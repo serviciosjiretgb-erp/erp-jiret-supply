@@ -11,7 +11,7 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, serverTimestamp, query } from "firebase/firestore";
 
 // ============================================================================
-// ESCUDO DE ERRORES (Evita la pantalla blanca)
+// ESCUDO DE ERRORES
 // ============================================================================
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, errorMsg: '' }; }
@@ -22,7 +22,7 @@ class ErrorBoundary extends React.Component {
       return (
         <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-6">
           <AlertTriangle size={60} className="text-red-500 mb-4" />
-          <h2 className="text-2xl font-black text-black uppercase mb-2">Error de Interfaz Bloqueado</h2>
+          <h2 className="text-2xl font-black text-black uppercase mb-2">Error de Interfaz</h2>
           <p className="text-gray-500 text-sm mb-6">{this.state.errorMsg}</p>
           <button onClick={() => window.location.reload()} className="bg-black text-white font-black px-8 py-4 rounded-xl uppercase tracking-widest text-xs shadow-lg">Recargar Sistema</button>
         </div>
@@ -35,7 +35,7 @@ class ErrorBoundary extends React.Component {
 // ============================================================================
 // CONFIGURACIÓN DE FIREBASE BLINDADA
 // ============================================================================
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+const firebaseConfig = {
   apiKey: "AIzaSyBri2uZAaxsH4S0OpqhYvXB4wfCqo4g3sk",
   authDomain: "erp-gyb-supply.firebaseapp.com",
   projectId: "erp-gyb-supply",
@@ -47,11 +47,10 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-// MAGIA: Conectamos directo a tu base de datos us-central
-const db = getFirestore(app, "us-central");
+// Conectamos a tu base de datos us-central
+const db = getFirestore(app, "us-central"); 
 
-// RUTAS DIRECTAS: Quitamos las carpetas ocultas para que guarde en la raíz
-const getColRef = (colName) => collection(db, colName);
+const getColRef = (colName) => collection(db, colName); 
 const getDocRef = (colName, docId) => doc(db, colName, String(docId));
 
 const getTodayDate = () => {
@@ -59,28 +58,14 @@ const getTodayDate = () => {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
 
-// --- BASE DE DATOS INICIAL (INVENTARIO EXTRAÍDO DEL PDF) ---
+// --- BASE DE DATOS INICIAL ---
 const INITIAL_INVENTORY = [
-  { id: 'MP-0240', desc: 'ESENTTIA', cost: 914.05, stock: 2325, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-11PG4', desc: 'METALOCENO', cost: 877.14, stock: 1735, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-3003', desc: 'BAPOLENE', cost: 842.16, stock: 500, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-3003-E', desc: '3003 ESENTTIA', cost: 1113.59, stock: 0, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-RECICLADO', desc: 'MATERIAL RECICLADO', cost: 1.00, stock: 9999, unit: 'kg', category: 'Materia Prima' },
-  { id: 'PRI0020', desc: 'ALCOHOL ISOPROPILICO TAMBOR 160 KG', cost: 1451.15, stock: 50, unit: 'und', category: 'Químicos' },
-  { id: 'PRI0784', desc: 'ALCOHOL BUTILICO (N-BUTANOL) TAMBOR 170 KG', cost: 2284.19, stock: 160, unit: 'und', category: 'Químicos' },
-  { id: 'PRI1142', desc: 'MASTERBATCH WELSET BLANCO 70% WM7080', cost: 3414.52, stock: 20, unit: 'saco', category: 'Pigmentos' },
-  { id: 'PRI1302', desc: 'POLIETILENO CYNPOL LL0118H (11PG4) SACO 25 KG', cost: 1157.25, stock: 25, unit: 'saco', category: 'Materia Prima' },
-  { id: 'WS-1932', desc: 'BLANCO SUPERFICIE G/F', cost: 4586.61, stock: 0, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-1934', desc: 'ROJO PANT 485 G/F', cost: 5572.33, stock: 32, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-1956', desc: 'NEGRO PROCESO G/F', cost: 5210.23, stock: 47, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-2012', desc: 'AMARILLO PANT 123 G/F', cost: 5572.33, stock: 36, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-2134', desc: 'NARANJA PANT 1585 G/F', cost: 5572.33, stock: 8, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-2135', desc: 'ROJO PANT. 1925 G/F', cost: 5572.33, stock: 32, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-2136', desc: 'VERDE PANT 360 G/F', cost: 5572.33, stock: 18, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-2137', desc: 'GRIS PANT 422', cost: 5572.33, stock: 18, unit: 'kg', category: 'Tintas' }
+  { id: 'MP-0240', desc: 'ESENTTIA', cost: 0.96, stock: 2325, unit: 'kg', category: 'Materia Prima' },
+  { id: 'MP-11PG4', desc: 'METALOCENO', cost: 0.91, stock: 1735, unit: 'kg', category: 'Materia Prima' },
+  { id: 'MP-3003', desc: 'BAPOLENE', cost: 0.96, stock: 500, unit: 'kg', category: 'Materia Prima' },
+  { id: 'MP-RECICLADO', desc: 'MATERIAL RECICLADO', cost: 1.00, stock: 9999, unit: 'kg', category: 'Materia Prima' }
 ];
 
-// --- HELPERS SEGUROS ---
 const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
 const parseNum = (val) => {
   if (!val) return 0;
@@ -121,7 +106,6 @@ export default function App() {
   const [clients, setClients] = useState([]);
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
-  const [orders, setOrders] = useState([]);
 
   // --- UI STATES ---
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
@@ -138,19 +122,16 @@ export default function App() {
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
 
   // --- FORMULARIOS VENTAS ---
-  const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', tipoContribuyente: 'ORDINARIO', poseeCredito: 'No', diasCredito: '', productosMaquila: '', fechaCreacion: getTodayDate() };
+  const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [editingClientId, setEditingClientId] = useState(null);
   
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
-  const [requisicionList, setRequisicionList] = useState([]);
 
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: 'BOLSAS', vendedor: '', montoBase: '', iva: '', total: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
-  const [invoiceList, setInvoiceList] = useState([]);
-  const [invoiceCurrent, setInvoiceCurrent] = useState({ id: '', qty: '', price: '', dcto: '0' });
 
   // --- ESTADOS PRODUCCIÓN ---
   const [showWorkOrder, setShowWorkOrder] = useState(null);
@@ -159,7 +140,7 @@ export default function App() {
   const [recipeEditReqId, setRecipeEditReqId] = useState(null);
   const [selectedPhaseReqId, setSelectedPhaseReqId] = useState(null);
   const [activePhaseTab, setActivePhaseTab] = useState('extrusion');
-  const [phaseForm, setPhaseForm] = useState({ insumos: [], producedKg: '', mermaKg: '', grafilado: '', torta: '', millares: '', troquel: '', date: getTodayDate() });
+  const [phaseForm, setPhaseForm] = useState({ insumos: [], producedKg: '', mermaKg: '', date: getTodayDate() });
   const [tempRecipe, setTempRecipe] = useState([]);
   const [newIngId, setNewIngId] = useState('');
   const [newIngQty, setNewIngQty] = useState('');
@@ -298,16 +279,12 @@ export default function App() {
   };
 
   // ============================================================================
-  // FIREBASE SYNC
+  // FIREBASE SYNC (Mantiene tus datos vivos)
   // ============================================================================
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) { 
-          await signInWithCustomToken(auth, __initial_auth_token); 
-        } else { 
-          await signInAnonymously(auth); 
-        }
+        await signInAnonymously(auth); 
       } catch (err) { console.error("Error Auth:", err); }
     };
     initAuth();
@@ -331,15 +308,13 @@ export default function App() {
     const unsubCli = onSnapshot(getColRef('clientes'), (s) => setClients(s.docs.map(d => ({ id: d.id, ...d.data() }))), (e) => console.error("Clientes FB error:", e));
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() }))), (e) => console.error("Requisiciones FB error:", e));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))), (e) => console.error("Facturas FB error:", e));
-    const unsubOrd = onSnapshot(getColRef('productionOrders'), (s) => setOrders(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))), (e) => console.error("Ordenes FB error:", e));
     
-    return () => { unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubOrd(); };
+    return () => { unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); };
   }, [fbUser]);
 
   const clearAllReports = () => {
     setShowReqReport(false); setShowClientReport(false); setShowGeneralInvoicesReport(false);
     setShowNewReqPanel(false); setShowNewInvoicePanel(false); 
-    setRequisicionList([]); setInvoiceList([]);
     setEditingClientId(null); setEditingReqId(null); setShowSingleReqReport(null);
     setShowSingleInvoice(null); setInvoiceSearchTerm('');
     setShowWorkOrder(null); setShowPhaseReport(null); setShowFiniquito(null);
@@ -510,7 +485,7 @@ export default function App() {
 
 
   // ============================================================================
-  // LOGICA VENTAS: DIRECTORIO DE CLIENTES (APROBADO)
+  // LOGICA VENTAS: DIRECTORIO DE CLIENTES
   // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault();
@@ -530,7 +505,7 @@ export default function App() {
       await setDoc(getDocRef('clientes', rifUpper), data, { merge: true });
       setNewClientForm(initialClientForm);
       setEditingClientId(null);
-      setDialog({ title: '¡Éxito!', text: 'Cliente guardado correctamente en el directorio.', type: 'alert' });
+      setDialog({ title: '¡Éxito!', text: 'Cliente guardado correctamente en la nube.', type: 'alert' });
     } catch(err) { 
       setDialog({ title: 'Error', text: err.message, type: 'alert' }); 
     }
@@ -545,7 +520,7 @@ export default function App() {
   const handleDeleteClient = (rif) => setDialog({ title: 'Eliminar Cliente', text: `¿Desea eliminar el cliente ${rif}?`, type: 'confirm', onConfirm: async () => { await deleteDoc(getDocRef('clientes', rif)); }});
 
   // ============================================================================
-  // LOGICA VENTAS: FACTURACIÓN (APROBADO)
+  // LOGICA VENTAS: FACTURACIÓN
   // ============================================================================
   const generateInvoiceId = () => {
     const max = (invoices || []).reduce((m, r) => {
@@ -594,7 +569,7 @@ export default function App() {
   const handleDeleteInvoice = (id) => setDialog({ title: 'Eliminar Factura', text: `¿Desea eliminar la factura permanentemente?`, type: 'confirm', onConfirm: async () => { await deleteDoc(getDocRef('maquilaInvoices', id)); }});
 
   // ============================================================================
-  // LOGICA VENTAS: REQUISICIONES (APROBADO)
+  // LOGICA VENTAS: REQUISICIONES (OP) CON FORMULAS CORREGIDAS
   // ============================================================================
   const generateReqId = () => {
      const max = (requirements || []).reduce((m, r) => {
@@ -607,33 +582,52 @@ export default function App() {
   
   const handleReqFormChange = (field, value) => {
     let f = { ...newReqForm, [field]: typeof value === 'string' ? value.toUpperCase() : value };
+    
     if (field === 'client') {
       const selectedClient = (clients || []).find(c => c.name === (value||'').toUpperCase());
       if (selectedClient && selectedClient.vendedor) f.vendedor = selectedClient.vendedor.toUpperCase();
     }
+    
     if (field === 'tipoProducto' && value === 'TERMOENCOGIBLE') { f.presentacion = 'KILOS'; }
-    const w = parseNum(f.ancho), l = parseNum(f.largo), m = parseNum(f.micras), fuelles = parseNum(f.fuelles), c = parseNum(f.cantidad), tipo = f.tipoProducto, presentacion = f.presentacion;
-    if (w > 0 && l > 0 && m > 0) {
-      let pesoEstimado = 0; let descStr = ''; const micrasFormat = m < 1 && m > 0 ? Math.round(m * 1000) : m;
-      if (tipo === 'BOLSAS') {
+    
+    const w = parseNum(f.ancho);
+    const l = parseNum(f.largo);
+    const m = parseNum(f.micras);
+    const fuelles = parseNum(f.fuelles);
+    const c = parseNum(f.cantidad);
+    const tipo = f.tipoProducto;
+    const presentacion = f.presentacion;
+
+    let pesoEstimado = 0; 
+    let descStr = ''; 
+    const micrasFormat = m < 1 && m > 0 ? Math.round(m * 1000) : m;
+
+    if (w > 0 && m > 0) {
+      if (tipo === 'BOLSAS' && l > 0) {
+         // Fórmula Bolsas: (Ancho + Fuelles) * Largo * Micras
          pesoEstimado = (w + fuelles) * l * m;
          f.pesoMillar = pesoEstimado.toFixed(2);
          descStr = fuelles > 0 ? `(${w}+${fuelles/2}+${fuelles/2})X${l}X${micrasFormat}MIC | ${f.color || ''}` : `${w}X${l}X${micrasFormat}MIC | ${f.color || ''}`;
          f.requestedKg = presentacion === 'KILOS' ? c.toFixed(2) : (pesoEstimado * c).toFixed(2);
       } else if (tipo === 'TERMOENCOGIBLE') {
-         pesoEstimado = w * l * m; f.pesoMillar = 'N/A'; descStr = `${w}X${l}X${micrasFormat}MIC | ${f.color || ''}`;
-         f.requestedKg = c.toFixed(2);
+         // Fórmula Termoencogible: Ancho * Micras
+         pesoEstimado = w * m; 
+         f.pesoMillar = 'N/A'; 
+         descStr = `TERMOENCOGIBLE ${w}CM X ${micrasFormat}MIC | ${f.color || ''}`;
+         f.requestedKg = c > 0 ? c.toFixed(2) : '0.00';
       } else {
-         pesoEstimado = w * l * m; 
-         f.pesoMillar = pesoEstimado.toFixed(2);
-         descStr = `${w}X${l}X${micrasFormat}MIC | ${f.color || ''}`;
-         f.requestedKg = presentacion === 'KILOS' ? c > 0 ? c.toFixed(2) : '0.00' : (pesoEstimado * c).toFixed(2);
+         f.pesoMillar = '0.00'; 
+         f.requestedKg = '0.00';
       }
-      if (['ancho', 'fuelles', 'largo', 'micras', 'tipoProducto', 'color'].includes(field)) { f.desc = descStr; }
+      
+      if (['ancho', 'fuelles', 'largo', 'micras', 'tipoProducto', 'color', 'cantidad', 'presentacion'].includes(field)) { 
+        f.desc = descStr; 
+      }
     } else {
       f.pesoMillar = tipo === 'TERMOENCOGIBLE' ? 'N/A' : '0.00';
       f.requestedKg = presentacion === 'KILOS' ? (c > 0 ? c.toFixed(2) : '0.00') : '0.00';
     }
+    
     setNewReqForm(f);
   };
 
@@ -644,7 +638,7 @@ export default function App() {
     try {
       await setDoc(getDocRef('requirements', opId), newReq, { merge: true });
       setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null);
-      setDialog({title: 'Éxito', text: `Requisición de Producción guardada.`, type: 'alert'});
+      setDialog({title: 'Éxito', text: `Requisición de Producción guardada en la nube.`, type: 'alert'});
     } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
 
@@ -656,7 +650,6 @@ export default function App() {
       pesoMillar: r.tipoProducto === 'TERMOENCOGIBLE' ? 'N/A' : (r.pesoMillar || ''), presentacion: r.presentacion || 'MILLAR', 
       cantidad: r.cantidad || '', requestedKg: r.requestedKg || '', color: r.color || 'NATURAL', tratamiento: r.tratamiento || 'LISO', vendedor: r.vendedor || '' 
     });
-    setRequisicionList(r.items || []);
     setShowNewReqPanel(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -1409,7 +1402,37 @@ export default function App() {
         {ventasView === 'clientes' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-6 border-b bg-white flex justify-between items-center"><h2 className="text-xl font-black uppercase flex items-center gap-3"><Users className="text-orange-500" /> DIRECTORIO DE CLIENTES</h2><button onClick={()=>setShowClientReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase">REPORTE PDF</button></div>
-            <div className="p-8 bg-gray-50/50 border-b"><form onSubmit={handleAddClient} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6"><div className="grid grid-cols-1 md:grid-cols-4 gap-6"><div className="md:col-span-2"><label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Razón Social</label><input type="text" value={newClientForm.razonSocial} onChange={e=>setNewClientForm({...newClientForm, razonSocial: e.target.value.toUpperCase()})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all" /></div><div><label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">RIF</label><input type="text" disabled={!!editingClientId} value={newClientForm.rif} onChange={e=>setNewClientForm({...newClientForm, rif: e.target.value.toUpperCase()})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none border-2 border-transparent" /></div><div><label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Teléfono</label><input type="text" value={newClientForm.telefono} onChange={e=>setNewClientForm({...newClientForm, telefono: e.target.value})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none border-2 border-transparent" /></div></div><div className="flex justify-end pt-4"><button type="submit" className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-slate-800 transition-all">GUARDAR DIRECTORIO</button></div></form></div>
+            <div className="p-8 bg-gray-50/50 border-b">
+              <form onSubmit={handleAddClient} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                  <div className="md:col-span-2">
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Razón Social</label>
+                    <input type="text" value={newClientForm.razonSocial} onChange={e=>setNewClientForm({...newClientForm, razonSocial: e.target.value.toUpperCase()})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">RIF</label>
+                    <input type="text" disabled={!!editingClientId} value={newClientForm.rif} onChange={e=>setNewClientForm({...newClientForm, rif: e.target.value.toUpperCase()})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none border-2 border-transparent" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Teléfono</label>
+                    <input type="text" value={newClientForm.telefono} onChange={e=>setNewClientForm({...newClientForm, telefono: e.target.value})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none border-2 border-transparent" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="md:col-span-2">
+                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Dirección Fiscal</label>
+                     <input type="text" value={newClientForm.direccion} onChange={e=>setNewClientForm({...newClientForm, direccion: e.target.value.toUpperCase()})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all" />
+                  </div>
+                  <div>
+                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Vendedor Asignado</label>
+                     <input type="text" value={newClientForm.vendedor} onChange={e=>setNewClientForm({...newClientForm, vendedor: e.target.value.toUpperCase()})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all" />
+                  </div>
+                </div>
+                <div className="flex justify-end pt-4">
+                  <button type="submit" className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-slate-800 transition-all">GUARDAR DIRECTORIO</button>
+                </div>
+              </form>
+            </div>
             <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR POR NOMBRE O RIF..." value={clientSearchTerm} onChange={e=>setClientSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4">RIF</th><th className="py-4 px-4 w-1/2">Razón Social</th><th className="py-4 px-4">Contacto</th><th className="py-4 px-4 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{filteredClients.map(c => (<tr key={c.rif}><td className="py-5 px-4 font-black">{c.rif}</td><td className="py-5 px-4"><span className="font-black uppercase block text-sm">{c.name}</span><span className="text-[10px] font-bold text-gray-400 block">{c.direccion}</span></td><td className="py-5 px-4"><span className="font-bold text-gray-700 text-xs">{c.personaContacto}</span></td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>startEditClient(c)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div></div>
           </div>
         )}
@@ -1426,7 +1449,53 @@ export default function App() {
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
              <div className="px-8 py-6 border-b bg-white flex justify-between items-center"><h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> REQUISICIONES OP</h2><div className="flex gap-2"><button onClick={()=>setShowReqReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors">REPORTE GENERAL</button><button onClick={()=>{setShowNewReqPanel(!showNewReqPanel);setNewReqForm(initialReqForm);setEditingReqId(null);}} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-all">{showNewReqPanel ? 'CANCELAR' : 'NUEVA SOLICITUD'}</button></div></div>
              {showNewReqPanel && (
-                <div className="p-8 bg-gray-50/50 border-b"><form onSubmit={handleCreateRequirement} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6"><div className="flex justify-between items-center border-b pb-3 mb-6"><h3 className="text-sm font-black uppercase text-black">{editingReqId ? 'EDITAR ORDEN' : 'NUEVA ORDEN'}</h3><span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl font-black text-[10px]">CORRELATIVO: {editingReqId ? String(editingReqId).replace('OP-','').padStart(5,'0') : generateReqId().replace('OP-','').padStart(5,'0')}</span></div><div className="grid grid-cols-1 md:grid-cols-2 gap-8"><div className="space-y-4"><div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Cliente del Directorio</label><select required value={newReqForm.client} onChange={e=>handleReqFormChange('client', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500"><option value="">Seleccione...</option>{clients.map(c=><option key={c.rif} value={c.name}>{c.name}</option>)}</select></div><div className="grid grid-cols-2 gap-4"><div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Ancho (cm)</label><input type="number" step="0.1" value={newReqForm.ancho} onChange={e=>handleReqFormChange('ancho', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black" /></div><div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Fuelle Total (cm)</label><input type="number" step="0.1" value={newReqForm.fuelles} onChange={e=>handleReqFormChange('fuelles', e.target.value)} disabled={newReqForm.tipoProducto === 'TERMOENCOGIBLE'} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black disabled:bg-gray-100 disabled:opacity-50" /></div></div></div><div className="space-y-4"><div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Largo (cm)</label><input type="number" step="0.1" value={newReqForm.largo} onChange={e=>handleReqFormChange('largo', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black" /></div><div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Micras / Espesor</label><input type="number" step="0.001" value={newReqForm.micras} onChange={e=>handleReqFormChange('micras', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black" /></div></div></div><div className="flex justify-between items-center bg-orange-50 p-6 rounded-3xl border-2 border-orange-200 mt-6 shadow-inner"><div><span className="text-[10px] font-black text-orange-800 uppercase tracking-tighter">TOTAL CARGA ESTIMADA</span><span className="text-4xl font-black text-orange-600 block">{newReqForm.requestedKg} KG</span></div><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR EN PLANTA</button></div></form></div>
+                <div className="p-8 bg-gray-50/50 border-b">
+                  <form onSubmit={handleCreateRequirement} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+                    <div className="flex justify-between items-center border-b pb-3 mb-6"><h3 className="text-sm font-black uppercase text-black">{editingReqId ? 'EDITAR ORDEN' : 'NUEVA ORDEN'}</h3><span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl font-black text-[10px]">CORRELATIVO: {editingReqId ? String(editingReqId).replace('OP-','').padStart(5,'0') : generateReqId().replace('OP-','').padStart(5,'0')}</span></div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      <div className="space-y-4">
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Cliente del Directorio</label>
+                          <select required value={newReqForm.client} onChange={e=>handleReqFormChange('client', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500">
+                            <option value="">Seleccione...</option>{clients.map(c=><option key={c.rif} value={c.name}>{c.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Ancho (cm)</label><input type="number" step="0.1" value={newReqForm.ancho} onChange={e=>handleReqFormChange('ancho', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black" /></div>
+                          <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Fuelle Total (cm)</label><input type="number" step="0.1" value={newReqForm.fuelles} onChange={e=>handleReqFormChange('fuelles', e.target.value)} disabled={newReqForm.tipoProducto === 'TERMOENCOGIBLE'} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black disabled:bg-gray-100 disabled:opacity-50" /></div>
+                        </div>
+                      </div>
+                      <div className="space-y-4">
+                        <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Largo (cm)</label><input type="number" step="0.1" value={newReqForm.largo} onChange={e=>handleReqFormChange('largo', e.target.value)} disabled={newReqForm.tipoProducto === 'TERMOENCOGIBLE'} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black disabled:bg-gray-100 disabled:opacity-50" /></div>
+                        <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Micras / Espesor</label><input type="number" step="0.001" value={newReqForm.micras} onChange={e=>handleReqFormChange('micras', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black" /></div>
+                      </div>
+                    </div>
+                    
+                    {/* NUEVA FILA PARA CANTIDAD Y TIPO DE PRODUCTO */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
+                       <div>
+                         <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Tipo de Producto</label>
+                         <select value={newReqForm.tipoProducto} onChange={e=>handleReqFormChange('tipoProducto', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500">
+                           <option value="BOLSAS">BOLSAS / EMPAQUES</option>
+                           <option value="TERMOENCOGIBLE">TERMOENCOGIBLE (LÁMINA/TUBO)</option>
+                         </select>
+                       </div>
+                       <div>
+                         <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Cantidad Solicitada</label>
+                         <input type="number" step="0.01" value={newReqForm.cantidad} onChange={e=>handleReqFormChange('cantidad', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-4 font-black text-lg text-center text-black outline-none focus:border-orange-500" />
+                       </div>
+                       <div>
+                         <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Presentación</label>
+                         <select disabled={newReqForm.tipoProducto === 'TERMOENCOGIBLE'} value={newReqForm.presentacion} onChange={e=>handleReqFormChange('presentacion', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500 disabled:bg-gray-100 disabled:opacity-50">
+                           <option value="MILLAR">MILLARES</option>
+                           <option value="KILOS">KILOGRAMOS</option>
+                         </select>
+                       </div>
+                    </div>
+
+                    <div className="flex justify-between items-center bg-orange-50 p-6 rounded-3xl border-2 border-orange-200 mt-6 shadow-inner"><div><span className="text-[10px] font-black text-orange-800 uppercase tracking-tighter">TOTAL CARGA ESTIMADA</span><span className="text-4xl font-black text-orange-600 block">{newReqForm.requestedKg} KG</span></div><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR EN PLANTA</button></div>
+                  </form>
+                </div>
              )}
              <div className="p-8 overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black w-1/2">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{requirements.map(r=>(<tr key={r.id} className="hover:bg-gray-50 group transition-all"><td className="py-5 px-4 font-black text-orange-500">#{String(r.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r.fecha}</span></td><td className="py-5 px-4"><span className="font-black text-black uppercase block text-sm">{r.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r.desc}</span></td><td className="py-5 px-4 text-right font-black text-black text-lg">{formatNum(r.requestedKg)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div>
           </div>
