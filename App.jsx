@@ -47,13 +47,12 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app);
+// MAGIA: Conectamos directo a tu base de datos us-central
+const db = getFirestore(app, "us-central");
 
-// Uso exacto del AppId para cumplir reglas de seguridad de Firestore
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'erp-jiret-v1'; 
-
-const getColRef = (colName) => collection(db, 'artifacts', appId, 'public', 'data', colName);
-const getDocRef = (colName, docId) => doc(db, 'artifacts', appId, 'public', 'data', colName, String(docId));
+// RUTAS DIRECTAS: Quitamos las carpetas ocultas para que guarde en la raíz
+const getColRef = (colName) => collection(db, colName);
+const getDocRef = (colName, docId) => doc(db, colName, String(docId));
 
 const getTodayDate = () => {
   const d = new Date();
@@ -1662,192 +1661,192 @@ export default function App() {
               const cPhase = req.production?.[activePhaseTab] || { batches: [], isClosed: false };
               return (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in slide-in-from-bottom-8"><div className="lg:col-span-1 space-y-6"><div className="bg-black rounded-3xl shadow-xl p-8 text-white relative overflow-hidden"><div className="absolute -right-6 -bottom-6 opacity-10"><Factory size={160}/></div><div className="relative z-10"><span className="bg-orange-500 text-white px-3 py-1.5 rounded-lg text-[9px] font-black uppercase mb-4 inline-block shadow-sm">EN PRODUCCIÓN</span><h2 className="text-4xl font-black uppercase tracking-tighter mb-2">#{String(req.id).replace('OP-', '').padStart(5, '0')}</h2><p className="text-sm font-bold text-gray-300 uppercase leading-relaxed mb-6 border-b border-gray-700 pb-6">{req.client}<br/><span className="text-orange-400 text-lg">{req.desc}</span></p><div className="bg-gray-800 p-5 rounded-2xl border border-gray-700 shadow-inner"><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 tracking-widest">META A PRODUCIR:</p><p className="text-3xl font-black text-white">{formatNum(req.requestedKg)} KG</p></div></div></div><div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-3 space-y-2">{[{ id: 'extrusion', label: '1. Extrusión' }, { id: 'impresion', label: '2. Impresión' }, { id: 'sellado', label: '3. Sellado' }].map(tab => (<button key={tab.id} onClick={() => setActivePhaseTab(tab.id)} className={`w-full flex justify-between items-center p-5 rounded-2xl text-[10px] font-black uppercase transition-all ${activePhaseTab === tab.id ? 'bg-orange-50 text-orange-700 border-2 border-orange-200' : 'text-gray-500 hover:bg-gray-50'}`}><span>{tab.label}</span>{req.production?.[tab.id]?.isClosed && <CheckCircle size={18} className="text-green-500"/>}</button>))}</div></div><div className="lg:col-span-2 bg-white rounded-3xl shadow-sm border border-gray-200 p-8 lg:p-10"><div className="border-b-2 border-gray-100 pb-6 mb-8 flex justify-between items-center"><h3 className="text-2xl font-black uppercase text-black tracking-tighter">Fase: {activePhaseTab.toUpperCase()}</h3><button onClick={()=>setSelectedPhaseReqId(null)} className="bg-gray-100 p-2.5 rounded-xl text-gray-500 hover:text-black"><X size={18}/></button></div>{cPhase.batches && cPhase.batches.length > 0 && (<div className="mb-8 overflow-hidden rounded-2xl border border-gray-200"><table className="w-full text-center text-xs"><thead className="bg-gray-50 border-b border-gray-200"><tr className="uppercase font-black text-[9px] text-gray-500 tracking-widest"><th className="p-3 border-r border-gray-200">Fecha</th><th className="p-3 border-r border-gray-200">Producido</th><th className="p-3 border-r border-gray-200">Merma</th><th className="p-3">Borrar</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{cPhase.batches.map(b => (<tr key={b.id} className="hover:bg-gray-50"><td className="p-3 border-r border-gray-200 font-bold">{b.date}</td><td className="p-3 border-r border-gray-200 font-black text-green-600">{formatNum(b.producedKg)} kg</td><td className="p-3 border-r border-gray-200 font-black text-red-500">{formatNum(b.mermaKg)} kg</td><td className="p-3 text-center"><button onClick={() => handleDeleteBatch(req.id, activePhaseTab, b.id)} className="text-red-400 hover:text-red-600 transition-colors p-1"><Trash2 size={14} className="mx-auto"/></button></td></tr>))}</tbody></table></div>)}{cPhase.isClosed ? (<div className="text-center py-10 bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200 shadow-inner"><CheckCircle size={56} className="text-green-500 mx-auto mb-6"/><h4 className="text-xl font-black text-black uppercase tracking-widest">Esta Fase se encuentra cerrada</h4><p className="text-[10px] font-bold text-gray-400 uppercase mt-2">Ya no se permiten reportes parciales en esta etapa.</p></div>) : (<form onSubmit={handleSavePhase} className="space-y-8"><div className="flex gap-4 items-center"><label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Fecha Reporte:</label><input type="date" value={phaseForm.date} onChange={e=>setPhaseForm({...phaseForm, date: e.target.value})} className="border-2 border-gray-200 rounded-xl p-2 font-black text-xs outline-none text-black focus:border-orange-500" /></div><div className="bg-orange-50 p-6 rounded-2xl border border-orange-100 shadow-inner"><p className="text-[10px] font-black text-orange-800 uppercase mb-4 flex items-center gap-2"><Package size={16}/> Preparación (Checklist Almacén)</p><div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-[10px] font-bold text-gray-600 uppercase">{activePhaseTab === 'extrusion' && <><span>[ ] PEBD 240</span> <span>[ ] LINEAL 11PG4</span> <span>[ ] PIGMENTO</span></>}{activePhaseTab === 'impresion' && <><span>[ ] Tintas Base</span> <span>[ ] Solvente</span> <span>[ ] Sticky Back</span></>}{activePhaseTab === 'sellado' && <><span>[ ] Cinta Empaque</span> <span>[ ] Marcadores</span> <span>[ ] Hojillas</span></>}</div></div><div className="bg-gray-50 p-6 rounded-2xl border border-gray-200"><h4 className="text-[10px] font-black text-gray-600 uppercase mb-4 flex items-center gap-2"><Box size={16}/> Insumos Consumidos (Lote Actual)</h4><div className="flex gap-3 mb-6"><select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border-2 border-gray-200 rounded-xl p-3.5 font-black text-xs text-black outline-none focus:border-orange-500">{renderPhaseInventoryOptions()}</select><input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} placeholder="Cant" className="w-32 border-2 border-gray-200 rounded-xl p-3.5 text-xs font-black text-center text-black outline-none focus:border-orange-500" /><button type="button" onClick={handleAddPhaseIng} className="bg-black text-white px-5 rounded-xl shadow-md transition-all hover:bg-slate-800"><Plus size={20}/></button></div><ul className="space-y-3">{(phaseForm.insumos || []).map((ing, idx) => (<li key={idx} className="flex justify-between items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm"><span className="text-xs font-black uppercase text-gray-800">{(inventory || []).find(i=>i.id===ing.id)?.desc || ing.id}</span><div className="flex items-center gap-4"><span className="text-sm font-black text-black bg-gray-100 px-3 py-1.5 rounded-lg">{ing.qty}</span><button type="button" onClick={()=>handleRemovePhaseIng(idx)} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 size={18}/></button></div></li>))}</ul></div><div className="grid grid-cols-2 gap-4"><div className="bg-green-50 p-4 rounded-2xl border border-green-200 shadow-inner"><label className="text-[9px] font-black text-green-800 uppercase block mb-2 tracking-widest">Producido (Bobinas/Sellado)</label><input type="number" step="0.01" value={phaseForm.producedKg} onChange={e=>setPhaseForm({...phaseForm, producedKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-green-300 rounded-xl p-3 text-lg font-black text-green-700 text-center outline-none focus:border-green-500" /></div><div className="bg-red-50 p-4 rounded-2xl border border-red-200 shadow-inner"><label className="text-[9px] font-black text-red-800 uppercase block mb-2 tracking-widest">Mermas / Desperdicio</label><input type="number" step="0.01" value={phaseForm.mermaKg} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-red-300 rounded-xl p-3 text-lg font-black text-red-700 text-center outline-none focus:border-red-500" /></div></div><div className="flex flex-col md:flex-row gap-4 pt-6 border-t-2 border-gray-100"><button type="submit" name="skip" className="w-full md:w-1/4 bg-gray-100 text-gray-500 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-gray-200 shadow-sm transition-all hover:bg-gray-200">OMITIR FASE</button><button type="submit" name="partial" className="w-full md:w-2/4 bg-blue-50 text-blue-600 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-blue-200 flex justify-center items-center gap-2 shadow-sm transition-all hover:bg-blue-100"><Plus size={16}/> GUARDAR REPORTE PARCIAL</button><button type="submit" name="close" className="w-full md:w-1/4 bg-black text-white font-black py-4 rounded-2xl uppercase text-[9px] flex justify-center items-center gap-2 shadow-xl hover:bg-slate-800 transition-all"><CheckCircle size={16}/> CERRAR FASE DEFINITIVA</button></div></form>)}</div></div>
-              );
-            })()}
-          </div>
-        )}
-
-        {/* HISTORIAL */}
-        {prodView === 'historial' && (
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
-            <div className="px-6 py-5 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-lg font-black text-black uppercase flex items-center gap-2"><History className="text-orange-500" /> Órdenes Completadas</h2><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Auditoría de Proceso</p></div>
-            <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-right text-black text-[10px] font-black uppercase tracking-widest">KG Finales</th><th className="p-4 text-center text-black text-[10px] font-black uppercase tracking-widest">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{completedOrders.map(req => (<tr key={req.id} className="hover:bg-gray-50 transition-colors group"><td className="p-4 font-black text-orange-500 text-lg">#{String(req.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-xs text-black">{req.client}<br/><span className="text-[10px] font-bold text-gray-400">{req.desc}</span></td><td className="p-4 text-right font-black text-green-600 text-lg">{formatNum(req.production?.sellado?.batches?.reduce((a,b)=>a+parseNum(b.producedKg),0) || 0)} KG</td><td className="p-4 text-center"><button onClick={()=>setShowFiniquito(req.id)} className="bg-black text-white px-8 py-3 rounded-2xl text-[9px] font-black uppercase hover:bg-gray-800 shadow-md flex items-center gap-2 mx-auto transition-all"><FileText size={14}/> GENERAR FINIQUITO</button></td></tr>))}</tbody></table></div>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // --- VISTAS DE IMPRESIÓN (PRODUCCIÓN) ---
-  const renderWorkOrder = () => {
-    const req = requirements.find(r => r.id === showWorkOrder); if (!req) return null;
-    return (
-      <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black shadow-xl"><style>{`@media print { @page { size: portrait; margin: 10mm; } }`}</style>
-        <div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden bg-gray-50 p-4 rounded-xl border border-gray-200">
-           <button onClick={() => setShowWorkOrder(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2.5 rounded-xl">VOLVER</button>
-           <button onClick={() => handleExportPDF(`OP_${req.id}`)} className="bg-black text-white px-8 py-3 rounded-xl font-black flex items-center gap-2 shadow-lg text-xs uppercase transition-all hover:bg-gray-800"><Printer size={16} /> EXPORTAR PDF</button>
+            );
+          })()}
         </div>
-        <ReportHeader />
-        <div className="text-center my-6"><span className="text-xl font-black uppercase tracking-widest border-b-2 border-black pb-1">ORDEN DE TRABAJO N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
-        <div className="grid grid-cols-2 gap-4 mb-6 font-bold text-xs uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-2 text-gray-500 font-bold text-[10px]">PRODUCTO: {req.desc}</p></div><div className="text-right"><p>FECHA: {req.fecha || getSafeDate(req.timestamp)}</p><p className="mt-2 text-lg text-orange-600 font-black uppercase">META: {formatNum(req.requestedKg)} KG</p></div></div>
-        <div className="border-4 border-black p-4 mb-6 rounded-3xl overflow-hidden"><div className="font-black text-center border-b-2 border-black mb-4 py-1 text-sm bg-gray-100 uppercase">Especificaciones y Fórmula de Extrusión</div>
-          <table className="w-full text-left text-xs mb-4"><thead><tr className="font-black uppercase text-[10px] border-b border-black"><td>Insumo / Material</td><td className="text-center">Proporción (%)</td><td className="text-right">Peso Teórico (KG)</td></tr></thead>
-            <tbody className="divide-y divide-gray-100">{Array.isArray(req.recipe) && req.recipe.map((r, i) => (<tr key={i} className="text-black h-8 align-middle"><td>{inventory.find(inv=>inv.id===r.id)?.desc || r.id}</td><td className="text-center">{r.percentage ? `${r.percentage}%` : 'N/A'}</td><td className="text-right font-bold">{formatNum(r.totalQty)} KG</td></tr>))}</tbody>
-          </table>
-          <div className="grid grid-cols-4 gap-4 text-center text-[10px] font-black uppercase border-t-2 border-black pt-4 bg-gray-50 p-2"><div>ANCHO<br/><span className="text-base">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-base">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-base">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-base">{req.micras}</span></div></div>
-        </div>
-        <div className="mt-32 grid grid-cols-2 gap-24 text-center font-black text-[10px] uppercase border-t-2 border-black pt-4 text-black"><div>CONTROL DE CALIDAD</div><div>SUPERVISOR DE PLANTA</div></div>
-      </div>
-    );
-  };
+      )}
 
-  const renderPhaseReport = () => {
-    const req = requirements.find(r => r.id === showPhaseReport?.reqId); if (!req) return null;
-    const pData = req.production?.[showPhaseReport.phase]; if (!pData) return null;
-    return (
-      <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black shadow-xl"><div data-html2canvas-ignore="true" className="flex justify-between mb-10 print:hidden bg-gray-50 p-4 rounded-xl border border-gray-200"><button onClick={() => setShowPhaseReport(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2.5 rounded-xl">VOLVER</button><button onClick={() => handleExportPDF(`ReporteFase_${showPhaseReport.phase}_OP${req.id}`)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button></div>
-        <ReportHeader /><h2 className="text-2xl font-black text-center my-10 uppercase border-b-4 border-orange-500 pb-2">REPORTE FASE: {showPhaseReport.phase.toUpperCase()}</h2>
-        <div className="grid grid-cols-2 gap-x-10 gap-y-4 text-xs font-black uppercase mb-10"><div>CLIENTE: {req.client}</div><div>EMISIÓN: {getSafeDate(Date.now())}</div><div>OP N°: {String(req.id).replace('OP-', '').padStart(5, '0')}</div><div>VENDEDOR: {req.vendedor || 'S/N'}</div></div>
-        <table className="w-full text-center border-collapse border-2 border-black text-black"><thead className="bg-gray-200"><tr><th className="p-3 border border-black text-[10px] tracking-widest">FECHA LOTE</th><th className="p-3 border border-black text-[10px] tracking-widest">PRODUCIDO (KG)</th><th className="p-3 border border-black text-[10px] tracking-widest">DESPERDICIO (KG)</th></tr></thead>
-          <tbody className="divide-y divide-black">{(pData.batches || []).map((b, i)=>(<tr key={i} className="h-10 align-middle"><td className="p-3 border border-black font-bold uppercase">{b.date}</td><td className="p-3 border border-black font-black text-base">{formatNum(b.producedKg)}</td><td className="p-3 border border-black font-bold text-red-600">{formatNum(b.mermaKg)}</td></tr>))}</tbody>
+      {/* HISTORIAL */}
+      {prodView === 'historial' && (
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
+          <div className="px-6 py-5 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-lg font-black text-black uppercase flex items-center gap-2"><History className="text-orange-500" /> Órdenes Completadas</h2><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Auditoría de Proceso</p></div>
+          <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-right text-black text-[10px] font-black uppercase tracking-widest">KG Finales</th><th className="p-4 text-center text-black text-[10px] font-black uppercase tracking-widest">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{completedOrders.map(req => (<tr key={req.id} className="hover:bg-gray-50 transition-colors group"><td className="p-4 font-black text-orange-500 text-lg">#{String(req.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-xs text-black">{req.client}<br/><span className="text-[10px] font-bold text-gray-400">{req.desc}</span></td><td className="p-4 text-right font-black text-green-600 text-lg">{formatNum(req.production?.sellado?.batches?.reduce((a,b)=>a+parseNum(b.producedKg),0) || 0)} KG</td><td className="p-4 text-center"><button onClick={()=>setShowFiniquito(req.id)} className="bg-black text-white px-8 py-3 rounded-2xl text-[9px] font-black uppercase hover:bg-gray-800 shadow-md flex items-center gap-2 mx-auto transition-all"><FileText size={14}/> GENERAR FINIQUITO</button></td></tr>))}</tbody></table></div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- VISTAS DE IMPRESIÓN (PRODUCCIÓN) ---
+const renderWorkOrder = () => {
+  const req = requirements.find(r => r.id === showWorkOrder); if (!req) return null;
+  return (
+    <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black shadow-xl"><style>{`@media print { @page { size: portrait; margin: 10mm; } }`}</style>
+      <div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden bg-gray-50 p-4 rounded-xl border border-gray-200">
+         <button onClick={() => setShowWorkOrder(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2.5 rounded-xl">VOLVER</button>
+         <button onClick={() => handleExportPDF(`OP_${req.id}`)} className="bg-black text-white px-8 py-3 rounded-xl font-black flex items-center gap-2 shadow-lg text-xs uppercase transition-all hover:bg-gray-800"><Printer size={16} /> EXPORTAR PDF</button>
+      </div>
+      <ReportHeader />
+      <div className="text-center my-6"><span className="text-xl font-black uppercase tracking-widest border-b-2 border-black pb-1">ORDEN DE TRABAJO N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
+      <div className="grid grid-cols-2 gap-4 mb-6 font-bold text-xs uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-2 text-gray-500 font-bold text-[10px]">PRODUCTO: {req.desc}</p></div><div className="text-right"><p>FECHA: {req.fecha || getSafeDate(req.timestamp)}</p><p className="mt-2 text-lg text-orange-600 font-black uppercase">META: {formatNum(req.requestedKg)} KG</p></div></div>
+      <div className="border-4 border-black p-4 mb-6 rounded-3xl overflow-hidden"><div className="font-black text-center border-b-2 border-black mb-4 py-1 text-sm bg-gray-100 uppercase">Especificaciones y Fórmula de Extrusión</div>
+        <table className="w-full text-left text-xs mb-4"><thead><tr className="font-black uppercase text-[10px] border-b border-black"><td>Insumo / Material</td><td className="text-center">Proporción (%)</td><td className="text-right">Peso Teórico (KG)</td></tr></thead>
+          <tbody className="divide-y divide-gray-100">{Array.isArray(req.recipe) && req.recipe.map((r, i) => (<tr key={i} className="text-black h-8 align-middle"><td>{inventory.find(inv=>inv.id===r.id)?.desc || r.id}</td><td className="text-center">{r.percentage ? `${r.percentage}%` : 'N/A'}</td><td className="text-right font-bold">{formatNum(r.totalQty)} KG</td></tr>))}</tbody>
         </table>
-        <div className="mt-32 flex justify-between border-t-2 border-black pt-4 font-black text-[10px] uppercase text-black"><div>REVISIÓN DE PLANTA</div><div>AUTORIZACIÓN GERENCIA</div></div>
+        <div className="grid grid-cols-4 gap-4 text-center text-[10px] font-black uppercase border-t-2 border-black pt-4 bg-gray-50 p-2"><div>ANCHO<br/><span className="text-base">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-base">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-base">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-base">{req.micras}</span></div></div>
       </div>
-    );
-  };
+      <div className="mt-32 grid grid-cols-2 gap-24 text-center font-black text-[10px] uppercase border-t-2 border-black pt-4 text-black"><div>CONTROL DE CALIDAD</div><div>SUPERVISOR DE PLANTA</div></div>
+    </div>
+  );
+};
 
-  const renderFiniquito = () => {
-    const req = requirements.find(r => r.id === showFiniquito); if (!req) return null;
-    const extSum = req.production?.extrusion?.batches?.reduce((a,b)=>a+parseNum(b.producedKg),0) || 0;
-    const selSum = req.production?.sellado?.batches?.reduce((a,b)=>a+parseNum(b.producedKg),0) || 0;
-    const extMerma = req.production?.extrusion?.batches?.reduce((a,b)=>a+parseNum(b.mermaKg),0) || 0;
-    const selMerma = req.production?.sellado?.batches?.reduce((a,b)=>a+parseNum(b.mermaKg),0) || 0;
+const renderPhaseReport = () => {
+  const req = requirements.find(r => r.id === showPhaseReport?.reqId); if (!req) return null;
+  const pData = req.production?.[showPhaseReport.phase]; if (!pData) return null;
+  return (
+    <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black shadow-xl"><div data-html2canvas-ignore="true" className="flex justify-between mb-10 print:hidden bg-gray-50 p-4 rounded-xl border border-gray-200"><button onClick={() => setShowPhaseReport(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2.5 rounded-xl">VOLVER</button><button onClick={() => handleExportPDF(`ReporteFase_${showPhaseReport.phase}_OP${req.id}`)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button></div>
+      <ReportHeader /><h2 className="text-2xl font-black text-center my-10 uppercase border-b-4 border-orange-500 pb-2">REPORTE FASE: {showPhaseReport.phase.toUpperCase()}</h2>
+      <div className="grid grid-cols-2 gap-x-10 gap-y-4 text-xs font-black uppercase mb-10"><div>CLIENTE: {req.client}</div><div>EMISIÓN: {getSafeDate(Date.now())}</div><div>OP N°: {String(req.id).replace('OP-', '').padStart(5, '0')}</div><div>VENDEDOR: {req.vendedor || 'S/N'}</div></div>
+      <table className="w-full text-center border-collapse border-2 border-black text-black"><thead className="bg-gray-200"><tr><th className="p-3 border border-black text-[10px] tracking-widest">FECHA LOTE</th><th className="p-3 border border-black text-[10px] tracking-widest">PRODUCIDO (KG)</th><th className="p-3 border border-black text-[10px] tracking-widest">DESPERDICIO (KG)</th></tr></thead>
+        <tbody className="divide-y divide-black">{(pData.batches || []).map((b, i)=>(<tr key={i} className="h-10 align-middle"><td className="p-3 border border-black font-bold uppercase">{b.date}</td><td className="p-3 border border-black font-black text-base">{formatNum(b.producedKg)}</td><td className="p-3 border border-black font-bold text-red-600">{formatNum(b.mermaKg)}</td></tr>))}</tbody>
+      </table>
+      <div className="mt-32 flex justify-between border-t-2 border-black pt-4 font-black text-[10px] uppercase text-black"><div>REVISIÓN DE PLANTA</div><div>AUTORIZACIÓN GERENCIA</div></div>
+    </div>
+  );
+};
 
-    return (
-      <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black shadow-2xl"><div data-html2canvas-ignore="true" className="flex justify-between mb-10 print:hidden bg-gray-100 p-4 rounded-xl border border-gray-200"><button onClick={() => setShowFiniquito(null)} className="text-gray-700 font-black text-xs uppercase bg-white border px-6 py-2.5 rounded-xl">VOLVER</button><button onClick={() => handleExportPDF(`Finiquito_OP_${req.id}`)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button></div>
-        <ReportHeader /><h2 className="text-3xl font-black text-center my-10 uppercase border-b-4 border-orange-500 pb-2 tracking-widest">FINIQUITO DE PRODUCCIÓN</h2>
-        <div className="mb-10 text-sm font-black uppercase text-black"><p className="text-gray-500 text-[10px] tracking-widest">ORDEN DE PRODUCCIÓN:</p><p className="text-2xl text-orange-600 mb-6">#{String(req.id).replace('OP-','').padStart(5,'0')}</p><p className="text-gray-500 text-[10px] tracking-widest">CLIENTE:</p><p className="text-xl mb-4 border-b-2 border-gray-100">{req.client}</p><p className="text-gray-500 text-[10px] tracking-widest">DESCRIPCIÓN TÉCNICA:</p><p className="text-lg">{req.desc}</p></div>
-        <div className="border-4 border-black rounded-3xl overflow-hidden shadow-2xl"><div className="bg-black text-white p-4 font-black uppercase text-xs text-center tracking-widest">RESUMEN CONSOLIDADO DEL PROCESO</div>
-          <table className="w-full text-center text-xs text-black"><thead><tr className="border-b-2 border-black font-black uppercase bg-gray-200 h-10"><td className="p-3">FASE OPERATIVA</td><td className="p-3">TOTAL PRODUCIDO</td><td className="p-3">TOTAL DESPERDICIO</td><td className="p-3">% EFICIENCIA</td></tr></thead>
-            <tbody className="font-bold uppercase divide-y-2 divide-gray-100">
-              {req.production?.extrusion && <tr><td className="p-4 bg-gray-50 font-black">EXTRUSIÓN</td><td className="p-4 font-black text-green-600 text-base">{formatNum(extSum)} KG</td><td className="p-4 text-red-600 text-base">{formatNum(extMerma)} KG</td><td className="p-4">{extSum > 0 ? ((1 - (extMerma/extSum))*100).toFixed(2) : 0}%</td></tr>}
-              {req.production?.sellado && <tr><td className="p-4 bg-gray-50 font-black">SELLADO Y CORTE</td><td className="p-4 font-black text-green-600 text-base">{formatNum(selSum)} KG</td><td className="p-4 text-red-600 text-base">{formatNum(selMerma)} KG</td><td className="p-4">{selSum > 0 ? ((1 - (selMerma/selSum))*100).toFixed(2) : 0}%</td></tr>}
-            </tbody>
-          </table>
-        </div>
-        <div className="mt-32 grid grid-cols-3 gap-12 text-center font-black text-[10px] uppercase border-t-2 border-black pt-4 text-black"><div>ELABORADO POR ANALISTA</div><div>SUPERVISOR DE PLANTA</div><div>AUDITORÍA INTERNA</div></div>
-      </div>
-    );
-  };
-
-  // --- ESTRUCTURA GENERAL DE LA APP ---
-  if (!appUser) {
-    return <ErrorBoundary>{renderLogin()}</ErrorBoundary>;
-  }
+const renderFiniquito = () => {
+  const req = requirements.find(r => r.id === showFiniquito); if (!req) return null;
+  const extSum = req.production?.extrusion?.batches?.reduce((a,b)=>a+parseNum(b.producedKg),0) || 0;
+  const selSum = req.production?.sellado?.batches?.reduce((a,b)=>a+parseNum(b.producedKg),0) || 0;
+  const extMerma = req.production?.extrusion?.batches?.reduce((a,b)=>a+parseNum(b.mermaKg),0) || 0;
+  const selMerma = req.production?.sellado?.batches?.reduce((a,b)=>a+parseNum(b.mermaKg),0) || 0;
 
   return (
-    <ErrorBoundary>
-      <div className="min-h-screen bg-gray-100 text-gray-900 font-sans flex flex-col print:bg-white print:block print:w-full overflow-x-hidden print:overflow-visible">
-        <style>{`@media print { body, html, #root { background-color: white !important; width: 100% !important; height: auto !important; overflow: visible !important; } }`}</style>
-        
-        <header className="bg-black border-b-4 border-orange-500 sticky top-0 z-50 text-white shadow-md print:hidden">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between h-20 items-center">
-              <div className="flex items-center gap-4 cursor-pointer transition-transform hover:scale-105 active:scale-95" onClick={()=>{clearAllReports(); setActiveTab('home');}}>
-                <div className="flex items-center bg-white rounded-2xl px-3 py-1 shadow-inner"><span className="text-black font-black text-3xl leading-none">G</span><span className="text-orange-500 font-black text-2xl mx-0.5">&</span><span className="text-black font-black text-3xl leading-none">B</span></div>
-                <div className="hidden sm:block border-l-2 border-gray-800 pl-4"><span className="font-black text-lg text-white block uppercase italic tracking-tighter">Supply ERP</span><span className="text-[9px] text-orange-400 font-black uppercase block mt-0.5 tracking-widest">Servicios Jiret G&B C.A.</span></div>
-              </div>
-              <div className="flex items-center gap-5">
-                <div className="flex items-center gap-3 bg-gray-800 px-5 py-2 rounded-2xl border border-gray-700 shadow-inner"><ShieldCheck size={18} className="text-orange-500" /><div className="flex flex-col"><span className="font-black text-white text-[10px] uppercase leading-none">{appUser?.name}</span><span className="text-gray-400 text-[8px] font-black uppercase italic mt-1">{appUser?.role}</span></div></div>
-                <button onClick={() => { setAppUser(null); setActiveTab('home'); }} className="text-gray-400 hover:text-white transition-all bg-gray-800 hover:bg-red-600 p-2.5 rounded-2xl border border-gray-700 shadow-lg"><LogOut size={20}/></button>
-              </div>
+    <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black shadow-2xl"><div data-html2canvas-ignore="true" className="flex justify-between mb-10 print:hidden bg-gray-100 p-4 rounded-xl border border-gray-200"><button onClick={() => setShowFiniquito(null)} className="text-gray-700 font-black text-xs uppercase bg-white border px-6 py-2.5 rounded-xl">VOLVER</button><button onClick={() => handleExportPDF(`Finiquito_OP_${req.id}`)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button></div>
+      <ReportHeader /><h2 className="text-3xl font-black text-center my-10 uppercase border-b-4 border-orange-500 pb-2 tracking-widest">FINIQUITO DE PRODUCCIÓN</h2>
+      <div className="mb-10 text-sm font-black uppercase text-black"><p className="text-gray-500 text-[10px] tracking-widest">ORDEN DE PRODUCCIÓN:</p><p className="text-2xl text-orange-600 mb-6">#{String(req.id).replace('OP-','').padStart(5,'0')}</p><p className="text-gray-500 text-[10px] tracking-widest">CLIENTE:</p><p className="text-xl mb-4 border-b-2 border-gray-100">{req.client}</p><p className="text-gray-500 text-[10px] tracking-widest">DESCRIPCIÓN TÉCNICA:</p><p className="text-lg">{req.desc}</p></div>
+      <div className="border-4 border-black rounded-3xl overflow-hidden shadow-2xl"><div className="bg-black text-white p-4 font-black uppercase text-xs text-center tracking-widest">RESUMEN CONSOLIDADO DEL PROCESO</div>
+        <table className="w-full text-center text-xs text-black"><thead><tr className="border-b-2 border-black font-black uppercase bg-gray-200 h-10"><td className="p-3">FASE OPERATIVA</td><td className="p-3">TOTAL PRODUCIDO</td><td className="p-3">TOTAL DESPERDICIO</td><td className="p-3">% EFICIENCIA</td></tr></thead>
+          <tbody className="font-bold uppercase divide-y-2 divide-gray-100">
+            {req.production?.extrusion && <tr><td className="p-4 bg-gray-50 font-black">EXTRUSIÓN</td><td className="p-4 font-black text-green-600 text-base">{formatNum(extSum)} KG</td><td className="p-4 text-red-600 text-base">{formatNum(extMerma)} KG</td><td className="p-4">{extSum > 0 ? ((1 - (extMerma/extSum))*100).toFixed(2) : 0}%</td></tr>}
+            {req.production?.sellado && <tr><td className="p-4 bg-gray-50 font-black">SELLADO Y CORTE</td><td className="p-4 font-black text-green-600 text-base">{formatNum(selSum)} KG</td><td className="p-4 text-red-600 text-base">{formatNum(selMerma)} KG</td><td className="p-4">{selSum > 0 ? ((1 - (selMerma/selSum))*100).toFixed(2) : 0}%</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-32 grid grid-cols-3 gap-12 text-center font-black text-[10px] uppercase border-t-2 border-black pt-4 text-black"><div>ELABORADO POR ANALISTA</div><div>SUPERVISOR DE PLANTA</div><div>AUDITORÍA INTERNA</div></div>
+    </div>
+  );
+};
+
+// --- ESTRUCTURA GENERAL DE LA APP ---
+if (!appUser) {
+  return <ErrorBoundary>{renderLogin()}</ErrorBoundary>;
+}
+
+return (
+  <ErrorBoundary>
+    <div className="min-h-screen bg-gray-100 text-gray-900 font-sans flex flex-col print:bg-white print:block print:w-full overflow-x-hidden print:overflow-visible">
+      <style>{`@media print { body, html, #root { background-color: white !important; width: 100% !important; height: auto !important; overflow: visible !important; } }`}</style>
+      
+      <header className="bg-black border-b-4 border-orange-500 sticky top-0 z-50 text-white shadow-md print:hidden">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-20 items-center">
+            <div className="flex items-center gap-4 cursor-pointer transition-transform hover:scale-105 active:scale-95" onClick={()=>{clearAllReports(); setActiveTab('home');}}>
+              <div className="flex items-center bg-white rounded-2xl px-3 py-1 shadow-inner"><span className="text-black font-black text-3xl leading-none">G</span><span className="text-orange-500 font-black text-2xl mx-0.5">&</span><span className="text-black font-black text-3xl leading-none">B</span></div>
+              <div className="hidden sm:block border-l-2 border-gray-800 pl-4"><span className="font-black text-lg text-white block uppercase italic tracking-tighter">Supply ERP</span><span className="text-[9px] text-orange-400 font-black uppercase block mt-0.5 tracking-widest">Servicios Jiret G&B C.A.</span></div>
+            </div>
+            <div className="flex items-center gap-5">
+              <div className="flex items-center gap-3 bg-gray-800 px-5 py-2 rounded-2xl border border-gray-700 shadow-inner"><ShieldCheck size={18} className="text-orange-500" /><div className="flex flex-col"><span className="font-black text-white text-[10px] uppercase leading-none">{appUser?.name}</span><span className="text-gray-400 text-[8px] font-black uppercase italic mt-1">{appUser?.role}</span></div></div>
+              <button onClick={() => { setAppUser(null); setActiveTab('home'); }} className="text-gray-400 hover:text-white transition-all bg-gray-800 hover:bg-red-600 p-2.5 rounded-2xl border border-gray-700 shadow-lg"><LogOut size={20}/></button>
             </div>
           </div>
-        </header>
+        </div>
+      </header>
 
-        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 flex flex-col md:flex-row gap-8 flex-1 print:p-0 print:m-0 print:max-w-full print:w-full print:block">
-          {activeTab !== 'home' && (
-            <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
-              <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 uppercase tracking-widest border-2 border-gray-800 transition-all active:scale-95"><Home size={18} className="text-orange-500" /> INICIO</button>
-              
-              {activeTab === 'ventas' && (
-                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2 border-b border-gray-100 pb-3"><Receipt size={14} className="text-orange-500"/> Área de Ventas</h3>
-                  <button onClick={() => {clearAllReports(); setVentasView('facturacion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'facturacion' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Receipt size={16}/> Facturación</button>
-                  <button onClick={() => {clearAllReports(); setVentasView('requisiciones');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'requisiciones' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Requisiciones OP</button>
-                  <button onClick={() => {clearAllReports(); setVentasView('clientes');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'clientes' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Users size={16}/> Clientes</button>
-                </div>
-              )}
-              
-              {activeTab === 'produccion' && (
-                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2 border-b border-gray-100 pb-3"><Factory size={14} className="text-orange-500"/> Producción</h3>
-                  <button onClick={() => {clearAllReports(); setProdView('calculadora');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'calculadora' ? 'bg-black text-white border-black shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Calculator size={16}/> Simulador OP</button>
-                  <button onClick={() => {clearAllReports(); setProdView('requisiciones');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'requisiciones' ? 'bg-black text-white border-black shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><ClipboardList size={16}/> Ingeniería</button>
-                  <button onClick={() => {clearAllReports(); setProdView('fases_produccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'fases_produccion' ? 'bg-black text-white border-black shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><PlayCircle size={16}/> Control Fases</button>
-                  <button onClick={() => {clearAllReports(); setProdView('historial');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'historial' ? 'bg-black text-white border-black shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><History size={16}/> Historial</button>
-                </div>
-              )}
-
-              {activeTab === 'inventario' && (
-                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2 animate-in slide-in-from-left">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2 border-b border-gray-100 pb-3"><Package size={14} className="text-orange-500"/> Inventario (Art. 177)</h3>
-                  <button onClick={() => {clearAllReports(); setInvView('catalogo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'catalogo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Box size={16}/> Lista de Productos</button>
-                  <button onClick={() => {clearAllReports(); setInvView('cargo'); setNewMovementForm({...initialMovementForm, type: 'ENTRADA'});}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'cargo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowDownToLine size={16}/> Cargo</button>
-                  <button onClick={() => {clearAllReports(); setInvView('descargo'); setNewMovementForm({...initialMovementForm, type: 'SALIDA'});}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'descargo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowUpFromLine size={16}/> Descargo</button>
-                  <button onClick={() => {clearAllReports(); setInvView('ajuste'); setNewMovementForm({...initialMovementForm, type: 'AJUSTE (POSITIVO)'});}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'ajuste' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Settings2 size={16}/> Ajuste</button>
-                  <button onClick={() => {clearAllReports(); setInvView('kardex');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'kardex' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><History size={16}/> Kardex</button>
-                  <button onClick={() => {clearAllReports(); setInvView('reporte177');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'reporte177' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Reporte Gral. (Art 177)</button>
-                </div>
-              )}
-            </nav>
-          )}
-
-          <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' ? 'flex items-center justify-center print:block' : ''}`}>
-            {activeTab === 'home' && (
-              <div className="w-full max-w-6xl mx-auto py-8 animate-in fade-in">
-                <div className="text-center mb-10">
-                  <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
-                  <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
-                  <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl">
-                     <Users size={40} className="text-orange-500 mb-4" />
-                     <h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3>
-                     <p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p>
-                  </button>
-                  <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl">
-                     <Factory size={40} className="text-orange-500 mb-4" />
-                     <h3 className="text-xl font-black text-white uppercase">Producción Planta</h3>
-                     <p className="text-xs text-gray-400 mt-2">Ingeniería, Órdenes y Fases.</p>
-                  </button>
-                  <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl">
-                     <Package size={40} className="text-orange-500 mb-4" />
-                     <h3 className="text-xl font-black text-white uppercase">Control Inventario</h3>
-                     <p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p>
-                  </button>
-                </div>
+      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 flex flex-col md:flex-row gap-8 flex-1 print:p-0 print:m-0 print:max-w-full print:w-full print:block">
+        {activeTab !== 'home' && (
+          <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
+            <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 uppercase tracking-widest border-2 border-gray-800 transition-all active:scale-95"><Home size={18} className="text-orange-500" /> INICIO</button>
+            
+            {activeTab === 'ventas' && (
+              <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
+                <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2 border-b border-gray-100 pb-3"><Receipt size={14} className="text-orange-500"/> Área de Ventas</h3>
+                <button onClick={() => {clearAllReports(); setVentasView('facturacion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'facturacion' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Receipt size={16}/> Facturación</button>
+                <button onClick={() => {clearAllReports(); setVentasView('requisiciones');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'requisiciones' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Requisiciones OP</button>
+                <button onClick={() => {clearAllReports(); setVentasView('clientes');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'clientes' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Users size={16}/> Clientes</button>
               </div>
             )}
-            {activeTab === 'ventas' && renderVentasModule()}
-            {activeTab === 'produccion' && renderProductionModule()}
-            {activeTab === 'inventario' && renderInventoryModule()}
-          </main>
-        </div>
+            
+            {activeTab === 'produccion' && (
+              <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
+                <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2 border-b border-gray-100 pb-3"><Factory size={14} className="text-orange-500"/> Producción</h3>
+                <button onClick={() => {clearAllReports(); setProdView('calculadora');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'calculadora' ? 'bg-black text-white border-black shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Calculator size={16}/> Simulador OP</button>
+                <button onClick={() => {clearAllReports(); setProdView('requisiciones');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'requisiciones' ? 'bg-black text-white border-black shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><ClipboardList size={16}/> Ingeniería</button>
+                <button onClick={() => {clearAllReports(); setProdView('fases_produccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'fases_produccion' ? 'bg-black text-white border-black shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><PlayCircle size={16}/> Control Fases</button>
+                <button onClick={() => {clearAllReports(); setProdView('historial');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'historial' ? 'bg-black text-white border-black shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><History size={16}/> Historial</button>
+              </div>
+            )}
 
-        {dialog && (
-          <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[9999] print:hidden">
-            <div className="bg-white rounded-3xl shadow-2xl border-t-8 border-orange-500 p-8 w-full max-w-md transform animate-in zoom-in-95">
-              <h3 className="text-xl font-black text-black uppercase tracking-widest mb-4 tracking-tighter">{dialog.title}</h3>
-              <p className="text-sm font-bold text-gray-500 mb-8 uppercase text-center">{dialog.text}</p>
-              <div className="flex gap-4">
-                {dialog.type === 'confirm' && (<button onClick={() => setDialog(null)} className="flex-1 bg-gray-100 font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-colors text-gray-800">CANCELAR</button>)}
-                <button onClick={() => { if (dialog.onConfirm) dialog.onConfirm(); setDialog(null); }} className="flex-1 bg-black text-white font-black py-4 rounded-2xl shadow-xl uppercase text-[10px] tracking-widest hover:bg-gray-900 transition-colors">ACEPTAR</button>
+            {activeTab === 'inventario' && (
+              <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2 animate-in slide-in-from-left">
+                <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2 border-b border-gray-100 pb-3"><Package size={14} className="text-orange-500"/> Inventario (Art. 177)</h3>
+                <button onClick={() => {clearAllReports(); setInvView('catalogo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'catalogo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Box size={16}/> Lista de Productos</button>
+                <button onClick={() => {clearAllReports(); setInvView('cargo'); setNewMovementForm({...initialMovementForm, type: 'ENTRADA'});}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'cargo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowDownToLine size={16}/> Cargo</button>
+                <button onClick={() => {clearAllReports(); setInvView('descargo'); setNewMovementForm({...initialMovementForm, type: 'SALIDA'});}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'descargo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowUpFromLine size={16}/> Descargo</button>
+                <button onClick={() => {clearAllReports(); setInvView('ajuste'); setNewMovementForm({...initialMovementForm, type: 'AJUSTE (POSITIVO)'});}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'ajuste' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Settings2 size={16}/> Ajuste</button>
+                <button onClick={() => {clearAllReports(); setInvView('kardex');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'kardex' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><History size={16}/> Kardex</button>
+                <button onClick={() => {clearAllReports(); setInvView('reporte177');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'reporte177' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Reporte Gral. (Art 177)</button>
+              </div>
+            )}
+          </nav>
+        )}
+
+        <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' ? 'flex items-center justify-center print:block' : ''}`}>
+          {activeTab === 'home' && (
+            <div className="w-full max-w-6xl mx-auto py-8 animate-in fade-in">
+              <div className="text-center mb-10">
+                <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
+                <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
+                <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl">
+                   <Users size={40} className="text-orange-500 mb-4" />
+                   <h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3>
+                   <p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p>
+                </button>
+                <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl">
+                   <Factory size={40} className="text-orange-500 mb-4" />
+                   <h3 className="text-xl font-black text-white uppercase">Producción Planta</h3>
+                   <p className="text-xs text-gray-400 mt-2">Ingeniería, Órdenes y Fases.</p>
+                </button>
+                <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl">
+                   <Package size={40} className="text-orange-500 mb-4" />
+                   <h3 className="text-xl font-black text-white uppercase">Control Inventario</h3>
+                   <p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p>
+                </button>
               </div>
             </div>
-          </div>
-        )}
+          )}
+          {activeTab === 'ventas' && renderVentasModule()}
+          {activeTab === 'produccion' && renderProductionModule()}
+          {activeTab === 'inventario' && renderInventoryModule()}
+        </main>
       </div>
-    </ErrorBoundary>
-  );
+
+      {dialog && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[9999] print:hidden">
+          <div className="bg-white rounded-3xl shadow-2xl border-t-8 border-orange-500 p-8 w-full max-w-md transform animate-in zoom-in-95">
+            <h3 className="text-xl font-black text-black uppercase tracking-widest mb-4 tracking-tighter">{dialog.title}</h3>
+            <p className="text-sm font-bold text-gray-500 mb-8 uppercase text-center">{dialog.text}</p>
+            <div className="flex gap-4">
+              {dialog.type === 'confirm' && (<button onClick={() => setDialog(null)} className="flex-1 bg-gray-100 font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-colors text-gray-800">CANCELAR</button>)}
+              <button onClick={() => { if (dialog.onConfirm) dialog.onConfirm(); setDialog(null); }} className="flex-1 bg-black text-white font-black py-4 rounded-2xl shadow-xl uppercase text-[10px] tracking-widest hover:bg-gray-900 transition-colors">ACEPTAR</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  </ErrorBoundary>
+);
 }
