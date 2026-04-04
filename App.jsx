@@ -11,7 +11,7 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, serverTimestamp, query } from "firebase/firestore";
 
 // ============================================================================
-// ESCUDO DE ERRORES
+// ESCUDO DE ERRORES (Evita la pantalla blanca)
 // ============================================================================
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, errorMsg: '' }; }
@@ -22,7 +22,7 @@ class ErrorBoundary extends React.Component {
       return (
         <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-6">
           <AlertTriangle size={60} className="text-red-500 mb-4" />
-          <h2 className="text-2xl font-black text-black uppercase mb-2">Error de Interfaz</h2>
+          <h2 className="text-2xl font-black text-black uppercase mb-2">Error de Interfaz Bloqueado</h2>
           <p className="text-gray-500 text-sm mb-6">{this.state.errorMsg}</p>
           <button onClick={() => window.location.reload()} className="bg-black text-white font-black px-8 py-4 rounded-xl uppercase tracking-widest text-xs shadow-lg">Recargar Sistema</button>
         </div>
@@ -35,7 +35,7 @@ class ErrorBoundary extends React.Component {
 // ============================================================================
 // CONFIGURACIÓN DE FIREBASE BLINDADA
 // ============================================================================
-const firebaseConfig = {
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
   apiKey: "AIzaSyBri2uZAaxsH4S0OpqhYvXB4wfCqo4g3sk",
   authDomain: "erp-gyb-supply.firebaseapp.com",
   projectId: "erp-gyb-supply",
@@ -106,6 +106,7 @@ export default function App() {
   const [clients, setClients] = useState([]);
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [orders, setOrders] = useState([]);
 
   // --- UI STATES ---
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
@@ -129,8 +130,10 @@ export default function App() {
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
+  const [requisicionList, setRequisicionList] = useState([]);
 
-  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: 'BOLSAS', vendedor: '', montoBase: '', iva: '', total: '' };
+  // Se agregaron los campos 'aplicaIva' y 'opAsignada'
+  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
   // --- ESTADOS PRODUCCIÓN ---
@@ -279,7 +282,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // FIREBASE SYNC (Mantiene tus datos vivos)
+  // FIREBASE SYNC
   // ============================================================================
   useEffect(() => {
     const initAuth = async () => {
@@ -520,7 +523,7 @@ export default function App() {
   const handleDeleteClient = (rif) => setDialog({ title: 'Eliminar Cliente', text: `¿Desea eliminar el cliente ${rif}?`, type: 'confirm', onConfirm: async () => { await deleteDoc(getDocRef('clientes', rif)); }});
 
   // ============================================================================
-  // LOGICA VENTAS: FACTURACIÓN
+  // LOGICA VENTAS: FACTURACIÓN CON IVA Y CRUCE DE OP
   // ============================================================================
   const generateInvoiceId = () => {
     const max = (invoices || []).reduce((m, r) => {
@@ -534,22 +537,44 @@ export default function App() {
   const handleInvoiceFormChange = (field, value) => {
     const valUpper = typeof value === 'string' ? value.toUpperCase() : value;
     let f = { ...newInvoiceForm, [field]: valUpper };
+    
+    // Si cambia el cliente, auto-llenamos nombre y vendedor, y reseteamos la OP
     if (field === 'clientRif') {
        const c = (clients || []).find(cl => cl.rif === value);
        f.clientName = c?.name || '';
        f.vendedor = (c?.vendedor || '').toUpperCase();
+       f.opAsignada = '';
+       f.productoMaquilado = '';
     }
-    if (field === 'montoBase') {
-       const base = parseNum(value);
-       const iva = base * 0.16;
-       f.iva = iva > 0 ? iva.toFixed(2) : '';
-       f.total = base > 0 ? (base + iva).toFixed(2) : '';
+
+    // Si selecciona una OP, construimos la descripción con todos los datos de esa OP
+    if (field === 'opAsignada') {
+       const op = (requirements || []).find(r => r.id === value);
+       if (op) {
+          const numOp = String(op.id).replace('OP-', '').padStart(5, '0');
+          let descFull = `OP N°: ${numOp} | PRODUCTO: ${op.tipoProducto} | ESPECIFICACIONES: ${op.desc} | CANTIDAD: ${formatNum(op.cantidad)} ${op.presentacion}`;
+          f.productoMaquilado = descFull;
+       } else {
+          f.productoMaquilado = '';
+       }
     }
-    if (field === 'iva') {
-       const base = parseNum(f.montoBase);
-       const iva = parseNum(value);
-       f.total = (base + iva).toFixed(2);
+
+    // Recalculo en tiempo real del IVA basado en el selector "aplicaIva" y "montoBase"
+    let base = parseNum(f.montoBase);
+    if (field === 'montoBase') base = parseNum(value);
+    
+    let applyIva = f.aplicaIva === 'SI';
+    if (field === 'aplicaIva') applyIva = value === 'SI';
+
+    if (applyIva) {
+       const ivaCalc = base * 0.16;
+       f.iva = ivaCalc > 0 ? ivaCalc.toFixed(2) : '';
+       f.total = base > 0 ? (base + ivaCalc).toFixed(2) : '';
+    } else {
+       f.iva = '0.00';
+       f.total = base > 0 ? base.toFixed(2) : '';
     }
+
     setNewInvoiceForm(f);
   };
 
@@ -1440,7 +1465,61 @@ export default function App() {
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
              <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Receipt className="text-orange-500" size={24}/> Facturación de Venta</h2><div className="flex gap-2"><button onClick={()=>setShowGeneralInvoicesReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors">REPORTE GENERAL</button><button onClick={()=>{setShowNewInvoicePanel(!showNewInvoicePanel); setNewInvoiceForm(initialInvoiceForm);}} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-slate-800 transition-colors">{showNewInvoicePanel ? 'CANCELAR' : 'NUEVA FACTURA'}</button></div></div>
              {showNewInvoicePanel && (
-                <div className="p-8 bg-gray-50/50 border-b"><form onSubmit={handleCreateInvoice} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6"><div className="flex justify-between items-center border-b border-gray-100 pb-4 mb-6"><h3 className="text-sm font-black uppercase text-black tracking-widest">Registrar Factura de Venta</h3><div className="flex items-center gap-4"><span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest shadow-sm">FACTURA NRO: {newInvoiceForm.documento || generateInvoiceId()}</span><button type="button" onClick={()=>setShowNewInvoicePanel(false)} className="text-gray-400 hover:text-red-500"><X size={20}/></button></div></div><div className="grid grid-cols-1 md:grid-cols-4 gap-6"><div className="md:col-span-2"><label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label><select required value={newInvoiceForm.clientRif} onChange={e=>handleInvoiceFormChange('clientRif', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black"><option value="">Seleccione...</option>{clients.map(c=><option key={c.rif} value={c.rif}>{c.name}</option>)}</select></div><div><label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Base (USD)</label><input type="number" step="0.01" required className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black text-center" value={newInvoiceForm.montoBase} onChange={e=>handleInvoiceFormChange('montoBase', e.target.value)} /></div><div><label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Total con IVA</label><div className="p-4 bg-orange-50 border-2 border-orange-200 rounded-2xl font-black text-orange-700 text-lg text-center shadow-inner">${formatNum(newInvoiceForm.total)}</div></div></div><div className="flex justify-end"><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR FACTURA DE VENTA</button></div></form></div>
+                <div className="p-8 bg-gray-50/50 border-b">
+                  <form onSubmit={handleCreateInvoice} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+                    <div className="flex justify-between items-center border-b border-gray-100 pb-4 mb-6">
+                      <h3 className="text-sm font-black uppercase text-black tracking-widest">Registrar Factura de Venta</h3>
+                      <div className="flex items-center gap-4">
+                        <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest shadow-sm">FACTURA NRO: {newInvoiceForm.documento || generateInvoiceId()}</span>
+                        <button type="button" onClick={()=>setShowNewInvoicePanel(false)} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
+                        <select required value={newInvoiceForm.clientRif} onChange={e=>handleInvoiceFormChange('clientRif', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
+                          <option value="">Seleccione...</option>
+                          {clients.map(c=><option key={c.rif} value={c.rif}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">OP Asociada (Opcional)</label>
+                        <select value={newInvoiceForm.opAsignada} onChange={e=>handleInvoiceFormChange('opAsignada', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black" disabled={!newInvoiceForm.clientName}>
+                          <option value="">Seleccione OP...</option>
+                          {requirements.filter(r => r.client === newInvoiceForm.clientName).sort((a,b) => b.timestamp - a.timestamp).map(r => (
+                            <option key={r.id} value={r.id}>OP-{String(r.id).replace('OP-','').padStart(5,'0')} - {r.fecha}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="mb-6">
+                      <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Descripción para Factura</label>
+                      <textarea value={newInvoiceForm.productoMaquilado} onChange={e=>handleInvoiceFormChange('productoMaquilado', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black uppercase" rows="2" placeholder="Escriba la descripción o seleccione una OP arriba..."></textarea>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Aplica IVA</label>
+                        <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black text-center">
+                          <option value="SI">CON IVA (16%)</option>
+                          <option value="NO">SIN IVA (0%)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Base (USD)</label>
+                        <input type="number" step="0.01" required className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black text-center" value={newInvoiceForm.montoBase} onChange={e=>handleInvoiceFormChange('montoBase', e.target.value)} />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Total</label>
+                        <div className="p-4 bg-orange-50 border-2 border-orange-200 rounded-2xl font-black text-orange-700 text-lg text-center shadow-inner">${formatNum(newInvoiceForm.total)}</div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex justify-end pt-4"><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR FACTURA DE VENTA</button></div>
+                  </form>
+                </div>
              )}
              <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR FACTURA O CLIENTE..." value={invoiceSearchTerm} onChange={e=>setInvoiceSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-gray-400 text-[10px] tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">Cliente</th><th className="py-4 px-4 text-right text-black">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{filteredInvoices.map(inv=>(<tr key={inv.id} className="hover:bg-gray-50"><td className="py-5 px-4 font-black text-sm">{inv.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{getSafeDate(inv.timestamp)}</span></td><td className="py-5 px-4 font-bold text-gray-700 uppercase">{inv.clientName}</td><td className="py-5 px-4 text-right font-black text-green-600 text-lg">${formatNum(inv.total)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>handleDeleteInvoice(inv.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div></div>
           </div>
