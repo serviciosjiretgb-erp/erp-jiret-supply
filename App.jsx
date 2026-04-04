@@ -36,12 +36,13 @@ class ErrorBoundary extends React.Component {
 // CONFIGURACIÓN DE FIREBASE BLINDADA
 // ============================================================================
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-  apiKey: "AIzaSyBri2uZAaxsH4S0OpqhYvXB4wfCqo4g3sk",
+  aapiKey: "AIzaSyBri2uZAaxsH4S0OpqhYvXB4wfCqo4g3sk",
   authDomain: "erp-gyb-supply.firebaseapp.com",
   projectId: "erp-gyb-supply",
   storageBucket: "erp-gyb-supply.firebasestorage.app",
   messagingSenderId: "201939139821",
-  appId: "1:201939139821:web:95e5f589e546d7d557e0e4"
+  appId: "1:201939139821:web:95e5f589e546d7d557e0e4",
+  measurementId: "G-FZKXEP0WMK"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -514,17 +515,33 @@ export default function App() {
   // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault();
+    
+    // Si el RIF o el Nombre están vacíos, no hace nada
     if (!newClientForm.rif || !newClientForm.razonSocial) {
       return setDialog({ title: 'Aviso', text: 'El RIF y la Razón Social son obligatorios.', type: 'alert' });
     }
-    const rifUpper = newClientForm.rif.toUpperCase();
-    const data = { ...newClientForm, name: newClientForm.razonSocial.toUpperCase(), rif: rifUpper, timestamp: Date.now() };
+
+    const rifUpper = newClientForm.rif.toUpperCase().trim();
+    const data = { 
+      ...newClientForm, 
+      name: newClientForm.razonSocial.toUpperCase().trim(), 
+      rif: rifUpper, 
+      timestamp: Date.now() 
+    };
+
     try {
-      await setDoc(getDocRef('clientes', rifUpper), data, { merge: true });
+      // ESTO ES LO IMPORTANTE: Le dice a Firebase que guarde en la carpeta "clientes"
+      const docRef = doc(db, 'clientes', rifUpper);
+      await setDoc(docRef, data, { merge: true });
+      
       setNewClientForm(initialClientForm);
       setEditingClientId(null);
-      setDialog({ title: 'Éxito', text: 'Cliente guardado correctamente en el directorio.', type: 'alert' });
-    } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
+      
+      setDialog({ title: '¡Éxito!', text: 'Cliente guardado correctamente.', type: 'alert' });
+    } catch(err) { 
+      // Si hay un error (como el 400 que vimos), aquí te dirá por qué
+      setDialog({ title: 'Error', text: 'No se pudo guardar: ' + err.message, type: 'alert' }); 
+    }
   };
 
   const startEditClient = (c) => {
