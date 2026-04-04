@@ -35,8 +35,8 @@ class ErrorBoundary extends React.Component {
 // ============================================================================
 // CONFIGURACIÓN DE FIREBASE BLINDADA
 // ============================================================================
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-  aapiKey: "AIzaSyBri2uZAaxsH4S0OpqhYvXB4wfCqo4g3sk",
+const firebaseConfig = {
+  apiKey: "AIzaSyBri2uZAaxsH4S0OpqhYvXB4wfCqo4g3sk",
   authDomain: "erp-gyb-supply.firebaseapp.com",
   projectId: "erp-gyb-supply",
   storageBucket: "erp-gyb-supply.firebasestorage.app",
