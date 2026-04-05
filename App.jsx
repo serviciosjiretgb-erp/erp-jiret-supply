@@ -11,7 +11,7 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, serverTimestamp, query } from "firebase/firestore";
 
 // ============================================================================
-// ESCUDO DE ERRORES (Evita la pantalla blanca)
+// ESCUDO DE ERRORES
 // ============================================================================
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, errorMsg: '' }; }
@@ -156,7 +156,7 @@ export default function App() {
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
   // ============================================================================
-  // GENERADORES DE EXPORTACIÓN (CERRADOS)
+  // GENERADORES DE EXPORTACIÓN
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content');
@@ -222,7 +222,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA INVENTARIO (SELLADO)
+  // LOGICA INVENTARIO (CERRADO)
   // ============================================================================
   const handleSaveInvItem = async (e) => {
     e.preventDefault(); if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
@@ -265,7 +265,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA VENTAS Y FACTURACIÓN (SELLADO A VERSIÓN ORIGINAL Y FUNCIONAL)
+  // LOGICA VENTAS Y FACTURACIÓN (RESTURADO AL CÓDIGO FUNCIONAL QUE PEDISTE)
   // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault(); if (!newClientForm.rif || !newClientForm.razonSocial) return setDialog({ title: 'Aviso', text: 'RIF y Razón Social obligatorios.', type: 'alert' });
@@ -297,7 +297,6 @@ export default function App() {
     }
     setNewInvoiceForm(f);
   };
-
   const handleCreateInvoice = async (e) => {
     e.preventDefault(); if(!newInvoiceForm.clientRif || !newInvoiceForm.montoBase) return setDialog({title: 'Aviso', text: 'Selecciona un cliente e ingresa el monto base.', type: 'alert'});
     const id = newInvoiceForm.documento || generateInvoiceId();
@@ -336,9 +335,16 @@ export default function App() {
   // LOGICA PRODUCCIÓN E INGENIERÍA DE PLANTA
   // ============================================================================
   const renderRecipeInventoryOptions = () => {
-    const categories = ['Materia Prima', 'Pigmentos', 'Tintas', 'Químicos', 'Consumibles', 'Herramientas', 'Seguridad Industrial'];
-    const grouped = {}; (inventory || []).forEach(i => { const cat = i.category || 'Otros'; if (!grouped[cat]) grouped[cat] = []; grouped[cat].push(i); });
-    return (<><option value="">Seleccione Insumo / Material...</option>{categories.map(cat => grouped[cat] && grouped[cat].length > 0 && (<optgroup key={cat} label={`📌 ${cat.toUpperCase()}`}>{grouped[cat].map(i => <option key={i.id} value={i.id}>{i.id} - {i.desc} ({i.stock} {i.unit})</option>)}</optgroup>))}</>);
+    // MODIFICADO: Agrupamos todo para que no salga vacío en ninguna vista
+    const grouped = {}; 
+    (inventory || []).forEach(i => { const cat = i.category || 'Otros'; if (!grouped[cat]) grouped[cat] = []; grouped[cat].push(i); });
+    return (<><option value="">Seleccione Insumo / Material...</option>
+      {Object.keys(grouped).map(cat => (
+        <optgroup key={cat} label={`📌 ${cat.toUpperCase()}`}>
+          {grouped[cat].map(i => <option key={i.id} value={i.id}>{i.id} - {i.desc} ({formatNum(i.stock)} {i.unit})</option>)}
+        </optgroup>
+      ))}
+    </>);
   };
 
   const handleAddIngToRecipe = () => {
@@ -365,22 +371,9 @@ export default function App() {
     setRecipeEditReqId(null); setProdView('fases_produccion'); setDialog({ title: 'Éxito', text: 'Fórmula asignada.', type: 'alert' });
   };
 
-  const renderPhaseInventoryOptions = () => {
-    let mainCats = [];
-    if (activePhaseTab === 'extrusion') mainCats = ['Materia Prima', 'Pigmentos', 'Consumibles', 'Herramientas', 'Seguridad Industrial'];
-    else if (activePhaseTab === 'impresion') mainCats = ['Tintas', 'Químicos', 'Consumibles', 'Seguridad Industrial'];
-    else if (activePhaseTab === 'sellado') mainCats = ['Consumibles', 'Herramientas'];
-    const grouped = {}; (inventory || []).forEach(i => { const cat = i.category || 'Otros'; if (!grouped[cat]) grouped[cat] = []; grouped[cat].push(i); });
-    return (<><option value="">Seleccione Insumo...</option>{mainCats.map(cat => grouped[cat] && grouped[cat].length > 0 && (<optgroup key={cat} label={`📌 ${cat.toUpperCase()} (Recomendado)`}>{grouped[cat].map(i => <option key={i.id} value={i.id}>{i.id} - {i.desc} ({i.stock} {i.unit})</option>)}</optgroup>))}</>);
-  };
-
   const handleAddPhaseIng = () => {
-    // Si no se ha escrito una cantidad específica o un ID válido, no hacer nada
-    if (!phaseIngId || !phaseIngQty) return; 
-    const ing = (inventory || []).find(i => i.id === phaseIngId); 
-    if (!ing) return;
-    setPhaseForm({ ...phaseForm, insumos: [...(phaseForm.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }] }); 
-    setPhaseIngId(''); setPhaseIngQty('');
+    if (!phaseIngId || !phaseIngQty) return; const ing = (inventory || []).find(i => i.id === phaseIngId); if (!ing) return;
+    setPhaseForm({ ...phaseForm, insumos: [...(phaseForm.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }] }); setPhaseIngId(''); setPhaseIngQty('');
   };
 
   const handleSavePhase = async (e) => {
@@ -419,6 +412,55 @@ export default function App() {
         const req = (requirements || []).find(r => r.id === reqId); let currentPhase = { ...req.production[phase] }; const bIdx = currentPhase.batches.findIndex(b => b.id === batchId);
         if (bIdx >= 0) { const batch = currentPhase.batches[bIdx]; const fbBatch = writeBatch(db); for (let ing of batch.insumos) { const item = (inventory || []).find(i => i.id === ing.id); if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: item.stock + ing.qty }); } await fbBatch.commit(); currentPhase.batches.splice(bIdx, 1); }
         await updateDoc(getDocRef('requirements', reqId), { production: { ...req.production, [phase]: currentPhase } });
+    }});
+  };
+
+  // NUEVO: Función para Modificar un lote ya cargado en Fases
+  const handleEditBatch = (reqId, phase, batchId) => {
+    setDialog({ title: `MODIFICAR LOTE`, text: `El lote volverá al formulario para su edición y el inventario se ajustará temporalmente. ¿Continuar?`, type: 'confirm', onConfirm: async () => {
+        const req = (requirements || []).find(r => r.id === reqId); 
+        let currentPhase = { ...req.production[phase] }; 
+        const bIdx = currentPhase.batches.findIndex(b => b.id === batchId);
+        if (bIdx >= 0) { 
+            const batch = currentPhase.batches[bIdx]; 
+            const restoreForm = { ...initialPhaseForm, date: batch.date, producedKg: batch.producedKg, mermaKg: batch.mermaKg, insumos: batch.insumos || [] };
+            if(phase === 'extrusion' && batch.techParams) {
+                restoreForm.operadorExt = batch.techParams.operador || ''; restoreForm.tratado = batch.techParams.tratado || ''; restoreForm.motorExt = batch.techParams.motor || '';
+                restoreForm.ventilador = batch.techParams.ventilador || ''; restoreForm.jalador = batch.techParams.jalador || '';
+                restoreForm.zona1 = batch.techParams.zonas?.[0] || ''; restoreForm.zona2 = batch.techParams.zonas?.[1] || ''; restoreForm.zona3 = batch.techParams.zonas?.[2] || '';
+                restoreForm.zona4 = batch.techParams.zonas?.[3] || ''; restoreForm.zona5 = batch.techParams.zonas?.[4] || ''; restoreForm.zona6 = batch.techParams.zonas?.[5] || '';
+                restoreForm.cabezalA = batch.techParams.cabezalA || ''; restoreForm.cabezalB = batch.techParams.cabezalB || '';
+            }
+            if(phase === 'impresion' && batch.techParams) {
+                restoreForm.operadorImp = batch.techParams.operador || ''; restoreForm.kgRecibidosImp = batch.techParams.kgRecibidos || ''; restoreForm.cantColores = batch.techParams.cantColores || '';
+                restoreForm.relacionImp = batch.techParams.relacion || ''; restoreForm.motorImp = batch.techParams.motor || ''; restoreForm.tensores = batch.techParams.tensores || '';
+                restoreForm.tempImp = batch.techParams.temp || ''; restoreForm.solvente = batch.techParams.solvente || '';
+            }
+            if(phase === 'sellado' && batch.techParams) {
+                restoreForm.operadorSel = batch.techParams.operador || ''; restoreForm.kgRecibidosSel = batch.techParams.kgRecibidos || ''; restoreForm.impresa = batch.techParams.impresa || 'NO';
+                restoreForm.tipoSello = batch.techParams.tipoSello || 'Sello FC'; restoreForm.tempCabezalA = batch.techParams.tempCabezalA || ''; restoreForm.tempCabezalB = batch.techParams.tempCabezalB || '';
+                restoreForm.tempPisoA = batch.techParams.tempPisoA || ''; restoreForm.tempPisoB = batch.techParams.tempPisoB || ''; restoreForm.velServo = batch.techParams.velServo || '';
+                restoreForm.millaresProd = batch.techParams.millares || ''; restoreForm.troquelSel = batch.techParams.troquel || '';
+            }
+            
+            setPhaseForm(restoreForm);
+            
+            const fbBatch = writeBatch(db); 
+            for (let ing of batch.insumos) { 
+                const item = (inventory || []).find(i => i.id === ing.id); 
+                if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: item.stock + ing.qty }); 
+            } 
+            await fbBatch.commit(); 
+            currentPhase.batches.splice(bIdx, 1); 
+        }
+        await updateDoc(getDocRef('requirements', reqId), { production: { ...req.production, [phase]: currentPhase } });
+    }});
+  };
+
+  const handleRevertPhase = async (reqId, phase) => {
+    setDialog({ title: `ELIMINAR`, text: `¿Eliminar fase por completo?`, type: 'confirm', onConfirm: async () => {
+        const newProd = { ...(requirements.find(r => r.id === reqId).production) }; delete newProd[phase];
+        await updateDoc(getDocRef('requirements', reqId), { production: newProd });
     }});
   };
 
@@ -609,16 +651,6 @@ export default function App() {
                     <input type="text" value={newClientForm.telefono} onChange={e=>setNewClientForm({...newClientForm, telefono: e.target.value})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none border-2 border-transparent" />
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="md:col-span-2">
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Dirección Fiscal</label>
-                     <input type="text" value={newClientForm.direccion} onChange={e=>setNewClientForm({...newClientForm, direccion: e.target.value.toUpperCase()})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all" />
-                  </div>
-                  <div>
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Vendedor Asignado</label>
-                     <input type="text" value={newClientForm.vendedor} onChange={e=>setNewClientForm({...newClientForm, vendedor: e.target.value.toUpperCase()})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all" />
-                  </div>
-                </div>
                 <div className="flex justify-end pt-4">
                   <button type="submit" className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-slate-800 transition-all">GUARDAR DIRECTORIO</button>
                 </div>
@@ -640,7 +672,6 @@ export default function App() {
                         <button type="button" onClick={()=>setShowNewInvoicePanel(false)} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
                       </div>
                     </div>
-
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                       <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
@@ -658,7 +689,6 @@ export default function App() {
                         <div className="p-4 bg-orange-50 border-2 border-orange-200 rounded-2xl font-black text-orange-700 text-lg text-center shadow-inner">${formatNum(newInvoiceForm.total)}</div>
                       </div>
                     </div>
-                    
                     <div className="flex justify-end pt-4"><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR FACTURA DE VENTA</button></div>
                   </form>
                 </div>
@@ -683,36 +713,14 @@ export default function App() {
                         </div>
                         <div className="grid grid-cols-2 gap-4">
                           <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Ancho (cm)</label><input type="number" step="0.1" value={newReqForm.ancho} onChange={e=>handleReqFormChange('ancho', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black" /></div>
-                          <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Fuelle Total (cm)</label><input type="number" step="0.1" value={newReqForm.fuelles} onChange={e=>handleReqFormChange('fuelles', e.target.value)} disabled={newReqForm.tipoProducto === 'TERMOENCOGIBLE'} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black disabled:bg-gray-100 disabled:opacity-50" /></div>
+                          <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Fuelle Total (cm)</label><input type="number" step="0.1" value={newReqForm.fuelles} onChange={e=>handleReqFormChange('fuelles', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black" /></div>
                         </div>
                       </div>
                       <div className="space-y-4">
-                        <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Largo (cm)</label><input type="number" step="0.1" value={newReqForm.largo} onChange={e=>handleReqFormChange('largo', e.target.value)} disabled={newReqForm.tipoProducto === 'TERMOENCOGIBLE'} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black disabled:bg-gray-100 disabled:opacity-50" /></div>
+                        <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Largo (cm)</label><input type="number" step="0.1" value={newReqForm.largo} onChange={e=>handleReqFormChange('largo', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black" /></div>
                         <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Micras / Espesor</label><input type="number" step="0.001" value={newReqForm.micras} onChange={e=>handleReqFormChange('micras', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black" /></div>
                       </div>
                     </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
-                       <div>
-                         <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Tipo de Producto</label>
-                         <select value={newReqForm.tipoProducto} onChange={e=>handleReqFormChange('tipoProducto', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500">
-                           <option value="BOLSAS">BOLSAS / EMPAQUES</option>
-                           <option value="TERMOENCOGIBLE">TERMOENCOGIBLE (LÁMINA/TUBO)</option>
-                         </select>
-                       </div>
-                       <div>
-                         <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Cantidad Solicitada</label>
-                         <input type="number" step="0.01" value={newReqForm.cantidad} onChange={e=>handleReqFormChange('cantidad', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-4 font-black text-lg text-center text-black outline-none focus:border-orange-500" />
-                       </div>
-                       <div>
-                         <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Presentación</label>
-                         <select disabled={newReqForm.tipoProducto === 'TERMOENCOGIBLE'} value={newReqForm.presentacion} onChange={e=>handleReqFormChange('presentacion', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500 disabled:bg-gray-100 disabled:opacity-50">
-                           <option value="MILLAR">MILLARES</option>
-                           <option value="KILOS">KILOGRAMOS</option>
-                         </select>
-                       </div>
-                    </div>
-
                     <div className="flex justify-between items-center bg-orange-50 p-6 rounded-3xl border-2 border-orange-200 mt-6 shadow-inner"><div><span className="text-[10px] font-black text-orange-800 uppercase tracking-tighter">TOTAL CARGA ESTIMADA</span><span className="text-4xl font-black text-orange-600 block">{newReqForm.requestedKg} KG</span></div><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR EN PLANTA</button></div>
                   </form>
                 </div>
@@ -968,7 +976,6 @@ export default function App() {
                   <button onClick={() => setRecipeEditReqId(null)} className="text-gray-400 hover:text-red-500 transition-colors"><X size={20} /></button>
                 </div>
                 
-                {/* DETALLES EXPANDIDOS PARA PLANTA */}
                 <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 shadow-inner">
                   <div className="flex justify-between items-start mb-2">
                      <p className="text-[10px] font-black text-orange-800 uppercase">OP N°: {String(recipeEditReqId).replace('OP-', '').padStart(5, '0')}</p>
@@ -1025,7 +1032,7 @@ export default function App() {
         {prodView === 'fases_produccion' && (
           <div className="space-y-6">
             {!selectedPhaseReqId ? (
-              <div className="p-12 bg-white rounded-3xl border border-gray-200 shadow-sm text-center animate-in fade-in"><div className="bg-black p-5 rounded-full inline-block mb-6 text-orange-500 shadow-lg"><Factory size={40}/></div><h2 className="text-2xl font-black uppercase text-black tracking-tighter mb-2">Control de Producción Activo</h2><p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-10">Reporte el consumo de insumos y mermas por fase</p><div className="mt-12 border-t border-gray-200 pt-8 overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-center text-black tracking-widest">Acción de Planta</th></tr></thead><tbody className="divide-y divide-gray-100">{(requirements || []).filter(r => ['LISTO PARA PRODUCIR', 'EN PROCESO'].includes(r.status)).map(r => (<tr key={r.id} className="group hover:bg-gray-50 transition-colors"><td className="p-4 font-black text-orange-500 text-lg">#{String(r.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-sm text-black">{r.client}<br/><span className="text-[10px] text-gray-400 font-bold">{r.desc}</span></td><td className="p-4 text-center"><div className="flex justify-center gap-2"><button onClick={() => setShowWorkOrder(r.id)} className="bg-white border-2 border-gray-100 text-gray-700 px-4 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm hover:bg-gray-50 transition-all" title="Imprimir"><Printer size={16}/> ORDEN TRABAJO</button><button onClick={() => { setSelectedPhaseReqId(r.id); setActivePhaseTab('extrusion'); }} className="bg-black text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-md hover:bg-slate-800 transition-all"><PlayCircle size={16}/> ENTRAR A FASES</button></div></td></tr>))}</tbody></table></div></div>
+              <div className="p-12 bg-white rounded-3xl border border-gray-200 shadow-sm text-center animate-in fade-in"><div className="bg-black p-5 rounded-full inline-block mb-6 text-orange-500 shadow-lg"><Factory size={40}/></div><h2 className="text-2xl font-black uppercase text-black tracking-tighter mb-2">Control de Producción Activo</h2><p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-10">Reporte el consumo de insumos y mermas por fase</p><div className="mt-12 border-t border-gray-200 pt-8 overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-center text-black tracking-widest">Acción de Planta</th></tr></thead><tbody className="divide-y divide-gray-100">{(activeOrders || []).map(r => (<tr key={r.id} className="group hover:bg-gray-50 transition-colors"><td className="p-4 font-black text-orange-500 text-lg">#{String(r.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-sm text-black">{r.client}<br/><span className="text-[10px] text-gray-400 font-bold">{r.desc}</span></td><td className="p-4 text-center"><div className="flex justify-center gap-2"><button onClick={() => setShowWorkOrder(r.id)} className="bg-white border-2 border-gray-100 text-gray-700 px-4 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm hover:bg-gray-50 transition-all" title="Imprimir"><Printer size={16}/> ORDEN TRABAJO</button><button onClick={() => { setSelectedPhaseReqId(r.id); setActivePhaseTab('extrusion'); }} className="bg-black text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-md hover:bg-slate-800 transition-all"><PlayCircle size={16}/> ENTRAR A FASES</button></div></td></tr>))}</tbody></table></div></div>
             ) : (() => {
               const req = (requirements || []).find(r => r.id === selectedPhaseReqId); if (!req) return null;
               const cPhase = req.production?.[activePhaseTab] || { batches: [], isClosed: false };
@@ -1038,7 +1045,7 @@ export default function App() {
                   
                   <div className="lg:col-span-2 bg-white rounded-3xl shadow-sm border border-gray-200 p-8 lg:p-10">
                     <div className="border-b-2 border-gray-100 pb-6 mb-8 flex justify-between items-center"><h3 className="text-2xl font-black uppercase text-black tracking-tighter">Fase: {activePhaseTab.toUpperCase()}</h3><button onClick={()=>setSelectedPhaseReqId(null)} className="bg-gray-100 p-2.5 rounded-xl text-gray-500 hover:text-black"><X size={18}/></button></div>
-                    {cPhase.batches && cPhase.batches.length > 0 && (<div className="mb-8 overflow-hidden rounded-2xl border border-gray-200"><table className="w-full text-center text-xs"><thead className="bg-gray-50 border-b border-gray-200"><tr className="uppercase font-black text-[9px] text-gray-500 tracking-widest"><th className="p-3 border-r border-gray-200">Fecha</th><th className="p-3 border-r border-gray-200">Producido</th><th className="p-3 border-r border-gray-200">Merma</th><th className="p-3">Borrar</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{cPhase.batches.map(b => (<tr key={b.id} className="hover:bg-gray-50"><td className="p-3 border-r border-gray-200 font-bold">{b.date}</td><td className="p-3 border-r border-gray-200 font-black text-green-600">{formatNum(b.producedKg)} kg</td><td className="p-3 border-r border-gray-200 font-black text-red-500">{formatNum(b.mermaKg)} kg</td><td className="p-3 text-center"><button onClick={() => handleDeleteBatch(req.id, activePhaseTab, b.id)} className="text-red-400 hover:text-red-600 transition-colors p-1"><Trash2 size={14} className="mx-auto"/></button></td></tr>))}</tbody></table></div>)}
+                    {cPhase.batches && cPhase.batches.length > 0 && (<div className="mb-8 overflow-hidden rounded-2xl border border-gray-200"><table className="w-full text-center text-xs"><thead className="bg-gray-50 border-b border-gray-200"><tr className="uppercase font-black text-[9px] text-gray-500 tracking-widest"><th className="p-3 border-r border-gray-200">Fecha</th><th className="p-3 border-r border-gray-200">Producido</th><th className="p-3 border-r border-gray-200">Merma</th><th className="p-3">Acción</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{cPhase.batches.map(b => (<tr key={b.id} className="hover:bg-gray-50"><td className="p-3 border-r border-gray-200 font-bold">{b.date}</td><td className="p-3 border-r border-gray-200 font-black text-green-600">{formatNum(b.producedKg)} kg</td><td className="p-3 border-r border-gray-200 font-black text-red-500">{formatNum(b.mermaKg)} kg</td><td className="p-3 text-center flex justify-center gap-2"><button onClick={() => handleEditBatch(req.id, activePhaseTab, b.id)} className="bg-blue-50 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors p-1.5 rounded-lg" title="Modificar"><Edit size={14}/></button><button onClick={() => handleDeleteBatch(req.id, activePhaseTab, b.id)} className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-colors p-1.5 rounded-lg" title="Eliminar"><Trash2 size={14}/></button></td></tr>))}</tbody></table></div>)}
                     {cPhase.isClosed ? (<div className="text-center py-10 bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200 shadow-inner"><CheckCircle size={56} className="text-green-500 mx-auto mb-6"/><h4 className="text-xl font-black text-black uppercase tracking-widest">Esta Fase se encuentra cerrada</h4><p className="text-[10px] font-bold text-gray-400 uppercase mt-2">Ya no se permiten reportes parciales en esta etapa.</p></div>) : (
                       <form onSubmit={handleSavePhase} className="space-y-8">
                         <div className="flex gap-4 items-center"><label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Fecha Reporte:</label><input type="date" value={phaseForm.date} onChange={e=>setPhaseForm({...phaseForm, date: e.target.value})} className="border-2 border-gray-200 rounded-xl p-2 font-black text-xs outline-none text-black focus:border-orange-500" /></div>
@@ -1134,7 +1141,7 @@ export default function App() {
                                 </div>
                              </div>
                              <div className="grid grid-cols-2 gap-4 pt-4 mt-4 border-t border-gray-200">
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase mb-1 block">Cant. Producida (Millares)</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border p-2 text-xs rounded-lg outline-none focus:border-orange-500"/></div>
+                                <div><label className="text-[9px] font-black text-gray-500 uppercase mb-1 block">Cant. Producida ({req.tipoProducto === 'TERMOENCOGIBLE' ? 'Kilos' : 'Millares'})</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border p-2 text-xs rounded-lg outline-none focus:border-orange-500"/></div>
                                 <div><label className="text-[9px] font-black text-gray-500 uppercase mb-1 block">Troquel</label><input type="text" value={phaseForm.troquelSel} onChange={e=>setPhaseForm({...phaseForm, troquelSel: e.target.value.toUpperCase()})} className="w-full border p-2 text-xs rounded-lg outline-none focus:border-orange-500"/></div>
                              </div>
                           </div>
@@ -1154,81 +1161,49 @@ export default function App() {
         {prodView === 'historial' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
             <div className="px-6 py-5 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-lg font-black text-black uppercase flex items-center gap-2"><History className="text-orange-500" /> Órdenes Completadas</h2><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Auditoría de Proceso</p></div>
-            <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-right text-black text-[10px] font-black uppercase tracking-widest">KG Finales</th><th className="p-4 text-center text-black text-[10px] font-black uppercase tracking-widest">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(completedOrders || []).map(req => (<tr key={req.id} className="hover:bg-gray-50 transition-colors group"><td className="p-4 font-black text-orange-500 text-lg">#{String(req.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-xs text-black">{req.client}<br/><span className="text-[10px] font-bold text-gray-400">{req.desc}</span></td><td className="p-4 text-right font-black text-green-600 text-lg">{formatNum(req.production?.sellado?.batches?.reduce((a,b)=>a+parseNum(b.producedKg),0) || 0)} KG</td><td className="p-4 text-center"><button onClick={()=>setShowFiniquito(req.id)} className="bg-black text-white px-8 py-3 rounded-2xl text-[9px] font-black uppercase hover:bg-gray-800 shadow-md flex items-center gap-2 mx-auto transition-all"><FileText size={14}/> GENERAR FINIQUITO</button></td></tr>))}</tbody></table></div>
+            <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-right text-black text-[10px] font-black uppercase tracking-widest">KG Finales</th><th className="p-4 text-center text-black text-[10px] font-black uppercase tracking-widest">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(completedOrders || []).map(req => (<tr key={req.id} className="hover:bg-gray-50 transition-colors group"><td className="p-4 font-black text-orange-500 text-lg">#{String(req.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-xs text-black">{req.client}<br/><span className="text-[10px] font-bold text-gray-400">{req.desc}</span></td><td className="p-4 text-right font-black text-green-600 text-lg">{formatNum(req.production?.sellado?.batches?.reduce((a,b)=>a+parseNum(b.producedKg),0) || req.production?.extrusion?.batches?.reduce((a,b)=>a+parseNum(b.producedKg),0) || 0)} KG</td><td className="p-4 text-center"><button onClick={()=>setShowFiniquito(req.id)} className="bg-black text-white px-8 py-3 rounded-2xl text-[9px] font-black uppercase hover:bg-gray-800 shadow-md flex items-center gap-2 mx-auto transition-all"><FileText size={14}/> GENERAR FINIQUITO</button></td></tr>))}</tbody></table></div>
           </div>
         )}
       </div>
     );
   };
 
-  // --- VISTAS DE IMPRESIÓN (PRODUCCIÓN - CORREGIDAS AL DISEÑO ORIGINAL EN UNA HOJA) ---
+  // --- VISTAS DE IMPRESIÓN (PRODUCCIÓN) ---
   const renderWorkOrder = () => {
     const req = (requirements || []).find(r => r.id === showWorkOrder); if (!req) return null;
-
-    // Calculamos las fechas automáticamente
-    const getFechaEntrada = (r) => {
-       if (!r.production) return 'PENDIENTE';
-       const batches = [];
-       ['extrusion', 'impresion', 'sellado'].forEach(f => {
-          if (r.production[f]?.batches) batches.push(...r.production[f].batches);
-       });
-       if (batches.length === 0) return 'PENDIENTE';
-       batches.sort((a, b) => a.timestamp - b.timestamp);
-       return batches[0].date;
-    };
-
-    const getFechaSalida = (r) => {
-       if (r.status !== 'COMPLETADO') return 'EN PROCESO';
-       const batches = [];
-       ['extrusion', 'impresion', 'sellado'].forEach(f => {
-          if (r.production[f]?.batches) batches.push(...r.production[f].batches);
-       });
-       if (batches.length === 0) return 'COMPLETADO';
-       batches.sort((a, b) => b.timestamp - a.timestamp);
-       return batches[0].date;
-    };
-
     return (
-      <div id="pdf-content" className="bg-white p-6 print:p-0 min-h-screen text-black"><style>{`@media print { @page { size: portrait; margin: 5mm; } }`}</style>
-        <div data-html2canvas-ignore="true" className="flex justify-between mb-2 print:hidden bg-gray-50 p-2 rounded-xl border border-gray-200">
-           <button onClick={() => setShowWorkOrder(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2 rounded-xl hover:bg-gray-200">VOLVER</button>
-           <button onClick={() => handleExportPDF(`OP_${req.id}`)} className="bg-black text-white px-8 py-2 rounded-xl font-black flex items-center gap-2 shadow-lg text-xs uppercase transition-all hover:bg-gray-800"><Printer size={16} /> EXPORTAR PDF</button>
+      <div id="pdf-content" className="bg-white p-8 print:p-0 min-h-screen text-black"><style>{`@media print { @page { size: portrait; margin: 5mm; } }`}</style>
+        <div data-html2canvas-ignore="true" className="flex justify-between mb-4 print:hidden bg-gray-50 p-4 rounded-xl border border-gray-200">
+           <button onClick={() => setShowWorkOrder(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2.5 rounded-xl hover:bg-gray-200">VOLVER</button>
+           <button onClick={() => handleExportPDF(`OP_${req.id}`)} className="bg-black text-white px-8 py-3 rounded-xl font-black flex items-center gap-2 shadow-lg text-xs uppercase transition-all hover:bg-gray-800"><Printer size={16} /> EXPORTAR PDF</button>
         </div>
         
-        {/* HEADER */}
-        <div className="flex justify-between items-end border-b-2 border-black pb-1 mb-2">
+        <div className="flex justify-between items-end border-b-2 border-black pb-2 mb-4">
            <div>
-              <div className="flex items-center -mb-1"><span className="text-black font-black text-3xl leading-none">G</span><span className="text-orange-500 font-black text-lg mx-0.5">&amp;</span><span className="text-black font-black text-3xl leading-none">B</span></div>
-              <p className="text-[6px] font-bold text-orange-500 uppercase tracking-widest mt-1">Servicio y Calidad</p>
+              <div className="flex items-center -mb-1"><span className="text-black font-black text-4xl leading-none">G</span><span className="text-orange-500 font-black text-xl mx-0.5">&amp;</span><span className="text-black font-black text-4xl leading-none">B</span></div>
+              <p className="text-[7px] font-bold text-orange-500 uppercase tracking-widest mt-1">Servicio y Calidad</p>
            </div>
-           <div className="text-center flex-1"><h1 className="text-lg font-black uppercase tracking-widest">ORDEN DE TRABAJO PARA OP.</h1></div>
+           <div className="text-center flex-1"><h1 className="text-xl font-black uppercase tracking-widest">ORDEN DE TRABAJO PARA OP.</h1></div>
         </div>
 
-        {/* INFO GENERAL ACTUALIZADA CON FECHAS AUTOMÁTICAS */}
-        <div className="grid grid-cols-3 text-[9px] font-bold uppercase mb-2 border-b-2 border-black pb-2">
+        <div className="grid grid-cols-2 text-[10px] font-bold uppercase mb-4 border-b-2 border-black pb-4">
            <div>
-              <p className="mb-1"><span className="w-16 inline-block font-black pr-1">CLIENTE:</span> {req.client}</p>
-              <p className="mb-1"><span className="w-16 inline-block font-black pr-1">OP:</span> #{String(req.id).replace('OP-', '').padStart(5, '0')}</p>
-              <p><span className="w-16 inline-block font-black pr-1">TIPO:</span> {req.tipoProducto || 'N/A'}</p>
+              <p className="mb-2"><span className="w-20 inline-block font-black text-right pr-2">CLIENTE:</span> {req.client}</p>
+              <p><span className="w-20 inline-block font-black text-right pr-2">OP:</span> #{String(req.id).replace('OP-', '').padStart(5, '0')}</p>
            </div>
            <div>
-              <p className="mb-1"><span className="w-20 inline-block font-black pr-1">EMISIÓN OP:</span> {req.fecha || getSafeDate(req.timestamp)}</p>
-              <p><span className="w-20 inline-block font-black pr-1 text-orange-600">META (KG):</span> <span className="text-orange-600 font-black">{formatNum(req.requestedKg)} KG</span></p>
-           </div>
-           <div>
-              <p className="mb-1"><span className="w-24 inline-block font-black pr-1">FECHA ENTRADA:</span> <span className="text-orange-600">{getFechaEntrada(req)}</span></p>
-              <p><span className="w-24 inline-block font-black pr-1">FECHA SALIDA:</span> <span className={req.status === 'COMPLETADO' ? 'text-green-600' : 'text-gray-500'}>{getFechaSalida(req)}</span></p>
+              <p className="mb-2"><span className="w-32 inline-block font-black text-right pr-2">FECHA:</span> {req.fecha || getSafeDate(req.timestamp)}</p>
+              <p><span className="w-32 inline-block font-black text-right pr-2">META (KG):</span> {formatNum(req.requestedKg)} KG</p>
            </div>
         </div>
 
-        {/* TABLA DE RECETA */}
-        <div className="border-2 border-black p-2 mb-2 rounded-2xl overflow-hidden">
-          <div className="font-black text-center border-b-2 border-black mb-2 py-0.5 text-xs bg-gray-100 uppercase">Especificaciones y Fórmula de Extrusión</div>
-          <table className="w-full text-left text-[9px] mb-2">
+        <div className="border-4 border-black p-4 mb-4 rounded-3xl overflow-hidden">
+          <div className="font-black text-center border-b-2 border-black mb-4 py-1 text-sm bg-gray-100 uppercase">Especificaciones y Fórmula de Extrusión</div>
+          <table className="w-full text-left text-[10px] mb-4">
             <thead><tr className="font-black uppercase border-b border-black"><td>Insumo / Material</td><td className="text-center">Proporción (%)</td><td className="text-right">Peso Teórico (KG)</td></tr></thead>
             <tbody className="divide-y divide-gray-100">
               {Array.isArray(req.recipe) && req.recipe.map((r, i) => (
-                <tr key={i} className="text-black h-5 align-middle">
+                <tr key={i} className="text-black h-6 align-middle">
                   <td>{(inventory || []).find(inv=>inv.id===r.id)?.desc || r.id}</td>
                   <td className="text-center">{r.percentage ? `${r.percentage}%` : 'N/A'}</td>
                   <td className="text-right font-bold">{formatNum(r.totalQty)} KG</td>
@@ -1236,88 +1211,18 @@ export default function App() {
               ))}
             </tbody>
           </table>
-          <div className="grid grid-cols-4 gap-2 text-center text-[9px] font-black uppercase border-t-2 border-black pt-2 bg-gray-50">
-            <div>ANCHO<br/><span className="text-sm text-orange-600">{req.ancho} CM</span></div>
-            <div>FUELLES<br/><span className="text-sm text-orange-600">{req.fuelles || '0'} CM</span></div>
-            <div>LARGO<br/><span className="text-sm text-orange-600">{req.largo} CM</span></div>
-            <div>MICRAS<br/><span className="text-sm text-orange-600">{req.micras}</span></div>
+          <div className="grid grid-cols-4 gap-4 text-center text-[10px] font-black uppercase border-t-2 border-black pt-4 bg-gray-50 p-2">
+            <div>ANCHO<br/><span className="text-base text-orange-600">{req.ancho} CM</span></div>
+            <div>FUELLES<br/><span className="text-base text-orange-600">{req.fuelles || '0'} CM</span></div>
+            <div>LARGO<br/><span className="text-base text-orange-600">{req.largo} CM</span></div>
+            <div>MICRAS<br/><span className="text-base text-orange-600">{req.micras}</span></div>
           </div>
         </div>
 
-        {/* EXTRUSIÓN */}
-        <div className="border-2 border-black rounded-xl mb-2 overflow-hidden">
-           <div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Parámetros de Extrusión</div>
-           <div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2">
-              <div><span className="font-black pr-1">OPERADOR:</span> __________________________</div>
-              <div><span className="font-black pr-1">CANTIDAD KG:</span> __________________________</div>
-              <div className="col-span-2 flex justify-between">
-                <div><span className="font-black pr-1">TRATADO: 1</span> _____ <span className="ml-4">2</span> _____</div>
-                <div><span className="font-black pr-1">COLOR:</span> {req.color}</div>
-              </div>
-              <div className="col-span-2 flex justify-between">
-                 <div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> _________________</div>
-                 <div><span className="font-black pr-1">VENTILADOR:</span> _________________</div>
-                 <div><span className="font-black pr-1">JALADOR:</span> _________________</div>
-              </div>
-              <div className="col-span-2 border-t border-gray-300 pt-1 mt-1">
-                 <div className="flex justify-between mb-2"><span className="font-black">ZONAS:</span><span>1 ____</span><span>2 ____</span><span>3 ____</span><span>4 ____</span><span>5 ____</span><span>6 ____</span></div>
-                 <div className="flex gap-10"><span className="font-black">CABEZAL:</span><span>A ________</span><span>B ________</span></div>
-              </div>
-           </div>
-        </div>
-
-        {/* IMPRESIÓN */}
-        <div className="border-2 border-black rounded-xl mb-2 overflow-hidden">
-           <div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Impresión Flexográfica</div>
-           <div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2">
-              <div><span className="font-black pr-1">OPERADOR:</span> __________________________</div>
-              <div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div>
-              <div><span className="font-black pr-1">CANTIDAD COLORES:</span> ______________________</div>
-              <div><span className="font-black pr-1">RELACIÓN DE IMPRESIÓN:</span> _________________</div>
-              <div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> __________________________</div>
-              <div><span className="font-black pr-1">TENSORES:</span> 1 _________ <span className="ml-4">2 _________</span></div>
-              <div><span className="font-black pr-1">TEMPERATURA:</span> __________________________</div>
-              <div><span className="font-black pr-1">CANTIDAD SOLVENTE:</span> _______________________</div>
-              <div className="col-span-2 border-t border-gray-300 pt-1 mt-1">
-                 <div className="flex justify-between mb-1"><span className="font-black">COLORES:</span><span>1 _______</span><span>2 _______</span><span>3 _______</span><span>4 _______</span><span>5 _______</span><span>6 _______</span></div>
-                 <div><span className="font-black pr-1">KG P/COLORES:</span> __________________________________________________________________</div>
-              </div>
-           </div>
-        </div>
-
-        {/* SELLADO */}
-        <div className="border-2 border-black rounded-xl mb-2 overflow-hidden">
-           <div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Sellado y Corte</div>
-           <div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2">
-              <div><span className="font-black pr-1">OPERADOR:</span> __________________________</div>
-              <div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div>
-              <div className="col-span-2 flex justify-between">
-                 <div><span className="font-black pr-1">IMPRESA:</span> SI _____ NO _____</div>
-                 <div className="font-black">SELLO FC _____ &nbsp;&nbsp; SELLO FR _____ &nbsp;&nbsp; SELLO PC _____</div>
-              </div>
-              <div className="col-span-2 grid grid-cols-2 gap-1 border-y border-gray-300 py-1 my-1">
-                 <div><span className="font-black pr-1">TEMP CABEZAL A:</span> ____________</div>
-                 <div><span className="font-black pr-1">TEMP PISO A:</span> ____________</div>
-                 <div><span className="font-black pr-1">TEMP CABEZAL B:</span> ____________</div>
-                 <div><span className="font-black pr-1">TEMP PISO B:</span> ____________</div>
-              </div>
-              <div className="col-span-2 flex justify-between">
-                 <span className="font-black">VELOCIDAD SERVOMOTORES:</span><span>1 _______</span><span>2 _______</span><span>3 _______</span><span>4 _______</span>
-              </div>
-              <div className="col-span-2 grid grid-cols-2 gap-y-1 pt-1">
-                 <div><span className="font-black pr-1">CANT. PRODUCIDA (KG):</span> _______________</div>
-                 <div><span className="font-black pr-1">TROQUEL:</span> __________________</div>
-                 <div><span className="font-black pr-1">CANT. PRODUCIDA MILLARES:</span> ___________</div>
-                 <div><span className="font-black pr-1">DESPERDICIO (KG):</span> ___________</div>
-              </div>
-           </div>
-        </div>
-        
         <div className="mt-8 grid grid-cols-2 gap-24 text-center font-black text-[9px] uppercase border-t-2 border-black pt-2 text-black">
           <div>CONTROL DE CALIDAD</div>
           <div>SUPERVISOR DE PLANTA</div>
         </div>
-
       </div>
     );
   };
@@ -1339,24 +1244,174 @@ export default function App() {
 
   const renderFiniquito = () => {
     const req = (requirements || []).find(r => r.id === showFiniquito); if (!req) return null;
-    const extSum = req.production?.extrusion?.batches?.reduce((a,b)=>a+parseNum(b.producedKg),0) || 0;
-    const selSum = req.production?.sellado?.batches?.reduce((a,b)=>a+parseNum(b.producedKg),0) || 0;
-    const extMerma = req.production?.extrusion?.batches?.reduce((a,b)=>a+parseNum(b.mermaKg),0) || 0;
-    const selMerma = req.production?.sellado?.batches?.reduce((a,b)=>a+parseNum(b.mermaKg),0) || 0;
+    
+    // Extracción de fechas de producción
+    const getFechaInicio = () => {
+       const batches = [];
+       if (req.production?.extrusion?.batches) batches.push(...req.production.extrusion.batches);
+       if (req.production?.impresion?.batches) batches.push(...req.production.impresion.batches);
+       if (req.production?.sellado?.batches) batches.push(...req.production.sellado.batches);
+       if (batches.length === 0) return 'NO INICIADO';
+       batches.sort((a, b) => a.timestamp - b.timestamp);
+       return batches[0].date;
+    };
+    
+    const getFechaFin = () => {
+       if (req.status !== 'COMPLETADO') return 'EN PROCESO';
+       const batches = [];
+       if (req.production?.extrusion?.batches) batches.push(...req.production.extrusion.batches);
+       if (req.production?.impresion?.batches) batches.push(...req.production.impresion.batches);
+       if (req.production?.sellado?.batches) batches.push(...req.production.sellado.batches);
+       if (batches.length === 0) return getTodayDate();
+       batches.sort((a, b) => b.timestamp - a.timestamp);
+       return batches[0].date;
+    };
+
+    // Cálculos Reales
+    const isTermo = req.tipoProducto === 'TERMOENCOGIBLE';
+    const extBatches = req.production?.extrusion?.batches || [];
+    const selBatches = req.production?.sellado?.batches || [];
+
+    // Sumar insumos de Extrusión
+    let mpConsumida = [];
+    extBatches.forEach(b => {
+        (b.insumos || []).forEach(ing => {
+            const existing = mpConsumida.find(i => i.id === ing.id);
+            if(existing) { existing.qty += ing.qty; existing.cost += (ing.qty * (b.cost / (b.totalInsumosKg || 1))); }
+            else { mpConsumida.push({...ing, cost: (ing.qty * (b.cost / (b.totalInsumosKg || 1)))}); }
+        });
+    });
+
+    const totalMezclaPreparada = mpConsumida.reduce((sum, item) => sum + item.qty, 0) || parseNum(req.requestedKg);
+    const costoPromedio = mpConsumida.reduce((sum, item) => sum + item.cost, 0) / (totalMezclaPreparada || 1);
+
+    const extProducido = extBatches.reduce((a,b)=>a+parseNum(b.producedKg),0);
+    const extMerma = extBatches.reduce((a,b)=>a+parseNum(b.mermaKg),0);
+    const extRendimiento = totalMezclaPreparada > 0 ? (extProducido / totalMezclaPreparada) * 100 : 0;
+
+    const selProducido = selBatches.reduce((a,b)=>a+parseNum(b.producedKg),0);
+    const selMerma = selBatches.reduce((a,b)=>a+parseNum(b.mermaKg),0);
+    
+    // Producción Final (KG o Millares)
+    const totalFinalUnidades = isTermo 
+      ? (selProducido > 0 ? selProducido : extProducido)
+      : selBatches.reduce((sum, b) => sum + parseNum(b.techParams?.millares || 0), 0);
+
+    const unitFinal = isTermo ? 'KG' : 'Millares';
 
     return (
-      <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black shadow-2xl"><div data-html2canvas-ignore="true" className="flex justify-between mb-10 print:hidden bg-gray-100 p-4 rounded-xl border border-gray-200"><button onClick={() => setShowFiniquito(null)} className="text-gray-700 font-black text-xs uppercase bg-white border px-6 py-2.5 rounded-xl">VOLVER</button><button onClick={() => handleExportPDF(`Finiquito_OP_${req.id}`)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button></div>
-        <ReportHeader /><h2 className="text-3xl font-black text-center my-10 uppercase border-b-4 border-orange-500 pb-2 tracking-widest">FINIQUITO DE PRODUCCIÓN</h2>
-        <div className="mb-10 text-sm font-black uppercase text-black"><p className="text-gray-500 text-[10px] tracking-widest">ORDEN DE PRODUCCIÓN:</p><p className="text-2xl text-orange-600 mb-6">#{String(req.id).replace('OP-','').padStart(5,'0')}</p><p className="text-gray-500 text-[10px] tracking-widest">CLIENTE:</p><p className="text-xl mb-4 border-b-2 border-gray-100">{req.client}</p><p className="text-gray-500 text-[10px] tracking-widest">DESCRIPCIÓN TÉCNICA:</p><p className="text-lg">{req.desc}</p></div>
-        <div className="border-4 border-black rounded-3xl overflow-hidden shadow-2xl"><div className="bg-black text-white p-4 font-black uppercase text-xs text-center tracking-widest">RESUMEN CONSOLIDADO DEL PROCESO</div>
-          <table className="w-full text-center text-xs text-black"><thead><tr className="border-b-2 border-black font-black uppercase bg-gray-200 h-10"><td className="p-3">FASE OPERATIVA</td><td className="p-3">TOTAL PRODUCIDO</td><td className="p-3">TOTAL DESPERDICIO</td><td className="p-3">% EFICIENCIA</td></tr></thead>
-            <tbody className="font-bold uppercase divide-y-2 divide-gray-100">
-              {req.production?.extrusion && <tr><td className="p-4 bg-gray-50 font-black">EXTRUSIÓN</td><td className="p-4 font-black text-green-600 text-base">{formatNum(extSum)} KG</td><td className="p-4 text-red-600 text-base">{formatNum(extMerma)} KG</td><td className="p-4">{extSum > 0 ? ((1 - (extMerma/extSum))*100).toFixed(2) : 0}%</td></tr>}
-              {req.production?.sellado && <tr><td className="p-4 bg-gray-50 font-black">SELLADO Y CORTE</td><td className="p-4 font-black text-green-600 text-base">{formatNum(selSum)} KG</td><td className="p-4 text-red-600 text-base">{formatNum(selMerma)} KG</td><td className="p-4">{selSum > 0 ? ((1 - (selMerma/selSum))*100).toFixed(2) : 0}%</td></tr>}
-            </tbody>
-          </table>
+      <div id="pdf-content" className="bg-[#1e1e1e] p-12 print:p-0 min-h-screen text-white"><style>{`@media print { @page { size: landscape; margin: 5mm; } body { background-color: #1e1e1e !important; -webkit-print-color-adjust: exact; } }`}</style>
+        <div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden">
+           <button onClick={() => setShowFiniquito(null)} className="text-white font-black text-xs uppercase bg-gray-800 border border-gray-700 px-6 py-2.5 rounded-xl hover:bg-gray-700">VOLVER</button>
+           <button onClick={() => handleExportPDF(`Finiquito_OP_${req.id}`, true)} className="bg-orange-600 text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-orange-500 transition-all"><Printer size={16} /> EXPORTAR PDF</button>
         </div>
-        <div className="mt-32 grid grid-cols-3 gap-12 text-center font-black text-[10px] uppercase border-t-2 border-black pt-4 text-black"><div>ELABORADO POR ANALISTA</div><div>SUPERVISOR DE PLANTA</div><div>AUDITORÍA INTERNA</div></div>
+        
+        <div className="flex justify-between items-end border-b border-gray-700 pb-4 mb-6">
+           <div className="flex items-center gap-4">
+              <div className="bg-white text-black p-2 rounded-lg flex items-center">
+                 <span className="font-black text-2xl leading-none">G</span><span className="text-orange-500 font-black text-lg mx-0.5">&amp;</span><span className="font-black text-2xl leading-none">B</span>
+              </div>
+              <div>
+                 <h1 className="text-lg font-black uppercase tracking-widest text-white">REPORTE FINAL DE PRODUCCIÓN Y COSTOS</h1>
+                 <p className="text-[10px] font-bold text-gray-400 uppercase">SERVICIOS JIRET G&B, C.A.</p>
+              </div>
+           </div>
+           <div className="text-right">
+              <p className="text-[10px] font-bold text-gray-400 uppercase">FECHA EMISIÓN: <span className="text-white">{getTodayDate()}</span></p>
+              <p className="text-sm font-black text-orange-500 uppercase mt-1">OP N° {String(req.id).replace('OP-','').padStart(5,'0')}</p>
+           </div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-4 bg-gray-800 p-4 rounded-xl mb-6 text-[10px] font-bold uppercase border border-gray-700">
+           <div><span className="text-gray-400 block mb-1">CLIENTE:</span> {req.client}</div>
+           <div className="col-span-2"><span className="text-gray-400 block mb-1">PRODUCTO:</span> {req.desc}</div>
+           <div className="text-right"><span className="text-gray-400 block mb-1">META SOLICITADA:</span> <span className="text-orange-400 font-black text-sm">{formatNum(req.requestedKg)} KG</span></div>
+           <div><span className="text-gray-400 block mb-1">FECHA INICIO (PLANTA):</span> <span className="text-green-400">{getFechaInicio()}</span></div>
+           <div><span className="text-gray-400 block mb-1">FECHA CIERRE (PLANTA):</span> <span className="text-green-400">{getFechaFin()}</span></div>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-gray-700">
+           <table className="w-full text-left text-[10px] whitespace-nowrap">
+              <thead className="bg-gray-800 text-gray-300">
+                 <tr>
+                    <th className="p-3">FASE / CONCEPTO</th>
+                    <th className="p-3 text-center">CANTIDAD</th>
+                    <th className="p-3 text-center">U.M.</th>
+                    <th className="p-3 text-center">COSTO UNIT. (USD)</th>
+                    <th className="p-3 text-center">COSTO TOTAL (USD)</th>
+                    <th className="p-3">NOTAS / INDICADORES</th>
+                 </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800">
+                 
+                 {/* 1. MEZCLA */}
+                 <tr><td colSpan="6" className="p-2 font-black uppercase text-[11px] text-orange-500 bg-[#1a1a1a]">1. MATERIA PRIMA (MEZCLA EXTRUIDA)</td></tr>
+                 {mpConsumida.length > 0 ? mpConsumida.map((ing, i) => (
+                   <tr key={i} className="hover:bg-gray-800">
+                     <td className="p-2 pl-4 font-bold text-gray-200">{(inventory || []).find(inv=>inv.id===ing.id)?.desc || ing.id}</td>
+                     <td className="p-2 text-center text-gray-300">{formatNum(ing.qty)}</td>
+                     <td className="p-2 text-center text-gray-500">kg</td>
+                     <td className="p-2 text-center text-gray-300">${formatNum(costoPromedio)}</td>
+                     <td className="p-2 text-center text-gray-300">${formatNum(ing.cost)}</td>
+                     <td className="p-2 text-gray-500">{formatNum((ing.qty/totalMezclaPreparada)*100)}% de la mezcla</td>
+                   </tr>
+                 )) : (
+                   <tr><td colSpan="6" className="p-4 text-center text-gray-500 italic">No se reportó consumo de materia prima en extrusión.</td></tr>
+                 )}
+                 <tr className="bg-gray-800 font-black border-y border-gray-600">
+                   <td className="p-2 pl-4 text-white">TOTAL MEZCLA PREPARADA</td>
+                   <td className="p-2 text-center text-white">{formatNum(totalMezclaPreparada)}</td>
+                   <td className="p-2 text-center text-gray-400">kg</td>
+                   <td className="p-2 text-center text-white">${formatNum(costoPromedio)}</td>
+                   <td className="p-2 text-center text-white">${formatNum(totalMezclaPreparada * costoPromedio)}</td>
+                   <td className="p-2 text-gray-400">Ingreso real a Extrusión</td>
+                 </tr>
+
+                 {/* 2. EXTRUSIÓN */}
+                 <tr><td colSpan="6" className="p-2 pt-4 font-black uppercase text-[11px] text-orange-500 bg-[#1a1a1a]">2. FASE DE EXTRUSIÓN</td></tr>
+                 <tr className="hover:bg-gray-800">
+                   <td className="p-2 pl-4 font-bold text-gray-200">MERMA RECUPERABLE / DESPERDICIO</td>
+                   <td className="p-2 text-center text-red-400">{formatNum(extMerma)}</td>
+                   <td className="p-2 text-center text-gray-500">kg</td>
+                   <td className="p-2 text-center text-gray-500">-</td>
+                   <td className="p-2 text-center text-gray-500">-</td>
+                   <td className="p-2 text-gray-500">{totalMezclaPreparada > 0 ? formatNum((extMerma/totalMezclaPreparada)*100) : 0}% (Pérdida de extrusión)</td>
+                 </tr>
+                 <tr className="bg-gray-800 font-black border-y border-gray-600">
+                   <td className="p-2 pl-4 text-white">PRODUCCIÓN DE BOBINAS</td>
+                   <td className="p-2 text-center text-white">{formatNum(extProducido)}</td>
+                   <td className="p-2 text-center text-gray-400">kg</td>
+                   <td className="p-2 text-center text-white">${formatNum(costoPromedio)}</td>
+                   <td className="p-2 text-center text-white">${formatNum(extProducido * costoPromedio)}</td>
+                   <td className="p-2 text-green-400">Rendimiento Útil: {formatNum(extRendimiento)}%</td>
+                 </tr>
+
+                 {/* 3. SELLADO (SI APLICA) */}
+                 {!isTermo && (
+                   <>
+                     <tr><td colSpan="6" className="p-2 pt-4 font-black uppercase text-[11px] text-orange-500 bg-[#1a1a1a]">3. FASE DE SELLADO Y CORTE</td></tr>
+                     <tr className="hover:bg-gray-800">
+                       <td className="p-2 pl-4 font-bold text-gray-200">MERMA DE SELLADO (CORTE/REFILE)</td>
+                       <td className="p-2 text-center text-red-400">{formatNum(selMerma)}</td>
+                       <td className="p-2 text-center text-gray-500">kg</td>
+                       <td className="p-2 text-center text-gray-500">-</td>
+                       <td className="p-2 text-center text-gray-500">-</td>
+                       <td className="p-2 text-gray-500">Diferencia en conversión</td>
+                     </tr>
+                   </>
+                 )}
+                 
+                 <tr className="bg-[#111827] font-black border-y border-orange-500 text-[12px]">
+                   <td className="p-3 pl-4 text-green-500">PRODUCCIÓN FINAL LÍQUIDA</td>
+                   <td className="p-3 text-center text-green-500">{formatNum(totalFinalUnidades)}</td>
+                   <td className="p-3 text-center text-green-500">{unitFinal}</td>
+                   <td className="p-3 text-center text-white">${totalFinalUnidades > 0 ? formatNum((extProducido * costoPromedio) / totalFinalUnidades) : '0.00'}</td>
+                   <td className="p-3 text-center text-white">${formatNum(extProducido * costoPromedio)}</td>
+                   <td className="p-3 text-gray-400 text-[9px] font-bold">COSTO DEFINITIVO DE PRODUCCIÓN</td>
+                 </tr>
+              </tbody>
+           </table>
+        </div>
       </div>
     );
   };
