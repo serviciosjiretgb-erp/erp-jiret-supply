@@ -47,10 +47,9 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-// Conectamos a tu base de datos us-central
-const db = getFirestore(app, "us-central"); 
+const db = getFirestore(app, "us-central"); // BD arreglada
 
-const getColRef = (colName) => collection(db, colName); 
+const getColRef = (colName) => collection(db, colName); // Rutas directas
 const getDocRef = (colName, docId) => doc(db, colName, String(docId));
 
 const getTodayDate = () => {
@@ -58,14 +57,28 @@ const getTodayDate = () => {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
 
-// --- BASE DE DATOS INICIAL ---
+// --- BASE DE DATOS INICIAL (INVENTARIO EXTRAÍDO DEL PDF) ---
 const INITIAL_INVENTORY = [
-  { id: 'MP-0240', desc: 'ESENTTIA', cost: 0.96, stock: 2325, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-11PG4', desc: 'METALOCENO', cost: 0.91, stock: 1735, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-3003', desc: 'BAPOLENE', cost: 0.96, stock: 500, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-RECICLADO', desc: 'MATERIAL RECICLADO', cost: 1.00, stock: 9999, unit: 'kg', category: 'Materia Prima' }
+  { id: 'MP-0240', desc: 'ESENTTIA', cost: 914.05, stock: 2325, unit: 'kg', category: 'Materia Prima' },
+  { id: 'MP-11PG4', desc: 'METALOCENO', cost: 877.14, stock: 1735, unit: 'kg', category: 'Materia Prima' },
+  { id: 'MP-3003', desc: 'BAPOLENE', cost: 842.16, stock: 500, unit: 'kg', category: 'Materia Prima' },
+  { id: 'MP-3003-E', desc: '3003 ESENTTIA', cost: 1113.59, stock: 0, unit: 'kg', category: 'Materia Prima' },
+  { id: 'MP-RECICLADO', desc: 'MATERIAL RECICLADO', cost: 1.00, stock: 9999, unit: 'kg', category: 'Materia Prima' },
+  { id: 'PRI0020', desc: 'ALCOHOL ISOPROPILICO TAMBOR 160 KG', cost: 1451.15, stock: 50, unit: 'und', category: 'Químicos' },
+  { id: 'PRI0784', desc: 'ALCOHOL BUTILICO (N-BUTANOL) TAMBOR 170 KG', cost: 2284.19, stock: 160, unit: 'und', category: 'Químicos' },
+  { id: 'PRI1142', desc: 'MASTERBATCH WELSET BLANCO 70% WM7080', cost: 3414.52, stock: 20, unit: 'saco', category: 'Pigmentos' },
+  { id: 'PRI1302', desc: 'POLIETILENO CYNPOL LL0118H (11PG4) SACO 25 KG', cost: 1157.25, stock: 25, unit: 'saco', category: 'Materia Prima' },
+  { id: 'WS-1932', desc: 'BLANCO SUPERFICIE G/F', cost: 4586.61, stock: 0, unit: 'kg', category: 'Tintas' },
+  { id: 'WS-1934', desc: 'ROJO PANT 485 G/F', cost: 5572.33, stock: 32, unit: 'kg', category: 'Tintas' },
+  { id: 'WS-1956', desc: 'NEGRO PROCESO G/F', cost: 5210.23, stock: 47, unit: 'kg', category: 'Tintas' },
+  { id: 'WS-2012', desc: 'AMARILLO PANT 123 G/F', cost: 5572.33, stock: 36, unit: 'kg', category: 'Tintas' },
+  { id: 'WS-2134', desc: 'NARANJA PANT 1585 G/F', cost: 5572.33, stock: 8, unit: 'kg', category: 'Tintas' },
+  { id: 'WS-2135', desc: 'ROJO PANT. 1925 G/F', cost: 5572.33, stock: 32, unit: 'kg', category: 'Tintas' },
+  { id: 'WS-2136', desc: 'VERDE PANT 360 G/F', cost: 5572.33, stock: 18, unit: 'kg', category: 'Tintas' },
+  { id: 'WS-2137', desc: 'GRIS PANT 422', cost: 5572.33, stock: 18, unit: 'kg', category: 'Tintas' }
 ];
 
+// --- HELPERS SEGUROS ---
 const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
 const parseNum = (val) => {
   if (!val) return 0;
@@ -123,7 +136,7 @@ export default function App() {
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
 
   // --- FORMULARIOS VENTAS ---
-  const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
+  const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', tipoContribuyente: 'ORDINARIO', poseeCredito: 'No', diasCredito: '', productosMaquila: '', fechaCreacion: getTodayDate() };
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [editingClientId, setEditingClientId] = useState(null);
   
@@ -523,7 +536,7 @@ export default function App() {
   const handleDeleteClient = (rif) => setDialog({ title: 'Eliminar Cliente', text: `¿Desea eliminar el cliente ${rif}?`, type: 'confirm', onConfirm: async () => { await deleteDoc(getDocRef('clientes', rif)); }});
 
   // ============================================================================
-  // LOGICA VENTAS: FACTURACIÓN CON IVA Y CRUCE DE OP
+  // LOGICA VENTAS: FACTURACIÓN
   // ============================================================================
   const generateInvoiceId = () => {
     const max = (invoices || []).reduce((m, r) => {
@@ -538,7 +551,6 @@ export default function App() {
     const valUpper = typeof value === 'string' ? value.toUpperCase() : value;
     let f = { ...newInvoiceForm, [field]: valUpper };
     
-    // Si cambia el cliente, auto-llenamos nombre y vendedor, y reseteamos la OP
     if (field === 'clientRif') {
        const c = (clients || []).find(cl => cl.rif === value);
        f.clientName = c?.name || '';
@@ -547,7 +559,6 @@ export default function App() {
        f.productoMaquilado = '';
     }
 
-    // Si selecciona una OP, construimos la descripción con todos los datos de esa OP
     if (field === 'opAsignada') {
        const op = (requirements || []).find(r => r.id === value);
        if (op) {
@@ -559,7 +570,6 @@ export default function App() {
        }
     }
 
-    // Recalculo en tiempo real del IVA basado en el selector "aplicaIva" y "montoBase"
     let base = parseNum(f.montoBase);
     if (field === 'montoBase') base = parseNum(value);
     
@@ -594,7 +604,7 @@ export default function App() {
   const handleDeleteInvoice = (id) => setDialog({ title: 'Eliminar Factura', text: `¿Desea eliminar la factura permanentemente?`, type: 'confirm', onConfirm: async () => { await deleteDoc(getDocRef('maquilaInvoices', id)); }});
 
   // ============================================================================
-  // LOGICA VENTAS: REQUISICIONES (OP) CON FORMULAS CORREGIDAS
+  // LOGICA VENTAS: REQUISICIONES (OP)
   // ============================================================================
   const generateReqId = () => {
      const max = (requirements || []).reduce((m, r) => {
@@ -629,13 +639,11 @@ export default function App() {
 
     if (w > 0 && m > 0) {
       if (tipo === 'BOLSAS' && l > 0) {
-         // Fórmula Bolsas: (Ancho + Fuelles) * Largo * Micras
          pesoEstimado = (w + fuelles) * l * m;
          f.pesoMillar = pesoEstimado.toFixed(2);
          descStr = fuelles > 0 ? `(${w}+${fuelles/2}+${fuelles/2})X${l}X${micrasFormat}MIC | ${f.color || ''}` : `${w}X${l}X${micrasFormat}MIC | ${f.color || ''}`;
          f.requestedKg = presentacion === 'KILOS' ? c.toFixed(2) : (pesoEstimado * c).toFixed(2);
       } else if (tipo === 'TERMOENCOGIBLE') {
-         // Fórmula Termoencogible: Ancho * Micras
          pesoEstimado = w * m; 
          f.pesoMillar = 'N/A'; 
          descStr = `TERMOENCOGIBLE ${w}CM X ${micrasFormat}MIC | ${f.color || ''}`;
@@ -1550,7 +1558,6 @@ export default function App() {
                       </div>
                     </div>
                     
-                    {/* NUEVA FILA PARA CANTIDAD Y TIPO DE PRODUCTO */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
                        <div>
                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Tipo de Producto</label>
@@ -1786,15 +1793,93 @@ export default function App() {
           </div>
         )}
 
-        {/* INGENIERIA (FORMULAS) */}
+        {/* INGENIERIA (FORMULAS) - MODIFICADO CON ETIQUETA "NUEVO" Y DETALLES */}
         {prodView === 'requisiciones' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className={"bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden " + (recipeEditReqId ? 'lg:col-span-2' : 'lg:col-span-3')}>
               <div className="px-6 py-5 border-b bg-gray-50 flex items-center gap-3"><div className="bg-orange-500 p-2 rounded-lg text-white shadow-sm"><ClipboardList size={22}/></div><h2 className="text-lg font-black text-black uppercase tracking-tighter">Ingeniería de Planta</h2></div>
-              <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-gray-500 text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-gray-500 text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-[10px] font-black uppercase text-gray-500 text-right text-black tracking-widest">KG Solicitados</th><th className="p-4 text-center text-gray-500 text-black tracking-widest">Gestión</th></tr></thead><tbody className="divide-y divide-gray-100">{(requirements || []).filter(r => r.status === 'PENDIENTE DE INGENIERÍA').map(r => (<tr key={r.id} className="hover:bg-gray-50 group"><td className="p-4 font-black text-orange-500">#{String(r.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-bold text-black uppercase text-xs">{r.client}<br/><span className="text-[9px] font-bold text-gray-400">{r.desc}</span></td><td className="p-4 text-right font-black text-black">{formatNum(r.requestedKg)} KG</td><td className="p-4 text-center"><button onClick={() => { setRecipeEditReqId(r.id); setTempRecipe(r.recipe || []); }} className="bg-black text-white px-5 py-2.5 rounded-xl text-[9px] font-black uppercase hover:bg-gray-800 transition-colors shadow-md">ASIGNAR RECETA</button></td></tr>))}</tbody></table></div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm whitespace-nowrap">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr><th className="p-4 text-[10px] font-black uppercase text-gray-500 text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-gray-500 text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-[10px] font-black uppercase text-gray-500 text-right text-black tracking-widest">KG Solicitados</th><th className="p-4 text-center text-gray-500 text-black tracking-widest">Gestión</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {(requirements || []).filter(r => r.status === 'PENDIENTE DE INGENIERÍA').map(r => (
+                      <tr key={r.id} className="hover:bg-gray-50 group">
+                        <td className="p-4 font-black text-orange-500">
+                          #{String(r.id).replace('OP-', '').padStart(5, '0')}
+                          {!r.viewedByPlanta && <span className="ml-2 inline-block animate-pulse bg-red-500 text-white px-2 py-0.5 rounded-md text-[9px] uppercase tracking-widest">Nuevo</span>}
+                        </td>
+                        <td className="p-4 font-bold text-black uppercase text-xs">{r.client}<br/><span className="text-[9px] font-bold text-gray-400">{r.desc}</span></td>
+                        <td className="p-4 text-right font-black text-black">{formatNum(r.requestedKg)} KG</td>
+                        <td className="p-4 text-center">
+                          <button onClick={async () => { 
+                            setRecipeEditReqId(r.id); 
+                            setTempRecipe(r.recipe || []); 
+                            if (!r.viewedByPlanta) {
+                               await updateDoc(getDocRef('requirements', r.id), { viewedByPlanta: true });
+                            }
+                          }} className="bg-black text-white px-5 py-2.5 rounded-xl text-[9px] font-black uppercase hover:bg-gray-800 transition-colors shadow-md">ASIGNAR RECETA</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
+            
             {recipeEditReqId && canEdit && (
-              <div className="lg:col-span-1 bg-white rounded-3xl shadow-xl border border-gray-200 p-8 animate-in slide-in-from-right"><div className="flex justify-between items-center border-b border-gray-200 pb-4 mb-6"><h3 className="text-md font-black uppercase text-black flex items-center gap-2"><Beaker size={18} className="text-orange-500"/> Definir Mezcla</h3><button onClick={() => setRecipeEditReqId(null)} className="text-gray-400 hover:text-red-500 transition-colors"><X size={20} /></button></div><div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 shadow-inner"><p className="text-[10px] font-black text-orange-800 uppercase mb-1">OP N°: {String(recipeEditReqId).replace('OP-', '').padStart(5, '0')}</p><p className="text-sm font-black text-orange-600 uppercase">{(requirements || []).find(r=>r.id===recipeEditReqId)?.desc}</p></div><div className="space-y-4"><div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5 tracking-widest">Materia Prima / Insumo</label><select value={newIngId} onChange={e=>setNewIngId(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs bg-gray-50 outline-none focus:bg-white focus:border-orange-500 text-black">{renderRecipeInventoryOptions()}</select></div><div className="flex gap-3 items-end"><div className="flex-1"><label className="text-[10px] font-black text-gray-500 uppercase mb-1.5 tracking-widest">Porcentaje / Cantidad</label><input type="number" step="0.001" value={newIngQty} onChange={e=>setNewIngQty(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black outline-none focus:bg-white focus:border-orange-500 text-black" /></div><button type="button" onClick={handleAddIngToRecipe} className="bg-orange-500 text-white font-black p-3 rounded-xl hover:bg-orange-600 shadow-md h-[46px] w-[46px] flex items-center justify-center transition-all"><Plus size={20}/></button></div></div><ul className="space-y-3 mt-6 mb-8">{tempRecipe.map((ing, idx) => (<li key={idx} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-200 shadow-sm"><span className="text-[10px] font-black uppercase text-gray-800">{(inventory || []).find(i=>i.id===ing.id)?.desc || ing.id}</span><div className="flex items-center gap-3"><span className="text-[10px] font-black text-orange-600 bg-orange-100 px-2 py-1 rounded-lg">{formatNum(ing.totalQty)}</span><button type="button" onClick={()=>handleRemoveIngFromRecipe(idx)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button></div></li>))}</ul><button onClick={handleSaveRecipe} disabled={(tempRecipe || []).length === 0} className="w-full bg-black text-white font-black py-4 rounded-2xl uppercase tracking-widest text-[10px] flex justify-center items-center gap-2 shadow-xl shadow-black/30 hover:bg-slate-800 transition-all"><CheckCircle size={16}/> APROBAR Y ENVIAR A PLANTA</button></div>
+              <div className="lg:col-span-1 bg-white rounded-3xl shadow-xl border border-gray-200 p-8 animate-in slide-in-from-right">
+                <div className="flex justify-between items-center border-b border-gray-200 pb-4 mb-6">
+                  <h3 className="text-md font-black uppercase text-black flex items-center gap-2"><Beaker size={18} className="text-orange-500"/> Definir Mezcla</h3>
+                  <button onClick={() => setRecipeEditReqId(null)} className="text-gray-400 hover:text-red-500 transition-colors"><X size={20} /></button>
+                </div>
+                
+                {/* DETALLES EXPANDIDOS PARA PLANTA */}
+                <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 shadow-inner">
+                  <div className="flex justify-between items-start mb-2">
+                     <p className="text-[10px] font-black text-orange-800 uppercase">OP N°: {String(recipeEditReqId).replace('OP-', '').padStart(5, '0')}</p>
+                     <p className="text-[10px] font-black text-orange-800 uppercase">CLIENTE: {(requirements || []).find(r=>r.id===recipeEditReqId)?.client}</p>
+                  </div>
+                  <p className="text-sm font-black text-orange-600 uppercase mb-3">{(requirements || []).find(r=>r.id===recipeEditReqId)?.desc}</p>
+                  
+                  <div className="grid grid-cols-2 gap-2 bg-white/60 p-3 rounded-lg border border-orange-100 text-[9px] font-black text-gray-700 uppercase">
+                     <div>TIPO: {(requirements || []).find(r=>r.id===recipeEditReqId)?.tipoProducto}</div>
+                     <div>CANTIDAD: {(requirements || []).find(r=>r.id===recipeEditReqId)?.cantidad} {(requirements || []).find(r=>r.id===recipeEditReqId)?.presentacion}</div>
+                     <div>TOTAL CARGA: {formatNum((requirements || []).find(r=>r.id===recipeEditReqId)?.requestedKg)} KG</div>
+                     <div>VENDEDOR: {(requirements || []).find(r=>r.id===recipeEditReqId)?.vendedor || 'S/N'}</div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5 tracking-widest">Materia Prima / Insumo</label>
+                    <select value={newIngId} onChange={e=>setNewIngId(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs bg-gray-50 outline-none focus:bg-white focus:border-orange-500 text-black">
+                      {renderRecipeInventoryOptions()}
+                    </select>
+                  </div>
+                  <div className="flex gap-3 items-end">
+                    <div className="flex-1">
+                      <label className="text-[10px] font-black text-gray-500 uppercase mb-1.5 tracking-widest">Porcentaje / Cantidad</label>
+                      <input type="number" step="0.001" value={newIngQty} onChange={e=>setNewIngQty(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black outline-none focus:bg-white focus:border-orange-500 text-black" />
+                    </div>
+                    <button type="button" onClick={handleAddIngToRecipe} className="bg-orange-500 text-white font-black p-3 rounded-xl hover:bg-orange-600 shadow-md h-[46px] w-[46px] flex items-center justify-center transition-all"><Plus size={20}/></button>
+                  </div>
+                </div>
+
+                <ul className="space-y-3 mt-6 mb-8">
+                  {tempRecipe.map((ing, idx) => (
+                    <li key={idx} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-200 shadow-sm">
+                      <span className="text-[10px] font-black uppercase text-gray-800">{(inventory || []).find(i=>i.id===ing.id)?.desc || ing.id}</span>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] font-black text-orange-600 bg-orange-100 px-2 py-1 rounded-lg">{formatNum(ing.totalQty)}</span>
+                        <button type="button" onClick={()=>handleRemoveIngFromRecipe(idx)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <button onClick={handleSaveRecipe} disabled={(tempRecipe || []).length === 0} className="w-full bg-black text-white font-black py-4 rounded-2xl uppercase tracking-widest text-[10px] flex justify-center items-center gap-2 shadow-xl shadow-black/30 hover:bg-slate-800 transition-all"><CheckCircle size={16}/> APROBAR Y ENVIAR A PLANTA</button>
+              </div>
             )}
           </div>
         )}
