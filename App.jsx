@@ -1,3 +1,4 @@
+```javascript
 import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, Package, Factory, TrendingUp, AlertTriangle, 
@@ -835,4 +836,3 @@ export default function App() {
   );
 }
 ```
-
