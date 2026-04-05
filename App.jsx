@@ -47,9 +47,10 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app, "us-central"); // BD arreglada
+// Conectamos a tu base de datos us-central
+const db = getFirestore(app, "us-central"); 
 
-const getColRef = (colName) => collection(db, colName); // Rutas directas
+const getColRef = (colName) => collection(db, colName); 
 const getDocRef = (colName, docId) => doc(db, colName, String(docId));
 
 const getTodayDate = () => {
@@ -57,28 +58,14 @@ const getTodayDate = () => {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
 
-// --- BASE DE DATOS INICIAL (INVENTARIO EXTRAÍDO DEL PDF) ---
+// --- BASE DE DATOS INICIAL ---
 const INITIAL_INVENTORY = [
-  { id: 'MP-0240', desc: 'ESENTTIA', cost: 914.05, stock: 2325, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-11PG4', desc: 'METALOCENO', cost: 877.14, stock: 1735, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-3003', desc: 'BAPOLENE', cost: 842.16, stock: 500, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-3003-E', desc: '3003 ESENTTIA', cost: 1113.59, stock: 0, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-RECICLADO', desc: 'MATERIAL RECICLADO', cost: 1.00, stock: 9999, unit: 'kg', category: 'Materia Prima' },
-  { id: 'PRI0020', desc: 'ALCOHOL ISOPROPILICO TAMBOR 160 KG', cost: 1451.15, stock: 50, unit: 'und', category: 'Químicos' },
-  { id: 'PRI0784', desc: 'ALCOHOL BUTILICO (N-BUTANOL) TAMBOR 170 KG', cost: 2284.19, stock: 160, unit: 'und', category: 'Químicos' },
-  { id: 'PRI1142', desc: 'MASTERBATCH WELSET BLANCO 70% WM7080', cost: 3414.52, stock: 20, unit: 'saco', category: 'Pigmentos' },
-  { id: 'PRI1302', desc: 'POLIETILENO CYNPOL LL0118H (11PG4) SACO 25 KG', cost: 1157.25, stock: 25, unit: 'saco', category: 'Materia Prima' },
-  { id: 'WS-1932', desc: 'BLANCO SUPERFICIE G/F', cost: 4586.61, stock: 0, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-1934', desc: 'ROJO PANT 485 G/F', cost: 5572.33, stock: 32, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-1956', desc: 'NEGRO PROCESO G/F', cost: 5210.23, stock: 47, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-2012', desc: 'AMARILLO PANT 123 G/F', cost: 5572.33, stock: 36, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-2134', desc: 'NARANJA PANT 1585 G/F', cost: 5572.33, stock: 8, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-2135', desc: 'ROJO PANT. 1925 G/F', cost: 5572.33, stock: 32, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-2136', desc: 'VERDE PANT 360 G/F', cost: 5572.33, stock: 18, unit: 'kg', category: 'Tintas' },
-  { id: 'WS-2137', desc: 'GRIS PANT 422', cost: 5572.33, stock: 18, unit: 'kg', category: 'Tintas' }
+  { id: 'MP-0240', desc: 'ESENTTIA', cost: 0.96, stock: 2325, unit: 'kg', category: 'Materia Prima' },
+  { id: 'MP-11PG4', desc: 'METALOCENO', cost: 0.91, stock: 1735, unit: 'kg', category: 'Materia Prima' },
+  { id: 'MP-3003', desc: 'BAPOLENE', cost: 0.96, stock: 500, unit: 'kg', category: 'Materia Prima' },
+  { id: 'MP-RECICLADO', desc: 'MATERIAL RECICLADO', cost: 1.00, stock: 9999, unit: 'kg', category: 'Materia Prima' }
 ];
 
-// --- HELPERS SEGUROS ---
 const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
 const parseNum = (val) => {
   if (!val) return 0;
@@ -136,7 +123,7 @@ export default function App() {
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
 
   // --- FORMULARIOS VENTAS ---
-  const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', tipoContribuyente: 'ORDINARIO', poseeCredito: 'No', diasCredito: '', productosMaquila: '', fechaCreacion: getTodayDate() };
+  const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [editingClientId, setEditingClientId] = useState(null);
   
@@ -667,7 +654,13 @@ export default function App() {
   const handleCreateRequirement = async (e) => {
     e.preventDefault();
     const opId = editingReqId ? editingReqId : generateReqId();
-    const newReq = { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements.find(r => r.id === editingReqId)?.timestamp || Date.now()) : Date.now(), status: editingReqId ? (requirements.find(r => r.id === editingReqId)?.status || 'PENDIENTE DE INGENIERÍA') : 'PENDIENTE DE INGENIERÍA' };
+    const newReq = { 
+       ...newReqForm, 
+       id: opId, 
+       timestamp: editingReqId ? (requirements.find(r => r.id === editingReqId)?.timestamp || Date.now()) : Date.now(), 
+       status: editingReqId ? (requirements.find(r => r.id === editingReqId)?.status || 'PENDIENTE DE INGENIERÍA') : 'PENDIENTE DE INGENIERÍA',
+       viewedByPlanta: false // Nuevo indicador para la etiqueta "NUEVO"
+    };
     try {
       await setDoc(getDocRef('requirements', opId), newReq, { merge: true });
       setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null);
@@ -690,7 +683,7 @@ export default function App() {
   const handleDeleteReq = (id) => setDialog({ title: 'Eliminar OP', text: `¿Desea eliminar la OP #${id}?`, type: 'confirm', onConfirm: async () => { await deleteDoc(getDocRef('requirements', id)); }});
 
   // ============================================================================
-  // LOGICA PRODUCCIÓN 
+  // LOGICA PRODUCCIÓN E INGENIERÍA DE PLANTA (ACTUALIZADO)
   // ============================================================================
   const renderRecipeInventoryOptions = () => {
     const categories = ['Materia Prima', 'Pigmentos', 'Tintas', 'Químicos', 'Consumibles', 'Herramientas', 'Seguridad Industrial'];
@@ -713,6 +706,17 @@ export default function App() {
     const totalQty = isMateriaPrima ? (parseFloat(newIngQty) / 100) * parseNum(req?.requestedKg) : parseFloat(newIngQty);
     setTempRecipe([...tempRecipe, { id: newIngId, percentage: isMateriaPrima ? parseFloat(newIngQty) : null, totalQty }]);
     setNewIngId(''); setNewIngQty('');
+  };
+
+  const handleRemoveIngFromRecipe = (index) => {
+    setTempRecipe(tempRecipe.filter((_, i) => i !== index));
+  };
+
+  const handleEditIngFromRecipe = (index) => {
+    const item = tempRecipe[index];
+    setNewIngId(item.id);
+    setNewIngQty(item.percentage !== null ? item.percentage : item.totalQty);
+    setTempRecipe(tempRecipe.filter((_, i) => i !== index));
   };
 
   const handleSaveRecipe = async () => {
@@ -1529,7 +1533,7 @@ export default function App() {
                   </form>
                 </div>
              )}
-             <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR FACTURA O CLIENTE..." value={invoiceSearchTerm} onChange={e=>setInvoiceSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-gray-400 text-[10px] tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">Cliente</th><th className="py-4 px-4 text-right text-black">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{filteredInvoices.map(inv=>(<tr key={inv.id} className="hover:bg-gray-50"><td className="py-5 px-4 font-black text-sm">{inv.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{getSafeDate(inv.timestamp)}</span></td><td className="py-5 px-4 font-bold text-gray-700 uppercase">{inv.clientName}</td><td className="py-5 px-4 text-right font-black text-green-600 text-lg">${formatNum(inv.total)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>handleDeleteInvoice(inv.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div></div>
+             <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR FACTURA O CLIENTE..." value={invoiceSearchTerm} onChange={e=>setInvoiceSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">Cliente</th><th className="py-4 px-4 text-right text-black">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{filteredInvoices.map(inv=>(<tr key={inv.id} className="hover:bg-gray-50"><td className="py-5 px-4 font-black text-sm">{inv.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{getSafeDate(inv.timestamp)}</span></td><td className="py-5 px-4 font-bold text-gray-700 uppercase">{inv.clientName}</td><td className="py-5 px-4 text-right font-black text-green-600 text-lg">${formatNum(inv.total)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>handleDeleteInvoice(inv.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div></div>
           </div>
         )}
         {ventasView === 'requisiciones' && (
@@ -1870,10 +1874,14 @@ export default function App() {
                 <ul className="space-y-3 mt-6 mb-8">
                   {tempRecipe.map((ing, idx) => (
                     <li key={idx} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-200 shadow-sm">
-                      <span className="text-[10px] font-black uppercase text-gray-800">{(inventory || []).find(i=>i.id===ing.id)?.desc || ing.id}</span>
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-black uppercase text-gray-800">{(inventory || []).find(i=>i.id===ing.id)?.desc || ing.id}</span>
+                        {ing.percentage !== null && <span className="text-[9px] font-bold text-gray-500 mt-0.5">PORCENTAJE: {ing.percentage}%</span>}
+                      </div>
                       <div className="flex items-center gap-3">
-                        <span className="text-[10px] font-black text-orange-600 bg-orange-100 px-2 py-1 rounded-lg">{formatNum(ing.totalQty)}</span>
-                        <button type="button" onClick={()=>handleRemoveIngFromRecipe(idx)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
+                        <span className="text-[10px] font-black text-orange-600 bg-orange-100 px-2 py-1 rounded-lg">{formatNum(ing.totalQty)} KG</span>
+                        <button type="button" onClick={()=>handleEditIngFromRecipe(idx)} className="text-blue-500 hover:text-blue-700 transition-colors"><Edit size={16}/></button>
+                        <button type="button" onClick={()=>handleRemoveIngFromRecipe(idx)} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 size={16}/></button>
                       </div>
                     </li>
                   ))}
