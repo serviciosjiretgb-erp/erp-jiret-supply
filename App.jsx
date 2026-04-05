@@ -35,7 +35,7 @@ class ErrorBoundary extends React.Component {
 // ============================================================================
 // CONFIGURACIÓN DE FIREBASE BLINDADA
 // ============================================================================
-const firebaseConfig = {
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
   apiKey: "AIzaSyBri2uZAaxsH4S0OpqhYvXB4wfCqo4g3sk",
   authDomain: "erp-gyb-supply.firebaseapp.com",
   projectId: "erp-gyb-supply",
@@ -115,6 +115,7 @@ export default function App() {
   const [showSingleReqReport, setShowSingleReqReport] = useState(null);
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
 
+  // Formularios de Ventas (RESTURADOS AL ORIGINAL FUNCIONAL)
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [editingClientId, setEditingClientId] = useState(null);
@@ -123,9 +124,10 @@ export default function App() {
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
 
-  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '' };
+  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: 'BOLSAS', vendedor: '', montoBase: '', iva: '', total: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
+  // --- ESTADOS PRODUCCIÓN ---
   const initialPhaseForm = { 
     date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '',
     operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '',
@@ -156,7 +158,7 @@ export default function App() {
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
   // ============================================================================
-  // GENERADORES DE EXPORTACIÓN (CERRADOS)
+  // GENERADORES DE EXPORTACIÓN
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content');
@@ -222,7 +224,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA INVENTARIO (SELLADO)
+  // LOGICA INVENTARIO (CERRADO)
   // ============================================================================
   const handleSaveInvItem = async (e) => {
     e.preventDefault(); if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
@@ -265,7 +267,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA VENTAS Y FACTURACIÓN (SELLADO CON CRUCE IVA)
+  // LOGICA VENTAS Y FACTURACIÓN (RESTAURADO A VERSIÓN ROBUSTA ORIGINAL)
   // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault(); if (!newClientForm.rif || !newClientForm.razonSocial) return setDialog({ title: 'Aviso', text: 'RIF y Razón Social obligatorios.', type: 'alert' });
@@ -277,19 +279,33 @@ export default function App() {
   const generateInvoiceId = () => `FAC-${((invoices || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(4, '0')}`;
   
   const handleInvoiceFormChange = (field, value) => {
-    let f = { ...newInvoiceForm, [field]: typeof value === 'string' ? value.toUpperCase() : value };
-    if (field === 'clientRif') { const c = (clients || []).find(cl => cl.rif === value); f.clientName = c?.name || ''; f.vendedor = (c?.vendedor || '').toUpperCase(); f.opAsignada = ''; f.productoMaquilado = ''; }
-    if (field === 'opAsignada') { const op = (requirements || []).find(r => r.id === value); f.productoMaquilado = op ? `OP N°: ${String(op.id).replace('OP-', '').padStart(5, '0')} | PRODUCTO: ${op.tipoProducto} | ESPECIFICACIONES: ${op.desc} | CANTIDAD: ${formatNum(op.cantidad)} ${op.presentacion}` : ''; }
-    let base = parseNum(field === 'montoBase' ? value : f.montoBase); let applyIva = (field === 'aplicaIva' ? value : f.aplicaIva) === 'SI';
-    if (applyIva) { const ivaCalc = base * 0.16; f.iva = ivaCalc > 0 ? ivaCalc.toFixed(2) : ''; f.total = base > 0 ? (base + ivaCalc).toFixed(2) : ''; } 
-    else { f.iva = '0.00'; f.total = base > 0 ? base.toFixed(2) : ''; }
+    const valUpper = typeof value === 'string' ? value.toUpperCase() : value;
+    let f = { ...newInvoiceForm, [field]: valUpper };
+    if (field === 'clientRif') {
+       const c = (clients || []).find(cl => cl.rif === value);
+       f.clientName = c?.name || '';
+       f.vendedor = (c?.vendedor || '').toUpperCase();
+    }
+    if (field === 'montoBase') {
+       const base = parseNum(value);
+       const iva = base * 0.16;
+       f.iva = iva > 0 ? iva.toFixed(2) : '';
+       f.total = base > 0 ? (base + iva).toFixed(2) : '';
+    }
+    if (field === 'iva') {
+       const base = parseNum(f.montoBase);
+       const iva = parseNum(value);
+       f.total = (base + iva).toFixed(2);
+    }
     setNewInvoiceForm(f);
   };
+
   const handleCreateInvoice = async (e) => {
-    e.preventDefault(); if(!newInvoiceForm.clientRif || !newInvoiceForm.montoBase) return setDialog({title: 'Aviso', text: 'Datos incompletos.', type: 'alert'});
+    e.preventDefault(); if(!newInvoiceForm.clientRif || !newInvoiceForm.montoBase) return setDialog({title: 'Aviso', text: 'Selecciona un cliente e ingresa el monto base.', type: 'alert'});
     const id = newInvoiceForm.documento || generateInvoiceId();
     try { await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), timestamp: Date.now(), user: appUser?.name }); setShowNewInvoicePanel(false); setNewInvoiceForm(initialInvoiceForm); setDialog({title: 'Éxito', text: 'Factura Registrada.', type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
+  
   const handleDeleteInvoice = (id) => setDialog({ title: 'Eliminar', text: `¿Eliminar factura?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('maquilaInvoices', id))});
   const generateReqId = () => `OP-${((requirements || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(5, '0')}`;
   
@@ -310,9 +326,10 @@ export default function App() {
     } else { f.pesoMillar = tipo === 'TERMOENCOGIBLE' ? 'N/A' : '0.00'; f.requestedKg = f.presentacion === 'KILOS' && c > 0 ? c.toFixed(2) : '0.00'; }
     setNewReqForm(f);
   };
+
   const handleCreateRequirement = async (e) => {
     e.preventDefault(); const opId = editingReqId ? editingReqId : generateReqId();
-    try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? requirements.find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? requirements.find(r=>r.id===editingReqId)?.status : 'PENDIENTE DE INGENIERÍA', viewedByPlanta: false }, { merge: true }); setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP guardada.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
+    try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'PENDIENTE DE INGENIERÍA', viewedByPlanta: false }, { merge: true }); setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP guardada.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
   const startEditReq = (r) => { setEditingReqId(r.id); setNewReqForm({ fecha: r.fecha||getTodayDate(), client: r.client||'', tipoProducto: r.tipoProducto||'BOLSAS', desc: r.desc||'', ancho: r.ancho||'', fuelles: r.fuelles||'', largo: r.largo||'', micras: r.micras||'', pesoMillar: r.tipoProducto==='TERMOENCOGIBLE'?'N/A':(r.pesoMillar||''), presentacion: r.presentacion||'MILLAR', cantidad: r.cantidad||'', requestedKg: r.requestedKg||'', color: r.color||'NATURAL', tratamiento: r.tratamiento||'LISO', vendedor: r.vendedor||'' }); setShowNewReqPanel(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteReq = (id) => setDialog({ title: 'Eliminar OP', text: `¿Desea eliminar la OP #${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('requirements', id))});
@@ -495,406 +512,14 @@ export default function App() {
     </div>
   );
 
-  const renderInventoryModule = () => {
-    const searchInvUpper = (invSearchTerm || '').toUpperCase();
-    const filteredInventory = (inventory || []).filter(i => (i.id || '').toUpperCase().includes(searchInvUpper) || (i.desc || '').toUpperCase().includes(searchInvUpper));
-    const filteredMovements = (invMovements || []).filter(m => (m.itemId || '').toUpperCase().includes(searchInvUpper) || (m.itemName || '').toUpperCase().includes(searchInvUpper) || (m.reference || '').toUpperCase().includes(searchInvUpper));
-    const reporte177Data = generateReport177Data();
-    let grandInitialTotal = 0; let grandEntradasTotal = 0; let grandSalidasTotal = 0; let grandFinalTotal = 0;
-
-    return (
-      <div className="animate-in fade-in space-y-6">
-        
-        {/* VISTA 1: CATÁLOGO / CARGA INICIAL */}
-        {invView === 'catalogo' && (
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
-            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center print:hidden">
-               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Lista de Productos (Catálogo)</h2>
-               <button onClick={() => handleExportPDF('Catalogo_Inventario', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
-            </div>
-            
-            <div data-html2canvas-ignore="true" className="p-8 bg-gray-50/50 border-b border-gray-200 print:hidden">
-               <form onSubmit={handleSaveInvItem} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
-                 <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-4 tracking-widest">Nuevo Artículo / Actualizar</h3>
-                 <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                   <div>
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Código ID</label>
-                     <input type="text" required value={newInvItemForm.id} onChange={e=>setNewInvItemForm({...newInvItemForm, id: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="EJ: MP-001" />
-                   </div>
-                   <div className="md:col-span-2">
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción</label>
-                     <input type="text" required value={newInvItemForm.desc} onChange={e=>setNewInvItemForm({...newInvItemForm, desc: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="DESCRIPCIÓN DEL INSUMO" />
-                   </div>
-                   <div>
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
-                     <select value={newInvItemForm.category} onChange={e=>setNewInvItemForm({...newInvItemForm, category: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
-                        <option value="Materia Prima">Materia Prima</option>
-                        <option value="Pigmentos">Pigmentos</option>
-                        <option value="Tintas">Tintas</option>
-                        <option value="Químicos">Químicos</option>
-                        <option value="Consumibles">Consumibles</option>
-                        <option value="Herramientas">Herramientas</option>
-                        <option value="Seguridad Industrial">Seguridad Industrial</option>
-                        <option value="Otros">Otros</option>
-                     </select>
-                   </div>
-                   <div className="grid grid-cols-2 gap-2">
-                     <div>
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Costo ($)</label>
-                       <input type="number" step="0.01" required value={newInvItemForm.cost} onChange={e=>setNewInvItemForm({...newInvItemForm, cost: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-center" />
-                     </div>
-                     <div>
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">UM</label>
-                       <select value={newInvItemForm.unit} onChange={e=>setNewInvItemForm({...newInvItemForm, unit: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
-                          <option value="kg">KG</option><option value="lts">LTS</option><option value="und">UND</option><option value="par">PAR</option><option value="saco">SACO</option>
-                       </select>
-                     </div>
-                   </div>
-                 </div>
-                 <div className="flex items-center gap-4 pt-4 border-t border-gray-100">
-                   <div className="w-1/3">
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Carga Inicial (Stock)</label>
-                      <input type="number" step="0.01" required value={newInvItemForm.stock} onChange={e=>setNewInvItemForm({...newInvItemForm, stock: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-center text-blue-600" />
-                   </div>
-                   <div className="flex-1 text-right">
-                      <button type="submit" className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all">GUARDAR EN CATÁLOGO</button>
-                   </div>
-                 </div>
-               </form>
-            </div>
-
-            <div id="pdf-content" className="p-8 print:p-0">
-               <style>{`@media print { @page { size: landscape; margin: 10mm; } }`}</style>
-               <div className="hidden print:block mb-8">
-                 <ReportHeader />
-                 <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2">Catálogo de Inventario y Existencias</h1>
-                 <p className="text-sm font-bold text-gray-500 uppercase mt-2">FECHA DE EMISIÓN: {getTodayDate()}</p>
-               </div>
-
-               <div data-html2canvas-ignore="true" className="relative max-w-2xl mb-8 print:hidden">
-                 <Search className="absolute left-4 top-4 text-gray-400" size={18} />
-                 <input type="text" placeholder="BUSCAR INSUMO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
-               </div>
-               <div className="overflow-x-auto rounded-xl print:border print:border-black print:rounded-none">
-                 <table className="w-full text-left whitespace-nowrap">
-                   <thead className="bg-gray-100 border-b-2 border-gray-200 print:border-black">
-                     <tr className="uppercase font-black text-gray-800 text-[10px] tracking-widest print:text-black">
-                       <th className="py-4 px-4">Código</th>
-                       <th className="py-4 px-4">Descripción / Categoría</th>
-                       <th className="py-4 px-4 text-center">Costo Unit.</th>
-                       <th className="py-4 px-4 text-right">Stock Actual</th>
-                       <th className="py-4 px-4 text-center print:hidden">Acciones</th>
-                     </tr>
-                   </thead>
-                   <tbody className="divide-y divide-gray-100 print:divide-black">
-                     {filteredInventory.map(inv => (
-                       <tr key={inv.id} className="hover:bg-gray-50 transition-colors group">
-                          <td className="py-4 px-4 font-black text-orange-600 text-xs print:text-black">{inv.id}</td>
-                          <td className="py-4 px-4 font-black uppercase text-xs text-black">{inv.desc}<span className="block text-[9px] font-bold text-gray-500 mt-1 print:text-black">{inv.category}</span></td>
-                          <td className="py-4 px-4 text-center font-bold text-gray-600 print:text-black">${formatNum(inv.cost)}</td>
-                          <td className="py-4 px-4 text-right font-black text-blue-600 text-lg print:text-black">{formatNum(inv.stock)} <span className="text-xs text-gray-400 print:text-black">{inv.unit}</span></td>
-                          <td className="py-4 px-4 text-center print:hidden">
-                            <button onClick={()=>handleDeleteInvItem(inv.id)} className="p-2 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 transition-colors"><Trash2 size={16}/></button>
-                          </td>
-                       </tr>
-                     ))}
-                     {filteredInventory.length === 0 && <tr><td colSpan="5" className="p-10 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin artículos registrados</td></tr>}
-                   </tbody>
-                 </table>
-               </div>
-            </div>
-          </div>
-        )}
-
-        {/* VISTAS DE REGISTRO DE MOVIMIENTOS (CARGO, DESCARGO, AJUSTE) */}
-        {['cargo', 'descargo', 'ajuste'].includes(invView) && (
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
-               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter">
-                  <ArrowRightLeft className="text-orange-500" size={24}/> 
-                  {invView === 'cargo' && 'Registrar Cargo (Entrada)'}
-                  {invView === 'descargo' && 'Registrar Descargo (Salida)'}
-                  {invView === 'ajuste' && 'Registrar Ajuste'}
-               </h2>
-            </div>
-            <div className="p-8">
-               <form onSubmit={handleSaveMovement} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-xl space-y-6 max-w-4xl mx-auto">
-                  <div className="bg-orange-50 p-4 rounded-xl border border-orange-200 text-center mb-6">
-                     <p className="text-[10px] font-black text-orange-800 uppercase tracking-widest">Atención</p>
-                     <p className="text-xs font-bold text-orange-600 uppercase">Los movimientos afectan directamente el catálogo y el Kardex según Art. 177 LISLR.</p>
-                  </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                     <div>
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tipo de Operación</label>
-                       <select required value={newMovementForm.type} onChange={e=>setNewMovementForm({...newMovementForm, type: e.target.value})} className={`w-full border-2 rounded-xl p-4 font-black text-sm uppercase outline-none transition-colors ${newMovementForm.type === 'ENTRADA' || newMovementForm.type === 'AJUSTE (POSITIVO)' ? 'border-green-200 bg-green-50 text-green-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
-                          {invView === 'cargo' && <option value="ENTRADA">ENTRADA (COMPRA/PRODUCCIÓN)</option>}
-                          {invView === 'descargo' && <>
-                             <option value="SALIDA">SALIDA (VENTA/DESPACHO)</option>
-                             <option value="AUTOCONSUMO">AUTOCONSUMO (USO INTERNO)</option>
-                          </>}
-                          {invView === 'ajuste' && <>
-                             <option value="AJUSTE (POSITIVO)">AJUSTE FÍSICO (+ SOBRANTE)</option>
-                             <option value="AJUSTE (NEGATIVO)">AJUSTE FÍSICO (- FALTANTE/MERMA)</option>
-                          </>}
-                       </select>
-                     </div>
-                     <div>
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                       <input type="date" required value={newMovementForm.date} onChange={e=>setNewMovementForm({...newMovementForm, date: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-sm outline-none transition-colors text-black" />
-                     </div>
-                     
-                     <div className="md:col-span-2">
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Ítem del Inventario</label>
-                       <select required value={newMovementForm.itemId} onChange={e=>{
-                          const item = (inventory || []).find(i=>i.id===e.target.value);
-                          setNewMovementForm({...newMovementForm, itemId: e.target.value, cost: item ? item.cost : ''});
-                       }} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black uppercase text-xs outline-none transition-colors">
-                          <option value="">Seleccione...</option>
-                          {(inventory || []).map(i => <option key={i.id} value={i.id}>{i.id} - {i.desc} (Stock: {i.stock} {i.unit})</option>)}
-                       </select>
-                     </div>
-
-                     <div>
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
-                       <input type="number" step="0.01" required value={newMovementForm.qty} onChange={e=>setNewMovementForm({...newMovementForm, qty: e.target.value})} placeholder="0.00" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black" />
-                     </div>
-                     <div>
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Costo Unitario ($) - Opcional para actualizar</label>
-                       <input type="number" step="0.01" value={newMovementForm.cost} onChange={e=>setNewMovementForm({...newMovementForm, cost: e.target.value})} placeholder="0.00" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black" />
-                     </div>
-
-                     <div className="md:col-span-2">
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Documento Referencia (Factura, OP, Guía)</label>
-                       <input type="text" required value={newMovementForm.reference} onChange={e=>setNewMovementForm({...newMovementForm, reference: e.target.value.toUpperCase()})} placeholder="EJ: FACT-001 o OP-005" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-xs uppercase outline-none transition-colors" />
-                     </div>
-                     <div className="md:col-span-2">
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones o Notas</label>
-                       <input type="text" value={newMovementForm.notes} onChange={e=>setNewMovementForm({...newMovementForm, notes: e.target.value.toUpperCase()})} placeholder="Opcional" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-xs uppercase outline-none transition-colors" />
-                     </div>
-                  </div>
-
-                  <div className="flex justify-end pt-6 mt-6 border-t border-gray-100">
-                     <button type="submit" className="bg-black text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all tracking-widest flex items-center gap-2"><CheckCircle2 size={18}/> PROCESAR MOVIMIENTO</button>
-                  </div>
-               </form>
-            </div>
-          </div>
-        )}
-
-        {/* VISTA 5: KARDEX / HISTORIAL */}
-        {invView === 'kardex' && (
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
-            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center print:hidden">
-               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><History className="text-orange-500" size={24}/> Kardex / Historial de Movimientos</h2>
-               <button onClick={() => handleExportPDF('Kardex_Inventario', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
-            </div>
-
-            <div className="p-8 print:p-0" id="pdf-content">
-               <style>{`@media print { @page { size: landscape; margin: 10mm; } }`}</style>
-               <div className="hidden print:block mb-8">
-                 <ReportHeader />
-                 <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2">REPORTE DE MOVIMIENTOS POR UNIDADES</h1>
-                 <p className="text-sm font-bold text-gray-500 uppercase mt-2">AL: {getTodayDate()}</p>
-               </div>
-
-               <div data-html2canvas-ignore="true" className="relative max-w-2xl mb-8 print:hidden">
-                 <Search className="absolute left-4 top-4 text-gray-400" size={18} />
-                 <input type="text" placeholder="BUSCAR POR CÓDIGO, REFERENCIA O TIPO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
-               </div>
-
-               <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-                 <table className="w-full text-left whitespace-nowrap text-xs">
-                   <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
-                     <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                       <th className="py-3 px-4 border-r print:border-black">Fecha / Usuario</th>
-                       <th className="py-3 px-4 border-r print:border-black">Referencia / Notas</th>
-                       <th className="py-3 px-4 border-r print:border-black">Tipo Operación</th>
-                       <th className="py-3 px-4 border-r print:border-black">Ítem / Código</th>
-                       <th className="py-3 px-4 text-center border-r print:border-black">Cant.</th>
-                       <th className="py-3 px-4 text-right border-r print:border-black">Costo U.</th>
-                       <th className="py-3 px-4 text-right border-r print:border-black">Valor Total</th>
-                       <th className="py-3 px-4 text-center print:hidden">Acciones</th>
-                     </tr>
-                   </thead>
-                   <tbody className="divide-y divide-gray-100 text-black print:divide-black">
-                     {filteredMovements.map(m => {
-                        const isPos = m.type === 'ENTRADA' || m.type === 'AJUSTE (POSITIVO)';
-                        return (
-                         <tr key={m.id} className="hover:bg-gray-50 transition-colors">
-                           <td className="py-3 px-4 font-bold border-r print:border-black">{m.date}<br/><span className="text-[9px] text-gray-500 print:text-black">{m.user}</span></td>
-                           <td className="py-3 px-4 font-black border-r print:border-black">{m.reference}<br/><span className="text-[9px] font-bold text-gray-400 print:text-black">{m.notes}</span></td>
-                           <td className="py-3 px-4 border-r print:border-black"><span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${isPos ? 'bg-green-100 text-green-700 print:border print:border-black print:bg-transparent print:text-black' : 'bg-red-100 text-red-700 print:border print:border-black print:bg-transparent print:text-black'}`}>{m.type}</span></td>
-                           <td className="py-3 px-4 font-bold border-r print:border-black">{m.itemId}<br/><span className="text-[9px] font-black print:text-black">{m.itemName}</span></td>
-                           <td className={`py-3 px-4 text-center font-black text-sm border-r print:border-black ${isPos ? 'text-green-600' : 'text-red-600'} print:text-black`}>{isPos ? '+' : '-'}{formatNum(m.qty)}</td>
-                           <td className="py-3 px-4 text-right font-bold text-gray-600 border-r print:border-black print:text-black">${formatNum(m.cost)}</td>
-                           <td className="py-3 px-4 text-right font-black border-r print:border-black print:text-black">${formatNum(m.totalValue)}</td>
-                           <td className="py-3 px-4 text-center print:hidden">
-                              <button onClick={() => handleDeleteMovement(m)} className="p-2 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 transition-colors" title="Borrar/Revertir Movimiento"><Trash2 size={16}/></button>
-                           </td>
-                         </tr>
-                        );
-                     })}
-                     {filteredMovements.length === 0 && <tr><td colSpan="8" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin movimientos registrados</td></tr>}
-                   </tbody>
-                 </table>
-               </div>
-            </div>
-          </div>
-        )}
-
-        {/* VISTA 6: REPORTE GENERAL ART 177 LISLR */}
-        {invView === 'reporte177' && (
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
-            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center print:hidden">
-               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Reporte General (Art. 177 LISLR)</h2>
-               <div className="flex gap-2">
-                 <button onClick={() => handleExportExcel('reporte-177-table', 'Reporte_Inventario_177')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXPORTAR EXCEL</button>
-                 <button onClick={() => handleExportPDF('Reporte_Art_177', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
-               </div>
-            </div>
-
-            <div className="p-8 print:p-0" id="pdf-content">
-               <style>{`
-                 @media print { 
-                   @page { size: landscape; margin: 5mm; } 
-                   .print-tiny { font-size: 7px !important; }
-                   .print-p-1 { padding: 2px !important; }
-                 }
-               `}</style>
-               
-               <div data-html2canvas-ignore="true" className="flex gap-4 mb-8 print:hidden items-end">
-                 <div>
-                   <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes a Reportar</label>
-                   <select value={reportMonth} onChange={e=>setReportMonth(parseInt(e.target.value))} className="w-48 border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs uppercase outline-none">
-                     <option value="1">Enero</option><option value="2">Febrero</option><option value="3">Marzo</option><option value="4">Abril</option><option value="5">Mayo</option><option value="6">Junio</option><option value="7">Julio</option><option value="8">Agosto</option><option value="9">Septiembre</option><option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
-                   </select>
-                 </div>
-                 <div>
-                   <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Año</label>
-                   <input type="number" value={reportYear} onChange={e=>setReportYear(parseInt(e.target.value))} className="w-32 border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none text-center" />
-                 </div>
-               </div>
-
-               <div className="hidden print:block mb-6">
-                 <ReportHeader />
-                 <h1 className="text-xl font-black text-black uppercase border-b-2 border-orange-500 pb-1">REPORTE GENERAL DE INVENTARIO (ART. 177 LISLR)</h1>
-                 <p className="text-xs font-bold text-gray-500 uppercase mt-1">PERÍODO: {reportMonth.toString().padStart(2, '0')} / {reportYear}</p>
-               </div>
-
-               <div className="overflow-x-auto print:overflow-hidden border-2 border-black">
-                 <table id="reporte-177-table" className="w-full text-left text-[9px] border-collapse whitespace-nowrap text-black print-tiny">
-                   <thead>
-                     <tr>
-                       <th rowSpan="2" className="border-r-2 border-b-2 border-black p-3 bg-gray-200 font-black uppercase text-center w-1/5 print-p-1">PRODUCTO / CÓDIGO</th>
-                       <th colSpan="3" className="border-r-2 border-b-2 border-black p-2 text-center bg-gray-100 font-black uppercase print-p-1">INVENTARIO INICIAL</th>
-                       <th colSpan="3" className="border-r-2 border-b-2 border-black p-2 text-center bg-green-50 font-black uppercase print-p-1">ENTRADAS</th>
-                       <th colSpan="3" className="border-r-2 border-b-2 border-black p-2 text-center bg-red-50 font-black uppercase print-p-1">SALIDAS / AUTOCONSUMO</th>
-                       <th colSpan="3" className="border-b-2 border-black p-2 text-center bg-blue-50 font-black uppercase print-p-1">INVENTARIO FINAL</th>
-                     </tr>
-                     <tr className="bg-gray-50 font-bold uppercase text-[8px] text-center border-b-2 border-black print-tiny">
-                       <th className="border-r border-black p-2 print-p-1">Cant.</th>
-                       <th className="border-r border-black p-2 print-p-1">Costo U.</th>
-                       <th className="border-r-2 border-black p-2 print-p-1">Total ($)</th>
-                       
-                       <th className="border-r border-black p-2 print-p-1">Cant.</th>
-                       <th className="border-r border-black p-2 print-p-1">Costo Prom.</th>
-                       <th className="border-r-2 border-black p-2 print-p-1">Total ($)</th>
-                       
-                       <th className="border-r border-black p-2 print-p-1">Cant.</th>
-                       <th className="border-r border-black p-2 print-p-1">Costo Prom.</th>
-                       <th className="border-r-2 border-black p-2 print-p-1">Total ($)</th>
-                       
-                       <th className="border-r border-black p-2 print-p-1">Cant.</th>
-                       <th className="border-r border-black p-2 print-p-1">Costo U.</th>
-                       <th className="p-2 print-p-1">Total ($)</th>
-                     </tr>
-                   </thead>
-                   <tbody>
-                     {reporte177Data.map((cat, catIndex) => {
-                        const catInitialTotal = cat.items.reduce((sum, item) => sum + item.initialTotal, 0);
-                        const catEntradasTotal = cat.items.reduce((sum, item) => sum + item.monthEntradasTotal, 0);
-                        const catSalidasTotal = cat.items.reduce((sum, item) => sum + item.monthSalidasTotal, 0);
-                        const catFinalTotal = cat.items.reduce((sum, item) => sum + item.invFinalTotal, 0);
-
-                        grandInitialTotal += catInitialTotal;
-                        grandEntradasTotal += catEntradasTotal;
-                        grandSalidasTotal += catSalidasTotal;
-                        grandFinalTotal += catFinalTotal;
-
-                        return (
-                           <React.Fragment key={catIndex}>
-                              <tr>
-                                 <td colSpan="13" className="bg-black text-white p-2 font-black uppercase tracking-widest border-b-2 border-black print-p-1">Categoría: {cat.category}</td>
-                              </tr>
-                              {cat.items.map(item => (
-                                 <tr key={item.id} className="border-b border-gray-300 print:border-black hover:bg-gray-50">
-                                   <td className="p-2 border-r-2 border-black font-bold uppercase print-p-1">{item.desc} <span className="text-gray-500 block text-[7px]">{item.id}</span></td>
-                                   
-                                   <td className="p-2 border-r border-black text-center font-bold print-p-1">{formatNum(item.initialStock)} {item.unit}</td>
-                                   <td className="p-2 border-r border-black text-right print-p-1">${formatNum(item.cost)}</td>
-                                   <td className="p-2 border-r-2 border-black text-right font-black bg-gray-50 print-p-1">${formatNum(item.initialTotal)}</td>
-                                   
-                                   <td className="p-2 border-r border-black text-center font-bold text-green-700 print-p-1">{formatNum(item.monthEntradasQty)} {item.unit}</td>
-                                   <td className="p-2 border-r border-black text-right text-green-700 print-p-1">${formatNum(item.monthEntradasProm)}</td>
-                                   <td className="p-2 border-r-2 border-black text-right font-black bg-green-50 print-p-1">${formatNum(item.monthEntradasTotal)}</td>
-                                   
-                                   <td className="p-2 border-r border-black text-center font-bold text-red-700 print-p-1">{formatNum(item.monthSalidasQty)} {item.unit}</td>
-                                   <td className="p-2 border-r border-black text-right text-red-700 print-p-1">${formatNum(item.monthSalidasProm)}</td>
-                                   <td className="p-2 border-r-2 border-black text-right font-black bg-red-50 print-p-1">${formatNum(item.monthSalidasTotal)}</td>
-                                   
-                                   <td className="p-2 border-r border-black text-center font-black text-blue-700 print-p-1">{formatNum(item.invFinalQty)} {item.unit}</td>
-                                   <td className="p-2 border-r border-black text-right font-bold text-blue-700 print-p-1">${formatNum(item.invFinalCost)}</td>
-                                   <td className="p-2 text-right font-black bg-blue-50 text-xs print-p-1">${formatNum(item.invFinalTotal)}</td>
-                                 </tr>
-                              ))}
-                              {/* TOTAL DE LA CATEGORÍA */}
-                              <tr className="bg-gray-200 font-black border-y-2 border-black">
-                                <td className="p-2 border-r-2 border-black text-right uppercase print-p-1">TOTAL {cat.category}</td>
-                                <td colSpan="2" className="border-r border-black print-p-1"></td>
-                                <td className="p-2 border-r-2 border-black text-right print-p-1">${formatNum(catInitialTotal)}</td>
-                                <td colSpan="2" className="border-r border-black print-p-1"></td>
-                                <td className="p-2 border-r-2 border-black text-right text-green-700 print-p-1">${formatNum(catEntradasTotal)}</td>
-                                <td colSpan="2" className="border-r border-black print-p-1"></td>
-                                <td className="p-2 border-r-2 border-black text-right text-red-700 print-p-1">${formatNum(catSalidasTotal)}</td>
-                                <td colSpan="2" className="border-r border-black print-p-1"></td>
-                                <td className="p-2 text-right text-blue-700 text-xs print-p-1">${formatNum(catFinalTotal)}</td>
-                              </tr>
-                           </React.Fragment>
-                        );
-                     })}
-                   </tbody>
-                   <tfoot>
-                     <tr className="bg-black text-white font-black text-[11px] print-tiny">
-                       <td className="p-3 border-r-2 border-black text-right uppercase print-p-1">GRAN TOTAL INVENTARIO</td>
-                       <td colSpan="2" className="border-r border-black print-p-1"></td>
-                       <td className="p-3 border-r-2 border-black text-right print-p-1">${formatNum(grandInitialTotal)}</td>
-                       <td colSpan="2" className="border-r border-black print-p-1"></td>
-                       <td className="p-3 border-r-2 border-black text-right text-green-300 print-p-1">${formatNum(grandEntradasTotal)}</td>
-                       <td colSpan="2" className="border-r border-black print-p-1"></td>
-                       <td className="p-3 border-r-2 border-black text-right text-red-300 print-p-1">${formatNum(grandSalidasTotal)}</td>
-                       <td colSpan="2" className="border-r border-black print-p-1"></td>
-                       <td className="p-3 text-right text-blue-300 text-[13px] print-p-1">${formatNum(grandFinalTotal)}</td>
-                     </tr>
-                   </tfoot>
-                 </table>
-               </div>
-            </div>
-          </div>
-        )}
-
-      </div>
-    );
-  };
-
   const renderVentasModule = () => {
     const filteredClients = (clients || []).filter(c => (c.name || '').toUpperCase().includes(clientSearchTerm.toUpperCase()) || (c.rif || '').toUpperCase().includes(clientSearchTerm.toUpperCase()));
     const filteredInvoices = (invoices || []).filter(inv => (inv.documento || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()) || (inv.clientName || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()));
 
     if (showGeneralInvoicesReport) {
-      const totalBaseGeneral = invoices.reduce((acc, curr) => acc + parseNum(curr.montoBase), 0);
-      const totalIvaGeneral = invoices.reduce((acc, curr) => acc + parseNum(curr.iva), 0);
-      const totalGeneral = invoices.reduce((acc, curr) => acc + parseNum(curr.total), 0);
+      const totalBaseGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr.montoBase), 0);
+      const totalIvaGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr.iva), 0);
+      const totalGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr.total), 0);
       return (
         <div id="pdf-content" className="bg-white p-8 min-h-screen print:p-0 text-black">
           <div data-html2canvas-ignore="true" className="flex justify-between mb-4 print:hidden"><button onClick={() => setShowGeneralInvoicesReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF('Reporte_General_Facturas', true)} className="bg-black text-white px-6 py-2 rounded-xl flex items-center gap-2 font-black text-xs uppercase"><Printer size={16}/> Exportar PDF</button></div>
@@ -1013,9 +638,8 @@ export default function App() {
                         <button type="button" onClick={()=>setShowNewInvoicePanel(false)} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
                       </div>
                     </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                      <div>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                      <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
                         <select required value={newInvoiceForm.clientRif} onChange={e=>handleInvoiceFormChange('clientRif', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
                           <option value="">Seleccione...</option>
@@ -1023,39 +647,14 @@ export default function App() {
                         </select>
                       </div>
                       <div>
-                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">OP Asociada (Opcional)</label>
-                        <select value={newInvoiceForm.opAsignada} onChange={e=>handleInvoiceFormChange('opAsignada', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black" disabled={!newInvoiceForm.clientName}>
-                          <option value="">Seleccione OP...</option>
-                          {(requirements || []).filter(r => r.client === newInvoiceForm.clientName).sort((a,b) => b.timestamp - a.timestamp).map(r => (
-                            <option key={r.id} value={r.id}>OP-{String(r.id).replace('OP-','').padStart(5,'0')} - {r.fecha}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="mb-6">
-                      <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Descripción para Factura</label>
-                      <textarea value={newInvoiceForm.productoMaquilado} onChange={e=>handleInvoiceFormChange('productoMaquilado', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black uppercase" rows="2" placeholder="Escriba la descripción o seleccione una OP arriba..."></textarea>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                      <div>
-                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Aplica IVA</label>
-                        <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black text-center">
-                          <option value="SI">CON IVA (16%)</option>
-                          <option value="NO">SIN IVA (0%)</option>
-                        </select>
-                      </div>
-                      <div>
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Base (USD)</label>
                         <input type="number" step="0.01" required className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black text-center" value={newInvoiceForm.montoBase} onChange={e=>handleInvoiceFormChange('montoBase', e.target.value)} />
                       </div>
-                      <div className="md:col-span-2">
-                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Total</label>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Total con IVA</label>
                         <div className="p-4 bg-orange-50 border-2 border-orange-200 rounded-2xl font-black text-orange-700 text-lg text-center shadow-inner">${formatNum(newInvoiceForm.total)}</div>
                       </div>
                     </div>
-                    
                     <div className="flex justify-end pt-4"><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR FACTURA DE VENTA</button></div>
                   </form>
                 </div>
@@ -1136,7 +735,7 @@ export default function App() {
         {/* CALCULADORA / SIMULADOR OP */}
         {prodView === 'calculadora' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none print:m-0 print:p-0 print:block print:w-full">
-             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center print:hidden">
+            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center print:hidden">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Calculator className="text-orange-500" size={24}/> Simulador de Producción</h2>
                <button onClick={() => handleExportPDF('Simulador_Produccion', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
             </div>
@@ -1323,7 +922,7 @@ export default function App() {
           </div>
         )}
 
-        {/* INGENIERIA (FORMULAS) - MODIFICADO CON ETIQUETA "NUEVO" Y DETALLES */}
+        {/* INGENIERIA (FORMULAS) - CON ETIQUETA "NUEVO" Y DETALLES */}
         {prodView === 'requisiciones' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className={"bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden " + (recipeEditReqId ? 'lg:col-span-2' : 'lg:col-span-3')}>
@@ -1585,7 +1184,7 @@ export default function App() {
            </div>
            <div>
               <p className="mb-2"><span className="w-32 inline-block font-black text-right pr-2">FECHA:</span> {req.fecha || getSafeDate(req.timestamp)}</p>
-              <p><span className="w-32 inline-block font-black text-right pr-2">ORDEN DE TRABAJO:</span> #{String(req.id).replace('OP-', '').padStart(5, '0')}</p>
+              <p><span className="w-32 inline-block font-black text-right pr-2">META (KG):</span> {formatNum(req.requestedKg)} KG</p>
            </div>
         </div>
 
@@ -1612,8 +1211,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* --- NUEVOS CAMPOS TÉCNICOS (DISEÑO PROFESIONAL CON RECUADROS) --- */}
-        
         {/* EXTRUSIÓN */}
         <div className="border-2 border-black rounded-xl mb-4 overflow-hidden">
            <div className="bg-gray-200 font-black text-[10px] uppercase text-center p-1.5 border-b-2 border-black">Parámetros de Extrusión</div>
