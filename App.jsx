@@ -35,7 +35,7 @@ class ErrorBoundary extends React.Component {
 // ============================================================================
 // CONFIGURACIÓN DE FIREBASE BLINDADA
 // ============================================================================
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+const firebaseConfig = {
   apiKey: "AIzaSyBri2uZAaxsH4S0OpqhYvXB4wfCqo4g3sk",
   authDomain: "erp-gyb-supply.firebaseapp.com",
   projectId: "erp-gyb-supply",
@@ -115,7 +115,6 @@ export default function App() {
   const [showSingleReqReport, setShowSingleReqReport] = useState(null);
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
 
-  // Formularios de Ventas (RESTURADOS AL ORIGINAL FUNCIONAL)
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [editingClientId, setEditingClientId] = useState(null);
@@ -124,10 +123,9 @@ export default function App() {
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
 
-  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: 'BOLSAS', vendedor: '', montoBase: '', iva: '', total: '' };
+  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
-  // --- ESTADOS PRODUCCIÓN ---
   const initialPhaseForm = { 
     date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '',
     operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '',
@@ -158,7 +156,7 @@ export default function App() {
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
   // ============================================================================
-  // GENERADORES DE EXPORTACIÓN
+  // GENERADORES DE EXPORTACIÓN (CERRADOS)
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content');
@@ -224,7 +222,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA INVENTARIO (CERRADO)
+  // LOGICA INVENTARIO (SELLADO)
   // ============================================================================
   const handleSaveInvItem = async (e) => {
     e.preventDefault(); if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
@@ -267,7 +265,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA VENTAS Y FACTURACIÓN (RESTAURADO A VERSIÓN ROBUSTA ORIGINAL)
+  // LOGICA VENTAS Y FACTURACIÓN (SELLADO A VERSIÓN ORIGINAL Y FUNCIONAL)
   // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault(); if (!newClientForm.rif || !newClientForm.razonSocial) return setDialog({ title: 'Aviso', text: 'RIF y Razón Social obligatorios.', type: 'alert' });
@@ -377,8 +375,12 @@ export default function App() {
   };
 
   const handleAddPhaseIng = () => {
-    if (!phaseIngId || !phaseIngQty) return; const ing = (inventory || []).find(i => i.id === phaseIngId); if (!ing) return;
-    setPhaseForm({ ...phaseForm, insumos: [...(phaseForm.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }] }); setPhaseIngId(''); setPhaseIngQty('');
+    // Si no se ha escrito una cantidad específica o un ID válido, no hacer nada
+    if (!phaseIngId || !phaseIngQty) return; 
+    const ing = (inventory || []).find(i => i.id === phaseIngId); 
+    if (!ing) return;
+    setPhaseForm({ ...phaseForm, insumos: [...(phaseForm.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }] }); 
+    setPhaseIngId(''); setPhaseIngQty('');
   };
 
   const handleSavePhase = async (e) => {
@@ -622,7 +624,7 @@ export default function App() {
                 </div>
               </form>
             </div>
-            <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR POR NOMBRE O RIF..." value={clientSearchTerm} onChange={e=>setClientSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4">RIF</th><th className="py-4 px-4 w-1/2">Razón Social</th><th className="py-4 px-4">Contacto</th><th className="py-4 px-4 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{filteredClients.map(c => (<tr key={c.rif}><td className="py-5 px-4 font-black">{c.rif}</td><td className="py-5 px-4"><span className="font-black uppercase block text-sm">{c.name}</span><span className="text-[10px] font-bold text-gray-400 block">{c.direccion}</span></td><td className="py-5 px-4"><span className="font-bold text-gray-700 text-xs">{c.personaContacto}</span></td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>startEditClient(c)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div></div>
+            <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR POR NOMBRE O RIF..." value={clientSearchTerm} onChange={e=>setClientSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4">RIF</th><th className="py-4 px-4 w-1/2">Razón Social</th><th className="py-4 px-4">Contacto</th><th className="py-4 px-4 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(filteredClients || []).map(c => (<tr key={c.rif}><td className="py-5 px-4 font-black">{c.rif}</td><td className="py-5 px-4"><span className="font-black uppercase block text-sm">{c.name}</span><span className="text-[10px] font-bold text-gray-400 block">{c.direccion}</span></td><td className="py-5 px-4"><span className="font-bold text-gray-700 text-xs">{c.personaContacto}</span></td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>startEditClient(c)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div></div>
           </div>
         )}
         {ventasView === 'facturacion' && (
@@ -638,6 +640,7 @@ export default function App() {
                         <button type="button" onClick={()=>setShowNewInvoicePanel(false)} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
                       </div>
                     </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                       <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
@@ -655,6 +658,7 @@ export default function App() {
                         <div className="p-4 bg-orange-50 border-2 border-orange-200 rounded-2xl font-black text-orange-700 text-lg text-center shadow-inner">${formatNum(newInvoiceForm.total)}</div>
                       </div>
                     </div>
+                    
                     <div className="flex justify-end pt-4"><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR FACTURA DE VENTA</button></div>
                   </form>
                 </div>
@@ -1021,7 +1025,7 @@ export default function App() {
         {prodView === 'fases_produccion' && (
           <div className="space-y-6">
             {!selectedPhaseReqId ? (
-              <div className="p-12 bg-white rounded-3xl border border-gray-200 shadow-sm text-center animate-in fade-in"><div className="bg-black p-5 rounded-full inline-block mb-6 text-orange-500 shadow-lg"><Factory size={40}/></div><h2 className="text-2xl font-black uppercase text-black tracking-tighter mb-2">Control de Producción Activo</h2><p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-10">Reporte el consumo de insumos y mermas por fase</p><div className="mt-12 border-t border-gray-200 pt-8 overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-center text-black tracking-widest">Acción de Planta</th></tr></thead><tbody className="divide-y divide-gray-100">{(activeOrders || []).map(r => (<tr key={r.id} className="group hover:bg-gray-50 transition-colors"><td className="p-4 font-black text-orange-500 text-lg">#{String(r.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-sm text-black">{r.client}<br/><span className="text-[10px] text-gray-400 font-bold">{r.desc}</span></td><td className="p-4 text-center"><div className="flex justify-center gap-2"><button onClick={() => setShowWorkOrder(r.id)} className="bg-white border-2 border-gray-100 text-gray-700 px-4 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm hover:bg-gray-50 transition-all" title="Imprimir"><Printer size={16}/> ORDEN TRABAJO</button><button onClick={() => { setSelectedPhaseReqId(r.id); setActivePhaseTab('extrusion'); }} className="bg-black text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-md hover:bg-slate-800 transition-all"><PlayCircle size={16}/> ENTRAR A FASES</button></div></td></tr>))}</tbody></table></div></div>
+              <div className="p-12 bg-white rounded-3xl border border-gray-200 shadow-sm text-center animate-in fade-in"><div className="bg-black p-5 rounded-full inline-block mb-6 text-orange-500 shadow-lg"><Factory size={40}/></div><h2 className="text-2xl font-black uppercase text-black tracking-tighter mb-2">Control de Producción Activo</h2><p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-10">Reporte el consumo de insumos y mermas por fase</p><div className="mt-12 border-t border-gray-200 pt-8 overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-center text-black tracking-widest">Acción de Planta</th></tr></thead><tbody className="divide-y divide-gray-100">{(requirements || []).filter(r => ['LISTO PARA PRODUCIR', 'EN PROCESO'].includes(r.status)).map(r => (<tr key={r.id} className="group hover:bg-gray-50 transition-colors"><td className="p-4 font-black text-orange-500 text-lg">#{String(r.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-sm text-black">{r.client}<br/><span className="text-[10px] text-gray-400 font-bold">{r.desc}</span></td><td className="p-4 text-center"><div className="flex justify-center gap-2"><button onClick={() => setShowWorkOrder(r.id)} className="bg-white border-2 border-gray-100 text-gray-700 px-4 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm hover:bg-gray-50 transition-all" title="Imprimir"><Printer size={16}/> ORDEN TRABAJO</button><button onClick={() => { setSelectedPhaseReqId(r.id); setActivePhaseTab('extrusion'); }} className="bg-black text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-md hover:bg-slate-800 transition-all"><PlayCircle size={16}/> ENTRAR A FASES</button></div></td></tr>))}</tbody></table></div></div>
             ) : (() => {
               const req = (requirements || []).find(r => r.id === selectedPhaseReqId); if (!req) return null;
               const cPhase = req.production?.[activePhaseTab] || { batches: [], isClosed: false };
@@ -1157,45 +1161,74 @@ export default function App() {
     );
   };
 
-  // --- VISTAS DE IMPRESIÓN (PRODUCCIÓN - CORREGIDAS AL DISEÑO ORIGINAL) ---
+  // --- VISTAS DE IMPRESIÓN (PRODUCCIÓN - CORREGIDAS AL DISEÑO ORIGINAL EN UNA HOJA) ---
   const renderWorkOrder = () => {
     const req = (requirements || []).find(r => r.id === showWorkOrder); if (!req) return null;
+
+    // Calculamos las fechas automáticamente
+    const getFechaEntrada = (r) => {
+       if (!r.production) return 'PENDIENTE';
+       const batches = [];
+       ['extrusion', 'impresion', 'sellado'].forEach(f => {
+          if (r.production[f]?.batches) batches.push(...r.production[f].batches);
+       });
+       if (batches.length === 0) return 'PENDIENTE';
+       batches.sort((a, b) => a.timestamp - b.timestamp);
+       return batches[0].date;
+    };
+
+    const getFechaSalida = (r) => {
+       if (r.status !== 'COMPLETADO') return 'EN PROCESO';
+       const batches = [];
+       ['extrusion', 'impresion', 'sellado'].forEach(f => {
+          if (r.production[f]?.batches) batches.push(...r.production[f].batches);
+       });
+       if (batches.length === 0) return 'COMPLETADO';
+       batches.sort((a, b) => b.timestamp - a.timestamp);
+       return batches[0].date;
+    };
+
     return (
-      <div id="pdf-content" className="bg-white p-8 print:p-0 min-h-screen text-black"><style>{`@media print { @page { size: portrait; margin: 10mm; } }`}</style>
-        <div data-html2canvas-ignore="true" className="flex justify-between mb-4 print:hidden bg-gray-50 p-4 rounded-xl border border-gray-200">
-           <button onClick={() => setShowWorkOrder(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2.5 rounded-xl hover:bg-gray-200">VOLVER</button>
-           <button onClick={() => handleExportPDF(`OP_${req.id}`)} className="bg-black text-white px-8 py-3 rounded-xl font-black flex items-center gap-2 shadow-lg text-xs uppercase transition-all hover:bg-gray-800"><Printer size={16} /> EXPORTAR PDF</button>
+      <div id="pdf-content" className="bg-white p-6 print:p-0 min-h-screen text-black"><style>{`@media print { @page { size: portrait; margin: 5mm; } }`}</style>
+        <div data-html2canvas-ignore="true" className="flex justify-between mb-2 print:hidden bg-gray-50 p-2 rounded-xl border border-gray-200">
+           <button onClick={() => setShowWorkOrder(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2 rounded-xl hover:bg-gray-200">VOLVER</button>
+           <button onClick={() => handleExportPDF(`OP_${req.id}`)} className="bg-black text-white px-8 py-2 rounded-xl font-black flex items-center gap-2 shadow-lg text-xs uppercase transition-all hover:bg-gray-800"><Printer size={16} /> EXPORTAR PDF</button>
         </div>
         
         {/* HEADER */}
-        <div className="flex justify-between items-end border-b-2 border-black pb-2 mb-4">
+        <div className="flex justify-between items-end border-b-2 border-black pb-1 mb-2">
            <div>
-              <div className="flex items-center -mb-1"><span className="text-black font-black text-4xl leading-none">G</span><span className="text-orange-500 font-black text-xl mx-0.5">&amp;</span><span className="text-black font-black text-4xl leading-none">B</span></div>
-              <p className="text-[7px] font-bold text-orange-500 uppercase tracking-widest mt-1">Servicio y Calidad</p>
+              <div className="flex items-center -mb-1"><span className="text-black font-black text-3xl leading-none">G</span><span className="text-orange-500 font-black text-lg mx-0.5">&amp;</span><span className="text-black font-black text-3xl leading-none">B</span></div>
+              <p className="text-[6px] font-bold text-orange-500 uppercase tracking-widest mt-1">Servicio y Calidad</p>
            </div>
-           <div className="text-center flex-1"><h1 className="text-xl font-black uppercase tracking-widest">ORDEN DE TRABAJO PARA OP.</h1></div>
+           <div className="text-center flex-1"><h1 className="text-lg font-black uppercase tracking-widest">ORDEN DE TRABAJO PARA OP.</h1></div>
         </div>
 
-        {/* INFO GENERAL */}
-        <div className="grid grid-cols-2 text-[10px] font-bold uppercase mb-4 border-b-2 border-black pb-4">
+        {/* INFO GENERAL ACTUALIZADA CON FECHAS AUTOMÁTICAS */}
+        <div className="grid grid-cols-3 text-[9px] font-bold uppercase mb-2 border-b-2 border-black pb-2">
            <div>
-              <p className="mb-2"><span className="w-20 inline-block font-black text-right pr-2">CLIENTE:</span> {req.client}</p>
-              <p><span className="w-20 inline-block font-black text-right pr-2">OP:</span> #{String(req.id).replace('OP-', '').padStart(5, '0')}</p>
+              <p className="mb-1"><span className="w-16 inline-block font-black pr-1">CLIENTE:</span> {req.client}</p>
+              <p className="mb-1"><span className="w-16 inline-block font-black pr-1">OP:</span> #{String(req.id).replace('OP-', '').padStart(5, '0')}</p>
+              <p><span className="w-16 inline-block font-black pr-1">TIPO:</span> {req.tipoProducto || 'N/A'}</p>
            </div>
            <div>
-              <p className="mb-2"><span className="w-32 inline-block font-black text-right pr-2">FECHA:</span> {req.fecha || getSafeDate(req.timestamp)}</p>
-              <p><span className="w-32 inline-block font-black text-right pr-2">META (KG):</span> {formatNum(req.requestedKg)} KG</p>
+              <p className="mb-1"><span className="w-20 inline-block font-black pr-1">EMISIÓN OP:</span> {req.fecha || getSafeDate(req.timestamp)}</p>
+              <p><span className="w-20 inline-block font-black pr-1 text-orange-600">META (KG):</span> <span className="text-orange-600 font-black">{formatNum(req.requestedKg)} KG</span></p>
+           </div>
+           <div>
+              <p className="mb-1"><span className="w-24 inline-block font-black pr-1">FECHA ENTRADA:</span> <span className="text-orange-600">{getFechaEntrada(req)}</span></p>
+              <p><span className="w-24 inline-block font-black pr-1">FECHA SALIDA:</span> <span className={req.status === 'COMPLETADO' ? 'text-green-600' : 'text-gray-500'}>{getFechaSalida(req)}</span></p>
            </div>
         </div>
 
-        {/* TABLA DE RECETA (LA ORIGINAL QUE PEDISTE) */}
-        <div className="border-4 border-black p-4 mb-4 rounded-3xl overflow-hidden">
-          <div className="font-black text-center border-b-2 border-black mb-4 py-1 text-sm bg-gray-100 uppercase">Especificaciones y Fórmula de Extrusión</div>
-          <table className="w-full text-left text-[10px] mb-4">
+        {/* TABLA DE RECETA */}
+        <div className="border-2 border-black p-2 mb-2 rounded-2xl overflow-hidden">
+          <div className="font-black text-center border-b-2 border-black mb-2 py-0.5 text-xs bg-gray-100 uppercase">Especificaciones y Fórmula de Extrusión</div>
+          <table className="w-full text-left text-[9px] mb-2">
             <thead><tr className="font-black uppercase border-b border-black"><td>Insumo / Material</td><td className="text-center">Proporción (%)</td><td className="text-right">Peso Teórico (KG)</td></tr></thead>
             <tbody className="divide-y divide-gray-100">
               {Array.isArray(req.recipe) && req.recipe.map((r, i) => (
-                <tr key={i} className="text-black h-6 align-middle">
+                <tr key={i} className="text-black h-5 align-middle">
                   <td>{(inventory || []).find(inv=>inv.id===r.id)?.desc || r.id}</td>
                   <td className="text-center">{r.percentage ? `${r.percentage}%` : 'N/A'}</td>
                   <td className="text-right font-bold">{formatNum(r.totalQty)} KG</td>
@@ -1203,81 +1236,86 @@ export default function App() {
               ))}
             </tbody>
           </table>
-          <div className="grid grid-cols-4 gap-4 text-center text-[10px] font-black uppercase border-t-2 border-black pt-4 bg-gray-50 p-2">
-            <div>ANCHO<br/><span className="text-base text-orange-600">{req.ancho} CM</span></div>
-            <div>FUELLES<br/><span className="text-base text-orange-600">{req.fuelles || '0'} CM</span></div>
-            <div>LARGO<br/><span className="text-base text-orange-600">{req.largo} CM</span></div>
-            <div>MICRAS<br/><span className="text-base text-orange-600">{req.micras}</span></div>
+          <div className="grid grid-cols-4 gap-2 text-center text-[9px] font-black uppercase border-t-2 border-black pt-2 bg-gray-50">
+            <div>ANCHO<br/><span className="text-sm text-orange-600">{req.ancho} CM</span></div>
+            <div>FUELLES<br/><span className="text-sm text-orange-600">{req.fuelles || '0'} CM</span></div>
+            <div>LARGO<br/><span className="text-sm text-orange-600">{req.largo} CM</span></div>
+            <div>MICRAS<br/><span className="text-sm text-orange-600">{req.micras}</span></div>
           </div>
         </div>
 
         {/* EXTRUSIÓN */}
-        <div className="border-2 border-black rounded-xl mb-4 overflow-hidden">
-           <div className="bg-gray-200 font-black text-[10px] uppercase text-center p-1.5 border-b-2 border-black">Parámetros de Extrusión</div>
-           <div className="p-3 text-[9px] font-bold uppercase grid grid-cols-2 gap-y-3">
-              <div><span className="font-black pr-2">OPERADOR:</span> __________________________</div>
-              <div><span className="font-black pr-2">CANTIDAD KG:</span> __________________________</div>
+        <div className="border-2 border-black rounded-xl mb-2 overflow-hidden">
+           <div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Parámetros de Extrusión</div>
+           <div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2">
+              <div><span className="font-black pr-1">OPERADOR:</span> __________________________</div>
+              <div><span className="font-black pr-1">CANTIDAD KG:</span> __________________________</div>
               <div className="col-span-2 flex justify-between">
-                <div><span className="font-black pr-2">TRATADO: 1</span> _____ <span className="ml-4">2</span> _____</div>
-                <div><span className="font-black pr-2">COLOR:</span> {req.color}</div>
+                <div><span className="font-black pr-1">TRATADO: 1</span> _____ <span className="ml-4">2</span> _____</div>
+                <div><span className="font-black pr-1">COLOR:</span> {req.color}</div>
               </div>
               <div className="col-span-2 flex justify-between">
-                 <div><span className="font-black pr-2">MOTOR PRINCIPAL:</span> _________________</div>
-                 <div><span className="font-black pr-2">VENTILADOR:</span> _________________</div>
-                 <div><span className="font-black pr-2">JALADOR:</span> _________________</div>
+                 <div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> _________________</div>
+                 <div><span className="font-black pr-1">VENTILADOR:</span> _________________</div>
+                 <div><span className="font-black pr-1">JALADOR:</span> _________________</div>
               </div>
-              <div className="col-span-2 border-t border-gray-300 pt-2 mt-1">
-                 <div className="flex justify-between mb-3"><span className="font-black">ZONAS:</span><span>1 ____</span><span>2 ____</span><span>3 ____</span><span>4 ____</span><span>5 ____</span><span>6 ____</span></div>
+              <div className="col-span-2 border-t border-gray-300 pt-1 mt-1">
+                 <div className="flex justify-between mb-2"><span className="font-black">ZONAS:</span><span>1 ____</span><span>2 ____</span><span>3 ____</span><span>4 ____</span><span>5 ____</span><span>6 ____</span></div>
                  <div className="flex gap-10"><span className="font-black">CABEZAL:</span><span>A ________</span><span>B ________</span></div>
               </div>
            </div>
         </div>
 
         {/* IMPRESIÓN */}
-        <div className="border-2 border-black rounded-xl mb-4 overflow-hidden">
-           <div className="bg-gray-200 font-black text-[10px] uppercase text-center p-1.5 border-b-2 border-black">Impresión Flexográfica</div>
-           <div className="p-3 text-[9px] font-bold uppercase grid grid-cols-2 gap-y-3">
-              <div><span className="font-black pr-2">OPERADOR:</span> __________________________</div>
-              <div><span className="font-black pr-2">KG RECIBIDOS:</span> __________________________</div>
-              <div><span className="font-black pr-2">CANTIDAD COLORES:</span> __________________________</div>
-              <div><span className="font-black pr-2">RELACIÓN DE IMPRESIÓN:</span> ___________________</div>
-              <div><span className="font-black pr-2">MOTOR PRINCIPAL:</span> __________________________</div>
-              <div><span className="font-black pr-2">TENSORES:</span> 1 _________ <span className="ml-4">2 _________</span></div>
-              <div><span className="font-black pr-2">TEMPERATURA:</span> __________________________</div>
-              <div><span className="font-black pr-2">CANTIDAD SOLVENTE:</span> _______________________</div>
-              <div className="col-span-2 border-t border-gray-300 pt-2 mt-1">
-                 <div className="flex justify-between mb-2"><span className="font-black">COLORES:</span><span>1 _______</span><span>2 _______</span><span>3 _______</span><span>4 _______</span><span>5 _______</span><span>6 _______</span></div>
-                 <div><span className="font-black pr-2">KG P/COLORES:</span> ______________________________________________________________</div>
+        <div className="border-2 border-black rounded-xl mb-2 overflow-hidden">
+           <div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Impresión Flexográfica</div>
+           <div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2">
+              <div><span className="font-black pr-1">OPERADOR:</span> __________________________</div>
+              <div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div>
+              <div><span className="font-black pr-1">CANTIDAD COLORES:</span> ______________________</div>
+              <div><span className="font-black pr-1">RELACIÓN DE IMPRESIÓN:</span> _________________</div>
+              <div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> __________________________</div>
+              <div><span className="font-black pr-1">TENSORES:</span> 1 _________ <span className="ml-4">2 _________</span></div>
+              <div><span className="font-black pr-1">TEMPERATURA:</span> __________________________</div>
+              <div><span className="font-black pr-1">CANTIDAD SOLVENTE:</span> _______________________</div>
+              <div className="col-span-2 border-t border-gray-300 pt-1 mt-1">
+                 <div className="flex justify-between mb-1"><span className="font-black">COLORES:</span><span>1 _______</span><span>2 _______</span><span>3 _______</span><span>4 _______</span><span>5 _______</span><span>6 _______</span></div>
+                 <div><span className="font-black pr-1">KG P/COLORES:</span> __________________________________________________________________</div>
               </div>
            </div>
         </div>
 
         {/* SELLADO */}
-        <div className="border-2 border-black rounded-xl mb-4 overflow-hidden">
-           <div className="bg-gray-200 font-black text-[10px] uppercase text-center p-1.5 border-b-2 border-black">Sellado y Corte</div>
-           <div className="p-3 text-[9px] font-bold uppercase grid grid-cols-2 gap-y-3">
-              <div><span className="font-black pr-2">OPERADOR:</span> __________________________</div>
-              <div><span className="font-black pr-2">KG RECIBIDOS:</span> __________________________</div>
+        <div className="border-2 border-black rounded-xl mb-2 overflow-hidden">
+           <div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Sellado y Corte</div>
+           <div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2">
+              <div><span className="font-black pr-1">OPERADOR:</span> __________________________</div>
+              <div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div>
               <div className="col-span-2 flex justify-between">
-                 <div><span className="font-black pr-2">IMPRESA:</span> SI _____ NO _____</div>
-                 <div className="font-black">SELLO FC _____ &nbsp;&nbsp;&nbsp; SELLO FR _____ &nbsp;&nbsp;&nbsp; SELLO PC _____</div>
+                 <div><span className="font-black pr-1">IMPRESA:</span> SI _____ NO _____</div>
+                 <div className="font-black">SELLO FC _____ &nbsp;&nbsp; SELLO FR _____ &nbsp;&nbsp; SELLO PC _____</div>
               </div>
-              <div className="col-span-2 grid grid-cols-2 gap-2 border-y border-gray-300 py-2 my-1">
-                 <div><span className="font-black pr-2">TEMP CABEZAL A:</span> ______________</div>
-                 <div><span className="font-black pr-2">TEMP PISO A:</span> ______________</div>
-                 <div><span className="font-black pr-2">TEMP CABEZAL B:</span> ______________</div>
-                 <div><span className="font-black pr-2">TEMP PISO B:</span> ______________</div>
+              <div className="col-span-2 grid grid-cols-2 gap-1 border-y border-gray-300 py-1 my-1">
+                 <div><span className="font-black pr-1">TEMP CABEZAL A:</span> ____________</div>
+                 <div><span className="font-black pr-1">TEMP PISO A:</span> ____________</div>
+                 <div><span className="font-black pr-1">TEMP CABEZAL B:</span> ____________</div>
+                 <div><span className="font-black pr-1">TEMP PISO B:</span> ____________</div>
               </div>
               <div className="col-span-2 flex justify-between">
                  <span className="font-black">VELOCIDAD SERVOMOTORES:</span><span>1 _______</span><span>2 _______</span><span>3 _______</span><span>4 _______</span>
               </div>
-              <div className="col-span-2 grid grid-cols-2 gap-y-2 pt-2">
-                 <div><span className="font-black pr-2">CANT. PRODUCIDA (KG):</span> _________________</div>
-                 <div><span className="font-black pr-2">TROQUEL:</span> _______________________</div>
-                 <div><span className="font-black pr-2">CANT. PRODUCIDA MILLARES:</span> _____________</div>
-                 <div><span className="font-black pr-2">DESPERDICIO (KG):</span> ________________</div>
+              <div className="col-span-2 grid grid-cols-2 gap-y-1 pt-1">
+                 <div><span className="font-black pr-1">CANT. PRODUCIDA (KG):</span> _______________</div>
+                 <div><span className="font-black pr-1">TROQUEL:</span> __________________</div>
+                 <div><span className="font-black pr-1">CANT. PRODUCIDA MILLARES:</span> ___________</div>
+                 <div><span className="font-black pr-1">DESPERDICIO (KG):</span> ___________</div>
               </div>
            </div>
+        </div>
+        
+        <div className="mt-8 grid grid-cols-2 gap-24 text-center font-black text-[9px] uppercase border-t-2 border-black pt-2 text-black">
+          <div>CONTROL DE CALIDAD</div>
+          <div>SUPERVISOR DE PLANTA</div>
         </div>
 
       </div>
