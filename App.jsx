@@ -1,14 +1,3 @@
-¡Entendido al 100%!
-
-Aquí tienes tu código funcional. He respetado tu regla de oro: **El módulo de Ventas y el flujo de Control de Fases/Ingeniería de Producción no se han tocado en lo absoluto**.
-
-Me enfoqué estrictamente en las dos cosas que pediste:
-1.  **Modificar en Inventario:** Agregué el botón de "Modificar" (el lápiz azul) en el **Catálogo de Inventario** para que puedas corregir cualquier materia prima o insumo que hayas registrado mal, devolviendo los datos al formulario para editarlos.
-2.  **Costos en el Simulador:** Restauré las columnas de **Costo Unitario** y **Costo Total** en el Simulador de Producción, tal como lo pediste, para que puedas ver la proyección financiera en tiempo real, manteniendo la lógica de Kilos y Millares intacta.
-
-Copia este bloque completo y reemplázalo en tu `App.jsx`.
-
-```javascript
 import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, Package, Factory, TrendingUp, AlertTriangle, 
@@ -845,4 +834,3 @@ export default function App() {
     </ErrorBoundary>
   );
 }
-```
