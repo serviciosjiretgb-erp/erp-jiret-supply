@@ -11,7 +11,7 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, serverTimestamp, query } from "firebase/firestore";
 
 // ============================================================================
-// ESCUDO DE ERRORES
+// ESCUDO DE ERRORES EXTREMO (Evita pantallas blancas)
 // ============================================================================
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, errorMsg: '' }; }
@@ -22,9 +22,9 @@ class ErrorBoundary extends React.Component {
       return (
         <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-6">
           <AlertTriangle size={60} className="text-red-500 mb-4" />
-          <h2 className="text-2xl font-black text-black uppercase mb-2">Error de Interfaz Bloqueado</h2>
+          <h2 className="text-2xl font-black text-black uppercase mb-2">Sistema Protegido de Caída</h2>
           <p className="text-gray-500 text-sm mb-6">{this.state.errorMsg}</p>
-          <button onClick={() => window.location.reload()} className="bg-black text-white font-black px-8 py-4 rounded-xl uppercase tracking-widest text-xs shadow-lg">Recargar Sistema</button>
+          <button onClick={() => window.location.reload()} className="bg-black text-white font-black px-8 py-4 rounded-xl uppercase tracking-widest text-xs shadow-lg">Recargar Interfaz</button>
         </div>
       );
     }
@@ -57,7 +57,6 @@ const getTodayDate = () => {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
 
-// --- BASE DE DATOS INICIAL ---
 const INITIAL_INVENTORY = [
   { id: 'MP-0240', desc: 'ESENTTIA', cost: 0.96, stock: 2325, unit: 'kg', category: 'Materia Prima' },
   { id: 'MP-11PG4', desc: 'METALOCENO', cost: 0.91, stock: 1735, unit: 'kg', category: 'Materia Prima' },
@@ -69,7 +68,7 @@ const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigit
 const parseNum = (val) => {
   if (!val) return 0;
   if (typeof val === 'number') return val;
-  let str = val.toString().trim();
+  let str = String(val).trim();
   if (str.includes('.') && str.includes(',')) str = str.replace(/\./g, '').replace(',', '.');
   else if (str.includes(',')) str = str.replace(',', '.');
   const parsed = parseFloat(str);
@@ -115,6 +114,7 @@ export default function App() {
   const [showSingleReqReport, setShowSingleReqReport] = useState(null);
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
 
+  // Formularios de Ventas (SELLADOS)
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [editingClientId, setEditingClientId] = useState(null);
@@ -126,14 +126,8 @@ export default function App() {
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
-  const initialPhaseForm = { 
-    date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '',
-    operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '',
-    zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '',
-    operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '',
-    operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: ''
-  };
-
+  // Formularios Producción 
+  const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '' };
   const [showWorkOrder, setShowWorkOrder] = useState(null);
   const [showPhaseReport, setShowPhaseReport] = useState(null);
   const [showFiniquito, setShowFiniquito] = useState(null);
@@ -147,6 +141,7 @@ export default function App() {
   const [phaseIngId, setPhaseIngId] = useState('');
   const [phaseIngQty, setPhaseIngQty] = useState('');
 
+  // Simulador
   const [calcInputs, setCalcInputs] = useState({ 
     ingredientes: [{ id: Date.now() + 1, nombre: 'MP-0240', pct: 80, costo: 0.96 }, { id: Date.now() + 2, nombre: 'MP-RECICLADO', pct: 20, costo: 1.00 }], 
     mezclaTotal: 745, 
@@ -178,11 +173,7 @@ export default function App() {
   const handleExportExcel = (tableId, filename) => {
     const table = document.getElementById(tableId); if (!table) return;
     const tableClone = table.cloneNode(true);
-    const html = `
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-      <head><meta charset="utf-8" /><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #000;padding:5px;}th{text-align:center;}</style></head>
-      <body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><br/>${tableClone.outerHTML}</body></html>
-    `;
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8" /><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #000;padding:5px;}th{text-align:center;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><br/>${tableClone.outerHTML}</body></html>`;
     const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
     const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${filename}_${getTodayDate()}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
@@ -229,7 +220,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA INVENTARIO (CERRADO Y SELLADO)
+  // LOGICA INVENTARIO (BLINDADO CON || [])
   // ============================================================================
   const handleSaveInvItem = async (e) => {
     e.preventDefault(); if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
@@ -237,42 +228,59 @@ export default function App() {
     try { await setDoc(getDocRef('inventory', itemData.id), itemData, { merge: true }); setNewInvItemForm(initialInvItemForm); setDialog({ title: 'Éxito', text: 'Artículo guardado.', type: 'alert' }); } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
   const handleSaveMovement = async (e) => {
-    e.preventDefault(); const item = (inventory || []).find(i => i.id === newMovementForm.itemId); if (!item) return;
+    e.preventDefault(); const item = (inventory || []).find(i => i?.id === newMovementForm.itemId); if (!item) return;
     const qty = parseNum(newMovementForm.qty); const isAddition = newMovementForm.type === 'ENTRADA' || newMovementForm.type === 'AJUSTE (POSITIVO)';
-    if (!isAddition && item.stock < qty) return setDialog({title: 'Stock Insuficiente', text: `Inventario no cubre salida.`, type: 'alert'});
-    const movCost = newMovementForm.cost ? parseNum(newMovementForm.cost) : item.cost; const movId = Date.now().toString();
+    if (!isAddition && (item?.stock || 0) < qty) return setDialog({title: 'Stock Insuficiente', text: `Inventario no cubre salida.`, type: 'alert'});
+    const movCost = newMovementForm.cost ? parseNum(newMovementForm.cost) : (item?.cost || 0); const movId = Date.now().toString();
     try {
       const batch = writeBatch(db);
       batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: newMovementForm.date, itemId: item.id, itemName: item.desc, type: newMovementForm.type, qty, cost: movCost, totalValue: qty * movCost, reference: newMovementForm.reference.toUpperCase(), notes: newMovementForm.notes.toUpperCase(), timestamp: Date.now(), user: appUser?.name });
-      batch.update(getDocRef('inventory', item.id), { stock: item.stock + (isAddition ? qty : -qty), cost: isAddition && movCost > 0 ? movCost : item.cost });
+      batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (isAddition ? qty : -qty), cost: isAddition && movCost > 0 ? movCost : (item?.cost || 0) });
       await batch.commit(); setNewMovementForm(initialMovementForm); setDialog({title: 'Éxito', text: 'Movimiento registrado.', type: 'alert'});
     } catch (err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
   const handleDeleteInvItem = (id) => setDialog({ title: 'Eliminar Ítem', text: `¿Eliminar ${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('inventory', id))});
   const handleDeleteMovement = (m) => setDialog({ title: 'Anular Movimiento', text: `¿Revertir movimiento?`, type: 'confirm', onConfirm: async () => {
-        const item = (inventory || []).find(i => i.id === m.itemId);
-        if (item) { const batch = writeBatch(db); batch.update(getDocRef('inventory', item.id), { stock: item.stock + (m.type.includes('ENTRADA')||m.type.includes('POSITIVO') ? -m.qty : m.qty) }); batch.delete(getDocRef('inventoryMovements', m.id)); await batch.commit(); setDialog({title: 'Anulado', text: 'Stock actualizado.', type: 'alert'}); } else { await deleteDoc(getDocRef('inventoryMovements', m.id)); setDialog({title: 'Anulado', text: 'Registro eliminado.', type: 'alert'}); }
+        const item = (inventory || []).find(i => i?.id === m?.itemId);
+        if (item) { 
+           const isPos = String(m?.type || '').includes('ENTRADA') || String(m?.type || '').includes('POSITIVO');
+           const batch = writeBatch(db); 
+           batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (isPos ? -(m?.qty || 0) : (m?.qty || 0)) }); 
+           batch.delete(getDocRef('inventoryMovements', m.id)); 
+           await batch.commit(); 
+           setDialog({title: 'Anulado', text: 'Stock actualizado.', type: 'alert'}); 
+        } else { 
+           await deleteDoc(getDocRef('inventoryMovements', m.id)); setDialog({title: 'Anulado', text: 'Registro eliminado.', type: 'alert'}); 
+        }
   }});
+  
   const generateReport177Data = () => {
-    const data = []; const categories = [...new Set((inventory || []).map(i => i.category || 'Otros'))];
+    const data = []; const categories = [...new Set((inventory || []).map(i => i?.category || 'Otros'))];
     categories.forEach(cat => {
-       const itemsData = (inventory || []).filter(i => (i.category || 'Otros') === cat).map(item => {
-          const movs = (invMovements || []).filter(m => m.itemId === item.id);
+       const itemsData = (inventory || []).filter(i => (i?.category || 'Otros') === cat).map(item => {
+          const movs = (invMovements || []).filter(m => m?.itemId === item?.id);
           const start = new Date(reportYear, reportMonth - 1, 1).getTime(); const end = new Date(reportYear, reportMonth, 0, 23, 59, 59).getTime(); 
-          let initialStock = item.stock;
-          movs.filter(m => m.timestamp >= start).forEach(m => { initialStock += (m.type.includes('ENTRADA')||m.type.includes('POSITIVO') ? -m.qty : m.qty); });
-          let mEntQty = 0, mEntCost = 0, mSalQty = 0, mSalCost = 0;
-          movs.filter(m => m.timestamp >= start && m.timestamp <= end).forEach(m => {
-             if (m.type.includes('ENTRADA')||m.type.includes('POSITIVO')) { mEntQty += m.qty; mEntCost += (m.cost * m.qty); } else { mSalQty += m.qty; mSalCost += (m.cost * m.qty); }
+          let initialStock = item?.stock || 0;
+          movs.filter(m => m?.timestamp >= start).forEach(m => { 
+             const isPos = String(m?.type || '').includes('ENTRADA') || String(m?.type || '').includes('POSITIVO');
+             initialStock += (isPos ? -(m?.qty || 0) : (m?.qty || 0)); 
           });
-          return { ...item, initialStock, initialTotal: initialStock * item.cost, monthEntradasQty: mEntQty, monthEntradasTotal: mEntCost, monthEntradasProm: mEntQty ? mEntCost/mEntQty : 0, monthSalidasQty: mSalQty, monthSalidasTotal: mSalCost, monthSalidasProm: mSalQty ? mSalCost/mSalQty : 0, invFinalQty: initialStock + mEntQty - mSalQty, invFinalTotal: (initialStock + mEntQty - mSalQty) * item.cost, invFinalCost: item.cost };
+          let mEntQty = 0, mEntCost = 0, mSalQty = 0, mSalCost = 0;
+          movs.filter(m => m?.timestamp >= start && m?.timestamp <= end).forEach(m => {
+             const isPos = String(m?.type || '').includes('ENTRADA') || String(m?.type || '').includes('POSITIVO');
+             if (isPos) { mEntQty += (m?.qty || 0); mEntCost += ((m?.cost || 0) * (m?.qty || 0)); } 
+             else { mSalQty += (m?.qty || 0); mSalCost += ((m?.cost || 0) * (m?.qty || 0)); }
+          });
+          const itemCost = item?.cost || 0;
+          const invFinalQty = initialStock + mEntQty - mSalQty;
+          return { ...item, initialStock, initialTotal: initialStock * itemCost, monthEntradasQty: mEntQty, monthEntradasTotal: mEntCost, monthEntradasProm: mEntQty ? mEntCost/mEntQty : 0, monthSalidasQty: mSalQty, monthSalidasTotal: mSalCost, monthSalidasProm: mSalQty ? mSalCost/mSalQty : 0, invFinalQty, invFinalTotal: invFinalQty * itemCost, invFinalCost: itemCost };
        });
        data.push({ category: cat, items: itemsData });
     }); return data;
   };
 
   // ============================================================================
-  // LOGICA VENTAS Y FACTURACIÓN (CERRADOS Y SELLADOS COMPLETAMENTE)
+  // LOGICA VENTAS Y FACTURACIÓN (SELLADO A VERSIÓN ORIGINAL Y FUNCIONAL)
   // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault(); if (!newClientForm.rif || !newClientForm.razonSocial) return setDialog({ title: 'Aviso', text: 'RIF y Razón Social obligatorios.', type: 'alert' });
@@ -309,6 +317,7 @@ export default function App() {
     const id = newInvoiceForm.documento || generateInvoiceId();
     try { await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), timestamp: Date.now(), user: appUser?.name }); setShowNewInvoicePanel(false); setNewInvoiceForm(initialInvoiceForm); setDialog({title: 'Éxito', text: 'Factura Registrada.', type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
+  
   const handleDeleteInvoice = (id) => setDialog({ title: 'Eliminar', text: `¿Eliminar factura?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('maquilaInvoices', id))});
   const generateReqId = () => `OP-${((requirements || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(5, '0')}`;
   
@@ -329,6 +338,7 @@ export default function App() {
     } else { f.pesoMillar = tipo === 'TERMOENCOGIBLE' ? 'N/A' : '0.00'; f.requestedKg = f.presentacion === 'KILOS' && c > 0 ? c.toFixed(2) : '0.00'; }
     setNewReqForm(f);
   };
+
   const handleCreateRequirement = async (e) => {
     e.preventDefault(); const opId = editingReqId ? editingReqId : generateReqId();
     try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'PENDIENTE DE INGENIERÍA', viewedByPlanta: false }, { merge: true }); setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP guardada.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
@@ -341,19 +351,19 @@ export default function App() {
   // ============================================================================
   const renderRecipeInventoryOptions = () => {
     const grouped = {}; 
-    (inventory || []).forEach(i => { const cat = i.category || 'Otros'; if (!grouped[cat]) grouped[cat] = []; grouped[cat].push(i); });
+    (inventory || []).forEach(i => { const cat = i?.category || 'Otros'; if (!grouped[cat]) grouped[cat] = []; grouped[cat].push(i); });
     return (<><option value="">Seleccione Insumo / Material...</option>
       {Object.keys(grouped).map(cat => (
         <optgroup key={cat} label={`📌 ${cat.toUpperCase()}`}>
-          {(grouped[cat] || []).map(i => <option key={i.id} value={i.id}>{i.id} - {i.desc} ({formatNum(i.stock)} {i.unit})</option>)}
+          {(grouped[cat] || []).map(i => <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc} ({formatNum(i?.stock)} {i?.unit})</option>)}
         </optgroup>
       ))}
     </>);
   };
 
   const handleAddIngToRecipe = () => {
-    if (!newIngId || !newIngQty) return; const ing = (inventory || []).find(i => i.id === newIngId); if (!ing) return;
-    const req = (requirements || []).find(r => r.id === recipeEditReqId); const isMateriaPrima = ing.category === 'Materia Prima' || ing.category === 'Pigmentos';
+    if (!newIngId || !newIngQty) return; const ing = (inventory || []).find(i => i?.id === newIngId); if (!ing) return;
+    const req = (requirements || []).find(r => r?.id === recipeEditReqId); const isMateriaPrima = ing?.category === 'Materia Prima' || ing?.category === 'Pigmentos';
     const totalQty = isMateriaPrima ? (parseFloat(newIngQty) / 100) * parseNum(req?.requestedKg) : parseFloat(newIngQty);
     setTempRecipe([...(tempRecipe || []), { id: newIngId, percentage: isMateriaPrima ? parseFloat(newIngQty) : null, totalQty }]); setNewIngId(''); setNewIngQty('');
   };
@@ -371,8 +381,8 @@ export default function App() {
 
   const handleSaveRecipe = async () => {
     if ((tempRecipe || []).length === 0) return;
-    const req = (requirements || []).find(r => r.id === recipeEditReqId); let totalCost = 0;
-    (tempRecipe || []).forEach(ing => { const item = (inventory || []).find(i => i.id === ing.id); if(item) totalCost += (item.cost * (ing.totalQty || 0)); });
+    const req = (requirements || []).find(r => r?.id === recipeEditReqId); let totalCost = 0;
+    (tempRecipe || []).forEach(ing => { const item = (inventory || []).find(i => i?.id === ing?.id); if(item) totalCost += ((item?.cost || 0) * (ing?.totalQty || 0)); });
     await updateDoc(getDocRef('requirements', recipeEditReqId), { recipe: tempRecipe, estimatedCostPerKg: totalCost / (parseNum(req?.requestedKg) || 1), status: 'LISTO PARA PRODUCIR' });
     setRecipeEditReqId(null); setProdView('fases_produccion'); setDialog({ title: 'Éxito', text: 'Fórmula asignada.', type: 'alert' });
   };
@@ -382,140 +392,113 @@ export default function App() {
     if (activePhaseTab === 'extrusion') mainCats = ['Materia Prima', 'Pigmentos', 'Consumibles', 'Herramientas', 'Seguridad Industrial'];
     else if (activePhaseTab === 'impresion') mainCats = ['Tintas', 'Químicos', 'Consumibles', 'Seguridad Industrial'];
     else if (activePhaseTab === 'sellado') mainCats = ['Consumibles', 'Herramientas'];
-    const grouped = {}; (inventory || []).forEach(i => { const cat = i.category || 'Otros'; if (!grouped[cat]) grouped[cat] = []; grouped[cat].push(i); });
+    const grouped = {}; (inventory || []).forEach(i => { const cat = i?.category || 'Otros'; if (!grouped[cat]) grouped[cat] = []; grouped[cat].push(i); });
     return (<><option value="">Seleccione Insumo...</option>
       {mainCats.map(cat => grouped[cat] && grouped[cat].length > 0 && (
         <optgroup key={cat} label={`📌 ${cat.toUpperCase()} (Recomendado)`}>
-          {(grouped[cat] || []).map(i => <option key={i.id} value={i.id}>{i.id} - {i.desc} ({formatNum(i.stock)} {i.unit})</option>)}
+          {(grouped[cat] || []).map(i => <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc} ({formatNum(i?.stock)} {i?.unit})</option>)}
         </optgroup>
       ))}
       {Object.keys(grouped).filter(c => !mainCats.includes(c)).map(cat => grouped[cat] && grouped[cat].length > 0 && (
         <optgroup key={cat} label={`📂 ${cat.toUpperCase()} (Otros)`}>
-          {(grouped[cat] || []).map(i => <option key={i.id} value={i.id}>{i.id} - {i.desc} ({formatNum(i.stock)} {i.unit})</option>)}
+          {(grouped[cat] || []).map(i => <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc} ({formatNum(i?.stock)} {i?.unit})</option>)}
         </optgroup>
       ))}
     </>);
   };
 
   const handleAddPhaseIng = () => {
-    if (!phaseIngId || !phaseIngQty) return; const ing = (inventory || []).find(i => i.id === phaseIngId); if (!ing) return;
-    setPhaseForm({ ...phaseForm, insumos: [...(phaseForm.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }] }); setPhaseIngId(''); setPhaseIngQty('');
+    if (!phaseIngId || !phaseIngQty) return; const ing = (inventory || []).find(i => i?.id === phaseIngId); if (!ing) return;
+    setPhaseForm({ ...phaseForm, insumos: [...(phaseForm?.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }] }); setPhaseIngId(''); setPhaseIngQty('');
   };
 
   const handleSavePhase = async (e) => {
     e.preventDefault();
-    const req = (requirements || []).find(r => r.id === selectedPhaseReqId); if (!req) return;
+    const req = (requirements || []).find(r => r?.id === selectedPhaseReqId); if (!req) return;
     const actionType = e.nativeEvent?.submitter?.name; const isSkip = actionType === 'skip'; const isClose = actionType === 'close';
-    let currentPhase = req.production?.[activePhaseTab] || { batches: [], isClosed: false };
+    let currentPhase = req?.production?.[activePhaseTab] || { batches: [], isClosed: false };
     if (isSkip) { currentPhase.skipped = true; currentPhase.isClosed = true; } 
     else {
-        const prodKg = parseNum(phaseForm.producedKg); const mermaKg = parseNum(phaseForm.mermaKg);
-        if (prodKg > 0 || mermaKg > 0 || (phaseForm.insumos || []).length > 0) {
+        const prodKg = parseNum(phaseForm?.producedKg); const mermaKg = parseNum(phaseForm?.mermaKg);
+        if (prodKg > 0 || mermaKg > 0 || (phaseForm?.insumos || []).length > 0) {
             const batch = writeBatch(db); let phaseCost = 0; let totalInsumosKg = 0;
-            for (let ing of (phaseForm.insumos || [])) {
-              const item = (inventory || []).find(i => i.id === ing.id);
-              if (item) { phaseCost += (item.cost * ing.qty); totalInsumosKg += parseFloat(ing.qty); batch.update(getDocRef('inventory', item.id), { stock: item.stock - ing.qty }); }
+            for (let ing of (phaseForm?.insumos || [])) {
+              const item = (inventory || []).find(i => i?.id === ing?.id);
+              if (item) { phaseCost += ((item?.cost || 0) * (ing?.qty || 0)); totalInsumosKg += parseFloat(ing?.qty || 0); batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) - (ing?.qty || 0) }); }
             }
             await batch.commit();
-            
-            let techParams = {};
-            if(activePhaseTab === 'extrusion') techParams = { operador: phaseForm.operadorExt, tratado: phaseForm.tratado, motor: phaseForm.motorExt, ventilador: phaseForm.ventilador, jalador: phaseForm.jalador, zonas: [phaseForm.zona1, phaseForm.zona2, phaseForm.zona3, phaseForm.zona4, phaseForm.zona5, phaseForm.zona6], cabezalA: phaseForm.cabezalA, cabezalB: phaseForm.cabezalB };
-            if(activePhaseTab === 'impresion') techParams = { operador: phaseForm.operadorImp, kgRecibidos: phaseForm.kgRecibidosImp, cantColores: phaseForm.cantColores, relacion: phaseForm.relacionImp, motor: phaseForm.motorImp, tensores: phaseForm.tensores, temp: phaseForm.tempImp, solvente: phaseForm.solvente };
-            if(activePhaseTab === 'sellado') techParams = { operador: phaseForm.operadorSel, kgRecibidos: phaseForm.kgRecibidosSel, impresa: phaseForm.impresa, tipoSello: phaseForm.tipoSello, tempCabezalA: phaseForm.tempCabezalA, tempCabezalB: phaseForm.tempCabezalB, tempPisoA: phaseForm.tempPisoA, tempPisoB: phaseForm.tempPisoB, velServo: phaseForm.velServo, millares: phaseForm.millaresProd, troquel: phaseForm.troquelSel };
-
-            const newBatch = { id: Date.now().toString(), timestamp: Date.now(), date: phaseForm.date, insumos: phaseForm.insumos, producedKg: prodKg, mermaKg, totalInsumosKg, cost: phaseCost, operator: appUser?.name, techParams };
+            const newBatch = { id: Date.now().toString(), timestamp: Date.now(), date: phaseForm?.date, insumos: phaseForm?.insumos || [], producedKg: prodKg, mermaKg, totalInsumosKg, cost: phaseCost, operator: appUser?.name || 'Operador' };
             if (!currentPhase.batches) currentPhase.batches = []; currentPhase.batches.push(newBatch);
         }
         if (isClose) currentPhase.isClosed = true;
     }
     const newProd = { ...(req.production || {}), [activePhaseTab]: currentPhase };
     await updateDoc(getDocRef('requirements', req.id), { production: newProd, status: (activePhaseTab === 'sellado' && currentPhase.isClosed) ? 'COMPLETADO' : 'EN PROCESO' });
-    setPhaseForm(initialPhaseForm); setDialog({ title: 'Éxito', text: 'Reporte guardado.', type: 'alert' });
+    setPhaseForm({ date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '' }); 
+    setDialog({ title: 'Éxito', text: 'Reporte guardado.', type: 'alert' });
   };
 
   const handleDeleteBatch = async (reqId, phase, batchId) => {
     setDialog({ title: `ELIMINAR LOTE`, text: `¿Seguro que desea eliminar este lote parcial?`, type: 'confirm', onConfirm: async () => {
-        const req = (requirements || []).find(r => r.id === reqId); let currentPhase = { ...req.production[phase] }; const bIdx = (currentPhase.batches || []).findIndex(b => b.id === batchId);
-        if (bIdx >= 0) { const batch = currentPhase.batches[bIdx]; const fbBatch = writeBatch(db); for (let ing of (batch.insumos || [])) { const item = (inventory || []).find(i => i.id === ing.id); if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: item.stock + ing.qty }); } await fbBatch.commit(); currentPhase.batches.splice(bIdx, 1); }
-        await updateDoc(getDocRef('requirements', reqId), { production: { ...req.production, [phase]: currentPhase } });
+        const req = (requirements || []).find(r => r?.id === reqId); let currentPhase = { ...(req?.production?.[phase] || {}) }; const bIdx = (currentPhase.batches || []).findIndex(b => b?.id === batchId);
+        if (bIdx >= 0) { const batch = currentPhase.batches[bIdx]; const fbBatch = writeBatch(db); for (let ing of (batch.insumos || [])) { const item = (inventory || []).find(i => i?.id === ing?.id); if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (ing?.qty || 0) }); } await fbBatch.commit(); currentPhase.batches.splice(bIdx, 1); }
+        await updateDoc(getDocRef('requirements', reqId), { production: { ...(req?.production || {}), [phase]: currentPhase } });
     }});
   };
 
   const handleEditBatch = (reqId, phase, batchId) => {
     setDialog({ title: `MODIFICAR LOTE`, text: `El lote volverá al formulario para su edición y el inventario se ajustará temporalmente. ¿Continuar?`, type: 'confirm', onConfirm: async () => {
-        const req = (requirements || []).find(r => r.id === reqId); 
-        let currentPhase = { ...req.production[phase] }; 
-        const bIdx = (currentPhase.batches || []).findIndex(b => b.id === batchId);
+        const req = (requirements || []).find(r => r?.id === reqId); 
+        if(!req) return;
+        let currentPhase = { ...(req?.production?.[phase] || {}) }; 
+        const bIdx = (currentPhase.batches || []).findIndex(b => b?.id === batchId);
         if (bIdx >= 0) { 
             const batch = currentPhase.batches[bIdx]; 
-            const restoreForm = { ...initialPhaseForm, date: batch.date, producedKg: batch.producedKg, mermaKg: batch.mermaKg, insumos: batch.insumos || [] };
-            if(phase === 'extrusion' && batch.techParams) {
-                restoreForm.operadorExt = batch.techParams.operador || ''; restoreForm.tratado = batch.techParams.tratado || ''; restoreForm.motorExt = batch.techParams.motor || '';
-                restoreForm.ventilador = batch.techParams.ventilador || ''; restoreForm.jalador = batch.techParams.jalador || '';
-                restoreForm.zona1 = batch.techParams.zonas?.[0] || ''; restoreForm.zona2 = batch.techParams.zonas?.[1] || ''; restoreForm.zona3 = batch.techParams.zonas?.[2] || '';
-                restoreForm.zona4 = batch.techParams.zonas?.[3] || ''; restoreForm.zona5 = batch.techParams.zonas?.[4] || ''; restoreForm.zona6 = batch.techParams.zonas?.[5] || '';
-                restoreForm.cabezalA = batch.techParams.cabezalA || ''; restoreForm.cabezalB = batch.techParams.cabezalB || '';
-            }
-            if(phase === 'impresion' && batch.techParams) {
-                restoreForm.operadorImp = batch.techParams.operador || ''; restoreForm.kgRecibidosImp = batch.techParams.kgRecibidos || ''; restoreForm.cantColores = batch.techParams.cantColores || '';
-                restoreForm.relacionImp = batch.techParams.relacion || ''; restoreForm.motorImp = batch.techParams.motor || ''; restoreForm.tensores = batch.techParams.tensores || '';
-                restoreForm.tempImp = batch.techParams.temp || ''; restoreForm.solvente = batch.techParams.solvente || '';
-            }
-            if(phase === 'sellado' && batch.techParams) {
-                restoreForm.operadorSel = batch.techParams.operador || ''; restoreForm.kgRecibidosSel = batch.techParams.kgRecibidos || ''; restoreForm.impresa = batch.techParams.impresa || 'NO';
-                restoreForm.tipoSello = batch.techParams.tipoSello || 'Sello FC'; restoreForm.tempCabezalA = batch.techParams.tempCabezalA || ''; restoreForm.tempCabezalB = batch.techParams.tempCabezalB || '';
-                restoreForm.tempPisoA = batch.techParams.tempPisoA || ''; restoreForm.tempPisoB = batch.techParams.tempPisoB || ''; restoreForm.velServo = batch.techParams.velServo || '';
-                restoreForm.millaresProd = batch.techParams.millares || ''; restoreForm.troquelSel = batch.techParams.troquel || '';
-            }
-            
-            setPhaseForm(restoreForm);
-            
+            setPhaseForm({ date: batch?.date || getTodayDate(), producedKg: batch?.producedKg || '', mermaKg: batch?.mermaKg || '', insumos: batch?.insumos || [] });
             const fbBatch = writeBatch(db); 
-            for (let ing of (batch.insumos || [])) { 
-                const item = (inventory || []).find(i => i.id === ing.id); 
-                if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: item.stock + ing.qty }); 
+            for (let ing of (batch?.insumos || [])) { 
+                const item = (inventory || []).find(i => i?.id === ing?.id); 
+                if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (ing?.qty || 0) }); 
             } 
             await fbBatch.commit(); 
             currentPhase.batches.splice(bIdx, 1); 
         }
-        await updateDoc(getDocRef('requirements', reqId), { production: { ...req.production, [phase]: currentPhase } });
+        await updateDoc(getDocRef('requirements', reqId), { production: { ...(req?.production || {}), [phase]: currentPhase } });
     }});
   };
 
   // --- LÓGICA CALCULADORA (SIMULADOR OP MODIFICADO) ---
   const handleCalcChange = (field, value) => setCalcInputs({ ...calcInputs, [field]: parseNum(value) });
-  const updateCalcIng = (id, field, value) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs.ingredientes || []).map(ing => ing.id === id ? { ...ing, [field]: field === 'nombre' ? value : parseNum(value) } : ing) });
+  const updateCalcIng = (id, field, value) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs.ingredientes || []).map(ing => ing?.id === id ? { ...ing, [field]: field === 'nombre' ? value : parseNum(value) } : ing) });
   const addCalcIng = () => setCalcInputs({ ...calcInputs, ingredientes: [...(calcInputs.ingredientes || []), { id: Date.now(), nombre: '', pct: 0, costo: 0 }] });
-  const removeCalcIng = (id) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs.ingredientes || []).filter(i => i.id !== id) });
+  const removeCalcIng = (id) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs.ingredientes || []).filter(i => i?.id !== id) });
 
-  const calcTotalMezcla = calcInputs.mezclaTotal || 0; const calcMezclaProcesada = calcTotalMezcla; let calcCostoMezclaPreparada = 0;
+  const calcTotalMezcla = calcInputs?.mezclaTotal || 0; const calcMezclaProcesada = calcTotalMezcla; let calcCostoMezclaPreparada = 0;
   const calcIngredientesProcesados = (calcInputs.ingredientes || []).map(ing => {
-    const kg = (ing.pct / 100) * calcTotalMezcla; const totalCost = kg * ing.costo; calcCostoMezclaPreparada += totalCost;
-    const invItem = (inventory || []).find(i => i.id === ing.nombre); let desc = invItem ? invItem.desc : ing.nombre;
-    if (!invItem) { if (ing.nombre === 'MP-0240') desc = 'PEBD 240 (ESENTTIA)'; if (ing.nombre === 'MP-11PG4') desc = 'LINEAL 11PG4 (METALOCENO)'; if (ing.nombre === 'MP-3003') desc = 'PEBD 3003 (BAPOLENE)'; if (ing.nombre === 'MP-RECICLADO') desc = 'MATERIAL RECICLADO'; }
+    const kg = ((ing?.pct || 0) / 100) * calcTotalMezcla; const totalCost = kg * (ing?.costo || 0); calcCostoMezclaPreparada += totalCost;
+    const invItem = (inventory || []).find(i => i?.id === ing?.nombre); let desc = invItem ? invItem.desc : ing?.nombre;
+    if (!invItem) { if (ing?.nombre === 'MP-0240') desc = 'PEBD 240 (ESENTTIA)'; if (ing?.nombre === 'MP-11PG4') desc = 'LINEAL 11PG4 (METALOCENO)'; if (ing?.nombre === 'MP-3003') desc = 'PEBD 3003 (BAPOLENE)'; if (ing?.nombre === 'MP-RECICLADO') desc = 'MATERIAL RECICLADO'; }
     return { ...ing, desc, kg, totalCost };
   });
 
   const calcCostoPromedio = calcTotalMezcla > 0 ? (calcCostoMezclaPreparada / calcTotalMezcla) : 0;
   const calcCostoMezclaProcesada = calcCostoMezclaPreparada;
-  const calcMermaGlobalKg = calcMezclaProcesada * ((calcInputs.mermaGlobalPorc || 0) / 100);
+  const calcMermaGlobalKg = calcMezclaProcesada * ((calcInputs?.mermaGlobalPorc || 0) / 100);
   const calcProduccionNetaKg = calcMezclaProcesada - calcMermaGlobalKg;
   const calcRendimientoUtil = calcMezclaProcesada > 0 ? (calcProduccionNetaKg / calcMezclaProcesada) * 100 : 0;
   
   // Fórmulas para Simulador según tipo de producto
-  const simW = parseNum(calcInputs.ancho);
-  const simL = parseNum(calcInputs.largo);
-  const simM = parseNum(calcInputs.micras);
-  const simFu = parseNum(calcInputs.fuelles);
+  const simW = parseNum(calcInputs?.ancho);
+  const simL = parseNum(calcInputs?.largo);
+  const simM = parseNum(calcInputs?.micras);
+  const simFu = parseNum(calcInputs?.fuelles);
   
   let simPesoMillar = 0;
-  if (calcInputs.tipoProducto === 'BOLSAS') {
-     simPesoMillar = (simW + simFu) * simL * simM;
-  }
+  if (calcInputs?.tipoProducto === 'BOLSAS') { simPesoMillar = (simW + simFu) * simL * simM; }
   
-  const calcProduccionFinalUnidades = calcInputs.tipoProducto === 'BOLSAS' && simPesoMillar > 0 ? (calcProduccionNetaKg / simPesoMillar) : calcProduccionNetaKg;
+  const calcProduccionFinalUnidades = calcInputs?.tipoProducto === 'BOLSAS' && simPesoMillar > 0 ? (calcProduccionNetaKg / simPesoMillar) : calcProduccionNetaKg;
   const calcCostoFinalUnidad = calcProduccionFinalUnidades > 0 ? (calcCostoMezclaProcesada / calcProduccionFinalUnidades) : 0;
-  const simUmFinal = calcInputs.tipoProducto === 'BOLSAS' ? 'Millares' : 'KG';
+  const simUmFinal = calcInputs?.tipoProducto === 'BOLSAS' ? 'Millares' : 'KG';
 
   // ============================================================================
   // RENDERIZADO DE MÓDULOS
@@ -587,20 +570,20 @@ export default function App() {
   );
 
   const renderVentasModule = () => {
-    const filteredClients = (clients || []).filter(c => (c.name || '').toUpperCase().includes(clientSearchTerm.toUpperCase()) || (c.rif || '').toUpperCase().includes(clientSearchTerm.toUpperCase()));
-    const filteredInvoices = (invoices || []).filter(inv => (inv.documento || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()) || (inv.clientName || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()));
+    const filteredClients = (clients || []).filter(c => String(c?.name || '').toUpperCase().includes(clientSearchTerm.toUpperCase()) || String(c?.rif || '').toUpperCase().includes(clientSearchTerm.toUpperCase()));
+    const filteredInvoices = (invoices || []).filter(inv => String(inv?.documento || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()) || String(inv?.clientName || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()));
 
     if (showGeneralInvoicesReport) {
-      const totalBaseGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr.montoBase), 0);
-      const totalIvaGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr.iva), 0);
-      const totalGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr.total), 0);
+      const totalBaseGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.montoBase), 0);
+      const totalIvaGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.iva), 0);
+      const totalGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.total), 0);
       return (
         <div id="pdf-content" className="bg-white p-8 min-h-screen print:p-0 text-black">
           <div data-html2canvas-ignore="true" className="flex justify-between mb-4 print:hidden"><button onClick={() => setShowGeneralInvoicesReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF('Reporte_General_Facturas', true)} className="bg-black text-white px-6 py-2 rounded-xl flex items-center gap-2 font-black text-xs uppercase"><Printer size={16}/> Exportar PDF</button></div>
           <ReportHeader /><h2 className="text-xl font-black text-center mb-6 uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte General de Facturación</h2>
           <table className="w-full text-[10px] border-collapse border border-gray-300">
             <thead className="bg-gray-100 uppercase"><tr><th className="p-2 border">Fecha</th><th className="p-2 border">Factura</th><th className="p-2 border">Cliente</th><th className="p-2 border text-right">Base ($)</th><th className="p-2 border text-right">IVA ($)</th><th className="p-2 border text-right">Total ($)</th></tr></thead>
-            <tbody>{(invoices || []).map(i => (<tr key={i.id}><td className="p-2 border">{i.fecha}</td><td className="p-2 border font-bold">{i.documento}</td><td className="p-2 border">{i.clientName}</td><td className="p-2 border text-right">${formatNum(i.montoBase)}</td><td className="p-2 border text-right">${formatNum(i.iva)}</td><td className="p-2 border text-right font-black text-green-600">${formatNum(i.total)}</td></tr>))}</tbody>
+            <tbody>{(invoices || []).map(i => (<tr key={i?.id}><td className="p-2 border">{i?.fecha}</td><td className="p-2 border font-bold">{i?.documento}</td><td className="p-2 border">{i?.clientName}</td><td className="p-2 border text-right">${formatNum(i?.montoBase)}</td><td className="p-2 border text-right">${formatNum(i?.iva)}</td><td className="p-2 border text-right font-black text-green-600">${formatNum(i?.total)}</td></tr>))}</tbody>
             <tfoot className="bg-gray-100 font-black"><tr><td colSpan="3" className="p-2 border text-right">TOTALES:</td><td className="p-2 border text-right">${formatNum(totalBaseGeneral)}</td><td className="p-2 border text-right">${formatNum(totalIvaGeneral)}</td><td className="p-2 border text-right text-orange-600">${formatNum(totalGeneral)}</td></tr></tfoot>
           </table>
         </div>
@@ -608,8 +591,8 @@ export default function App() {
     }
 
     if (showSingleInvoice) {
-      const inv = (invoices || []).find(i => i.id === showSingleInvoice); if (!inv) return null;
-      const client = (clients || []).find(c => c.rif === inv.clientRif) || {};
+      const inv = (invoices || []).find(i => i?.id === showSingleInvoice); if (!inv) return null;
+      const client = (clients || []).find(c => c?.rif === inv.clientRif) || {};
       return (
         <div id="pdf-content" className="bg-white p-12 min-h-screen text-black"><div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden"><button onClick={() => setShowSingleInvoice(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF(`Factura_${inv.documento}`)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg"><Printer size={16} /> Exportar PDF</button></div><ReportHeader />
           <div className="text-center my-8"><span className="text-2xl font-black uppercase border-b-4 border-orange-500 pb-2">FACTURA N° {inv.documento}</span></div>
@@ -622,7 +605,7 @@ export default function App() {
     }
 
     if (showSingleReqReport) {
-      const req = (requirements || []).find(r => r.id === showSingleReqReport); if (!req) return null;
+      const req = (requirements || []).find(r => r?.id === showSingleReqReport); if (!req) return null;
       return (
         <div id="pdf-content" className="bg-white p-12 min-h-screen text-black shadow-xl"><div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden"><button onClick={() => setShowSingleReqReport(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF(`Requisicion_${req.id}`)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg"><Printer size={16} /> Exportar PDF</button></div><ReportHeader />
           <div className="text-center my-8"><span className="text-2xl font-black uppercase border-b-4 border-orange-500 pb-2">REQUISICIÓN DE PRODUCCIÓN N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
@@ -641,7 +624,7 @@ export default function App() {
           <ReportHeader /><h2 className="text-xl font-black text-center mb-8 uppercase border-b-2 border-orange-500 inline-block pb-1">Directorio de Clientes</h2>
           <table className="w-full text-[10px] border-collapse border border-gray-300">
             <thead className="bg-gray-100 uppercase"><tr><th className="p-2 border">RIF</th><th className="p-2 border">Razón Social</th><th className="p-2 border w-1/3">Dirección</th><th className="p-2 border">Teléfono</th><th className="p-2 border">Vendedor</th></tr></thead>
-            <tbody>{(clients || []).map(c => (<tr key={c.rif}><td className="p-2 border font-bold">{c.rif}</td><td className="p-2 border font-black uppercase">{c.name}</td><td className="p-2 border uppercase">{c.direccion}</td><td className="p-2 border">{c.telefono}</td><td className="p-2 border uppercase font-bold">{c.vendedor}</td></tr>))}</tbody>
+            <tbody>{(clients || []).map(c => (<tr key={c?.rif}><td className="p-2 border font-bold">{c?.rif}</td><td className="p-2 border font-black uppercase">{c?.name}</td><td className="p-2 border uppercase">{c?.direccion}</td><td className="p-2 border">{c?.telefono}</td><td className="p-2 border uppercase font-bold">{c?.vendedor}</td></tr>))}</tbody>
           </table>
         </div>
       );
@@ -654,7 +637,7 @@ export default function App() {
           <ReportHeader /><h2 className="text-xl font-black text-center mb-6 uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte de Requisiciones (OP)</h2>
           <table className="w-full text-[10px] border-collapse border border-gray-300">
             <thead className="bg-gray-100 uppercase"><tr><th>OP N°</th><th>Fecha</th><th>Cliente</th><th>Vendedor</th><th>Producto</th><th className="text-right">KG Estimados</th><th className="text-center">Estatus</th></tr></thead>
-            <tbody>{(requirements || []).map(r => (<tr key={r.id}><td className="p-2 border text-center">{String(r.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-2 border">{r.fecha}</td><td className="p-2 border font-bold">{r.client}</td><td className="p-2 border">{r.vendedor}</td><td className="p-2 border">{r.desc}</td><td className="p-2 border text-right font-black">{formatNum(r.requestedKg)} KG</td><td className="p-2 border text-center font-bold uppercase">{r.status}</td></tr>))}</tbody>
+            <tbody>{(requirements || []).map(r => (<tr key={r?.id}><td className="p-2 border text-center">{String(r?.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-2 border">{r?.fecha}</td><td className="p-2 border font-bold">{r?.client}</td><td className="p-2 border">{r?.vendedor}</td><td className="p-2 border">{r?.desc}</td><td className="p-2 border text-right font-black">{formatNum(r?.requestedKg)} KG</td><td className="p-2 border text-center font-bold uppercase">{r?.status}</td></tr>))}</tbody>
           </table>
         </div>
       );
@@ -697,9 +680,9 @@ export default function App() {
               </form>
             </div>
             <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR POR NOMBRE O RIF..." value={clientSearchTerm} onChange={e=>setClientSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4">RIF</th><th className="py-4 px-4 w-1/2">Razón Social</th><th className="py-4 px-4">Contacto</th><th className="py-4 px-4 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(clients || []).map(c => {
-               if(!c.name.toUpperCase().includes(clientSearchTerm.toUpperCase()) && !c.rif.toUpperCase().includes(clientSearchTerm.toUpperCase())) return null;
+               if(!String(c?.name || '').toUpperCase().includes(clientSearchTerm.toUpperCase()) && !String(c?.rif || '').toUpperCase().includes(clientSearchTerm.toUpperCase())) return null;
                return (
-               <tr key={c.rif}><td className="py-5 px-4 font-black">{c.rif}</td><td className="py-5 px-4"><span className="font-black uppercase block text-sm">{c.name}</span><span className="text-[10px] font-bold text-gray-400 block">{c.direccion}</span></td><td className="py-5 px-4"><span className="font-bold text-gray-700 text-xs">{c.personaContacto}</span></td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>startEditClient(c)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
+               <tr key={c?.rif}><td className="py-5 px-4 font-black">{c?.rif}</td><td className="py-5 px-4"><span className="font-black uppercase block text-sm">{c?.name}</span><span className="text-[10px] font-bold text-gray-400 block">{c?.direccion}</span></td><td className="py-5 px-4"><span className="font-bold text-gray-700 text-xs">{c?.personaContacto}</span></td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>startEditClient(c)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
                );
             })}</tbody></table></div></div>
           </div>
@@ -722,7 +705,7 @@ export default function App() {
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
                         <select required value={newInvoiceForm.clientRif} onChange={e=>handleInvoiceFormChange('clientRif', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
                           <option value="">Seleccione...</option>
-                          {(clients || []).map(c=><option key={c.rif} value={c.rif}>{c.name}</option>)}
+                          {(clients || []).map(c=><option key={c?.rif} value={c?.rif}>{c?.name}</option>)}
                         </select>
                       </div>
                       <div>
@@ -739,9 +722,9 @@ export default function App() {
                 </div>
              )}
              <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR FACTURA O CLIENTE..." value={invoiceSearchTerm} onChange={e=>setInvoiceSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">Cliente</th><th className="py-4 px-4 text-right text-black">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{(invoices || []).map(inv=>{
-               if(!inv.documento.toUpperCase().includes(invoiceSearchTerm.toUpperCase()) && !inv.clientName.toUpperCase().includes(invoiceSearchTerm.toUpperCase())) return null;
+               if(!String(inv?.documento || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()) && !String(inv?.clientName || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase())) return null;
                return (
-               <tr key={inv.id} className="hover:bg-gray-50"><td className="py-5 px-4 font-black text-sm">{inv.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{getSafeDate(inv.timestamp)}</span></td><td className="py-5 px-4 font-bold text-gray-700 uppercase">{inv.clientName}</td><td className="py-5 px-4 text-right font-black text-green-600 text-lg">${formatNum(inv.total)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>handleDeleteInvoice(inv.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
+               <tr key={inv?.id} className="hover:bg-gray-50"><td className="py-5 px-4 font-black text-sm">{inv?.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{getSafeDate(inv?.timestamp)}</span></td><td className="py-5 px-4 font-bold text-gray-700 uppercase">{inv?.clientName}</td><td className="py-5 px-4 text-right font-black text-green-600 text-lg">${formatNum(inv?.total)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>handleDeleteInvoice(inv.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
              )})}</tbody></table></div></div>
           </div>
         )}
@@ -757,7 +740,7 @@ export default function App() {
                         <div>
                           <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Cliente del Directorio</label>
                           <select required value={newReqForm.client} onChange={e=>handleReqFormChange('client', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500">
-                            <option value="">Seleccione...</option>{(clients || []).map(c=><option key={c.rif} value={c.name}>{c.name}</option>)}
+                            <option value="">Seleccione...</option>{(clients || []).map(c=><option key={c?.rif} value={c?.name}>{c?.name}</option>)}
                           </select>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
@@ -771,7 +754,6 @@ export default function App() {
                       </div>
                     </div>
                     
-                    {/* FILA PARA CANTIDAD Y TIPO DE PRODUCTO */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
                        <div>
                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Tipo de Producto</label>
@@ -797,7 +779,7 @@ export default function App() {
                   </form>
                 </div>
              )}
-             <div className="p-8 overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black w-1/2">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{(requirements || []).map(r=>(<tr key={r.id} className="hover:bg-gray-50 group transition-all"><td className="py-5 px-4 font-black text-orange-500">#{String(r.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r.fecha}</span></td><td className="py-5 px-4"><span className="font-black text-black uppercase block text-sm">{r.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r.desc}</span></td><td className="py-5 px-4 text-right font-black text-black text-lg">{formatNum(r.requestedKg)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div>
+             <div className="p-8 overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black w-1/2">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{(requirements || []).map(r=>(<tr key={r?.id} className="hover:bg-gray-50 group transition-all"><td className="py-5 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r?.fecha}</span></td><td className="py-5 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.desc}</span></td><td className="py-5 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div>
           </div>
         )}
       </div>
@@ -810,8 +792,8 @@ export default function App() {
     if (showFiniquito) return renderFiniquito();
 
     const canEdit = appUser?.role === 'Planta' || appUser?.role === 'Master';
-    const activeOrders = (requirements || []).filter(r => ['LISTO PARA PRODUCIR', 'EN PROCESO'].includes(r.status));
-    const completedOrders = (requirements || []).filter(r => r.status === 'COMPLETADO');
+    const activeOrders = (requirements || []).filter(r => ['LISTO PARA PRODUCIR', 'EN PROCESO'].includes(r?.status));
+    const completedOrders = (requirements || []).filter(r => r?.status === 'COMPLETADO');
     
     return (
       <div className="animate-in fade-in space-y-6">
@@ -835,7 +817,7 @@ export default function App() {
                      <div className="space-y-4">
                         <div>
                           <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Total a Preparar (KG)</label>
-                          <input type="number" value={calcInputs.mezclaTotal} onChange={(e) => handleCalcChange('mezclaTotal', e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 text-sm font-black outline-none focus:border-orange-500 text-center text-blue-600" />
+                          <input type="number" value={calcInputs?.mezclaTotal} onChange={(e) => handleCalcChange('mezclaTotal', e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 text-sm font-black outline-none focus:border-orange-500 text-center text-blue-600" />
                         </div>
                      </div>
                  </div>
@@ -847,12 +829,12 @@ export default function App() {
                        <button onClick={addCalcIng} className="text-[9px] bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-black font-bold uppercase transition-all">+ Insumo</button>
                      </div>
                      <div className="space-y-3">
-                        {(calcInputs.ingredientes || []).map(ing => (
-                           <div key={ing.id} className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm relative">
-                              <button onClick={() => removeCalcIng(ing.id)} className="absolute -top-2 -right-2 bg-red-100 text-red-500 rounded-full p-1 hover:bg-red-50 hover:text-white transition-all"><X size={12}/></button>
+                        {(calcInputs?.ingredientes || []).map(ing => (
+                           <div key={ing?.id} className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm relative">
+                              <button onClick={() => removeCalcIng(ing?.id)} className="absolute -top-2 -right-2 bg-red-100 text-red-500 rounded-full p-1 hover:bg-red-50 hover:text-white transition-all"><X size={12}/></button>
                               
                               <select 
-                                value={ing.nombre} 
+                                value={ing?.nombre} 
                                 onChange={(e) => {
                                    const selectedId = e.target.value;
                                    let defaultCost = 0;
@@ -861,41 +843,41 @@ export default function App() {
                                    else if (selectedId === 'MP-11PG4') defaultCost = 0.91;
                                    else if (selectedId === 'MP-3003') defaultCost = 0.96;
 
-                                   const invItem = (inventory || []).find(i => i.id === selectedId);
+                                   const invItem = (inventory || []).find(i => i?.id === selectedId);
                                    const finalCost = invItem ? invItem.cost : defaultCost;
                                    
-                                   const newIngs = (calcInputs.ingredientes || []).map(i => 
-                                     i.id === ing.id ? { ...i, nombre: selectedId, costo: finalCost } : i
+                                   const newIngs = (calcInputs?.ingredientes || []).map(i => 
+                                     i?.id === ing?.id ? { ...i, nombre: selectedId, costo: finalCost } : i
                                    );
                                    setCalcInputs({ ...calcInputs, ingredientes: newIngs });
                                 }} 
                                 className="w-full text-[10px] font-bold uppercase outline-none mb-2 border-b border-gray-200 pb-1 bg-transparent text-gray-800"
                               >
                                 <option value="">SELECCIONE MATERIA PRIMA...</option>
-                                {(inventory || []).filter(i => i.category === 'Materia Prima' || i.category === 'Pigmentos').map(i => (
-                                   <option key={i.id} value={i.id}>{i.id} - {i.desc}</option>
+                                {(inventory || []).filter(i => i?.category === 'Materia Prima' || i?.category === 'Pigmentos').map(i => (
+                                   <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc}</option>
                                 ))}
                                 <option value="MP-RECICLADO">MP-RECICLADO - MATERIAL RECICLADO</option>
-                                {!(inventory || []).find(i => i.id === 'MP-0240') && <option value="MP-0240">MP-0240 - PEBD 240 (ESENTTIA)</option>}
-                                {!(inventory || []).find(i => i.id === 'MP-11PG4') && <option value="MP-11PG4">MP-11PG4 - LINEAL 11PG4 (METALOCENO)</option>}
-                                {!(inventory || []).find(i => i.id === 'MP-3003') && <option value="MP-3003">MP-3003 - PEBD 3003 (BAPOLENE)</option>}
+                                {!(inventory || []).find(i => i?.id === 'MP-0240') && <option value="MP-0240">MP-0240 - PEBD 240 (ESENTTIA)</option>}
+                                {!(inventory || []).find(i => i?.id === 'MP-11PG4') && <option value="MP-11PG4">MP-11PG4 - LINEAL 11PG4 (METALOCENO)</option>}
+                                {!(inventory || []).find(i => i?.id === 'MP-3003') && <option value="MP-3003">MP-3003 - PEBD 3003 (BAPOLENE)</option>}
                               </select>
                               
                               <div className="flex gap-2 mt-1">
                                 <div className="w-1/2">
                                    <label className="text-[8px] font-bold text-gray-400 uppercase">Proporción (%)</label>
-                                   <input type="number" value={ing.pct} onChange={(e) => updateCalcIng(ing.id, 'pct', e.target.value)} className="w-full text-xs font-black text-center outline-none bg-gray-50 rounded p-1 border border-gray-100 text-black" />
+                                   <input type="number" value={ing?.pct} onChange={(e) => updateCalcIng(ing?.id, 'pct', e.target.value)} className="w-full text-xs font-black text-center outline-none bg-gray-50 rounded p-1 border border-gray-100 text-black" />
                                 </div>
                                 <div className="w-1/2">
                                    <label className="text-[8px] font-bold text-gray-400 uppercase">Costo ($/KG)</label>
-                                   <input type="number" step="0.01" value={ing.costo} onChange={(e) => updateCalcIng(ing.id, 'costo', e.target.value)} className="w-full text-xs font-black text-center outline-none bg-gray-50 rounded p-1 border border-gray-100 text-black" />
+                                   <input type="number" step="0.01" value={ing?.costo} onChange={(e) => updateCalcIng(ing?.id, 'costo', e.target.value)} className="w-full text-xs font-black text-center outline-none bg-gray-50 rounded p-1 border border-gray-100 text-black" />
                                 </div>
                               </div>
                            </div>
                         ))}
                      </div>
                      <div className="mt-2 text-right">
-                       <span className={`text-[10px] font-black uppercase ${(calcInputs.ingredientes || []).reduce((a,b)=>a+b.pct,0) !== 100 ? 'text-red-500' : 'text-green-500'}`}>Total Fórmula: {(calcInputs.ingredientes || []).reduce((a,b)=>a+b.pct,0)}%</span>
+                       <span className={`text-[10px] font-black uppercase ${(calcInputs?.ingredientes || []).reduce((a,b)=>a+(b?.pct||0),0) !== 100 ? 'text-red-500' : 'text-green-500'}`}>Total Fórmula: {(calcInputs?.ingredientes || []).reduce((a,b)=>a+(b?.pct||0),0)}%</span>
                      </div>
                  </div>
 
@@ -905,7 +887,7 @@ export default function App() {
                      <div className="space-y-3">
                         <div className="flex items-center justify-between gap-4">
                           <label className="text-[9px] font-bold text-gray-500 uppercase flex-1">Merma Global Esperada (%)</label>
-                          <input type="number" step="0.1" value={calcInputs.mermaGlobalPorc} onChange={(e) => handleCalcChange('mermaGlobalPorc', e.target.value)} className="w-24 border-2 border-gray-200 rounded-lg p-2 text-xs font-black text-center text-red-500" />
+                          <input type="number" step="0.1" value={calcInputs?.mermaGlobalPorc} onChange={(e) => handleCalcChange('mermaGlobalPorc', e.target.value)} className="w-24 border-2 border-gray-200 rounded-lg p-2 text-xs font-black text-center text-red-500" />
                         </div>
                      </div>
                  </div>
@@ -916,7 +898,7 @@ export default function App() {
                      <div className="space-y-3">
                         <div>
                           <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Tipo de Producto</label>
-                          <select value={calcInputs.tipoProducto} onChange={e=>setCalcInputs({...calcInputs, tipoProducto: e.target.value})} className="w-full border-2 border-gray-200 rounded-lg p-2 text-xs font-black text-center text-blue-600 outline-none">
+                          <select value={calcInputs?.tipoProducto} onChange={e=>setCalcInputs({...calcInputs, tipoProducto: e.target.value})} className="w-full border-2 border-gray-200 rounded-lg p-2 text-xs font-black text-center text-blue-600 outline-none">
                             <option value="BOLSAS">BOLSAS / EMPAQUES</option>
                             <option value="TERMOENCOGIBLE">TERMOENCOGIBLE</option>
                           </select>
@@ -924,19 +906,19 @@ export default function App() {
                         <div className="grid grid-cols-2 gap-2">
                           <div>
                             <label className="text-[8px] font-bold text-gray-400 uppercase">ANCHO (CM)</label>
-                            <input type="number" step="0.1" value={calcInputs.ancho} onChange={e=>setCalcInputs({...calcInputs, ancho: e.target.value})} className="w-full border p-2 text-xs text-center font-bold" />
+                            <input type="number" step="0.1" value={calcInputs?.ancho} onChange={e=>setCalcInputs({...calcInputs, ancho: e.target.value})} className="w-full border p-2 text-xs text-center font-bold" />
                           </div>
                           <div>
                             <label className="text-[8px] font-bold text-gray-400 uppercase">FUELLES (CM)</label>
-                            <input type="number" step="0.1" disabled={calcInputs.tipoProducto === 'TERMOENCOGIBLE'} value={calcInputs.fuelles} onChange={e=>setCalcInputs({...calcInputs, fuelles: e.target.value})} className="w-full border p-2 text-xs text-center font-bold disabled:bg-gray-100" />
+                            <input type="number" step="0.1" disabled={calcInputs?.tipoProducto === 'TERMOENCOGIBLE'} value={calcInputs?.fuelles} onChange={e=>setCalcInputs({...calcInputs, fuelles: e.target.value})} className="w-full border p-2 text-xs text-center font-bold disabled:bg-gray-100" />
                           </div>
                           <div>
                             <label className="text-[8px] font-bold text-gray-400 uppercase">LARGO (CM)</label>
-                            <input type="number" step="0.1" disabled={calcInputs.tipoProducto === 'TERMOENCOGIBLE'} value={calcInputs.largo} onChange={e=>setCalcInputs({...calcInputs, largo: e.target.value})} className="w-full border p-2 text-xs text-center font-bold disabled:bg-gray-100" />
+                            <input type="number" step="0.1" disabled={calcInputs?.tipoProducto === 'TERMOENCOGIBLE'} value={calcInputs?.largo} onChange={e=>setCalcInputs({...calcInputs, largo: e.target.value})} className="w-full border p-2 text-xs text-center font-bold disabled:bg-gray-100" />
                           </div>
                           <div>
                             <label className="text-[8px] font-bold text-gray-400 uppercase">MICRAS</label>
-                            <input type="number" step="0.001" value={calcInputs.micras} onChange={e=>setCalcInputs({...calcInputs, micras: e.target.value})} className="w-full border p-2 text-xs text-center font-bold" />
+                            <input type="number" step="0.001" value={calcInputs?.micras} onChange={e=>setCalcInputs({...calcInputs, micras: e.target.value})} className="w-full border p-2 text-xs text-center font-bold" />
                           </div>
                         </div>
                      </div>
@@ -968,13 +950,13 @@ export default function App() {
                            {/* 1. MATERIA PRIMA */}
                            <tr><td colSpan="6" className="p-1.5 font-black uppercase bg-gray-50 print:bg-transparent">1. MATERIA PRIMA (MEZCLA)</td></tr>
                            {(calcIngredientesProcesados || []).map(ing => (
-                             <tr key={ing.id}>
-                               <td className="p-1.5 pl-4 font-bold">{ing.desc}</td>
-                               <td className="p-1.5 text-center">{formatNum(ing.kg)}</td>
+                             <tr key={ing?.id}>
+                               <td className="p-1.5 pl-4 font-bold">{ing?.desc}</td>
+                               <td className="p-1.5 text-center">{formatNum(ing?.kg)}</td>
                                <td className="p-1.5 text-center">kg</td>
-                               <td className="p-1.5 text-center">${formatNum(ing.costo)}</td>
-                               <td className="p-1.5 text-center">${formatNum(ing.totalCost)}</td>
-                               <td className="p-1.5 text-gray-500 print:text-black">{formatNum(ing.pct)}% de la mezcla</td>
+                               <td className="p-1.5 text-center">${formatNum(ing?.costo)}</td>
+                               <td className="p-1.5 text-center">${formatNum(ing?.totalCost)}</td>
+                               <td className="p-1.5 text-gray-500 print:text-black">{formatNum(ing?.pct)}% de la mezcla</td>
                              </tr>
                            ))}
                            <tr className="bg-gray-100 font-black border-y border-gray-300 print:border-black print:bg-gray-200">
@@ -994,7 +976,7 @@ export default function App() {
                              <td className="p-1.5 text-center">kg</td>
                              <td className="p-1.5 text-center">$0.00</td>
                              <td className="p-1.5 text-center">$0.00</td>
-                             <td className="p-1.5 text-gray-500 print:text-black">{formatNum(calcInputs.mermaGlobalPorc)}% de la mezcla</td>
+                             <td className="p-1.5 text-gray-500 print:text-black">{formatNum(calcInputs?.mermaGlobalPorc)}% de la mezcla</td>
                            </tr>
                            <tr className="bg-gray-100 font-black border-y border-gray-300 print:border-black print:bg-gray-200">
                              <td className="p-1.5 pl-4 text-blue-700">PRODUCCIÓN NETA (KG ÚTILES)</td>
@@ -1006,14 +988,14 @@ export default function App() {
                            </tr>
 
                            {/* 3. CONVERSIÓN */}
-                           <tr><td colSpan="6" className="p-1.5 pt-3 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">3. CONVERSIÓN FINAL ({calcInputs.tipoProducto})</td></tr>
+                           <tr><td colSpan="6" className="p-1.5 pt-3 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">3. CONVERSIÓN FINAL ({calcInputs?.tipoProducto || ''})</td></tr>
                            <tr className="bg-green-100 print:bg-gray-300 font-black text-green-800 print:text-black border-y border-gray-400 print:border-black text-[11px] print:text-[9px]">
                              <td className="p-2 pl-4">PRODUCCIÓN FINAL ESTIMADA</td>
                              <td className="p-2 text-center">{formatNum(calcProduccionFinalUnidades)}</td>
                              <td className="p-2 text-center">{simUmFinal}</td>
                              <td className="p-2 text-center">${formatNum(calcCostoFinalUnidad)}</td>
                              <td className="p-2 text-center">${formatNum(calcCostoMezclaProcesada)}</td>
-                             <td className="p-2 text-[8px] text-gray-600 print:text-black">{calcInputs.tipoProducto === 'BOLSAS' ? `Peso Teórico: ${formatNum(simPesoMillar)} kg/M` : `Conversión directa a KG`}</td>
+                             <td className="p-2 text-[8px] text-gray-600 print:text-black">{calcInputs?.tipoProducto === 'BOLSAS' ? `Peso Teórico: ${formatNum(simPesoMillar)} kg/M` : `Conversión directa a KG`}</td>
                            </tr>
                         </tbody>
                      </table>
@@ -1034,20 +1016,20 @@ export default function App() {
                     <tr><th className="p-4 text-[10px] font-black uppercase text-gray-500 text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-gray-500 text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-[10px] font-black uppercase text-gray-500 text-right text-black tracking-widest">KG Solicitados</th><th className="p-4 text-center text-gray-500 text-black tracking-widest">Gestión</th></tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {(requirements || []).filter(r => r.status === 'PENDIENTE DE INGENIERÍA').map(r => (
-                      <tr key={r.id} className="hover:bg-gray-50 group">
+                    {(requirements || []).filter(r => r?.status === 'PENDIENTE DE INGENIERÍA').map(r => (
+                      <tr key={r?.id} className="hover:bg-gray-50 group">
                         <td className="p-4 font-black text-orange-500">
-                          #{String(r.id).replace('OP-', '').padStart(5, '0')}
-                          {!r.viewedByPlanta && <span className="ml-2 inline-block animate-pulse bg-red-500 text-white px-2 py-0.5 rounded-md text-[9px] uppercase tracking-widest">Nuevo</span>}
+                          #{String(r?.id).replace('OP-', '').padStart(5, '0')}
+                          {!r?.viewedByPlanta && <span className="ml-2 inline-block animate-pulse bg-red-500 text-white px-2 py-0.5 rounded-md text-[9px] uppercase tracking-widest">Nuevo</span>}
                         </td>
-                        <td className="p-4 font-bold text-black uppercase text-xs">{r.client}<br/><span className="text-[9px] font-bold text-gray-400">{r.desc}</span></td>
-                        <td className="p-4 text-right font-black text-black">{formatNum(r.requestedKg)} KG</td>
+                        <td className="p-4 font-bold text-black uppercase text-xs">{r?.client}<br/><span className="text-[9px] font-bold text-gray-400">{r?.desc}</span></td>
+                        <td className="p-4 text-right font-black text-black">{formatNum(r?.requestedKg)} KG</td>
                         <td className="p-4 text-center">
                           <button onClick={async () => { 
-                            setRecipeEditReqId(r.id); 
-                            setTempRecipe(r.recipe || []); 
-                            if (!r.viewedByPlanta) {
-                               await updateDoc(getDocRef('requirements', r.id), { viewedByPlanta: true });
+                            setRecipeEditReqId(r?.id); 
+                            setTempRecipe(r?.recipe || []); 
+                            if (!r?.viewedByPlanta) {
+                               updateDoc(getDocRef('requirements', r.id), { viewedByPlanta: true }).catch(e=>console.error(e));
                             }
                           }} className="bg-black text-white px-5 py-2.5 rounded-xl text-[9px] font-black uppercase hover:bg-gray-800 transition-colors shadow-md">ASIGNAR RECETA</button>
                         </td>
@@ -1069,15 +1051,15 @@ export default function App() {
                 <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 shadow-inner">
                   <div className="flex justify-between items-start mb-2">
                      <p className="text-[10px] font-black text-orange-800 uppercase">OP N°: {String(recipeEditReqId).replace('OP-', '').padStart(5, '0')}</p>
-                     <p className="text-[10px] font-black text-orange-800 uppercase">CLIENTE: {(requirements || []).find(r=>r.id===recipeEditReqId)?.client}</p>
+                     <p className="text-[10px] font-black text-orange-800 uppercase">CLIENTE: {(requirements || []).find(r=>r?.id===recipeEditReqId)?.client}</p>
                   </div>
-                  <p className="text-sm font-black text-orange-600 uppercase mb-3">{(requirements || []).find(r=>r.id===recipeEditReqId)?.desc}</p>
+                  <p className="text-sm font-black text-orange-600 uppercase mb-3">{(requirements || []).find(r=>r?.id===recipeEditReqId)?.desc}</p>
                   
                   <div className="grid grid-cols-2 gap-2 bg-white/60 p-3 rounded-lg border border-orange-100 text-[9px] font-black text-gray-700 uppercase">
-                     <div>TIPO: {(requirements || []).find(r=>r.id===recipeEditReqId)?.tipoProducto}</div>
-                     <div>CANTIDAD: {(requirements || []).find(r=>r.id===recipeEditReqId)?.cantidad} {(requirements || []).find(r=>r.id===recipeEditReqId)?.presentacion}</div>
-                     <div>TOTAL CARGA: {formatNum((requirements || []).find(r=>r.id===recipeEditReqId)?.requestedKg)} KG</div>
-                     <div>VENDEDOR: {(requirements || []).find(r=>r.id===recipeEditReqId)?.vendedor || 'S/N'}</div>
+                     <div>TIPO: {(requirements || []).find(r=>r?.id===recipeEditReqId)?.tipoProducto}</div>
+                     <div>CANTIDAD: {(requirements || []).find(r=>r?.id===recipeEditReqId)?.cantidad} {(requirements || []).find(r=>r?.id===recipeEditReqId)?.presentacion}</div>
+                     <div>TOTAL CARGA: {formatNum((requirements || []).find(r=>r?.id===recipeEditReqId)?.requestedKg)} KG</div>
+                     <div>VENDEDOR: {(requirements || []).find(r=>r?.id===recipeEditReqId)?.vendedor || 'S/N'}</div>
                   </div>
                 </div>
 
@@ -1101,11 +1083,11 @@ export default function App() {
                   {(tempRecipe || []).map((ing, idx) => (
                     <li key={idx} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-200 shadow-sm">
                       <div className="flex flex-col">
-                        <span className="text-[10px] font-black uppercase text-gray-800">{(inventory || []).find(i=>i.id===ing.id)?.desc || ing.id}</span>
-                        {ing.percentage !== null && <span className="text-[9px] font-bold text-gray-500 mt-0.5">PORCENTAJE: {ing.percentage}%</span>}
+                        <span className="text-[10px] font-black uppercase text-gray-800">{(inventory || []).find(i=>i?.id===ing?.id)?.desc || ing?.id}</span>
+                        {ing?.percentage !== null && <span className="text-[9px] font-bold text-gray-500 mt-0.5">PORCENTAJE: {ing?.percentage}%</span>}
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="text-[10px] font-black text-orange-600 bg-orange-100 px-2 py-1 rounded-lg">{formatNum(ing.totalQty)} KG</span>
+                        <span className="text-[10px] font-black text-orange-600 bg-orange-100 px-2 py-1 rounded-lg">{formatNum(ing?.totalQty)} KG</span>
                         <button type="button" onClick={()=>handleEditIngFromRecipe(idx)} className="text-blue-500 hover:text-blue-700 transition-colors"><Edit size={16}/></button>
                         <button type="button" onClick={()=>handleRemoveIngFromRecipe(idx)} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 size={16}/></button>
                       </div>
@@ -1118,13 +1100,13 @@ export default function App() {
           </div>
         )}
 
-        {/* CONTROL DE FASES (REPORTE DIARIO E INGRESO DE PARAMETROS TECNICOS) */}
+        {/* CONTROL DE FASES (REPORTE DIARIO DE INSUMOS SIMPLIFICADO) */}
         {prodView === 'fases_produccion' && (
           <div className="space-y-6">
             {!selectedPhaseReqId ? (
-              <div className="p-12 bg-white rounded-3xl border border-gray-200 shadow-sm text-center animate-in fade-in"><div className="bg-black p-5 rounded-full inline-block mb-6 text-orange-500 shadow-lg"><Factory size={40}/></div><h2 className="text-2xl font-black uppercase text-black tracking-tighter mb-2">Control de Producción Activo</h2><p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-10">Reporte el consumo de insumos y mermas por fase</p><div className="mt-12 border-t border-gray-200 pt-8 overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-center text-black tracking-widest">Acción de Planta</th></tr></thead><tbody className="divide-y divide-gray-100">{(activeOrders || []).map(r => (<tr key={r.id} className="group hover:bg-gray-50 transition-colors"><td className="p-4 font-black text-orange-500 text-lg">#{String(r.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-sm text-black">{r.client}<br/><span className="text-[10px] text-gray-400 font-bold">{r.desc}</span></td><td className="p-4 text-center"><div className="flex justify-center gap-2"><button onClick={() => setShowWorkOrder(r.id)} className="bg-white border-2 border-gray-100 text-gray-700 px-4 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm hover:bg-gray-50 transition-all" title="Imprimir"><Printer size={16}/> ORDEN TRABAJO</button><button onClick={() => { setSelectedPhaseReqId(r.id); setActivePhaseTab('extrusion'); }} className="bg-black text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-md hover:bg-slate-800 transition-all"><PlayCircle size={16}/> ENTRAR A FASES</button></div></td></tr>))}</tbody></table></div></div>
+              <div className="p-12 bg-white rounded-3xl border border-gray-200 shadow-sm text-center animate-in fade-in"><div className="bg-black p-5 rounded-full inline-block mb-6 text-orange-500 shadow-lg"><Factory size={40}/></div><h2 className="text-2xl font-black uppercase text-black tracking-tighter mb-2">Control de Producción Activo</h2><p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-10">Reporte el consumo de insumos y mermas por fase</p><div className="mt-12 border-t border-gray-200 pt-8 overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-center text-black tracking-widest">Acción de Planta</th></tr></thead><tbody className="divide-y divide-gray-100">{(activeOrders || []).map(r => (<tr key={r?.id} className="group hover:bg-gray-50 transition-colors"><td className="p-4 font-black text-orange-500 text-lg">#{String(r?.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-sm text-black">{r?.client}<br/><span className="text-[10px] text-gray-400 font-bold">{r?.desc}</span></td><td className="p-4 text-center"><div className="flex justify-center gap-2"><button onClick={() => setShowWorkOrder(r?.id)} className="bg-white border-2 border-gray-100 text-gray-700 px-4 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm hover:bg-gray-50 transition-all" title="Imprimir"><Printer size={16}/> ORDEN TRABAJO</button><button onClick={() => { setSelectedPhaseReqId(r?.id); setActivePhaseTab('extrusion'); }} className="bg-black text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-md hover:bg-slate-800 transition-all"><PlayCircle size={16}/> ENTRAR A FASES</button></div></td></tr>))}</tbody></table></div></div>
             ) : (() => {
-              const req = (requirements || []).find(r => r.id === selectedPhaseReqId); if (!req) return null;
+              const req = (requirements || []).find(r => r?.id === selectedPhaseReqId); if (!req) return null;
               const cPhase = req.production?.[activePhaseTab] || { batches: [], isClosed: false };
               return (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in slide-in-from-bottom-8">
@@ -1135,109 +1117,13 @@ export default function App() {
                   
                   <div className="lg:col-span-2 bg-white rounded-3xl shadow-sm border border-gray-200 p-8 lg:p-10">
                     <div className="border-b-2 border-gray-100 pb-6 mb-8 flex justify-between items-center"><h3 className="text-2xl font-black uppercase text-black tracking-tighter">Fase: {activePhaseTab.toUpperCase()}</h3><button onClick={()=>setSelectedPhaseReqId(null)} className="bg-gray-100 p-2.5 rounded-xl text-gray-500 hover:text-black"><X size={18}/></button></div>
-                    {cPhase.batches && cPhase.batches.length > 0 && (<div className="mb-8 overflow-hidden rounded-2xl border border-gray-200"><table className="w-full text-center text-xs"><thead className="bg-gray-50 border-b border-gray-200"><tr className="uppercase font-black text-[9px] text-gray-500 tracking-widest"><th className="p-3 border-r border-gray-200">Fecha</th><th className="p-3 border-r border-gray-200">Producido</th><th className="p-3 border-r border-gray-200">Merma</th><th className="p-3">Acción</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(cPhase.batches || []).map(b => (<tr key={b.id} className="hover:bg-gray-50"><td className="p-3 border-r border-gray-200 font-bold">{b.date}</td><td className="p-3 border-r border-gray-200 font-black text-green-600">{formatNum(b.producedKg)} kg</td><td className="p-3 border-r border-gray-200 font-black text-red-500">{formatNum(b.mermaKg)} kg</td><td className="p-3 text-center flex justify-center gap-2"><button onClick={() => handleEditBatch(req.id, activePhaseTab, b.id)} className="bg-blue-50 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors p-1.5 rounded-lg" title="Modificar"><Edit size={14}/></button><button onClick={() => handleDeleteBatch(req.id, activePhaseTab, b.id)} className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-colors p-1.5 rounded-lg" title="Eliminar"><Trash2 size={14}/></button></td></tr>))}</tbody></table></div>)}
+                    {cPhase.batches && cPhase.batches.length > 0 && (<div className="mb-8 overflow-hidden rounded-2xl border border-gray-200"><table className="w-full text-center text-xs"><thead className="bg-gray-50 border-b border-gray-200"><tr className="uppercase font-black text-[9px] text-gray-500 tracking-widest"><th className="p-3 border-r border-gray-200">Fecha</th><th className="p-3 border-r border-gray-200">Producido</th><th className="p-3 border-r border-gray-200">Merma</th><th className="p-3">Acción</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(cPhase.batches || []).map(b => (<tr key={b?.id} className="hover:bg-gray-50"><td className="p-3 border-r border-gray-200 font-bold">{b?.date}</td><td className="p-3 border-r border-gray-200 font-black text-green-600">{formatNum(b?.producedKg)} kg</td><td className="p-3 border-r border-gray-200 font-black text-red-500">{formatNum(b?.mermaKg)} kg</td><td className="p-3 text-center flex justify-center gap-2"><button onClick={() => handleEditBatch(req.id, activePhaseTab, b.id)} className="bg-blue-50 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors p-1.5 rounded-lg" title="Modificar"><Edit size={14}/></button><button onClick={() => handleDeleteBatch(req.id, activePhaseTab, b.id)} className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-colors p-1.5 rounded-lg" title="Eliminar"><Trash2 size={14}/></button></td></tr>))}</tbody></table></div>)}
                     {cPhase.isClosed ? (<div className="text-center py-10 bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200 shadow-inner"><CheckCircle size={56} className="text-green-500 mx-auto mb-6"/><h4 className="text-xl font-black text-black uppercase tracking-widest">Esta Fase se encuentra cerrada</h4><p className="text-[10px] font-bold text-gray-400 uppercase mt-2">Ya no se permiten reportes parciales en esta etapa.</p></div>) : (
                       <form onSubmit={handleSavePhase} className="space-y-8">
                         <div className="flex gap-4 items-center"><label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Fecha Reporte:</label><input type="date" value={phaseForm.date} onChange={e=>setPhaseForm({...phaseForm, date: e.target.value})} className="border-2 border-gray-200 rounded-xl p-2 font-black text-xs outline-none text-black focus:border-orange-500" /></div>
                         
-                        {/* FORMULARIOS TÉCNICOS SEGÚN FASE */}
-                        {activePhaseTab === 'extrusion' && (
-                          <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 shadow-inner mb-6">
-                             <h4 className="text-[10px] font-black text-gray-600 uppercase mb-4 flex items-center gap-2"><Settings2 size={16}/> Parámetros Técnicos - Extrusión</h4>
-                             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">Operador</label><input type="text" value={phaseForm.operadorExt} onChange={e=>setPhaseForm({...phaseForm, operadorExt: e.target.value.toUpperCase()})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                                <div>
-                                  <label className="text-[9px] font-black text-gray-500 uppercase">Tratado</label>
-                                  <select value={phaseForm.tratado} onChange={e=>setPhaseForm({...phaseForm, tratado: e.target.value})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500">
-                                    <option value="">Seleccione...</option><option value="1">Tratado 1</option><option value="2">Tratado 2</option>
-                                  </select>
-                                </div>
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">Motor Principal</label><input type="text" value={phaseForm.motorExt} onChange={e=>setPhaseForm({...phaseForm, motorExt: e.target.value.toUpperCase()})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">Ventilador</label><input type="text" value={phaseForm.ventilador} onChange={e=>setPhaseForm({...phaseForm, ventilador: e.target.value.toUpperCase()})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">Jalador</label><input type="text" value={phaseForm.jalador} onChange={e=>setPhaseForm({...phaseForm, jalador: e.target.value.toUpperCase()})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                             </div>
-                             <div className="border-t border-gray-200 pt-4">
-                               <p className="text-[9px] font-black text-gray-500 uppercase mb-2">Zonas de Calor (1 al 6)</p>
-                               <div className="grid grid-cols-6 gap-2 mb-4">
-                                 <input type="text" placeholder="Z1" value={phaseForm.zona1} onChange={e=>setPhaseForm({...phaseForm, zona1: e.target.value})} className="border p-2 text-xs rounded-lg text-center" />
-                                 <input type="text" placeholder="Z2" value={phaseForm.zona2} onChange={e=>setPhaseForm({...phaseForm, zona2: e.target.value})} className="border p-2 text-xs rounded-lg text-center" />
-                                 <input type="text" placeholder="Z3" value={phaseForm.zona3} onChange={e=>setPhaseForm({...phaseForm, zona3: e.target.value})} className="border p-2 text-xs rounded-lg text-center" />
-                                 <input type="text" placeholder="Z4" value={phaseForm.zona4} onChange={e=>setPhaseForm({...phaseForm, zona4: e.target.value})} className="border p-2 text-xs rounded-lg text-center" />
-                                 <input type="text" placeholder="Z5" value={phaseForm.zona5} onChange={e=>setPhaseForm({...phaseForm, zona5: e.target.value})} className="border p-2 text-xs rounded-lg text-center" />
-                                 <input type="text" placeholder="Z6" value={phaseForm.zona6} onChange={e=>setPhaseForm({...phaseForm, zona6: e.target.value})} className="border p-2 text-xs rounded-lg text-center" />
-                               </div>
-                               <p className="text-[9px] font-black text-gray-500 uppercase mb-2">Cabezales</p>
-                               <div className="grid grid-cols-2 gap-4">
-                                 <div><label className="text-[8px] font-bold text-gray-400">Cabezal A</label><input type="text" value={phaseForm.cabezalA} onChange={e=>setPhaseForm({...phaseForm, cabezalA: e.target.value})} className="w-full border p-2 text-xs rounded-lg" /></div>
-                                 <div><label className="text-[8px] font-bold text-gray-400">Cabezal B</label><input type="text" value={phaseForm.cabezalB} onChange={e=>setPhaseForm({...phaseForm, cabezalB: e.target.value})} className="w-full border p-2 text-xs rounded-lg" /></div>
-                               </div>
-                             </div>
-                          </div>
-                        )}
-
-                        {activePhaseTab === 'impresion' && (
-                          <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 shadow-inner mb-6">
-                             <h4 className="text-[10px] font-black text-gray-600 uppercase mb-4 flex items-center gap-2"><Settings2 size={16}/> Parámetros Técnicos - Impresión</h4>
-                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">Operador</label><input type="text" value={phaseForm.operadorImp} onChange={e=>setPhaseForm({...phaseForm, operadorImp: e.target.value.toUpperCase()})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">KG Recibidos</label><input type="number" value={phaseForm.kgRecibidosImp} onChange={e=>setPhaseForm({...phaseForm, kgRecibidosImp: e.target.value})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">Cant. Colores</label><input type="number" value={phaseForm.cantColores} onChange={e=>setPhaseForm({...phaseForm, cantColores: e.target.value})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">Relación Imp.</label><input type="text" value={phaseForm.relacionImp} onChange={e=>setPhaseForm({...phaseForm, relacionImp: e.target.value.toUpperCase()})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">Motor Principal</label><input type="text" value={phaseForm.motorImp} onChange={e=>setPhaseForm({...phaseForm, motorImp: e.target.value.toUpperCase()})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">Tensores (1 y 2)</label><input type="text" value={phaseForm.tensores} onChange={e=>setPhaseForm({...phaseForm, tensores: e.target.value.toUpperCase()})} placeholder="Ej: 15 / 20" className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">Temperatura</label><input type="text" value={phaseForm.tempImp} onChange={e=>setPhaseForm({...phaseForm, tempImp: e.target.value.toUpperCase()})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">Cant. Solvente</label><input type="text" value={phaseForm.solvente} onChange={e=>setPhaseForm({...phaseForm, solvente: e.target.value.toUpperCase()})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                             </div>
-                          </div>
-                        )}
-
-                        {activePhaseTab === 'sellado' && (
-                          <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 shadow-inner mb-6">
-                             <h4 className="text-[10px] font-black text-gray-600 uppercase mb-4 flex items-center gap-2"><Settings2 size={16}/> Parámetros Técnicos - Sellado y Corte</h4>
-                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">Operador</label><input type="text" value={phaseForm.operadorSel} onChange={e=>setPhaseForm({...phaseForm, operadorSel: e.target.value.toUpperCase()})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase">KG Recibidos</label><input type="number" value={phaseForm.kgRecibidosSel} onChange={e=>setPhaseForm({...phaseForm, kgRecibidosSel: e.target.value})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500"/></div>
-                                <div>
-                                  <label className="text-[9px] font-black text-gray-500 uppercase">Impresa</label>
-                                  <select value={phaseForm.impresa} onChange={e=>setPhaseForm({...phaseForm, impresa: e.target.value})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500">
-                                    <option value="NO">NO</option><option value="SI">SI</option>
-                                  </select>
-                                </div>
-                                <div>
-                                  <label className="text-[9px] font-black text-gray-500 uppercase">Tipo de Sello</label>
-                                  <select value={phaseForm.tipoSello} onChange={e=>setPhaseForm({...phaseForm, tipoSello: e.target.value})} className="w-full border p-2 text-xs rounded-lg uppercase outline-none focus:border-orange-500">
-                                    <option value="Sello FC">Sello FC</option><option value="Sello FR">Sello FR</option><option value="Sello PC">Sello PC</option>
-                                  </select>
-                                </div>
-                             </div>
-                             <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200">
-                                <div>
-                                  <p className="text-[9px] font-black text-gray-500 uppercase mb-2 flex items-center gap-1"><Thermometer size={12}/> Temp Cabezales</p>
-                                  <div className="flex gap-2">
-                                    <input type="text" placeholder="Cabezal A" value={phaseForm.tempCabezalA} onChange={e=>setPhaseForm({...phaseForm, tempCabezalA: e.target.value})} className="w-1/2 border p-2 text-xs rounded-lg text-center" />
-                                    <input type="text" placeholder="Cabezal B" value={phaseForm.tempCabezalB} onChange={e=>setPhaseForm({...phaseForm, tempCabezalB: e.target.value})} className="w-1/2 border p-2 text-xs rounded-lg text-center" />
-                                  </div>
-                                </div>
-                                <div>
-                                  <p className="text-[9px] font-black text-gray-500 uppercase mb-2 flex items-center gap-1"><Thermometer size={12}/> Temp Pisos</p>
-                                  <div className="flex gap-2">
-                                    <input type="text" placeholder="Piso A" value={phaseForm.tempPisoA} onChange={e=>setPhaseForm({...phaseForm, tempPisoA: e.target.value})} className="w-1/2 border p-2 text-xs rounded-lg text-center" />
-                                    <input type="text" placeholder="Piso B" value={phaseForm.tempPisoB} onChange={e=>setPhaseForm({...phaseForm, tempPisoB: e.target.value})} className="w-1/2 border p-2 text-xs rounded-lg text-center" />
-                                  </div>
-                                </div>
-                                <div className="col-span-2">
-                                  <label className="text-[9px] font-black text-gray-500 uppercase flex items-center gap-1 mb-1"><Gauge size={12}/> Velocidad Servomotores (1 al 4)</label>
-                                  <input type="text" placeholder="Ej: S1:100 / S2:90 / S3:100 / S4:110" value={phaseForm.velServo} onChange={e=>setPhaseForm({...phaseForm, velServo: e.target.value.toUpperCase()})} className="w-full border p-2 text-xs rounded-lg outline-none focus:border-orange-500"/>
-                                </div>
-                             </div>
-                             <div className="grid grid-cols-2 gap-4 pt-4 mt-4 border-t border-gray-200">
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase mb-1 block">Cant. Producida ({req.tipoProducto === 'TERMOENCOGIBLE' ? 'Kilos' : 'Millares'})</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border p-2 text-xs rounded-lg outline-none focus:border-orange-500"/></div>
-                                <div><label className="text-[9px] font-black text-gray-500 uppercase mb-1 block">Troquel</label><input type="text" value={phaseForm.troquelSel} onChange={e=>setPhaseForm({...phaseForm, troquelSel: e.target.value.toUpperCase()})} className="w-full border p-2 text-xs rounded-lg outline-none focus:border-orange-500"/></div>
-                             </div>
-                          </div>
-                        )}
-
-                        <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200"><h4 className="text-[10px] font-black text-gray-600 uppercase mb-4 flex items-center gap-2"><Box size={16}/> Insumos Consumidos (Lote Actual)</h4><div className="flex gap-3 mb-6"><select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border-2 border-gray-200 rounded-xl p-3.5 font-black text-xs text-black outline-none focus:border-orange-500">{renderPhaseInventoryOptions()}</select><input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} placeholder="Cant" className="w-32 border-2 border-gray-200 rounded-xl p-3.5 text-xs font-black text-center text-black outline-none focus:border-orange-500" /><button type="button" onClick={handleAddPhaseIng} className="bg-black text-white px-5 rounded-xl shadow-md transition-all hover:bg-slate-800"><Plus size={20}/></button></div><ul className="space-y-3">{(phaseForm.insumos || []).map((ing, idx) => (<li key={idx} className="flex justify-between items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm"><span className="text-xs font-black uppercase text-gray-800">{(inventory || []).find(i=>i.id===ing.id)?.desc || ing.id}</span><div className="flex items-center gap-4"><span className="text-sm font-black text-black bg-gray-100 px-3 py-1.5 rounded-lg">{ing.qty}</span><button type="button" onClick={() => setPhaseForm({...phaseForm, insumos: (phaseForm.insumos || []).filter((_, i) => i !== idx)})} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 size={18}/></button></div></li>))}</ul></div><div className="grid grid-cols-2 gap-4"><div className="bg-green-50 p-4 rounded-2xl border border-green-200 shadow-inner"><label className="text-[9px] font-black text-green-800 uppercase block mb-2 tracking-widest">Producido Bruto (KG)</label><input type="number" step="0.01" value={phaseForm.producedKg} onChange={e=>setPhaseForm({...phaseForm, producedKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-green-300 rounded-xl p-3 text-lg font-black text-green-700 text-center outline-none focus:border-green-500" /></div><div className="bg-red-50 p-4 rounded-2xl border border-red-200 shadow-inner"><label className="text-[9px] font-black text-red-800 uppercase block mb-2 tracking-widest">Mermas / Desperdicio (KG)</label><input type="number" step="0.01" value={phaseForm.mermaKg} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-red-300 rounded-xl p-3 text-lg font-black text-red-700 text-center outline-none focus:border-red-500" /></div></div><div className="flex flex-col md:flex-row gap-4 pt-6 border-t-2 border-gray-100"><button type="submit" name="skip" className="w-full md:w-1/4 bg-gray-100 text-gray-500 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-gray-200 shadow-sm transition-all hover:bg-gray-200">OMITIR FASE</button><button type="submit" name="partial" className="w-full md:w-2/4 bg-blue-50 text-blue-600 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-blue-200 flex justify-center items-center gap-2 shadow-sm transition-all hover:bg-blue-100"><Plus size={16}/> GUARDAR REPORTE PARCIAL</button><button type="submit" name="close" className="w-full md:w-1/4 bg-black text-white font-black py-4 rounded-2xl uppercase text-[9px] flex justify-center items-center gap-2 shadow-xl hover:bg-slate-800 transition-all"><CheckCircle size={16}/> CERRAR FASE DEFINITIVA</button></div>
+                        {/* FORMULARIO SIMPLIFICADO: Solo Insumos, Producido y Mermas (SIN ESTADO PESADO) */}
+                        <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200"><h4 className="text-[10px] font-black text-gray-600 uppercase mb-4 flex items-center gap-2"><Box size={16}/> Insumos Consumidos (Lote Actual)</h4><div className="flex gap-3 mb-6"><select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border-2 border-gray-200 rounded-xl p-3.5 font-black text-xs text-black outline-none focus:border-orange-500">{renderPhaseInventoryOptions()}</select><input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} placeholder="Cant" className="w-32 border-2 border-gray-200 rounded-xl p-3.5 text-xs font-black text-center text-black outline-none focus:border-orange-500" /><button type="button" onClick={handleAddPhaseIng} className="bg-black text-white px-5 rounded-xl shadow-md transition-all hover:bg-slate-800"><Plus size={20}/></button></div><ul className="space-y-3">{(phaseForm.insumos || []).map((ing, idx) => (<li key={idx} className="flex justify-between items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm"><span className="text-xs font-black uppercase text-gray-800">{(inventory || []).find(i=>i?.id===ing?.id)?.desc || ing?.id}</span><div className="flex items-center gap-4"><span className="text-sm font-black text-black bg-gray-100 px-3 py-1.5 rounded-lg">{ing?.qty}</span><button type="button" onClick={() => setPhaseForm({...phaseForm, insumos: (phaseForm.insumos || []).filter((_, i) => i !== idx)})} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 size={18}/></button></div></li>))}</ul></div><div className="grid grid-cols-2 gap-4"><div className="bg-green-50 p-4 rounded-2xl border border-green-200 shadow-inner"><label className="text-[9px] font-black text-green-800 uppercase block mb-2 tracking-widest">Producido Bruto (KG)</label><input type="number" step="0.01" value={phaseForm.producedKg} onChange={e=>setPhaseForm({...phaseForm, producedKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-green-300 rounded-xl p-3 text-lg font-black text-green-700 text-center outline-none focus:border-green-500" /></div><div className="bg-red-50 p-4 rounded-2xl border border-red-200 shadow-inner"><label className="text-[9px] font-black text-red-800 uppercase block mb-2 tracking-widest">Mermas / Desperdicio (KG)</label><input type="number" step="0.01" value={phaseForm.mermaKg} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-red-300 rounded-xl p-3 text-lg font-black text-red-700 text-center outline-none focus:border-red-500" /></div></div><div className="flex flex-col md:flex-row gap-4 pt-6 border-t-2 border-gray-100"><button type="submit" name="skip" className="w-full md:w-1/4 bg-gray-100 text-gray-500 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-gray-200 shadow-sm transition-all hover:bg-gray-200">OMITIR FASE</button><button type="submit" name="partial" className="w-full md:w-2/4 bg-blue-50 text-blue-600 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-blue-200 flex justify-center items-center gap-2 shadow-sm transition-all hover:bg-blue-100"><Plus size={16}/> GUARDAR REPORTE PARCIAL</button><button type="submit" name="close" className="w-full md:w-1/4 bg-black text-white font-black py-4 rounded-2xl uppercase text-[9px] flex justify-center items-center gap-2 shadow-xl hover:bg-slate-800 transition-all"><CheckCircle size={16}/> CERRAR FASE DEFINITIVA</button></div>
                       </form>
                     )}
                   </div>
@@ -1251,7 +1137,7 @@ export default function App() {
         {prodView === 'historial' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
             <div className="px-6 py-5 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-lg font-black text-black uppercase flex items-center gap-2"><History className="text-orange-500" /> Órdenes Completadas</h2><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Auditoría de Proceso</p></div>
-            <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-right text-black text-[10px] font-black uppercase tracking-widest">KG Finales</th><th className="p-4 text-center text-black text-[10px] font-black uppercase tracking-widest">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(completedOrders || []).map(req => (<tr key={req.id} className="hover:bg-gray-50 transition-colors group"><td className="p-4 font-black text-orange-500 text-lg">#{String(req.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-xs text-black">{req.client}<br/><span className="text-[10px] font-bold text-gray-400">{req.desc}</span></td><td className="p-4 text-right font-black text-green-600 text-lg">{formatNum((req.production?.sellado?.batches || []).reduce((a,b)=>a+parseNum(b.producedKg),0) || (req.production?.extrusion?.batches || []).reduce((a,b)=>a+parseNum(b.producedKg),0) || 0)} KG</td><td className="p-4 text-center"><button onClick={()=>setShowFiniquito(req.id)} className="bg-black text-white px-8 py-3 rounded-2xl text-[9px] font-black uppercase hover:bg-gray-800 shadow-md flex items-center gap-2 mx-auto transition-all"><FileText size={14}/> GENERAR FINIQUITO</button></td></tr>))}</tbody></table></div>
+            <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-right text-black text-[10px] font-black uppercase tracking-widest">KG Finales</th><th className="p-4 text-center text-black text-[10px] font-black uppercase tracking-widest">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(completedOrders || []).map(req => (<tr key={req?.id} className="hover:bg-gray-50 transition-colors group"><td className="p-4 font-black text-orange-500 text-lg">#{String(req?.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-xs text-black">{req?.client}<br/><span className="text-[10px] font-bold text-gray-400">{req?.desc}</span></td><td className="p-4 text-right font-black text-green-600 text-lg">{formatNum((req?.production?.sellado?.batches || []).reduce((a,b)=>a+parseNum(b?.producedKg),0) || (req?.production?.extrusion?.batches || []).reduce((a,b)=>a+parseNum(b?.producedKg),0) || 0)} KG</td><td className="p-4 text-center"><button onClick={()=>setShowFiniquito(req?.id)} className="bg-black text-white px-8 py-3 rounded-2xl text-[9px] font-black uppercase hover:bg-gray-800 shadow-md flex items-center gap-2 mx-auto transition-all"><FileText size={14}/> GENERAR FINIQUITO</button></td></tr>))}</tbody></table></div>
           </div>
         )}
       </div>
@@ -1260,10 +1146,10 @@ export default function App() {
 
   // --- VISTAS DE IMPRESIÓN (PRODUCCIÓN) ---
   const renderWorkOrder = () => {
-    const req = (requirements || []).find(r => r.id === showWorkOrder); if (!req) return null;
+    const req = (requirements || []).find(r => r?.id === showWorkOrder); if (!req) return null;
 
     const getFechaEntrada = (r) => {
-       if (!r.production) return 'PENDIENTE';
+       if (!r?.production) return 'PENDIENTE';
        const batches = [];
        ['extrusion', 'impresion', 'sellado'].forEach(f => {
           if (r.production[f]?.batches) batches.push(...r.production[f].batches);
@@ -1274,7 +1160,7 @@ export default function App() {
     };
 
     const getFechaSalida = (r) => {
-       if (r.status !== 'COMPLETADO') return 'EN PROCESO';
+       if (r?.status !== 'COMPLETADO') return 'EN PROCESO';
        const batches = [];
        ['extrusion', 'impresion', 'sellado'].forEach(f => {
           if (r.production[f]?.batches) batches.push(...r.production[f].batches);
@@ -1288,7 +1174,7 @@ export default function App() {
       <div id="pdf-content" className="bg-white p-6 print:p-0 min-h-screen text-black"><style>{`@media print { @page { size: portrait; margin: 5mm; } }`}</style>
         <div data-html2canvas-ignore="true" className="flex justify-between mb-2 print:hidden bg-gray-50 p-2 rounded-xl border border-gray-200">
            <button onClick={() => setShowWorkOrder(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2 rounded-xl hover:bg-gray-200">VOLVER</button>
-           <button onClick={() => handleExportPDF(`OP_${req.id}`)} className="bg-black text-white px-8 py-2 rounded-xl font-black flex items-center gap-2 shadow-lg text-xs uppercase transition-all hover:bg-gray-800"><Printer size={16} /> EXPORTAR PDF</button>
+           <button onClick={() => handleExportPDF(`OP_${req?.id}`)} className="bg-black text-white px-8 py-2 rounded-xl font-black flex items-center gap-2 shadow-lg text-xs uppercase transition-all hover:bg-gray-800"><Printer size={16} /> EXPORTAR PDF</button>
         </div>
         
         <div className="flex justify-between items-end border-b-2 border-black pb-1 mb-2">
@@ -1301,17 +1187,17 @@ export default function App() {
 
         <div className="grid grid-cols-3 text-[9px] font-bold uppercase mb-2 border-b-2 border-black pb-2">
            <div>
-              <p className="mb-1"><span className="w-16 inline-block font-black pr-1">CLIENTE:</span> {req.client}</p>
-              <p className="mb-1"><span className="w-16 inline-block font-black pr-1">OP:</span> #{String(req.id).replace('OP-', '').padStart(5, '0')}</p>
-              <p><span className="w-16 inline-block font-black pr-1">TIPO:</span> {req.tipoProducto || 'N/A'}</p>
+              <p className="mb-1"><span className="w-16 inline-block font-black pr-1">CLIENTE:</span> {req?.client}</p>
+              <p className="mb-1"><span className="w-16 inline-block font-black pr-1">OP:</span> #{String(req?.id).replace('OP-', '').padStart(5, '0')}</p>
+              <p><span className="w-16 inline-block font-black pr-1">TIPO:</span> {req?.tipoProducto || 'N/A'}</p>
            </div>
            <div>
-              <p className="mb-1"><span className="w-20 inline-block font-black pr-1">EMISIÓN OP:</span> {req.fecha || getSafeDate(req.timestamp)}</p>
-              <p><span className="w-20 inline-block font-black pr-1 text-orange-600">META (KG):</span> <span className="text-orange-600 font-black">{formatNum(req.requestedKg)} KG</span></p>
+              <p className="mb-1"><span className="w-20 inline-block font-black pr-1">EMISIÓN OP:</span> {req?.fecha || getSafeDate(req?.timestamp)}</p>
+              <p><span className="w-20 inline-block font-black pr-1 text-orange-600">META (KG):</span> <span className="text-orange-600 font-black">{formatNum(req?.requestedKg)} KG</span></p>
            </div>
            <div>
               <p className="mb-1"><span className="w-24 inline-block font-black pr-1">FECHA ENTRADA:</span> <span className="text-orange-600">{getFechaEntrada(req)}</span></p>
-              <p><span className="w-24 inline-block font-black pr-1">FECHA SALIDA:</span> <span className={req.status === 'COMPLETADO' ? 'text-green-600' : 'text-gray-500'}>{getFechaSalida(req)}</span></p>
+              <p><span className="w-24 inline-block font-black pr-1">FECHA SALIDA:</span> <span className={req?.status === 'COMPLETADO' ? 'text-green-600' : 'text-gray-500'}>{getFechaSalida(req)}</span></p>
            </div>
         </div>
 
@@ -1320,23 +1206,24 @@ export default function App() {
           <table className="w-full text-left text-[9px] mb-2">
             <thead><tr className="font-black uppercase border-b border-black"><td>Insumo / Material</td><td className="text-center">Proporción (%)</td><td className="text-right">Peso Teórico (KG)</td></tr></thead>
             <tbody className="divide-y divide-gray-100">
-              {Array.isArray(req.recipe) && req.recipe.map((r, i) => (
+              {Array.isArray(req?.recipe) && req.recipe.map((r, i) => (
                 <tr key={i} className="text-black h-5 align-middle">
-                  <td>{(inventory || []).find(inv=>inv.id===r.id)?.desc || r.id}</td>
-                  <td className="text-center">{r.percentage ? `${r.percentage}%` : 'N/A'}</td>
-                  <td className="text-right font-bold">{formatNum(r.totalQty)} KG</td>
+                  <td>{(inventory || []).find(inv=>inv?.id===r?.id)?.desc || r?.id}</td>
+                  <td className="text-center">{r?.percentage ? `${r.percentage}%` : 'N/A'}</td>
+                  <td className="text-right font-bold">{formatNum(r?.totalQty)} KG</td>
                 </tr>
               ))}
             </tbody>
           </table>
           <div className="grid grid-cols-4 gap-2 text-center text-[9px] font-black uppercase border-t-2 border-black pt-2 bg-gray-50">
-            <div>ANCHO<br/><span className="text-sm text-orange-600">{req.ancho} CM</span></div>
-            <div>FUELLES<br/><span className="text-sm text-orange-600">{req.fuelles || '0'} CM</span></div>
-            <div>LARGO<br/><span className="text-sm text-orange-600">{req.largo} CM</span></div>
-            <div>MICRAS<br/><span className="text-sm text-orange-600">{req.micras}</span></div>
+            <div>ANCHO<br/><span className="text-sm text-orange-600">{req?.ancho} CM</span></div>
+            <div>FUELLES<br/><span className="text-sm text-orange-600">{req?.fuelles || '0'} CM</span></div>
+            <div>LARGO<br/><span className="text-sm text-orange-600">{req?.largo} CM</span></div>
+            <div>MICRAS<br/><span className="text-sm text-orange-600">{req?.micras}</span></div>
           </div>
         </div>
 
+        {/* EXTRUSIÓN */}
         <div className="border-2 border-black rounded-xl mb-2 overflow-hidden">
            <div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Parámetros de Extrusión</div>
            <div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2">
@@ -1344,7 +1231,7 @@ export default function App() {
               <div><span className="font-black pr-1">CANTIDAD KG:</span> __________________________</div>
               <div className="col-span-2 flex justify-between">
                 <div><span className="font-black pr-1">TRATADO: 1</span> _____ <span className="ml-4">2</span> _____</div>
-                <div><span className="font-black pr-1">COLOR:</span> {req.color}</div>
+                <div><span className="font-black pr-1">COLOR:</span> {req?.color}</div>
               </div>
               <div className="col-span-2 flex justify-between">
                  <div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> _________________</div>
@@ -1358,6 +1245,7 @@ export default function App() {
            </div>
         </div>
 
+        {/* IMPRESIÓN */}
         <div className="border-2 border-black rounded-xl mb-2 overflow-hidden">
            <div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Impresión Flexográfica</div>
            <div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2">
@@ -1376,6 +1264,7 @@ export default function App() {
            </div>
         </div>
 
+        {/* SELLADO */}
         <div className="border-2 border-black rounded-xl mb-2 overflow-hidden">
            <div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Sellado y Corte</div>
            <div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2">
@@ -1407,19 +1296,20 @@ export default function App() {
           <div>CONTROL DE CALIDAD</div>
           <div>SUPERVISOR DE PLANTA</div>
         </div>
+
       </div>
     );
   };
 
   const renderPhaseReport = () => {
-    const req = (requirements || []).find(r => r.id === showPhaseReport?.reqId); if (!req) return null;
+    const req = (requirements || []).find(r => r?.id === showPhaseReport?.reqId); if (!req) return null;
     const pData = req.production?.[showPhaseReport.phase]; if (!pData) return null;
     return (
-      <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black shadow-xl"><div data-html2canvas-ignore="true" className="flex justify-between mb-10 print:hidden bg-gray-50 p-4 rounded-xl border border-gray-200"><button onClick={() => setShowPhaseReport(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2.5 rounded-xl">VOLVER</button><button onClick={() => handleExportPDF(`ReporteFase_${showPhaseReport.phase}_OP${req.id}`)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button></div>
+      <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black shadow-xl"><div data-html2canvas-ignore="true" className="flex justify-between mb-10 print:hidden bg-gray-50 p-4 rounded-xl border border-gray-200"><button onClick={() => setShowPhaseReport(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2.5 rounded-xl">VOLVER</button><button onClick={() => handleExportPDF(`ReporteFase_${showPhaseReport.phase}_OP${req?.id}`)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button></div>
         <ReportHeader /><h2 className="text-2xl font-black text-center my-10 uppercase border-b-4 border-orange-500 pb-2">REPORTE FASE: {showPhaseReport.phase.toUpperCase()}</h2>
-        <div className="grid grid-cols-2 gap-x-10 gap-y-4 text-xs font-black uppercase mb-10"><div>CLIENTE: {req.client}</div><div>EMISIÓN: {getSafeDate(Date.now())}</div><div>OP N°: {String(req.id).replace('OP-', '').padStart(5, '0')}</div><div>VENDEDOR: {req.vendedor || 'S/N'}</div></div>
+        <div className="grid grid-cols-2 gap-x-10 gap-y-4 text-xs font-black uppercase mb-10"><div>CLIENTE: {req?.client}</div><div>EMISIÓN: {getSafeDate(Date.now())}</div><div>OP N°: {String(req?.id).replace('OP-', '').padStart(5, '0')}</div><div>VENDEDOR: {req?.vendedor || 'S/N'}</div></div>
         <table className="w-full text-center border-collapse border-2 border-black text-black"><thead className="bg-gray-200"><tr><th className="p-3 border border-black text-[10px] tracking-widest">FECHA LOTE</th><th className="p-3 border border-black text-[10px] tracking-widest">PRODUCIDO (KG)</th><th className="p-3 border border-black text-[10px] tracking-widest">DESPERDICIO (KG)</th></tr></thead>
-          <tbody className="divide-y divide-black">{(pData.batches || []).map((b, i)=>(<tr key={i} className="h-10 align-middle"><td className="p-3 border border-black font-bold uppercase">{b.date}</td><td className="p-3 border border-black font-black text-base">{formatNum(b.producedKg)}</td><td className="p-3 border border-black font-bold text-red-600">{formatNum(b.mermaKg)}</td></tr>))}</tbody>
+          <tbody className="divide-y divide-black">{(pData?.batches || []).map((b, i)=>(<tr key={i} className="h-10 align-middle"><td className="p-3 border border-black font-bold uppercase">{b?.date}</td><td className="p-3 border border-black font-black text-base">{formatNum(b?.producedKg)}</td><td className="p-3 border border-black font-bold text-red-600">{formatNum(b?.mermaKg)}</td></tr>))}</tbody>
         </table>
         <div className="mt-32 flex justify-between border-t-2 border-black pt-4 font-black text-[10px] uppercase text-black"><div>REVISIÓN DE PLANTA</div><div>AUTORIZACIÓN GERENCIA</div></div>
       </div>
@@ -1427,53 +1317,57 @@ export default function App() {
   };
 
   const renderFiniquito = () => {
-    const req = (requirements || []).find(r => r.id === showFiniquito); if (!req) return null;
+    const req = (requirements || []).find(r => r?.id === showFiniquito); if (!req) return null;
     
+    // Extracción de fechas de producción
     const getFechaInicio = () => {
        const batches = [];
-       if (req.production?.extrusion?.batches) batches.push(...req.production.extrusion.batches);
-       if (req.production?.impresion?.batches) batches.push(...req.production.impresion.batches);
-       if (req.production?.sellado?.batches) batches.push(...req.production.sellado.batches);
+       if (req?.production?.extrusion?.batches) batches.push(...req.production.extrusion.batches);
+       if (req?.production?.impresion?.batches) batches.push(...req.production.impresion.batches);
+       if (req?.production?.sellado?.batches) batches.push(...req.production.sellado.batches);
        if (batches.length === 0) return 'NO INICIADO';
        batches.sort((a, b) => a.timestamp - b.timestamp);
        return batches[0].date;
     };
     
     const getFechaFin = () => {
-       if (req.status !== 'COMPLETADO') return 'EN PROCESO';
+       if (req?.status !== 'COMPLETADO') return 'EN PROCESO';
        const batches = [];
-       if (req.production?.extrusion?.batches) batches.push(...req.production.extrusion.batches);
-       if (req.production?.impresion?.batches) batches.push(...req.production.impresion.batches);
-       if (req.production?.sellado?.batches) batches.push(...req.production.sellado.batches);
+       if (req?.production?.extrusion?.batches) batches.push(...req.production.extrusion.batches);
+       if (req?.production?.impresion?.batches) batches.push(...req.production.impresion.batches);
+       if (req?.production?.sellado?.batches) batches.push(...req.production.sellado.batches);
        if (batches.length === 0) return getTodayDate();
        batches.sort((a, b) => b.timestamp - a.timestamp);
        return batches[0].date;
     };
 
-    const isTermo = req.tipoProducto === 'TERMOENCOGIBLE';
-    const extBatches = req.production?.extrusion?.batches || [];
-    const selBatches = req.production?.sellado?.batches || [];
+    // Cálculos Reales
+    const isTermo = req?.tipoProducto === 'TERMOENCOGIBLE';
+    const extBatches = req?.production?.extrusion?.batches || [];
+    const selBatches = req?.production?.sellado?.batches || [];
 
+    // Sumar insumos de Extrusión
     let mpConsumida = [];
     extBatches.forEach(b => {
-        (b.insumos || []).forEach(ing => {
-            const existing = mpConsumida.find(i => i.id === ing.id);
-            if(existing) { existing.qty += ing.qty; }
+        (b?.insumos || []).forEach(ing => {
+            const existing = mpConsumida.find(i => i?.id === ing?.id);
+            if(existing) { existing.qty += ing?.qty; }
             else { mpConsumida.push({...ing}); }
         });
     });
 
-    const totalMezclaPreparada = mpConsumida.reduce((sum, item) => sum + item.qty, 0) || parseNum(req.requestedKg);
-    const extProducido = extBatches.reduce((a,b)=>a+parseNum(b.producedKg),0);
-    const extMerma = extBatches.reduce((a,b)=>a+parseNum(b.mermaKg),0);
+    const totalMezclaPreparada = mpConsumida.reduce((sum, item) => sum + (item?.qty || 0), 0) || parseNum(req?.requestedKg);
+    const extProducido = extBatches.reduce((a,b)=>a+parseNum(b?.producedKg),0);
+    const extMerma = extBatches.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
     const extRendimiento = totalMezclaPreparada > 0 ? (extProducido / totalMezclaPreparada) * 100 : 0;
 
-    const selProducido = selBatches.reduce((a,b)=>a+parseNum(b.producedKg),0);
-    const selMerma = selBatches.reduce((a,b)=>a+parseNum(b.mermaKg),0);
+    const selProducido = selBatches.reduce((a,b)=>a+parseNum(b?.producedKg),0);
+    const selMerma = selBatches.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
     
+    // Producción Final (KG o Millares)
     const totalFinalUnidades = isTermo 
       ? (selProducido > 0 ? selProducido : extProducido)
-      : selBatches.reduce((sum, b) => sum + parseNum(b.techParams?.millares || 0), 0);
+      : selBatches.reduce((sum, b) => sum + parseNum(b?.techParams?.millares || 0), 0);
 
     const unitFinal = isTermo ? 'KG' : 'Millar';
 
@@ -1481,7 +1375,7 @@ export default function App() {
       <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black"><style>{`@media print { @page { size: landscape; margin: 5mm; } body { background-color: white !important; } }`}</style>
         <div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden">
            <button onClick={() => setShowFiniquito(null)} className="text-black font-black text-xs uppercase bg-gray-100 border border-gray-200 px-6 py-2.5 rounded-xl hover:bg-gray-200">VOLVER</button>
-           <button onClick={() => handleExportPDF(`Finiquito_OP_${req.id}`, true)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button>
+           <button onClick={() => handleExportPDF(`Finiquito_OP_${req?.id}`, true)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button>
         </div>
         
         <div className="flex justify-between items-end border-b border-gray-300 pb-4 mb-6">
@@ -1496,14 +1390,14 @@ export default function App() {
            </div>
            <div className="text-right">
               <p className="text-[10px] font-bold text-gray-500 uppercase">FECHA EMISIÓN: <span className="text-black">{getTodayDate()}</span></p>
-              <p className="text-sm font-black text-orange-600 uppercase mt-1">OP N° {String(req.id).replace('OP-','').padStart(5,'0')}</p>
+              <p className="text-sm font-black text-orange-600 uppercase mt-1">OP N° {String(req?.id).replace('OP-','').padStart(5,'0')}</p>
            </div>
         </div>
 
         <div className="grid grid-cols-4 gap-4 bg-gray-50 p-4 rounded-xl mb-6 text-[10px] font-bold uppercase border border-gray-200">
-           <div><span className="text-gray-500 block mb-1">CLIENTE:</span> {req.client}</div>
-           <div className="col-span-2"><span className="text-gray-500 block mb-1">PRODUCTO:</span> {req.desc}</div>
-           <div className="text-right"><span className="text-gray-500 block mb-1">META SOLICITADA:</span> <span className="text-orange-600 font-black text-sm">{formatNum(req.requestedKg)} KG</span></div>
+           <div><span className="text-gray-500 block mb-1">CLIENTE:</span> {req?.client}</div>
+           <div className="col-span-2"><span className="text-gray-500 block mb-1">PRODUCTO:</span> {req?.desc}</div>
+           <div className="text-right"><span className="text-gray-500 block mb-1">META SOLICITADA:</span> <span className="text-orange-600 font-black text-sm">{formatNum(req?.requestedKg)} KG</span></div>
            <div><span className="text-gray-500 block mb-1">FECHA INICIO (PLANTA):</span> <span className="text-black">{getFechaInicio()}</span></div>
            <div><span className="text-gray-500 block mb-1">FECHA CIERRE (PLANTA):</span> <span className="text-black">{getFechaFin()}</span></div>
         </div>
@@ -1524,10 +1418,10 @@ export default function App() {
                  <tr><td colSpan="4" className="p-2 font-black uppercase text-[11px] text-orange-600 bg-orange-50">1. MATERIA PRIMA (MEZCLA EXTRUIDA)</td></tr>
                  {mpConsumida.length > 0 ? mpConsumida.map((ing, i) => (
                    <tr key={i} className="hover:bg-gray-50">
-                     <td className="p-2 pl-4 font-bold text-gray-800">{(inventory || []).find(inv=>inv.id===ing.id)?.desc || ing.id}</td>
-                     <td className="p-2 text-center text-gray-700">{formatNum(ing.qty)}</td>
+                     <td className="p-2 pl-4 font-bold text-gray-800">{(inventory || []).find(inv=>inv?.id===ing?.id)?.desc || ing?.id}</td>
+                     <td className="p-2 text-center text-gray-700">{formatNum(ing?.qty)}</td>
                      <td className="p-2 text-center text-gray-500">kg</td>
-                     <td className="p-2 text-gray-600">{formatNum((ing.qty/totalMezclaPreparada)*100)}% de la mezcla</td>
+                     <td className="p-2 text-gray-600">{formatNum((ing?.qty/totalMezclaPreparada)*100)}% de la mezcla</td>
                    </tr>
                  )) : (
                    <tr><td colSpan="4" className="p-4 text-center text-gray-500 italic">No se reportó consumo de materia prima en extrusión.</td></tr>
