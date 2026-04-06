@@ -536,14 +536,33 @@ export default function App() {
     }});
   };
 
-  // --- LÓGICA CALCULADORA (SIMULADOR OP CON COSTOS) ---
+  // --- LÓGICA CALCULADORA (SIMULADOR OP CON COSTOS) MEJORADA ---
   const handleCalcChange = (field, value) => setCalcInputs({ ...calcInputs, [field]: parseNum(value) });
   
   const updateCalcIng = (id, field, value) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs?.ingredientes || []).map(ing => ing?.id === id ? { ...ing, [field]: field === 'nombre' ? value : parseNum(value) } : ing) });
   const addCalcIng = () => setCalcInputs({ ...calcInputs, ingredientes: [...(calcInputs?.ingredientes || []), { id: Date.now(), nombre: '', pct: 0, costo: 0 }] });
   const removeCalcIng = (id) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs?.ingredientes || []).filter(i => i?.id !== id) });
 
-  const calcTotalMezcla = calcInputs?.mezclaTotal || 0; const calcMezclaProcesada = calcTotalMezcla; let calcCostoMezclaPreparada = 0;
+  // 1. Cálculos de Parámetros del Producto (Movido aquí para calcular KG reales)
+  const simW = parseNum(calcInputs?.ancho);
+  const simL = parseNum(calcInputs?.largo);
+  const simM = parseNum(calcInputs?.micras);
+  const simFu = parseNum(calcInputs?.fuelles);
+  
+  let simPesoMillar = 0;
+  if (calcInputs?.tipoProducto === 'BOLSAS') {
+     simPesoMillar = (simW + simFu) * simL * simM;
+  }
+
+  // 2. Lógica ajustada: Convertir Millares ingresados a KG reales si es bolsa
+  const inputCantidadSolicitada = calcInputs?.mezclaTotal || 0;
+  const calcTotalMezcla = calcInputs?.tipoProducto === 'BOLSAS' && simPesoMillar > 0 
+                          ? (inputCantidadSolicitada * simPesoMillar) 
+                          : inputCantidadSolicitada;
+
+  const calcMezclaProcesada = calcTotalMezcla; 
+  let calcCostoMezclaPreparada = 0;
+  
   const calcIngredientesProcesados = (calcInputs?.ingredientes || []).map(ing => {
     const kg = ((ing?.pct || 0) / 100) * calcTotalMezcla; const totalCost = kg * (ing?.costo || 0); calcCostoMezclaPreparada += totalCost;
     const invItem = (inventory || []).find(i => i?.id === ing?.nombre); let desc = invItem ? invItem.desc : ing?.nombre;
@@ -556,24 +575,8 @@ export default function App() {
   const calcMermaGlobalKg = calcMezclaProcesada * ((calcInputs?.mermaGlobalPorc || 0) / 100);
   const calcProduccionNetaKg = calcMezclaProcesada - calcMermaGlobalKg;
   
-  // ==========================================
-  // AQUÍ ESTABA EL BUG - DECLARACIÓN FALTANTE:
-  // ==========================================
   const calcCostoUnitarioNeto = calcProduccionNetaKg > 0 ? (calcCostoMezclaProcesada / calcProduccionNetaKg) : 0;
-  // ==========================================
-
   const calcRendimientoUtil = calcMezclaProcesada > 0 ? (calcProduccionNetaKg / calcMezclaProcesada) * 100 : 0;
-  
-  // Formulas Simulator
-  const simW = parseNum(calcInputs?.ancho);
-  const simL = parseNum(calcInputs?.largo);
-  const simM = parseNum(calcInputs?.micras);
-  const simFu = parseNum(calcInputs?.fuelles);
-  
-  let simPesoMillar = 0;
-  if (calcInputs?.tipoProducto === 'BOLSAS') {
-     simPesoMillar = (simW + simFu) * simL * simM;
-  }
   
   const calcProduccionFinalUnidades = calcInputs?.tipoProducto === 'BOLSAS' && simPesoMillar > 0 ? (calcProduccionNetaKg / simPesoMillar) : calcProduccionNetaKg;
   const calcCostoFinalUnidad = calcProduccionFinalUnidades > 0 ? (calcCostoMezclaProcesada / calcProduccionFinalUnidades) : 0;
@@ -1275,7 +1278,14 @@ export default function App() {
             </div>
             
             <div id="pdf-content" className="grid grid-cols-1 lg:grid-cols-12 gap-0 print:block print:w-full">
-               <style>{`@media print { @page { size: landscape; margin: 5mm; } .print-text-xs { font-size: 8px !important; } }`}</style>
+               <style>{`
+                 @media print { 
+                   @page { size: landscape; margin: 5mm; } 
+                   .print-text-xs { font-size: 8px !important; } 
+                   #pdf-content { transform: scale(0.95); transform-origin: top center; }
+                   table, tr, td, th, tbody, thead, tfoot { page-break-inside: avoid !important; }
+                 }
+               `}</style>
                {/* PANEL DE CONTROLES */}
                <div data-html2canvas-ignore="true" className="lg:col-span-4 border-r border-gray-200 bg-gray-50 p-8 print:hidden space-y-8">
                  
@@ -1284,7 +1294,9 @@ export default function App() {
                      <h3 className="text-xs font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">1. Variables de Mezcla</h3>
                      <div className="space-y-4">
                         <div>
-                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Total a Preparar (KG)</label>
+                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
+                             Total a Preparar ({calcInputs?.tipoProducto === 'BOLSAS' ? 'MILLARES' : 'KG'})
+                          </label>
                           <input type="number" value={calcInputs?.mezclaTotal || ''} onChange={(e) => handleCalcChange('mezclaTotal', e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 text-sm font-black outline-none focus:border-orange-500 text-center text-blue-600" />
                         </div>
                      </div>
@@ -1398,7 +1410,15 @@ export default function App() {
                   <div className="hidden print:block mb-6">
                      <ReportHeader />
                      <h1 className="text-xl font-black text-black uppercase border-b-2 border-orange-500 pb-1 mt-2">PROYECCIÓN Y COSTEO DE PRODUCCIÓN</h1>
-                     <p className="text-xs font-bold text-gray-500 uppercase mt-1">FECHA DE SIMULACIÓN: {getTodayDate()}</p>
+                     <div className="flex justify-between items-start mt-2 border-b border-gray-200 pb-4 mb-4">
+                        <p className="text-xs font-bold text-gray-500 uppercase">FECHA DE SIMULACIÓN: {getTodayDate()}</p>
+                        <div className="text-right border-l-2 border-orange-500 pl-4">
+                           <p className="text-xs font-black text-black uppercase">TIPO: {calcInputs?.tipoProducto}</p>
+                           <p className="text-[10px] font-bold text-orange-600 uppercase">
+                              SOLICITADO: {calcInputs?.mezclaTotal || 0} {calcInputs?.tipoProducto === 'BOLSAS' ? 'MILLARES' : 'KG'}
+                           </p>
+                        </div>
+                     </div>
                   </div>
                   
                   <div className="overflow-x-auto rounded-xl border border-gray-300 print:border-black print:rounded-none">
