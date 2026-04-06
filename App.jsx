@@ -464,7 +464,6 @@ export default function App() {
     }
     const newProd = { ...(req.production || {}), [activePhaseTab]: currentPhase };
     let newStatus = (activePhaseTab === 'sellado' && currentPhase.isClosed) ? 'COMPLETADO' : 'EN PROCESO';
-    // Si la fase se cierra, revisar si cambia el status
     await updateDoc(getDocRef('requirements', req.id), { production: newProd, status: newStatus });
     setPhaseForm({ ...initialPhaseForm, date: getTodayDate() }); 
     setDialog({ title: 'Éxito', text: 'Reporte guardado.', type: 'alert' });
@@ -519,7 +518,6 @@ export default function App() {
     }});
   };
 
-  // NUEVO: Función para reabrir fases cerradas
   const handleReopenPhase = async (reqId, phase) => {
     setDialog({ title: `REABRIR FASE`, text: `¿Seguro que desea reabrir esta fase para editar o añadir más lotes?`, type: 'confirm', onConfirm: async () => {
         const req = (requirements || []).find(r => r.id === reqId);
@@ -527,7 +525,6 @@ export default function App() {
         let currentPhase = { ...(req.production?.[phase] || {}) };
         currentPhase.isClosed = false;
         
-        // Si el estado general era completado y reabrimos, lo pasamos a EN PROCESO
         let newStatus = req.status;
         if (req.status === 'COMPLETADO') newStatus = 'EN PROCESO';
 
@@ -558,6 +555,13 @@ export default function App() {
   const calcCostoMezclaProcesada = calcCostoMezclaPreparada;
   const calcMermaGlobalKg = calcMezclaProcesada * ((calcInputs?.mermaGlobalPorc || 0) / 100);
   const calcProduccionNetaKg = calcMezclaProcesada - calcMermaGlobalKg;
+  
+  // ==========================================
+  // AQUÍ ESTABA EL BUG - DECLARACIÓN FALTANTE:
+  // ==========================================
+  const calcCostoUnitarioNeto = calcProduccionNetaKg > 0 ? (calcCostoMezclaProcesada / calcProduccionNetaKg) : 0;
+  // ==========================================
+
   const calcRendimientoUtil = calcMezclaProcesada > 0 ? (calcProduccionNetaKg / calcMezclaProcesada) * 100 : 0;
   
   // Formulas Simulator
