@@ -115,7 +115,7 @@ export default function App() {
   const [showSingleReqReport, setShowSingleReqReport] = useState(null);
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
 
-  // Formularios de Ventas 
+  // Formularios de Ventas
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [editingClientId, setEditingClientId] = useState(null);
@@ -124,10 +124,11 @@ export default function App() {
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
 
+  // NOTA: Se añade aplicaIva por defecto a 'SI'
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
-  // Formularios Producción 
+  // Formularios Producción
   const initialPhaseForm = { 
     date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '',
     operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '',
@@ -175,14 +176,14 @@ export default function App() {
     const printOnlyElements = element.querySelectorAll('.hidden.print\\:block');
     printOnlyElements.forEach(el => { el.classList.remove('hidden'); el.classList.add('block'); });
     
-    // Configuraciones ajustadas para forzar el contenido en 1 sola página ancha
+    // Opciones ajustadas para evitar cortes y forzar 1 sola página
     const opt = { 
-      margin: 5, 
+      margin: 10, 
       filename: `${filename}_${getTodayDate()}.pdf`, 
       image: { type: 'jpeg', quality: 0.98 }, 
-      html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: 1000 }, 
+      html2canvas: { scale: 2, useCORS: true, logging: false }, 
       jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' },
-      pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+      pagebreak: { mode: 'avoid-all' }
     };
     
     const finishExport = () => { printOnlyElements.forEach(el => { el.classList.remove('block'); el.classList.add('hidden'); }); };
@@ -319,7 +320,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA VENTAS Y FACTURACIÓN (CON OP Y PRODUCTOS MAQUILADOS)
+  // LOGICA VENTAS Y FACTURACIÓN (CON MANEJO DE IVA)
   // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault(); if (!newClientForm.rif || !newClientForm.razonSocial) return setDialog({ title: 'Aviso', text: 'RIF y Razón Social obligatorios.', type: 'alert' });
@@ -333,18 +334,23 @@ export default function App() {
   const handleInvoiceFormChange = (field, value) => {
     const valUpper = typeof value === 'string' ? value.toUpperCase() : value;
     let f = { ...newInvoiceForm, [field]: valUpper };
+    
     if (field === 'clientRif') {
        const c = (clients || []).find(cl => cl.rif === value);
        f.clientName = c?.name || '';
        f.vendedor = (c?.vendedor || '').toUpperCase();
     }
-    if (field === 'montoBase') {
-       const base = parseNum(value);
-       const iva = base * 0.16;
-       f.iva = iva > 0 ? iva.toFixed(2) : '';
-       f.total = base > 0 ? (base + iva).toFixed(2) : '';
+    
+    // Lógica dinámica de cálculo de IVA
+    if (field === 'montoBase' || field === 'aplicaIva') {
+       const base = parseNum(field === 'montoBase' ? value : f.montoBase);
+       const aplica = field === 'aplicaIva' ? value : f.aplicaIva;
+       const iva = aplica === 'SI' ? base * 0.16 : 0;
+       f.iva = iva > 0 ? iva.toFixed(2) : '0.00';
+       f.total = base > 0 ? (base + iva).toFixed(2) : base.toFixed(2);
     }
-    if (field === 'iva') {
+    
+    if (field === 'iva' && f.aplicaIva === 'SI') {
        const base = parseNum(f.montoBase);
        const iva = parseNum(value);
        f.total = (base + iva).toFixed(2);
@@ -355,7 +361,22 @@ export default function App() {
   const handleCreateInvoice = async (e) => {
     e.preventDefault(); if(!newInvoiceForm.clientRif || !newInvoiceForm.montoBase) return setDialog({title: 'Aviso', text: 'Selecciona un cliente e ingresa el monto base.', type: 'alert'});
     const id = newInvoiceForm.documento || generateInvoiceId();
-    try { await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), timestamp: Date.now(), user: appUser?.name }); setShowNewInvoicePanel(false); setNewInvoiceForm(initialInvoiceForm); setDialog({title: 'Éxito', text: 'Factura Registrada.', type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
+    try { 
+      await setDoc(getDocRef('maquilaInvoices', id), { 
+        ...newInvoiceForm, 
+        id, 
+        documento: id, 
+        montoBase: parseNum(newInvoiceForm.montoBase), 
+        iva: parseNum(newInvoiceForm.iva), 
+        total: parseNum(newInvoiceForm.total), 
+        aplicaIva: newInvoiceForm.aplicaIva || 'SI',
+        timestamp: Date.now(), 
+        user: appUser?.name 
+      }); 
+      setShowNewInvoicePanel(false); 
+      setNewInvoiceForm(initialInvoiceForm); 
+      setDialog({title: 'Éxito', text: 'Factura Registrada.', type: 'alert'}); 
+    } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
   
   const handleDeleteInvoice = (id) => setDialog({ title: 'Eliminar', text: `¿Eliminar factura?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('maquilaInvoices', id))});
@@ -576,7 +597,6 @@ export default function App() {
   // 2. Lógica ajustada: Convertir Millares ingresados a KG reales si es bolsa
   const inputCantidadSolicitada = calcInputs?.mezclaTotal || 0;
   
-  // Si es BOLSAS y no hay peso (simPesoMillar = 0), calcTotalMezcla será 0 para evitar descuadres.
   const calcTotalMezcla = isBolsas 
                           ? (simPesoMillar > 0 ? (inputCantidadSolicitada * simPesoMillar) : 0) 
                           : inputCantidadSolicitada;
@@ -607,17 +627,17 @@ export default function App() {
   // RENDERIZADO DE MÓDULOS
   // ============================================================================
   const ReportHeader = () => (
-    <div className="flex items-start justify-between border-b-2 border-black pb-4 mb-6 print:border-black print:w-full print:flex-row">
+    <div className="flex items-start justify-between border-b-2 border-black pb-2 mb-4 print:border-black print:w-full print:flex-row">
        <div className="flex flex-col items-start w-1/2 print:w-1/2">
           <span className="text-2xl font-light tracking-widest text-gray-800 print:text-black">Supply</span>
           <div className="flex items-center -mt-2">
-             <span className="text-black font-black text-[50px] leading-none">G</span><div className="bg-orange-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-xl font-black mx-1 print:bg-orange-500 print:text-black">&amp;</div><span className="text-black font-black text-[50px] leading-none">B</span>
+             <span className="text-black font-black text-[40px] leading-none">G</span><div className="bg-orange-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-lg font-black mx-1 print:bg-orange-500 print:text-black">&amp;</div><span className="text-black font-black text-[40px] leading-none">B</span>
           </div>
        </div>
        <div className="w-1/2 text-right print:w-1/2">
-           <h1 className="text-xl font-black text-black uppercase print:text-black">SERVICIOS JIRET G&amp;B, C.A.</h1>
-           <p className="text-xs font-bold text-gray-700 print:text-black">RIF: J-412309374</p>
-           <p className="text-[9px] font-medium text-gray-500 mt-1 uppercase print:text-black">Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9, Maracaibo.</p>
+           <h1 className="text-lg font-black text-black uppercase print:text-black">SERVICIOS JIRET G&amp;B, C.A.</h1>
+           <p className="text-[10px] font-bold text-gray-700 print:text-black">RIF: J-412309374</p>
+           <p className="text-[8px] font-medium text-gray-500 mt-0.5 uppercase print:text-black">Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9, Maracaibo.</p>
        </div>
     </div>
   );
@@ -1070,10 +1090,10 @@ export default function App() {
       const totalIvaGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.iva), 0);
       const totalGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.total), 0);
       return (
-        <div id="pdf-content" className="bg-white p-8 min-h-screen print:p-0 text-black">
+        <div id="pdf-content" className="bg-white p-8 min-h-0 print:p-4 text-black">
           <div data-html2canvas-ignore="true" className="flex justify-between mb-4 print:hidden"><button onClick={() => setShowGeneralInvoicesReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF('Reporte_General_Facturas', true)} className="bg-black text-white px-6 py-2 rounded-xl flex items-center gap-2 font-black text-xs uppercase"><Printer size={16}/> Exportar PDF</button></div>
-          <ReportHeader /><h2 className="text-xl font-black text-center mb-6 uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte General de Facturación</h2>
-          <table className="w-full text-[10px] border-collapse border border-gray-300">
+          <ReportHeader /><h2 className="text-xl print:text-lg font-black text-center mb-6 print:mb-4 uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte General de Facturación</h2>
+          <table className="w-full text-[10px] print:text-[8px] border-collapse border border-gray-300">
             <thead className="bg-gray-100 uppercase"><tr><th className="p-2 border">Fecha</th><th className="p-2 border">Factura</th><th className="p-2 border">Cliente</th><th className="p-2 border text-right">Base ($)</th><th className="p-2 border text-right">IVA ($)</th><th className="p-2 border text-right">Total ($)</th></tr></thead>
             <tbody>{(invoices || []).map(i => (<tr key={i?.id}><td className="p-2 border">{i?.fecha}</td><td className="p-2 border font-bold">{i?.documento}</td><td className="p-2 border">{i?.clientName}</td><td className="p-2 border text-right">${formatNum(i?.montoBase)}</td><td className="p-2 border text-right">${formatNum(i?.iva)}</td><td className="p-2 border text-right font-black text-green-600">${formatNum(i?.total)}</td></tr>))}</tbody>
             <tfoot className="bg-gray-100 font-black"><tr><td colSpan="3" className="p-2 border text-right">TOTALES:</td><td className="p-2 border text-right">${formatNum(totalBaseGeneral)}</td><td className="p-2 border text-right">${formatNum(totalIvaGeneral)}</td><td className="p-2 border text-right text-orange-600">${formatNum(totalGeneral)}</td></tr></tfoot>
@@ -1086,12 +1106,24 @@ export default function App() {
       const inv = (invoices || []).find(i => i?.id === showSingleInvoice); if (!inv) return null;
       const client = (clients || []).find(c => c?.rif === inv.clientRif) || {};
       return (
-        <div id="pdf-content" className="bg-white p-12 min-h-screen text-black"><div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden"><button onClick={() => setShowSingleInvoice(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF(`Factura_${inv.documento}`)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg"><Printer size={16} /> Exportar PDF</button></div><ReportHeader />
-          <div className="text-center my-8"><span className="text-2xl font-black uppercase border-b-4 border-orange-500 pb-2">FACTURA N° {inv.documento}</span></div>
-          <div className="grid grid-cols-2 gap-4 mb-8 text-sm uppercase font-bold"><div><p>CLIENTE: {inv.clientName}</p><p>RIF: {inv.clientRif}</p><p className="text-[10px] text-gray-500">DIRECCIÓN: {client.direccion || 'N/A'}</p></div><div className="text-right"><p>FECHA: {inv.fecha}</p><p>VENDEDOR: {inv.vendedor || 'N/A'}</p></div></div>
-          <table className="w-full border-collapse border-2 border-black mb-8"><thead className="bg-gray-100"><tr><th className="p-4 border-b border-black">Descripción Maquila</th><th className="p-4 border-b border-black text-center">Importe Base (USD)</th></tr></thead><tbody><tr><td className="p-4 border-r border-black font-bold text-sm">MAQUILA / PRODUCTO: {inv.productoMaquilado || 'N/A'}</td><td className="p-4 text-center font-bold text-lg">${formatNum(inv.montoBase)}</td></tr></tbody></table>
-          <div className="flex justify-end"><div className="w-1/2 md:w-1/3 space-y-2 border-l-2 border-black pl-4"><div className="flex justify-between font-bold"><span>SUBTOTAL:</span><span>${formatNum(inv.montoBase)}</span></div><div className="flex justify-between font-bold"><span>IVA (16%):</span><span>${formatNum(inv.iva)}</span></div><div className="flex justify-between font-black text-xl border-t-2 border-black pt-2 text-orange-600"><span>TOTAL:</span><span>${formatNum(inv.total)}</span></div></div></div>
-          <div className="mt-24 text-center font-black uppercase text-[10px]"><div className="w-48 border-t-2 border-black mx-auto pt-1">Firma / Sello Autorizado</div></div>
+        <div id="pdf-content" className="bg-white p-12 print:p-6 min-h-0 text-black"><div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden"><button onClick={() => setShowSingleInvoice(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF(`Factura_${inv.documento}`)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg"><Printer size={16} /> Exportar PDF</button></div><ReportHeader />
+          <div className="text-center my-6 print:my-4"><span className="text-2xl print:text-xl font-black uppercase border-b-4 border-orange-500 pb-2">FACTURA N° {inv.documento}</span></div>
+          <div className="grid grid-cols-2 gap-4 mb-6 print:mb-4 text-sm print:text-xs uppercase font-bold">
+             <div><p>CLIENTE: {inv.clientName}</p><p>RIF: {inv.clientRif}</p><p className="text-[10px] text-gray-500">DIRECCIÓN: {client.direccion || 'N/A'}</p></div>
+             <div className="text-right"><p>FECHA: {inv.fecha}</p><p>VENDEDOR: {inv.vendedor || 'N/A'}</p><p className="text-[10px] text-gray-500">OP RELACIONADA: {inv.opAsignada || 'N/A'}</p></div>
+          </div>
+          <table className="w-full border-collapse border-2 border-black mb-6 print:mb-4">
+             <thead className="bg-gray-100"><tr><th className="p-4 print:p-2 border-b border-black">Descripción Maquila</th><th className="p-4 print:p-2 border-b border-black text-center">Importe Base (USD)</th></tr></thead>
+             <tbody><tr><td className="p-4 print:p-2 border-r border-black font-bold text-sm print:text-xs">MAQUILA / PRODUCTO: {inv.productoMaquilado || 'S/D'}</td><td className="p-4 print:p-2 text-center font-bold text-lg print:text-base">${formatNum(inv.montoBase)}</td></tr></tbody>
+          </table>
+          <div className="flex justify-end mb-6 print:mb-4">
+             <div className="w-1/2 md:w-1/3 space-y-2 border-l-2 border-black pl-4">
+                <div className="flex justify-between font-bold"><span>SUBTOTAL:</span><span>${formatNum(inv.montoBase)}</span></div>
+                {inv.aplicaIva === 'SI' && <div className="flex justify-between font-bold"><span>IVA (16%):</span><span>${formatNum(inv.iva)}</span></div>}
+                <div className="flex justify-between font-black text-xl border-t-2 border-black pt-2 text-orange-600"><span>TOTAL:</span><span>${formatNum(inv.total)}</span></div>
+             </div>
+          </div>
+          <div className="mt-20 print:mt-12 text-center font-black uppercase text-[10px]"><div className="w-48 border-t-2 border-black mx-auto pt-1">Firma / Sello Autorizado</div></div>
         </div>
       );
     }
@@ -1099,22 +1131,28 @@ export default function App() {
     if (showSingleReqReport) {
       const req = (requirements || []).find(r => r?.id === showSingleReqReport); if (!req) return null;
       return (
-        <div id="pdf-content" className="bg-white p-12 min-h-screen text-black shadow-xl"><div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden"><button onClick={() => setShowSingleReqReport(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF(`Requisicion_${req.id}`)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg"><Printer size={16} /> Exportar PDF</button></div><ReportHeader />
-          <div className="text-center my-8"><span className="text-2xl font-black uppercase border-b-4 border-orange-500 pb-2">REQUISICIÓN DE PRODUCCIÓN N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
-          <div className="grid grid-cols-2 gap-4 mb-6 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto}</p></div></div>
-          <div className="border-4 border-black p-6 grid grid-cols-4 gap-4 text-center text-[10px] font-black uppercase mb-6 rounded-3xl"><div>ANCHO<br/><span className="text-lg">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-lg">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-lg">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-lg">{req.micras}</span></div></div>
-          <div className="bg-gray-50 p-6 flex justify-between border-2 border-black rounded-3xl"><div><span className="block text-[10px] font-black uppercase">Peso Millar Estimado</span><span className="text-xl font-black">{req.pesoMillar || 'N/A'}</span></div><div className="text-right"><span className="block text-[10px] font-black uppercase">Carga Total Planta</span><span className="text-3xl font-black text-orange-600">{formatNum(req.requestedKg)} KG</span></div></div>
-          <div className="mt-32 grid grid-cols-2 gap-24 text-center font-black text-[10px] uppercase border-t-2 border-black pt-4"><div>FIRMA VENTAS</div><div>RECIBE PLANTA</div></div>
+        <div id="pdf-content" className="bg-white p-8 print:p-4 min-h-0 text-black shadow-xl print:shadow-none"><div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden"><button onClick={() => setShowSingleReqReport(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF(`Requisicion_${req.id}`)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg"><Printer size={16} /> Exportar PDF</button></div><ReportHeader />
+          <div className="text-center my-4 print:my-2"><span className="text-xl print:text-lg font-black uppercase border-b-4 border-orange-500 pb-1">REQUISICIÓN DE PRODUCCIÓN N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
+          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm print:text-xs uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto}</p></div></div>
+          <div className="border-2 border-black p-4 grid grid-cols-4 gap-4 text-center text-xs print:text-[10px] font-black uppercase mb-4 rounded-2xl"><div>ANCHO<br/><span className="text-sm text-blue-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-blue-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-blue-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-blue-600">{req.micras}</span></div></div>
+          
+          <div className="bg-gray-50 p-4 flex justify-between border-2 border-black rounded-2xl mb-4">
+             <div><span className="block text-[10px] font-black uppercase">Cant. Solicitada</span><span className="text-xl font-black text-blue-600">{formatNum(req.cantidad)} {req.presentacion}</span></div>
+             <div><span className="block text-[10px] font-black uppercase">Peso Millar Est.</span><span className="text-xl font-black">{req.pesoMillar || 'N/A'}</span></div>
+             <div className="text-right"><span className="block text-[10px] font-black uppercase">Carga Total Planta</span><span className="text-3xl font-black text-orange-600">{formatNum(req.requestedKg)} KG</span></div>
+          </div>
+          
+          <div className="mt-16 print:mt-12 grid grid-cols-2 gap-24 text-center font-black text-xs print:text-[10px] uppercase border-t-2 border-black pt-4"><div>FIRMA VENTAS</div><div>RECIBE PLANTA</div></div>
         </div>
       );
     }
 
     if (showClientReport) {
       return (
-        <div id="pdf-content" className="bg-white p-10 min-h-screen print:p-0 text-black">
+        <div id="pdf-content" className="bg-white p-10 min-h-0 print:p-4 text-black">
           <div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden"><button onClick={() => setShowClientReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF('Directorio_Clientes', true)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase"><Printer size={16}/> Exportar PDF</button></div>
           <ReportHeader /><h2 className="text-xl font-black text-center mb-8 uppercase border-b-2 border-orange-500 inline-block pb-1">Directorio de Clientes</h2>
-          <table className="w-full text-[10px] border-collapse border border-gray-300">
+          <table className="w-full text-[10px] print:text-[8px] border-collapse border border-gray-300">
             <thead className="bg-gray-100 uppercase"><tr><th className="p-2 border">RIF</th><th className="p-2 border">Razón Social</th><th className="p-2 border w-1/3">Dirección</th><th className="p-2 border">Teléfono</th><th className="p-2 border">Vendedor</th></tr></thead>
             <tbody>{(clients || []).map(c => (<tr key={c?.rif}><td className="p-2 border font-bold">{c?.rif}</td><td className="p-2 border font-black uppercase">{c?.name}</td><td className="p-2 border uppercase">{c?.direccion}</td><td className="p-2 border">{c?.telefono}</td><td className="p-2 border uppercase font-bold">{c?.vendedor}</td></tr>))}</tbody>
           </table>
@@ -1124,10 +1162,10 @@ export default function App() {
 
     if (showReqReport) {
       return (
-        <div id="pdf-content" className="bg-white p-8 min-h-screen print:p-0 text-black">
+        <div id="pdf-content" className="bg-white p-8 min-h-0 print:p-4 text-black">
           <div data-html2canvas-ignore="true" className="flex justify-between mb-4 print:hidden"><button onClick={() => setShowReqReport(false)} className="bg-gray-100 px-4 py-2 font-bold text-xs uppercase rounded-xl">Volver</button><button onClick={() => handleExportPDF('Reporte_Requisiciones', true)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase"><Printer size={16}/> Exportar PDF</button></div>
-          <ReportHeader /><h2 className="text-xl font-black text-center mb-6 uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte de Requisiciones (OP)</h2>
-          <table className="w-full text-[10px] border-collapse border border-gray-300">
+          <ReportHeader /><h2 className="text-xl print:text-lg font-black text-center mb-6 print:mb-4 uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte de Requisiciones (OP)</h2>
+          <table className="w-full text-[10px] print:text-[8px] border-collapse border border-gray-300">
             <thead className="bg-gray-100 uppercase"><tr><th>OP N°</th><th>Fecha</th><th>Cliente</th><th>Vendedor</th><th>Producto</th><th className="text-right">KG Estimados</th><th className="text-center">Estatus</th></tr></thead>
             <tbody>{(requirements || []).map(r => (<tr key={r?.id}><td className="p-2 border text-center">{String(r?.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-2 border">{r?.fecha}</td><td className="p-2 border font-bold">{r?.client}</td><td className="p-2 border">{r?.vendedor}</td><td className="p-2 border">{r?.desc}</td><td className="p-2 border text-right font-black">{formatNum(r?.requestedKg)} KG</td><td className="p-2 border text-center font-bold uppercase">{r?.status}</td></tr>))}</tbody>
           </table>
@@ -1193,7 +1231,6 @@ export default function App() {
                       </div>
                     </div>
                     
-                    {/* FORMULARIO FACTURACIÓN ACTUALIZADO CON OP Y PRODUCTO */}
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                       <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
@@ -1220,12 +1257,18 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Base (USD)</label>
-                        <input type="number" step="0.01" required className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black text-center" value={newInvoiceForm.montoBase} onChange={e=>handleInvoiceFormChange('montoBase', e.target.value)} />
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Base (USD) e IVA</label>
+                        <div className="flex gap-2">
+                           <input type="number" step="0.01" required className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black text-center" value={newInvoiceForm.montoBase} onChange={e=>handleInvoiceFormChange('montoBase', e.target.value)} placeholder="0.00" />
+                           <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva', e.target.value)} className="bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-xs font-black outline-none focus:bg-white focus:border-orange-500 text-black">
+                             <option value="SI">+ IVA</option>
+                             <option value="NO">EXENTO</option>
+                           </select>
+                        </div>
                       </div>
                       
                       <div>
-                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Total con IVA</label>
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Total</label>
                         <div className="p-4 bg-orange-50 border-2 border-orange-200 rounded-2xl font-black text-orange-700 text-lg text-center shadow-inner">${formatNum(newInvoiceForm.total)}</div>
                       </div>
                     </div>
@@ -1322,9 +1365,9 @@ export default function App() {
             <div id="pdf-content" className="grid grid-cols-1 lg:grid-cols-12 gap-0 print:block print:w-full print:mx-auto">
                <style>{`
                  @media print { 
-                   @page { size: landscape; margin: 5mm; } 
+                   @page { size: portrait; margin: 5mm; } 
                    .print-text-xs { font-size: 8px !important; } 
-                   #pdf-content { max-width: 1000px !important; margin: 0 auto !important; }
+                   #pdf-content { transform: scale(0.85); transform-origin: top center; max-width: 100% !important; margin: 0 auto !important; }
                    table, tr, td, th, tbody, thead, tfoot { page-break-inside: avoid !important; }
                  }
                `}</style>
@@ -1448,14 +1491,14 @@ export default function App() {
                </div>
 
                {/* TABLA DE RESULTADO (VISTA IMPRIMIBLE) */}
-               <div className="lg:col-span-8 p-10 bg-white print:w-full print:p-0">
-                  <div className="hidden print:block mb-6">
+               <div className="lg:col-span-8 p-10 bg-white print:w-full print:p-4 print:m-0">
+                  <div className="hidden print:block mb-4">
                      <ReportHeader />
                      <h1 className="text-xl font-black text-black uppercase border-b-2 border-orange-500 pb-1 mt-2">PROYECCIÓN Y COSTEO DE PRODUCCIÓN</h1>
-                     <div className="flex justify-between items-start mt-2 border-b border-gray-200 pb-4 mb-4">
-                        <p className="text-xs font-bold text-gray-500 uppercase">FECHA DE SIMULACIÓN: {getTodayDate()}</p>
+                     <div className="flex justify-between items-start mt-2 border-b border-gray-200 pb-2 mb-2">
+                        <p className="text-[10px] font-bold text-gray-500 uppercase">FECHA DE SIMULACIÓN: {getTodayDate()}</p>
                         <div className="text-right border-l-2 border-orange-500 pl-4">
-                           <p className="text-xs font-black text-black uppercase">TIPO: {calcInputs?.tipoProducto}</p>
+                           <p className="text-[10px] font-black text-black uppercase">TIPO: {calcInputs?.tipoProducto}</p>
                         </div>
                      </div>
                   </div>
@@ -1471,75 +1514,75 @@ export default function App() {
                      <table className="w-full text-left text-[10px] whitespace-nowrap print-text-xs">
                         <thead className="bg-gray-200 print:bg-gray-300 border-b border-gray-400 print:border-black">
                            <tr className="font-black uppercase text-black">
-                              <th className="p-2 pl-4">Fase / Concepto</th>
-                              <th className="p-2 text-center border-l border-gray-300 print:border-black">Cantidad</th>
-                              <th className="p-2 text-center border-l border-gray-300 print:border-black">U.M.</th>
-                              <th className="p-2 text-center border-l border-gray-300 print:border-black">Costo Unit.</th>
-                              <th className="p-2 text-center border-l border-gray-300 print:border-black">Costo Total</th>
-                              <th className="p-2 border-l border-gray-300 print:border-black">Notas</th>
+                              <th className="p-2 print:p-1 pl-4">Fase / Concepto</th>
+                              <th className="p-2 print:p-1 text-center border-l border-gray-300 print:border-black">Cantidad</th>
+                              <th className="p-2 print:p-1 text-center border-l border-gray-300 print:border-black">U.M.</th>
+                              <th className="p-2 print:p-1 text-center border-l border-gray-300 print:border-black">Costo Unit.</th>
+                              <th className="p-2 print:p-1 text-center border-l border-gray-300 print:border-black">Costo Total</th>
+                              <th className="p-2 print:p-1 border-l border-gray-300 print:border-black">Notas</th>
                            </tr>
                         </thead>
                         <tbody className="text-black divide-y divide-gray-200 print:divide-black">
                            
                            {/* 0. CANTIDAD SOLICITADA */}
                            <tr className="bg-orange-50 font-black border-y border-gray-300 print:border-black print:bg-gray-200">
-                              <td className="p-1.5 pl-4 text-orange-800 print:text-black">0. CANTIDAD SOLICITADA A PRODUCIR</td>
-                              <td className="p-1.5 text-center text-orange-800 print:text-black text-lg">{formatNum(inputCantidadSolicitada)}</td>
-                              <td className="p-1.5 text-center text-orange-800 print:text-black">{isBolsas ? 'MILLARES' : 'KG'}</td>
-                              <td className="p-1.5 text-center text-orange-800 print:text-black">-</td>
-                              <td className="p-1.5 text-center text-orange-800 print:text-black">-</td>
-                              <td className="p-1.5 text-gray-500 print:text-black">Base inicial para cálculo</td>
+                              <td className="p-1.5 print:p-1 pl-4 text-orange-800 print:text-black">0. CANTIDAD SOLICITADA A PRODUCIR</td>
+                              <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black text-lg print:text-xs">{formatNum(inputCantidadSolicitada)}</td>
+                              <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">{isBolsas ? 'MILLARES' : 'KG'}</td>
+                              <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">-</td>
+                              <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">-</td>
+                              <td className="p-1.5 print:p-1 text-gray-500 print:text-black">Base inicial para cálculo</td>
                            </tr>
 
                            {/* 1. MATERIA PRIMA */}
-                           <tr><td colSpan="6" className="p-1.5 pl-4 font-black uppercase bg-gray-50 print:bg-transparent">1. MATERIA PRIMA (MEZCLA)</td></tr>
+                           <tr><td colSpan="6" className="p-1.5 print:p-1 pl-4 font-black uppercase bg-gray-50 print:bg-transparent">1. MATERIA PRIMA (MEZCLA)</td></tr>
                            {(calcIngredientesProcesados || []).map(ing => (
                              <tr key={ing?.id}>
-                               <td className="p-1.5 pl-4 font-bold">{ing?.desc}</td>
-                               <td className="p-1.5 text-center">{formatNum(ing?.kg)}</td>
-                               <td className="p-1.5 text-center">kg</td>
-                               <td className="p-1.5 text-center">${formatNum(ing?.costo)}</td>
-                               <td className="p-1.5 text-center">${formatNum(ing?.totalCost)}</td>
-                               <td className="p-1.5 text-gray-500 print:text-black">{formatNum(ing?.pct)}% de la mezcla</td>
+                               <td className="p-1.5 print:p-1 pl-4 font-bold">{ing?.desc}</td>
+                               <td className="p-1.5 print:p-1 text-center">{formatNum(ing?.kg)}</td>
+                               <td className="p-1.5 print:p-1 text-center">kg</td>
+                               <td className="p-1.5 print:p-1 text-center">${formatNum(ing?.costo)}</td>
+                               <td className="p-1.5 print:p-1 text-center">${formatNum(ing?.totalCost)}</td>
+                               <td className="p-1.5 print:p-1 text-gray-500 print:text-black">{formatNum(ing?.pct)}% de la mezcla</td>
                              </tr>
                            ))}
                            <tr className="bg-gray-100 font-black border-y border-gray-300 print:border-black print:bg-gray-200">
-                             <td className="p-1.5 pl-4">TOTAL MEZCLA A PROCESAR</td>
-                             <td className="p-1.5 text-center text-blue-700 text-base">{formatNum(calcTotalMezcla)}</td>
-                             <td className="p-1.5 text-center">kg</td>
-                             <td className="p-1.5 text-center">${formatNum(calcCostoPromedio)}</td>
-                             <td className="p-1.5 text-center">${formatNum(calcCostoMezclaPreparada)}</td>
-                             <td className="p-1.5 text-gray-500 print:text-black">Kilos de mezcla teóricos requeridos</td>
+                             <td className="p-1.5 print:p-1 pl-4">TOTAL MEZCLA A PROCESAR</td>
+                             <td className="p-1.5 print:p-1 text-center text-blue-700 text-base print:text-[10px]">{formatNum(calcTotalMezcla)}</td>
+                             <td className="p-1.5 print:p-1 text-center">kg</td>
+                             <td className="p-1.5 print:p-1 text-center">${formatNum(calcCostoPromedio)}</td>
+                             <td className="p-1.5 print:p-1 text-center">${formatNum(calcCostoMezclaPreparada)}</td>
+                             <td className="p-1.5 print:p-1 text-gray-500 print:text-black">Kilos teóricos requeridos</td>
                            </tr>
 
                            {/* 2. PRODUCCIÓN Y MERMA */}
-                           <tr><td colSpan="6" className="p-1.5 pt-3 pl-4 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">2. FASE DE PRODUCCIÓN Y MERMA</td></tr>
+                           <tr><td colSpan="6" className="p-1.5 print:p-1 pt-3 pl-4 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">2. FASE DE PRODUCCIÓN Y MERMA</td></tr>
                            <tr>
-                             <td className="p-1.5 pl-4 font-bold">MERMA GLOBAL ESTIMADA</td>
-                             <td className="p-1.5 text-center text-red-600">{formatNum(calcMermaGlobalKg)}</td>
-                             <td className="p-1.5 text-center">kg</td>
-                             <td className="p-1.5 text-center">$0.00</td>
-                             <td className="p-1.5 text-center">$0.00</td>
-                             <td className="p-1.5 text-gray-500 print:text-black">{formatNum(calcInputs?.mermaGlobalPorc)}% de la mezcla</td>
+                             <td className="p-1.5 print:p-1 pl-4 font-bold">MERMA GLOBAL ESTIMADA</td>
+                             <td className="p-1.5 print:p-1 text-center text-red-600">{formatNum(calcMermaGlobalKg)}</td>
+                             <td className="p-1.5 print:p-1 text-center">kg</td>
+                             <td className="p-1.5 print:p-1 text-center">$0.00</td>
+                             <td className="p-1.5 print:p-1 text-center">$0.00</td>
+                             <td className="p-1.5 print:p-1 text-gray-500 print:text-black">{formatNum(calcInputs?.mermaGlobalPorc)}% de la mezcla</td>
                            </tr>
                            <tr className="bg-gray-100 font-black border-y border-gray-300 print:border-black print:bg-gray-200">
-                             <td className="p-1.5 pl-4 text-blue-700">PRODUCCIÓN NETA (KG ÚTILES)</td>
-                             <td className="p-1.5 text-center text-blue-700">{formatNum(calcProduccionNetaKg)}</td>
-                             <td className="p-1.5 text-center text-blue-700">kg</td>
-                             <td className="p-1.5 text-center text-blue-700">${formatNum(calcCostoUnitarioNeto)}</td>
-                             <td className="p-1.5 text-center text-blue-700">${formatNum(calcCostoMezclaProcesada)}</td>
-                             <td className="p-1.5 text-blue-700">Rendimiento Útil: {formatNum(calcRendimientoUtil)}%</td>
+                             <td className="p-1.5 print:p-1 pl-4 text-blue-700">PRODUCCIÓN NETA (KG ÚTILES)</td>
+                             <td className="p-1.5 print:p-1 text-center text-blue-700">{formatNum(calcProduccionNetaKg)}</td>
+                             <td className="p-1.5 print:p-1 text-center text-blue-700">kg</td>
+                             <td className="p-1.5 print:p-1 text-center text-blue-700">${formatNum(calcCostoUnitarioNeto)}</td>
+                             <td className="p-1.5 print:p-1 text-center text-blue-700">${formatNum(calcCostoMezclaProcesada)}</td>
+                             <td className="p-1.5 print:p-1 text-blue-700">Rendimiento Útil: {formatNum(calcRendimientoUtil)}%</td>
                            </tr>
 
                            {/* 3. CONVERSIÓN */}
-                           <tr><td colSpan="6" className="p-1.5 pt-3 pl-4 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">3. CONVERSIÓN FINAL ({calcInputs?.tipoProducto || ''})</td></tr>
+                           <tr><td colSpan="6" className="p-1.5 print:p-1 pt-3 pl-4 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">3. CONVERSIÓN FINAL ({calcInputs?.tipoProducto || ''})</td></tr>
                            <tr className="bg-green-100 print:bg-gray-300 font-black text-green-800 print:text-black border-y border-gray-400 print:border-black text-[11px] print:text-[9px]">
-                             <td className="p-2 pl-4">PRODUCCIÓN FINAL ESTIMADA</td>
-                             <td className="p-2 text-center text-lg">{formatNum(calcProduccionFinalUnidades)}</td>
-                             <td className="p-2 text-center">{simUmFinal}</td>
-                             <td className="p-2 text-center">${formatNum(calcCostoFinalUnidad)}</td>
-                             <td className="p-2 text-center">${formatNum(calcCostoMezclaProcesada)}</td>
-                             <td className="p-2 text-[8px] text-gray-600 print:text-black">{isBolsas ? `Peso Teórico: ${formatNum(simPesoMillar)} kg/M` : `Conversión directa a KG`}</td>
+                             <td className="p-2 print:p-1 pl-4">PRODUCCIÓN FINAL ESTIMADA</td>
+                             <td className="p-2 print:p-1 text-center text-lg print:text-[10px]">{formatNum(calcProduccionFinalUnidades)}</td>
+                             <td className="p-2 print:p-1 text-center">{simUmFinal}</td>
+                             <td className="p-2 print:p-1 text-center">${formatNum(calcCostoFinalUnidad)}</td>
+                             <td className="p-2 print:p-1 text-center">${formatNum(calcCostoMezclaProcesada)}</td>
+                             <td className="p-2 print:p-1 text-[8px] text-gray-600 print:text-black">{isBolsas ? `Peso Teórico: ${formatNum(simPesoMillar)} kg/M` : `Conversión directa a KG`}</td>
                            </tr>
                         </tbody>
                      </table>
