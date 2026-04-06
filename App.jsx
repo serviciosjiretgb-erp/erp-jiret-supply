@@ -115,7 +115,7 @@ export default function App() {
   const [showSingleReqReport, setShowSingleReqReport] = useState(null);
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
 
-  // Formularios de Ventas (SELLADOS AL ORIGINAL FUNCIONAL)
+  // Formularios de Ventas
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [editingClientId, setEditingClientId] = useState(null);
@@ -127,15 +127,12 @@ export default function App() {
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
-  // Formularios Producción con Parámetros Técnicos Completos y Seguros
+  // Formularios Producción
   const initialPhaseForm = { 
     date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '',
-    // Campos Extrusión
     operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '',
     zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '',
-    // Campos Impresión
     operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '',
-    // Campos Sellado
     operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: ''
   };
 
@@ -232,7 +229,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA INVENTARIO (SELLADO)
+  // LOGICA INVENTARIO
   // ============================================================================
   const handleSaveInvItem = async (e) => {
     e.preventDefault(); if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
@@ -305,7 +302,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA VENTAS Y FACTURACIÓN (SELLADO A VERSIÓN ORIGINAL Y FUNCIONAL)
+  // LOGICA VENTAS Y FACTURACIÓN
   // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault(); if (!newClientForm.rif || !newClientForm.razonSocial) return setDialog({ title: 'Aviso', text: 'RIF y Razón Social obligatorios.', type: 'alert' });
@@ -371,7 +368,7 @@ export default function App() {
   const handleDeleteReq = (id) => setDialog({ title: 'Eliminar OP', text: `¿Desea eliminar la OP #${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('requirements', id))});
 
   // ============================================================================
-  // LOGICA PRODUCCIÓN E INGENIERÍA DE PLANTA (BLINDADA CONTRA ERRORES)
+  // LOGICA PRODUCCIÓN E INGENIERÍA DE PLANTA 
   // ============================================================================
   const renderRecipeInventoryOptions = () => {
     const grouped = {}; 
@@ -536,14 +533,16 @@ export default function App() {
     }});
   };
 
+  // ============================================================================
   // --- LÓGICA CALCULADORA (SIMULADOR OP CON COSTOS) MEJORADA ---
+  // ============================================================================
   const handleCalcChange = (field, value) => setCalcInputs({ ...calcInputs, [field]: parseNum(value) });
   
   const updateCalcIng = (id, field, value) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs?.ingredientes || []).map(ing => ing?.id === id ? { ...ing, [field]: field === 'nombre' ? value : parseNum(value) } : ing) });
   const addCalcIng = () => setCalcInputs({ ...calcInputs, ingredientes: [...(calcInputs?.ingredientes || []), { id: Date.now(), nombre: '', pct: 0, costo: 0 }] });
   const removeCalcIng = (id) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs?.ingredientes || []).filter(i => i?.id !== id) });
 
-  // 1. Cálculos de Parámetros del Producto (Movido aquí para calcular KG reales)
+  // 1. Cálculos de Parámetros del Producto 
   const simW = parseNum(calcInputs?.ancho);
   const simL = parseNum(calcInputs?.largo);
   const simM = parseNum(calcInputs?.micras);
@@ -551,10 +550,12 @@ export default function App() {
   
   let simPesoMillar = 0;
   if (calcInputs?.tipoProducto === 'BOLSAS') {
+     // Fórmula estándar de peso: (Ancho + Fuelle) * Largo * Micras
      simPesoMillar = (simW + simFu) * simL * simM;
   }
 
   // 2. Lógica ajustada: Convertir Millares ingresados a KG reales si es bolsa
+  // Aquí ocurre la magia de la conversión que pediste
   const inputCantidadSolicitada = calcInputs?.mezclaTotal || 0;
   const calcTotalMezcla = calcInputs?.tipoProducto === 'BOLSAS' && simPesoMillar > 0 
                           ? (inputCantidadSolicitada * simPesoMillar) 
@@ -581,7 +582,6 @@ export default function App() {
   const calcProduccionFinalUnidades = calcInputs?.tipoProducto === 'BOLSAS' && simPesoMillar > 0 ? (calcProduccionNetaKg / simPesoMillar) : calcProduccionNetaKg;
   const calcCostoFinalUnidad = calcProduccionFinalUnidades > 0 ? (calcCostoMezclaProcesada / calcProduccionFinalUnidades) : 0;
   const simUmFinal = calcInputs?.tipoProducto === 'BOLSAS' ? 'Millares' : 'KG';
-
 
   // ============================================================================
   // RENDERIZADO DE MÓDULOS
@@ -653,6 +653,7 @@ export default function App() {
   );
 
   const renderInventoryModule = () => {
+    // ... (El código de inventario sigue igual)
     const searchInvUpper = (invSearchTerm || '').toUpperCase();
     const filteredInventory = (inventory || []).filter(i => (i?.id || '').includes(searchInvUpper) || (i?.desc || '').includes(searchInvUpper));
     const filteredMovements = (invMovements || []).filter(m => (m?.itemId || '').toUpperCase().includes(searchInvUpper) || (m?.itemName || '').toUpperCase().includes(searchInvUpper) || (m?.reference || '').toUpperCase().includes(searchInvUpper));
@@ -1041,6 +1042,7 @@ export default function App() {
   };
 
   const renderVentasModule = () => {
+    // ... (Módulo de ventas sin cambios, se mantiene funcional)
     const filteredClients = (clients || []).filter(c => String(c?.name || '').toUpperCase().includes(clientSearchTerm.toUpperCase()) || String(c?.rif || '').toUpperCase().includes(clientSearchTerm.toUpperCase()));
     const filteredInvoices = (invoices || []).filter(inv => String(inv?.documento || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()) || String(inv?.clientName || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()));
 
