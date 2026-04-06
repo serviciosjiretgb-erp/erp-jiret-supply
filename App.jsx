@@ -1,39 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Package, Factory, AlertTriangle, ClipboardList, PlayCircle, History, FileText, 
-  Settings2, Trash2, Calculator, Plus, Users, LogOut, Lock, ArrowDownToLine, 
-  ArrowUpFromLine, Box, Home, Edit, Printer, X, Search, Beaker, CheckCircle, 
-  Receipt, ArrowRight, User, Thermometer, Gauge, ShieldCheck
+  LayoutDashboard, Package, Factory, TrendingUp, AlertTriangle, 
+  ClipboardList, PlayCircle, History, FileText, Settings2, Trash2, 
+  PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
+  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge
 } from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, collection, doc, setDoc, updateDoc, onSnapshot, deleteDoc, writeBatch } from "firebase/firestore";
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
+import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, serverTimestamp, query } from "firebase/firestore";
 
 // ============================================================================
-// ERROR BOUNDARY
+// ESCUDO DE ERRORES (Evita la pantalla blanca)
 // ============================================================================
 class ErrorBoundary extends React.Component {
-  constructor(props) { 
-    super(props); 
-    this.state = { hasError: false, errorMsg: '' }; 
-  }
-  static getDerivedStateFromError(error) { 
-    return { hasError: true }; 
-  }
-  componentDidCatch(error) { 
-    this.setState({ errorMsg: error?.message || String(error) }); 
-  }
+  constructor(props) { super(props); this.state = { hasError: false, errorMsg: '' }; }
+  static getDerivedStateFromError(error) { return { hasError: true }; }
+  componentDidCatch(error) { this.setState({ errorMsg: error && error.message ? error.message : String(error) }); }
   render() {
     if (this.state.hasError) {
       return (
         <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-6">
           <AlertTriangle size={60} className="text-red-500 mb-4" />
-          <h2 className="text-2xl font-black text-black uppercase mb-2">Error Detectado</h2>
+          <h2 className="text-2xl font-black text-black uppercase mb-2">Error de Interfaz Bloqueado</h2>
           <p className="text-gray-500 text-sm mb-6">{this.state.errorMsg}</p>
-          <button onClick={() => window.location.reload()} className="bg-black text-white font-black px-8 py-4 rounded-xl uppercase tracking-widest text-xs shadow-lg">
-            Recargar Sistema
-          </button>
+          <button onClick={() => window.location.reload()} className="bg-black text-white font-black px-8 py-4 rounded-xl uppercase tracking-widest text-xs shadow-lg">Recargar Sistema</button>
         </div>
       );
     }
@@ -42,7 +33,7 @@ class ErrorBoundary extends React.Component {
 }
 
 // ============================================================================
-// FIREBASE CONFIG
+// CONFIGURACIÓN DE FIREBASE
 // ============================================================================
 const firebaseConfig = {
   apiKey: "AIzaSyBri2uZAaxsH4S0OpqhYvXB4wfCqo4g3sk",
@@ -58,7 +49,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const getColRef = (colName) => collection(db, colName);
+const getColRef = (colName) => collection(db, colName); 
 const getDocRef = (colName, docId) => doc(db, colName, String(docId));
 
 const getTodayDate = () => {
@@ -66,13 +57,9 @@ const getTodayDate = () => {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
 
-const INITIAL_INVENTORY = [
-  { id: 'MP-0240', desc: 'ESENTTIA', cost: 0.96, stock: 2325, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-11PG4', desc: 'METALOCENO', cost: 0.91, stock: 1735, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-3003', desc: 'BAPOLENE', cost: 0.96, stock: 500, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-RECICLADO', desc: 'MATERIAL RECICLADO', cost: 1.00, stock: 9999, unit: 'kg', category: 'Materia Prima' }
-];
-
+// ============================================================================
+// UTILIDADES
+// ============================================================================
 const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
 const parseNum = (val) => {
   if (!val) return 0;
@@ -98,44 +85,20 @@ const getSafeDate = (ts) => {
 // ============================================================================
 export default function App() {
   const [fbUser, setFbUser] = useState(null);
-  const [appUser, setAppUser] = useState(null);
+  const [appUser, setAppUser] = useState(null); 
   const [loginData, setLoginData] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
-
-  // NAVEGACIÓN
   const [activeTab, setActiveTab] = useState('home');
-  const [ventasView, setVentasView] = useState('facturacion');
-  const [prodView, setProdView] = useState('calculadora');
-  const [invView, setInvView] = useState('catalogo');
-
-  // DATOS GLOBALES
+  const [dialog, setDialog] = useState(null);
+  
+  // Datos globales
   const [inventory, setInventory] = useState([]);
-  const [invMovements, setInvMovements] = useState([]);
   const [clients, setClients] = useState([]);
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
 
-  // UI STATES
-  const [dialog, setDialog] = useState(null);
-  const [clientSearchTerm, setClientSearchTerm] = useState('');
-
-  // FORMS
-  const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
-  const [newClientForm, setNewClientForm] = useState(initialClientForm);
-  const [editingClientId, setEditingClientId] = useState(null);
-
-  const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '' };
-  const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
-
-  const initialMovementForm = { date: getTodayDate(), itemId: '', type: 'ENTRADA', qty: '', cost: '', reference: '', notes: '' };
-  const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
-
-  const [invSearchTerm, setInvSearchTerm] = useState('');
-  const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
-  const [reportYear, setReportYear] = useState(new Date().getFullYear());
-
   // ============================================================================
-  // LOGIN
+  // LÓGICA DE LOGIN
   // ============================================================================
   const handleLogin = (e) => {
     e.preventDefault();
@@ -149,19 +112,19 @@ export default function App() {
       setAppUser({ user: 'planta', role: 'Planta', name: 'Supervisor de Planta' });
       setLoginError('');
     } else {
-      setLoginError('Credenciales incorrectas.');
+      setLoginError('Credenciales incorrectas. Intente nuevamente.');
     }
   };
 
   // ============================================================================
-  // FIREBASE SYNC
+  // FIREBASE SYNC - VARIABLES CON NOMBRES ÚNICOS
   // ============================================================================
   useEffect(() => {
     const initAuth = async () => {
       try {
-        await signInAnonymously(auth);
-      } catch (err) {
-        console.error("Error Auth:", err);
+        await signInAnonymously(auth); 
+      } catch (err) { 
+        console.error("Error Auth:", err); 
       }
     };
     initAuth();
@@ -171,223 +134,126 @@ export default function App() {
 
   useEffect(() => {
     if (!fbUser) return;
-    
-    let isFirstInv = true;
-    const unsubInv = onSnapshot(getColRef('inventory'), (s) => {
-      const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // INVENTARIO - Variable única: unsubInventory
+    const unsubInventory = onSnapshot(getColRef('inventory'), (snapshot) => {
+      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setInventory(data);
-      if (s.empty && isFirstInv) {
-        INITIAL_INVENTORY.forEach(item => setDoc(getDocRef('inventory', item.id), item));
-      }
-      isFirstInv = false;
+    }, (error) => {
+      console.error("Error inventario:", error);
     });
 
-    const unsubMovs = onSnapshot(getColRef('inventoryMovements'), (s) => 
-      setInvMovements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0)))
-    );
-    const unsubCli = onSnapshot(getColRef('clientes'), (s) => 
-      setClients(s.docs.map(d => ({ id: d.id, ...d.data() })))
-    );
-    const unsubReq = onSnapshot(getColRef('requirements'), (s) => 
-      setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0)))
-    );
-    const unsubInv = onSnapshot(getColRef('maquilaInvoices'), (s) => 
-      setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0)))
-    );
+    // CLIENTES - Variable única: unsubClients  
+    const unsubClients = onSnapshot(getColRef('clientes'), (snapshot) => {
+      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setClients(data);
+    }, (error) => {
+      console.error("Error clientes:", error);
+    });
 
-    return () => { unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInv(); };
+    // REQUISICIONES - Variable única: unsubRequirements
+    const unsubRequirements = onSnapshot(getColRef('requirements'), (snapshot) => {
+      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
+      setRequirements(data);
+    }, (error) => {
+      console.error("Error requisiciones:", error);
+    });
+
+    // FACTURAS - Variable única: unsubInvoices (NO unsubInv)
+    const unsubInvoices = onSnapshot(getColRef('maquilaInvoices'), (snapshot) => {
+      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
+      setInvoices(data);
+    }, (error) => {
+      console.error("Error facturas:", error);
+    });
+
+    // Cleanup con nombres únicos
+    return () => { 
+      unsubInventory(); 
+      unsubClients(); 
+      unsubRequirements(); 
+      unsubInvoices(); 
+    };
   }, [fbUser]);
 
   // ============================================================================
-  // INVENTARIO - GUARDAR ARTÍCULO
-  // ============================================================================
-  const handleSaveInvItem = async (e) => {
-    e.preventDefault();
-    if (!newInvItemForm.id || !newInvItemForm.desc) {
-      setDialog({ title: 'Aviso', text: 'Código y descripción son obligatorios.', type: 'alert' });
-      return;
-    }
-
-    const itemData = {
-      ...newInvItemForm,
-      id: newInvItemForm.id.toUpperCase(),
-      desc: newInvItemForm.desc.toUpperCase(),
-      cost: parseNum(newInvItemForm.cost),
-      stock: parseNum(newInvItemForm.stock),
-      timestamp: Date.now()
-    };
-
-    try {
-      await setDoc(getDocRef('inventory', itemData.id), itemData, { merge: true });
-      setNewInvItemForm(initialInvItemForm);
-      setDialog({ title: 'Éxito', text: 'Artículo guardado.', type: 'alert' });
-    } catch(err) {
-      setDialog({ title: 'Error', text: err.message, type: 'alert' });
-    }
-  };
-
-  // ============================================================================
-  // INVENTARIO - GUARDAR MOVIMIENTO
-  // ============================================================================
-  const handleSaveMovement = async (e) => {
-    e.preventDefault();
-    if (!newMovementForm.itemId || !newMovementForm.qty) {
-      setDialog({ title: 'Aviso', text: 'Seleccione ítem y cantidad.', type: 'alert' });
-      return;
-    }
-
-    const item = (inventory || []).find(i => i.id === newMovementForm.itemId);
-    if (!item) {
-      setDialog({ title: 'Error', text: 'Ítem no encontrado.', type: 'alert' });
-      return;
-    }
-
-    const qty = parseNum(newMovementForm.qty);
-    if (qty <= 0) {
-      setDialog({ title: 'Error', text: 'La cantidad debe ser mayor a 0.', type: 'alert' });
-      return;
-    }
-
-    const type = newMovementForm.type;
-    const isAddition = type === 'ENTRADA' || type === 'AJUSTE (POSITIVO)';
-    const stockChange = isAddition ? qty : -qty;
-
-    if (!isAddition && item.stock < qty) {
-      setDialog({ title: 'Stock Insuficiente', text: `Stock actual: ${item.stock} ${item.unit}`, type: 'alert' });
-      return;
-    }
-
-    const movCost = newMovementForm.cost ? parseNum(newMovementForm.cost) : item.cost;
-    const movId = Date.now().toString();
-
-    try {
-      const batch = writeBatch(db);
-      batch.set(getDocRef('inventoryMovements', movId), {
-        id: movId,
-        date: newMovementForm.date,
-        itemId: item.id,
-        itemName: item.desc,
-        type: type,
-        qty: qty,
-        cost: movCost,
-        totalValue: qty * movCost,
-        reference: newMovementForm.reference.toUpperCase(),
-        notes: newMovementForm.notes.toUpperCase(),
-        timestamp: Date.now(),
-        user: appUser?.name || 'Sistema'
-      });
-      batch.update(getDocRef('inventory', item.id), {
-        stock: item.stock + stockChange,
-        cost: isAddition && movCost > 0 ? movCost : item.cost
-      });
-      await batch.commit();
-      setNewMovementForm(initialMovementForm);
-      setDialog({ title: 'Éxito', text: 'Movimiento registrado.', type: 'alert' });
-    } catch (err) {
-      setDialog({ title: 'Error', text: err.message, type: 'alert' });
-    }
-  };
-
-  // ============================================================================
-  // CLIENTES
-  // ============================================================================
-  const handleAddClient = async (e) => {
-    e.preventDefault();
-    if (!newClientForm.rif || !newClientForm.razonSocial) {
-      setDialog({ title: 'Aviso', text: 'RIF y Razón Social son obligatorios.', type: 'alert' });
-      return;
-    }
-
-    const rifUpper = newClientForm.rif.toUpperCase().trim();
-    try {
-      await setDoc(getDocRef('clientes', rifUpper), {
-        ...newClientForm,
-        name: newClientForm.razonSocial.toUpperCase().trim(),
-        rif: rifUpper,
-        timestamp: Date.now()
-      }, { merge: true });
-      setNewClientForm(initialClientForm);
-      setEditingClientId(null);
-      setDialog({ title: 'Éxito', text: 'Cliente guardado.', type: 'alert' });
-    } catch(err) {
-      setDialog({ title: 'Error', text: err.message, type: 'alert' });
-    }
-  };
-
-  const handleDeleteClient = (rif) => {
-    setDialog({
-      title: 'Eliminar Cliente',
-      text: `¿Desea eliminar ${rif}?`,
-      type: 'confirm',
-      onConfirm: async () => {
-        await deleteDoc(getDocRef('clientes', rif));
-      }
-    });
-  };
-
-  // ============================================================================
-  // RENDER: LOGIN
+  // RENDERIZADO DE LOGIN
   // ============================================================================
   const renderLogin = () => (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-gray-900 to-black">
-      <div className="bg-white rounded-3xl shadow-2xl p-8 w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-2 mb-4">
-            <span className="text-black font-black text-4xl">G</span>
-            <span className="text-orange-500 font-black text-3xl">&</span>
-            <span className="text-black font-black text-4xl">B</span>
+    <div className="min-h-screen flex items-center justify-center p-4 relative" style={{ 
+      backgroundImage: "url('https://images.unsplash.com/photo-1530124566582-a618bc2615dc?q=80&w=2070&auto=format&fit=crop')", 
+      backgroundSize: 'cover', 
+      backgroundPosition: 'center' 
+    }}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+      <div className="relative z-10 bg-white rounded-3xl shadow-[0_30px_60px_rgba(0,0,0,0.6)] overflow-hidden w-full max-w-4xl flex transform transition-all duration-500 hover:scale-[1.01] border border-white/20">
+        <div className="w-1/2 bg-gradient-to-br from-gray-900 to-black p-12 flex-col justify-between hidden md:flex relative overflow-hidden shadow-[inset_-10px_0_20px_rgba(0,0,0,0.5)] border-r border-gray-800">
+          <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-tr from-white/10 to-transparent transform -skew-x-12 pointer-events-none"></div>
+          <div className="relative z-10">
+            <div className="flex items-center bg-white rounded-2xl px-4 py-2 shadow-[0_10px_20px_rgba(0,0,0,0.4)] w-fit transform hover:translate-x-1 hover:-translate-y-1 transition-transform duration-300">
+              <span className="text-black font-black text-4xl leading-none drop-shadow-sm">G</span>
+              <span className="text-orange-500 font-black text-3xl mx-1 drop-shadow-sm">&amp;</span>
+              <span className="text-black font-black text-4xl leading-none drop-shadow-sm">B</span>
+            </div>
+            <h1 className="text-white text-3xl font-black mt-10 uppercase tracking-widest drop-shadow-lg">Supply ERP</h1>
+            <p className="text-gray-300 mt-4 text-sm leading-relaxed drop-shadow-md">Sistema Integrado de Producción e Inventario para Servicios Jiret G&B C.A.</p>
           </div>
-          <h1 className="text-2xl font-black text-black uppercase">Supply ERP</h1>
-          <p className="text-xs text-gray-500 mt-2 uppercase">Sistema de Gestión Integral</p>
+          <div className="relative z-10 text-gray-500 text-xs font-bold uppercase tracking-widest">© {new Date().getFullYear()} Todos los derechos reservados</div>
         </div>
-
-        {loginError && (
-          <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2">
-            <AlertTriangle size={16} />
-            {loginError}
-          </div>
-        )}
-
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div>
-            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Usuario</label>
-            <input
-              type="text"
-              value={loginData.username}
-              onChange={e => setLoginData({ ...loginData, username: e.target.value })}
-              className="w-full p-3 border-2 border-gray-200 rounded-xl font-black text-sm outline-none focus:border-orange-500"
-              placeholder="ADMIN o PLANTA"
-            />
-          </div>
-
-          <div>
-            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Contraseña</label>
-            <input
-              type="password"
-              value={loginData.password}
-              onChange={e => setLoginData({ ...loginData, password: e.target.value })}
-              className="w-full p-3 border-2 border-gray-200 rounded-xl font-black text-sm outline-none focus:border-orange-500"
-              placeholder="••••••••"
-            />
-          </div>
-
-          <div className="pt-2 text-center text-xs text-gray-500 bg-gray-50 p-3 rounded-xl border border-dashed border-gray-300">
-            <p>Test: <strong>admin / 1234</strong> o <strong>planta / 1234</strong></p>
-          </div>
-
-          <button
-            type="submit"
-            className="w-full bg-orange-500 text-white font-black py-4 rounded-xl uppercase tracking-widest text-xs hover:bg-orange-600 transition-all shadow-lg"
-          >
-            Entrar al Sistema
-          </button>
-        </form>
+        <div className="w-full md:w-1/2 p-12 flex flex-col justify-center bg-white relative z-10">
+          <h2 className="text-2xl font-black text-black uppercase tracking-widest mb-2">Iniciar Sesión</h2>
+          <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-8">Ingresa tus credenciales de acceso</p>
+          {loginError && (
+            <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)]">
+              <AlertTriangle size={16}/> {loginError}
+            </div>
+          )}
+          <form onSubmit={handleLogin} className="space-y-6">
+            <div>
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Usuario</label>
+              <div className="relative group">
+                <User className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/>
+                <input 
+                  type="text" 
+                  value={loginData.username} 
+                  onChange={e=>setLoginData({...loginData, username: e.target.value})} 
+                  className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" 
+                  placeholder="EJ: ADMIN o PLANTA"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Contraseña</label>
+              <div className="relative group">
+                <Lock className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/>
+                <input 
+                  type="password" 
+                  value={loginData.password} 
+                  onChange={e=>setLoginData({...loginData, password: e.target.value})} 
+                  className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" 
+                  placeholder="••••••••"
+                />
+              </div>
+            </div>
+            <div className="pt-4 text-center text-xs text-gray-500 bg-gray-50 p-3 rounded-xl border border-dashed border-gray-300 shadow-sm">
+              <p>Usuarios de prueba: <strong className="text-black">admin</strong> (1234) o <strong className="text-black">planta</strong> (1234)</p>
+            </div>
+            <button 
+              type="submit" 
+              className="w-full bg-gradient-to-r from-orange-500 to-orange-600 text-white font-black py-4 rounded-xl shadow-[0_8px_20px_rgba(249,115,22,0.4)] hover:shadow-[0_15px_25px_rgba(249,115,22,0.6)] hover:-translate-y-1 active:translate-y-1 uppercase tracking-widest text-xs flex justify-center items-center gap-2 mt-4 transform transition-all"
+            >
+              ENTRAR AL SISTEMA <ArrowRight size={16}/>
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );
 
   // ============================================================================
-  // RENDER: HOME
+  // RENDERIZADO DE HOME
   // ============================================================================
   const renderHome = () => (
     <div className="w-full max-w-6xl mx-auto py-8 animate-in fade-in">
@@ -396,288 +262,92 @@ export default function App() {
         <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
-        <button
-          onClick={() => { setActiveTab('ventas'); setVentasView('facturacion'); }}
+        <button 
+          onClick={() => setActiveTab('ventas')} 
           className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"
         >
           <Users size={40} className="text-orange-500 mb-4" />
-          <h3 className="text-xl font-black text-white uppercase">Ventas</h3>
-          <p className="text-xs text-gray-400 mt-2">Clientes y Facturación</p>
+          <h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3>
+          <p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p>
         </button>
-
-        <button
-          onClick={() => { setActiveTab('produccion'); setProdView('calculadora'); }}
+        <button 
+          onClick={() => setActiveTab('produccion')} 
           className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"
         >
           <Factory size={40} className="text-orange-500 mb-4" />
-          <h3 className="text-xl font-black text-white uppercase">Producción</h3>
-          <p className="text-xs text-gray-400 mt-2">Órdenes y Control</p>
+          <h3 className="text-xl font-black text-white uppercase">Producción Planta</h3>
+          <p className="text-xs text-gray-400 mt-2">Ingeniería, Órdenes y Fases.</p>
         </button>
-
-        <button
-          onClick={() => { setActiveTab('inventario'); setInvView('catalogo'); }}
+        <button 
+          onClick={() => setActiveTab('inventario')} 
           className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"
         >
           <Package size={40} className="text-orange-500 mb-4" />
-          <h3 className="text-xl font-black text-white uppercase">Inventario</h3>
-          <p className="text-xs text-gray-400 mt-2">Art. 177 LISLR</p>
+          <h3 className="text-xl font-black text-white uppercase">Control Inventario</h3>
+          <p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p>
         </button>
       </div>
     </div>
   );
 
   // ============================================================================
-  // RENDER: INVENTARIO MODULE (CORREGIDO)
-  // ============================================================================
-  const renderInventoryModule = () => {
-    const filteredMovements = (invMovements || []).filter(m =>
-      String(m?.itemName || '').toUpperCase().includes(invSearchTerm.toUpperCase())
-    );
-
-    return (
-      <div className="space-y-6 animate-in fade-in">
-        {invView === 'catalogo' && (
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-8 py-6 border-b bg-white flex justify-between items-center">
-              <h2 className="text-xl font-black uppercase flex items-center gap-3">
-                <Box className="text-orange-500" /> Catálogo de Artículos
-              </h2>
-            </div>
-
-            <div className="p-8 bg-gray-50/50 border-b">
-              <form onSubmit={handleSaveInvItem} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Código</label>
-                    <input
-                      type="text"
-                      value={newInvItemForm.id}
-                      onChange={e => setNewInvItemForm({ ...newInvItemForm, id: e.target.value })}
-                      className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all"
-                      placeholder="EJ: MP-001"
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Descripción</label>
-                    <input
-                      type="text"
-                      value={newInvItemForm.desc}
-                      onChange={e => setNewInvItemForm({ ...newInvItemForm, desc: e.target.value })}
-                      className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Categoría</label>
-                    <select
-                      value={newInvItemForm.category}
-                      onChange={e => setNewInvItemForm({ ...newInvItemForm, category: e.target.value })}
-                      className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none border-2 border-transparent"
-                    >
-                      <option value="Materia Prima">Materia Prima</option>
-                      <option value="Insumos">Insumos</option>
-                      <option value="Otros">Otros</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Costo ($/kg)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={newInvItemForm.cost}
-                      onChange={e => setNewInvItemForm({ ...newInvItemForm, cost: e.target.value })}
-                      className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Stock Inicial</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={newInvItemForm.stock}
-                      onChange={e => setNewInvItemForm({ ...newInvItemForm, stock: e.target.value })}
-                      className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Unidad</label>
-                    <select
-                      value={newInvItemForm.unit}
-                      onChange={e => setNewInvItemForm({ ...newInvItemForm, unit: e.target.value })}
-                      className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none border-2 border-transparent"
-                    >
-                      <option value="kg">kg</option>
-                      <option value="unidad">Unidad</option>
-                      <option value="litro">Litro</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="flex justify-end pt-4">
-                  <button
-                    type="submit"
-                    className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-slate-800 transition-all"
-                  >
-                    Guardar Artículo
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            <div className="p-8">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left whitespace-nowrap">
-                  <thead className="bg-white border-b-2 border-gray-100">
-                    <tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest">
-                      <th className="py-4 px-4">Código</th>
-                      <th className="py-4 px-4">Descripción</th>
-                      <th className="py-4 px-4">Categoría</th>
-                      <th className="py-4 px-4 text-right">Stock</th>
-                      <th className="py-4 px-4 text-right">Costo</th>
-                      <th className="py-4 px-4 text-center">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 text-black">
-                    {(inventory || []).map(item => (
-                      <tr key={item?.id} className="hover:bg-gray-50">
-                        <td className="py-5 px-4 font-black text-sm">{item?.id}</td>
-                        <td className="py-5 px-4 font-bold text-xs">{item?.desc}</td>
-                        <td className="py-5 px-4 text-xs">{item?.category}</td>
-                        <td className="py-5 px-4 text-right font-bold">{formatNum(item?.stock)} {item?.unit}</td>
-                        <td className="py-5 px-4 text-right font-bold">${formatNum(item?.cost)}</td>
-                        <td className="py-5 px-4 text-center">
-                          <button
-                            onClick={() => { 
-                              setNewInvItemForm(item);
-                            }}
-                            className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"
-                          >
-                            <Edit size={16} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {invView === 'cargo' && (
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-8 py-6 border-b bg-white flex justify-between items-center">
-              <h2 className="text-xl font-black uppercase flex items-center gap-3">
-                <ArrowDownToLine className="text-orange-500" /> Cargo de Inventario
-              </h2>
-            </div>
-
-            <div className="p-8 bg-gray-50/50 border-b">
-              <form onSubmit={handleSaveMovement} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Fecha</label>
-                    <input
-                      type="date"
-                      value={newMovementForm.date}
-                      onChange={e => setNewMovementForm({ ...newMovementForm, date: e.target.value })}
-                      className="w-full p-4 border-2 border-gray-200 rounded-2xl font-black text-xs outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Artículo</label>
-                    <select
-                      value={newMovementForm.itemId}
-                      onChange={e => setNewMovementForm({ ...newMovementForm, itemId: e.target.value })}
-                      className="w-full p-4 border-2 border-gray-200 rounded-2xl font-black text-xs outline-none"
-                    >
-                      <option value="">Seleccione...</option>
-                      {(inventory || []).map(item => (
-                        <option key={item.id} value={item.id}>
-                          {item.id} - {item.desc}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Cantidad</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={newMovementForm.qty}
-                      onChange={e => setNewMovementForm({ ...newMovementForm, qty: e.target.value })}
-                      className="w-full p-4 border-2 border-gray-200 rounded-2xl font-black text-xs outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-end pt-4">
-                  <button
-                    type="submit"
-                    className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-slate-800 transition-all"
-                  >
-                    Registrar Cargo
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            <div className="p-8">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left whitespace-nowrap">
-                  <thead className="bg-white border-b-2 border-gray-100">
-                    <tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest">
-                      <th className="py-4 px-4">Fecha</th>
-                      <th className="py-4 px-4">Artículo</th>
-                      <th className="py-4 px-4 text-right">Cantidad</th>
-                      <th className="py-4 px-4">Tipo</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 text-black">
-                    {filteredMovements.map(mov => (
-                      <tr key={mov?.id} className="hover:bg-gray-50">
-                        <td className="py-5 px-4 text-sm">{mov?.date}</td>
-                        <td className="py-5 px-4 font-bold text-xs">{mov?.itemName}</td>
-                        <td className="py-5 px-4 text-right font-bold">{formatNum(mov?.qty)}</td>
-                        <td className="py-5 px-4 text-xs">{mov?.type}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // ============================================================================
-  // RENDER: VENTAS MODULE (PLACEHOLDER)
+  // MÓDULOS SIMPLIFICADOS
   // ============================================================================
   const renderVentasModule = () => (
-    <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8 text-center">
-      <Users size={40} className="text-orange-500 mx-auto mb-4" />
-      <h2 className="text-xl font-black text-black uppercase">Módulo de Ventas</h2>
-      <p className="text-sm text-gray-500 mt-2">En desarrollo...</p>
+    <div className="p-8 bg-white rounded-3xl shadow-sm">
+      <h2 className="text-2xl font-black mb-4 uppercase flex items-center gap-3">
+        <Receipt className="text-orange-500" /> Módulo de Ventas
+      </h2>
+      <p className="text-gray-600">Gestión de clientes, requisiciones y facturación.</p>
+      <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-gray-50 p-6 rounded-xl">
+          <h3 className="font-black text-lg mb-2">Clientes</h3>
+          <p className="text-sm text-gray-600">Total: {clients.length}</p>
+        </div>
+        <div className="bg-gray-50 p-6 rounded-xl">
+          <h3 className="font-black text-lg mb-2">Requisiciones</h3>
+          <p className="text-sm text-gray-600">Total: {requirements.length}</p>
+        </div>
+        <div className="bg-gray-50 p-6 rounded-xl">
+          <h3 className="font-black text-lg mb-2">Facturas</h3>
+          <p className="text-sm text-gray-600">Total: {invoices.length}</p>
+        </div>
+      </div>
     </div>
   );
 
-  // ============================================================================
-  // RENDER: PRODUCCIÓN MODULE (PLACEHOLDER)
-  // ============================================================================
   const renderProductionModule = () => (
-    <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8 text-center">
-      <Factory size={40} className="text-orange-500 mx-auto mb-4" />
-      <h2 className="text-xl font-black text-black uppercase">Módulo de Producción</h2>
-      <p className="text-sm text-gray-500 mt-2">En desarrollo...</p>
+    <div className="p-8 bg-white rounded-3xl shadow-sm">
+      <h2 className="text-2xl font-black mb-4 uppercase flex items-center gap-3">
+        <Factory className="text-orange-500" /> Módulo de Producción
+      </h2>
+      <p className="text-gray-600">Control de procesos de manufactura.</p>
+      <div className="mt-6">
+        <div className="bg-gray-50 p-6 rounded-xl">
+          <h3 className="font-black text-lg mb-2">Estado de Planta</h3>
+          <p className="text-sm text-gray-600">Sistema operativo</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderInventoryModule = () => (
+    <div className="p-8 bg-white rounded-3xl shadow-sm">
+      <h2 className="text-2xl font-black mb-4 uppercase flex items-center gap-3">
+        <Package className="text-orange-500" /> Módulo de Inventario
+      </h2>
+      <p className="text-gray-600">Control de stock y movimientos (Art. 177 LISLR).</p>
+      <div className="mt-6">
+        <div className="bg-gray-50 p-6 rounded-xl">
+          <h3 className="font-black text-lg mb-2">Artículos</h3>
+          <p className="text-sm text-gray-600">Total: {inventory.length} items</p>
+        </div>
+      </div>
     </div>
   );
 
   // ============================================================================
-  // RENDER PRINCIPAL
+  // RENDERIZADO PRINCIPAL
   // ============================================================================
   if (!appUser) {
     return <ErrorBoundary>{renderLogin()}</ErrorBoundary>;
@@ -686,16 +356,14 @@ export default function App() {
   return (
     <ErrorBoundary>
       <div className="min-h-screen bg-gray-100 text-gray-900 font-sans flex flex-col">
+        {/* HEADER */}
         <header className="bg-black border-b-4 border-orange-500 sticky top-0 z-50 text-white shadow-md">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between h-20 items-center">
-              <div
-                className="flex items-center gap-4 cursor-pointer transition-transform hover:scale-105"
-                onClick={() => setActiveTab('home')}
-              >
+              <div className="flex items-center gap-4 cursor-pointer transition-transform hover:scale-105" onClick={() => setActiveTab('home')}>
                 <div className="flex items-center bg-white rounded-2xl px-3 py-1 shadow-inner">
                   <span className="text-black font-black text-3xl leading-none">G</span>
-                  <span className="text-orange-500 font-black text-2xl mx-0.5">&</span>
+                  <span className="text-orange-500 font-black text-2xl mx-0.5">&amp;</span>
                   <span className="text-black font-black text-3xl leading-none">B</span>
                 </div>
                 <div className="hidden sm:block border-l-2 border-gray-800 pl-4">
@@ -703,83 +371,43 @@ export default function App() {
                   <span className="text-[9px] text-orange-400 font-black uppercase block mt-0.5 tracking-widest">Servicios Jiret G&B C.A.</span>
                 </div>
               </div>
-
               <div className="flex items-center gap-5">
                 <div className="flex items-center gap-3 bg-gray-800 px-5 py-2 rounded-2xl border border-gray-700 shadow-inner">
                   <ShieldCheck size={18} className="text-orange-500" />
                   <span className="font-black text-white text-[10px] uppercase leading-none">{appUser?.name}</span>
                 </div>
-                <button
-                  onClick={() => setAppUser(null)}
-                  className="text-gray-400 hover:text-white transition-all bg-gray-800 hover:bg-red-600 p-2.5 rounded-2xl border border-gray-700 shadow-lg"
-                >
-                  <LogOut size={20} />
+                <button onClick={() => setAppUser(null)} className="text-gray-400 hover:text-white transition-all bg-gray-800 hover:bg-red-600 p-2.5 rounded-2xl border border-gray-700 shadow-lg">
+                  <LogOut size={20}/>
                 </button>
               </div>
             </div>
           </div>
         </header>
 
+        {/* CONTENIDO PRINCIPAL */}
         <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 flex flex-col md:flex-row gap-8 flex-1">
+          {/* NAVEGACIÓN */}
           {activeTab !== 'home' && (
             <nav className="md:w-64 flex-shrink-0 space-y-4 animate-in slide-in-from-left">
-              <button
-                onClick={() => setActiveTab('home')}
-                className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 uppercase tracking-widest transition-all"
-              >
+              <button onClick={() => setActiveTab('home')} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 uppercase tracking-widest transition-all active:scale-95">
                 <Home size={18} className="text-orange-500" /> INICIO
               </button>
-
-              {activeTab === 'inventario' && (
-                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2 border-b border-gray-100 pb-3">
-                    <Package size={14} className="text-orange-500" /> Inventario
-                  </h3>
-                  <button
-                    onClick={() => setInvView('catalogo')}
-                    className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'catalogo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}
-                  >
-                    <Box size={16} /> Catálogo
-                  </button>
-                  <button
-                    onClick={() => setInvView('cargo')}
-                    className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'cargo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}
-                  >
-                    <ArrowDownToLine size={16} /> Cargo
-                  </button>
-                </div>
-              )}
-
-              {activeTab === 'ventas' && (
-                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2 border-b border-gray-100 pb-3">
-                    <Receipt size={14} className="text-orange-500" /> Ventas
-                  </h3>
-                  <button
-                    onClick={() => setVentasView('clientes')}
-                    className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'clientes' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}
-                  >
-                    <Users size={16} /> Clientes
-                  </button>
-                </div>
-              )}
-
-              {activeTab === 'produccion' && (
-                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2 border-b border-gray-100 pb-3">
-                    <Factory size={14} className="text-orange-500" /> Producción
-                  </h3>
-                  <button
-                    onClick={() => setProdView('calculadora')}
-                    className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'calculadora' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}
-                  >
-                    <Calculator size={16} /> Simulador
-                  </button>
-                </div>
-              )}
+              <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
+                <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Módulos</h3>
+                <button onClick={() => setActiveTab('ventas')} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${activeTab === 'ventas' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}>
+                  <Receipt size={16}/> Ventas
+                </button>
+                <button onClick={() => setActiveTab('produccion')} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${activeTab === 'produccion' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}>
+                  <Factory size={16}/> Producción
+                </button>
+                <button onClick={() => setActiveTab('inventario')} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${activeTab === 'inventario' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}>
+                  <Package size={16}/> Inventario
+                </button>
+              </div>
             </nav>
           )}
 
+          {/* CONTENIDO */}
           <main className={`flex-1 min-w-0 pb-12 ${activeTab === 'home' ? 'flex items-center justify-center' : ''}`}>
             {activeTab === 'home' && renderHome()}
             {activeTab === 'ventas' && renderVentasModule()}
@@ -788,6 +416,7 @@ export default function App() {
           </main>
         </div>
 
+        {/* MODAL DE DIÁLOGO */}
         {dialog && (
           <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[9999]">
             <div className="bg-white rounded-3xl shadow-2xl border-t-8 border-orange-500 p-8 w-full max-w-md transform animate-in zoom-in-95">
@@ -795,20 +424,11 @@ export default function App() {
               <p className="text-sm font-bold text-gray-500 mb-8 uppercase text-center">{dialog.text}</p>
               <div className="flex gap-4">
                 {dialog.type === 'confirm' && (
-                  <button
-                    onClick={() => setDialog(null)}
-                    className="flex-1 bg-gray-100 font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-colors text-gray-800"
-                  >
+                  <button onClick={() => setDialog(null)} className="flex-1 bg-gray-100 font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-colors text-gray-800">
                     CANCELAR
                   </button>
                 )}
-                <button
-                  onClick={() => {
-                    if (dialog.onConfirm) dialog.onConfirm();
-                    setDialog(null);
-                  }}
-                  className="flex-1 bg-black text-white font-black py-4 rounded-2xl shadow-xl uppercase text-[10px] tracking-widest hover:bg-gray-900 transition-colors"
-                >
+                <button onClick={() => { if (dialog.onConfirm) dialog.onConfirm(); setDialog(null); }} className="flex-1 bg-black text-white font-black py-4 rounded-2xl shadow-xl uppercase text-[10px] tracking-widest hover:bg-gray-900 transition-colors">
                   ACEPTAR
                 </button>
               </div>
