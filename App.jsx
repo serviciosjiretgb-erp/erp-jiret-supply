@@ -139,13 +139,9 @@ export default function App() {
   const [showWorkOrder, setShowWorkOrder] = useState(null);
   const [showPhaseReport, setShowPhaseReport] = useState(null);
   const [showFiniquito, setShowFiniquito] = useState(null);
-  const [recipeEditReqId, setRecipeEditReqId] = useState(null);
   const [selectedPhaseReqId, setSelectedPhaseReqId] = useState(null);
   const [activePhaseTab, setActivePhaseTab] = useState('extrusion');
   const [phaseForm, setPhaseForm] = useState(initialPhaseForm);
-  const [tempRecipe, setTempRecipe] = useState([]);
-  const [newIngId, setNewIngId] = useState('');
-  const [newIngQty, setNewIngQty] = useState('');
   const [phaseIngId, setPhaseIngId] = useState('');
   const [phaseIngQty, setPhaseIngQty] = useState('');
 
@@ -174,22 +170,36 @@ export default function App() {
     const element = document.getElementById('pdf-content');
     if (!element) return;
     
-    // Mostramos elementos ocultos para impresión
-    const printOnlyElements = element.querySelectorAll('.hidden.print\\:block');
-    printOnlyElements.forEach(el => { el.classList.remove('hidden'); el.classList.add('block'); });
+    // Mostrar headers ocultos dedicados para PDF
+    const headers = element.querySelectorAll('.pdf-header');
+    headers.forEach(el => { el.style.display = 'block'; });
     
-    // Truco infalible: Forzamos el ancho del contenedor en píxeles antes de capturar
-    // Esto obliga al navegador a renderizar la tabla completa sin cortar, y html2pdf
-    // lo adaptará perfectamente a la hoja A4.
-    const originalWidth = element.style.width;
-    const originalMaxWidth = element.style.maxWidth;
-    const virtualWidth = isLandscape ? 1120 : 800;
+    // Ocultar botones, inputs de búsqueda y otra UI
+    const noPdfElements = element.querySelectorAll('.no-pdf');
+    noPdfElements.forEach(el => { el.style.display = 'none'; });
+
+    const originalCssText = element.style.cssText;
+    const originalClasses = element.className;
+    const virtualWidth = isLandscape ? 1120 : 800; // Lienzo virtual forzado
     
+    element.className = 'bg-white text-black p-8';
     element.style.width = `${virtualWidth}px`; 
     element.style.maxWidth = 'none';
+    element.style.margin = '0 auto';
+    
+    // Forzar envoltura y reajuste de tablas
+    const tables = element.querySelectorAll('table');
+    tables.forEach(t => { 
+      t.style.whiteSpace = 'normal'; 
+      t.style.tableLayout = 'auto'; 
+      t.style.width = '100%';
+    });
+
+    const overflows = element.querySelectorAll('.overflow-x-auto');
+    overflows.forEach(el => { el.style.overflow = 'visible'; });
 
     const opt = { 
-      margin: [5, 5, 5, 5], 
+      margin: [10, 10, 10, 10], 
       filename: `${filename}_${getTodayDate()}.pdf`, 
       image: { type: 'jpeg', quality: 1 }, 
       html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: virtualWidth }, 
@@ -197,9 +207,12 @@ export default function App() {
     };
     
     const finishExport = () => { 
-      printOnlyElements.forEach(el => { el.classList.remove('block'); el.classList.add('hidden'); }); 
-      element.style.width = originalWidth;
-      element.style.maxWidth = originalMaxWidth;
+      headers.forEach(el => { el.style.display = 'none'; });
+      noPdfElements.forEach(el => { el.style.display = ''; });
+      element.style.cssText = originalCssText;
+      element.className = originalClasses;
+      tables.forEach(t => { t.style.whiteSpace = ''; t.style.tableLayout = ''; t.style.width = ''; });
+      overflows.forEach(el => { el.style.overflow = ''; });
     };
 
     if (typeof window.html2pdf === 'undefined') { 
@@ -258,7 +271,7 @@ export default function App() {
     setEditingClientId(null); setEditingReqId(null); setShowSingleReqReport(null);
     setShowSingleInvoice(null); setInvoiceSearchTerm('');
     setShowWorkOrder(null); setShowPhaseReport(null); setShowFiniquito(null);
-    setRecipeEditReqId(null); setSelectedPhaseReqId(null);
+    setSelectedPhaseReqId(null);
   };
 
   // ============================================================================
@@ -328,7 +341,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA VENTAS Y FACTURACIÓN (CON OP, PRODUCTOS MAQUILADOS E IVA)
+  // LOGICA VENTAS Y FACTURACIÓN (SELLADA / SIN MODIFICAR)
   // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault(); if (!newClientForm.rif || !newClientForm.razonSocial) return setDialog({ title: 'Aviso', text: 'RIF y Razón Social obligatorios.', type: 'alert' });
@@ -691,11 +704,11 @@ export default function App() {
       <div className="animate-in fade-in space-y-6">
         {invView === 'catalogo' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
-            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center print:hidden">
+            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Lista de Productos (Catálogo)</h2>
                <button onClick={() => handleExportPDF('Catalogo_Inventario', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
             </div>
-            <div data-html2canvas-ignore="true" className="p-8 bg-gray-50/50 border-b border-gray-200 print:hidden">
+            <div data-html2canvas-ignore="true" className="p-8 bg-gray-50/50 border-b border-gray-200 no-pdf">
                <form onSubmit={handleSaveInvItem} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
                  <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-4 tracking-widest">{editingInvId ? 'Modificar Artículo' : 'Nuevo Artículo / Actualizar'}</h3>
                  <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -746,14 +759,13 @@ export default function App() {
                </form>
             </div>
             <div id="pdf-content" className="p-8 print:p-0">
-               <style>{`@media print { @page { size: landscape; margin: 10mm; } }`}</style>
-               <div className="hidden print:block mb-8">
+               <div className="hidden pdf-header mb-8">
                  <ReportHeader />
                  <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2">Catálogo de Inventario y Existencias</h1>
                  <p className="text-sm font-bold text-gray-500 uppercase mt-2">FECHA DE EMISIÓN: {getTodayDate()}</p>
                </div>
 
-               <div data-html2canvas-ignore="true" className="relative max-w-2xl mb-8 print:hidden">
+               <div data-html2canvas-ignore="true" className="relative max-w-2xl mb-8 no-pdf">
                  <Search className="absolute left-4 top-4 text-gray-400" size={18} />
                  <input type="text" placeholder="BUSCAR INSUMO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
                </div>
@@ -765,7 +777,7 @@ export default function App() {
                        <th className="py-4 px-4">Descripción / Categoría</th>
                        <th className="py-4 px-4 text-center">Costo Unit.</th>
                        <th className="py-4 px-4 text-right">Stock Actual</th>
-                       <th className="py-4 px-4 text-center print:hidden">Acciones</th>
+                       <th className="py-4 px-4 text-center no-pdf">Acciones</th>
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-gray-100 print:divide-black">
@@ -775,7 +787,7 @@ export default function App() {
                           <td className="py-4 px-4 font-black uppercase text-xs text-black">{inv?.desc}<span className="block text-[9px] font-bold text-gray-500 mt-1 print:text-black">{inv?.category}</span></td>
                           <td className="py-4 px-4 text-center font-bold text-gray-600 print:text-black">${formatNum(inv?.cost)}</td>
                           <td className="py-4 px-4 text-right font-black text-blue-600 text-lg print:text-black">{formatNum(inv?.stock)} <span className="text-xs text-gray-400 print:text-black">{inv?.unit}</span></td>
-                          <td className="py-4 px-4 text-center print:hidden">
+                          <td className="py-4 px-4 text-center no-pdf">
                             <div className="flex justify-center gap-2">
                               <button onClick={() => startEditInvItem(inv)} className="p-2 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-100 transition-colors"><Edit size={16}/></button>
                               <button onClick={()=>handleDeleteInvItem(inv?.id)} className="p-2 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 transition-colors"><Trash2 size={16}/></button>
@@ -868,20 +880,19 @@ export default function App() {
 
         {invView === 'kardex' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
-            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center print:hidden">
+            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><History className="text-orange-500" size={24}/> Kardex / Historial de Movimientos</h2>
                <button onClick={() => handleExportPDF('Kardex_Inventario', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
             </div>
 
             <div className="p-8 print:p-0 bg-white" id="pdf-content">
-               <style>{`@media print { @page { size: landscape; margin: 10mm; } }`}</style>
-               <div className="hidden print:block mb-8">
+               <div className="hidden pdf-header mb-8">
                  <ReportHeader />
                  <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2">REPORTE DE MOVIMIENTOS POR UNIDADES</h1>
                  <p className="text-sm font-bold text-gray-500 uppercase mt-2">AL: {getTodayDate()}</p>
                </div>
 
-               <div data-html2canvas-ignore="true" className="relative max-w-2xl mb-8 print:hidden">
+               <div data-html2canvas-ignore="true" className="relative max-w-2xl mb-8 no-pdf">
                  <Search className="absolute left-4 top-4 text-gray-400" size={18} />
                  <input type="text" placeholder="BUSCAR POR CÓDIGO, REFERENCIA O TIPO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
                </div>
@@ -897,7 +908,7 @@ export default function App() {
                        <th className="py-3 px-4 text-center border-r print:border-black">Cant.</th>
                        <th className="py-3 px-4 text-right border-r print:border-black">Costo U.</th>
                        <th className="py-3 px-4 text-right border-r print:border-black">Valor Total</th>
-                       <th className="py-3 px-4 text-center print:hidden">Acciones</th>
+                       <th className="py-3 px-4 text-center no-pdf">Acciones</th>
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-gray-100 text-black print:divide-black">
@@ -912,7 +923,7 @@ export default function App() {
                            <td className={`py-3 px-4 text-center font-black text-sm border-r print:border-black ${isPos ? 'text-green-600' : 'text-red-600'} print:text-black`}>{isPos ? '+' : '-'}{formatNum(m?.qty)}</td>
                            <td className="py-3 px-4 text-right font-bold text-gray-600 border-r print:border-black print:text-black">${formatNum(m?.cost)}</td>
                            <td className="py-3 px-4 text-right font-black border-r print:border-black print:text-black">${formatNum(m?.totalValue)}</td>
-                           <td className="py-3 px-4 text-center print:hidden">
+                           <td className="py-3 px-4 text-center no-pdf">
                               <button onClick={() => handleDeleteMovement(m)} className="p-2 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 transition-colors" title="Borrar/Revertir Movimiento"><Trash2 size={16}/></button>
                            </td>
                          </tr>
@@ -928,7 +939,7 @@ export default function App() {
 
         {invView === 'reporte177' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
-            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center print:hidden">
+            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Reporte General (Art. 177 LISLR)</h2>
                <div className="flex gap-2">
                  <button onClick={() => handleExportExcel('reporte-177-table', 'Reporte_Inventario_177')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXPORTAR EXCEL</button>
@@ -937,15 +948,7 @@ export default function App() {
             </div>
 
             <div className="p-8 print:p-0 bg-white" id="pdf-content">
-               <style>{`
-                 @media print { 
-                   @page { size: landscape; margin: 5mm; } 
-                   .print-tiny { font-size: 7px !important; }
-                   .print-p-1 { padding: 2px !important; }
-                 }
-               `}</style>
-               
-               <div data-html2canvas-ignore="true" className="flex gap-4 mb-8 print:hidden items-end">
+               <div data-html2canvas-ignore="true" className="flex gap-4 mb-8 items-end no-pdf">
                  <div>
                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes a Reportar</label>
                    <select value={reportMonth} onChange={e=>setReportMonth(parseInt(e.target.value))} className="w-48 border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs uppercase outline-none">
@@ -958,7 +961,7 @@ export default function App() {
                  </div>
                </div>
 
-               <div className="hidden print:block mb-6">
+               <div className="hidden pdf-header mb-6">
                  <ReportHeader />
                  <h1 className="text-xl font-black text-black uppercase border-b-2 border-orange-500 pb-1">REPORTE GENERAL DE INVENTARIO (ART. 177 LISLR)</h1>
                  <p className="text-xs font-bold text-gray-500 uppercase mt-1">PERÍODO: {reportMonth.toString().padStart(2, '0')} / {reportYear}</p>
@@ -1077,10 +1080,11 @@ export default function App() {
       const totalIvaGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.iva), 0);
       const totalGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.total), 0);
       return (
-        <div id="pdf-content" className="bg-white p-8 min-h-0 print:p-4 text-black bg-white">
-          <div data-html2canvas-ignore="true" className="flex justify-between mb-4 print:hidden"><button onClick={() => setShowGeneralInvoicesReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF('Reporte_General_Facturas', true)} className="bg-black text-white px-6 py-2 rounded-xl flex items-center gap-2 font-black text-xs uppercase"><Printer size={16}/> Exportar PDF</button></div>
-          <ReportHeader /><h2 className="text-xl print:text-lg font-black text-center mb-6 print:mb-4 uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte General de Facturación</h2>
-          <table className="w-full text-[10px] print:text-[8px] border-collapse border border-gray-300">
+        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black">
+          <div data-html2canvas-ignore="true" className="flex justify-between mb-4 no-pdf"><button onClick={() => setShowGeneralInvoicesReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF('Reporte_General_Facturas', false)} className="bg-black text-white px-6 py-2 rounded-xl flex items-center gap-2 font-black text-xs uppercase hover:bg-gray-800"><Printer size={16}/> Exportar PDF</button></div>
+          <div className="hidden pdf-header mb-6"><ReportHeader /></div>
+          <div className="text-center mb-6"><h2 className="text-xl font-black uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte General de Facturación</h2></div>
+          <table className="w-full text-[10px] border-collapse border border-gray-300">
             <thead className="bg-gray-100 uppercase"><tr><th className="p-2 border">Fecha</th><th className="p-2 border">Factura</th><th className="p-2 border">Cliente</th><th className="p-2 border text-right">Base ($)</th><th className="p-2 border text-right">IVA ($)</th><th className="p-2 border text-right">Total ($)</th></tr></thead>
             <tbody>{(invoices || []).map(i => (<tr key={i?.id}><td className="p-2 border">{i?.fecha}</td><td className="p-2 border font-bold">{i?.documento}</td><td className="p-2 border">{i?.clientName}</td><td className="p-2 border text-right">${formatNum(i?.montoBase)}</td><td className="p-2 border text-right">${formatNum(i?.iva)}</td><td className="p-2 border text-right font-black text-green-600">${formatNum(i?.total)}</td></tr>))}</tbody>
             <tfoot className="bg-gray-100 font-black"><tr><td colSpan="3" className="p-2 border text-right">TOTALES:</td><td className="p-2 border text-right">${formatNum(totalBaseGeneral)}</td><td className="p-2 border text-right">${formatNum(totalIvaGeneral)}</td><td className="p-2 border text-right text-orange-600">${formatNum(totalGeneral)}</td></tr></tfoot>
@@ -1093,24 +1097,26 @@ export default function App() {
       const inv = (invoices || []).find(i => i?.id === showSingleInvoice); if (!inv) return null;
       const client = (clients || []).find(c => c?.rif === inv.clientRif) || {};
       return (
-        <div id="pdf-content" className="bg-white p-12 print:p-6 min-h-0 text-black bg-white"><div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden"><button onClick={() => setShowSingleInvoice(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF(`Factura_${inv.documento}`)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg"><Printer size={16} /> Exportar PDF</button></div><ReportHeader />
-          <div className="text-center my-6 print:my-4"><span className="text-2xl print:text-xl font-black uppercase border-b-4 border-orange-500 pb-2">FACTURA N° {inv.documento}</span></div>
-          <div className="grid grid-cols-2 gap-4 mb-6 print:mb-4 text-sm print:text-xs uppercase font-bold">
+        <div id="pdf-content" className="bg-white p-12 min-h-0 text-black">
+          <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowSingleInvoice(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Factura_${inv.documento}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar PDF</button></div>
+          <div className="hidden pdf-header mb-6"><ReportHeader /></div>
+          <div className="text-center my-6"><span className="text-2xl font-black uppercase border-b-4 border-orange-500 pb-2">FACTURA N° {inv.documento}</span></div>
+          <div className="grid grid-cols-2 gap-4 mb-6 text-sm uppercase font-bold">
              <div><p>CLIENTE: {inv.clientName}</p><p>RIF: {inv.clientRif}</p><p className="text-[10px] text-gray-500">DIRECCIÓN: {client.direccion || 'N/A'}</p></div>
              <div className="text-right"><p>FECHA: {inv.fecha}</p><p>VENDEDOR: {inv.vendedor || 'N/A'}</p><p className="text-[10px] text-gray-500">OP RELACIONADA: {inv.opAsignada || 'N/A'}</p></div>
           </div>
-          <table className="w-full border-collapse border-2 border-black mb-6 print:mb-4">
-             <thead className="bg-gray-100"><tr><th className="p-4 print:p-2 border-b border-black">Descripción Maquila</th><th className="p-4 print:p-2 border-b border-black text-center">Importe Base (USD)</th></tr></thead>
-             <tbody><tr><td className="p-4 print:p-2 border-r border-black font-bold text-sm print:text-xs">MAQUILA / PRODUCTO: {inv.productoMaquilado || 'S/D'}</td><td className="p-4 print:p-2 text-center font-bold text-lg print:text-base">${formatNum(inv.montoBase)}</td></tr></tbody>
+          <table className="w-full border-collapse border-2 border-black mb-6">
+             <thead className="bg-gray-100"><tr><th className="p-4 border-b border-black">Descripción Maquila</th><th className="p-4 border-b border-black text-center">Importe Base (USD)</th></tr></thead>
+             <tbody><tr><td className="p-4 border-r border-black font-bold text-sm">MAQUILA / PRODUCTO: {inv.productoMaquilado || 'S/D'}</td><td className="p-4 text-center font-bold text-lg">${formatNum(inv.montoBase)}</td></tr></tbody>
           </table>
-          <div className="flex justify-end mb-6 print:mb-4">
+          <div className="flex justify-end mb-6">
              <div className="w-1/2 md:w-1/3 space-y-2 border-l-2 border-black pl-4">
                 <div className="flex justify-between font-bold"><span>SUBTOTAL:</span><span>${formatNum(inv.montoBase)}</span></div>
                 {inv.aplicaIva === 'SI' && <div className="flex justify-between font-bold"><span>IVA (16%):</span><span>${formatNum(inv.iva)}</span></div>}
                 <div className="flex justify-between font-black text-xl border-t-2 border-black pt-2 text-orange-600"><span>TOTAL:</span><span>${formatNum(inv.total)}</span></div>
              </div>
           </div>
-          <div className="mt-20 print:mt-12 text-center font-black uppercase text-[10px]"><div className="w-48 border-t-2 border-black mx-auto pt-1">Firma / Sello Autorizado</div></div>
+          <div className="mt-20 text-center font-black uppercase text-[10px]"><div className="w-48 border-t-2 border-black mx-auto pt-1">Firma / Sello Autorizado</div></div>
         </div>
       );
     }
@@ -1118,10 +1124,12 @@ export default function App() {
     if (showSingleReqReport) {
       const req = (requirements || []).find(r => r?.id === showSingleReqReport); if (!req) return null;
       return (
-        <div id="pdf-content" className="bg-white p-8 print:p-6 min-h-0 text-black shadow-xl print:shadow-none bg-white"><div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden"><button onClick={() => setShowSingleReqReport(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF(`Requisicion_${req.id}`)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg"><Printer size={16} /> EXPORTAR PDF</button></div><ReportHeader />
-          <div className="text-center my-4 print:my-2"><span className="text-xl print:text-lg font-black uppercase border-b-4 border-orange-500 pb-1">REQUISICIÓN DE PRODUCCIÓN N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
-          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm print:text-xs uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto}</p></div></div>
-          <div className="border-2 border-black p-4 grid grid-cols-4 gap-4 text-center text-xs print:text-[10px] font-black uppercase mb-4 rounded-2xl"><div>ANCHO<br/><span className="text-sm text-blue-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-blue-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-blue-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-blue-600">{req.micras}</span></div></div>
+        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black shadow-xl">
+          <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowSingleReqReport(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Requisicion_${req.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar PDF</button></div>
+          <div className="hidden pdf-header mb-6"><ReportHeader /></div>
+          <div className="text-center my-4"><span className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">REQUISICIÓN DE PRODUCCIÓN N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
+          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto}</p></div></div>
+          <div className="border-2 border-black p-4 grid grid-cols-4 gap-4 text-center text-xs font-black uppercase mb-4 rounded-2xl"><div>ANCHO<br/><span className="text-sm text-blue-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-blue-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-blue-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-blue-600">{req.micras}</span></div></div>
           
           <div className="bg-gray-50 p-4 flex justify-between border-2 border-black rounded-2xl mb-4">
              <div><span className="block text-[10px] font-black uppercase">Cant. Solicitada</span><span className="text-xl font-black text-blue-600">{formatNum(req.cantidad)} {req.presentacion}</span></div>
@@ -1129,17 +1137,18 @@ export default function App() {
              <div className="text-right"><span className="block text-[10px] font-black uppercase">Carga Total Planta</span><span className="text-3xl font-black text-orange-600">{formatNum(req.requestedKg)} KG</span></div>
           </div>
           
-          <div className="mt-16 print:mt-12 grid grid-cols-2 gap-24 text-center font-black text-xs print:text-[10px] uppercase border-t-2 border-black pt-4"><div>FIRMA VENTAS</div><div>RECIBE PLANTA</div></div>
+          <div className="mt-16 grid grid-cols-2 gap-24 text-center font-black text-xs uppercase border-t-2 border-black pt-4"><div>FIRMA VENTAS</div><div>RECIBE PLANTA</div></div>
         </div>
       );
     }
 
     if (showClientReport) {
       return (
-        <div id="pdf-content" className="bg-white p-10 min-h-0 print:p-4 text-black bg-white">
-          <div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden"><button onClick={() => setShowClientReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase">Volver</button><button onClick={() => handleExportPDF('Directorio_Clientes', true)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase"><Printer size={16}/> Exportar PDF</button></div>
-          <ReportHeader /><h2 className="text-xl font-black text-center mb-8 uppercase border-b-2 border-orange-500 inline-block pb-1">Directorio de Clientes</h2>
-          <table className="w-full text-[10px] print:text-[8px] border-collapse border border-gray-300">
+        <div id="pdf-content" className="bg-white p-10 min-h-0 text-black">
+          <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowClientReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF('Directorio_Clientes', true)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase hover:bg-gray-800"><Printer size={16}/> Exportar PDF</button></div>
+          <div className="hidden pdf-header mb-6"><ReportHeader /></div>
+          <div className="text-center mb-8"><h2 className="text-xl font-black uppercase border-b-2 border-orange-500 inline-block pb-1">Directorio de Clientes</h2></div>
+          <table className="w-full text-[10px] border-collapse border border-gray-300">
             <thead className="bg-gray-100 uppercase"><tr><th className="p-2 border">RIF</th><th className="p-2 border">Razón Social</th><th className="p-2 border w-1/3">Dirección</th><th className="p-2 border">Teléfono</th><th className="p-2 border">Vendedor</th></tr></thead>
             <tbody>{(clients || []).map(c => (<tr key={c?.rif}><td className="p-2 border font-bold">{c?.rif}</td><td className="p-2 border font-black uppercase">{c?.name}</td><td className="p-2 border uppercase">{c?.direccion}</td><td className="p-2 border">{c?.telefono}</td><td className="p-2 border uppercase font-bold">{c?.vendedor}</td></tr>))}</tbody>
           </table>
@@ -1149,10 +1158,11 @@ export default function App() {
 
     if (showReqReport) {
       return (
-        <div id="pdf-content" className="bg-white p-8 min-h-0 print:p-4 text-black bg-white">
-          <div data-html2canvas-ignore="true" className="flex justify-between mb-4 print:hidden"><button onClick={() => setShowReqReport(false)} className="bg-gray-100 px-4 py-2 font-bold text-xs uppercase rounded-xl">Volver</button><button onClick={() => handleExportPDF('Reporte_Requisiciones', true)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase"><Printer size={16}/> Exportar PDF</button></div>
-          <ReportHeader /><h2 className="text-xl print:text-lg font-black text-center mb-6 print:mb-4 uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte de Requisiciones (OP)</h2>
-          <table className="w-full text-[10px] print:text-[8px] border-collapse border border-gray-300">
+        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black">
+          <div data-html2canvas-ignore="true" className="flex justify-between mb-4 no-pdf"><button onClick={() => setShowReqReport(false)} className="bg-gray-100 px-4 py-2 font-bold text-xs uppercase rounded-xl hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF('Reporte_Requisiciones', true)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase hover:bg-gray-800"><Printer size={16}/> Exportar PDF</button></div>
+          <div className="hidden pdf-header mb-6"><ReportHeader /></div>
+          <div className="text-center mb-6"><h2 className="text-xl font-black uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte de Requisiciones (OP)</h2></div>
+          <table className="w-full text-[10px] border-collapse border border-gray-300">
             <thead className="bg-gray-100 uppercase"><tr><th>OP N°</th><th>Fecha</th><th>Cliente</th><th>Vendedor</th><th>Producto</th><th className="text-right">KG Estimados</th><th className="text-center">Estatus</th></tr></thead>
             <tbody>{(requirements || []).map(r => (<tr key={r?.id}><td className="p-2 border text-center">{String(r?.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-2 border">{r?.fecha}</td><td className="p-2 border font-bold">{r?.client}</td><td className="p-2 border">{r?.vendedor}</td><td className="p-2 border">{r?.desc}</td><td className="p-2 border text-right font-black">{formatNum(r?.requestedKg)} KG</td><td className="p-2 border text-center font-bold uppercase">{r?.status}</td></tr>))}</tbody>
           </table>
@@ -1164,7 +1174,7 @@ export default function App() {
       <div className="space-y-6 animate-in fade-in">
         {ventasView === 'clientes' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-8 py-6 border-b bg-white flex justify-between items-center"><h2 className="text-xl font-black uppercase flex items-center gap-3"><Users className="text-orange-500" /> DIRECTORIO DE CLIENTES</h2><button onClick={()=>setShowClientReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase">REPORTE PDF</button></div>
+            <div className="px-8 py-6 border-b bg-white flex justify-between items-center"><h2 className="text-xl font-black uppercase flex items-center gap-3"><Users className="text-orange-500" /> DIRECTORIO DE CLIENTES</h2><button onClick={()=>setShowClientReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50">REPORTE PDF</button></div>
             <div className="p-8 bg-gray-50/50 border-b">
               <form onSubmit={handleAddClient} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -1218,9 +1228,9 @@ export default function App() {
                       </div>
                     </div>
                     
-                    {/* FORMULARIO FACTURACIÓN AMPLIADO */}
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                      <div className="md:col-span-2">
+                    {/* FORMULARIO FACTURACIÓN CON CAMPO DE PRECIO AMPLIADO */}
+                    <div className="grid grid-cols-1 md:grid-cols-6 gap-6">
+                      <div className="md:col-span-3">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
                         <select required value={newInvoiceForm.clientRif} onChange={e=>handleInvoiceFormChange('clientRif', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
                           <option value="">Seleccione...</option>
@@ -1228,7 +1238,7 @@ export default function App() {
                         </select>
                       </div>
                       
-                      <div className="md:col-span-2">
+                      <div className="md:col-span-3">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">OP Relacionada (Opcional)</label>
                         <select value={newInvoiceForm.opAsignada} onChange={e=>{
                            const op = requirements.find(r=>r.id===e.target.value);
@@ -1239,16 +1249,16 @@ export default function App() {
                         </select>
                       </div>
 
-                      <div className="md:col-span-4">
+                      <div className="md:col-span-6">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Descripción / Producto Maquilado</label>
                         <input type="text" required className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black uppercase" value={newInvoiceForm.productoMaquilado} onChange={e=>handleInvoiceFormChange('productoMaquilado', e.target.value)} placeholder="EJ: BOLSAS DE 28 X 75" />
                       </div>
 
-                      <div className="md:col-span-2">
+                      <div className="md:col-span-4">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Base (USD) e IVA</label>
-                        <div className="flex gap-2">
-                           <input type="number" step="0.01" required className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black text-center" value={newInvoiceForm.montoBase} onChange={e=>handleInvoiceFormChange('montoBase', e.target.value)} placeholder="0.00" />
-                           <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva', e.target.value)} className="min-w-[120px] w-1/3 bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-xs font-black outline-none focus:bg-white focus:border-orange-500 text-black">
+                        <div className="flex gap-3">
+                           <input type="number" step="0.01" required className="flex-1 bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-xl font-black outline-none focus:bg-white focus:border-orange-500 text-black text-center" value={newInvoiceForm.montoBase} onChange={e=>handleInvoiceFormChange('montoBase', e.target.value)} placeholder="0.00" />
+                           <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva', e.target.value)} className="w-40 bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-xs font-black outline-none focus:bg-white focus:border-orange-500 text-black">
                              <option value="SI">+ IVA</option>
                              <option value="NO">EXENTO</option>
                            </select>
@@ -1256,8 +1266,8 @@ export default function App() {
                       </div>
                       
                       <div className="md:col-span-2">
-                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Total Factura</label>
-                        <div className="p-4 bg-orange-50 border-2 border-orange-200 rounded-2xl font-black text-orange-700 text-lg text-center shadow-inner">${formatNum(newInvoiceForm.total)}</div>
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Total</label>
+                        <div className="p-4 bg-orange-50 border-2 border-orange-200 rounded-2xl font-black text-orange-700 text-xl text-center shadow-inner">${formatNum(newInvoiceForm.total)}</div>
                       </div>
                     </div>
                     
@@ -1319,7 +1329,7 @@ export default function App() {
                        </div>
                     </div>
 
-                    <div className="flex justify-between items-center bg-orange-50 p-6 rounded-3xl border-2 border-orange-200 mt-6 shadow-inner"><div><span className="text-[10px] font-black text-orange-800 uppercase tracking-tighter">TOTAL CARGA ESTIMADA</span><span className="text-4xl font-black text-orange-600 block">{newReqForm.requestedKg} KG</span></div><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR EN PLANTA</button></div>
+                    <div className="flex justify-between items-center bg-orange-50 p-6 rounded-3xl border-2 border-orange-200 mt-6 shadow-inner"><div><span className="text-[10px] font-black text-orange-800 uppercase tracking-tighter">TOTAL CARGA ESTIMADA</span><span className="text-4xl font-black text-orange-600 block">{newReqForm.requestedKg} KG</span></div><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR Y PASAR A PLANTA</button></div>
                   </form>
                 </div>
              )}
@@ -1335,6 +1345,7 @@ export default function App() {
     if (showPhaseReport) return renderPhaseReport();
     if (showFiniquito) return renderFiniquito();
 
+    const canEdit = appUser?.role === 'Planta' || appUser?.role === 'Master';
     const activeOrders = (requirements || []).filter(r => r?.status === 'EN PROCESO');
     const completedOrders = (requirements || []).filter(r => r?.status === 'COMPLETADO');
     
@@ -1344,7 +1355,7 @@ export default function App() {
         {/* CALCULADORA / SIMULADOR OP MODIFICADO */}
         {prodView === 'calculadora' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none print:m-0 print:p-0 print:block print:w-full">
-            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center print:hidden">
+            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Calculator className="text-orange-500" size={24}/> Simulador de Producción</h2>
                
                {/* NUEVO BOTON PARA LIMPIAR / NUEVA SIMULACION */}
@@ -1355,17 +1366,9 @@ export default function App() {
             </div>
             
             <div id="pdf-content" className="grid grid-cols-1 lg:grid-cols-12 gap-0 print:block print:w-full print:mx-auto bg-white">
-               <style>{`
-                 @media print { 
-                   @page { size: landscape !important; margin: 10mm !important; } 
-                   .print-text-xs { font-size: 8px !important; } 
-                   #pdf-content { width: 100% !important; max-width: 1000px !important; margin: 0 auto !important; display: block !important; }
-                   table { width: 100% !important; table-layout: auto !important; }
-                   table, tr, td, th, tbody, thead, tfoot { page-break-inside: avoid !important; }
-                 }
-               `}</style>
+               
                {/* PANEL DE CONTROLES */}
-               <div data-html2canvas-ignore="true" className="lg:col-span-4 border-r border-gray-200 bg-gray-50 p-8 print:hidden space-y-8">
+               <div data-html2canvas-ignore="true" className="lg:col-span-4 border-r border-gray-200 bg-gray-50 p-8 no-pdf space-y-8">
                  
                  {/* Bloque: Variables Base */}
                  <div>
@@ -1375,7 +1378,7 @@ export default function App() {
                           <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
                              Total a Preparar ({calcInputs?.tipoProducto === 'BOLSAS' ? 'MILLARES' : 'KG'})
                           </label>
-                          <input type="number" value={calcInputs?.mezclaTotal || ''} onChange={(e) => handleCalcChange('mezclaTotal', e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 text-sm font-black outline-none focus:border-orange-500 text-center text-blue-600" />
+                          <input type="number" value={calcInputs?.mezclaTotal === 0 ? '' : calcInputs?.mezclaTotal} onChange={(e) => handleCalcChange('mezclaTotal', e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 text-sm font-black outline-none focus:border-orange-500 text-center text-blue-600" />
                         </div>
                      </div>
                  </div>
@@ -1424,11 +1427,11 @@ export default function App() {
                               <div className="flex gap-2 mt-1">
                                 <div className="w-1/2">
                                    <label className="text-[8px] font-bold text-gray-400 uppercase">Proporción (%)</label>
-                                   <input type="number" value={ing?.pct || ''} onChange={(e) => updateCalcIng(ing?.id, 'pct', e.target.value)} className="w-full text-xs font-black text-center outline-none bg-gray-50 rounded p-1 border border-gray-100 text-black" />
+                                   <input type="number" value={ing?.pct === 0 ? '' : ing?.pct} onChange={(e) => updateCalcIng(ing?.id, 'pct', e.target.value)} className="w-full text-xs font-black text-center outline-none bg-gray-50 rounded p-1 border border-gray-100 text-black" />
                                 </div>
                                 <div className="w-1/2">
                                    <label className="text-[8px] font-bold text-gray-400 uppercase">Costo ($/KG)</label>
-                                   <input type="number" step="0.01" value={ing?.costo || ''} onChange={(e) => updateCalcIng(ing?.id, 'costo', e.target.value)} className="w-full text-xs font-black text-center outline-none bg-gray-50 rounded p-1 border border-gray-100 text-black" />
+                                   <input type="number" step="0.01" value={ing?.costo === 0 ? '' : ing?.costo} onChange={(e) => updateCalcIng(ing?.id, 'costo', e.target.value)} className="w-full text-xs font-black text-center outline-none bg-gray-50 rounded p-1 border border-gray-100 text-black" />
                                 </div>
                               </div>
                            </div>
@@ -1445,7 +1448,7 @@ export default function App() {
                      <div className="space-y-3">
                         <div className="flex items-center justify-between gap-4">
                           <label className="text-[9px] font-bold text-gray-500 uppercase flex-1">Merma Global Esperada (%)</label>
-                          <input type="number" step="0.1" value={calcInputs?.mermaGlobalPorc || ''} onChange={(e) => handleCalcChange('mermaGlobalPorc', e.target.value)} className="w-24 border-2 border-gray-200 rounded-lg p-2 text-xs font-black text-center text-red-500" />
+                          <input type="number" step="0.1" value={calcInputs?.mermaGlobalPorc === 0 ? '' : calcInputs?.mermaGlobalPorc} onChange={(e) => handleCalcChange('mermaGlobalPorc', e.target.value)} className="w-24 border-2 border-gray-200 rounded-lg p-2 text-xs font-black text-center text-red-500" />
                         </div>
                      </div>
                  </div>
@@ -1464,19 +1467,19 @@ export default function App() {
                         <div className="grid grid-cols-2 gap-2">
                           <div>
                             <label className="text-[8px] font-bold text-gray-400 uppercase">ANCHO (CM)</label>
-                            <input type="number" step="0.1" value={calcInputs?.ancho || ''} onChange={e=>setCalcInputs({...calcInputs, ancho: e.target.value})} className="w-full border p-2 text-xs text-center font-bold" />
+                            <input type="number" step="0.1" value={calcInputs?.ancho === 0 ? '' : calcInputs?.ancho} onChange={e=>setCalcInputs({...calcInputs, ancho: e.target.value})} className="w-full border p-2 text-xs text-center font-bold" />
                           </div>
                           <div>
                             <label className="text-[8px] font-bold text-gray-400 uppercase">FUELLES (CM)</label>
-                            <input type="number" step="0.1" disabled={calcInputs?.tipoProducto === 'TERMOENCOGIBLE'} value={calcInputs?.fuelles || ''} onChange={e=>setCalcInputs({...calcInputs, fuelles: e.target.value})} className="w-full border p-2 text-xs text-center font-bold disabled:bg-gray-100" />
+                            <input type="number" step="0.1" disabled={calcInputs?.tipoProducto === 'TERMOENCOGIBLE'} value={calcInputs?.fuelles === 0 ? '' : calcInputs?.fuelles} onChange={e=>setCalcInputs({...calcInputs, fuelles: e.target.value})} className="w-full border p-2 text-xs text-center font-bold disabled:bg-gray-100" />
                           </div>
                           <div>
                             <label className="text-[8px] font-bold text-gray-400 uppercase">LARGO (CM)</label>
-                            <input type="number" step="0.1" disabled={calcInputs?.tipoProducto === 'TERMOENCOGIBLE'} value={calcInputs?.largo || ''} onChange={e=>setCalcInputs({...calcInputs, largo: e.target.value})} className="w-full border p-2 text-xs text-center font-bold disabled:bg-gray-100" />
+                            <input type="number" step="0.1" disabled={calcInputs?.tipoProducto === 'TERMOENCOGIBLE'} value={calcInputs?.largo === 0 ? '' : calcInputs?.largo} onChange={e=>setCalcInputs({...calcInputs, largo: e.target.value})} className="w-full border p-2 text-xs text-center font-bold disabled:bg-gray-100" />
                           </div>
                           <div>
                             <label className="text-[8px] font-bold text-gray-400 uppercase">MICRAS</label>
-                            <input type="number" step="0.001" value={calcInputs?.micras || ''} onChange={e=>setCalcInputs({...calcInputs, micras: e.target.value})} className="w-full border p-2 text-xs text-center font-bold" />
+                            <input type="number" step="0.001" value={calcInputs?.micras === 0 ? '' : calcInputs?.micras} onChange={e=>setCalcInputs({...calcInputs, micras: e.target.value})} className="w-full border p-2 text-xs text-center font-bold" />
                           </div>
                         </div>
                      </div>
@@ -1485,7 +1488,7 @@ export default function App() {
 
                {/* TABLA DE RESULTADO (VISTA IMPRIMIBLE) */}
                <div className="lg:col-span-8 p-10 bg-white print:w-full print:p-4 print:m-0">
-                  <div className="hidden print:block mb-4">
+                  <div className="hidden pdf-header mb-4">
                      <ReportHeader />
                      <h1 className="text-xl font-black text-black uppercase border-b-2 border-orange-500 pb-1 mt-2">PROYECCIÓN Y COSTEO DE PRODUCCIÓN</h1>
                      <div className="flex justify-between items-start mt-2 border-b border-gray-200 pb-2 mb-2">
@@ -1498,13 +1501,13 @@ export default function App() {
                   
                   {/* ALERTA DE MEDIDAS */}
                   {calcInputs?.tipoProducto === 'BOLSAS' && simPesoMillar === 0 && (
-                     <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2 print:hidden">
+                     <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2 no-pdf">
                         <AlertTriangle size={16}/> Debes ingresar las medidas (Ancho, Fuelle, Largo, Micras) para calcular los KG.
                      </div>
                   )}
 
                   <div className="overflow-x-auto rounded-xl border border-gray-300 print:border-black print:rounded-none print:overflow-hidden print:w-full">
-                     <table className="w-full text-left text-[10px] print-text-xs print:whitespace-normal">
+                     <table className="w-full text-left text-[10px] print:text-xs print:whitespace-normal">
                         <thead className="bg-gray-200 print:bg-gray-300 border-b border-gray-400 print:border-black">
                            <tr className="font-black uppercase text-black">
                               <th className="p-2 print:p-1 pl-4">Fase / Concepto</th>
@@ -1640,7 +1643,7 @@ export default function App() {
 
     return (
       <div id="pdf-content" className="bg-white p-6 print:p-0 min-h-screen text-black shadow-none border-0 bg-white"><style>{`@media print { @page { size: portrait; margin: 5mm; } }`}</style>
-        <div data-html2canvas-ignore="true" className="flex justify-between mb-2 print:hidden"><button onClick={() => setShowWorkOrder(null)} className="bg-gray-100 px-6 py-2 rounded-xl text-xs font-black uppercase">VOLVER</button><button onClick={() => handleExportPDF(`OP_${req.id}`)} className="bg-black text-white px-8 py-2 rounded-xl font-black flex items-center gap-2 text-xs uppercase shadow-lg"><Printer size={16} /> EXPORTAR PDF</button></div>
+        <div data-html2canvas-ignore="true" className="flex justify-between mb-2 no-pdf"><button onClick={() => setShowWorkOrder(null)} className="bg-gray-100 px-6 py-2 rounded-xl text-xs font-black uppercase">VOLVER</button><button onClick={() => handleExportPDF(`OP_${req.id}`, false)} className="bg-black text-white px-8 py-2 rounded-xl font-black flex items-center gap-2 text-xs uppercase shadow-lg"><Printer size={16} /> EXPORTAR PDF</button></div>
         <div className="flex justify-between items-end border-b-2 border-black pb-1 mb-2"><div><div className="flex items-center -mb-1"><span className="text-black font-black text-3xl leading-none">G</span><span className="text-orange-500 font-black text-lg mx-0.5">&amp;</span><span className="text-black font-black text-3xl leading-none">B</span></div><p className="text-[6px] font-bold text-orange-500 uppercase mt-1 tracking-widest">Servicio y Calidad</p></div><div className="text-center flex-1"><h1 className="text-lg font-black uppercase tracking-widest">ORDEN DE TRABAJO PARA OP.</h1></div></div>
         <div className="grid grid-cols-3 text-[9px] font-bold uppercase mb-2 border-b-2 border-black pb-2"><div><p className="mb-1"><span className="w-16 inline-block font-black">CLIENTE:</span> {req.client}</p><p className="mb-1"><span className="w-16 inline-block font-black">OP:</span> #{String(req.id).replace('OP-', '').padStart(5, '0')}</p><p><span className="w-16 inline-block font-black">TIPO:</span> {req.tipoProducto || 'N/A'}</p></div><div><p className="mb-1"><span className="w-20 inline-block font-black">EMISIÓN:</span> {req.fecha}</p><p><span className="w-20 inline-block font-black text-orange-600 font-black">KG MATERIA PRIMA:</span> <span className="text-orange-600 font-black">{formatNum(totalMPKgRecipe)} KG</span></p></div><div><p className="mb-1"><span className="w-24 inline-block font-black">FECHA ENTRADA:</span> __________________</p><p><span className="w-24 inline-block font-black">FECHA SALIDA:</span> __________________</p></div></div>
         
@@ -1662,8 +1665,9 @@ export default function App() {
     const req = (requirements || []).find(r => r?.id === showPhaseReport?.reqId); if (!req) return null;
     const pData = req?.production?.[showPhaseReport?.phase]; if (!pData) return null;
     return (
-      <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black shadow-xl bg-white"><div data-html2canvas-ignore="true" className="flex justify-between mb-10 print:hidden bg-gray-50 p-4 rounded-xl border border-gray-200"><button onClick={() => setShowPhaseReport(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2.5 rounded-xl">VOLVER</button><button onClick={() => handleExportPDF(`ReporteFase_${showPhaseReport?.phase}_OP${req?.id}`)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button></div>
-        <ReportHeader /><h2 className="text-2xl font-black text-center my-10 uppercase border-b-4 border-orange-500 pb-2">REPORTE FASE: {(showPhaseReport?.phase || '').toUpperCase()}</h2>
+      <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black shadow-xl bg-white"><div data-html2canvas-ignore="true" className="flex justify-between mb-10 no-pdf bg-gray-50 p-4 rounded-xl border border-gray-200"><button onClick={() => setShowPhaseReport(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2.5 rounded-xl">VOLVER</button><button onClick={() => handleExportPDF(`ReporteFase_${showPhaseReport?.phase}_OP${req?.id}`, false)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button></div>
+        <div className="hidden pdf-header mb-6"><ReportHeader /></div>
+        <h2 className="text-2xl font-black text-center my-10 uppercase border-b-4 border-orange-500 pb-2">REPORTE FASE: {(showPhaseReport?.phase || '').toUpperCase()}</h2>
         <div className="grid grid-cols-2 gap-x-10 gap-y-4 text-xs font-black uppercase mb-10"><div>CLIENTE: {req?.client}</div><div>EMISIÓN: {getSafeDate(Date.now())}</div><div>OP N°: {String(req?.id).replace('OP-', '').padStart(5, '0')}</div><div>VENDEDOR: {req?.vendedor || 'S/N'}</div></div>
         <table className="w-full text-center border-collapse border-2 border-black text-black"><thead className="bg-gray-200"><tr><th className="p-3 border border-black text-[10px] tracking-widest">FECHA LOTE</th><th className="p-3 border border-black text-[10px] tracking-widest">PRODUCIDO (KG)</th><th className="p-3 border border-black text-[10px] tracking-widest">DESPERDICIO (KG)</th></tr></thead>
           <tbody className="divide-y divide-black">{(pData?.batches || []).map((b, i)=>(<tr key={i} className="h-10 align-middle"><td className="p-3 border border-black font-bold uppercase">{b?.date}</td><td className="p-3 border border-black font-black text-base">{formatNum(b?.producedKg)}</td><td className="p-3 border border-black font-bold text-red-600">{formatNum(b?.mermaKg)}</td></tr>))}</tbody>
@@ -1719,7 +1723,7 @@ export default function App() {
 
     return (
       <div id="pdf-content" className="bg-white p-12 print:p-6 min-h-0 text-black shadow-none border-0 font-black uppercase text-black bg-white"><style>{`@media print { @page { size: landscape !important; margin: 5mm !important; } body { background-color: white !important; } #pdf-content { width: 100% !important; max-width: 1000px !important; margin: 0 auto !important; display: block !important; } table, tr, td, th, tbody, thead, tfoot { page-break-inside: avoid !important; } .text-orange-600 { color: #ea580c !important; } }`}</style>
-        <div data-html2canvas-ignore="true" className="flex justify-between mb-8 print:hidden"><button onClick={() => setShowFiniquito(null)} className="text-black font-black text-xs uppercase bg-gray-100 border border-gray-200 px-6 py-2.5 rounded-xl hover:bg-gray-200">VOLVER</button><button onClick={() => handleExportPDF(`Finiquito_OP_${req?.id}`, true)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black text-[10px] uppercase shadow-lg"><Printer size={16} /> EXPORTAR PDF</button></div>
+        <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowFiniquito(null)} className="text-black font-black text-xs uppercase bg-gray-100 border border-gray-200 px-6 py-2.5 rounded-xl hover:bg-gray-200">VOLVER</button><button onClick={() => handleExportPDF(`Finiquito_OP_${req?.id}`, true)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black text-[10px] uppercase shadow-lg"><Printer size={16} /> EXPORTAR PDF</button></div>
         
         <div className="flex justify-between items-end border-b-2 border-black pb-4 mb-6">
            <div className="flex items-center gap-4">
