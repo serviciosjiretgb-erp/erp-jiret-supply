@@ -115,7 +115,7 @@ export default function App() {
   const [showSingleReqReport, setShowSingleReqReport] = useState(null);
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
 
-  // Formularios de Ventas
+  // Formularios de Ventas 
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [editingClientId, setEditingClientId] = useState(null);
@@ -127,7 +127,7 @@ export default function App() {
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
-  // Formularios Producción
+  // Formularios Producción 
   const initialPhaseForm = { 
     date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '',
     operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '',
@@ -167,16 +167,33 @@ export default function App() {
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
   // ============================================================================
-  // EXPORTACIONES
+  // EXPORTACIONES (AJUSTE PARA 1 SOLA PÁGINA)
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content');
     if (!element) return;
     const printOnlyElements = element.querySelectorAll('.hidden.print\\:block');
     printOnlyElements.forEach(el => { el.classList.remove('hidden'); el.classList.add('block'); });
-    const opt = { margin: 5, filename: `${filename}_${getTodayDate()}.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true, logging: false }, jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' } };
+    
+    // Configuraciones ajustadas para forzar el contenido en 1 sola página ancha
+    const opt = { 
+      margin: 5, 
+      filename: `${filename}_${getTodayDate()}.pdf`, 
+      image: { type: 'jpeg', quality: 0.98 }, 
+      html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: 1000 }, 
+      jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' },
+      pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+    };
+    
     const finishExport = () => { printOnlyElements.forEach(el => { el.classList.remove('block'); el.classList.add('hidden'); }); };
-    if (typeof window.html2pdf === 'undefined') { const script = document.createElement('script'); script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; script.onload = () => { window.html2pdf().set(opt).from(element).save().then(finishExport); }; document.head.appendChild(script); } else { window.html2pdf().set(opt).from(element).save().then(finishExport); }
+    if (typeof window.html2pdf === 'undefined') { 
+      const script = document.createElement('script'); 
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; 
+      script.onload = () => { window.html2pdf().set(opt).from(element).save().then(finishExport); }; 
+      document.head.appendChild(script); 
+    } else { 
+      window.html2pdf().set(opt).from(element).save().then(finishExport); 
+    }
   };
 
   const handleExportExcel = (tableId, filename) => {
@@ -302,7 +319,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA VENTAS Y FACTURACIÓN
+  // LOGICA VENTAS Y FACTURACIÓN (CON OP Y PRODUCTOS MAQUILADOS)
   // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault(); if (!newClientForm.rif || !newClientForm.razonSocial) return setDialog({ title: 'Aviso', text: 'RIF y Razón Social obligatorios.', type: 'alert' });
@@ -334,6 +351,7 @@ export default function App() {
     }
     setNewInvoiceForm(f);
   };
+  
   const handleCreateInvoice = async (e) => {
     e.preventDefault(); if(!newInvoiceForm.clientRif || !newInvoiceForm.montoBase) return setDialog({title: 'Aviso', text: 'Selecciona un cliente e ingresa el monto base.', type: 'alert'});
     const id = newInvoiceForm.documento || generateInvoiceId();
@@ -368,7 +386,7 @@ export default function App() {
   const handleDeleteReq = (id) => setDialog({ title: 'Eliminar OP', text: `¿Desea eliminar la OP #${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('requirements', id))});
 
   // ============================================================================
-  // LOGICA PRODUCCIÓN E INGENIERÍA DE PLANTA 
+  // LOGICA PRODUCCIÓN E INGENIERÍA DE PLANTA
   // ============================================================================
   const renderRecipeInventoryOptions = () => {
     const grouped = {}; 
@@ -548,17 +566,19 @@ export default function App() {
   const simM = parseNum(calcInputs?.micras);
   const simFu = parseNum(calcInputs?.fuelles);
   
+  const isBolsas = calcInputs?.tipoProducto === 'BOLSAS';
+  
   let simPesoMillar = 0;
-  if (calcInputs?.tipoProducto === 'BOLSAS') {
-     // Fórmula estándar de peso: (Ancho + Fuelle) * Largo * Micras
+  if (isBolsas) {
      simPesoMillar = (simW + simFu) * simL * simM;
   }
 
   // 2. Lógica ajustada: Convertir Millares ingresados a KG reales si es bolsa
-  // Aquí ocurre la magia de la conversión que pediste
   const inputCantidadSolicitada = calcInputs?.mezclaTotal || 0;
-  const calcTotalMezcla = calcInputs?.tipoProducto === 'BOLSAS' && simPesoMillar > 0 
-                          ? (inputCantidadSolicitada * simPesoMillar) 
+  
+  // Si es BOLSAS y no hay peso (simPesoMillar = 0), calcTotalMezcla será 0 para evitar descuadres.
+  const calcTotalMezcla = isBolsas 
+                          ? (simPesoMillar > 0 ? (inputCantidadSolicitada * simPesoMillar) : 0) 
                           : inputCantidadSolicitada;
 
   const calcMezclaProcesada = calcTotalMezcla; 
@@ -579,9 +599,9 @@ export default function App() {
   const calcCostoUnitarioNeto = calcProduccionNetaKg > 0 ? (calcCostoMezclaProcesada / calcProduccionNetaKg) : 0;
   const calcRendimientoUtil = calcMezclaProcesada > 0 ? (calcProduccionNetaKg / calcMezclaProcesada) * 100 : 0;
   
-  const calcProduccionFinalUnidades = calcInputs?.tipoProducto === 'BOLSAS' && simPesoMillar > 0 ? (calcProduccionNetaKg / simPesoMillar) : calcProduccionNetaKg;
+  const calcProduccionFinalUnidades = isBolsas && simPesoMillar > 0 ? (calcProduccionNetaKg / simPesoMillar) : calcProduccionNetaKg;
   const calcCostoFinalUnidad = calcProduccionFinalUnidades > 0 ? (calcCostoMezclaProcesada / calcProduccionFinalUnidades) : 0;
-  const simUmFinal = calcInputs?.tipoProducto === 'BOLSAS' ? 'Millares' : 'KG';
+  const simUmFinal = isBolsas ? 'Millares' : 'KG';
 
   // ============================================================================
   // RENDERIZADO DE MÓDULOS
@@ -653,7 +673,7 @@ export default function App() {
   );
 
   const renderInventoryModule = () => {
-    // ... (El código de inventario sigue igual)
+    // ... (El módulo de inventario sin cambios) ...
     const searchInvUpper = (invSearchTerm || '').toUpperCase();
     const filteredInventory = (inventory || []).filter(i => (i?.id || '').includes(searchInvUpper) || (i?.desc || '').includes(searchInvUpper));
     const filteredMovements = (invMovements || []).filter(m => (m?.itemId || '').toUpperCase().includes(searchInvUpper) || (m?.itemName || '').toUpperCase().includes(searchInvUpper) || (m?.reference || '').toUpperCase().includes(searchInvUpper));
@@ -1042,7 +1062,6 @@ export default function App() {
   };
 
   const renderVentasModule = () => {
-    // ... (Módulo de ventas sin cambios, se mantiene funcional)
     const filteredClients = (clients || []).filter(c => String(c?.name || '').toUpperCase().includes(clientSearchTerm.toUpperCase()) || String(c?.rif || '').toUpperCase().includes(clientSearchTerm.toUpperCase()));
     const filteredInvoices = (invoices || []).filter(inv => String(inv?.documento || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()) || String(inv?.clientName || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()));
 
@@ -1173,6 +1192,8 @@ export default function App() {
                         <button type="button" onClick={()=>setShowNewInvoicePanel(false)} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
                       </div>
                     </div>
+                    
+                    {/* FORMULARIO FACTURACIÓN ACTUALIZADO CON OP Y PRODUCTO */}
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                       <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
@@ -1181,23 +1202,42 @@ export default function App() {
                           {(clients || []).map(c=><option key={c?.rif} value={c?.rif}>{c?.name}</option>)}
                         </select>
                       </div>
+                      
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">OP Relacionada (Opcional)</label>
+                        <select value={newInvoiceForm.opAsignada} onChange={e=>{
+                           const op = requirements.find(r=>r.id===e.target.value);
+                           setNewInvoiceForm({...newInvoiceForm, opAsignada: e.target.value, productoMaquilado: op ? op.desc : newInvoiceForm.productoMaquilado});
+                        }} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
+                          <option value="">Seleccione OP...</option>
+                          {(requirements || []).map(r=><option key={r.id} value={r.id}>{r.id} - {r.client}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Descripción / Producto Maquilado</label>
+                        <input type="text" required className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black uppercase" value={newInvoiceForm.productoMaquilado} onChange={e=>handleInvoiceFormChange('productoMaquilado', e.target.value)} placeholder="EJ: BOLSAS DE 28 X 75" />
+                      </div>
+
                       <div>
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Base (USD)</label>
                         <input type="number" step="0.01" required className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black text-center" value={newInvoiceForm.montoBase} onChange={e=>handleInvoiceFormChange('montoBase', e.target.value)} />
                       </div>
+                      
                       <div>
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Total con IVA</label>
                         <div className="p-4 bg-orange-50 border-2 border-orange-200 rounded-2xl font-black text-orange-700 text-lg text-center shadow-inner">${formatNum(newInvoiceForm.total)}</div>
                       </div>
                     </div>
+                    
                     <div className="flex justify-end pt-4"><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR FACTURA DE VENTA</button></div>
                   </form>
                 </div>
              )}
-             <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR FACTURA O CLIENTE..." value={invoiceSearchTerm} onChange={e=>setInvoiceSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">Cliente</th><th className="py-4 px-4 text-right text-black">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{(invoices || []).map(inv=>{
+             <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR FACTURA O CLIENTE..." value={invoiceSearchTerm} onChange={e=>setInvoiceSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">Cliente / Producto</th><th className="py-4 px-4 text-right text-black">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{(invoices || []).map(inv=>{
                if(!String(inv?.documento || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()) && !String(inv?.clientName || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase())) return null;
                return (
-               <tr key={inv?.id} className="hover:bg-gray-50"><td className="py-5 px-4 font-black text-sm">{inv?.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{getSafeDate(inv?.timestamp)}</span></td><td className="py-5 px-4 font-bold text-gray-700 uppercase">{inv?.clientName}</td><td className="py-5 px-4 text-right font-black text-green-600 text-lg">${formatNum(inv?.total)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>handleDeleteInvoice(inv?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
+               <tr key={inv?.id} className="hover:bg-gray-50"><td className="py-5 px-4 font-black text-sm">{inv?.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{getSafeDate(inv?.timestamp)}</span></td><td className="py-5 px-4 font-bold text-gray-700 uppercase">{inv?.clientName}<br/><span className="text-[9px] font-black text-orange-500 block max-w-xs truncate" title={inv?.productoMaquilado}>{inv?.productoMaquilado || 'S/D'}</span></td><td className="py-5 px-4 text-right font-black text-green-600 text-lg">${formatNum(inv?.total)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>handleDeleteInvoice(inv?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
              )})}</tbody></table></div></div>
           </div>
         )}
@@ -1279,12 +1319,12 @@ export default function App() {
                <button onClick={() => handleExportPDF('Simulador_Produccion', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
             </div>
             
-            <div id="pdf-content" className="grid grid-cols-1 lg:grid-cols-12 gap-0 print:block print:w-full">
+            <div id="pdf-content" className="grid grid-cols-1 lg:grid-cols-12 gap-0 print:block print:w-full print:mx-auto">
                <style>{`
                  @media print { 
                    @page { size: landscape; margin: 5mm; } 
                    .print-text-xs { font-size: 8px !important; } 
-                   #pdf-content { transform: scale(0.95); transform-origin: top center; }
+                   #pdf-content { max-width: 1000px !important; margin: 0 auto !important; }
                    table, tr, td, th, tbody, thead, tfoot { page-break-inside: avoid !important; }
                  }
                `}</style>
@@ -1416,18 +1456,22 @@ export default function App() {
                         <p className="text-xs font-bold text-gray-500 uppercase">FECHA DE SIMULACIÓN: {getTodayDate()}</p>
                         <div className="text-right border-l-2 border-orange-500 pl-4">
                            <p className="text-xs font-black text-black uppercase">TIPO: {calcInputs?.tipoProducto}</p>
-                           <p className="text-[10px] font-bold text-orange-600 uppercase">
-                              SOLICITADO: {calcInputs?.mezclaTotal || 0} {calcInputs?.tipoProducto === 'BOLSAS' ? 'MILLARES' : 'KG'}
-                           </p>
                         </div>
                      </div>
                   </div>
                   
+                  {/* ALERTA DE MEDIDAS */}
+                  {calcInputs?.tipoProducto === 'BOLSAS' && simPesoMillar === 0 && (
+                     <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2 print:hidden">
+                        <AlertTriangle size={16}/> Debes ingresar las medidas (Ancho, Fuelle, Largo, Micras) para calcular los KG.
+                     </div>
+                  )}
+
                   <div className="overflow-x-auto rounded-xl border border-gray-300 print:border-black print:rounded-none">
                      <table className="w-full text-left text-[10px] whitespace-nowrap print-text-xs">
                         <thead className="bg-gray-200 print:bg-gray-300 border-b border-gray-400 print:border-black">
                            <tr className="font-black uppercase text-black">
-                              <th className="p-2">Fase / Concepto</th>
+                              <th className="p-2 pl-4">Fase / Concepto</th>
                               <th className="p-2 text-center border-l border-gray-300 print:border-black">Cantidad</th>
                               <th className="p-2 text-center border-l border-gray-300 print:border-black">U.M.</th>
                               <th className="p-2 text-center border-l border-gray-300 print:border-black">Costo Unit.</th>
@@ -1437,8 +1481,18 @@ export default function App() {
                         </thead>
                         <tbody className="text-black divide-y divide-gray-200 print:divide-black">
                            
+                           {/* 0. CANTIDAD SOLICITADA */}
+                           <tr className="bg-orange-50 font-black border-y border-gray-300 print:border-black print:bg-gray-200">
+                              <td className="p-1.5 pl-4 text-orange-800 print:text-black">0. CANTIDAD SOLICITADA A PRODUCIR</td>
+                              <td className="p-1.5 text-center text-orange-800 print:text-black text-lg">{formatNum(inputCantidadSolicitada)}</td>
+                              <td className="p-1.5 text-center text-orange-800 print:text-black">{isBolsas ? 'MILLARES' : 'KG'}</td>
+                              <td className="p-1.5 text-center text-orange-800 print:text-black">-</td>
+                              <td className="p-1.5 text-center text-orange-800 print:text-black">-</td>
+                              <td className="p-1.5 text-gray-500 print:text-black">Base inicial para cálculo</td>
+                           </tr>
+
                            {/* 1. MATERIA PRIMA */}
-                           <tr><td colSpan="6" className="p-1.5 font-black uppercase bg-gray-50 print:bg-transparent">1. MATERIA PRIMA (MEZCLA)</td></tr>
+                           <tr><td colSpan="6" className="p-1.5 pl-4 font-black uppercase bg-gray-50 print:bg-transparent">1. MATERIA PRIMA (MEZCLA)</td></tr>
                            {(calcIngredientesProcesados || []).map(ing => (
                              <tr key={ing?.id}>
                                <td className="p-1.5 pl-4 font-bold">{ing?.desc}</td>
@@ -1451,15 +1505,15 @@ export default function App() {
                            ))}
                            <tr className="bg-gray-100 font-black border-y border-gray-300 print:border-black print:bg-gray-200">
                              <td className="p-1.5 pl-4">TOTAL MEZCLA A PROCESAR</td>
-                             <td className="p-1.5 text-center">{formatNum(calcTotalMezcla)}</td>
+                             <td className="p-1.5 text-center text-blue-700 text-base">{formatNum(calcTotalMezcla)}</td>
                              <td className="p-1.5 text-center">kg</td>
                              <td className="p-1.5 text-center">${formatNum(calcCostoPromedio)}</td>
                              <td className="p-1.5 text-center">${formatNum(calcCostoMezclaPreparada)}</td>
-                             <td className="p-1.5">Costo promedio e ingreso</td>
+                             <td className="p-1.5 text-gray-500 print:text-black">Kilos de mezcla teóricos requeridos</td>
                            </tr>
 
                            {/* 2. PRODUCCIÓN Y MERMA */}
-                           <tr><td colSpan="6" className="p-1.5 pt-3 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">2. FASE DE PRODUCCIÓN Y MERMA</td></tr>
+                           <tr><td colSpan="6" className="p-1.5 pt-3 pl-4 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">2. FASE DE PRODUCCIÓN Y MERMA</td></tr>
                            <tr>
                              <td className="p-1.5 pl-4 font-bold">MERMA GLOBAL ESTIMADA</td>
                              <td className="p-1.5 text-center text-red-600">{formatNum(calcMermaGlobalKg)}</td>
@@ -1478,14 +1532,14 @@ export default function App() {
                            </tr>
 
                            {/* 3. CONVERSIÓN */}
-                           <tr><td colSpan="6" className="p-1.5 pt-3 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">3. CONVERSIÓN FINAL ({calcInputs?.tipoProducto || ''})</td></tr>
+                           <tr><td colSpan="6" className="p-1.5 pt-3 pl-4 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">3. CONVERSIÓN FINAL ({calcInputs?.tipoProducto || ''})</td></tr>
                            <tr className="bg-green-100 print:bg-gray-300 font-black text-green-800 print:text-black border-y border-gray-400 print:border-black text-[11px] print:text-[9px]">
                              <td className="p-2 pl-4">PRODUCCIÓN FINAL ESTIMADA</td>
-                             <td className="p-2 text-center">{formatNum(calcProduccionFinalUnidades)}</td>
+                             <td className="p-2 text-center text-lg">{formatNum(calcProduccionFinalUnidades)}</td>
                              <td className="p-2 text-center">{simUmFinal}</td>
                              <td className="p-2 text-center">${formatNum(calcCostoFinalUnidad)}</td>
                              <td className="p-2 text-center">${formatNum(calcCostoMezclaProcesada)}</td>
-                             <td className="p-2 text-[8px] text-gray-600 print:text-black">{calcInputs?.tipoProducto === 'BOLSAS' ? `Peso Teórico: ${formatNum(simPesoMillar)} kg/M` : `Conversión directa a KG`}</td>
+                             <td className="p-2 text-[8px] text-gray-600 print:text-black">{isBolsas ? `Peso Teórico: ${formatNum(simPesoMillar)} kg/M` : `Conversión directa a KG`}</td>
                            </tr>
                         </tbody>
                      </table>
@@ -1495,7 +1549,7 @@ export default function App() {
           </div>
         )}
 
-        {/* INGENIERIA (FORMULAS) - CON ETIQUETA "NUEVO" Y DETALLES */}
+        {/* INGENIERIA (FORMULAS) */}
         {prodView === 'requisiciones' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className={"bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden " + (recipeEditReqId ? 'lg:col-span-2' : 'lg:col-span-3')}>
