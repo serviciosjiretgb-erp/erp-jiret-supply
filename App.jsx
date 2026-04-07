@@ -1919,9 +1919,7 @@ export default function App() {
     );
   };
 
-  if (!appUser) return <ErrorBoundary>{renderLogin()}</ErrorBoundary>;
-
-  return (
+  if (!appUser) return <ErrorBoundary>{renderLogin()}</ErrorBoundary>;return (
     <ErrorBoundary>
       <div className="min-h-screen bg-gray-100 text-gray-900 font-sans flex flex-col print:bg-white print:block print:w-full overflow-x-hidden print:overflow-visible text-black font-black">
         <header className="bg-black border-b-4 border-orange-500 sticky top-0 z-50 text-white shadow-md print:hidden">
