@@ -101,11 +101,13 @@ export default function App() {
   const [clients, setClients] = useState([]);
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [invRequisitions, setInvRequisitions] = useState([]); // NUEVO: Estado para Requisiciones Almacén
 
   const [dialog, setDialog] = useState(null);
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
   const [invSearchTerm, setInvSearchTerm] = useState('');
+  const [reqToApprove, setReqToApprove] = useState(null); // NUEVO: Estado para modal de aprobación
 
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
   const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
@@ -159,7 +161,7 @@ export default function App() {
   };
   const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
 
-  // Formularios Inventario Actualizado (Añadido opAsignada)
+  // Formularios Inventario Actualizado
   const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '' };
   const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
   const [editingInvId, setEditingInvId] = useState(null);
@@ -175,24 +177,21 @@ export default function App() {
     const element = document.getElementById('pdf-content');
     if (!element) return;
     
-    // Mostramos elementos ocultos para impresión
     const printOnlyElements = element.querySelectorAll('.hidden.print\\:block, .hidden.pdf-header');
     printOnlyElements.forEach(el => { el.style.display = 'block'; });
     
-    // Ocultar botones, inputs de búsqueda y otra UI
     const noPdfElements = element.querySelectorAll('.no-pdf');
     noPdfElements.forEach(el => { el.style.display = 'none'; });
 
     const originalCssText = element.style.cssText;
     const originalClasses = element.className;
-    const virtualWidth = isLandscape ? 1120 : 800; // Lienzo virtual forzado
+    const virtualWidth = isLandscape ? 1120 : 800; 
     
     element.className = 'bg-white text-black p-8';
     element.style.width = `${virtualWidth}px`; 
     element.style.maxWidth = 'none';
     element.style.margin = '0 auto';
     
-    // Forzar envoltura y reajuste de tablas
     const tables = element.querySelectorAll('table');
     tables.forEach(t => { 
       t.style.whiteSpace = 'normal'; 
@@ -267,7 +266,11 @@ export default function App() {
     const unsubCli = onSnapshot(getColRef('clientes'), (s) => setClients(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
-    return () => { unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); };
+    
+    // NUEVO: Sincronizar Requisiciones de Almacén
+    const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+
+    return () => { unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); };
   }, [fbUser]);
 
   const clearAllReports = () => {
@@ -277,6 +280,7 @@ export default function App() {
     setShowSingleInvoice(null); setInvoiceSearchTerm('');
     setShowWorkOrder(null); setShowPhaseReport(null); setShowFiniquito(null);
     setRecipeEditReqId(null); setSelectedPhaseReqId(null);
+    setReqToApprove(null);
   };
 
   // ============================================================================
@@ -346,7 +350,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA VENTAS Y FACTURACIÓN (SELLADA / SIN MODIFICAR LA LÓGICA)
+  // LOGICA VENTAS Y FACTURACIÓN
   // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault(); if (!newClientForm.rif || !newClientForm.razonSocial) return setDialog({ title: 'Aviso', text: 'RIF y Razón Social obligatorios.', type: 'alert' });
@@ -429,7 +433,7 @@ export default function App() {
   const handleDeleteReq = (id) => setDialog({ title: 'Eliminar OP', text: `¿Desea eliminar la OP #${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('requirements', id))});
 
   // ============================================================================
-  // LOGICA PRODUCCIÓN Y CONTROL DE FASES
+  // LOGICA PRODUCCIÓN Y CONTROL DE FASES (MODIFICADO CON REQUISICIÓN A ALMACÉN)
   // ============================================================================
   const renderPhaseInventoryOptions = () => {
     let mainCats = [];
@@ -456,6 +460,30 @@ export default function App() {
     setPhaseForm({ ...phaseForm, insumos: [...(phaseForm?.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }] }); setPhaseIngId(''); setPhaseIngQty('');
   };
 
+  // NUEVO: Enviar los insumos como Requisición a Almacén
+  const handleSendRequisitionToAlmacen = async () => {
+    if (!phaseForm.insumos || phaseForm.insumos.length === 0) {
+      return setDialog({title: 'Aviso', text: 'Agregue insumos a la lista antes de solicitar a almacén.', type: 'alert'});
+    }
+    const newReq = {
+      opId: selectedPhaseReqId,
+      phase: activePhaseTab,
+      items: phaseForm.insumos,
+      status: 'PENDIENTE',
+      timestamp: Date.now(),
+      date: getTodayDate(),
+      user: appUser?.name || 'Operador de Planta'
+    };
+    try {
+      await addDoc(getColRef('inventoryRequisitions'), newReq);
+      // Limpiamos solo los insumos, para que el operador pueda seguir con su producción
+      setPhaseForm({...phaseForm, insumos: []});
+      setDialog({title: 'Solicitud Enviada', text: 'La requisición fue enviada al Almacén correctamente. Ellos se encargarán del descargo.', type: 'alert'});
+    } catch(e) {
+      setDialog({title: 'Error', text: e.message, type: 'alert'});
+    }
+  };
+
   const handleSavePhase = async (e) => {
     e.preventDefault();
     const req = (requirements || []).find(r => r?.id === selectedPhaseReqId); if (!req) return;
@@ -466,6 +494,7 @@ export default function App() {
         const prodKg = parseNum(phaseForm?.producedKg); const mermaKg = parseNum(phaseForm?.mermaKg);
         if (prodKg > 0 || mermaKg > 0 || (phaseForm?.insumos || []).length > 0) {
             const batch = writeBatch(db); let phaseCost = 0; let totalInsumosKg = 0;
+            // Solo descarga los insumos si se quedaron en la lista (si no enviaron requisición)
             for (let ing of (phaseForm?.insumos || [])) {
               const item = (inventory || []).find(i => i?.id === ing?.id);
               if (item) { phaseCost += ((item?.cost || 0) * (ing?.qty || 0)); totalInsumosKg += parseFloat(ing?.qty || 0); batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) - (ing?.qty || 0) }); }
@@ -486,11 +515,11 @@ export default function App() {
     let newStatus = (activePhaseTab === 'sellado' && currentPhase.isClosed) ? 'COMPLETADO' : 'EN PROCESO';
     await updateDoc(getDocRef('requirements', req.id), { production: newProd, status: newStatus });
     setPhaseForm({ ...initialPhaseForm, date: getTodayDate() }); 
-    setDialog({ title: 'Éxito', text: 'Reporte guardado.', type: 'alert' });
+    setDialog({ title: 'Éxito', text: 'Reporte de producción guardado.', type: 'alert' });
   };
 
   const handleDeleteBatch = async (reqId, phase, batchId) => {
-    setDialog({ title: `ELIMINAR LOTE`, text: `¿Seguro que desea eliminar este lote parcial?`, type: 'confirm', onConfirm: async () => {
+    setDialog({ title: `ELIMINAR LOTE`, text: `¿Seguro que desea eliminar este lote parcial? Si contiene materiales aprobados de almacén, regresarán al inventario.`, type: 'confirm', onConfirm: async () => {
         const req = (requirements || []).find(r => r?.id === reqId); let currentPhase = { ...(req?.production?.[phase] || {}) }; const bIdx = (currentPhase.batches || []).findIndex(b => b?.id === batchId);
         if (bIdx >= 0) { const batch = currentPhase.batches[bIdx]; const fbBatch = writeBatch(db); for (let ing of (batch.insumos || [])) { const item = (inventory || []).find(i => i?.id === ing?.id); if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (ing?.qty || 0) }); } await fbBatch.commit(); currentPhase.batches.splice(bIdx, 1); }
         await updateDoc(getDocRef('requirements', reqId), { production: { ...(req?.production || {}), [phase]: currentPhase } });
@@ -557,7 +586,75 @@ export default function App() {
   };
 
   // ============================================================================
-  // --- LÓGICA CALCULADORA (SIMULADOR OP CON COSTOS) MEJORADA ---
+  // LOGICA APROBACIÓN DE REQUISICIONES (NUEVO)
+  // ============================================================================
+  const submitApproveRequisition = async (e) => {
+    e.preventDefault();
+    try {
+        const req = reqToApprove;
+        const targetOP = (requirements || []).find(r => r.id === req.opId);
+        if (!targetOP) throw new Error('La OP asociada ya no existe en el sistema.');
+
+        const validItems = req.items.filter(i => parseNum(i.qty) > 0);
+        if (validItems.length === 0) throw new Error('No hay ítems con cantidad válida para procesar el descargo.');
+
+        const batch = writeBatch(db);
+        let phaseCost = 0;
+        let totalInsumosKg = 0;
+
+        // 1. Verificación de Stock y Descargo
+        for (let ing of validItems) {
+           const item = (inventory || []).find(i => i.id === ing.id);
+           if (!item) throw new Error(`El ítem ${ing.id} no fue encontrado en el catálogo.`);
+           if ((item.stock || 0) < ing.qty) throw new Error(`Stock insuficiente para ${item.desc} (Disponible: ${item.stock}). Modifique la cantidad.`);
+
+           phaseCost += (item.cost * ing.qty);
+           totalInsumosKg += parseFloat(ing.qty);
+
+           // Actualizar Inventario
+           batch.update(getDocRef('inventory', item.id), { stock: (item.stock || 0) - ing.qty });
+
+           // Generar Movimiento (Kardex)
+           const movId = Date.now().toString() + Math.floor(Math.random()*1000);
+           batch.set(getDocRef('inventoryMovements', movId), {
+              id: movId, date: getTodayDate(), itemId: item.id, itemName: item.desc,
+              type: 'SALIDA', qty: ing.qty, cost: item.cost, totalValue: ing.qty * item.cost, 
+              reference: `REQ-${targetOP.id}-${req.phase.substring(0,3).toUpperCase()}`,
+              opAsignada: targetOP.id, notes: 'DESPACHO ALMACÉN (REQUISICIÓN)', timestamp: Date.now(), user: appUser?.name || 'Almacén'
+           });
+        }
+
+        // 2. Inyectar el lote de insumos a la OP (Magia para mantener los costos finiquito)
+        let currentPhase = { ...(targetOP.production?.[req.phase] || { batches: [], isClosed: false }) };
+        const newProdBatch = {
+           id: Date.now().toString(), timestamp: Date.now(), date: getTodayDate(),
+           insumos: validItems, producedKg: 0, mermaKg: 0, totalInsumosKg, cost: phaseCost,
+           operator: 'ALMACÉN (DESPACHO)', techParams: {}
+        };
+        if (!currentPhase.batches) currentPhase.batches = [];
+        currentPhase.batches.push(newProdBatch);
+        batch.update(getDocRef('requirements', targetOP.id), { [`production.${req.phase}`]: currentPhase });
+
+        // 3. Marcar requisición como aprobada
+        batch.update(getDocRef('inventoryRequisitions', req.id), { status: 'APROBADO', dispatchDate: getTodayDate(), items: validItems, approvedBy: appUser?.name });
+
+        await batch.commit();
+        setReqToApprove(null);
+        setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada. Se descontó del stock, se actualizó el Kardex y los insumos fueron asignados a la OP para sus costos.', type:'alert'});
+    } catch(err) {
+        setDialog({title:'Error', text:err.message, type:'alert'});
+    }
+  };
+
+  const handleRejectRequisition = (id) => {
+    setDialog({title: 'Rechazar Requisición', text: '¿Desea eliminar o rechazar esta solicitud de materiales?', type: 'confirm', onConfirm: async () => {
+        await updateDoc(getDocRef('inventoryRequisitions', id), { status: 'RECHAZADO', dispatchDate: getTodayDate() });
+        setDialog({title: 'Actualizado', text: 'La solicitud ha sido rechazada.', type: 'alert'});
+    }});
+  };
+
+  // ============================================================================
+  // --- LÓGICA CALCULADORA (SIMULADOR OP CON COSTOS) ---
   // ============================================================================
   const handleResetCalc = () => {
     setCalcInputs(initialCalcInputs);
@@ -666,7 +763,7 @@ export default function App() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
         <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Users size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3><p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p></button>
         <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
-        <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p></button>
+        <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Requisiciones, Kardex y LISLR.</p></button>
       </div>
     </div>
   );
@@ -680,6 +777,108 @@ export default function App() {
 
     return (
       <div className="animate-in fade-in space-y-6">
+        {/* NUEVO MÓDULO: REQUISICIONES DE ALMACÉN */}
+        {invView === 'requisiciones' && (
+           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+             <div className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
+               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><ClipboardList className="text-orange-500" size={24}/> Requisiciones de Planta a Almacén</h2>
+             </div>
+             <div className="p-8">
+               <div className="overflow-x-auto rounded-xl border border-gray-200">
+                 <table className="w-full text-left text-sm whitespace-nowrap">
+                   <thead className="bg-gray-100 border-b-2 border-gray-200">
+                     <tr className="uppercase font-black text-[10px] tracking-widest text-gray-500">
+                       <th className="py-4 px-4 border-r">OP / Fase</th>
+                       <th className="py-4 px-4 border-r">Fecha / Solicitante</th>
+                       <th className="py-4 px-4 border-r">Insumos Solicitados</th>
+                       <th className="py-4 px-4 border-r text-center">Estado</th>
+                       <th className="py-4 px-4 text-center">Acciones (Almacén)</th>
+                     </tr>
+                   </thead>
+                   <tbody className="divide-y divide-gray-100 text-black">
+                     {(invRequisitions || []).map(r => (
+                       <tr key={r.id} className="hover:bg-gray-50">
+                         <td className="py-4 px-4 font-black border-r text-orange-600 text-lg">
+                           {String(r.opId).replace('OP-', '').padStart(5, '0')}<br/>
+                           <span className="text-[10px] text-gray-500 block text-black">{r.phase}</span>
+                         </td>
+                         <td className="py-4 px-4 border-r font-bold">
+                           {r.date}<br/>
+                           <span className="text-[10px] text-gray-400 font-bold">{r.user}</span>
+                         </td>
+                         <td className="py-4 px-4 border-r">
+                           <ul className="text-xs space-y-1">
+                             {(r.items || []).map((it, idx) => (
+                               <li key={idx}><span className="font-black bg-gray-100 px-2 rounded">{it.qty}</span> x {(inventory || []).find(inv=>inv.id===it.id)?.desc || it.id}</li>
+                             ))}
+                           </ul>
+                         </td>
+                         <td className="py-4 px-4 text-center border-r">
+                           {r.status === 'PENDIENTE' && <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border border-orange-200">PENDIENTE</span>}
+                           {r.status === 'APROBADO' && <span className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border border-green-200">APROBADO</span>}
+                           {r.status === 'RECHAZADO' && <span className="bg-red-100 text-red-700 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border border-red-200">RECHAZADO</span>}
+                         </td>
+                         <td className="py-4 px-4 text-center">
+                           {r.status === 'PENDIENTE' ? (
+                             <div className="flex justify-center gap-2">
+                               <button onClick={() => setReqToApprove(JSON.parse(JSON.stringify(r)))} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase shadow-sm hover:bg-slate-800 transition-all flex items-center gap-1"><CheckCircle2 size={14}/> GESTIONAR</button>
+                               <button onClick={() => handleRejectRequisition(r.id)} className="bg-red-50 text-red-500 px-3 py-2 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button>
+                             </div>
+                           ) : (
+                             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Procesado</span>
+                           )}
+                         </td>
+                       </tr>
+                     ))}
+                     {invRequisitions.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin Requisiciones Registradas</td></tr>}
+                   </tbody>
+                 </table>
+               </div>
+             </div>
+           </div>
+        )}
+
+        {/* MODAL DE APROBACIÓN DE REQUISICIÓN */}
+        {reqToApprove && (
+           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-[9999] p-4">
+              <div className="bg-white rounded-3xl p-10 max-w-2xl w-full shadow-2xl border-t-8 border-orange-500 transform animate-in zoom-in-95">
+                 <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
+                    <h2 className="text-xl font-black uppercase text-black">Aprobar Descargo (OP: {reqToApprove.opId})</h2>
+                    <button onClick={()=>setReqToApprove(null)} className="text-gray-400 hover:text-red-500"><X size={24}/></button>
+                 </div>
+                 <p className="text-xs font-bold text-gray-500 mb-6 uppercase">Verifique o modifique las cantidades a despachar. Al aprobar, se descontará del inventario y se cargará el costo a la producción de la fase <span className="text-black">{reqToApprove.phase}</span>.</p>
+                 <form onSubmit={submitApproveRequisition}>
+                    <table className="w-full text-left text-sm mb-8 border-collapse">
+                       <thead className="bg-gray-100 text-[10px] font-black uppercase text-gray-500 tracking-widest border-b-2 border-gray-200">
+                          <tr><th className="p-3">Insumo / Descripción</th><th className="p-3 text-center">Disp. Almacén</th><th className="p-3 text-center">Cant. Aprobada (Descargo)</th></tr>
+                       </thead>
+                       <tbody className="divide-y divide-gray-100">
+                          {reqToApprove.items.map((it, idx) => {
+                             const invItem = (inventory || []).find(inv => inv.id === it.id);
+                             return (
+                             <tr key={idx} className="hover:bg-gray-50">
+                                <td className="p-3 font-black text-black text-xs">{invItem?.desc || it.id}<br/><span className="text-[10px] font-bold text-gray-400">{it.id}</span></td>
+                                <td className="p-3 text-center font-black text-blue-600">{formatNum(invItem?.stock)}</td>
+                                <td className="p-3">
+                                   <input type="number" step="0.01" value={it.qty} onChange={e => {
+                                      const newItems = [...reqToApprove.items];
+                                      newItems[idx].qty = parseNum(e.target.value);
+                                      setReqToApprove({...reqToApprove, items: newItems});
+                                   }} className="border-2 border-gray-200 p-3 rounded-xl w-full text-center font-black outline-none focus:border-orange-500 text-lg text-black" />
+                                </td>
+                             </tr>
+                          )})}
+                       </tbody>
+                    </table>
+                    <div className="flex gap-4">
+                       <button type="button" onClick={()=>setReqToApprove(null)} className="flex-1 bg-gray-100 text-gray-700 p-4 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-gray-200 transition-colors">CANCELAR</button>
+                       <button type="submit" className="flex-1 bg-black text-white p-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"><CheckCircle2 size={16}/> PROCESAR DESCARGO</button>
+                    </div>
+                 </form>
+              </div>
+           </div>
+        )}
+
         {invView === 'catalogo' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
@@ -1587,7 +1786,17 @@ export default function App() {
                       <form onSubmit={handleSavePhase} className="space-y-8">
                         <div className="flex gap-4 items-center"><label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Fecha Reporte:</label><input type="date" value={phaseForm?.date || getTodayDate()} onChange={e=>setPhaseForm({...phaseForm, date: e.target.value})} className="border-2 border-gray-200 rounded-xl p-2 font-black text-xs outline-none text-black focus:border-orange-500" /></div>
                         
-                        <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200"><h4 className="text-[10px] font-black text-gray-600 uppercase mb-4 flex items-center gap-2"><Box size={16}/> Insumos Consumidos</h4><div className="flex gap-3 mb-6"><select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border-2 border-gray-200 rounded-xl p-3.5 font-black text-xs text-black outline-none focus:border-orange-500">{renderPhaseInventoryOptions()}</select><input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} placeholder="Cant" className="w-32 border-2 border-gray-200 rounded-xl p-3.5 text-xs font-black text-center text-black outline-none focus:border-orange-500" /><button type="button" onClick={handleAddPhaseIng} className="bg-black text-white px-5 rounded-xl shadow-md transition-all hover:bg-slate-800"><Plus size={20}/></button></div><ul className="space-y-3">{(phaseForm?.insumos || []).map((ing, idx) => (<li key={idx} className="flex justify-between items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm"><span className="text-xs font-black uppercase text-gray-800">{(inventory || []).find(i=>i?.id===ing?.id)?.desc || ing?.id}</span><div className="flex items-center gap-4"><span className="text-sm font-black text-black bg-gray-100 px-3 py-1.5 rounded-lg">{ing?.qty}</span><button type="button" onClick={() => setPhaseForm({...phaseForm, insumos: (phaseForm?.insumos || []).filter((_, i) => i !== idx)})} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 size={18}/></button></div></li>))}</ul></div><div className="grid grid-cols-2 gap-4"><div className="bg-green-50 p-4 rounded-2xl border border-green-200 shadow-inner"><label className="text-[9px] font-black text-green-800 uppercase block mb-2 tracking-widest">Producido Bruto (KG)</label><input type="number" step="0.01" value={phaseForm?.producedKg || ''} onChange={e=>setPhaseForm({...phaseForm, producedKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-green-300 rounded-xl p-3 text-lg font-black text-green-700 text-center outline-none focus:border-green-500" /></div><div className="bg-red-50 p-4 rounded-2xl border border-red-200 shadow-inner"><label className="text-[9px] font-black text-red-800 uppercase block mb-2 tracking-widest">Mermas / Desperdicio (KG)</label><input type="number" step="0.01" value={phaseForm?.mermaKg || ''} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-red-300 rounded-xl p-3 text-lg font-black text-red-700 text-center outline-none focus:border-red-500" /></div></div><div className="flex flex-col md:flex-row gap-4 pt-6 border-t-2 border-gray-100"><button type="submit" name="skip" className="w-full md:w-1/4 bg-gray-100 text-gray-500 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-gray-200 shadow-sm transition-all hover:bg-gray-200">OMITIR FASE</button><button type="submit" name="partial" className="w-full md:w-2/4 bg-blue-50 text-blue-600 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-blue-200 flex justify-center items-center gap-2 shadow-sm transition-all hover:bg-blue-100"><Plus size={16}/> GUARDAR REPORTE PARCIAL</button><button type="submit" name="close" className="w-full md:w-1/4 bg-black text-white font-black py-4 rounded-2xl uppercase text-[9px] flex justify-center items-center gap-2 shadow-xl hover:bg-slate-800 transition-all"><CheckCircle size={16}/> CERRAR FASE DEFINITIVA</button></div>
+                        <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
+                          <div className="flex justify-between items-center mb-6 border-b border-gray-200 pb-2">
+                             <h4 className="text-[10px] font-black text-gray-600 uppercase flex items-center gap-2"><Box size={16}/> Lista de Insumos</h4>
+                             <button type="button" onClick={handleSendRequisitionToAlmacen} className="bg-orange-500 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase shadow-sm hover:bg-orange-600 transition-all flex items-center gap-2"><ArrowRight size={14}/> SOLICITAR A ALMACÉN</button>
+                          </div>
+                          
+                          <div className="flex gap-3 mb-6"><select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border-2 border-gray-200 rounded-xl p-3.5 font-black text-xs text-black outline-none focus:border-orange-500">{renderPhaseInventoryOptions()}</select><input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} placeholder="Cant" className="w-32 border-2 border-gray-200 rounded-xl p-3.5 text-xs font-black text-center text-black outline-none focus:border-orange-500" /><button type="button" onClick={handleAddPhaseIng} className="bg-black text-white px-5 rounded-xl shadow-md transition-all hover:bg-slate-800"><Plus size={20}/></button></div><ul className="space-y-3">{(phaseForm?.insumos || []).map((ing, idx) => (<li key={idx} className="flex justify-between items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm"><span className="text-xs font-black uppercase text-gray-800">{(inventory || []).find(i=>i?.id===ing?.id)?.desc || ing?.id}</span><div className="flex items-center gap-4"><span className="text-sm font-black text-black bg-gray-100 px-3 py-1.5 rounded-lg">{ing?.qty}</span><button type="button" onClick={() => setPhaseForm({...phaseForm, insumos: (phaseForm?.insumos || []).filter((_, i) => i !== idx)})} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 size={18}/></button></div></li>))}</ul>
+                          {(phaseForm?.insumos || []).length > 0 && <p className="text-[9px] font-bold text-gray-400 mt-4 italic uppercase">Nota: Puedes "Solicitar a Almacén" o dar a "Guardar Reporte" para descargar directamente del inventario general.</p>}
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-4"><div className="bg-green-50 p-4 rounded-2xl border border-green-200 shadow-inner"><label className="text-[9px] font-black text-green-800 uppercase block mb-2 tracking-widest">Producido Bruto (KG)</label><input type="number" step="0.01" value={phaseForm?.producedKg || ''} onChange={e=>setPhaseForm({...phaseForm, producedKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-green-300 rounded-xl p-3 text-lg font-black text-green-700 text-center outline-none focus:border-green-500" /></div><div className="bg-red-50 p-4 rounded-2xl border border-red-200 shadow-inner"><label className="text-[9px] font-black text-red-800 uppercase block mb-2 tracking-widest">Mermas / Desperdicio (KG)</label><input type="number" step="0.01" value={phaseForm?.mermaKg || ''} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-red-300 rounded-xl p-3 text-lg font-black text-red-700 text-center outline-none focus:border-red-500" /></div></div><div className="flex flex-col md:flex-row gap-4 pt-6 border-t-2 border-gray-100"><button type="submit" name="skip" className="w-full md:w-1/4 bg-gray-100 text-gray-500 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-gray-200 shadow-sm transition-all hover:bg-gray-200">OMITIR FASE</button><button type="submit" name="partial" className="w-full md:w-2/4 bg-blue-50 text-blue-600 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-blue-200 flex justify-center items-center gap-2 shadow-sm transition-all hover:bg-blue-100"><Plus size={16}/> GUARDAR REPORTE PARCIAL</button><button type="submit" name="close" className="w-full md:w-1/4 bg-black text-white font-black py-4 rounded-2xl uppercase text-[9px] flex justify-center items-center gap-2 shadow-xl hover:bg-slate-800 transition-all"><CheckCircle size={16}/> CERRAR FASE DEFINITIVA</button></div>
                       </form>
                     )}
                   </div>
@@ -1689,9 +1898,7 @@ export default function App() {
     const selMerma = selB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
     const totalMerma = extMerma + impMerma + selMerma;
 
-    // Producción Final Total (SEGÚN IMAGEN 7)
-    // Para bolsas, la meta real está en el sellado (millares)
-    // Para termo, la meta real está en el sellado (kg), o extrusión si no aplica sellado
+    // Producción Final Total
     const totUnid = isTermo ? (selP > 0 ? selP : extP) : selB.reduce((s, b) => s + parseNum(b?.millaresProd || b?.techParams?.millares || 0), 0);
     const unitF = isBolsas ? 'MILLARES' : 'KG';
 
@@ -1824,7 +2031,18 @@ export default function App() {
           </main>
         </div>
         {dialog && (
-          <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[9999] print:hidden"><div className="bg-white rounded-3xl shadow-2xl border-t-8 border-orange-500 p-8 w-full max-w-md transform animate-in zoom-in-95"><h3 className="text-xl font-black text-black uppercase mb-4 tracking-tighter">{dialog.title}</h3><p className="text-sm font-bold text-gray-500 mb-8 uppercase text-center">{dialog.text}</p><div className="flex gap-4">{dialog.type === 'confirm' && (<button onClick={() => setDialog(null)} className="flex-1 bg-gray-100 font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-colors text-gray-800">CANCELAR</button>)}<button onClick={() => { if (dialog.onConfirm) dialog.onConfirm(); setDialog(null); }} className="flex-1 bg-black text-white font-black py-4 rounded-2xl shadow-xl uppercase text-[10px] tracking-widest hover:bg-gray-900 transition-colors">ACEPTAR</button></div></div></div>
+          <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[9999] print:hidden">
+            <div className="bg-white rounded-3xl shadow-2xl border-t-8 border-orange-500 p-8 w-full max-w-md transform animate-in zoom-in-95">
+              <h3 className="text-xl font-black text-black uppercase mb-4 tracking-tighter">{dialog.title}</h3>
+              <p className="text-sm font-bold text-gray-500 mb-8 uppercase text-center">{dialog.text}</p>
+              <div className="flex gap-4">
+                {dialog.type === 'confirm' && (
+                  <button onClick={() => setDialog(null)} className="flex-1 bg-gray-100 font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-colors text-gray-800">CANCELAR</button>
+                )}
+                <button onClick={() => { if (dialog.onConfirm) dialog.onConfirm(); setDialog(null); }} className="flex-1 bg-black text-white font-black py-4 rounded-2xl shadow-xl uppercase text-[10px] tracking-widest hover:bg-gray-900 transition-colors">ACEPTAR</button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </ErrorBoundary>
