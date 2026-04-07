@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, Factory, TrendingUp, AlertTriangle, 
   ClipboardList, PlayCircle, History, FileText, Settings2, Trash2, 
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
-  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save
+  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart
 } from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
@@ -11,7 +11,7 @@ import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch } from "firebase/firestore";
 
 // ============================================================================
-// ESCUDO DE ERRORES EXTREMO (Evita la pantalla blanca)
+// ESCUDO DE ERRORES EXTREMO
 // ============================================================================
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, errorMsg: '' }; }
@@ -33,7 +33,7 @@ class ErrorBoundary extends React.Component {
 }
 
 // ============================================================================
-// COMPRESOR DE IMÁGENES (Para el fondo de pantalla)
+// COMPRESOR DE IMÁGENES (Fondo de Pantalla)
 // ============================================================================
 const compressImage = (file, callback) => {
   const reader = new FileReader();
@@ -49,7 +49,7 @@ const compressImage = (file, callback) => {
       if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
       canvas.width = width; canvas.height = height;
       ctx.drawImage(img, 0, 0, width, height);
-      callback(canvas.toDataURL('image/jpeg', 0.6)); // Comprime al 60% para evitar límites de Firestore
+      callback(canvas.toDataURL('image/jpeg', 0.6)); 
     };
   };
 };
@@ -79,14 +79,6 @@ const getTodayDate = () => {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
 
-// --- BASE DE DATOS INICIAL ---
-const INITIAL_INVENTORY = [
-  { id: 'MP-0240', desc: 'ESENTTIA', cost: 0.96, stock: 2325, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-11PG4', desc: 'METALOCENO', cost: 0.91, stock: 1735, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-3003', desc: 'BAPOLENE', cost: 0.96, stock: 500, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-RECICLADO', desc: 'MATERIAL RECICLADO', cost: 1.00, stock: 9999, unit: 'kg', category: 'Materia Prima' }
-];
-
 const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
 const parseNum = (val) => {
   if (!val) return 0;
@@ -97,7 +89,6 @@ const parseNum = (val) => {
   const parsed = parseFloat(str);
   return isNaN(parsed) ? 0 : parsed;
 };
-
 const getSafeDate = (ts) => {
   if (!ts) return '';
   if (typeof ts === 'string') return ts;
@@ -107,11 +98,19 @@ const getSafeDate = (ts) => {
   return '';
 };
 
+// --- BASE DE DATOS INICIAL ---
+const INITIAL_INVENTORY = [
+  { id: 'MP-0240', desc: 'ESENTTIA', cost: 0.96, stock: 2325, unit: 'kg', category: 'Materia Prima' },
+  { id: 'MP-11PG4', desc: 'METALOCENO', cost: 0.91, stock: 1735, unit: 'kg', category: 'Materia Prima' },
+  { id: 'MP-3003', desc: 'BAPOLENE', cost: 0.96, stock: 500, unit: 'kg', category: 'Materia Prima' },
+  { id: 'MP-RECICLADO', desc: 'MATERIAL RECICLADO', cost: 1.00, stock: 9999, unit: 'kg', category: 'Materia Prima' }
+];
+
 export default function App() {
   const [fbUser, setFbUser] = useState(null);
   const [appUser, setAppUser] = useState(null); 
-  const [systemUsers, setSystemUsers] = useState([]); // NUEVO: Usuarios Dinámicos
-  const [settings, setSettings] = useState({}); // NUEVO: Configuraciones Globales (Fondo)
+  const [systemUsers, setSystemUsers] = useState([]); 
+  const [settings, setSettings] = useState({}); 
   
   const [loginData, setLoginData] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
@@ -120,6 +119,7 @@ export default function App() {
   const [ventasView, setVentasView] = useState('facturacion'); 
   const [prodView, setProdView] = useState('calculadora');
   const [invView, setInvView] = useState('catalogo');
+  const [invReportType, setInvReportType] = useState('cargos');
 
   const [inventory, setInventory] = useState([]);
   const [invMovements, setInvMovements] = useState([]); 
@@ -143,7 +143,7 @@ export default function App() {
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
   const [showMovementReceipt, setShowMovementReceipt] = useState(null);
 
-  // Formularios de Configuración (NUEVO)
+  // Formularios de Configuración
   const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
   const [newUserForm, setNewUserForm] = useState(initialUserForm);
   const [editingUserId, setEditingUserId] = useState(null);
@@ -152,47 +152,28 @@ export default function App() {
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [editingClientId, setEditingClientId] = useState(null);
-  
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
-
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
   // Formularios Producción
-  const initialPhaseForm = { 
-    date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '',
-    operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '',
-    zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '',
-    operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '',
-    operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: ''
-  };
-
+  const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '', operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '', zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '', operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '', operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: '' };
   const [showWorkOrder, setShowWorkOrder] = useState(null);
   const [showPhaseReport, setShowPhaseReport] = useState(null);
   const [showFiniquito, setShowFiniquito] = useState(null);
-  const [recipeEditReqId, setRecipeEditReqId] = useState(null);
   const [selectedPhaseReqId, setSelectedPhaseReqId] = useState(null);
   const [activePhaseTab, setActivePhaseTab] = useState('extrusion');
   const [phaseForm, setPhaseForm] = useState(initialPhaseForm);
-  const [tempRecipe, setTempRecipe] = useState([]);
-  const [newIngId, setNewIngId] = useState('');
-  const [newIngQty, setNewIngQty] = useState('');
   const [phaseIngId, setPhaseIngId] = useState('');
   const [phaseIngQty, setPhaseIngQty] = useState('');
 
   // Simulador
-  const initialCalcInputs = { 
-    ingredientes: [{ id: Date.now() + 1, nombre: 'MP-0240', pct: 80, costo: 0.96 }, { id: Date.now() + 2, nombre: 'MP-RECICLADO', pct: 20, costo: 1.00 }], 
-    mezclaTotal: '', 
-    mermaGlobalPorc: 5, 
-    tipoProducto: 'BOLSAS',
-    ancho: '', fuelles: '', largo: '', micras: ''
-  };
+  const initialCalcInputs = { ingredientes: [{ id: Date.now() + 1, nombre: 'MP-0240', pct: 80, costo: 0.96 }, { id: Date.now() + 2, nombre: 'MP-RECICLADO', pct: 20, costo: 1.00 }], mezclaTotal: '', mermaGlobalPorc: 5, tipoProducto: 'BOLSAS', ancho: '', fuelles: '', largo: '', micras: '' };
   const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
 
-  // Formularios Inventario Actualizado
+  // Formularios Inventario
   const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '' };
   const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
   const [editingInvId, setEditingInvId] = useState(null);
@@ -201,118 +182,47 @@ export default function App() {
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
-  // ============================================================================
-  // EXPORTACIONES 
-  // ============================================================================
+  // EXPORTACIONES
   const handleExportPDF = (filename, isLandscape = false) => {
-    const element = document.getElementById('pdf-content');
-    if (!element) return;
-    
-    const printOnlyElements = element.querySelectorAll('.hidden.print\\:block, .hidden.pdf-header');
-    printOnlyElements.forEach(el => { el.style.display = 'block'; });
-    
-    const noPdfElements = element.querySelectorAll('.no-pdf');
-    noPdfElements.forEach(el => { el.style.display = 'none'; });
-
-    const originalCssText = element.style.cssText;
-    const originalClasses = element.className;
-    const virtualWidth = isLandscape ? 1120 : 800; 
-    
-    element.className = 'bg-white text-black p-8';
-    element.style.width = `${virtualWidth}px`; 
-    element.style.maxWidth = 'none';
-    element.style.margin = '0 auto';
-    
-    const tables = element.querySelectorAll('table');
-    tables.forEach(t => { t.style.whiteSpace = 'normal'; t.style.tableLayout = 'auto'; t.style.width = '100%'; });
-    const overflows = element.querySelectorAll('.overflow-x-auto');
-    overflows.forEach(el => { el.style.overflow = 'visible'; });
-
+    const element = document.getElementById('pdf-content'); if (!element) return;
+    const printOnlyElements = element.querySelectorAll('.hidden.print\\:block, .hidden.pdf-header'); printOnlyElements.forEach(el => { el.style.display = 'block'; });
+    const noPdfElements = element.querySelectorAll('.no-pdf'); noPdfElements.forEach(el => { el.style.display = 'none'; });
+    const originalCssText = element.style.cssText; const originalClasses = element.className; const virtualWidth = isLandscape ? 1120 : 800; 
+    element.className = 'bg-white text-black p-8'; element.style.width = `${virtualWidth}px`; element.style.maxWidth = 'none'; element.style.margin = '0 auto';
+    const tables = element.querySelectorAll('table'); tables.forEach(t => { t.style.whiteSpace = 'normal'; t.style.tableLayout = 'auto'; t.style.width = '100%'; });
+    const overflows = element.querySelectorAll('.overflow-x-auto'); overflows.forEach(el => { el.style.overflow = 'visible'; });
     const opt = { margin: [10, 10, 10, 10], filename: `${filename}_${getTodayDate()}.pdf`, image: { type: 'jpeg', quality: 1 }, html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: virtualWidth }, jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' } };
-    
-    const finishExport = () => { 
-      printOnlyElements.forEach(el => { el.style.display = ''; });
-      noPdfElements.forEach(el => { el.style.display = ''; });
-      element.style.cssText = originalCssText;
-      element.className = originalClasses;
-      tables.forEach(t => { t.style.whiteSpace = ''; t.style.tableLayout = ''; t.style.width = ''; });
-      overflows.forEach(el => { el.style.overflow = ''; });
-    };
-
-    if (typeof window.html2pdf === 'undefined') { 
-      const script = document.createElement('script'); script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; script.onload = () => { window.html2pdf().set(opt).from(element).save().then(finishExport); }; document.head.appendChild(script); 
-    } else { window.html2pdf().set(opt).from(element).save().then(finishExport); }
+    const finishExport = () => { printOnlyElements.forEach(el => { el.style.display = ''; }); noPdfElements.forEach(el => { el.style.display = ''; }); element.style.cssText = originalCssText; element.className = originalClasses; tables.forEach(t => { t.style.whiteSpace = ''; t.style.tableLayout = ''; t.style.width = ''; }); overflows.forEach(el => { el.style.overflow = ''; }); };
+    if (typeof window.html2pdf === 'undefined') { const script = document.createElement('script'); script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; script.onload = () => { window.html2pdf().set(opt).from(element).save().then(finishExport); }; document.head.appendChild(script); } else { window.html2pdf().set(opt).from(element).save().then(finishExport); }
   };
-
   const handleExportExcel = (tableId, filename) => {
-    const table = document.getElementById(tableId); if (!table) return;
-    const tableClone = table.cloneNode(true);
+    const table = document.getElementById(tableId); if (!table) return; const tableClone = table.cloneNode(true);
     const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8" /><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #000;padding:5px;}th{text-align:center;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><br/>${tableClone.outerHTML}</body></html>`;
-    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
-    const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${filename}_${getTodayDate()}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${filename}_${getTodayDate()}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
-  // ============================================================================
-  // FIREBASE SYNC E INICIO DE SESIÓN DINÁMICO
-  // ============================================================================
+  // INICIO DE SESIÓN
   const handleLogin = (e) => {
-    e.preventDefault();
-    const user = loginData.username.toLowerCase().trim(); const pass = loginData.password.trim();
-    
-    // Verificar en la lista dinámica de usuarios
+    e.preventDefault(); const user = loginData.username.toLowerCase().trim(); const pass = loginData.password.trim();
     const foundUser = systemUsers.find(u => u.username === user && u.password === pass);
-    
-    if (foundUser) { 
-       setAppUser(foundUser); 
-       setLoginError(''); 
-    } else { 
-       setLoginError('Credenciales incorrectas. Intente nuevamente.'); 
-    }
+    if (foundUser) { setAppUser(foundUser); setLoginError(''); } else { setLoginError('Credenciales incorrectas. Intente nuevamente.'); }
   };
-
   const handleBgUpload = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      compressImage(file, async (base64) => {
-         try {
-            await setDoc(getDocRef('settings', 'general'), { loginBg: base64 }, { merge: true });
-            setDialog({title: 'Éxito', text: 'Fondo de pantalla actualizado.', type: 'alert'});
-         } catch (error) {
-            setDialog({title: 'Error', text: 'La imagen es muy pesada o hubo un error al subirla.', type: 'alert'});
-         }
-      });
-    }
+    if (file) { compressImage(file, async (base64) => { try { await setDoc(getDocRef('settings', 'general'), { loginBg: base64 }, { merge: true }); setDialog({title: 'Éxito', text: 'Fondo actualizado.', type: 'alert'}); } catch (error) { setDialog({title: 'Error', text: 'Imagen muy pesada o error de red.', type: 'alert'}); } }); }
   };
 
+  useEffect(() => { signInAnonymously(auth).catch(err => console.error(err)); const unsubscribe = onAuthStateChanged(auth, setFbUser); return () => unsubscribe(); }, []);
   useEffect(() => {
-    signInAnonymously(auth).catch(err => console.error("Auth Error:", err));
-    const unsubscribe = onAuthStateChanged(auth, setFbUser);
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!fbUser) return;
-    let isFirstInv = true;
-    
-    // LISTENER DE USUARIOS
+    if (!fbUser) return; let isFirstInv = true;
     const unsubUsers = onSnapshot(getColRef('users'), (s) => {
-      const loadedUsers = s.docs.map(d => ({ id: d.id, ...d.data() }));
-      setSystemUsers(loadedUsers);
-      
-      // Sembrar usuarios iniciales si la colección está vacía
+      const loadedUsers = s.docs.map(d => ({ id: d.id, ...d.data() })); setSystemUsers(loadedUsers);
       if (s.empty) {
-         const defaultAdmin = { username: 'admin', password: '1234', name: 'Administrador General', role: 'Master', permissions: { ventas: true, produccion: true, inventario: true, costos: true, configuracion: true } };
-         const defaultPlanta = { username: 'planta', password: '1234', name: 'Supervisor de Planta', role: 'Planta', permissions: { ventas: false, produccion: true, inventario: false, costos: false, configuracion: false } };
-         setDoc(getDocRef('users', 'admin'), defaultAdmin);
-         setDoc(getDocRef('users', 'planta'), defaultPlanta);
+         setDoc(getDocRef('users', 'admin'), { username: 'admin', password: '1234', name: 'Administrador General', role: 'Master', permissions: { ventas: true, produccion: true, inventario: true, costos: true, configuracion: true } });
+         setDoc(getDocRef('users', 'planta'), { username: 'planta', password: '1234', name: 'Supervisor de Planta', role: 'Planta', permissions: { ventas: false, produccion: true, inventario: false, costos: false, configuracion: false } });
       }
     });
-
-    // LISTENER DE CONFIGURACIÓN GLOBAL (FONDO)
-    const unsubSettings = onSnapshot(getDocRef('settings', 'general'), (d) => {
-      if(d.exists()) setSettings(d.data());
-    });
-
+    const unsubSettings = onSnapshot(getDocRef('settings', 'general'), (d) => { if(d.exists()) setSettings(d.data()); });
     const unsubInv = onSnapshot(getColRef('inventory'), (s) => {
       const data = s.docs.map(d => ({ id: d.id, ...d.data() })); setInventory(data);
       if (s.empty && isFirstInv) { INITIAL_INVENTORY.forEach(item => setDoc(getDocRef('inventory', item.id), item)); }
@@ -323,78 +233,65 @@ export default function App() {
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
-
     return () => { unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); };
   }, [fbUser]);
 
   const clearAllReports = () => {
     setShowReqReport(false); setShowClientReport(false); setShowGeneralInvoicesReport(false);
-    setShowNewReqPanel(false); setShowNewInvoicePanel(false); 
-    setEditingClientId(null); setEditingReqId(null); setShowSingleReqReport(null);
-    setShowSingleInvoice(null); setInvoiceSearchTerm('');
-    setShowWorkOrder(null); setShowPhaseReport(null); setShowFiniquito(null);
-    setRecipeEditReqId(null); setSelectedPhaseReqId(null); setReqToApprove(null);
-    setShowMovementReceipt(null);
+    setShowNewReqPanel(false); setShowNewInvoicePanel(false); setEditingClientId(null); setEditingReqId(null); 
+    setShowSingleReqReport(null); setShowSingleInvoice(null); setInvoiceSearchTerm(''); setShowWorkOrder(null); 
+    setShowPhaseReport(null); setShowFiniquito(null); setSelectedPhaseReqId(null); setReqToApprove(null); setShowMovementReceipt(null);
   };
 
   // ============================================================================
-  // LOGICA DE CONFIGURACIÓN Y USUARIOS (NUEVO)
+  // LOGICA CONFIGURACIÓN / USUARIOS
   // ============================================================================
   const handleSaveUser = async (e) => {
-    e.preventDefault();
-    if (!newUserForm.username || !newUserForm.password) return setDialog({title:'Aviso', text:'Usuario y contraseña requeridos.', type:'alert'});
-    
+    e.preventDefault(); if (!newUserForm.username || !newUserForm.password) return setDialog({title:'Aviso', text:'Usuario y contraseña requeridos.', type:'alert'});
     const userId = newUserForm.username.toLowerCase().trim();
-    try {
-       await setDoc(getDocRef('users', userId), { ...newUserForm, username: userId });
-       setNewUserForm(initialUserForm);
-       setEditingUserId(null);
-       setDialog({title: 'Éxito', text: 'Usuario registrado correctamente.', type: 'alert'});
-    } catch(err) {
-       setDialog({title: 'Error', text: err.message, type: 'alert'});
-    }
+    try { await setDoc(getDocRef('users', userId), { ...newUserForm, username: userId }); setNewUserForm(initialUserForm); setEditingUserId(null); setDialog({title: 'Éxito', text: 'Usuario registrado.', type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
-
-  const startEditUser = (u) => {
-    setEditingUserId(u.username);
-    setNewUserForm(u);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleDeleteUser = (id) => {
-    if(id === 'admin') return setDialog({title:'Acción Denegada', text:'No puedes eliminar al administrador principal.', type:'alert'});
-    setDialog({ title: 'Eliminar Usuario', text: `¿Desea eliminar el acceso a ${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('users', id))});
-  };
-
+  const startEditUser = (u) => { setEditingUserId(u.username); setNewUserForm(u); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const handleDeleteUser = (id) => { if(id === 'admin') return setDialog({title:'Acción Denegada', text:'No puedes eliminar al administrador.', type:'alert'}); setDialog({ title: 'Eliminar Usuario', text: `¿Desea eliminar el acceso a ${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('users', id))}); };
 
   // ============================================================================
-  // LOGICA INVENTARIO
+  // LOGICA INVENTARIO Y COSTO PROMEDIO
   // ============================================================================
   const handleSaveInvItem = async (e) => {
     e.preventDefault(); if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
     const itemData = { ...newInvItemForm, id: newInvItemForm.id.toUpperCase(), desc: newInvItemForm.desc.toUpperCase(), cost: parseNum(newInvItemForm.cost), stock: parseNum(newInvItemForm.stock), timestamp: Date.now() };
     try { await setDoc(getDocRef('inventory', itemData.id), itemData, { merge: true }); setNewInvItemForm(initialInvItemForm); setEditingInvId(null); setDialog({ title: 'Éxito', text: 'Artículo guardado.', type: 'alert' }); } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
-  const startEditInvItem = (item) => {
-    setEditingInvId(item.id);
-    setNewInvItemForm({ id: item.id, desc: item.desc, category: item.category || 'Materia Prima', cost: item.cost || '', stock: item.stock || '', unit: item.unit || 'kg' });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  const startEditInvItem = (item) => { setEditingInvId(item.id); setNewInvItemForm({ id: item.id, desc: item.desc, category: item.category || 'Materia Prima', cost: item.cost || '', stock: item.stock || '', unit: item.unit || 'kg' }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
   const handleSaveMovement = async (e) => {
     e.preventDefault(); const item = (inventory || []).find(i => i?.id === newMovementForm.itemId); if (!item) return;
     const qty = parseNum(newMovementForm.qty); const isAddition = newMovementForm.type === 'ENTRADA' || newMovementForm.type === 'AJUSTE (POSITIVO)';
-    if (!isAddition && (item?.stock || 0) < qty) return setDialog({title: 'Stock Insuficiente', text: `Inventario no cubre salida.`, type: 'alert'});
-    const movCost = newMovementForm.cost ? parseNum(newMovementForm.cost) : (item?.cost || 0); const movId = Date.now().toString();
+    if (!isAddition && (item?.stock || 0) < qty) return setDialog({title: 'Stock Insuficiente', text: `Inventario actual (${item.stock}) no cubre salida de ${qty}.`, type: 'alert'});
+    
+    // CALCULO COSTO PROMEDIO
+    let updatedCost = item?.cost || 0;
+    const movCost = newMovementForm.cost ? parseNum(newMovementForm.cost) : updatedCost; 
+    
+    if (newMovementForm.type === 'ENTRADA') {
+        const oldStock = item?.stock || 0;
+        const oldCost = item?.cost || 0;
+        if (oldStock + qty > 0) {
+            updatedCost = ((oldStock * oldCost) + (qty * movCost)) / (oldStock + qty);
+        }
+    }
+
+    const movId = Date.now().toString();
     try {
       const batch = writeBatch(db);
       batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: newMovementForm.date, itemId: item.id, itemName: item.desc, type: newMovementForm.type, qty, cost: movCost, totalValue: qty * movCost, reference: newMovementForm.reference.toUpperCase(), opAsignada: newMovementForm.opAsignada || '', notes: newMovementForm.notes.toUpperCase(), timestamp: Date.now(), user: appUser?.name });
-      batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (isAddition ? qty : -qty), cost: isAddition && movCost > 0 ? movCost : (item?.cost || 0) });
-      await batch.commit(); setNewMovementForm(initialMovementForm); setDialog({title: 'Éxito', text: 'Movimiento registrado.', type: 'alert'});
+      batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (isAddition ? qty : -qty), cost: updatedCost });
+      await batch.commit(); setNewMovementForm(initialMovementForm); setDialog({title: 'Éxito', text: `Movimiento registrado. ${newMovementForm.type === 'ENTRADA' ? 'Costo promedio actualizado.' : ''}`, type: 'alert'});
     } catch (err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
+  
   const handleDeleteInvItem = (id) => setDialog({ title: 'Eliminar Ítem', text: `¿Eliminar ${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('inventory', id))});
-  const handleDeleteMovement = (m) => setDialog({ title: 'Anular Movimiento', text: `¿Revertir movimiento?`, type: 'confirm', onConfirm: async () => {
+  const handleDeleteMovement = (m) => setDialog({ title: 'Anular Movimiento', text: `¿Revertir movimiento? Esto ajustará el stock, pero NO recalcula costos anteriores.`, type: 'confirm', onConfirm: async () => {
         const item = (inventory || []).find(i => i?.id === m?.itemId);
         if (item) { 
            const isPos = String(m?.type || '').includes('ENTRADA') || String(m?.type || '').includes('POSITIVO');
@@ -446,45 +343,21 @@ export default function App() {
   const generateInvoiceId = () => `FAC-${((invoices || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(4, '0')}`;
   
   const handleInvoiceFormChange = (field, value) => {
-    const valUpper = typeof value === 'string' ? value.toUpperCase() : value;
-    let f = { ...newInvoiceForm, [field]: valUpper };
-    
-    if (field === 'clientRif') {
-       const c = (clients || []).find(cl => cl.rif === value);
-       f.clientName = c?.name || '';
-       f.vendedor = (c?.vendedor || '').toUpperCase();
-    }
-    
-    if (field === 'montoBase' || field === 'aplicaIva') {
-       const base = parseNum(field === 'montoBase' ? value : f.montoBase);
-       const aplica = field === 'aplicaIva' ? value : f.aplicaIva;
-       const iva = aplica === 'SI' ? base * 0.16 : 0;
-       f.iva = iva > 0 ? iva.toFixed(2) : '0.00';
-       f.total = base > 0 ? (base + iva).toFixed(2) : base.toFixed(2);
-    }
-    
-    if (field === 'iva' && f.aplicaIva === 'SI') {
-       const base = parseNum(f.montoBase);
-       const iva = parseNum(value);
-       f.total = (base + iva).toFixed(2);
-    }
+    const valUpper = typeof value === 'string' ? value.toUpperCase() : value; let f = { ...newInvoiceForm, [field]: valUpper };
+    if (field === 'clientRif') { const c = (clients || []).find(cl => cl.rif === value); f.clientName = c?.name || ''; f.vendedor = (c?.vendedor || '').toUpperCase(); }
+    if (field === 'montoBase' || field === 'aplicaIva') { const base = parseNum(field === 'montoBase' ? value : f.montoBase); const aplica = field === 'aplicaIva' ? value : f.aplicaIva; const iva = aplica === 'SI' ? base * 0.16 : 0; f.iva = iva > 0 ? iva.toFixed(2) : '0.00'; f.total = base > 0 ? (base + iva).toFixed(2) : base.toFixed(2); }
+    if (field === 'iva' && f.aplicaIva === 'SI') { const base = parseNum(f.montoBase); const iva = parseNum(value); f.total = (base + iva).toFixed(2); }
     setNewInvoiceForm(f);
   };
   
   const handleCreateInvoice = async (e) => {
     e.preventDefault(); if(!newInvoiceForm.clientRif || !newInvoiceForm.montoBase) return setDialog({title: 'Aviso', text: 'Selecciona un cliente e ingresa el monto base.', type: 'alert'});
     const id = newInvoiceForm.documento || generateInvoiceId();
-    try { 
-      await setDoc(getDocRef('maquilaInvoices', id), { 
-        ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: Date.now(), user: appUser?.name 
-      }); 
-      setShowNewInvoicePanel(false); setNewInvoiceForm(initialInvoiceForm); setDialog({title: 'Éxito', text: 'Factura Registrada.', type: 'alert'}); 
-    } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
+    try { await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: Date.now(), user: appUser?.name }); setShowNewInvoicePanel(false); setNewInvoiceForm(initialInvoiceForm); setDialog({title: 'Éxito', text: 'Factura Registrada.', type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
-  
   const handleDeleteInvoice = (id) => setDialog({ title: 'Eliminar', text: `¿Eliminar factura?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('maquilaInvoices', id))});
-  const generateReqId = () => `OP-${((requirements || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(5, '0')}`;
   
+  const generateReqId = () => `OP-${((requirements || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(5, '0')}`;
   const handleReqFormChange = (field, value) => {
     let f = { ...newReqForm, [field]: typeof value === 'string' ? value.toUpperCase() : value };
     if (field === 'client') { const c = (clients || []).find(cl => cl.name === (value||'').toUpperCase()); if (c && c.vendedor) f.vendedor = c.vendedor.toUpperCase(); }
@@ -492,27 +365,17 @@ export default function App() {
     const w = parseNum(f.ancho), l = parseNum(f.largo), m = parseNum(f.micras), fu = parseNum(f.fuelles), c = parseNum(f.cantidad), tipo = f.tipoProducto;
     if (w > 0 && m > 0) {
       const micFmt = m < 1 && m > 0 ? Math.round(m * 1000) : m;
-      if (tipo === 'BOLSAS' && l > 0) {
-         const pEst = (w + fu) * l * m; f.pesoMillar = pEst.toFixed(2);
-         f.desc = fu > 0 ? `(${w}+${fu/2}+${fu/2})X${l}X${micFmt}MIC | ${f.color || ''}` : `${w}X${l}X${micFmt}MIC | ${f.color || ''}`;
-         f.requestedKg = f.presentacion === 'KILOS' ? c.toFixed(2) : (pEst * c).toFixed(2);
-      } else if (tipo === 'TERMOENCOGIBLE') {
-         f.pesoMillar = 'N/A'; f.desc = `TERMOENCOGIBLE ${w}CM X ${micFmt}MIC | ${f.color || ''}`; f.requestedKg = c > 0 ? c.toFixed(2) : '0.00';
-      } else { f.pesoMillar = '0.00'; f.requestedKg = '0.00'; }
+      if (tipo === 'BOLSAS' && l > 0) { const pEst = (w + fu) * l * m; f.pesoMillar = pEst.toFixed(2); f.desc = fu > 0 ? `(${w}+${fu/2}+${fu/2})X${l}X${micFmt}MIC | ${f.color || ''}` : `${w}X${l}X${micFmt}MIC | ${f.color || ''}`; f.requestedKg = f.presentacion === 'KILOS' ? c.toFixed(2) : (pEst * c).toFixed(2); } 
+      else if (tipo === 'TERMOENCOGIBLE') { f.pesoMillar = 'N/A'; f.desc = `TERMOENCOGIBLE ${w}CM X ${micFmt}MIC | ${f.color || ''}`; f.requestedKg = c > 0 ? c.toFixed(2) : '0.00'; } 
+      else { f.pesoMillar = '0.00'; f.requestedKg = '0.00'; }
     } else { f.pesoMillar = tipo === 'TERMOENCOGIBLE' ? 'N/A' : '0.00'; f.requestedKg = f.presentacion === 'KILOS' && c > 0 ? c.toFixed(2) : '0.00'; }
     setNewReqForm(f);
   };
 
   const handleCreateRequirement = async (e) => {
     e.preventDefault(); const opId = editingReqId ? editingReqId : generateReqId();
-    try { 
-      await setDoc(getDocRef('requirements', opId), { 
-        ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', viewedByPlanta: false 
-      }, { merge: true }); 
-      setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); 
-    } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
+    try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', viewedByPlanta: false }, { merge: true }); setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
-
   const startEditReq = (r) => { setEditingReqId(r.id); setNewReqForm({ fecha: r.fecha||getTodayDate(), client: r.client||'', tipoProducto: r.tipoProducto||'BOLSAS', desc: r.desc||'', ancho: r.ancho||'', fuelles: r.fuelles||'', largo: r.largo||'', micras: r.micras||'', pesoMillar: r.tipoProducto==='TERMOENCOGIBLE'?'N/A':(r.pesoMillar||''), presentacion: r.presentacion||'MILLAR', cantidad: r.cantidad||'', requestedKg: r.requestedKg||'', color: r.color||'NATURAL', tratamiento: r.tratamiento||'LISO', vendedor: r.vendedor||'' }); setShowNewReqPanel(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteReq = (id) => setDialog({ title: 'Eliminar OP', text: `¿Desea eliminar la OP #${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('requirements', id))});
 
@@ -520,89 +383,47 @@ export default function App() {
   // LOGICA APROBACIÓN DE REQUISICIONES DE ALMACÉN
   // ============================================================================
   const handleSendRequisitionToAlmacen = async () => {
-    if (!phaseForm.insumos || phaseForm.insumos.length === 0) {
-      return setDialog({title: 'Aviso', text: 'Agregue insumos a la lista antes de solicitar a almacén.', type: 'alert'});
-    }
-    const newReq = {
-      opId: selectedPhaseReqId,
-      phase: activePhaseTab,
-      items: phaseForm.insumos,
-      status: 'PENDIENTE',
-      timestamp: Date.now(),
-      date: getTodayDate(),
-      user: appUser?.name || 'Operador de Planta'
-    };
-    try {
-      await addDoc(getColRef('inventoryRequisitions'), newReq);
-      setPhaseForm({...phaseForm, insumos: []});
-      setDialog({title: 'Solicitud Enviada', text: 'La requisición fue enviada al Almacén correctamente. Espere su entrega.', type: 'alert'});
-    } catch(e) {
-      setDialog({title: 'Error', text: e.message, type: 'alert'});
-    }
+    if (!phaseForm.insumos || phaseForm.insumos.length === 0) { return setDialog({title: 'Aviso', text: 'Agregue insumos a la lista antes de solicitar a almacén.', type: 'alert'}); }
+    const newReq = { opId: selectedPhaseReqId, phase: activePhaseTab, items: phaseForm.insumos, status: 'PENDIENTE', timestamp: Date.now(), date: getTodayDate(), user: appUser?.name || 'Operador de Planta' };
+    try { await addDoc(getColRef('inventoryRequisitions'), newReq); setPhaseForm({...phaseForm, insumos: []}); setDialog({title: 'Solicitud Enviada', text: 'Requisición enviada al Almacén. Espere su entrega.', type: 'alert'}); } catch(e) { setDialog({title: 'Error', text: e.message, type: 'alert'}); }
   };
 
   const submitApproveRequisition = async (e) => {
     e.preventDefault();
     try {
-        const req = reqToApprove;
-        const targetOP = (requirements || []).find(r => r.id === req.opId);
-        if (!targetOP) throw new Error('La OP asociada ya no existe en el sistema.');
-
+        const req = reqToApprove; const targetOP = (requirements || []).find(r => r.id === req.opId);
+        if (!targetOP) throw new Error('La OP asociada ya no existe.');
         const validItems = req.items.filter(i => parseNum(i.qty) > 0);
-        if (validItems.length === 0) throw new Error('No hay ítems con cantidad válida para procesar el descargo.');
+        if (validItems.length === 0) throw new Error('No hay ítems con cantidad válida.');
 
-        const batch = writeBatch(db);
-        let phaseCost = 0;
-        let totalInsumosKg = 0;
+        const batch = writeBatch(db); let phaseCost = 0; let totalInsumosKg = 0;
 
         for (let ing of validItems) {
            const item = (inventory || []).find(i => i.id === ing.id);
-           if (!item) throw new Error(`El ítem ${ing.id} no fue encontrado en el catálogo.`);
+           if (!item) throw new Error(`Ítem ${ing.id} no encontrado en catálogo.`);
            if ((item.stock || 0) < ing.qty) throw new Error(`Stock insuficiente para ${item.desc}.`);
 
-           phaseCost += (item.cost * ing.qty);
-           totalInsumosKg += parseFloat(ing.qty);
-
-           // 1. Descontar de inventario
+           phaseCost += (item.cost * ing.qty); totalInsumosKg += parseFloat(ing.qty);
+           // Descontar inventario
            batch.update(getDocRef('inventory', item.id), { stock: (item.stock || 0) - ing.qty });
-
-           // 2. Crear Movimiento en Kardex
+           // Crear Movimiento
            const movId = Date.now().toString() + Math.floor(Math.random()*1000);
-           batch.set(getDocRef('inventoryMovements', movId), {
-              id: movId, date: getTodayDate(), itemId: item.id, itemName: item.desc,
-              type: 'SALIDA', qty: ing.qty, cost: item.cost, totalValue: ing.qty * item.cost, 
-              reference: `REQ-${targetOP.id}-${req.phase.substring(0,3).toUpperCase()}`,
-              opAsignada: targetOP.id, notes: 'DESPACHO ALMACÉN (REQUISICIÓN)', timestamp: Date.now(), user: appUser?.name || 'Almacén'
-           });
+           batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: getTodayDate(), itemId: item.id, itemName: item.desc, type: 'SALIDA', qty: ing.qty, cost: item.cost, totalValue: ing.qty * item.cost, reference: `REQ-${targetOP.id}-${req.phase.substring(0,3).toUpperCase()}`, opAsignada: targetOP.id, notes: 'DESPACHO ALMACÉN', timestamp: Date.now(), user: appUser?.name || 'Almacén' });
         }
 
-        // 3. Inyectar Lote de Costos a la OP (para el finiquito)
+        // Inyectar Lote a la OP
         let currentPhase = { ...(targetOP.production?.[req.phase] || { batches: [], isClosed: false }) };
-        const newProdBatch = {
-           id: Date.now().toString(), timestamp: Date.now(), date: getTodayDate(),
-           insumos: validItems, producedKg: 0, mermaKg: 0, totalInsumosKg, cost: phaseCost,
-           operator: 'ALMACÉN (DESPACHO)', techParams: {}
-        };
-        if (!currentPhase.batches) currentPhase.batches = [];
-        currentPhase.batches.push(newProdBatch);
+        const newProdBatch = { id: Date.now().toString(), timestamp: Date.now(), date: getTodayDate(), insumos: validItems, producedKg: 0, mermaKg: 0, totalInsumosKg, cost: phaseCost, operator: 'ALMACÉN (DESPACHO)', techParams: {} };
+        if (!currentPhase.batches) currentPhase.batches = []; currentPhase.batches.push(newProdBatch);
         batch.update(getDocRef('requirements', targetOP.id), { [`production.${req.phase}`]: currentPhase });
-
-        // 4. Actualizar Estado de Requisición
         batch.update(getDocRef('inventoryRequisitions', req.id), { status: 'APROBADO', dispatchDate: getTodayDate(), items: validItems, approvedBy: appUser?.name });
 
-        await batch.commit();
-        setReqToApprove(null);
-        setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada. Se descontó del stock, actualizó el Kardex y se cargaron los insumos a la OP.', type:'alert'});
-    } catch(err) {
-        setDialog({title:'Error', text:err.message, type:'alert'});
-    }
+        await batch.commit(); setReqToApprove(null); setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada, stock descontado y costos asignados a OP.', type:'alert'});
+    } catch(err) { setDialog({title:'Error', text:err.message, type:'alert'}); }
   };
 
   const handleRejectRequisition = (id) => {
-    setDialog({title: 'Rechazar Requisición', text: '¿Desea rechazar esta solicitud de materiales?', type: 'confirm', onConfirm: async () => {
-        await updateDoc(getDocRef('inventoryRequisitions', id), { status: 'RECHAZADO', dispatchDate: getTodayDate() });
-        setDialog({title: 'Actualizado', text: 'La solicitud ha sido rechazada.', type: 'alert'});
-    }});
+    setDialog({title: 'Rechazar Requisición', text: '¿Desea rechazar esta solicitud de materiales?', type: 'confirm', onConfirm: async () => { await updateDoc(getDocRef('inventoryRequisitions', id), { status: 'RECHAZADO', dispatchDate: getTodayDate() }); setDialog({title: 'Actualizado', text: 'La solicitud ha sido rechazada.', type: 'alert'}); }});
   };
 
   // ============================================================================
@@ -615,27 +436,15 @@ export default function App() {
     else if (activePhaseTab === 'sellado') mainCats = ['Consumibles', 'Herramientas'];
     const grouped = {}; (inventory || []).forEach(i => { const cat = i?.category || 'Otros'; if (!grouped[cat]) grouped[cat] = []; grouped[cat].push(i); });
     return (<><option value="">Seleccione Insumo...</option>
-      {mainCats.map(cat => grouped[cat] && grouped[cat].length > 0 && (
-        <optgroup key={cat} label={`📌 ${cat.toUpperCase()} (Recomendado)`}>
-          {(grouped[cat] || []).map(i => <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc} ({formatNum(i?.stock)} {i?.unit})</option>)}
-        </optgroup>
-      ))}
-      {Object.keys(grouped).filter(c => !mainCats.includes(c)).map(cat => grouped[cat] && grouped[cat].length > 0 && (
-        <optgroup key={cat} label={`📂 ${cat.toUpperCase()} (Otros)`}>
-          {(grouped[cat] || []).map(i => <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc} ({formatNum(i?.stock)} {i?.unit})</option>)}
-        </optgroup>
-      ))}
+      {mainCats.map(cat => grouped[cat] && grouped[cat].length > 0 && ( <optgroup key={cat} label={`📌 ${cat.toUpperCase()} (Recomendado)`}> {(grouped[cat] || []).map(i => <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc} ({formatNum(i?.stock)} {i?.unit})</option>)} </optgroup> ))}
+      {Object.keys(grouped).filter(c => !mainCats.includes(c)).map(cat => grouped[cat] && grouped[cat].length > 0 && ( <optgroup key={cat} label={`📂 ${cat.toUpperCase()} (Otros)`}> {(grouped[cat] || []).map(i => <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc} ({formatNum(i?.stock)} {i?.unit})</option>)} </optgroup> ))}
     </>);
   };
 
-  const handleAddPhaseIng = () => {
-    if (!phaseIngId || !phaseIngQty) return; const ing = (inventory || []).find(i => i?.id === phaseIngId); if (!ing) return;
-    setPhaseForm({ ...phaseForm, insumos: [...(phaseForm?.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }] }); setPhaseIngId(''); setPhaseIngQty('');
-  };
+  const handleAddPhaseIng = () => { if (!phaseIngId || !phaseIngQty) return; const ing = (inventory || []).find(i => i?.id === phaseIngId); if (!ing) return; setPhaseForm({ ...phaseForm, insumos: [...(phaseForm?.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }] }); setPhaseIngId(''); setPhaseIngQty(''); };
 
   const handleSavePhase = async (e) => {
-    e.preventDefault();
-    const req = (requirements || []).find(r => r?.id === selectedPhaseReqId); if (!req) return;
+    e.preventDefault(); const req = (requirements || []).find(r => r?.id === selectedPhaseReqId); if (!req) return;
     const actionType = e.nativeEvent?.submitter?.name; const isSkip = actionType === 'skip'; const isClose = actionType === 'close';
     let currentPhase = req.production?.[activePhaseTab] || { batches: [], isClosed: false };
     if (isSkip) { currentPhase.skipped = true; currentPhase.isClosed = true; } 
@@ -643,28 +452,22 @@ export default function App() {
         const prodKg = parseNum(phaseForm?.producedKg); const mermaKg = parseNum(phaseForm?.mermaKg);
         if (prodKg > 0 || mermaKg > 0 || (phaseForm?.insumos || []).length > 0) {
             const batch = writeBatch(db); let phaseCost = 0; let totalInsumosKg = 0;
-            // SI el operario no usa la Requisición, y le da Guardar Reporte, se descuenta de inventario directo
             for (let ing of (phaseForm?.insumos || [])) {
               const item = (inventory || []).find(i => i?.id === ing?.id);
               if (item) { phaseCost += ((item?.cost || 0) * (ing?.qty || 0)); totalInsumosKg += parseFloat(ing?.qty || 0); batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) - (ing?.qty || 0) }); }
             }
             await batch.commit();
-            
             let techParams = {};
             if(activePhaseTab === 'extrusion') techParams = { operador: phaseForm?.operadorExt, tratado: phaseForm?.tratado, motor: phaseForm?.motorExt, ventilador: phaseForm?.ventilador, jalador: phaseForm?.jalador, zonas: [phaseForm?.zona1, phaseForm?.zona2, phaseForm?.zona3, phaseForm?.zona4, phaseForm?.zona5, phaseForm?.zona6], cabezalA: phaseForm?.cabezalA, cabezalB: phaseForm?.cabezalB };
             if(activePhaseTab === 'impresion') techParams = { operador: phaseForm?.operadorImp, kgRecibidos: phaseForm?.kgRecibidosImp, cantColores: phaseForm?.cantColores, relacion: phaseForm?.relacionImp, motor: phaseForm?.motorImp, tensores: phaseForm?.tensores, temp: phaseForm?.tempImp, solvente: phaseForm?.solvente };
             if(activePhaseTab === 'sellado') techParams = { operador: phaseForm?.operadorSel, kgRecibidos: phaseForm?.kgRecibidosSel, impresa: phaseForm?.impresa, tipoSello: phaseForm?.tipoSello, tempCabezalA: phaseForm?.tempCabezalA, tempCabezalB: phaseForm?.tempCabezalB, tempPisoA: phaseForm?.tempPisoA, tempPisoB: phaseForm?.tempPisoB, velServo: phaseForm?.velServo, millares: phaseForm?.millaresProd, troquel: phaseForm?.troquelSel };
-
             const newBatch = { id: Date.now().toString(), timestamp: Date.now(), date: phaseForm?.date || getTodayDate(), insumos: phaseForm?.insumos || [], producedKg: prodKg, mermaKg, totalInsumosKg, cost: phaseCost, operator: appUser?.name || 'Operador', techParams };
             if (!currentPhase.batches) currentPhase.batches = []; currentPhase.batches.push(newBatch);
         }
         if (isClose) currentPhase.isClosed = true;
     }
-    const newProd = { ...(req.production || {}), [activePhaseTab]: currentPhase };
-    let newStatus = (activePhaseTab === 'sellado' && currentPhase.isClosed) ? 'COMPLETADO' : 'EN PROCESO';
-    await updateDoc(getDocRef('requirements', req.id), { production: newProd, status: newStatus });
-    setPhaseForm({ ...initialPhaseForm, date: getTodayDate() }); 
-    setDialog({ title: 'Éxito', text: 'Reporte guardado.', type: 'alert' });
+    const newProd = { ...(req.production || {}), [activePhaseTab]: currentPhase }; let newStatus = (activePhaseTab === 'sellado' && currentPhase.isClosed) ? 'COMPLETADO' : 'EN PROCESO';
+    await updateDoc(getDocRef('requirements', req.id), { production: newProd, status: newStatus }); setPhaseForm({ ...initialPhaseForm, date: getTodayDate() }); setDialog({ title: 'Éxito', text: 'Reporte guardado.', type: 'alert' });
   };
 
   const handleDeleteBatch = async (reqId, phase, batchId) => {
@@ -677,39 +480,15 @@ export default function App() {
 
   const handleEditBatch = (reqId, phase, batchId) => {
     setDialog({ title: `MODIFICAR LOTE`, text: `El lote volverá al formulario para su edición y el inventario se ajustará temporalmente. ¿Continuar?`, type: 'confirm', onConfirm: async () => {
-        const req = (requirements || []).find(r => r?.id === reqId); 
-        if(!req) return;
-        let currentPhase = { ...(req?.production?.[phase] || {}) }; 
-        const bIdx = (currentPhase.batches || []).findIndex(b => b?.id === batchId);
+        const req = (requirements || []).find(r => r?.id === reqId); if(!req) return; let currentPhase = { ...(req?.production?.[phase] || {}) }; const bIdx = (currentPhase.batches || []).findIndex(b => b?.id === batchId);
         if (bIdx >= 0) { 
             const batch = currentPhase.batches[bIdx]; 
             const restoreForm = { ...initialPhaseForm, date: batch?.date || getTodayDate(), producedKg: batch?.producedKg || '', mermaKg: batch?.mermaKg || '', insumos: batch?.insumos || [] };
-            if(phase === 'extrusion' && batch?.techParams) {
-                restoreForm.operadorExt = batch.techParams.operador || ''; restoreForm.tratado = batch.techParams.tratado || ''; restoreForm.motorExt = batch.techParams.motor || '';
-                restoreForm.ventilador = batch.techParams.ventilador || ''; restoreForm.jalador = batch.techParams.jalador || '';
-                restoreForm.zona1 = batch.techParams.zonas?.[0] || ''; restoreForm.zona2 = batch.techParams.zonas?.[1] || ''; restoreForm.zona3 = batch.techParams.zonas?.[2] || '';
-                restoreForm.zona4 = batch.techParams.zonas?.[3] || ''; restoreForm.zona5 = batch.techParams.zonas?.[4] || ''; restoreForm.zona6 = batch.techParams.zonas?.[5] || '';
-                restoreForm.cabezalA = batch.techParams.cabezalA || ''; restoreForm.cabezalB = batch.techParams.cabezalB || '';
-            }
-            if(phase === 'impresion' && batch?.techParams) {
-                restoreForm.operadorImp = batch.techParams.operador || ''; restoreForm.kgRecibidosImp = batch.techParams.kgRecibidos || ''; restoreForm.cantColores = batch.techParams.cantColores || '';
-                restoreForm.relacionImp = batch.techParams.relacion || ''; restoreForm.motorImp = batch.techParams.motor || ''; restoreForm.tensores = batch.techParams.tensores || '';
-                restoreForm.tempImp = batch.techParams.temp || ''; restoreForm.solvente = batch.techParams.solvente || '';
-            }
-            if(phase === 'sellado' && batch?.techParams) {
-                restoreForm.operadorSel = batch.techParams.operador || ''; restoreForm.kgRecibidosSel = batch.techParams.kgRecibidos || ''; restoreForm.impresa = batch.techParams.impresa || 'NO';
-                restoreForm.tipoSello = batch.techParams.tipoSello || 'Sello FC'; restoreForm.tempCabezalA = batch.techParams.tempCabezalA || ''; restoreForm.tempCabezalB = batch.techParams.tempCabezalB || '';
-                restoreForm.tempPisoA = batch.techParams.tempPisoA || ''; restoreForm.tempPisoB = batch.techParams.tempPisoB || ''; restoreForm.velServo = batch.techParams.velServo || '';
-                restoreForm.millaresProd = batch.techParams.millares || ''; restoreForm.troquelSel = batch.techParams.troquel || '';
-            }
-            
+            if(phase === 'extrusion' && batch?.techParams) { restoreForm.operadorExt = batch.techParams.operador || ''; restoreForm.tratado = batch.techParams.tratado || ''; restoreForm.motorExt = batch.techParams.motor || ''; restoreForm.ventilador = batch.techParams.ventilador || ''; restoreForm.jalador = batch.techParams.jalador || ''; restoreForm.zona1 = batch.techParams.zonas?.[0] || ''; restoreForm.zona2 = batch.techParams.zonas?.[1] || ''; restoreForm.zona3 = batch.techParams.zonas?.[2] || ''; restoreForm.zona4 = batch.techParams.zonas?.[3] || ''; restoreForm.zona5 = batch.techParams.zonas?.[4] || ''; restoreForm.zona6 = batch.techParams.zonas?.[5] || ''; restoreForm.cabezalA = batch.techParams.cabezalA || ''; restoreForm.cabezalB = batch.techParams.cabezalB || ''; }
+            if(phase === 'impresion' && batch?.techParams) { restoreForm.operadorImp = batch.techParams.operador || ''; restoreForm.kgRecibidosImp = batch.techParams.kgRecibidos || ''; restoreForm.cantColores = batch.techParams.cantColores || ''; restoreForm.relacionImp = batch.techParams.relacion || ''; restoreForm.motorImp = batch.techParams.motor || ''; restoreForm.tensores = batch.techParams.tensores || ''; restoreForm.tempImp = batch.techParams.temp || ''; restoreForm.solvente = batch.techParams.solvente || ''; }
+            if(phase === 'sellado' && batch?.techParams) { restoreForm.operadorSel = batch.techParams.operador || ''; restoreForm.kgRecibidosSel = batch.techParams.kgRecibidos || ''; restoreForm.impresa = batch.techParams.impresa || 'NO'; restoreForm.tipoSello = batch.techParams.tipoSello || 'Sello FC'; restoreForm.tempCabezalA = batch.techParams.tempCabezalA || ''; restoreForm.tempCabezalB = batch.techParams.tempCabezalB || ''; restoreForm.tempPisoA = batch.techParams.tempPisoA || ''; restoreForm.tempPisoB = batch.techParams.tempPisoB || ''; restoreForm.velServo = batch.techParams.velServo || ''; restoreForm.millaresProd = batch.techParams.millares || ''; restoreForm.troquelSel = batch.techParams.troquel || ''; }
             setPhaseForm(restoreForm);
-            const fbBatch = writeBatch(db); 
-            for (let ing of (batch?.insumos || [])) { 
-                const item = (inventory || []).find(i => i?.id === ing?.id); 
-                if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (ing?.qty || 0) }); 
-            } 
-            await fbBatch.commit(); 
+            const fbBatch = writeBatch(db); for (let ing of (batch?.insumos || [])) { const item = (inventory || []).find(i => i?.id === ing?.id); if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (ing?.qty || 0) }); } await fbBatch.commit(); 
             currentPhase.batches.splice(bIdx, 1); 
         }
         await updateDoc(getDocRef('requirements', reqId), { production: { ...(req?.production || {}), [phase]: currentPhase } });
@@ -718,18 +497,10 @@ export default function App() {
 
   const handleReopenPhase = async (reqId, phase) => {
     setDialog({ title: `REABRIR FASE`, text: `¿Seguro que desea reabrir esta fase para editar o añadir más lotes?`, type: 'confirm', onConfirm: async () => {
-        const req = (requirements || []).find(r => r.id === reqId);
-        if(!req) return;
-        let currentPhase = { ...(req.production?.[phase] || {}) };
-        currentPhase.isClosed = false;
-        
-        let newStatus = req.status;
-        if (req.status === 'COMPLETADO') newStatus = 'EN PROCESO';
-
-        await updateDoc(getDocRef('requirements', reqId), { 
-            production: { ...(req.production || {}), [phase]: currentPhase },
-            status: newStatus
-        });
+        const req = (requirements || []).find(r => r.id === reqId); if(!req) return;
+        let currentPhase = { ...(req.production?.[phase] || {}) }; currentPhase.isClosed = false;
+        let newStatus = req.status; if (req.status === 'COMPLETADO') newStatus = 'EN PROCESO';
+        await updateDoc(getDocRef('requirements', reqId), { production: { ...(req.production || {}), [phase]: currentPhase }, status: newStatus });
         setDialog({title: 'Éxito', text: 'La fase ha sido reabierta.', type: 'alert'});
     }});
   };
@@ -737,30 +508,16 @@ export default function App() {
   // ============================================================================
   // --- LÓGICA CALCULADORA (SIMULADOR OP) ---
   // ============================================================================
-  const handleResetCalc = () => {
-    setCalcInputs(initialCalcInputs);
-  };
-
+  const handleResetCalc = () => { setCalcInputs(initialCalcInputs); };
   const handleCalcChange = (field, value) => setCalcInputs({ ...calcInputs, [field]: parseNum(value) });
-  
   const updateCalcIng = (id, field, value) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs?.ingredientes || []).map(ing => ing?.id === id ? { ...ing, [field]: field === 'nombre' ? value : parseNum(value) } : ing) });
   const addCalcIng = () => setCalcInputs({ ...calcInputs, ingredientes: [...(calcInputs?.ingredientes || []), { id: Date.now(), nombre: '', pct: 0, costo: 0 }] });
   const removeCalcIng = (id) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs?.ingredientes || []).filter(i => i?.id !== id) });
 
-  const simW = parseNum(calcInputs?.ancho);
-  const simL = parseNum(calcInputs?.largo);
-  const simM = parseNum(calcInputs?.micras);
-  const simFu = parseNum(calcInputs?.fuelles);
-  const isBolsas = calcInputs?.tipoProducto === 'BOLSAS';
-  
-  let simPesoMillar = 0;
-  if (isBolsas) { simPesoMillar = (simW + simFu) * simL * simM; }
-
-  const inputCantidadSolicitada = calcInputs?.mezclaTotal || 0;
-  const calcTotalMezcla = isBolsas ? (simPesoMillar > 0 ? (inputCantidadSolicitada * simPesoMillar) : 0) : inputCantidadSolicitada;
-  const calcMezclaProcesada = calcTotalMezcla; 
-  let calcCostoMezclaPreparada = 0;
-  
+  const simW = parseNum(calcInputs?.ancho); const simL = parseNum(calcInputs?.largo); const simM = parseNum(calcInputs?.micras); const simFu = parseNum(calcInputs?.fuelles); const isBolsas = calcInputs?.tipoProducto === 'BOLSAS';
+  let simPesoMillar = 0; if (isBolsas) { simPesoMillar = (simW + simFu) * simL * simM; }
+  const inputCantidadSolicitada = calcInputs?.mezclaTotal || 0; const calcTotalMezcla = isBolsas ? (simPesoMillar > 0 ? (inputCantidadSolicitada * simPesoMillar) : 0) : inputCantidadSolicitada;
+  const calcMezclaProcesada = calcTotalMezcla; let calcCostoMezclaPreparada = 0;
   const calcIngredientesProcesados = (calcInputs?.ingredientes || []).map(ing => {
     const kg = ((ing?.pct || 0) / 100) * calcTotalMezcla; const totalCost = kg * (ing?.costo || 0); calcCostoMezclaPreparada += totalCost;
     const invItem = (inventory || []).find(i => i?.id === ing?.nombre); let desc = invItem ? invItem.desc : ing?.nombre;
@@ -772,13 +529,43 @@ export default function App() {
   const calcCostoMezclaProcesada = calcCostoMezclaPreparada;
   const calcMermaGlobalKg = calcMezclaProcesada * ((calcInputs?.mermaGlobalPorc || 0) / 100);
   const calcProduccionNetaKg = calcMezclaProcesada - calcMermaGlobalKg;
-  
   const calcCostoUnitarioNeto = calcProduccionNetaKg > 0 ? (calcCostoMezclaProcesada / calcProduccionNetaKg) : 0;
   const calcRendimientoUtil = calcMezclaProcesada > 0 ? (calcProduccionNetaKg / calcMezclaProcesada) * 100 : 0;
-  
   const calcProduccionFinalUnidades = isBolsas && simPesoMillar > 0 ? (calcProduccionNetaKg / simPesoMillar) : calcProduccionNetaKg;
   const calcCostoFinalUnidad = calcProduccionFinalUnidades > 0 ? (calcCostoMezclaProcesada / calcProduccionFinalUnidades) : 0;
   const simUmFinal = isBolsas ? 'Millares' : 'KG';
+
+  // ============================================================================
+  // LÓGICA DE PROYECCIÓN DE MP Y ORDEN DE COMPRA (NUEVO)
+  // ============================================================================
+  const generateProjectionData = () => {
+    // Promedio diario basado en ultimos 30 dias de salidas
+    const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+    const recentMovs = invMovements.filter(m => m.type === 'SALIDA' && m.timestamp >= thirtyDaysAgo);
+    
+    // Demanda de OP Pendientes (Req. EN PROCESO o Requisiciones no aprobadas)
+    // Para simplificar y ser exactos con el requerimiento "requisiciones abiertas que aún no han entrado", leemos invRequisitions PENDIENTE.
+    const pendingReqs = invRequisitions.filter(r => r.status === 'PENDIENTE');
+
+    return inventory.filter(i => i.category === 'Materia Prima').map(mp => {
+       const consumedIn30Days = recentMovs.filter(m => m.itemId === mp.id).reduce((sum, m) => sum + parseNum(m.qty), 0);
+       const dailyAvg = consumedIn30Days / 30;
+       
+       let committedStock = 0;
+       pendingReqs.forEach(req => {
+            const item = req.items.find(i => i.id === mp.id);
+            if (item) committedStock += parseNum(item.qty);
+       });
+
+       const availableReal = mp.stock - committedStock;
+       const daysRemaining = dailyAvg > 0 ? availableReal / dailyAvg : 999;
+       
+       // Sugerencia: Si días < 15 o deficitario, pedir deficit + 15 días de buffer
+       const suggestOrder = (daysRemaining < 15 || availableReal < 0) ? Math.abs(availableReal < 0 ? availableReal : 0) + (dailyAvg * 15) : 0; 
+
+       return { ...mp, dailyAvg, daysRemaining, committedStock, availableReal, suggestOrder };
+    });
+  };
 
   // ============================================================================
   // RENDERIZADO DE MÓDULOS
@@ -799,82 +586,67 @@ export default function App() {
     </div>
   );
 
-  const renderLogin = () => (
-    <div className="min-h-screen flex items-center justify-center p-4 relative" 
-         style={{ backgroundImage: `url('${settings?.loginBg || "https://images.unsplash.com/photo-1587293852726-70cdb56c2866?q=80&w=2072&auto=format&fit=crop"}')`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
-       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
-       
-       {/* BOTÓN PARA SUBIR FONDO DE PANTALLA */}
-       <div className="absolute top-4 right-4 z-20">
-          <label className="bg-black/50 hover:bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase cursor-pointer backdrop-blur-sm transition-all flex items-center gap-2 border border-white/20 shadow-lg">
-             <Edit size={14}/> Cambiar Fondo
-             <input type="file" accept="image/*" className="hidden" onChange={handleBgUpload} />
-          </label>
-       </div>
-
-       <div className="relative z-10 bg-white rounded-3xl shadow-[0_30px_60px_rgba(0,0,0,0.6)] overflow-hidden w-full max-w-4xl flex transform transition-all duration-500 hover:scale-[1.01] border border-white/20">
-          <div className="w-1/2 bg-gradient-to-br from-gray-900 to-black p-12 flex-col justify-between hidden md:flex relative overflow-hidden shadow-[inset_-10px_0_20px_rgba(0,0,0,0.5)] border-r border-gray-800">
-             <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-tr from-white/10 to-transparent transform -skew-x-12 pointer-events-none"></div>
-             <div className="relative z-10">
-               <div className="flex items-center bg-white rounded-2xl px-4 py-2 shadow-[0_10px_20px_rgba(0,0,0,0.4)] w-fit transform hover:translate-x-1 hover:-translate-y-1 transition-transform duration-300">
-                  <span className="text-black font-black text-4xl leading-none drop-shadow-sm">G</span><span className="text-orange-500 font-black text-3xl mx-1 drop-shadow-sm">&amp;</span><span className="text-black font-black text-4xl leading-none drop-shadow-sm">B</span>
-               </div>
-               <h1 className="text-white text-3xl font-black mt-10 uppercase tracking-widest drop-shadow-lg">Supply ERP</h1>
-               <p className="text-gray-300 mt-4 text-sm leading-relaxed drop-shadow-md">Sistema Integrado de Producción e Inventario para Servicios Jiret G&B C.A.</p>
+  const renderInventoryReports = () => {
+     // Modulo Reportes Inventario (Entradas, Salidas, Ajustes, Catálogo)
+     let filteredData = [];
+     if (invReportType === 'entradas') filteredData = invMovements.filter(m => m.type === 'ENTRADA');
+     if (invReportType === 'salidas') filteredData = invMovements.filter(m => m.type === 'SALIDA' || m.type === 'AUTOCONSUMO');
+     if (invReportType === 'ajustes') filteredData = invMovements.filter(m => m.type.includes('AJUSTE'));
+     
+     return (
+       <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
+          <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
+             <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Reportes de Inventario</h2>
+             <div className="flex gap-2">
+                <button onClick={() => handleExportPDF('Reporte_Inventario_Filtrado', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
              </div>
-             <div className="relative z-10 text-gray-500 text-xs font-bold uppercase tracking-widest">© {new Date().getFullYear()} Todos los derechos reservados</div>
           </div>
-          <div className="w-full md:w-1/2 p-12 flex flex-col justify-center bg-white relative z-10">
-             <h2 className="text-2xl font-black text-black uppercase tracking-widest mb-2">Iniciar Sesión</h2>
-             <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-8">Ingresa tus credenciales de acceso</p>
-             {loginError && (<div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)]"><AlertTriangle size={16}/> {loginError}</div>)}
-             <form onSubmit={handleLogin} className="space-y-6">
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Usuario</label>
-                  <div className="relative group"><User className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="text" value={loginData.username} onChange={e=>setLoginData({...loginData, username: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="EJ: ADMIN o PLANTA"/></div>
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Contraseña</label>
-                  <div className="relative group"><Lock className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="password" value={loginData.password} onChange={e=>setLoginData({...loginData, password: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="••••••••"/></div>
-                </div>
-                <button type="submit" className="w-full bg-gradient-to-r from-orange-500 to-orange-600 text-white font-black py-4 rounded-xl shadow-[0_8px_20px_rgba(249,115,22,0.4)] hover:shadow-[0_15px_25px_rgba(249,115,22,0.6)] hover:-translate-y-1 active:translate-y-1 uppercase tracking-widest text-xs flex justify-center items-center gap-2 mt-4 transform transition-all">ENTRAR AL SISTEMA <ArrowRight size={16}/></button>
-             </form>
+          <div data-html2canvas-ignore="true" className="p-6 bg-white border-b border-gray-100 flex gap-4 no-pdf">
+             {['entradas', 'salidas', 'ajustes'].map(type => (
+                <button key={type} onClick={()=>setInvReportType(type)} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors ${invReportType === type ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>Reporte de {type}</button>
+             ))}
+          </div>
+
+          <div id="pdf-content" className="p-8 print:p-0 bg-white">
+             <div className="hidden pdf-header mb-8">
+               <ReportHeader />
+               <h1 className="text-xl font-black text-black uppercase border-b-4 border-orange-500 pb-2">REPORTE DE MOVIMIENTOS: {invReportType.toUpperCase()}</h1>
+               <p className="text-sm font-bold text-gray-500 uppercase mt-2">FECHA DE EMISIÓN: {getTodayDate()}</p>
+             </div>
+
+             <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
+               <table className="w-full text-left whitespace-nowrap text-xs">
+                 <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
+                   <tr className="uppercase font-black text-[10px] tracking-widest text-black">
+                     <th className="py-3 px-4 border-r print:border-black">Fecha / Usuario</th>
+                     <th className="py-3 px-4 border-r print:border-black">Referencia / Notas</th>
+                     <th className="py-3 px-4 border-r print:border-black">Ítem / Código</th>
+                     <th className="py-3 px-4 text-center border-r print:border-black">Cant.</th>
+                     <th className="py-3 px-4 text-right border-r print:border-black">Costo U.</th>
+                     <th className="py-3 px-4 text-right print:border-black">Valor Total</th>
+                   </tr>
+                 </thead>
+                 <tbody className="divide-y divide-gray-100 text-black print:divide-black">
+                   {filteredData.map(m => {
+                      const isPos = m.type === 'ENTRADA' || m.type === 'AJUSTE (POSITIVO)';
+                      return (
+                       <tr key={m.id} className="hover:bg-gray-50 transition-colors">
+                         <td className="py-3 px-4 font-bold border-r print:border-black">{m.date}<br/><span className="text-[9px] text-gray-500 print:text-black">{m.user}</span></td>
+                         <td className="py-3 px-4 font-black border-r print:border-black">{m.reference}<br/><span className="text-[9px] font-bold text-gray-400 print:text-black">{m.notes}</span></td>
+                         <td className="py-3 px-4 font-bold border-r print:border-black">{m.itemId}<br/><span className="text-[9px] font-black print:text-black">{m.itemName}</span></td>
+                         <td className={`py-3 px-4 text-center font-black text-sm border-r print:border-black ${isPos ? 'text-green-600' : 'text-red-600'} print:text-black`}>{isPos ? '+' : '-'}{formatNum(m.qty)}</td>
+                         <td className="py-3 px-4 text-right font-bold text-gray-600 border-r print:border-black print:text-black">${formatNum(m.cost)}</td>
+                         <td className="py-3 px-4 text-right font-black print:border-black print:text-black">${formatNum(m.totalValue)}</td>
+                       </tr>
+                      );
+                   })}
+                   {filteredData.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin movimientos registrados</td></tr>}
+                 </tbody>
+               </table>
+             </div>
           </div>
        </div>
-    </div>
-  );
-
-  const renderHome = () => {
-    // Manejo seguro por si es usuario legacy sin la propiedad permissions
-    const hasPerm = (module) => appUser?.permissions ? appUser.permissions[module] : appUser?.role === 'Master';
-    
-    return (
-      <div className="w-full max-w-6xl mx-auto py-8 animate-in fade-in">
-        <div className="text-center mb-10">
-          <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
-          <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
-          {hasPerm('ventas') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Users size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3><p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p></button>
-          )}
-          {hasPerm('produccion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
-          )}
-          {hasPerm('inventario') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p></button>
-          )}
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
-          {hasPerm('costos') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('costos'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Reportes de Costo</h3><p className="text-xs text-gray-400 mt-2">Módulo en construcción.</p></button>
-          )}
-          {hasPerm('configuracion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><Settings2 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3><p className="text-xs text-gray-400 mt-2">Usuarios y Permisos.</p></button>
-          )}
-        </div>
-      </div>
-    );
+     );
   };
 
   const renderInventoryModule = () => {
@@ -908,6 +680,8 @@ export default function App() {
         </div>
       );
     }
+
+    if (invView === 'reportes_mod') return renderInventoryReports();
 
     const searchInvUpper = (invSearchTerm || '').toUpperCase();
     const filteredInventory = (inventory || []).filter(i => (i?.id || '').includes(searchInvUpper) || (i?.desc || '').includes(searchInvUpper));
@@ -986,7 +760,7 @@ export default function App() {
                     <h2 className="text-xl font-black uppercase text-black">Aprobar Descargo (OP: {reqToApprove.opId})</h2>
                     <button onClick={()=>setReqToApprove(null)} className="text-gray-400 hover:text-red-500"><X size={24}/></button>
                  </div>
-                 <p className="text-xs font-bold text-gray-500 mb-6 uppercase">Verifique o modifique las cantidades a despachar. Al aprobar, se descontará del inventario y se cargará el costo a la producción de la fase <span className="text-black">{reqToApprove.phase}</span>.</p>
+                 <p className="text-xs font-bold text-gray-500 mb-6 uppercase">Verifique o modifique las cantidades a despachar. Al aprobar, se descontará del inventario (recalculando costo) y se cargará el costo a la producción de la fase <span className="text-black">{reqToApprove.phase}</span>.</p>
                  <form onSubmit={submitApproveRequisition}>
                     <table className="w-full text-left text-sm mb-8 border-collapse">
                        <thead className="bg-gray-100 text-[10px] font-black uppercase text-gray-500 tracking-widest border-b-2 border-gray-200">
@@ -1052,7 +826,7 @@ export default function App() {
                    </div>
                    <div className="grid grid-cols-2 gap-2">
                      <div>
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Costo ($)</label>
+                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Costo Promedio ($)</label>
                        <input type="number" step="0.01" required value={newInvItemForm.cost} onChange={e=>setNewInvItemForm({...newInvItemForm, cost: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-center" />
                      </div>
                      <div>
@@ -1092,7 +866,7 @@ export default function App() {
                      <tr className="uppercase font-black text-gray-800 text-[10px] tracking-widest print:text-black">
                        <th className="py-4 px-4">Código</th>
                        <th className="py-4 px-4">Descripción / Categoría</th>
-                       <th className="py-4 px-4 text-center">Costo Unit.</th>
+                       <th className="py-4 px-4 text-center">Costo Unit. Promedio</th>
                        <th className="py-4 px-4 text-right">Stock Actual</th>
                        <th className="py-4 px-4 text-center no-pdf">Acciones</th>
                      </tr>
@@ -1134,7 +908,7 @@ export default function App() {
                <form onSubmit={handleSaveMovement} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-xl space-y-6 max-w-4xl mx-auto">
                   <div className="bg-orange-50 p-4 rounded-xl border border-orange-200 text-center mb-6">
                      <p className="text-[10px] font-black text-orange-800 uppercase tracking-widest">Atención</p>
-                     <p className="text-xs font-bold text-orange-600 uppercase">Los movimientos afectan directamente el catálogo y el Kardex según Art. 177 LISLR.</p>
+                     <p className="text-xs font-bold text-orange-600 uppercase">Las entradas actualizarán el Costo Promedio del catálogo y el Kardex automáticamente.</p>
                   </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1164,7 +938,7 @@ export default function App() {
                           setNewMovementForm({...newMovementForm, itemId: e.target.value, cost: item ? item.cost : ''});
                        }} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black uppercase text-xs outline-none transition-colors">
                           <option value="">Seleccione...</option>
-                          {(inventory || []).map(i => <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc} (Stock: {i?.stock} {i?.unit})</option>)}
+                          {(inventory || []).map(i => <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc} (Stock: {i?.stock} {i?.unit} | Costo Prom: ${formatNum(i?.cost)})</option>)}
                        </select>
                      </div>
 
@@ -1173,8 +947,8 @@ export default function App() {
                        <input type="number" step="0.01" required value={newMovementForm.qty} onChange={e=>setNewMovementForm({...newMovementForm, qty: e.target.value})} placeholder="0.00" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black" />
                      </div>
                      <div>
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Costo Unitario ($) - Opcional para actualizar</label>
-                       <input type="number" step="0.01" value={newMovementForm.cost} onChange={e=>setNewMovementForm({...newMovementForm, cost: e.target.value})} placeholder="0.00" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black" />
+                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">{invView === 'cargo' ? 'Nuevo Costo Unitario ($) Compra' : 'Costo Unitario Promedio Actual ($)'}</label>
+                       <input type="number" step="0.01" value={newMovementForm.cost} onChange={e=>setNewMovementForm({...newMovementForm, cost: e.target.value})} disabled={invView !== 'cargo'} placeholder="0.00" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black disabled:opacity-60" />
                      </div>
 
                      <div className="md:col-span-2">
@@ -1662,14 +1436,83 @@ export default function App() {
     if (showPhaseReport) return renderPhaseReport();
     if (showFiniquito) return renderFiniquito();
 
-    const canEdit = appUser?.role === 'Planta' || appUser?.role === 'Master';
     const activeOrders = (requirements || []).filter(r => r?.status === 'EN PROCESO');
     const completedOrders = (requirements || []).filter(r => r?.status === 'COMPLETADO');
     
+    // VISTA DE PROYECCIÓN DE MATERIA PRIMA (NUEVO MÓDULO)
+    if (prodView === 'proyeccion') {
+       const proyeccionData = generateProjectionData();
+       return (
+         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
+            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
+               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><TrendingUp className="text-orange-500" size={24}/> Proyección de Materia Prima</h2>
+               <button onClick={() => handleExportPDF('Proyeccion_MP', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR REPORTE</button>
+            </div>
+            <div id="pdf-content" className="p-8 print:p-0 bg-white">
+               <div className="hidden pdf-header mb-8">
+                 <ReportHeader />
+                 <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2">PROYECCIÓN DE CONSUMO DE MATERIA PRIMA</h1>
+                 <p className="text-sm font-bold text-gray-500 uppercase mt-2">FECHA: {getTodayDate()}</p>
+               </div>
+               
+               <div className="bg-blue-50 border border-blue-200 p-6 rounded-2xl mb-8 flex items-start gap-4">
+                  <AlertTriangle size={24} className="text-blue-600 mt-1 flex-shrink-0" />
+                  <div>
+                     <h3 className="text-sm font-black text-blue-800 uppercase tracking-widest mb-1">Módulo de Planificación</h3>
+                     <p className="text-xs font-bold text-blue-600 leading-relaxed">El sistema analiza el inventario actual, descuenta las requisiciones de planta no despachadas y calcula cuántos días de inventario quedan según el consumo promedio de los últimos 30 días.</p>
+                  </div>
+               </div>
+
+               <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
+                 <table className="w-full text-left whitespace-nowrap text-xs">
+                   <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
+                     <tr className="uppercase font-black text-[10px] tracking-widest text-black">
+                       <th className="py-3 px-4 border-r print:border-black">Insumo</th>
+                       <th className="py-3 px-4 border-r print:border-black text-center">Stock Actual</th>
+                       <th className="py-3 px-4 border-r print:border-black text-center text-red-600">Comprometido<br/><span className="text-[8px] block">(Req. Planta)</span></th>
+                       <th className="py-3 px-4 border-r print:border-black text-center text-green-600">Disponible<br/><span className="text-[8px] block">Real</span></th>
+                       <th className="py-3 px-4 border-r print:border-black text-center">Consumo<br/><span className="text-[8px] block">Diario</span></th>
+                       <th className="py-3 px-4 border-r print:border-black text-center">Días<br/><span className="text-[8px] block">Restantes</span></th>
+                       <th className="py-3 px-4 text-center no-pdf">Acción</th>
+                     </tr>
+                   </thead>
+                   <tbody className="divide-y divide-gray-100 text-black print:divide-black">
+                     {proyeccionData.map(mp => (
+                       <tr key={mp.id} className="hover:bg-gray-50 transition-colors">
+                         <td className="py-4 px-4 font-black border-r print:border-black uppercase text-sm">{mp.desc}<br/><span className="text-[9px] text-gray-500 font-bold">{mp.id}</span></td>
+                         <td className="py-4 px-4 font-black border-r print:border-black text-center text-lg">{formatNum(mp.stock)}</td>
+                         <td className="py-4 px-4 font-black border-r print:border-black text-center text-red-500">{formatNum(mp.committedStock)}</td>
+                         <td className={`py-4 px-4 font-black border-r print:border-black text-center text-lg ${mp.availableReal < 0 ? 'text-red-600' : 'text-green-600'}`}>{formatNum(mp.availableReal)}</td>
+                         <td className="py-4 px-4 font-bold border-r print:border-black text-center">{formatNum(mp.dailyAvg)} kg/d</td>
+                         <td className="py-4 px-4 border-r print:border-black text-center">
+                            <span className={`px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest border ${mp.daysRemaining < 15 ? 'bg-red-100 text-red-700 border-red-200' : 'bg-green-100 text-green-700 border-green-200'}`}>
+                               {mp.daysRemaining === 999 ? '+99 Días' : `${formatNum(mp.daysRemaining)} Días`}
+                            </span>
+                         </td>
+                         <td className="py-4 px-4 text-center no-pdf">
+                            {mp.suggestOrder > 0 ? (
+                               <button onClick={() => {
+                                 setDialog({title: 'Generar Orden', text: `Se recomienda comprar ${formatNum(mp.suggestOrder)} kg de ${mp.desc} para cubrir el déficit y asegurar 15 días de stock.`, type: 'alert'})
+                               }} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-1 shadow-md hover:bg-gray-800 w-full"><ShoppingCart size={14}/> PEDIR {formatNum(mp.suggestOrder)} KG</button>
+                            ) : (
+                               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Stock OK</span>
+                            )}
+                         </td>
+                       </tr>
+                     ))}
+                     {proyeccionData.length === 0 && <tr><td colSpan="7" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin Materias Primas registradas</td></tr>}
+                   </tbody>
+                 </table>
+               </div>
+            </div>
+         </div>
+       );
+    }
+
     return (
       <div className="animate-in fade-in space-y-6">
 
-        {/* CALCULADORA / SIMULADOR OP MODIFICADO */}
+        {/* CALCULADORA / SIMULADOR OP */}
         {prodView === 'calculadora' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none print:m-0 print:p-0 print:block print:w-full">
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
@@ -1904,7 +1747,7 @@ export default function App() {
           </div>
         )}
 
-        {/* CONTROL DE FASES (REPORTE DIARIO DE INSUMOS Y PRODUCCION DIRECTA) */}
+        {/* CONTROL DE FASES */}
         {prodView === 'fases_produccion' && (
           <div className="space-y-6">
             {!selectedPhaseReqId ? (
@@ -1961,24 +1804,17 @@ export default function App() {
   const renderWorkOrder = () => {
     const req = (requirements || []).find(r => r?.id === showWorkOrder); if (!req) return null;
     const isBolsas = req?.tipoProducto === 'BOLSAS';
-    
-    let totalMPKgRecipe = 0;
-    (req?.recipe || []).forEach(ing => { totalMPKgRecipe += parseNum(ing?.totalQty); });
-    if(totalMPKgRecipe === 0) totalMPKgRecipe = parseNum(req?.requestedKg);
-
+    let totalMPKgRecipe = 0; (req?.recipe || []).forEach(ing => { totalMPKgRecipe += parseNum(ing?.totalQty); }); if(totalMPKgRecipe === 0) totalMPKgRecipe = parseNum(req?.requestedKg);
     return (
       <div id="pdf-content" className="bg-white p-6 print:p-0 min-h-screen text-black shadow-none border-0 bg-white"><style>{`@media print { @page { size: portrait; margin: 5mm; } }`}</style>
         <div data-html2canvas-ignore="true" className="flex justify-between mb-2 no-pdf"><button onClick={() => setShowWorkOrder(null)} className="bg-gray-100 px-6 py-2 rounded-xl text-xs font-black uppercase">VOLVER</button><button onClick={() => handleExportPDF(`OP_${req.id}`, false)} className="bg-black text-white px-8 py-2 rounded-xl font-black flex items-center gap-2 text-xs uppercase shadow-lg"><Printer size={16} /> EXPORTAR PDF</button></div>
         <div className="flex justify-between items-end border-b-2 border-black pb-1 mb-2"><div><div className="flex items-center -mb-1"><span className="text-black font-black text-3xl leading-none">G</span><span className="text-orange-500 font-black text-lg mx-0.5">&amp;</span><span className="text-black font-black text-3xl leading-none">B</span></div><p className="text-[6px] font-bold text-orange-500 uppercase mt-1 tracking-widest">Servicio y Calidad</p></div><div className="text-center flex-1"><h1 className="text-lg font-black uppercase tracking-widest">ORDEN DE TRABAJO PARA OP.</h1></div></div>
         <div className="grid grid-cols-3 text-[9px] font-bold uppercase mb-2 border-b-2 border-black pb-2"><div><p className="mb-1"><span className="w-16 inline-block font-black">CLIENTE:</span> {req.client}</p><p className="mb-1"><span className="w-16 inline-block font-black">OP:</span> #{String(req.id).replace('OP-', '').padStart(5, '0')}</p><p><span className="w-16 inline-block font-black">TIPO:</span> {req.tipoProducto || 'N/A'}</p></div><div><p className="mb-1"><span className="w-20 inline-block font-black">EMISIÓN:</span> {req.fecha}</p><p><span className="w-20 inline-block font-black text-orange-600 font-black">KG MATERIA PRIMA:</span> <span className="text-orange-600 font-black">{formatNum(totalMPKgRecipe)} KG</span></p></div><div><p className="mb-1"><span className="w-24 inline-block font-black">FECHA ENTRADA:</span> __________________</p><p><span className="w-24 inline-block font-black">FECHA SALIDA:</span> __________________</p></div></div>
-        
         <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-3 flex justify-between items-center mb-2 shadow-inner"><div className="w-3/5"><span className="text-[11px] font-black text-orange-900 uppercase">META SOLICITADA POR EL CLIENTE ({isBolsas ? 'MILLARES' : 'KILOS'})</span><p className="text-[10px] font-bold text-gray-700 leading-tight">Cantidad bruta a entregar al cliente según nota de pedido. Incluye merma de sellado.</p></div><div className="text-right"><span className="text-4xl font-black text-orange-600">{isBolsas ? req?.cantidad : formatNum(req?.cantidad)}</span><span className="text-lg font-black text-orange-600 ml-1">{isBolsas ? req?.presentacion : 'KG'}</span></div></div>
-
         <div className="border-2 border-black p-2 mb-2 rounded-2xl overflow-hidden"><div className="font-black text-center border-b-2 border-black mb-2 py-0.5 text-xs bg-gray-100 uppercase font-black">Especificaciones Finales</div><div className="grid grid-cols-4 gap-2 text-center text-[9px] font-black uppercase bg-gray-50"><div>ANCHO<br/><span className="text-sm text-orange-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-orange-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-orange-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-orange-600">{req.micras}</span></div></div></div>
         <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Parámetros de Extrusión</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">CANTIDAD KG:</span> __________________________</div><div className="col-span-2 flex justify-between"><div><span className="font-black pr-1">TRATADO: 1</span> _____ <span className="ml-4">2</span> _____</div><div><span className="font-black pr-1">COLOR:</span> {req.color}</div></div><div className="col-span-2 flex justify-between"><div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> _________________</div><div><span className="font-black pr-1">VENTILADOR:</span> _________________</div><div><span className="font-black pr-1">JALADOR:</span> _________________</div></div><div className="col-span-2 border-t border-gray-300 pt-1 mt-1"><div className="flex justify-between mb-2"><span className="font-black">ZONAS:</span><span>1 ____</span><span>2 ____</span><span>3 ____</span><span>4 ____</span><span>5 ____</span><span>6 ____</span></div><div className="flex gap-10"><span className="font-black">CABEZAL:</span><span>A ________</span><span>B ________</span></div></div></div></div>
         <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Impresión Flexográfica</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div><div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> __________________________</div><div><span className="font-black pr-1">TEMPERATURA:</span> __________________________</div><div className="col-span-2 border-t border-gray-300 pt-1 mt-1"><div className="flex justify-between mb-1"><span className="font-black">COLORES:</span><span>1 _______</span><span>2 _______</span><span>3 _______</span><span>4 _______</span><span>5 _______</span><span>6 _______</span></div></div></div></div>
         <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Sellado y Corte</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div><div><span className="font-black pr-1">CANT. PRODUCIDA (KG):</span> _______________</div><div><span className="font-black pr-1">CANT. PRODUCIDA MILLARES:</span> ___________</div></div></div>
-        
         <div className="mt-6 border-t-2 border-black pt-2 text-black font-black uppercase text-[8px]"><div className="font-black mb-3">ESPACIO DE FIRMAS Y RESPONSABLES POR FASE:</div><div className="grid grid-cols-5 gap-3 text-center"><div className="border-t border-black pt-1">RESP. EXTRUSIÓN<br/>(OPERADOR)</div><div className="border-t border-black pt-1">RESP. IMPRESIÓN<br/>(OPERADOR)</div><div className="border-t border-black pt-1">RESP. SELLADO<br/>(OPERADOR)</div><div className="border-t border-black pt-1">CONTROL CALIDAD<br/>(INSPECTOR)</div><div className="border-t border-black pt-1">SUPERVISOR<br/>PLANTA</div></div></div>
       </div>
     );
@@ -2004,32 +1840,14 @@ export default function App() {
     const req = (requirements || []).find(r => r?.id === showFiniquito); if (!req) return null;
     const isTermo = req?.tipoProducto === 'TERMOENCOGIBLE';
     const isBolsas = req?.tipoProducto === 'BOLSAS';
-    
     const realPesoMillar = isBolsas ? parseNum(req?.micras) * (parseNum(req?.ancho) + parseNum(req?.fuelles)) * parseNum(req?.largo) / 1000 : 0;
 
-    const extB = req?.production?.extrusion?.batches || [];
-    const impB = req?.production?.impresion?.batches || [];
-    const selB = req?.production?.sellado?.batches || [];
-    
-    let mpC = []; 
-    extB.forEach(b => { 
-       (b?.insumos || []).forEach(ing => { 
-          const ex = mpC.find(i => i?.id === ing?.id); 
-          if(ex) ex.qty += (ing?.qty || 0); else mpC.push({...ing}); 
-       }); 
-    });
-
+    const extB = req?.production?.extrusion?.batches || []; const impB = req?.production?.impresion?.batches || []; const selB = req?.production?.sellado?.batches || [];
+    let mpC = []; extB.forEach(b => { (b?.insumos || []).forEach(ing => { const ex = mpC.find(i => i?.id === ing?.id); if(ex) ex.qty += (ing?.qty || 0); else mpC.push({...ing}); }); });
     const totMP = mpC.reduce((s, i) => s + (i?.qty || 0), 0) || 0;
-    
-    const extP = extB.reduce((a,b)=>a+parseNum(b?.producedKg),0);
-    const impP = impB.reduce((a,b)=>a+parseNum(b?.producedKg),0);
-    const selP = selB.reduce((a,b)=>a+parseNum(b?.producedKg),0);
-    
-    const extMerma = extB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
-    const impMerma = impB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
-    const selMerma = selB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
+    const extP = extB.reduce((a,b)=>a+parseNum(b?.producedKg),0); const impP = impB.reduce((a,b)=>a+parseNum(b?.producedKg),0); const selP = selB.reduce((a,b)=>a+parseNum(b?.producedKg),0);
+    const extMerma = extB.reduce((a,b)=>a+parseNum(b?.mermaKg),0); const impMerma = impB.reduce((a,b)=>a+parseNum(b?.mermaKg),0); const selMerma = selB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
     const totalMerma = extMerma + impMerma + selMerma;
-
     const totUnid = isTermo ? (selP > 0 ? selP : extP) : selB.reduce((s, b) => s + parseNum(b?.millaresProd || b?.techParams?.millares || 0), 0);
     const unitF = isBolsas ? 'MILLARES' : 'KG';
 
@@ -2054,12 +1872,7 @@ export default function App() {
         <div className="grid grid-cols-4 gap-4 bg-gray-50 p-4 rounded-xl mb-6 text-[10px] font-bold uppercase border border-gray-200">
            <div><span className="text-gray-500 block mb-1">CLIENTE:</span> {req?.client}</div>
            <div className="col-span-2"><span className="text-gray-500 block mb-1">PRODUCTO:</span> {req?.desc}</div>
-           <div className="text-right">
-              <span className="text-gray-500 block mb-1">META SOLICITADA:</span> 
-              <span className="text-orange-600 font-black text-sm">
-                 {formatNum(req?.cantidad || req?.requestedKg)} {isBolsas ? req?.presentacion : 'KG'}
-              </span>
-           </div>
+           <div className="text-right"><span className="text-gray-500 block mb-1">META SOLICITADA:</span> <span className="text-orange-600 font-black text-sm">{formatNum(req?.cantidad || req?.requestedKg)} {isBolsas ? req?.presentacion : 'KG'}</span></div>
            <div><span className="text-gray-500 block mb-1">FECHA INICIO (PLANTA):</span> <span className="text-black">{getFI()}</span></div>
            <div><span className="text-gray-500 block mb-1">FECHA CIERRE (PLANTA):</span> <span className="text-black">{getFF()}</span></div>
         </div>
@@ -2075,7 +1888,6 @@ export default function App() {
                  </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 print:divide-black">
-                 {/* MATERIA PRIMA */}
                  <tr><td colSpan="4" className="p-2 print:p-1.5 font-black uppercase text-[11px] text-orange-600 bg-orange-50 font-black print:text-black print:bg-transparent">1. MATERIA PRIMA CONSUMIDA (EXTRUSIÓN)</td></tr>
                  {mpC.length > 0 ? mpC.map((ing, i) => (
                     <tr key={i} className="hover:bg-gray-50">
@@ -2092,20 +1904,14 @@ export default function App() {
                     <td className="p-2 print:p-1.5 text-right text-gray-600 font-black">Ingreso real a Planta</td>
                  </tr>
                  
-                 {/* MERMAS Y PRODUCCION INTERMEDIA */}
                  <tr><td colSpan="4" className="p-2 print:p-1.5 pt-4 font-black uppercase text-[11px] text-orange-600 bg-orange-50 font-black print:text-black print:bg-transparent">2. DETALLE DE MERMAS POR FASE</td></tr>
-                 <tr>
-                    <td className="p-2 print:p-1.5 pl-4 font-bold text-gray-800 font-black">MERMA FASE EXTRUSIÓN</td>
-                    <td className="p-2 print:p-1.5 text-center text-red-600 font-black">{formatNum(extMerma)}</td>
-                    <td className="p-2 print:p-1.5 text-center text-gray-500 font-black">kg</td>
-                    <td className="p-2 print:p-1.5 text-right text-gray-600 font-black">{totMP > 0 ? formatNum((extMerma/totMP)*100) : '0,00'}% de la mezcla</td>
-                 </tr>
+                 <tr><td className="p-2 print:p-1.5 pl-4 font-bold text-gray-800 font-black">MERMA FASE EXTRUSIÓN</td><td className="p-2 print:p-1.5 text-center text-red-600 font-black">{formatNum(extMerma)}</td><td className="p-2 print:p-1.5 text-center text-gray-500 font-black">kg</td><td className="p-2 print:p-1.5 text-right text-gray-600 font-black">{totMP > 0 ? formatNum((extMerma/totMP)*100) : '0,00'}% de la mezcla</td></tr>
                  {impB.length > 0 && <tr><td className="p-2 print:p-1.5 pl-4 font-bold text-gray-800 font-black">MERMA FASE IMPRESIÓN</td><td className="p-2 print:p-1.5 text-center text-red-600 font-black">{formatNum(impMerma)}</td><td className="p-2 print:p-1.5 text-center text-gray-500 font-black">kg</td><td className="p-2 print:p-1.5 text-right text-gray-600 font-black">{impP > 0 ? formatNum((impMerma/impP)*100) : '0,00'}% del impreso</td></tr>}
                  <tr><td className="p-2 print:p-1.5 pl-4 font-bold text-gray-800 font-black">MERMA FASE SELLADO</td><td className="p-2 print:p-1.5 text-center text-red-600 font-black">{formatNum(selMerma)}</td><td className="p-2 print:p-1.5 text-center text-gray-500 font-black">kg</td><td className="p-2 print:p-1.5 text-right text-gray-600 font-black">{selP > 0 ? formatNum((selMerma/selP)*100) : '0,00'}% del sellado</td></tr>
                  
                  <tr><td colSpan="4" className="p-2 print:p-1.5 pt-4 font-black uppercase text-[11px] text-orange-600 bg-orange-50 font-black print:text-black print:bg-transparent">3. RESULTADO FINAL</td></tr>
                  <tr className="bg-gray-100 font-black border-y-2 border-gray-300 print:bg-gray-200 font-black"><td className="p-2 print:p-1.5 pl-4 text-red-700 font-black">TOTAL MERMA ACUMULADA</td><td className="p-2 print:p-1.5 text-center text-red-700 font-black text-base">{formatNum(totalMerma)}</td><td className="p-2 print:p-1.5 text-center text-red-700 font-black">kg</td><td className="p-2 print:p-1.5 text-right text-red-700 font-black">Merma Total del Proceso: {totMP > 0 ? formatNum((totalMerma/totMP)*100) : '0,00'}%</td></tr>
-                 <tr className="bg-black font-black border-y-4 border-orange-500 text-[12px] text-white print:border-black print:bg-white print:text-black font-black"><td className="p-3 print:p-2 pl-4 font-black">PRODUCCIÓN FINAL LÍQUIDA</td><td className="p-3 print:p-2 text-center text-orange-600 font-black text-3xl">{isBolsas ? formatNum(totUnid) : formatNum(totUnid)}</td><td className="p-3 print:p-2 text-center text-orange-600 font-black text-2xl">{unitF}</td><td className="p-3 print:p-2 text-right text-gray-400 print:text-gray-700 text-[9px] font-black">{isBolsas ? `PESO POR MILLAR REAL: ${realPesoMillar.toFixed(3)} KG` : 'ENTREGA FINAL'}</td></tr>
+                 <tr className="bg-black font-black border-y-4 border-orange-500 text-[12px] text-white print:border-black print:bg-white print:text-black font-black"><td className="p-3 print:p-2 pl-4 font-black">PRODUCCIÓN FINAL LÍQUIDA</td><td className="p-3 print:p-2 text-center text-orange-600 font-black text-3xl">{formatNum(totUnid)}</td><td className="p-3 print:p-2 text-center text-orange-600 font-black text-2xl">{unitF}</td><td className="p-3 print:p-2 text-right text-gray-400 print:text-gray-700 text-[9px] font-black">{isBolsas ? `PESO POR MILLAR REAL: ${realPesoMillar.toFixed(3)} KG` : 'ENTREGA FINAL'}</td></tr>
               </tbody>
            </table>
         </div>
@@ -2114,8 +1920,7 @@ export default function App() {
   };
 
   if (!appUser) return <ErrorBoundary>{renderLogin()}</ErrorBoundary>;
-
-return (
+  return (
     <ErrorBoundary>
       <div className="min-h-screen bg-gray-100 text-gray-900 font-sans flex flex-col print:bg-white print:block print:w-full overflow-x-hidden print:overflow-visible text-black font-black">
         <header className="bg-black border-b-4 border-orange-500 sticky top-0 z-50 text-white shadow-md print:hidden">
@@ -2139,17 +1944,18 @@ return (
             </div>
           </div>
         </header>
+
         <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 flex flex-col md:flex-row gap-8 flex-1 print:p-0 print:m-0 print:block">
           {activeTab !== 'home' && (
             <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
               <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 transition-all active:scale-95 uppercase tracking-widest"><Home size={18} className="text-orange-500" /> INICIO</button>
-              
-              {appUser?.permissions?.costos && (
-                 <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'costos' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><BarChart3 size={18} className={activeTab === 'costos' ? 'text-white' : 'text-gray-400'} /> COSTOS</button>
+
+              {appUser?.permissions?.costos && activeTab === 'costos' && (
+                <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><BarChart3 size={18} className="text-white" /> COSTOS</button>
               )}
-              
-              {appUser?.permissions?.configuracion && (
-                 <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'configuracion' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><Settings2 size={18} className={activeTab === 'configuracion' ? 'text-white' : 'text-gray-400'} /> CONFIGURACIÓN</button>
+
+              {appUser?.permissions?.configuracion && activeTab === 'configuracion' && (
+                <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><Settings2 size={18} className="text-white" /> CONFIGURACIÓN</button>
               )}
 
               {activeTab === 'ventas' && appUser?.permissions?.ventas && (
@@ -2165,6 +1971,7 @@ return (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Producción Planta</h3>
                   <button onClick={() => {clearAllReports(); setProdView('calculadora');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'calculadora' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Calculator size={16}/> Simulador OP</button>
+                  <button onClick={() => {clearAllReports(); setProdView('proyeccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'proyeccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><TrendingUp size={16}/> Proyección MP</button>
                   <button onClick={() => {clearAllReports(); setProdView('fases_produccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'fases_produccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><PlayCircle size={16}/> Control Fases</button>
                   <button onClick={() => {clearAllReports(); setProdView('historial');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'historial' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><History size={16}/> Historial y Finiquito</button>
                 </div>
@@ -2178,14 +1985,15 @@ return (
                   <button onClick={() => {clearAllReports(); setInvView('descargo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'descargo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowUpFromLine size={16}/> Descargo</button>
                   <button onClick={() => {clearAllReports(); setInvView('ajuste');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'ajuste' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Settings2 size={16}/> Ajuste</button>
                   <button onClick={() => {clearAllReports(); setInvView('kardex');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'kardex' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><History size={16}/> Kardex</button>
-                  <button onClick={() => {clearAllReports(); setInvView('reporte177');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'reporte177' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Art 177 LISLR</button>
+                  <button onClick={() => {clearAllReports(); setInvView('reportes_mod');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'reportes_mod' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Reportes Inv.</button>
+                  <button onClick={() => {clearAllReports(); setInvView('reporte177');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'reporte177' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileCheck size={16}/> Art 177 LISLR</button>
                   <button onClick={() => {clearAllReports(); setInvView('requisiciones');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'requisiciones' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ClipboardList size={16}/> Requisiciones OP</button>
                 </div>
               )}
             </nav>
           )}
           
-          <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' || activeTab === 'costos' ? 'flex items-center justify-center' : ''}`}>
+          <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' || activeTab === 'costos' || activeTab === 'configuracion' ? 'flex items-center justify-center' : ''}`}>
             {activeTab === 'home' && renderHome()}
             {activeTab === 'ventas' && renderVentasModule()}
             {activeTab === 'produccion' && renderProductionModule()}
@@ -2200,7 +2008,7 @@ return (
             )}
             
             {activeTab === 'configuracion' && (
-              <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden animate-in fade-in">
+              <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden animate-in fade-in w-full">
                  <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center">
                     <h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><Settings2 className="text-orange-500" size={24}/> Gestión de Usuarios y Permisos</h2>
                  </div>
@@ -2287,6 +2095,7 @@ return (
             )}
           </main>
         </div>
+        
         {dialog && (
           <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[9999] print:hidden">
             <div className="bg-white rounded-3xl shadow-2xl border-t-8 border-orange-500 p-8 w-full max-w-md transform animate-in zoom-in-95">
