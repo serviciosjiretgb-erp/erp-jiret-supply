@@ -119,7 +119,7 @@ export default function App() {
   const [ventasView, setVentasView] = useState('facturacion'); 
   const [prodView, setProdView] = useState('calculadora');
   const [invView, setInvView] = useState('catalogo');
-  const [invReportType, setInvReportType] = useState('cargos');
+  const [invReportType, setInvReportType] = useState('entradas');
 
   const [inventory, setInventory] = useState([]);
   const [invMovements, setInvMovements] = useState([]); 
@@ -213,6 +213,7 @@ export default function App() {
   };
 
   useEffect(() => { signInAnonymously(auth).catch(err => console.error(err)); const unsubscribe = onAuthStateChanged(auth, setFbUser); return () => unsubscribe(); }, []);
+  
   useEffect(() => {
     if (!fbUser) return; let isFirstInv = true;
     const unsubUsers = onSnapshot(getColRef('users'), (s) => {
@@ -536,15 +537,11 @@ export default function App() {
   const simUmFinal = isBolsas ? 'Millares' : 'KG';
 
   // ============================================================================
-  // LÓGICA DE PROYECCIÓN DE MP Y ORDEN DE COMPRA (NUEVO)
+  // LÓGICA DE PROYECCIÓN DE MP Y ORDEN DE COMPRA
   // ============================================================================
   const generateProjectionData = () => {
-    // Promedio diario basado en ultimos 30 dias de salidas
     const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
     const recentMovs = invMovements.filter(m => m.type === 'SALIDA' && m.timestamp >= thirtyDaysAgo);
-    
-    // Demanda de OP Pendientes (Req. EN PROCESO o Requisiciones no aprobadas)
-    // Para simplificar y ser exactos con el requerimiento "requisiciones abiertas que aún no han entrado", leemos invRequisitions PENDIENTE.
     const pendingReqs = invRequisitions.filter(r => r.status === 'PENDIENTE');
 
     return inventory.filter(i => i.category === 'Materia Prima').map(mp => {
@@ -560,7 +557,6 @@ export default function App() {
        const availableReal = mp.stock - committedStock;
        const daysRemaining = dailyAvg > 0 ? availableReal / dailyAvg : 999;
        
-       // Sugerencia: Si días < 15 o deficitario, pedir deficit + 15 días de buffer
        const suggestOrder = (daysRemaining < 15 || availableReal < 0) ? Math.abs(availableReal < 0 ? availableReal : 0) + (dailyAvg * 15) : 0; 
 
        return { ...mp, dailyAvg, daysRemaining, committedStock, availableReal, suggestOrder };
@@ -586,8 +582,83 @@ export default function App() {
     </div>
   );
 
+  const renderLogin = () => (
+    <div className="min-h-screen flex items-center justify-center p-4 relative" 
+         style={{ backgroundImage: `url('${settings?.loginBg || "https://images.unsplash.com/photo-1587293852726-70cdb56c2866?q=80&w=2072&auto=format&fit=crop"}')`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+       
+       <div className="absolute top-4 right-4 z-20">
+          <label className="bg-black/50 hover:bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase cursor-pointer backdrop-blur-sm transition-all flex items-center gap-2 border border-white/20 shadow-lg">
+             <Edit size={14}/> Cambiar Fondo
+             <input type="file" accept="image/*" className="hidden" onChange={handleBgUpload} />
+          </label>
+       </div>
+
+       <div className="relative z-10 bg-white rounded-3xl shadow-[0_30px_60px_rgba(0,0,0,0.6)] overflow-hidden w-full max-w-4xl flex transform transition-all duration-500 hover:scale-[1.01] border border-white/20">
+          <div className="w-1/2 bg-gradient-to-br from-gray-900 to-black p-12 flex-col justify-between hidden md:flex relative overflow-hidden shadow-[inset_-10px_0_20px_rgba(0,0,0,0.5)] border-r border-gray-800">
+             <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-tr from-white/10 to-transparent transform -skew-x-12 pointer-events-none"></div>
+             <div className="relative z-10">
+               <div className="flex items-center bg-white rounded-2xl px-4 py-2 shadow-[0_10px_20px_rgba(0,0,0,0.4)] w-fit transform hover:translate-x-1 hover:-translate-y-1 transition-transform duration-300">
+                  <span className="text-black font-black text-4xl leading-none drop-shadow-sm">G</span><span className="text-orange-500 font-black text-3xl mx-1 drop-shadow-sm">&amp;</span><span className="text-black font-black text-4xl leading-none drop-shadow-sm">B</span>
+               </div>
+               <h1 className="text-white text-3xl font-black mt-10 uppercase tracking-widest drop-shadow-lg">Supply ERP</h1>
+               <p className="text-gray-300 mt-4 text-sm leading-relaxed drop-shadow-md">Sistema Integrado de Producción e Inventario para Servicios Jiret G&B C.A.</p>
+             </div>
+             <div className="relative z-10 text-gray-500 text-xs font-bold uppercase tracking-widest">© {new Date().getFullYear()} Todos los derechos reservados</div>
+          </div>
+          <div className="w-full md:w-1/2 p-12 flex flex-col justify-center bg-white relative z-10">
+             <h2 className="text-2xl font-black text-black uppercase tracking-widest mb-2">Iniciar Sesión</h2>
+             <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-8">Ingresa tus credenciales de acceso</p>
+             {loginError && (<div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)]"><AlertTriangle size={16}/> {loginError}</div>)}
+             <form onSubmit={handleLogin} className="space-y-6">
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Usuario</label>
+                  <div className="relative group"><User className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="text" value={loginData.username} onChange={e=>setLoginData({...loginData, username: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="EJ: ADMIN o PLANTA"/></div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Contraseña</label>
+                  <div className="relative group"><Lock className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="password" value={loginData.password} onChange={e=>setLoginData({...loginData, password: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="••••••••"/></div>
+                </div>
+                <button type="submit" className="w-full bg-gradient-to-r from-orange-500 to-orange-600 text-white font-black py-4 rounded-xl shadow-[0_8px_20px_rgba(249,115,22,0.4)] hover:shadow-[0_15px_25px_rgba(249,115,22,0.6)] hover:-translate-y-1 active:translate-y-1 uppercase tracking-widest text-xs flex justify-center items-center gap-2 mt-4 transform transition-all">ENTRAR AL SISTEMA <ArrowRight size={16}/></button>
+             </form>
+          </div>
+       </div>
+    </div>
+  );
+
+  const renderHome = () => {
+    const hasPerm = (module) => appUser?.permissions ? appUser.permissions[module] : appUser?.role === 'Master';
+    
+    return (
+      <div className="w-full max-w-6xl mx-auto py-8 animate-in fade-in">
+        <div className="text-center mb-10">
+          <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
+          <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
+          {hasPerm('ventas') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Users size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3><p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p></button>
+          )}
+          {hasPerm('produccion') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
+          )}
+          {hasPerm('inventario') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p></button>
+          )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
+          {hasPerm('costos') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('costos'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Reportes de Costo</h3><p className="text-xs text-gray-400 mt-2">Módulo en construcción.</p></button>
+          )}
+          {hasPerm('configuracion') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><Settings2 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3><p className="text-xs text-gray-400 mt-2">Usuarios y Permisos.</p></button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const renderInventoryReports = () => {
-     // Modulo Reportes Inventario (Entradas, Salidas, Ajustes, Catálogo)
      let filteredData = [];
      if (invReportType === 'entradas') filteredData = invMovements.filter(m => m.type === 'ENTRADA');
      if (invReportType === 'salidas') filteredData = invMovements.filter(m => m.type === 'SALIDA' || m.type === 'AUTOCONSUMO');
@@ -650,7 +721,6 @@ export default function App() {
   };
 
   const renderInventoryModule = () => {
-    // COMPROBANTE DE MOVIMIENTO
     if (showMovementReceipt) {
       const m = showMovementReceipt;
       return (
@@ -691,7 +761,6 @@ export default function App() {
 
     return (
       <div className="animate-in fade-in space-y-6">
-        {/* MODULO: REQUISICIONES DE ALMACEN */}
         {invView === 'requisiciones' && (
            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
              <div className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
@@ -752,7 +821,6 @@ export default function App() {
            </div>
         )}
 
-        {/* MODAL DE APROBACIÓN DE REQUISICIÓN */}
         {reqToApprove && (
            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-[9999] p-4">
               <div className="bg-white rounded-3xl p-10 max-w-2xl w-full shadow-2xl border-t-8 border-orange-500 transform animate-in zoom-in-95">
@@ -1439,7 +1507,7 @@ export default function App() {
     const activeOrders = (requirements || []).filter(r => r?.status === 'EN PROCESO');
     const completedOrders = (requirements || []).filter(r => r?.status === 'COMPLETADO');
     
-    // VISTA DE PROYECCIÓN DE MATERIA PRIMA (NUEVO MÓDULO)
+    // VISTA DE PROYECCIÓN DE MATERIA PRIMA
     if (prodView === 'proyeccion') {
        const proyeccionData = generateProjectionData();
        return (
@@ -1747,7 +1815,7 @@ export default function App() {
           </div>
         )}
 
-        {/* CONTROL DE FASES */}
+        {/* CONTROL DE FASES (REPORTE DIARIO DE INSUMOS Y PRODUCCION DIRECTA) */}
         {prodView === 'fases_produccion' && (
           <div className="space-y-6">
             {!selectedPhaseReqId ? (
@@ -1951,12 +2019,12 @@ export default function App() {
             <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
               <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 transition-all active:scale-95 uppercase tracking-widest"><Home size={18} className="text-orange-500" /> INICIO</button>
 
-              {appUser?.permissions?.costos && activeTab === 'costos' && (
-                <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><BarChart3 size={18} className="text-white" /> COSTOS</button>
+              {appUser?.permissions?.costos && (
+                <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'costos' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><BarChart3 size={18} className={activeTab === 'costos' ? 'text-white' : 'text-gray-400'} /> COSTOS</button>
               )}
 
-              {appUser?.permissions?.configuracion && activeTab === 'configuracion' && (
-                <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><Settings2 size={18} className="text-white" /> CONFIGURACIÓN</button>
+              {appUser?.permissions?.configuracion && (
+                <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'configuracion' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><Settings2 size={18} className={activeTab === 'configuracion' ? 'text-white' : 'text-gray-400'} /> CONFIGURACIÓN</button>
               )}
 
               {activeTab === 'ventas' && appUser?.permissions?.ventas && (
