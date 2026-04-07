@@ -55,7 +55,7 @@ const compressImage = (file, callback) => {
 };
 
 // ============================================================================
-// CONFIGURACIÓN DE FIREBASE
+// CONFIGURACIÓN DE FIREBASE BLINDADA
 // ============================================================================
 const firebaseConfig = {
   apiKey: "AIzaSyBri2uZAaxsH4S0OpqhYvXB4wfCqo4g3sk",
@@ -142,7 +142,7 @@ export default function App() {
   const [showSingleReqReport, setShowSingleReqReport] = useState(null);
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
   const [showMovementReceipt, setShowMovementReceipt] = useState(null);
-  const [showPurchaseOrder, setShowPurchaseOrder] = useState(false); // NUEVO ESTADO PARA ORDEN DE COMPRA
+  const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
 
   // Formularios de Configuración
   const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
@@ -205,7 +205,6 @@ export default function App() {
     const overflows = element.querySelectorAll('.overflow-x-auto'); 
     overflows.forEach(el => { el.style.overflow = 'visible'; });
 
-    // Configuramos html2pdf para que autoescuadre al ancho A4 (190mm utiles aprox)
     const opt = { 
        margin: [10, 10, 10, 10], 
        filename: `${filename}_${getTodayDate()}.pdf`, 
@@ -394,17 +393,51 @@ export default function App() {
   const handleDeleteInvoice = (id) => setDialog({ title: 'Eliminar', text: `¿Eliminar factura?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('maquilaInvoices', id))});
   
   const generateReqId = () => `OP-${((requirements || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(5, '0')}`;
+  
+  // FUNCIÓN CORREGIDA Y ORDENADA EN MÚLTIPLES LÍNEAS
   const handleReqFormChange = (field, value) => {
     let f = { ...newReqForm, [field]: typeof value === 'string' ? value.toUpperCase() : value };
-    if (field === 'client') { const c = (clients || []).find(cl => cl.name === (value||'').toUpperCase()); if (c && c.vendedor) f.vendedor = c.vendedor.toUpperCase(); }
-    if (field === 'tipoProducto' && value === 'TERMOENCOGIBLE') f.presentacion = 'KILOS';
-    const w = parseNum(f.ancho), l = parseNum(f.largo), m = parseNum(f.micras), fu = parseNum(f.fuelles), c = parseNum(f.cantidad), tipo = f.tipoProducto;
+    
+    if (field === 'client') { 
+      const c = (clients || []).find(cl => cl.name === (value||'').toUpperCase()); 
+      if (c && c.vendedor) f.vendedor = c.vendedor.toUpperCase(); 
+    }
+    
+    if (field === 'tipoProducto' && value === 'TERMOENCOGIBLE') {
+      f.presentacion = 'KILOS';
+    }
+    
+    const w = parseNum(f.ancho);
+    const l = parseNum(f.largo);
+    const m = parseNum(f.micras);
+    const fu = parseNum(f.fuelles);
+    const c = parseNum(f.cantidad);
+    const tipo = f.tipoProducto;
+    
     if (w > 0 && m > 0) {
       const micFmt = m < 1 && m > 0 ? Math.round(m * 1000) : m;
-      if (tipo === 'BOLSAS' && l > 0) { const pEst = (w + fu) * l * m; f.pesoMillar = pEst.toFixed(2); f.desc = fu > 0 ? `(${w}+${fu/2}+${fu/2})X${l}X${micFmt}MIC | ${f.color || ''}`; f.requestedKg = f.presentacion === 'KILOS' ? c.toFixed(2) : (pEst * c).toFixed(2); } 
-      else if (tipo === 'TERMOENCOGIBLE') { f.pesoMillar = 'N/A'; f.desc = `TERMOENCOGIBLE ${w}CM X ${micFmt}MIC | ${f.color || ''}`; f.requestedKg = c > 0 ? c.toFixed(2) : '0.00'; } 
-      else { f.pesoMillar = '0.00'; f.requestedKg = '0.00'; }
-    } else { f.pesoMillar = tipo === 'TERMOENCOGIBLE' ? 'N/A' : '0.00'; f.requestedKg = f.presentacion === 'KILOS' && c > 0 ? c.toFixed(2) : '0.00'; }
+      
+      if (tipo === 'BOLSAS' && l > 0) { 
+        const pEst = (w + fu) * l * m; 
+        f.pesoMillar = pEst.toFixed(2); 
+        f.desc = fu > 0 
+          ? `(${w}+${fu/2}+${fu/2})X${l}X${micFmt}MIC | ${f.color || ''}` 
+          : `${w}X${l}X${micFmt}MIC | ${f.color || ''}`; 
+        f.requestedKg = f.presentacion === 'KILOS' ? c.toFixed(2) : (pEst * c).toFixed(2); 
+      } 
+      else if (tipo === 'TERMOENCOGIBLE') { 
+        f.pesoMillar = 'N/A'; 
+        f.desc = `TERMOENCOGIBLE ${w}CM X ${micFmt}MIC | ${f.color || ''}`; 
+        f.requestedKg = c > 0 ? c.toFixed(2) : '0.00'; 
+      } 
+      else { 
+        f.pesoMillar = '0.00'; 
+        f.requestedKg = '0.00'; 
+      }
+    } else { 
+      f.pesoMillar = tipo === 'TERMOENCOGIBLE' ? 'N/A' : '0.00'; 
+      f.requestedKg = f.presentacion === 'KILOS' && c > 0 ? c.toFixed(2) : '0.00'; 
+    }
     setNewReqForm(f);
   };
 
@@ -569,13 +602,11 @@ export default function App() {
   const simUmFinal = isBolsas ? 'Millares' : 'KG';
 
   // ============================================================================
-  // LÓGICA DE PROYECCIÓN DE MP Y ORDEN DE COMPRA (NUEVO)
+  // LÓGICA DE PROYECCIÓN DE MP Y ORDEN DE COMPRA
   // ============================================================================
   const generateProjectionData = () => {
-    // Promedio diario basado en ultimos 30 dias de salidas
     const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
     const recentMovs = invMovements.filter(m => m.type === 'SALIDA' && m.timestamp >= thirtyDaysAgo);
-    
     const pendingReqs = invRequisitions.filter(r => r.status === 'PENDIENTE');
     const activeOPs = requirements.filter(r => r.status === 'EN PROCESO');
 
@@ -1479,6 +1510,9 @@ export default function App() {
     if (showPhaseReport) return renderPhaseReport();
     if (showFiniquito) return renderFiniquito();
 
+    const activeOrders = (requirements || []).filter(r => r?.status === 'EN PROCESO');
+    const completedOrders = (requirements || []).filter(r => r?.status === 'COMPLETADO');
+    
     // VISTA DE LA ORDEN DE COMPRA (PROCURA)
     if (showPurchaseOrder) {
        const proyeccionData = generateProjectionData().filter(mp => mp.suggestOrder > 0);
@@ -1530,9 +1564,6 @@ export default function App() {
        );
     }
 
-    const activeOrders = (requirements || []).filter(r => r?.status === 'EN PROCESO');
-    const completedOrders = (requirements || []).filter(r => r?.status === 'COMPLETADO');
-    
     // VISTA DE PROYECCIÓN DE MATERIA PRIMA
     if (prodView === 'proyeccion') {
        const proyeccionData = generateProjectionData();
@@ -1848,7 +1879,7 @@ export default function App() {
           </div>
         )}
 
-        {/* CONTROL DE FASES */}
+        {/* CONTROL DE FASES (REPORTE DIARIO DE INSUMOS Y PRODUCCION DIRECTA) */}
         {prodView === 'fases_produccion' && (
           <div className="space-y-6">
             {!selectedPhaseReqId ? (
@@ -2052,15 +2083,15 @@ export default function App() {
             <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
               <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 transition-all active:scale-95 uppercase tracking-widest"><Home size={18} className="text-orange-500" /> INICIO</button>
 
-              {appUser?.permissions?.costos && (
-                <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'costos' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><BarChart3 size={18} className={activeTab === 'costos' ? 'text-white' : 'text-gray-400'} /> COSTOS</button>
+              {appUser?.permissions?.costos && activeTab === 'costos' && (
+                <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><BarChart3 size={18} className="text-white" /> COSTOS</button>
               )}
 
-              {appUser?.permissions?.configuracion && (
-                <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'configuracion' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><Settings2 size={18} className={activeTab === 'configuracion' ? 'text-white' : 'text-gray-400'} /> CONFIGURACIÓN</button>
+              {appUser?.permissions?.configuracion && activeTab === 'configuracion' && (
+                <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><Settings2 size={18} className="text-white" /> CONFIGURACIÓN</button>
               )}
 
-              {activeTab === 'ventas' && appUser?.permissions?.ventas && (
+              {activeTab === 'ventas' && (appUser?.permissions?.ventas || appUser?.role === 'Master') && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Área Ventas</h3>
                   <button onClick={() => {clearAllReports(); setVentasView('facturacion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'facturacion' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Receipt size={16}/> Facturación</button>
@@ -2069,7 +2100,7 @@ export default function App() {
                 </div>
               )}
 
-              {activeTab === 'produccion' && appUser?.permissions?.produccion && (
+              {activeTab === 'produccion' && (appUser?.permissions?.produccion || appUser?.role === 'Master') && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Producción Planta</h3>
                   <button onClick={() => {clearAllReports(); setProdView('calculadora');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'calculadora' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Calculator size={16}/> Simulador OP</button>
@@ -2079,7 +2110,7 @@ export default function App() {
                 </div>
               )}
 
-              {activeTab === 'inventario' && appUser?.permissions?.inventario && (
+              {activeTab === 'inventario' && (appUser?.permissions?.inventario || appUser?.role === 'Master') && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Control Inventario</h3>
                   <button onClick={() => {clearAllReports(); setInvView('catalogo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'catalogo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Box size={16}/> Catálogo</button>
