@@ -11,7 +11,7 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, serverTimestamp, query } from "firebase/firestore";
 
 // ============================================================================
-// ESCUDO DE ERRORES EXTREMO
+// ESCUDO DE ERRORES EXTREMO (Evita la pantalla blanca)
 // ============================================================================
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, errorMsg: '' }; }
@@ -160,12 +160,16 @@ export default function App() {
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
+  // ============================================================================
+  // EXPORTACIONES (SOLUCIÓN DEFINITIVA PARA CORTES DE PDF)
+  // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content');
     if (!element) return;
     
     const printOnlyElements = element.querySelectorAll('.hidden.print\\:block, .hidden.pdf-header');
     printOnlyElements.forEach(el => { el.style.display = 'block'; });
+    
     const noPdfElements = element.querySelectorAll('.no-pdf');
     noPdfElements.forEach(el => { el.style.display = 'none'; });
 
@@ -179,7 +183,12 @@ export default function App() {
     element.style.margin = '0 auto';
     
     const tables = element.querySelectorAll('table');
-    tables.forEach(t => { t.style.whiteSpace = 'normal'; t.style.tableLayout = 'auto'; t.style.width = '100%'; });
+    tables.forEach(t => { 
+      t.style.whiteSpace = 'normal'; 
+      t.style.tableLayout = 'auto'; 
+      t.style.width = '100%';
+    });
+
     const overflows = element.querySelectorAll('.overflow-x-auto');
     overflows.forEach(el => { el.style.overflow = 'visible'; });
 
@@ -205,7 +214,9 @@ export default function App() {
       script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; 
       script.onload = () => { window.html2pdf().set(opt).from(element).save().then(finishExport); }; 
       document.head.appendChild(script); 
-    } else { window.html2pdf().set(opt).from(element).save().then(finishExport); }
+    } else { 
+      window.html2pdf().set(opt).from(element).save().then(finishExport); 
+    }
   };
 
   const handleExportExcel = (tableId, filename) => {
@@ -216,6 +227,9 @@ export default function App() {
     const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${filename}_${getTodayDate()}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
+  // ============================================================================
+  // FIREBASE SYNC E INICIO
+  // ============================================================================
   const handleLogin = (e) => {
     e.preventDefault();
     const user = loginData.username.toLowerCase().trim(); const pass = loginData.password.trim();
@@ -256,6 +270,9 @@ export default function App() {
     setSelectedPhaseReqId(null);
   };
 
+  // ============================================================================
+  // LOGICA INVENTARIO
+  // ============================================================================
   const handleSaveInvItem = async (e) => {
     e.preventDefault(); if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
     const itemData = { ...newInvItemForm, id: newInvItemForm.id.toUpperCase(), desc: newInvItemForm.desc.toUpperCase(), cost: parseNum(newInvItemForm.cost), stock: parseNum(newInvItemForm.stock), timestamp: Date.now() };
@@ -318,7 +335,9 @@ export default function App() {
        });
        data.push({ category: cat, items: itemsData });
     }); return data;
-  };// ============================================================================
+  };
+
+  // ============================================================================
   // LÓGICA VENTAS Y FACTURACIÓN (SELLADA / INTACTA)
   // ============================================================================
   const handleAddClient = async (e) => {
@@ -402,16 +421,16 @@ export default function App() {
     else if (activePhaseTab === 'sellado') mainCats = ['Consumibles', 'Herramientas'];
     const grouped = {}; (inventory || []).forEach(i => { const cat = i?.category || 'Otros'; if (!grouped[cat]) grouped[cat] = []; grouped[cat].push(i); });
     return (<><option value="">Seleccione Insumo...</option>
-      {mainCats.map(cat => grouped[cat] && grouped[cat].length > 0 && (
+      {mainCats.map(cat => (grouped[cat] && grouped[cat].length > 0) ? (
         <optgroup key={cat} label={`📌 ${cat.toUpperCase()} (Recomendado)`}>
           {(grouped[cat] || []).map(i => <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc} ({formatNum(i?.stock)} {i?.unit})</option>)}
         </optgroup>
-      ))}
-      {Object.keys(grouped).filter(c => !mainCats.includes(c)).map(cat => grouped[cat] && grouped[cat].length > 0 && (
+      ) : null)}
+      {Object.keys(grouped).filter(c => !mainCats.includes(c)).map(cat => (grouped[cat] && grouped[cat].length > 0) ? (
         <optgroup key={cat} label={`📂 ${cat.toUpperCase()} (Otros)`}>
           {(grouped[cat] || []).map(i => <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc} ({formatNum(i?.stock)} {i?.unit})</option>)}
         </optgroup>
-      ))}
+      ) : null)}
     </>);
   };
 
@@ -451,6 +470,8 @@ export default function App() {
     setPhaseForm({ ...initialPhaseForm, date: getTodayDate() }); 
     setDialog({ title: 'Éxito', text: 'Reporte guardado.', type: 'alert' });
   };
+
+// --- FIN DE LA PARTE 1 ---// --- INICIO DE LA PARTE 2 ---
 
   const handleDeleteBatch = async (reqId, phase, batchId) => {
     setDialog({ title: `ELIMINAR LOTE`, text: `¿Seguro que desea eliminar este lote parcial?`, type: 'confirm', onConfirm: async () => {
@@ -648,7 +669,7 @@ export default function App() {
                             <td className="py-3 px-4 font-bold border-r">{req.requestedBy}</td>
                             <td className="py-3 px-4 border-r">
                                <ul className="text-[9px] font-bold text-gray-600">
-                                  {req.items.map((it, i) => <li key={i}>• {((inventory || []).find(inv=>inv?.id===it?.id)?.desc || it?.id)} <span className="text-black">({it.qty})</span></li>)}
+                                  {(req.items || []).map((it, i) => <li key={i}>• {((inventory || []).find(inv=>inv?.id===it?.id)?.desc || it?.id)} <span className="text-black">({it.qty})</span></li>)}
                                </ul>
                             </td>
                             <td className="py-3 px-4 text-center border-r">
@@ -1072,7 +1093,7 @@ export default function App() {
       </div>
     );
   };
-// --- FIN PARTE 1 ---// --- INICIO PARTE 2 ---
+
   const renderVentasModule = () => {
     const filteredClients = (clients || []).filter(c => String(c?.name || '').toUpperCase().includes(clientSearchTerm.toUpperCase()) || String(c?.rif || '').toUpperCase().includes(clientSearchTerm.toUpperCase()));
     const filteredInvoices = (invoices || []).filter(inv => String(inv?.documento || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()) || String(inv?.clientName || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()));
@@ -1341,7 +1362,7 @@ export default function App() {
     );
   };
 
-// --- FIN DE LA PARTE 2 ---// --- INICIO DE LA PARTE 3 ---
+// --- FIN PARTE 2 ---// --- INICIO PARTE 3 ---
 
   const renderProductionModule = () => {
     if (showWorkOrder) return renderWorkOrder();
@@ -1493,6 +1514,7 @@ export default function App() {
                      </div>
                   </div>
                   
+                  {/* ALERTA DE MEDIDAS */}
                   {calcInputs?.tipoProducto === 'BOLSAS' && simPesoMillar === 0 && (
                      <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2 no-pdf">
                         <AlertTriangle size={16}/> Debes ingresar las medidas (Ancho, Fuelle, Largo, Micras) para calcular los KG.
@@ -1598,6 +1620,7 @@ export default function App() {
                     <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-3 space-y-2">{[{ id: 'extrusion', label: '1. Extrusión' }, { id: 'impresion', label: '2. Impresión' }, { id: 'sellado', label: '3. Sellado' }].map(tab => (<button key={tab.id} onClick={() => {setActivePhaseTab(tab.id); setPhaseForm({...initialPhaseForm, date: getTodayDate()});}} className={`w-full flex justify-between items-center p-5 rounded-2xl text-[10px] font-black uppercase transition-all ${activePhaseTab === tab.id ? 'bg-orange-50 text-orange-700 border-2 border-orange-200' : 'text-gray-500 hover:bg-gray-50'}`}><span>{tab.label}</span>{req.production?.[tab.id]?.isClosed && <CheckCircle size={18} className="text-green-500"/>}</button>))}</div>
                   </div>
                   
+                  {/* MODAL DE SOLICITUD DE MATERIALES */}
                   {showMatReqPanel && (
                      <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4 no-pdf">
                         <div className="bg-white rounded-3xl p-8 max-w-2xl w-full shadow-2xl animate-in zoom-in">
@@ -1620,7 +1643,7 @@ export default function App() {
                               }} className="bg-black text-white px-5 rounded-xl hover:bg-gray-800 transition-colors shadow-md"><Plus size={20}/></button>
                            </div>
                            <ul className="space-y-2 mb-6 max-h-40 overflow-y-auto pr-2">
-                              {matReqForm.items.map((it, idx) => (
+                              {(matReqForm?.items || []).map((it, idx) => (
                                  <li key={idx} className="flex justify-between items-center p-4 bg-gray-50 rounded-xl border border-gray-100 shadow-sm">
                                     <span className="text-xs font-black text-gray-800 uppercase">{((inventory || []).find(inv=>inv?.id===it?.id)?.desc || it?.id)}</span>
                                     <div className="flex items-center gap-4">
@@ -1629,10 +1652,10 @@ export default function App() {
                                     </div>
                                  </li>
                               ))}
-                              {matReqForm.items.length === 0 && <p className="text-center text-xs text-gray-400 font-bold py-6 uppercase tracking-widest border-2 border-dashed border-gray-200 rounded-xl">Sin insumos agregados</p>}
+                              {(matReqForm?.items || []).length === 0 && <p className="text-center text-xs text-gray-400 font-bold py-6 uppercase tracking-widest border-2 border-dashed border-gray-200 rounded-xl">Sin insumos agregados</p>}
                            </ul>
                            <button onClick={async () => {
-                              if(matReqForm.items.length===0) return;
+                              if((matReqForm?.items || []).length===0) return;
                               const newReq = { id: Date.now().toString(), opId: req.id, date: getTodayDate(), timestamp: Date.now(), requestedBy: appUser?.name, items: matReqForm.items, status: 'PENDIENTE' };
                               await setDoc(getDocRef('materialRequests', newReq.id), newReq);
                               setShowMatReqPanel(false); setMatReqForm({items: []});
@@ -1670,8 +1693,6 @@ export default function App() {
     );
   };
 
-// --- FIN PARTE 2 ---// --- INICIO PARTE 3 ---
-
   // --- VISTAS DE IMPRESIÓN (PRODUCCIÓN) ---
   const renderWorkOrder = () => {
     const req = (requirements || []).find(r => r?.id === showWorkOrder); if (!req) return null;
@@ -1687,7 +1708,6 @@ export default function App() {
         <div className="flex justify-between items-end border-b-2 border-black pb-1 mb-2"><div><div className="flex items-center -mb-1"><span className="text-black font-black text-3xl leading-none">G</span><span className="text-orange-500 font-black text-lg mx-0.5">&amp;</span><span className="text-black font-black text-3xl leading-none">B</span></div><p className="text-[6px] font-bold text-orange-500 uppercase mt-1 tracking-widest">Servicio y Calidad</p></div><div className="text-center flex-1"><h1 className="text-lg font-black uppercase tracking-widest">ORDEN DE TRABAJO PARA OP.</h1></div></div>
         <div className="grid grid-cols-3 text-[9px] font-bold uppercase mb-2 border-b-2 border-black pb-2"><div><p className="mb-1"><span className="w-16 inline-block font-black">CLIENTE:</span> {req.client}</p><p className="mb-1"><span className="w-16 inline-block font-black">OP:</span> #{String(req.id).replace('OP-', '').padStart(5, '0')}</p><p><span className="w-16 inline-block font-black">TIPO:</span> {req.tipoProducto || 'N/A'}</p></div><div><p className="mb-1"><span className="w-20 inline-block font-black">EMISIÓN:</span> {req.fecha}</p><p><span className="w-20 inline-block font-black text-orange-600 font-black">KG MATERIA PRIMA:</span> <span className="text-orange-600 font-black">{formatNum(totalMPKgRecipe)} KG</span></p></div><div><p className="mb-1"><span className="w-24 inline-block font-black">FECHA ENTRADA:</span> __________________</p><p><span className="w-24 inline-block font-black">FECHA SALIDA:</span> __________________</p></div></div>
         
-        {/* NUEVA SECCIÓN: META SOLICITADA SEGÚN IMAGEN 5 */}
         <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-3 flex justify-between items-center mb-2 shadow-inner"><div className="w-3/5"><span className="text-[11px] font-black text-orange-900 uppercase">META SOLICITADA POR EL CLIENTE ({isBolsas ? 'MILLARES' : 'KILOS'})</span><p className="text-[10px] font-bold text-gray-700 leading-tight">Cantidad bruta a entregar al cliente según nota de pedido. Incluye merma de sellado.</p></div><div className="text-right"><span className="text-4xl font-black text-orange-600">{isBolsas ? req?.cantidad : formatNum(req?.cantidad)}</span><span className="text-lg font-black text-orange-600 ml-1">{isBolsas ? req?.presentacion : 'KG'}</span></div></div>
 
         <div className="border-2 border-black p-2 mb-2 rounded-2xl overflow-hidden"><div className="font-black text-center border-b-2 border-black mb-2 py-0.5 text-xs bg-gray-100 uppercase font-black">Especificaciones Finales</div><div className="grid grid-cols-4 gap-2 text-center text-[9px] font-black uppercase bg-gray-50"><div>ANCHO<br/><span className="text-sm text-blue-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-blue-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-blue-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-blue-600">{req.micras}</span></div></div></div>
@@ -1695,7 +1715,6 @@ export default function App() {
         <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Impresión Flexográfica</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div><div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> __________________________</div><div><span className="font-black pr-1">TEMPERATURA:</span> __________________________</div><div className="col-span-2 border-t border-gray-300 pt-1 mt-1"><div className="flex justify-between mb-1"><span className="font-black">COLORES:</span><span>1 _______</span><span>2 _______</span><span>3 _______</span><span>4 _______</span><span>5 _______</span><span>6 _______</span></div></div></div></div>
         <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Sellado y Corte</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div><div><span className="font-black pr-1">CANT. PRODUCIDA (KG):</span> _______________</div><div><span className="font-black pr-1">CANT. PRODUCIDA MILLARES:</span> ___________</div></div></div>
         
-        {/* NUEVA SECCIÓN: FIRMAS AMPLIADAS SEGÚN IMAGEN 5 */}
         <div className="mt-6 border-t-2 border-black pt-2 text-black font-black uppercase text-[8px]"><div className="font-black mb-3">ESPACIO DE FIRMAS Y RESPONSABLES POR FASE:</div><div className="grid grid-cols-5 gap-3 text-center"><div className="border-t border-black pt-1">RESP. EXTRUSIÓN<br/>(OPERADOR)</div><div className="border-t border-black pt-1">RESP. IMPRESIÓN<br/>(OPERADOR)</div><div className="border-t border-black pt-1">RESP. SELLADO<br/>(OPERADOR)</div><div className="border-t border-black pt-1">CONTROL CALIDAD<br/>(INSPECTOR)</div><div className="border-t border-black pt-1">SUPERVISOR<br/>PLANTA</div></div></div>
       </div>
     );
@@ -1752,9 +1771,7 @@ export default function App() {
     const selMerma = selB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
     const totalMerma = extMerma + impMerma + selMerma;
 
-    // Producción Final Total (SEGÚN IMAGEN 7)
-    // Para bolsas, la meta real está en el sellado (millares)
-    // Para termo, la meta real está en el sellado (kg), o extrusión si no aplica sellado
+    // Producción Final Total
     const totUnid = isTermo ? (selP > 0 ? selP : extP) : selB.reduce((s, b) => s + parseNum(b?.millaresProd || b?.techParams?.millares || 0), 0);
     const unitF = isBolsas ? 'MILLARES' : 'KG';
 
