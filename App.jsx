@@ -139,9 +139,13 @@ export default function App() {
   const [showWorkOrder, setShowWorkOrder] = useState(null);
   const [showPhaseReport, setShowPhaseReport] = useState(null);
   const [showFiniquito, setShowFiniquito] = useState(null);
+  const [recipeEditReqId, setRecipeEditReqId] = useState(null);
   const [selectedPhaseReqId, setSelectedPhaseReqId] = useState(null);
   const [activePhaseTab, setActivePhaseTab] = useState('extrusion');
   const [phaseForm, setPhaseForm] = useState(initialPhaseForm);
+  const [tempRecipe, setTempRecipe] = useState([]);
+  const [newIngId, setNewIngId] = useState('');
+  const [newIngQty, setNewIngQty] = useState('');
   const [phaseIngId, setPhaseIngId] = useState('');
   const [phaseIngQty, setPhaseIngQty] = useState('');
 
@@ -155,10 +159,11 @@ export default function App() {
   };
   const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
 
+  // Formularios Inventario Actualizado (Añadido opAsignada)
   const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '' };
   const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
   const [editingInvId, setEditingInvId] = useState(null);
-  const initialMovementForm = { date: getTodayDate(), itemId: '', type: 'ENTRADA', qty: '', cost: '', reference: '', notes: '' };
+  const initialMovementForm = { date: getTodayDate(), itemId: '', type: 'ENTRADA', qty: '', cost: '', reference: '', notes: '', opAsignada: '' };
   const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
@@ -170,9 +175,9 @@ export default function App() {
     const element = document.getElementById('pdf-content');
     if (!element) return;
     
-    // Mostrar headers ocultos dedicados para PDF
-    const headers = element.querySelectorAll('.pdf-header');
-    headers.forEach(el => { el.style.display = 'block'; });
+    // Mostramos elementos ocultos para impresión
+    const printOnlyElements = element.querySelectorAll('.hidden.print\\:block, .hidden.pdf-header');
+    printOnlyElements.forEach(el => { el.style.display = 'block'; });
     
     // Ocultar botones, inputs de búsqueda y otra UI
     const noPdfElements = element.querySelectorAll('.no-pdf');
@@ -207,7 +212,7 @@ export default function App() {
     };
     
     const finishExport = () => { 
-      headers.forEach(el => { el.style.display = 'none'; });
+      printOnlyElements.forEach(el => { el.style.display = ''; });
       noPdfElements.forEach(el => { el.style.display = ''; });
       element.style.cssText = originalCssText;
       element.className = originalClasses;
@@ -271,11 +276,11 @@ export default function App() {
     setEditingClientId(null); setEditingReqId(null); setShowSingleReqReport(null);
     setShowSingleInvoice(null); setInvoiceSearchTerm('');
     setShowWorkOrder(null); setShowPhaseReport(null); setShowFiniquito(null);
-    setSelectedPhaseReqId(null);
+    setRecipeEditReqId(null); setSelectedPhaseReqId(null);
   };
 
   // ============================================================================
-  // LOGICA INVENTARIO
+  // LOGICA INVENTARIO MODIFICADA (OP EN DESCARGOS)
   // ============================================================================
   const handleSaveInvItem = async (e) => {
     e.preventDefault(); if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
@@ -295,7 +300,7 @@ export default function App() {
     const movCost = newMovementForm.cost ? parseNum(newMovementForm.cost) : (item?.cost || 0); const movId = Date.now().toString();
     try {
       const batch = writeBatch(db);
-      batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: newMovementForm.date, itemId: item.id, itemName: item.desc, type: newMovementForm.type, qty, cost: movCost, totalValue: qty * movCost, reference: newMovementForm.reference.toUpperCase(), notes: newMovementForm.notes.toUpperCase(), timestamp: Date.now(), user: appUser?.name });
+      batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: newMovementForm.date, itemId: item.id, itemName: item.desc, type: newMovementForm.type, qty, cost: movCost, totalValue: qty * movCost, reference: newMovementForm.reference.toUpperCase(), opAsignada: newMovementForm.opAsignada || '', notes: newMovementForm.notes.toUpperCase(), timestamp: Date.now(), user: appUser?.name });
       batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (isAddition ? qty : -qty), cost: isAddition && movCost > 0 ? movCost : (item?.cost || 0) });
       await batch.commit(); setNewMovementForm(initialMovementForm); setDialog({title: 'Éxito', text: 'Movimiento registrado.', type: 'alert'});
     } catch (err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
@@ -341,7 +346,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA VENTAS Y FACTURACIÓN (SELLADA / SIN MODIFICAR)
+  // LOGICA VENTAS Y FACTURACIÓN (SELLADA / SIN MODIFICAR LA LÓGICA)
   // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault(); if (!newClientForm.rif || !newClientForm.razonSocial) return setDialog({ title: 'Aviso', text: 'RIF y Razón Social obligatorios.', type: 'alert' });
@@ -362,7 +367,6 @@ export default function App() {
        f.vendedor = (c?.vendedor || '').toUpperCase();
     }
     
-    // Lógica dinámica de cálculo de IVA y Total
     if (field === 'montoBase' || field === 'aplicaIva') {
        const base = parseNum(field === 'montoBase' ? value : f.montoBase);
        const aplica = field === 'aplicaIva' ? value : f.aplicaIva;
@@ -384,19 +388,9 @@ export default function App() {
     const id = newInvoiceForm.documento || generateInvoiceId();
     try { 
       await setDoc(getDocRef('maquilaInvoices', id), { 
-        ...newInvoiceForm, 
-        id, 
-        documento: id, 
-        montoBase: parseNum(newInvoiceForm.montoBase), 
-        iva: parseNum(newInvoiceForm.iva), 
-        total: parseNum(newInvoiceForm.total), 
-        aplicaIva: newInvoiceForm.aplicaIva || 'SI',
-        timestamp: Date.now(), 
-        user: appUser?.name 
+        ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: Date.now(), user: appUser?.name 
       }); 
-      setShowNewInvoicePanel(false); 
-      setNewInvoiceForm(initialInvoiceForm); 
-      setDialog({title: 'Éxito', text: 'Factura Registrada.', type: 'alert'}); 
+      setShowNewInvoicePanel(false); setNewInvoiceForm(initialInvoiceForm); setDialog({title: 'Éxito', text: 'Factura Registrada.', type: 'alert'}); 
     } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
   
@@ -425,16 +419,9 @@ export default function App() {
     e.preventDefault(); const opId = editingReqId ? editingReqId : generateReqId();
     try { 
       await setDoc(getDocRef('requirements', opId), { 
-        ...newReqForm, 
-        id: opId, 
-        timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), 
-        status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', // Ahora va directo a planta
-        viewedByPlanta: false 
+        ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', viewedByPlanta: false 
       }, { merge: true }); 
-      setShowNewReqPanel(false); 
-      setNewReqForm(initialReqForm); 
-      setEditingReqId(null); 
-      setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); 
+      setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); 
     } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
 
@@ -442,7 +429,7 @@ export default function App() {
   const handleDeleteReq = (id) => setDialog({ title: 'Eliminar OP', text: `¿Desea eliminar la OP #${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('requirements', id))});
 
   // ============================================================================
-  // LOGICA PRODUCCIÓN Y CONTROL DE FASES (Sin Ingeniería)
+  // LOGICA PRODUCCIÓN Y CONTROL DE FASES
   // ============================================================================
   const renderPhaseInventoryOptions = () => {
     let mainCats = [];
@@ -582,26 +569,17 @@ export default function App() {
   const addCalcIng = () => setCalcInputs({ ...calcInputs, ingredientes: [...(calcInputs?.ingredientes || []), { id: Date.now(), nombre: '', pct: 0, costo: 0 }] });
   const removeCalcIng = (id) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs?.ingredientes || []).filter(i => i?.id !== id) });
 
-  // 1. Cálculos de Parámetros del Producto 
   const simW = parseNum(calcInputs?.ancho);
   const simL = parseNum(calcInputs?.largo);
   const simM = parseNum(calcInputs?.micras);
   const simFu = parseNum(calcInputs?.fuelles);
-  
   const isBolsas = calcInputs?.tipoProducto === 'BOLSAS';
   
   let simPesoMillar = 0;
-  if (isBolsas) {
-     simPesoMillar = (simW + simFu) * simL * simM;
-  }
+  if (isBolsas) { simPesoMillar = (simW + simFu) * simL * simM; }
 
-  // 2. Lógica ajustada: Convertir Millares ingresados a KG reales si es bolsa
   const inputCantidadSolicitada = calcInputs?.mezclaTotal || 0;
-  
-  const calcTotalMezcla = isBolsas 
-                          ? (simPesoMillar > 0 ? (inputCantidadSolicitada * simPesoMillar) : 0) 
-                          : inputCantidadSolicitada;
-
+  const calcTotalMezcla = isBolsas ? (simPesoMillar > 0 ? (inputCantidadSolicitada * simPesoMillar) : 0) : inputCantidadSolicitada;
   const calcMezclaProcesada = calcTotalMezcla; 
   let calcCostoMezclaPreparada = 0;
   
@@ -758,7 +736,7 @@ export default function App() {
                  </div>
                </form>
             </div>
-            <div id="pdf-content" className="p-8 print:p-0">
+            <div id="pdf-content" className="p-8 print:p-0 bg-white">
                <div className="hidden pdf-header mb-8">
                  <ReportHeader />
                  <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2">Catálogo de Inventario y Existencias</h1>
@@ -1080,7 +1058,7 @@ export default function App() {
       const totalIvaGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.iva), 0);
       const totalGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.total), 0);
       return (
-        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black">
+        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black bg-white">
           <div data-html2canvas-ignore="true" className="flex justify-between mb-4 no-pdf"><button onClick={() => setShowGeneralInvoicesReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF('Reporte_General_Facturas', false)} className="bg-black text-white px-6 py-2 rounded-xl flex items-center gap-2 font-black text-xs uppercase hover:bg-gray-800"><Printer size={16}/> Exportar PDF</button></div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center mb-6"><h2 className="text-xl font-black uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte General de Facturación</h2></div>
@@ -1097,7 +1075,7 @@ export default function App() {
       const inv = (invoices || []).find(i => i?.id === showSingleInvoice); if (!inv) return null;
       const client = (clients || []).find(c => c?.rif === inv.clientRif) || {};
       return (
-        <div id="pdf-content" className="bg-white p-12 min-h-0 text-black">
+        <div id="pdf-content" className="bg-white p-12 min-h-0 text-black bg-white">
           <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowSingleInvoice(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Factura_${inv.documento}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar PDF</button></div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center my-6"><span className="text-2xl font-black uppercase border-b-4 border-orange-500 pb-2">FACTURA N° {inv.documento}</span></div>
@@ -1124,7 +1102,7 @@ export default function App() {
     if (showSingleReqReport) {
       const req = (requirements || []).find(r => r?.id === showSingleReqReport); if (!req) return null;
       return (
-        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black shadow-xl">
+        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black shadow-xl bg-white">
           <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowSingleReqReport(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Requisicion_${req.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar PDF</button></div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center my-4"><span className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">REQUISICIÓN DE PRODUCCIÓN N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
@@ -1144,7 +1122,7 @@ export default function App() {
 
     if (showClientReport) {
       return (
-        <div id="pdf-content" className="bg-white p-10 min-h-0 text-black">
+        <div id="pdf-content" className="bg-white p-10 min-h-0 text-black bg-white">
           <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowClientReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF('Directorio_Clientes', true)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase hover:bg-gray-800"><Printer size={16}/> Exportar PDF</button></div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center mb-8"><h2 className="text-xl font-black uppercase border-b-2 border-orange-500 inline-block pb-1">Directorio de Clientes</h2></div>
@@ -1158,7 +1136,7 @@ export default function App() {
 
     if (showReqReport) {
       return (
-        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black">
+        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black bg-white">
           <div data-html2canvas-ignore="true" className="flex justify-between mb-4 no-pdf"><button onClick={() => setShowReqReport(false)} className="bg-gray-100 px-4 py-2 font-bold text-xs uppercase rounded-xl hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF('Reporte_Requisiciones', true)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase hover:bg-gray-800"><Printer size={16}/> Exportar PDF</button></div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center mb-6"><h2 className="text-xl font-black uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte de Requisiciones (OP)</h2></div>
@@ -1228,9 +1206,8 @@ export default function App() {
                       </div>
                     </div>
                     
-                    {/* FORMULARIO FACTURACIÓN CON CAMPO DE PRECIO AMPLIADO */}
-                    <div className="grid grid-cols-1 md:grid-cols-6 gap-6">
-                      <div className="md:col-span-3">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                      <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
                         <select required value={newInvoiceForm.clientRif} onChange={e=>handleInvoiceFormChange('clientRif', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
                           <option value="">Seleccione...</option>
@@ -1238,7 +1215,7 @@ export default function App() {
                         </select>
                       </div>
                       
-                      <div className="md:col-span-3">
+                      <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">OP Relacionada (Opcional)</label>
                         <select value={newInvoiceForm.opAsignada} onChange={e=>{
                            const op = requirements.find(r=>r.id===e.target.value);
@@ -1249,16 +1226,16 @@ export default function App() {
                         </select>
                       </div>
 
-                      <div className="md:col-span-6">
+                      <div className="md:col-span-4">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Descripción / Producto Maquilado</label>
                         <input type="text" required className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black uppercase" value={newInvoiceForm.productoMaquilado} onChange={e=>handleInvoiceFormChange('productoMaquilado', e.target.value)} placeholder="EJ: BOLSAS DE 28 X 75" />
                       </div>
 
-                      <div className="md:col-span-4">
+                      <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Base (USD) e IVA</label>
-                        <div className="flex gap-3">
+                        <div className="flex gap-2">
                            <input type="number" step="0.01" required className="flex-1 bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-xl font-black outline-none focus:bg-white focus:border-orange-500 text-black text-center" value={newInvoiceForm.montoBase} onChange={e=>handleInvoiceFormChange('montoBase', e.target.value)} placeholder="0.00" />
-                           <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva', e.target.value)} className="w-40 bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-xs font-black outline-none focus:bg-white focus:border-orange-500 text-black">
+                           <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva', e.target.value)} className="w-32 bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-xs font-black outline-none focus:bg-white focus:border-orange-500 text-black">
                              <option value="SI">+ IVA</option>
                              <option value="NO">EXENTO</option>
                            </select>
@@ -1266,7 +1243,7 @@ export default function App() {
                       </div>
                       
                       <div className="md:col-span-2">
-                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Total</label>
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Total Factura</label>
                         <div className="p-4 bg-orange-50 border-2 border-orange-200 rounded-2xl font-black text-orange-700 text-xl text-center shadow-inner">${formatNum(newInvoiceForm.total)}</div>
                       </div>
                     </div>
@@ -1507,7 +1484,7 @@ export default function App() {
                   )}
 
                   <div className="overflow-x-auto rounded-xl border border-gray-300 print:border-black print:rounded-none print:overflow-hidden print:w-full">
-                     <table className="w-full text-left text-[10px] print:text-xs print:whitespace-normal">
+                     <table className="w-full text-left text-[10px] print-text-xs print:whitespace-normal">
                         <thead className="bg-gray-200 print:bg-gray-300 border-b border-gray-400 print:border-black">
                            <tr className="font-black uppercase text-black">
                               <th className="p-2 print:p-1 pl-4">Fase / Concepto</th>
@@ -1650,7 +1627,7 @@ export default function App() {
         {/* NUEVA SECCIÓN: META SOLICITADA SEGÚN IMAGEN 5 */}
         <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-3 flex justify-between items-center mb-2 shadow-inner"><div className="w-3/5"><span className="text-[11px] font-black text-orange-900 uppercase">META SOLICITADA POR EL CLIENTE ({isBolsas ? 'MILLARES' : 'KILOS'})</span><p className="text-[10px] font-bold text-gray-700 leading-tight">Cantidad bruta a entregar al cliente según nota de pedido. Incluye merma de sellado.</p></div><div className="text-right"><span className="text-4xl font-black text-orange-600">{isBolsas ? req?.cantidad : formatNum(req?.cantidad)}</span><span className="text-lg font-black text-orange-600 ml-1">{isBolsas ? req?.presentacion : 'KG'}</span></div></div>
 
-        <div className="border-2 border-black p-2 mb-2 rounded-2xl overflow-hidden"><div className="font-black text-center border-b-2 border-black mb-2 py-0.5 text-xs bg-gray-100 uppercase font-black">Especificaciones y Fórmula</div><table className="w-full text-left text-[9px] mb-2"><thead><tr className="font-black uppercase border-b border-black"><td>Insumo / Material</td><td className="text-center">Proporción (%)</td><td className="text-right">Peso Teórico (KG)</td></tr></thead><tbody className="divide-y divide-gray-100">{(req?.recipe || []).map((r, i) => (<tr key={i} className="text-black h-5 align-middle"><td>{(inventory || []).find(inv=>inv?.id===r?.id)?.desc || r?.id}</td><td className="text-center">{r?.percentage ? `${r.percentage}%` : 'N/A'}</td><td className="text-right font-bold">{formatNum(r?.totalQty)} KG</td></tr>))}</tbody></table><div className="grid grid-cols-4 gap-2 text-center text-[9px] font-black uppercase border-t-2 border-black pt-2 bg-gray-50"><div>ANCHO<br/><span className="text-sm text-blue-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-blue-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-blue-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-blue-600">{req.micras}</span></div></div></div>
+        <div className="border-2 border-black p-2 mb-2 rounded-2xl overflow-hidden"><div className="font-black text-center border-b-2 border-black mb-2 py-0.5 text-xs bg-gray-100 uppercase font-black">Especificaciones Finales</div><div className="grid grid-cols-4 gap-2 text-center text-[9px] font-black uppercase bg-gray-50"><div>ANCHO<br/><span className="text-sm text-orange-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-orange-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-orange-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-orange-600">{req.micras}</span></div></div></div>
         <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Parámetros de Extrusión</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">CANTIDAD KG:</span> __________________________</div><div className="col-span-2 flex justify-between"><div><span className="font-black pr-1">TRATADO: 1</span> _____ <span className="ml-4">2</span> _____</div><div><span className="font-black pr-1">COLOR:</span> {req.color}</div></div><div className="col-span-2 flex justify-between"><div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> _________________</div><div><span className="font-black pr-1">VENTILADOR:</span> _________________</div><div><span className="font-black pr-1">JALADOR:</span> _________________</div></div><div className="col-span-2 border-t border-gray-300 pt-1 mt-1"><div className="flex justify-between mb-2"><span className="font-black">ZONAS:</span><span>1 ____</span><span>2 ____</span><span>3 ____</span><span>4 ____</span><span>5 ____</span><span>6 ____</span></div><div className="flex gap-10"><span className="font-black">CABEZAL:</span><span>A ________</span><span>B ________</span></div></div></div></div>
         <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Impresión Flexográfica</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div><div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> __________________________</div><div><span className="font-black pr-1">TEMPERATURA:</span> __________________________</div><div className="col-span-2 border-t border-gray-300 pt-1 mt-1"><div className="flex justify-between mb-1"><span className="font-black">COLORES:</span><span>1 _______</span><span>2 _______</span><span>3 _______</span><span>4 _______</span><span>5 _______</span><span>6 _______</span></div></div></div></div>
         <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Sellado y Corte</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div><div><span className="font-black pr-1">CANT. PRODUCIDA (KG):</span> _______________</div><div><span className="font-black pr-1">CANT. PRODUCIDA MILLARES:</span> ___________</div></div></div>
@@ -1834,6 +1811,7 @@ export default function App() {
                   <button onClick={() => {clearAllReports(); setInvView('descargo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'descargo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowUpFromLine size={16}/> Descargo</button>
                   <button onClick={() => {clearAllReports(); setInvView('ajuste');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'ajuste' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Settings2 size={16}/> Ajuste</button>
                   <button onClick={() => {clearAllReports(); setInvView('kardex');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'kardex' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><History size={16}/> Kardex</button>
+                  <button onClick={() => {clearAllReports(); setInvView('reporte177');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'reporte177' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Art 177 LISLR</button>
                 </div>
               )}
             </nav>
