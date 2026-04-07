@@ -1920,6 +1920,7 @@ export default function App() {
   };
 
   if (!appUser) return <ErrorBoundary>{renderLogin()}</ErrorBoundary>;
+  
   return (
     <ErrorBoundary>
       <div className="min-h-screen bg-gray-100 text-gray-900 font-sans flex flex-col print:bg-white print:block print:w-full overflow-x-hidden print:overflow-visible text-black font-black">
@@ -1992,7 +1993,7 @@ export default function App() {
               )}
             </nav>
           )}
-          
+
           <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' || activeTab === 'costos' || activeTab === 'configuracion' ? 'flex items-center justify-center' : ''}`}>
             {activeTab === 'home' && renderHome()}
             {activeTab === 'ventas' && renderVentasModule()}
@@ -2095,7 +2096,7 @@ export default function App() {
             )}
           </main>
         </div>
-        
+
         {dialog && (
           <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[9999] print:hidden">
             <div className="bg-white rounded-3xl shadow-2xl border-t-8 border-orange-500 p-8 w-full max-w-md transform animate-in zoom-in-95">
