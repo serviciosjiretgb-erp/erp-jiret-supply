@@ -101,13 +101,13 @@ export default function App() {
   const [clients, setClients] = useState([]);
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
-  const [invRequisitions, setInvRequisitions] = useState([]); // NUEVO: Estado para Requisiciones Almacén
+  const [invRequisitions, setInvRequisitions] = useState([]); // ESTADO PARA REQUISICIONES
 
   const [dialog, setDialog] = useState(null);
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
   const [invSearchTerm, setInvSearchTerm] = useState('');
-  const [reqToApprove, setReqToApprove] = useState(null); // NUEVO: Estado para modal de aprobación
+  const [reqToApprove, setReqToApprove] = useState(null); // MODAL DE APROBACIÓN
 
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
   const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
@@ -171,7 +171,7 @@ export default function App() {
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
   // ============================================================================
-  // EXPORTACIONES (SOLUCIÓN DEFINITIVA PARA CORTES DE PDF EN UNA SOLA HOJA)
+  // EXPORTACIONES 
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content');
@@ -193,22 +193,11 @@ export default function App() {
     element.style.margin = '0 auto';
     
     const tables = element.querySelectorAll('table');
-    tables.forEach(t => { 
-      t.style.whiteSpace = 'normal'; 
-      t.style.tableLayout = 'auto'; 
-      t.style.width = '100%';
-    });
-
+    tables.forEach(t => { t.style.whiteSpace = 'normal'; t.style.tableLayout = 'auto'; t.style.width = '100%'; });
     const overflows = element.querySelectorAll('.overflow-x-auto');
     overflows.forEach(el => { el.style.overflow = 'visible'; });
 
-    const opt = { 
-      margin: [10, 10, 10, 10], 
-      filename: `${filename}_${getTodayDate()}.pdf`, 
-      image: { type: 'jpeg', quality: 1 }, 
-      html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: virtualWidth }, 
-      jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' }
-    };
+    const opt = { margin: [10, 10, 10, 10], filename: `${filename}_${getTodayDate()}.pdf`, image: { type: 'jpeg', quality: 1 }, html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: virtualWidth }, jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' } };
     
     const finishExport = () => { 
       printOnlyElements.forEach(el => { el.style.display = ''; });
@@ -220,13 +209,8 @@ export default function App() {
     };
 
     if (typeof window.html2pdf === 'undefined') { 
-      const script = document.createElement('script'); 
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; 
-      script.onload = () => { window.html2pdf().set(opt).from(element).save().then(finishExport); }; 
-      document.head.appendChild(script); 
-    } else { 
-      window.html2pdf().set(opt).from(element).save().then(finishExport); 
-    }
+      const script = document.createElement('script'); script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; script.onload = () => { window.html2pdf().set(opt).from(element).save().then(finishExport); }; document.head.appendChild(script); 
+    } else { window.html2pdf().set(opt).from(element).save().then(finishExport); }
   };
 
   const handleExportExcel = (tableId, filename) => {
@@ -267,7 +251,7 @@ export default function App() {
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     
-    // NUEVO: Sincronizar Requisiciones de Almacén
+    // LISTENER DE REQUISICIONES DE ALMACEN
     const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
 
     return () => { unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); };
@@ -279,12 +263,11 @@ export default function App() {
     setEditingClientId(null); setEditingReqId(null); setShowSingleReqReport(null);
     setShowSingleInvoice(null); setInvoiceSearchTerm('');
     setShowWorkOrder(null); setShowPhaseReport(null); setShowFiniquito(null);
-    setRecipeEditReqId(null); setSelectedPhaseReqId(null);
-    setReqToApprove(null);
+    setRecipeEditReqId(null); setSelectedPhaseReqId(null); setReqToApprove(null);
   };
 
   // ============================================================================
-  // LOGICA INVENTARIO MODIFICADA (OP EN DESCARGOS)
+  // LOGICA INVENTARIO
   // ============================================================================
   const handleSaveInvItem = async (e) => {
     e.preventDefault(); if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
@@ -433,7 +416,96 @@ export default function App() {
   const handleDeleteReq = (id) => setDialog({ title: 'Eliminar OP', text: `¿Desea eliminar la OP #${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('requirements', id))});
 
   // ============================================================================
-  // LOGICA PRODUCCIÓN Y CONTROL DE FASES (MODIFICADO CON REQUISICIÓN A ALMACÉN)
+  // LOGICA APROBACIÓN DE REQUISICIONES DE ALMACÉN (NUEVO MÓDULO)
+  // ============================================================================
+  const handleSendRequisitionToAlmacen = async () => {
+    if (!phaseForm.insumos || phaseForm.insumos.length === 0) {
+      return setDialog({title: 'Aviso', text: 'Agregue insumos a la lista antes de solicitar a almacén.', type: 'alert'});
+    }
+    const newReq = {
+      opId: selectedPhaseReqId,
+      phase: activePhaseTab,
+      items: phaseForm.insumos,
+      status: 'PENDIENTE',
+      timestamp: Date.now(),
+      date: getTodayDate(),
+      user: appUser?.name || 'Operador de Planta'
+    };
+    try {
+      await addDoc(getColRef('inventoryRequisitions'), newReq);
+      setPhaseForm({...phaseForm, insumos: []});
+      setDialog({title: 'Solicitud Enviada', text: 'La requisición fue enviada al Almacén correctamente. Espere su entrega.', type: 'alert'});
+    } catch(e) {
+      setDialog({title: 'Error', text: e.message, type: 'alert'});
+    }
+  };
+
+  const submitApproveRequisition = async (e) => {
+    e.preventDefault();
+    try {
+        const req = reqToApprove;
+        const targetOP = (requirements || []).find(r => r.id === req.opId);
+        if (!targetOP) throw new Error('La OP asociada ya no existe en el sistema.');
+
+        const validItems = req.items.filter(i => parseNum(i.qty) > 0);
+        if (validItems.length === 0) throw new Error('No hay ítems con cantidad válida para procesar el descargo.');
+
+        const batch = writeBatch(db);
+        let phaseCost = 0;
+        let totalInsumosKg = 0;
+
+        for (let ing of validItems) {
+           const item = (inventory || []).find(i => i.id === ing.id);
+           if (!item) throw new Error(`El ítem ${ing.id} no fue encontrado en el catálogo.`);
+           if ((item.stock || 0) < ing.qty) throw new Error(`Stock insuficiente para ${item.desc}.`);
+
+           phaseCost += (item.cost * ing.qty);
+           totalInsumosKg += parseFloat(ing.qty);
+
+           // 1. Descontar de inventario
+           batch.update(getDocRef('inventory', item.id), { stock: (item.stock || 0) - ing.qty });
+
+           // 2. Crear Movimiento en Kardex
+           const movId = Date.now().toString() + Math.floor(Math.random()*1000);
+           batch.set(getDocRef('inventoryMovements', movId), {
+              id: movId, date: getTodayDate(), itemId: item.id, itemName: item.desc,
+              type: 'SALIDA', qty: ing.qty, cost: item.cost, totalValue: ing.qty * item.cost, 
+              reference: `REQ-${targetOP.id}-${req.phase.substring(0,3).toUpperCase()}`,
+              opAsignada: targetOP.id, notes: 'DESPACHO ALMACÉN (REQUISICIÓN)', timestamp: Date.now(), user: appUser?.name || 'Almacén'
+           });
+        }
+
+        // 3. Inyectar Lote de Costos a la OP (para el finiquito)
+        let currentPhase = { ...(targetOP.production?.[req.phase] || { batches: [], isClosed: false }) };
+        const newProdBatch = {
+           id: Date.now().toString(), timestamp: Date.now(), date: getTodayDate(),
+           insumos: validItems, producedKg: 0, mermaKg: 0, totalInsumosKg, cost: phaseCost,
+           operator: 'ALMACÉN (DESPACHO)', techParams: {}
+        };
+        if (!currentPhase.batches) currentPhase.batches = [];
+        currentPhase.batches.push(newProdBatch);
+        batch.update(getDocRef('requirements', targetOP.id), { [`production.${req.phase}`]: currentPhase });
+
+        // 4. Actualizar Estado de Requisición
+        batch.update(getDocRef('inventoryRequisitions', req.id), { status: 'APROBADO', dispatchDate: getTodayDate(), items: validItems, approvedBy: appUser?.name });
+
+        await batch.commit();
+        setReqToApprove(null);
+        setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada. Se descontó del stock, actualizó el Kardex y se cargaron los insumos a la OP.', type:'alert'});
+    } catch(err) {
+        setDialog({title:'Error', text:err.message, type:'alert'});
+    }
+  };
+
+  const handleRejectRequisition = (id) => {
+    setDialog({title: 'Rechazar Requisición', text: '¿Desea rechazar esta solicitud de materiales?', type: 'confirm', onConfirm: async () => {
+        await updateDoc(getDocRef('inventoryRequisitions', id), { status: 'RECHAZADO', dispatchDate: getTodayDate() });
+        setDialog({title: 'Actualizado', text: 'La solicitud ha sido rechazada.', type: 'alert'});
+    }});
+  };
+
+  // ============================================================================
+  // LOGICA PRODUCCIÓN Y CONTROL DE FASES (MODIFICADO)
   // ============================================================================
   const renderPhaseInventoryOptions = () => {
     let mainCats = [];
@@ -460,30 +532,6 @@ export default function App() {
     setPhaseForm({ ...phaseForm, insumos: [...(phaseForm?.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }] }); setPhaseIngId(''); setPhaseIngQty('');
   };
 
-  // NUEVO: Enviar los insumos como Requisición a Almacén
-  const handleSendRequisitionToAlmacen = async () => {
-    if (!phaseForm.insumos || phaseForm.insumos.length === 0) {
-      return setDialog({title: 'Aviso', text: 'Agregue insumos a la lista antes de solicitar a almacén.', type: 'alert'});
-    }
-    const newReq = {
-      opId: selectedPhaseReqId,
-      phase: activePhaseTab,
-      items: phaseForm.insumos,
-      status: 'PENDIENTE',
-      timestamp: Date.now(),
-      date: getTodayDate(),
-      user: appUser?.name || 'Operador de Planta'
-    };
-    try {
-      await addDoc(getColRef('inventoryRequisitions'), newReq);
-      // Limpiamos solo los insumos, para que el operador pueda seguir con su producción
-      setPhaseForm({...phaseForm, insumos: []});
-      setDialog({title: 'Solicitud Enviada', text: 'La requisición fue enviada al Almacén correctamente. Ellos se encargarán del descargo.', type: 'alert'});
-    } catch(e) {
-      setDialog({title: 'Error', text: e.message, type: 'alert'});
-    }
-  };
-
   const handleSavePhase = async (e) => {
     e.preventDefault();
     const req = (requirements || []).find(r => r?.id === selectedPhaseReqId); if (!req) return;
@@ -494,7 +542,7 @@ export default function App() {
         const prodKg = parseNum(phaseForm?.producedKg); const mermaKg = parseNum(phaseForm?.mermaKg);
         if (prodKg > 0 || mermaKg > 0 || (phaseForm?.insumos || []).length > 0) {
             const batch = writeBatch(db); let phaseCost = 0; let totalInsumosKg = 0;
-            // Solo descarga los insumos si se quedaron en la lista (si no enviaron requisición)
+            // SI el operario no usa la Requisición, y le da Guardar Reporte, se descuenta de inventario directo (opcional según cómo quieras manejarlo, pero lo dejo por si acaso)
             for (let ing of (phaseForm?.insumos || [])) {
               const item = (inventory || []).find(i => i?.id === ing?.id);
               if (item) { phaseCost += ((item?.cost || 0) * (ing?.qty || 0)); totalInsumosKg += parseFloat(ing?.qty || 0); batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) - (ing?.qty || 0) }); }
@@ -515,11 +563,11 @@ export default function App() {
     let newStatus = (activePhaseTab === 'sellado' && currentPhase.isClosed) ? 'COMPLETADO' : 'EN PROCESO';
     await updateDoc(getDocRef('requirements', req.id), { production: newProd, status: newStatus });
     setPhaseForm({ ...initialPhaseForm, date: getTodayDate() }); 
-    setDialog({ title: 'Éxito', text: 'Reporte de producción guardado.', type: 'alert' });
+    setDialog({ title: 'Éxito', text: 'Reporte guardado.', type: 'alert' });
   };
 
   const handleDeleteBatch = async (reqId, phase, batchId) => {
-    setDialog({ title: `ELIMINAR LOTE`, text: `¿Seguro que desea eliminar este lote parcial? Si contiene materiales aprobados de almacén, regresarán al inventario.`, type: 'confirm', onConfirm: async () => {
+    setDialog({ title: `ELIMINAR LOTE`, text: `¿Seguro que desea eliminar este lote parcial?`, type: 'confirm', onConfirm: async () => {
         const req = (requirements || []).find(r => r?.id === reqId); let currentPhase = { ...(req?.production?.[phase] || {}) }; const bIdx = (currentPhase.batches || []).findIndex(b => b?.id === batchId);
         if (bIdx >= 0) { const batch = currentPhase.batches[bIdx]; const fbBatch = writeBatch(db); for (let ing of (batch.insumos || [])) { const item = (inventory || []).find(i => i?.id === ing?.id); if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (ing?.qty || 0) }); } await fbBatch.commit(); currentPhase.batches.splice(bIdx, 1); }
         await updateDoc(getDocRef('requirements', reqId), { production: { ...(req?.production || {}), [phase]: currentPhase } });
@@ -586,75 +634,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA APROBACIÓN DE REQUISICIONES (NUEVO)
-  // ============================================================================
-  const submitApproveRequisition = async (e) => {
-    e.preventDefault();
-    try {
-        const req = reqToApprove;
-        const targetOP = (requirements || []).find(r => r.id === req.opId);
-        if (!targetOP) throw new Error('La OP asociada ya no existe en el sistema.');
-
-        const validItems = req.items.filter(i => parseNum(i.qty) > 0);
-        if (validItems.length === 0) throw new Error('No hay ítems con cantidad válida para procesar el descargo.');
-
-        const batch = writeBatch(db);
-        let phaseCost = 0;
-        let totalInsumosKg = 0;
-
-        // 1. Verificación de Stock y Descargo
-        for (let ing of validItems) {
-           const item = (inventory || []).find(i => i.id === ing.id);
-           if (!item) throw new Error(`El ítem ${ing.id} no fue encontrado en el catálogo.`);
-           if ((item.stock || 0) < ing.qty) throw new Error(`Stock insuficiente para ${item.desc} (Disponible: ${item.stock}). Modifique la cantidad.`);
-
-           phaseCost += (item.cost * ing.qty);
-           totalInsumosKg += parseFloat(ing.qty);
-
-           // Actualizar Inventario
-           batch.update(getDocRef('inventory', item.id), { stock: (item.stock || 0) - ing.qty });
-
-           // Generar Movimiento (Kardex)
-           const movId = Date.now().toString() + Math.floor(Math.random()*1000);
-           batch.set(getDocRef('inventoryMovements', movId), {
-              id: movId, date: getTodayDate(), itemId: item.id, itemName: item.desc,
-              type: 'SALIDA', qty: ing.qty, cost: item.cost, totalValue: ing.qty * item.cost, 
-              reference: `REQ-${targetOP.id}-${req.phase.substring(0,3).toUpperCase()}`,
-              opAsignada: targetOP.id, notes: 'DESPACHO ALMACÉN (REQUISICIÓN)', timestamp: Date.now(), user: appUser?.name || 'Almacén'
-           });
-        }
-
-        // 2. Inyectar el lote de insumos a la OP (Magia para mantener los costos finiquito)
-        let currentPhase = { ...(targetOP.production?.[req.phase] || { batches: [], isClosed: false }) };
-        const newProdBatch = {
-           id: Date.now().toString(), timestamp: Date.now(), date: getTodayDate(),
-           insumos: validItems, producedKg: 0, mermaKg: 0, totalInsumosKg, cost: phaseCost,
-           operator: 'ALMACÉN (DESPACHO)', techParams: {}
-        };
-        if (!currentPhase.batches) currentPhase.batches = [];
-        currentPhase.batches.push(newProdBatch);
-        batch.update(getDocRef('requirements', targetOP.id), { [`production.${req.phase}`]: currentPhase });
-
-        // 3. Marcar requisición como aprobada
-        batch.update(getDocRef('inventoryRequisitions', req.id), { status: 'APROBADO', dispatchDate: getTodayDate(), items: validItems, approvedBy: appUser?.name });
-
-        await batch.commit();
-        setReqToApprove(null);
-        setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada. Se descontó del stock, se actualizó el Kardex y los insumos fueron asignados a la OP para sus costos.', type:'alert'});
-    } catch(err) {
-        setDialog({title:'Error', text:err.message, type:'alert'});
-    }
-  };
-
-  const handleRejectRequisition = (id) => {
-    setDialog({title: 'Rechazar Requisición', text: '¿Desea eliminar o rechazar esta solicitud de materiales?', type: 'confirm', onConfirm: async () => {
-        await updateDoc(getDocRef('inventoryRequisitions', id), { status: 'RECHAZADO', dispatchDate: getTodayDate() });
-        setDialog({title: 'Actualizado', text: 'La solicitud ha sido rechazada.', type: 'alert'});
-    }});
-  };
-
-  // ============================================================================
-  // --- LÓGICA CALCULADORA (SIMULADOR OP CON COSTOS) ---
+  // --- LÓGICA CALCULADORA (SIMULADOR OP) ---
   // ============================================================================
   const handleResetCalc = () => {
     setCalcInputs(initialCalcInputs);
@@ -777,7 +757,7 @@ export default function App() {
 
     return (
       <div className="animate-in fade-in space-y-6">
-        {/* NUEVO MÓDULO: REQUISICIONES DE ALMACÉN */}
+        {/* NUEVO MODULO: REQUISICIONES DE ALMACEN */}
         {invView === 'requisiciones' && (
            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
              <div className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
@@ -1789,6 +1769,7 @@ export default function App() {
                         <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
                           <div className="flex justify-between items-center mb-6 border-b border-gray-200 pb-2">
                              <h4 className="text-[10px] font-black text-gray-600 uppercase flex items-center gap-2"><Box size={16}/> Lista de Insumos</h4>
+                             {/* NUEVO BOTON SOLICITAR ALMACEN */}
                              <button type="button" onClick={handleSendRequisitionToAlmacen} className="bg-orange-500 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase shadow-sm hover:bg-orange-600 transition-all flex items-center gap-2"><ArrowRight size={14}/> SOLICITAR A ALMACÉN</button>
                           </div>
                           
@@ -2019,6 +2000,7 @@ export default function App() {
                   <button onClick={() => {clearAllReports(); setInvView('ajuste');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'ajuste' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Settings2 size={16}/> Ajuste</button>
                   <button onClick={() => {clearAllReports(); setInvView('kardex');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'kardex' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><History size={16}/> Kardex</button>
                   <button onClick={() => {clearAllReports(); setInvView('reporte177');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'reporte177' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Art 177 LISLR</button>
+                  <button onClick={() => {clearAllReports(); setInvView('requisiciones');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'requisiciones' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ClipboardList size={16}/> Requisiciones OP</button>
                 </div>
               )}
             </nav>
