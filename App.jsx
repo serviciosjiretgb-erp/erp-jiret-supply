@@ -116,6 +116,7 @@ export default function App() {
   const [showReqReport, setShowReqReport] = useState(false);
   const [showSingleReqReport, setShowSingleReqReport] = useState(null);
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
+  const [showMovementReceipt, setShowMovementReceipt] = useState(null); // NUEVO ESTADO PARA COMPROBANTE
 
   // Formularios de Ventas
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
@@ -264,6 +265,7 @@ export default function App() {
     setShowSingleInvoice(null); setInvoiceSearchTerm('');
     setShowWorkOrder(null); setShowPhaseReport(null); setShowFiniquito(null);
     setRecipeEditReqId(null); setSelectedPhaseReqId(null); setReqToApprove(null);
+    setShowMovementReceipt(null);
   };
 
   // ============================================================================
@@ -416,7 +418,7 @@ export default function App() {
   const handleDeleteReq = (id) => setDialog({ title: 'Eliminar OP', text: `¿Desea eliminar la OP #${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('requirements', id))});
 
   // ============================================================================
-  // LOGICA APROBACIÓN DE REQUISICIONES DE ALMACÉN (NUEVO MÓDULO)
+  // LOGICA APROBACIÓN DE REQUISICIONES DE ALMACÉN
   // ============================================================================
   const handleSendRequisitionToAlmacen = async () => {
     if (!phaseForm.insumos || phaseForm.insumos.length === 0) {
@@ -505,7 +507,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA PRODUCCIÓN Y CONTROL DE FASES (MODIFICADO)
+  // LOGICA PRODUCCIÓN Y CONTROL DE FASES
   // ============================================================================
   const renderPhaseInventoryOptions = () => {
     let mainCats = [];
@@ -542,7 +544,7 @@ export default function App() {
         const prodKg = parseNum(phaseForm?.producedKg); const mermaKg = parseNum(phaseForm?.mermaKg);
         if (prodKg > 0 || mermaKg > 0 || (phaseForm?.insumos || []).length > 0) {
             const batch = writeBatch(db); let phaseCost = 0; let totalInsumosKg = 0;
-            // SI el operario no usa la Requisición, y le da Guardar Reporte, se descuenta de inventario directo (opcional según cómo quieras manejarlo, pero lo dejo por si acaso)
+            // SI el operario no usa la Requisición, y le da Guardar Reporte, se descuenta de inventario directo
             for (let ing of (phaseForm?.insumos || [])) {
               const item = (inventory || []).find(i => i?.id === ing?.id);
               if (item) { phaseCost += ((item?.cost || 0) * (ing?.qty || 0)); totalInsumosKg += parseFloat(ing?.qty || 0); batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) - (ing?.qty || 0) }); }
@@ -699,7 +701,7 @@ export default function App() {
   );
 
   const renderLogin = () => (
-    <div className="min-h-screen flex items-center justify-center p-4 relative" style={{ backgroundImage: "url('https://images.unsplash.com/photo-1530124566582-a618bc2615dc?q=80&w=2070&auto=format&fit=crop')", backgroundSize: 'cover', backgroundPosition: 'center' }}>
+    <div className="min-h-screen flex items-center justify-center p-4 relative" style={{ backgroundImage: "url('https://images.unsplash.com/photo-1586528116311-ad8ed7c663c0?q=80&w=2070&auto=format&fit=crop')", backgroundSize: 'cover', backgroundPosition: 'center' }}>
        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
        <div className="relative z-10 bg-white rounded-3xl shadow-[0_30px_60px_rgba(0,0,0,0.6)] overflow-hidden w-full max-w-4xl flex transform transition-all duration-500 hover:scale-[1.01] border border-white/20">
           <div className="w-1/2 bg-gradient-to-br from-gray-900 to-black p-12 flex-col justify-between hidden md:flex relative overflow-hidden shadow-[inset_-10px_0_20px_rgba(0,0,0,0.5)] border-r border-gray-800">
@@ -745,10 +747,45 @@ export default function App() {
         <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
         <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Requisiciones, Kardex y LISLR.</p></button>
       </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
+        <button onClick={() => { clearAllReports(); setActiveTab('costos'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Reportes de Costo</h3><p className="text-xs text-gray-400 mt-2">Módulo en construcción.</p></button>
+        <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><Settings2 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3><p className="text-xs text-gray-400 mt-2">Módulo en construcción.</p></button>
+      </div>
     </div>
   );
 
   const renderInventoryModule = () => {
+    // COMPROBANTE DE MOVIMIENTO
+    if (showMovementReceipt) {
+      const m = showMovementReceipt;
+      return (
+        <div id="pdf-content" className="bg-white p-12 min-h-0 text-black bg-white">
+          <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf">
+            <button onClick={() => setShowMovementReceipt(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button>
+            <button onClick={() => handleExportPDF(`Comprobante_${m.type}_${m.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar PDF</button>
+          </div>
+          <div className="hidden pdf-header mb-6"><ReportHeader /></div>
+          <div className="text-center my-6"><span className="text-2xl font-black uppercase border-b-4 border-orange-500 pb-2">COMPROBANTE DE {m.type}</span></div>
+          <div className="grid grid-cols-2 gap-4 mb-6 text-sm uppercase font-bold">
+             <div><p>CÓDIGO DE ÍTEM: {m.itemId}</p><p>DESCRIPCIÓN: {m.itemName}</p></div>
+             <div className="text-right"><p>FECHA: {m.date}</p><p>USUARIO: {m.user || 'N/A'}</p><p>REFERENCIA: {m.reference || 'N/A'}</p></div>
+          </div>
+          <table className="w-full border-collapse border-2 border-black mb-6">
+             <thead className="bg-gray-100"><tr><th className="p-4 border-b border-black text-center">Cantidad</th><th className="p-4 border-b border-black text-center">Costo Unitario</th><th className="p-4 border-b border-black text-center">Valor Total</th></tr></thead>
+             <tbody><tr><td className="p-4 border-r border-black font-black text-center text-lg">{formatNum(m.qty)}</td><td className="p-4 border-r border-black font-bold text-center">${formatNum(m.cost)}</td><td className="p-4 text-center font-bold text-lg">${formatNum(m.totalValue)}</td></tr></tbody>
+          </table>
+          <div className="mb-6 border-2 border-black p-4 rounded-xl">
+             <p className="font-black text-xs uppercase mb-1">NOTAS / OBSERVACIONES:</p>
+             <p className="text-sm font-bold uppercase">{m.notes || 'SIN OBSERVACIONES'}</p>
+          </div>
+          <div className="mt-20 grid grid-cols-2 gap-24 text-center font-black uppercase text-[10px]">
+             <div className="border-t-2 border-black mx-auto pt-1 w-full">Entregado / Procesado por</div>
+             <div className="border-t-2 border-black mx-auto pt-1 w-full">Recibido por (Almacén)</div>
+          </div>
+        </div>
+      );
+    }
+
     const searchInvUpper = (invSearchTerm || '').toUpperCase();
     const filteredInventory = (inventory || []).filter(i => (i?.id || '').includes(searchInvUpper) || (i?.desc || '').includes(searchInvUpper));
     const filteredMovements = (invMovements || []).filter(m => (m?.itemId || '').toUpperCase().includes(searchInvUpper) || (m?.itemName || '').toUpperCase().includes(searchInvUpper) || (m?.reference || '').toUpperCase().includes(searchInvUpper));
@@ -757,7 +794,7 @@ export default function App() {
 
     return (
       <div className="animate-in fade-in space-y-6">
-        {/* NUEVO MODULO: REQUISICIONES DE ALMACEN */}
+        {/* MODULO: REQUISICIONES DE ALMACEN */}
         {invView === 'requisiciones' && (
            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
              <div className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
@@ -1080,7 +1117,8 @@ export default function App() {
                            <td className={`py-3 px-4 text-center font-black text-sm border-r print:border-black ${isPos ? 'text-green-600' : 'text-red-600'} print:text-black`}>{isPos ? '+' : '-'}{formatNum(m?.qty)}</td>
                            <td className="py-3 px-4 text-right font-bold text-gray-600 border-r print:border-black print:text-black">${formatNum(m?.cost)}</td>
                            <td className="py-3 px-4 text-right font-black border-r print:border-black print:text-black">${formatNum(m?.totalValue)}</td>
-                           <td className="py-3 px-4 text-center no-pdf">
+                           <td className="py-3 px-4 text-center no-pdf flex justify-center gap-2">
+                              <button onClick={() => setShowMovementReceipt(m)} className="p-2 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-100 transition-colors" title="Imprimir Comprobante"><Printer size={16}/></button>
                               <button onClick={() => handleDeleteMovement(m)} className="p-2 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 transition-colors" title="Borrar/Revertir Movimiento"><Trash2 size={16}/></button>
                            </td>
                          </tr>
@@ -1514,7 +1552,6 @@ export default function App() {
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Calculator className="text-orange-500" size={24}/> Simulador de Producción</h2>
                
-               {/* NUEVO BOTON PARA LIMPIAR / NUEVA SIMULACION */}
                <div className="flex gap-2">
                  <button onClick={handleResetCalc} className="bg-gray-200 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-300 transition-colors flex items-center gap-2"><PlusCircle size={16}/> NUEVA SIMULACIÓN</button>
                  <button onClick={() => handleExportPDF('Simulador_Produccion', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
@@ -1769,7 +1806,6 @@ export default function App() {
                         <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
                           <div className="flex justify-between items-center mb-6 border-b border-gray-200 pb-2">
                              <h4 className="text-[10px] font-black text-gray-600 uppercase flex items-center gap-2"><Box size={16}/> Lista de Insumos</h4>
-                             {/* NUEVO BOTON SOLICITAR ALMACEN */}
                              <button type="button" onClick={handleSendRequisitionToAlmacen} className="bg-orange-500 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase shadow-sm hover:bg-orange-600 transition-all flex items-center gap-2"><ArrowRight size={14}/> SOLICITAR A ALMACÉN</button>
                           </div>
                           
@@ -1803,10 +1839,9 @@ export default function App() {
     const req = (requirements || []).find(r => r?.id === showWorkOrder); if (!req) return null;
     const isBolsas = req?.tipoProducto === 'BOLSAS';
     
-    // Calcular el total de kilos de materia prima planificada
     let totalMPKgRecipe = 0;
     (req?.recipe || []).forEach(ing => { totalMPKgRecipe += parseNum(ing?.totalQty); });
-    if(totalMPKgRecipe === 0) totalMPKgRecipe = parseNum(req?.requestedKg); // Fallback si no hay receta
+    if(totalMPKgRecipe === 0) totalMPKgRecipe = parseNum(req?.requestedKg);
 
     return (
       <div id="pdf-content" className="bg-white p-6 print:p-0 min-h-screen text-black shadow-none border-0 bg-white"><style>{`@media print { @page { size: portrait; margin: 5mm; } }`}</style>
@@ -1814,7 +1849,6 @@ export default function App() {
         <div className="flex justify-between items-end border-b-2 border-black pb-1 mb-2"><div><div className="flex items-center -mb-1"><span className="text-black font-black text-3xl leading-none">G</span><span className="text-orange-500 font-black text-lg mx-0.5">&amp;</span><span className="text-black font-black text-3xl leading-none">B</span></div><p className="text-[6px] font-bold text-orange-500 uppercase mt-1 tracking-widest">Servicio y Calidad</p></div><div className="text-center flex-1"><h1 className="text-lg font-black uppercase tracking-widest">ORDEN DE TRABAJO PARA OP.</h1></div></div>
         <div className="grid grid-cols-3 text-[9px] font-bold uppercase mb-2 border-b-2 border-black pb-2"><div><p className="mb-1"><span className="w-16 inline-block font-black">CLIENTE:</span> {req.client}</p><p className="mb-1"><span className="w-16 inline-block font-black">OP:</span> #{String(req.id).replace('OP-', '').padStart(5, '0')}</p><p><span className="w-16 inline-block font-black">TIPO:</span> {req.tipoProducto || 'N/A'}</p></div><div><p className="mb-1"><span className="w-20 inline-block font-black">EMISIÓN:</span> {req.fecha}</p><p><span className="w-20 inline-block font-black text-orange-600 font-black">KG MATERIA PRIMA:</span> <span className="text-orange-600 font-black">{formatNum(totalMPKgRecipe)} KG</span></p></div><div><p className="mb-1"><span className="w-24 inline-block font-black">FECHA ENTRADA:</span> __________________</p><p><span className="w-24 inline-block font-black">FECHA SALIDA:</span> __________________</p></div></div>
         
-        {/* NUEVA SECCIÓN: META SOLICITADA SEGÚN IMAGEN 5 */}
         <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-3 flex justify-between items-center mb-2 shadow-inner"><div className="w-3/5"><span className="text-[11px] font-black text-orange-900 uppercase">META SOLICITADA POR EL CLIENTE ({isBolsas ? 'MILLARES' : 'KILOS'})</span><p className="text-[10px] font-bold text-gray-700 leading-tight">Cantidad bruta a entregar al cliente según nota de pedido. Incluye merma de sellado.</p></div><div className="text-right"><span className="text-4xl font-black text-orange-600">{isBolsas ? req?.cantidad : formatNum(req?.cantidad)}</span><span className="text-lg font-black text-orange-600 ml-1">{isBolsas ? req?.presentacion : 'KG'}</span></div></div>
 
         <div className="border-2 border-black p-2 mb-2 rounded-2xl overflow-hidden"><div className="font-black text-center border-b-2 border-black mb-2 py-0.5 text-xs bg-gray-100 uppercase font-black">Especificaciones Finales</div><div className="grid grid-cols-4 gap-2 text-center text-[9px] font-black uppercase bg-gray-50"><div>ANCHO<br/><span className="text-sm text-orange-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-orange-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-orange-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-orange-600">{req.micras}</span></div></div></div>
@@ -1822,7 +1856,6 @@ export default function App() {
         <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Impresión Flexográfica</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div><div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> __________________________</div><div><span className="font-black pr-1">TEMPERATURA:</span> __________________________</div><div className="col-span-2 border-t border-gray-300 pt-1 mt-1"><div className="flex justify-between mb-1"><span className="font-black">COLORES:</span><span>1 _______</span><span>2 _______</span><span>3 _______</span><span>4 _______</span><span>5 _______</span><span>6 _______</span></div></div></div></div>
         <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Sellado y Corte</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div><div><span className="font-black pr-1">CANT. PRODUCIDA (KG):</span> _______________</div><div><span className="font-black pr-1">CANT. PRODUCIDA MILLARES:</span> ___________</div></div></div>
         
-        {/* NUEVA SECCIÓN: FIRMAS AMPLIADAS SEGÚN IMAGEN 5 */}
         <div className="mt-6 border-t-2 border-black pt-2 text-black font-black uppercase text-[8px]"><div className="font-black mb-3">ESPACIO DE FIRMAS Y RESPONSABLES POR FASE:</div><div className="grid grid-cols-5 gap-3 text-center"><div className="border-t border-black pt-1">RESP. EXTRUSIÓN<br/>(OPERADOR)</div><div className="border-t border-black pt-1">RESP. IMPRESIÓN<br/>(OPERADOR)</div><div className="border-t border-black pt-1">RESP. SELLADO<br/>(OPERADOR)</div><div className="border-t border-black pt-1">CONTROL CALIDAD<br/>(INSPECTOR)</div><div className="border-t border-black pt-1">SUPERVISOR<br/>PLANTA</div></div></div>
       </div>
     );
@@ -1849,15 +1882,12 @@ export default function App() {
     const isTermo = req?.tipoProducto === 'TERMOENCOGIBLE';
     const isBolsas = req?.tipoProducto === 'BOLSAS';
     
-    // Calcular peso por millar real (si es bolsa)
     const realPesoMillar = isBolsas ? parseNum(req?.micras) * (parseNum(req?.ancho) + parseNum(req?.fuelles)) * parseNum(req?.largo) / 1000 : 0;
 
-    // Obtener lotes por fase
     const extB = req?.production?.extrusion?.batches || [];
     const impB = req?.production?.impresion?.batches || [];
     const selB = req?.production?.sellado?.batches || [];
     
-    // Extracción de MP de Extrusión
     let mpC = []; 
     extB.forEach(b => { 
        (b?.insumos || []).forEach(ing => { 
@@ -1868,18 +1898,15 @@ export default function App() {
 
     const totMP = mpC.reduce((s, i) => s + (i?.qty || 0), 0) || 0;
     
-    // Producción Extrusión (Kilos Reales Fabricados)
     const extP = extB.reduce((a,b)=>a+parseNum(b?.producedKg),0);
     const impP = impB.reduce((a,b)=>a+parseNum(b?.producedKg),0);
     const selP = selB.reduce((a,b)=>a+parseNum(b?.producedKg),0);
     
-    // Mermas Individuales y Globales
     const extMerma = extB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
     const impMerma = impB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
     const selMerma = selB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
     const totalMerma = extMerma + impMerma + selMerma;
 
-    // Producción Final Total
     const totUnid = isTermo ? (selP > 0 ? selP : extP) : selB.reduce((s, b) => s + parseNum(b?.millaresProd || b?.techParams?.millares || 0), 0);
     const unitF = isBolsas ? 'MILLARES' : 'KG';
 
@@ -1969,12 +1996,35 @@ export default function App() {
     <ErrorBoundary>
       <div className="min-h-screen bg-gray-100 text-gray-900 font-sans flex flex-col print:bg-white print:block print:w-full overflow-x-hidden print:overflow-visible text-black font-black">
         <header className="bg-black border-b-4 border-orange-500 sticky top-0 z-50 text-white shadow-md print:hidden">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div className="flex justify-between h-20 items-center"><div className="flex items-center gap-4 cursor-pointer transition-transform hover:scale-105" onClick={()=>{clearAllReports(); setActiveTab('home');}}><div className="flex items-center bg-white rounded-2xl px-3 py-1"><span className="text-black font-black text-3xl leading-none">G</span><span className="text-orange-500 font-black text-2xl mx-0.5">&amp;</span><span className="text-black font-black text-3xl leading-none">B</span></div><div className="hidden sm:block border-l-2 border-gray-800 pl-4 uppercase font-black text-lg">Supply ERP</div></div><div className="flex items-center gap-5"><div className="flex items-center gap-3 bg-gray-800 px-5 py-2 rounded-2xl border border-gray-700"><ShieldCheck size={18} className="text-orange-500" /><span className="font-black text-white text-[10px] uppercase leading-none">{appUser?.name}</span></div><button onClick={() => setAppUser(null)} className="text-gray-400 hover:text-white bg-gray-800 hover:bg-red-600 p-2.5 rounded-2xl border border-gray-700"><LogOut size={20}/></button></div></div></div>
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between h-20 items-center">
+              <div className="flex items-center gap-4 cursor-pointer transition-transform hover:scale-105" onClick={()=>{clearAllReports(); setActiveTab('home');}}>
+                <div className="flex items-center bg-white rounded-2xl px-3 py-1">
+                  <span className="text-black font-black text-3xl leading-none">G</span>
+                  <span className="text-orange-500 font-black text-2xl mx-0.5">&amp;</span>
+                  <span className="text-black font-black text-3xl leading-none">B</span>
+                </div>
+                <div className="hidden sm:block border-l-2 border-gray-800 pl-4 uppercase font-black text-lg">Supply ERP</div>
+              </div>
+              <div className="flex items-center gap-5">
+                <div className="flex items-center gap-3 bg-gray-800 px-5 py-2 rounded-2xl border border-gray-700">
+                  <ShieldCheck size={18} className="text-orange-500" />
+                  <span className="font-black text-white text-[10px] uppercase leading-none">{appUser?.name}</span>
+                </div>
+                <button onClick={() => setAppUser(null)} className="text-gray-400 hover:text-white bg-gray-800 hover:bg-red-600 p-2.5 rounded-2xl border border-gray-700"><LogOut size={20}/></button>
+              </div>
+            </div>
+          </div>
         </header>
         <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 flex flex-col md:flex-row gap-8 flex-1 print:p-0 print:m-0 print:block">
           {activeTab !== 'home' && (
             <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
               <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 transition-all active:scale-95 uppercase tracking-widest"><Home size={18} className="text-orange-500" /> INICIO</button>
+              
+              <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'costos' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><BarChart3 size={18} className={activeTab === 'costos' ? 'text-white' : 'text-gray-400'} /> COSTOS</button>
+              
+              <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'configuracion' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><Settings2 size={18} className={activeTab === 'configuracion' ? 'text-white' : 'text-gray-400'} /> CONFIGURACIÓN</button>
+
               {activeTab === 'ventas' && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Área Ventas</h3>
@@ -2005,11 +2055,27 @@ export default function App() {
               )}
             </nav>
           )}
-          <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' ? 'flex items-center justify-center' : ''}`}>
+          <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' || activeTab === 'costos' || activeTab === 'configuracion' ? 'flex items-center justify-center' : ''}`}>
             {activeTab === 'home' && renderHome()}
             {activeTab === 'ventas' && renderVentasModule()}
             {activeTab === 'produccion' && renderProductionModule()}
             {activeTab === 'inventario' && renderInventoryModule()}
+            
+            {activeTab === 'costos' && (
+              <div className="bg-white p-16 rounded-3xl border border-gray-200 shadow-sm text-center w-full max-w-2xl animate-in fade-in">
+                <BarChart3 size={60} className="text-gray-300 mx-auto mb-6" />
+                <h2 className="text-2xl font-black text-gray-800 uppercase tracking-widest mb-2">Módulo de Costos</h2>
+                <p className="text-sm font-bold text-gray-400 uppercase">En Construcción / Próximamente</p>
+              </div>
+            )}
+            
+            {activeTab === 'configuracion' && (
+              <div className="bg-white p-16 rounded-3xl border border-gray-200 shadow-sm text-center w-full max-w-2xl animate-in fade-in">
+                <Settings2 size={60} className="text-gray-300 mx-auto mb-6" />
+                <h2 className="text-2xl font-black text-gray-800 uppercase tracking-widest mb-2">Configuración</h2>
+                <p className="text-sm font-bold text-gray-400 uppercase">En Construcción / Próximamente</p>
+              </div>
+            )}
           </main>
         </div>
         {dialog && (
