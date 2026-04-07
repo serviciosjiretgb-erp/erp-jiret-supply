@@ -394,7 +394,6 @@ export default function App() {
   
   const generateReqId = () => `OP-${((requirements || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(5, '0')}`;
   
-  // FUNCIÓN CORREGIDA Y ORDENADA EN MÚLTIPLES LÍNEAS
   const handleReqFormChange = (field, value) => {
     let f = { ...newReqForm, [field]: typeof value === 'string' ? value.toUpperCase() : value };
     
@@ -1879,7 +1878,7 @@ export default function App() {
           </div>
         )}
 
-        {/* CONTROL DE FASES (REPORTE DIARIO DE INSUMOS Y PRODUCCION DIRECTA) */}
+        {/* CONTROL DE FASES */}
         {prodView === 'fases_produccion' && (
           <div className="space-y-6">
             {!selectedPhaseReqId ? (
@@ -2083,15 +2082,15 @@ export default function App() {
             <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
               <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 transition-all active:scale-95 uppercase tracking-widest"><Home size={18} className="text-orange-500" /> INICIO</button>
 
-              {appUser?.permissions?.costos && activeTab === 'costos' && (
-                <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><BarChart3 size={18} className="text-white" /> COSTOS</button>
+              {appUser?.permissions?.costos && (
+                <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'costos' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><BarChart3 size={18} className={activeTab === 'costos' ? 'text-white' : 'text-gray-400'} /> COSTOS</button>
               )}
 
-              {appUser?.permissions?.configuracion && activeTab === 'configuracion' && (
-                <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><Settings2 size={18} className="text-white" /> CONFIGURACIÓN</button>
+              {appUser?.permissions?.configuracion && (
+                <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'configuracion' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><Settings2 size={18} className={activeTab === 'configuracion' ? 'text-white' : 'text-gray-400'} /> CONFIGURACIÓN</button>
               )}
 
-              {activeTab === 'ventas' && (appUser?.permissions?.ventas || appUser?.role === 'Master') && (
+              {activeTab === 'ventas' && appUser?.permissions?.ventas && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Área Ventas</h3>
                   <button onClick={() => {clearAllReports(); setVentasView('facturacion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'facturacion' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Receipt size={16}/> Facturación</button>
@@ -2100,7 +2099,7 @@ export default function App() {
                 </div>
               )}
 
-              {activeTab === 'produccion' && (appUser?.permissions?.produccion || appUser?.role === 'Master') && (
+              {activeTab === 'produccion' && appUser?.permissions?.produccion && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Producción Planta</h3>
                   <button onClick={() => {clearAllReports(); setProdView('calculadora');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'calculadora' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Calculator size={16}/> Simulador OP</button>
@@ -2110,7 +2109,7 @@ export default function App() {
                 </div>
               )}
 
-              {activeTab === 'inventario' && (appUser?.permissions?.inventario || appUser?.role === 'Master') && (
+              {activeTab === 'inventario' && appUser?.permissions?.inventario && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Control Inventario</h3>
                   <button onClick={() => {clearAllReports(); setInvView('catalogo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'catalogo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Box size={16}/> Catálogo</button>
@@ -2125,7 +2124,7 @@ export default function App() {
               )}
             </nav>
           )}
-
+          
           <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' || activeTab === 'costos' || activeTab === 'configuracion' ? 'flex items-center justify-center' : ''}`}>
             {activeTab === 'home' && renderHome()}
             {activeTab === 'ventas' && renderVentasModule()}
