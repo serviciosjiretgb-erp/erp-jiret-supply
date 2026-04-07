@@ -1920,6 +1920,7 @@ export default function App() {
   };
 
   if (!appUser) return <ErrorBoundary>{renderLogin()}</ErrorBoundary>;
+
   return (
     <ErrorBoundary>
       <div className="min-h-screen bg-gray-100 text-gray-900 font-sans flex flex-col print:bg-white print:block print:w-full overflow-x-hidden print:overflow-visible text-black font-black">
