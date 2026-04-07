@@ -3,12 +3,12 @@ import {
   LayoutDashboard, Package, Factory, TrendingUp, AlertTriangle, 
   ClipboardList, PlayCircle, History, FileText, Settings2, Trash2, 
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
-  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge
+  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save
 } from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, serverTimestamp, query } from "firebase/firestore";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch } from "firebase/firestore";
 
 // ============================================================================
 // ESCUDO DE ERRORES EXTREMO (Evita la pantalla blanca)
@@ -31,6 +31,28 @@ class ErrorBoundary extends React.Component {
     return this.props.children; 
   }
 }
+
+// ============================================================================
+// COMPRESOR DE IMÁGENES (Para el fondo de pantalla)
+// ============================================================================
+const compressImage = (file, callback) => {
+  const reader = new FileReader();
+  reader.readAsDataURL(file);
+  reader.onload = event => {
+    const img = new Image();
+    img.src = event.target.result;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const MAX_WIDTH = 1920;
+      let width = img.width; let height = img.height;
+      if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+      canvas.width = width; canvas.height = height;
+      ctx.drawImage(img, 0, 0, width, height);
+      callback(canvas.toDataURL('image/jpeg', 0.6)); // Comprime al 60% para evitar límites de Firestore
+    };
+  };
+};
 
 // ============================================================================
 // CONFIGURACIÓN DE FIREBASE BLINDADA
@@ -88,6 +110,9 @@ const getSafeDate = (ts) => {
 export default function App() {
   const [fbUser, setFbUser] = useState(null);
   const [appUser, setAppUser] = useState(null); 
+  const [systemUsers, setSystemUsers] = useState([]); // NUEVO: Usuarios Dinámicos
+  const [settings, setSettings] = useState({}); // NUEVO: Configuraciones Globales (Fondo)
+  
   const [loginData, setLoginData] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
 
@@ -101,13 +126,13 @@ export default function App() {
   const [clients, setClients] = useState([]);
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
-  const [invRequisitions, setInvRequisitions] = useState([]); // ESTADO PARA REQUISICIONES
+  const [invRequisitions, setInvRequisitions] = useState([]);
 
   const [dialog, setDialog] = useState(null);
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
   const [invSearchTerm, setInvSearchTerm] = useState('');
-  const [reqToApprove, setReqToApprove] = useState(null); // MODAL DE APROBACIÓN
+  const [reqToApprove, setReqToApprove] = useState(null);
 
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
   const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
@@ -116,7 +141,12 @@ export default function App() {
   const [showReqReport, setShowReqReport] = useState(false);
   const [showSingleReqReport, setShowSingleReqReport] = useState(null);
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
-  const [showMovementReceipt, setShowMovementReceipt] = useState(null); // NUEVO ESTADO PARA COMPROBANTE
+  const [showMovementReceipt, setShowMovementReceipt] = useState(null);
+
+  // Formularios de Configuración (NUEVO)
+  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
+  const [newUserForm, setNewUserForm] = useState(initialUserForm);
+  const [editingUserId, setEditingUserId] = useState(null);
 
   // Formularios de Ventas
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
@@ -223,14 +253,35 @@ export default function App() {
   };
 
   // ============================================================================
-  // FIREBASE SYNC E INICIO
+  // FIREBASE SYNC E INICIO DE SESIÓN DINÁMICO
   // ============================================================================
   const handleLogin = (e) => {
     e.preventDefault();
     const user = loginData.username.toLowerCase().trim(); const pass = loginData.password.trim();
-    if (user === 'admin' && pass === '1234') { setAppUser({ user: 'admin', role: 'Master', name: 'Administrador General' }); setLoginError(''); } 
-    else if (user === 'planta' && pass === '1234') { setAppUser({ user: 'planta', role: 'Planta', name: 'Supervisor de Planta' }); setLoginError(''); } 
-    else { setLoginError('Credenciales incorrectas. Intente nuevamente.'); }
+    
+    // Verificar en la lista dinámica de usuarios
+    const foundUser = systemUsers.find(u => u.username === user && u.password === pass);
+    
+    if (foundUser) { 
+       setAppUser(foundUser); 
+       setLoginError(''); 
+    } else { 
+       setLoginError('Credenciales incorrectas. Intente nuevamente.'); 
+    }
+  };
+
+  const handleBgUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      compressImage(file, async (base64) => {
+         try {
+            await setDoc(getDocRef('settings', 'general'), { loginBg: base64 }, { merge: true });
+            setDialog({title: 'Éxito', text: 'Fondo de pantalla actualizado.', type: 'alert'});
+         } catch (error) {
+            setDialog({title: 'Error', text: 'La imagen es muy pesada o hubo un error al subirla.', type: 'alert'});
+         }
+      });
+    }
   };
 
   useEffect(() => {
@@ -242,6 +293,26 @@ export default function App() {
   useEffect(() => {
     if (!fbUser) return;
     let isFirstInv = true;
+    
+    // LISTENER DE USUARIOS
+    const unsubUsers = onSnapshot(getColRef('users'), (s) => {
+      const loadedUsers = s.docs.map(d => ({ id: d.id, ...d.data() }));
+      setSystemUsers(loadedUsers);
+      
+      // Sembrar usuarios iniciales si la colección está vacía
+      if (s.empty) {
+         const defaultAdmin = { username: 'admin', password: '1234', name: 'Administrador General', role: 'Master', permissions: { ventas: true, produccion: true, inventario: true, costos: true, configuracion: true } };
+         const defaultPlanta = { username: 'planta', password: '1234', name: 'Supervisor de Planta', role: 'Planta', permissions: { ventas: false, produccion: true, inventario: false, costos: false, configuracion: false } };
+         setDoc(getDocRef('users', 'admin'), defaultAdmin);
+         setDoc(getDocRef('users', 'planta'), defaultPlanta);
+      }
+    });
+
+    // LISTENER DE CONFIGURACIÓN GLOBAL (FONDO)
+    const unsubSettings = onSnapshot(getDocRef('settings', 'general'), (d) => {
+      if(d.exists()) setSettings(d.data());
+    });
+
     const unsubInv = onSnapshot(getColRef('inventory'), (s) => {
       const data = s.docs.map(d => ({ id: d.id, ...d.data() })); setInventory(data);
       if (s.empty && isFirstInv) { INITIAL_INVENTORY.forEach(item => setDoc(getDocRef('inventory', item.id), item)); }
@@ -251,11 +322,9 @@ export default function App() {
     const unsubCli = onSnapshot(getColRef('clientes'), (s) => setClients(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
-    
-    // LISTENER DE REQUISICIONES DE ALMACEN
     const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
 
-    return () => { unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); };
+    return () => { unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); };
   }, [fbUser]);
 
   const clearAllReports = () => {
@@ -267,6 +336,36 @@ export default function App() {
     setRecipeEditReqId(null); setSelectedPhaseReqId(null); setReqToApprove(null);
     setShowMovementReceipt(null);
   };
+
+  // ============================================================================
+  // LOGICA DE CONFIGURACIÓN Y USUARIOS (NUEVO)
+  // ============================================================================
+  const handleSaveUser = async (e) => {
+    e.preventDefault();
+    if (!newUserForm.username || !newUserForm.password) return setDialog({title:'Aviso', text:'Usuario y contraseña requeridos.', type:'alert'});
+    
+    const userId = newUserForm.username.toLowerCase().trim();
+    try {
+       await setDoc(getDocRef('users', userId), { ...newUserForm, username: userId });
+       setNewUserForm(initialUserForm);
+       setEditingUserId(null);
+       setDialog({title: 'Éxito', text: 'Usuario registrado correctamente.', type: 'alert'});
+    } catch(err) {
+       setDialog({title: 'Error', text: err.message, type: 'alert'});
+    }
+  };
+
+  const startEditUser = (u) => {
+    setEditingUserId(u.username);
+    setNewUserForm(u);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleDeleteUser = (id) => {
+    if(id === 'admin') return setDialog({title:'Acción Denegada', text:'No puedes eliminar al administrador principal.', type:'alert'});
+    setDialog({ title: 'Eliminar Usuario', text: `¿Desea eliminar el acceso a ${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('users', id))});
+  };
+
 
   // ============================================================================
   // LOGICA INVENTARIO
@@ -701,8 +800,18 @@ export default function App() {
   );
 
   const renderLogin = () => (
-    <div className="min-h-screen flex items-center justify-center p-4 relative" style={{ backgroundImage: "url('https://images.unsplash.com/photo-1586528116311-ad8ed7c663c0?q=80&w=2070&auto=format&fit=crop')", backgroundSize: 'cover', backgroundPosition: 'center' }}>
-       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+    <div className="min-h-screen flex items-center justify-center p-4 relative" 
+         style={{ backgroundImage: `url('${settings?.loginBg || "https://images.unsplash.com/photo-1587293852726-70cdb56c2866?q=80&w=2072&auto=format&fit=crop"}')`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+       
+       {/* BOTÓN PARA SUBIR FONDO DE PANTALLA */}
+       <div className="absolute top-4 right-4 z-20">
+          <label className="bg-black/50 hover:bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase cursor-pointer backdrop-blur-sm transition-all flex items-center gap-2 border border-white/20 shadow-lg">
+             <Edit size={14}/> Cambiar Fondo
+             <input type="file" accept="image/*" className="hidden" onChange={handleBgUpload} />
+          </label>
+       </div>
+
        <div className="relative z-10 bg-white rounded-3xl shadow-[0_30px_60px_rgba(0,0,0,0.6)] overflow-hidden w-full max-w-4xl flex transform transition-all duration-500 hover:scale-[1.01] border border-white/20">
           <div className="w-1/2 bg-gradient-to-br from-gray-900 to-black p-12 flex-col justify-between hidden md:flex relative overflow-hidden shadow-[inset_-10px_0_20px_rgba(0,0,0,0.5)] border-r border-gray-800">
              <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-tr from-white/10 to-transparent transform -skew-x-12 pointer-events-none"></div>
@@ -728,7 +837,6 @@ export default function App() {
                   <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Contraseña</label>
                   <div className="relative group"><Lock className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="password" value={loginData.password} onChange={e=>setLoginData({...loginData, password: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="••••••••"/></div>
                 </div>
-                <div className="pt-4 text-center text-xs text-gray-500 bg-gray-50 p-3 rounded-xl border border-dashed border-gray-300 shadow-sm"><p>Usuarios de prueba: <strong className="text-black">admin</strong> (1234) o <strong className="text-black">planta</strong> (1234)</p></div>
                 <button type="submit" className="w-full bg-gradient-to-r from-orange-500 to-orange-600 text-white font-black py-4 rounded-xl shadow-[0_8px_20px_rgba(249,115,22,0.4)] hover:shadow-[0_15px_25px_rgba(249,115,22,0.6)] hover:-translate-y-1 active:translate-y-1 uppercase tracking-widest text-xs flex justify-center items-center gap-2 mt-4 transform transition-all">ENTRAR AL SISTEMA <ArrowRight size={16}/></button>
              </form>
           </div>
@@ -736,23 +844,38 @@ export default function App() {
     </div>
   );
 
-  const renderHome = () => (
-    <div className="w-full max-w-6xl mx-auto py-8 animate-in fade-in">
-      <div className="text-center mb-10">
-        <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
-        <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
+  const renderHome = () => {
+    // Manejo seguro por si es usuario legacy sin la propiedad permissions
+    const hasPerm = (module) => appUser?.permissions ? appUser.permissions[module] : appUser?.role === 'Master';
+    
+    return (
+      <div className="w-full max-w-6xl mx-auto py-8 animate-in fade-in">
+        <div className="text-center mb-10">
+          <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
+          <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
+          {hasPerm('ventas') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Users size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3><p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p></button>
+          )}
+          {hasPerm('produccion') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
+          )}
+          {hasPerm('inventario') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p></button>
+          )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
+          {hasPerm('costos') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('costos'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Reportes de Costo</h3><p className="text-xs text-gray-400 mt-2">Módulo en construcción.</p></button>
+          )}
+          {hasPerm('configuracion') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><Settings2 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3><p className="text-xs text-gray-400 mt-2">Usuarios y Permisos.</p></button>
+          )}
+        </div>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
-        <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Users size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3><p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p></button>
-        <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
-        <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Requisiciones, Kardex y LISLR.</p></button>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
-        <button onClick={() => { clearAllReports(); setActiveTab('costos'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Reportes de Costo</h3><p className="text-xs text-gray-400 mt-2">Módulo en construcción.</p></button>
-        <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><Settings2 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3><p className="text-xs text-gray-400 mt-2">Módulo en construcción.</p></button>
-      </div>
-    </div>
-  );
+    );
+  };
 
   const renderInventoryModule = () => {
     // COMPROBANTE DE MOVIMIENTO
@@ -1992,7 +2115,7 @@ export default function App() {
 
   if (!appUser) return <ErrorBoundary>{renderLogin()}</ErrorBoundary>;
 
-  return (
+return (
     <ErrorBoundary>
       <div className="min-h-screen bg-gray-100 text-gray-900 font-sans flex flex-col print:bg-white print:block print:w-full overflow-x-hidden print:overflow-visible text-black font-black">
         <header className="bg-black border-b-4 border-orange-500 sticky top-0 z-50 text-white shadow-md print:hidden">
@@ -2021,11 +2144,15 @@ export default function App() {
             <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
               <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 transition-all active:scale-95 uppercase tracking-widest"><Home size={18} className="text-orange-500" /> INICIO</button>
               
-              <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'costos' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><BarChart3 size={18} className={activeTab === 'costos' ? 'text-white' : 'text-gray-400'} /> COSTOS</button>
+              {appUser?.permissions?.costos && (
+                 <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'costos' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><BarChart3 size={18} className={activeTab === 'costos' ? 'text-white' : 'text-gray-400'} /> COSTOS</button>
+              )}
               
-              <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'configuracion' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><Settings2 size={18} className={activeTab === 'configuracion' ? 'text-white' : 'text-gray-400'} /> CONFIGURACIÓN</button>
+              {appUser?.permissions?.configuracion && (
+                 <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'configuracion' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><Settings2 size={18} className={activeTab === 'configuracion' ? 'text-white' : 'text-gray-400'} /> CONFIGURACIÓN</button>
+              )}
 
-              {activeTab === 'ventas' && (
+              {activeTab === 'ventas' && appUser?.permissions?.ventas && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Área Ventas</h3>
                   <button onClick={() => {clearAllReports(); setVentasView('facturacion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'facturacion' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Receipt size={16}/> Facturación</button>
@@ -2033,7 +2160,8 @@ export default function App() {
                   <button onClick={() => {clearAllReports(); setVentasView('clientes');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'clientes' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Users size={16}/> Clientes</button>
                 </div>
               )}
-              {activeTab === 'produccion' && (
+
+              {activeTab === 'produccion' && appUser?.permissions?.produccion && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Producción Planta</h3>
                   <button onClick={() => {clearAllReports(); setProdView('calculadora');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'calculadora' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Calculator size={16}/> Simulador OP</button>
@@ -2041,7 +2169,8 @@ export default function App() {
                   <button onClick={() => {clearAllReports(); setProdView('historial');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'historial' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><History size={16}/> Historial y Finiquito</button>
                 </div>
               )}
-              {activeTab === 'inventario' && (
+
+              {activeTab === 'inventario' && appUser?.permissions?.inventario && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Control Inventario</h3>
                   <button onClick={() => {clearAllReports(); setInvView('catalogo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'catalogo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Box size={16}/> Catálogo</button>
@@ -2055,7 +2184,8 @@ export default function App() {
               )}
             </nav>
           )}
-          <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' || activeTab === 'costos' || activeTab === 'configuracion' ? 'flex items-center justify-center' : ''}`}>
+          
+          <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' || activeTab === 'costos' ? 'flex items-center justify-center' : ''}`}>
             {activeTab === 'home' && renderHome()}
             {activeTab === 'ventas' && renderVentasModule()}
             {activeTab === 'produccion' && renderProductionModule()}
@@ -2070,10 +2200,89 @@ export default function App() {
             )}
             
             {activeTab === 'configuracion' && (
-              <div className="bg-white p-16 rounded-3xl border border-gray-200 shadow-sm text-center w-full max-w-2xl animate-in fade-in">
-                <Settings2 size={60} className="text-gray-300 mx-auto mb-6" />
-                <h2 className="text-2xl font-black text-gray-800 uppercase tracking-widest mb-2">Configuración</h2>
-                <p className="text-sm font-bold text-gray-400 uppercase">En Construcción / Próximamente</p>
+              <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden animate-in fade-in">
+                 <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center">
+                    <h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><Settings2 className="text-orange-500" size={24}/> Gestión de Usuarios y Permisos</h2>
+                 </div>
+                 
+                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">
+                    <div className="lg:col-span-1 border-r border-gray-200 bg-gray-50/50 p-8">
+                       <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest border-b border-gray-200 pb-2">{editingUserId ? 'Editar Usuario' : 'Nuevo Usuario'}</h3>
+                       <form onSubmit={handleSaveUser} className="space-y-4">
+                          <div>
+                            <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nombre Completo</label>
+                            <input type="text" required value={newUserForm.name} onChange={e=>setNewUserForm({...newUserForm, name: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500 transition-colors" placeholder="EJ: JUAN PEREZ" />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Usuario (Login)</label>
+                            <input type="text" required disabled={!!editingUserId} value={newUserForm.username} onChange={e=>setNewUserForm({...newUserForm, username: e.target.value.toLowerCase()})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500 transition-colors" placeholder="EJ: juanp" />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Contraseña</label>
+                            <input type="text" required value={newUserForm.password} onChange={e=>setNewUserForm({...newUserForm, password: e.target.value})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500 transition-colors" placeholder="Mínimo 4 caracteres" />
+                          </div>
+                          
+                          <div className="pt-4 border-t border-gray-200 mt-4">
+                             <label className="text-[10px] font-black text-black uppercase block mb-3 tracking-widest">Permisos de Acceso</label>
+                             <div className="space-y-2 bg-white p-4 rounded-xl border border-gray-200">
+                                {['ventas', 'produccion', 'inventario', 'costos', 'configuracion'].map(mod => (
+                                   <label key={mod} className="flex items-center gap-3 cursor-pointer group">
+                                      <input type="checkbox" checked={newUserForm.permissions?.[mod] || false} onChange={(e) => setNewUserForm({...newUserForm, permissions: {...newUserForm.permissions, [mod]: e.target.checked}})} className="w-4 h-4 text-orange-500 rounded focus:ring-orange-500 cursor-pointer" />
+                                      <span className="text-[10px] font-black text-gray-600 uppercase group-hover:text-black transition-colors">Módulo de {mod}</span>
+                                   </label>
+                                ))}
+                             </div>
+                          </div>
+                          
+                          <div className="pt-6 flex gap-2">
+                             {editingUserId && <button type="button" onClick={() => {setEditingUserId(null); setNewUserForm(initialUserForm);}} className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl font-black text-[10px] uppercase hover:bg-gray-300 transition-all">Cancelar</button>}
+                             <button type="submit" className="flex-1 bg-black text-white py-3 rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all flex items-center justify-center gap-2"><Save size={14}/> Guardar</button>
+                          </div>
+                       </form>
+                    </div>
+                    
+                    <div className="lg:col-span-2 p-8">
+                       <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest border-b border-gray-200 pb-2">Usuarios Registrados</h3>
+                       <div className="overflow-x-auto rounded-xl border border-gray-200">
+                          <table className="w-full text-left whitespace-nowrap text-sm">
+                             <thead className="bg-gray-100 border-b-2 border-gray-200">
+                                <tr className="uppercase font-black text-[10px] tracking-widest text-gray-500">
+                                   <th className="py-3 px-4 border-r">Usuario / Nombre</th>
+                                   <th className="py-3 px-4 border-r">Clave</th>
+                                   <th className="py-3 px-4 border-r">Accesos Permitidos</th>
+                                   <th className="py-3 px-4 text-center">Acciones</th>
+                                </tr>
+                             </thead>
+                             <tbody className="divide-y divide-gray-100 text-black">
+                                {systemUsers.map(u => (
+                                   <tr key={u.username} className="hover:bg-gray-50">
+                                      <td className="py-3 px-4 border-r">
+                                         <span className="font-black text-orange-600 text-sm">{u.username}</span><br/>
+                                         <span className="text-[10px] font-bold text-gray-500 uppercase">{u.name}</span>
+                                      </td>
+                                      <td className="py-3 px-4 border-r font-black text-gray-400">{u.password}</td>
+                                      <td className="py-3 px-4 border-r">
+                                         <div className="flex flex-wrap gap-1">
+                                            {u.permissions && Object.entries(u.permissions).map(([key, val]) => val && (
+                                               <span key={key} className="bg-blue-50 text-blue-600 border border-blue-200 px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest">{key}</span>
+                                            ))}
+                                         </div>
+                                      </td>
+                                      <td className="py-3 px-4 text-center">
+                                         <div className="flex justify-center gap-2">
+                                            <button onClick={() => startEditUser(u)} className="p-2 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-all"><Edit size={14}/></button>
+                                            {u.username !== 'admin' && (
+                                               <button onClick={() => handleDeleteUser(u.username)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={14}/></button>
+                                            )}
+                                         </div>
+                                      </td>
+                                   </tr>
+                                ))}
+                             </tbody>
+                          </table>
+                       </div>
+                    </div>
+                 </div>
               </div>
             )}
           </main>
