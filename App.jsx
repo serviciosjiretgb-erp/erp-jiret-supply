@@ -33,7 +33,7 @@ class ErrorBoundary extends React.Component {
 }
 
 // ============================================================================
-// CONFIGURACIÓN DE FIREBASE BLINDADA
+// CONFIGURACIÓN DE FIREBASE
 // ============================================================================
 const firebaseConfig = {
   apiKey: "AIzaSyBri2uZAaxsH4S0OpqhYvXB4wfCqo4g3sk",
@@ -101,13 +101,7 @@ export default function App() {
   const [clients, setClients] = useState([]);
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
-  
-  // Nuevo Estado: Vales de Materiales (Almacén <-> Planta)
   const [materialRequests, setMaterialRequests] = useState([]);
-  const [showMatReqPanel, setShowMatReqPanel] = useState(false);
-  const [matReqForm, setMatReqForm] = useState({ items: [] });
-  const [matReqIngId, setMatReqIngId] = useState('');
-  const [matReqIngQty, setMatReqIngQty] = useState('');
 
   const [dialog, setDialog] = useState(null);
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
@@ -116,6 +110,7 @@ export default function App() {
 
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
   const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
+  const [showMatReqPanel, setShowMatReqPanel] = useState(false);
   const [showGeneralInvoicesReport, setShowGeneralInvoicesReport] = useState(false);
   const [showClientReport, setShowClientReport] = useState(false);
   const [showReqReport, setShowReqReport] = useState(false);
@@ -149,14 +144,14 @@ export default function App() {
   const [selectedPhaseReqId, setSelectedPhaseReqId] = useState(null);
   const [activePhaseTab, setActivePhaseTab] = useState('extrusion');
   const [phaseForm, setPhaseForm] = useState(initialPhaseForm);
+  const [matReqForm, setMatReqForm] = useState({ items: [] });
+  const [matReqIngId, setMatReqIngId] = useState('');
+  const [matReqIngQty, setMatReqIngQty] = useState('');
 
   // Simulador
   const initialCalcInputs = { 
     ingredientes: [{ id: Date.now() + 1, nombre: 'MP-0240', pct: 80, costo: 0.96 }, { id: Date.now() + 2, nombre: 'MP-RECICLADO', pct: 20, costo: 1.00 }], 
-    mezclaTotal: '', 
-    mermaGlobalPorc: 5, 
-    tipoProducto: 'BOLSAS',
-    ancho: '', fuelles: '', largo: '', micras: ''
+    mezclaTotal: '', mermaGlobalPorc: 5, tipoProducto: 'BOLSAS', ancho: '', fuelles: '', largo: '', micras: ''
   };
   const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
 
@@ -183,7 +178,7 @@ export default function App() {
 
     const originalCssText = element.style.cssText;
     const originalClasses = element.className;
-    const virtualWidth = isLandscape ? 1120 : 800;
+    const virtualWidth = isLandscape ? 1120 : 800; 
     
     element.className = 'bg-white text-black p-8';
     element.style.width = `${virtualWidth}px`; 
@@ -279,7 +274,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA INVENTARIO
+  // LÓGICA INVENTARIO
   // ============================================================================
   const handleSaveInvItem = async (e) => {
     e.preventDefault(); if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
@@ -304,6 +299,7 @@ export default function App() {
       await batch.commit(); setNewMovementForm(initialMovementForm); setDialog({title: 'Éxito', text: 'Movimiento registrado.', type: 'alert'});
     } catch (err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
+  
   const handleDeleteInvItem = (id) => setDialog({ title: 'Eliminar Ítem', text: `¿Eliminar ${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('inventory', id))});
   const handleDeleteMovement = (m) => setDialog({ title: 'Anular Movimiento', text: `¿Revertir movimiento?`, type: 'confirm', onConfirm: async () => {
         const item = (inventory || []).find(i => i?.id === m?.itemId);
@@ -345,7 +341,7 @@ export default function App() {
   };
 
   // ============================================================================
-  // LOGICA VENTAS Y FACTURACIÓN (SELLADA / SIN MODIFICAR LA LÓGICA)
+  // LÓGICA VENTAS Y FACTURACIÓN (SELLADA / INTACTA)
   // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault(); if (!newClientForm.rif || !newClientForm.razonSocial) return setDialog({ title: 'Aviso', text: 'RIF y Razón Social obligatorios.', type: 'alert' });
@@ -359,13 +355,11 @@ export default function App() {
   const handleInvoiceFormChange = (field, value) => {
     const valUpper = typeof value === 'string' ? value.toUpperCase() : value;
     let f = { ...newInvoiceForm, [field]: valUpper };
-    
     if (field === 'clientRif') {
        const c = (clients || []).find(cl => cl.rif === value);
        f.clientName = c?.name || '';
        f.vendedor = (c?.vendedor || '').toUpperCase();
     }
-    
     if (field === 'montoBase' || field === 'aplicaIva') {
        const base = parseNum(field === 'montoBase' ? value : f.montoBase);
        const aplica = field === 'aplicaIva' ? value : f.aplicaIva;
@@ -373,7 +367,6 @@ export default function App() {
        f.iva = iva > 0 ? iva.toFixed(2) : '0.00';
        f.total = base > 0 ? (base + iva).toFixed(2) : base.toFixed(2);
     }
-    
     if (field === 'iva' && f.aplicaIva === 'SI') {
        const base = parseNum(f.montoBase);
        const iva = parseNum(value);
@@ -428,7 +421,7 @@ export default function App() {
   const handleDeleteReq = (id) => setDialog({ title: 'Eliminar OP', text: `¿Desea eliminar la OP #${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('requirements', id))});
 
   // ============================================================================
-  // LOGICA PRODUCCIÓN Y CONTROL DE FASES (Sin Ingeniería)
+  // LÓGICA PRODUCCIÓN Y CONTROL DE FASES (Sin Ingeniería)
   // ============================================================================
   const renderPhaseInventoryOptions = () => {
     let mainCats = [];
@@ -467,7 +460,7 @@ export default function App() {
             const batch = writeBatch(db); let phaseCost = 0; let totalInsumosKg = 0;
             for (let ing of (phaseForm?.insumos || [])) {
               const item = (inventory || []).find(i => i?.id === ing?.id);
-              if (item) { phaseCost += ((item?.cost || 0) * (ing?.qty || 0)); totalInsumosKg += parseFloat(ing?.qty || 0); /* SE ELIMINA LA RESTA DE INVENTARIO AQUÍ PORQUE AHORA LO HACE ALMACÉN VÍA VALE */ }
+              if (item) { phaseCost += ((item?.cost || 0) * (ing?.qty || 0)); totalInsumosKg += parseFloat(ing?.qty || 0); /* RESTA DE INVENTARIO DESHABILITADA, AHORA LO HACE ALMACÉN */ }
             }
             await batch.commit();
             
@@ -491,7 +484,7 @@ export default function App() {
   const handleDeleteBatch = async (reqId, phase, batchId) => {
     setDialog({ title: `ELIMINAR LOTE`, text: `¿Seguro que desea eliminar este lote parcial?`, type: 'confirm', onConfirm: async () => {
         const req = (requirements || []).find(r => r?.id === reqId); let currentPhase = { ...(req?.production?.[phase] || {}) }; const bIdx = (currentPhase.batches || []).findIndex(b => b?.id === batchId);
-        if (bIdx >= 0) { const batch = currentPhase.batches[bIdx]; currentPhase.batches.splice(bIdx, 1); /* SE ELIMINA LA RESTITUCIÓN DE INVENTARIO AQUÍ PORQUE AHORA LO HACE ALMACÉN VÍA VALE */ }
+        if (bIdx >= 0) { currentPhase.batches.splice(bIdx, 1); }
         await updateDoc(getDocRef('requirements', reqId), { production: { ...(req?.production || {}), [phase]: currentPhase } });
     }});
   };
@@ -526,7 +519,6 @@ export default function App() {
             
             setPhaseForm(restoreForm);
             currentPhase.batches.splice(bIdx, 1); 
-            /* SE ELIMINA LA RESTITUCIÓN DE INVENTARIO AQUÍ PORQUE AHORA LO HACE ALMACÉN VÍA VALE */
         }
         await updateDoc(getDocRef('requirements', reqId), { production: { ...(req?.production || {}), [phase]: currentPhase } });
     }});
@@ -553,36 +545,23 @@ export default function App() {
   // ============================================================================
   // --- LÓGICA CALCULADORA (SIMULADOR OP CON COSTOS) MEJORADA ---
   // ============================================================================
-  const handleResetCalc = () => {
-    setCalcInputs(initialCalcInputs);
-  };
-
+  const handleResetCalc = () => { setCalcInputs(initialCalcInputs); };
   const handleCalcChange = (field, value) => setCalcInputs({ ...calcInputs, [field]: parseNum(value) });
-  
   const updateCalcIng = (id, field, value) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs?.ingredientes || []).map(ing => ing?.id === id ? { ...ing, [field]: field === 'nombre' ? value : parseNum(value) } : ing) });
   const addCalcIng = () => setCalcInputs({ ...calcInputs, ingredientes: [...(calcInputs?.ingredientes || []), { id: Date.now(), nombre: '', pct: 0, costo: 0 }] });
   const removeCalcIng = (id) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs?.ingredientes || []).filter(i => i?.id !== id) });
 
-  // 1. Cálculos de Parámetros del Producto 
   const simW = parseNum(calcInputs?.ancho);
   const simL = parseNum(calcInputs?.largo);
   const simM = parseNum(calcInputs?.micras);
   const simFu = parseNum(calcInputs?.fuelles);
-  
   const isBolsas = calcInputs?.tipoProducto === 'BOLSAS';
   
   let simPesoMillar = 0;
-  if (isBolsas) {
-     simPesoMillar = (simW + simFu) * simL * simM;
-  }
+  if (isBolsas) { simPesoMillar = (simW + simFu) * simL * simM; }
 
-  // 2. Lógica ajustada: Convertir Millares ingresados a KG reales si es bolsa
   const inputCantidadSolicitada = calcInputs?.mezclaTotal || 0;
-  
-  const calcTotalMezcla = isBolsas 
-                          ? (simPesoMillar > 0 ? (inputCantidadSolicitada * simPesoMillar) : 0) 
-                          : inputCantidadSolicitada;
-
+  const calcTotalMezcla = isBolsas ? (simPesoMillar > 0 ? (inputCantidadSolicitada * simPesoMillar) : 0) : inputCantidadSolicitada;
   const calcMezclaProcesada = calcTotalMezcla; 
   let calcCostoMezclaPreparada = 0;
   
@@ -1135,7 +1114,7 @@ export default function App() {
   };
 
   const renderVentasModule = () => {
-    // ESTE CÓDIGO DE VENTAS SE MANTIENE EXACTAMENTE IGUAL (SELLADO)
+    // ESTE CÓDIGO DE VENTAS SE MANTIENE EXACTAMENTE IGUAL (SELLADO LOGICAMENTE)
     const filteredClients = (clients || []).filter(c => String(c?.name || '').toUpperCase().includes(clientSearchTerm.toUpperCase()) || String(c?.rif || '').toUpperCase().includes(clientSearchTerm.toUpperCase()));
     const filteredInvoices = (invoices || []).filter(inv => String(inv?.documento || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()) || String(inv?.clientName || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()));
 
@@ -1189,7 +1168,7 @@ export default function App() {
       const req = (requirements || []).find(r => r?.id === showSingleReqReport); if (!req) return null;
       return (
         <div id="pdf-content" className="bg-white p-8 min-h-0 text-black shadow-xl bg-white">
-          <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowSingleReqReport(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Requisicion_${req.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> EXPORTAR PDF</button></div>
+          <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowSingleReqReport(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Requisicion_${req.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar PDF</button></div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center my-4"><span className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">REQUISICIÓN DE PRODUCCIÓN N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
           <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto}</p></div></div>
@@ -1317,6 +1296,7 @@ export default function App() {
                         <input type="text" required className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black uppercase" value={newInvoiceForm.productoMaquilado} onChange={e=>handleInvoiceFormChange('productoMaquilado', e.target.value)} placeholder="EJ: BOLSAS DE 28 X 75" />
                       </div>
 
+                      {/* AMPLIADO CAMPO BASE USD E IVA */}
                       <div className="md:col-span-4">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Base (USD) e IVA</label>
                         <div className="flex gap-3">
@@ -1404,7 +1384,7 @@ export default function App() {
   };
 
   const renderProductionModule = () => {
-    // ... Módulo de Producción (Se mantiene exactamente igual para respetar la restricción)
+    // ... MÓDULO PRODUCCIÓN (SELLADO - SIN MODIFICAR LÓGICA INTERNA) ...
     if (showWorkOrder) return renderWorkOrder();
     if (showPhaseReport) return renderPhaseReport();
     if (showFiniquito) return renderFiniquito();
@@ -1738,6 +1718,173 @@ export default function App() {
             <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-right text-black text-[10px] font-black uppercase tracking-widest">KG Finales</th><th className="p-4 text-center text-black text-[10px] font-black uppercase tracking-widest">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(completedOrders || []).map(req => (<tr key={req?.id} className="hover:bg-gray-50 transition-colors group"><td className="p-4 font-black text-orange-500 text-lg">#{String(req?.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-xs text-black">{req?.client}<br/><span className="text-[10px] font-bold text-gray-400">{req?.desc}</span></td><td className="p-4 text-right font-black text-green-600 text-lg">{formatNum((req?.production?.sellado?.batches || []).reduce((a,b)=>a+parseNum(b?.producedKg),0) || (req?.production?.extrusion?.batches || []).reduce((a,b)=>a+parseNum(b?.producedKg),0) || 0)} KG</td><td className="p-4 text-center"><button onClick={()=>setShowFiniquito(req?.id)} className="bg-black text-white px-8 py-3 rounded-2xl text-[9px] font-black uppercase hover:bg-gray-800 shadow-md flex items-center gap-2 mx-auto transition-all"><FileText size={14}/> GENERAR FINIQUITO</button></td></tr>))}</tbody></table></div>
           </div>
         )}
+      </div>
+    );
+  };
+
+  // --- VISTAS DE IMPRESIÓN (PRODUCCIÓN) ---
+  const renderWorkOrder = () => {
+    const req = (requirements || []).find(r => r?.id === showWorkOrder); if (!req) return null;
+    const isBolsas = req?.tipoProducto === 'BOLSAS';
+    
+    // Calcular el total de kilos de materia prima planificada
+    let totalMPKgRecipe = 0;
+    (req?.recipe || []).forEach(ing => { totalMPKgRecipe += parseNum(ing?.totalQty); });
+    if(totalMPKgRecipe === 0) totalMPKgRecipe = parseNum(req?.requestedKg); // Fallback si no hay receta
+
+    return (
+      <div id="pdf-content" className="bg-white p-6 print:p-0 min-h-screen text-black shadow-none border-0 bg-white"><style>{`@media print { @page { size: portrait; margin: 5mm; } }`}</style>
+        <div data-html2canvas-ignore="true" className="flex justify-between mb-2 no-pdf"><button onClick={() => setShowWorkOrder(null)} className="bg-gray-100 px-6 py-2 rounded-xl text-xs font-black uppercase">VOLVER</button><button onClick={() => handleExportPDF(`OP_${req.id}`, false)} className="bg-black text-white px-8 py-2 rounded-xl font-black flex items-center gap-2 text-xs uppercase shadow-lg"><Printer size={16} /> EXPORTAR PDF</button></div>
+        <div className="flex justify-between items-end border-b-2 border-black pb-1 mb-2"><div><div className="flex items-center -mb-1"><span className="text-black font-black text-3xl leading-none">G</span><span className="text-orange-500 font-black text-lg mx-0.5">&amp;</span><span className="text-black font-black text-3xl leading-none">B</span></div><p className="text-[6px] font-bold text-orange-500 uppercase mt-1 tracking-widest">Servicio y Calidad</p></div><div className="text-center flex-1"><h1 className="text-lg font-black uppercase tracking-widest">ORDEN DE TRABAJO PARA OP.</h1></div></div>
+        <div className="grid grid-cols-3 text-[9px] font-bold uppercase mb-2 border-b-2 border-black pb-2"><div><p className="mb-1"><span className="w-16 inline-block font-black">CLIENTE:</span> {req.client}</p><p className="mb-1"><span className="w-16 inline-block font-black">OP:</span> #{String(req.id).replace('OP-', '').padStart(5, '0')}</p><p><span className="w-16 inline-block font-black">TIPO:</span> {req.tipoProducto || 'N/A'}</p></div><div><p className="mb-1"><span className="w-20 inline-block font-black">EMISIÓN:</span> {req.fecha}</p><p><span className="w-20 inline-block font-black text-orange-600 font-black">KG MATERIA PRIMA:</span> <span className="text-orange-600 font-black">{formatNum(totalMPKgRecipe)} KG</span></p></div><div><p className="mb-1"><span className="w-24 inline-block font-black">FECHA ENTRADA:</span> __________________</p><p><span className="w-24 inline-block font-black">FECHA SALIDA:</span> __________________</p></div></div>
+        
+        {/* NUEVA SECCIÓN: META SOLICITADA SEGÚN IMAGEN 5 */}
+        <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-3 flex justify-between items-center mb-2 shadow-inner"><div className="w-3/5"><span className="text-[11px] font-black text-orange-900 uppercase">META SOLICITADA POR EL CLIENTE ({isBolsas ? 'MILLARES' : 'KILOS'})</span><p className="text-[10px] font-bold text-gray-700 leading-tight">Cantidad bruta a entregar al cliente según nota de pedido. Incluye merma de sellado.</p></div><div className="text-right"><span className="text-4xl font-black text-orange-600">{isBolsas ? req?.cantidad : formatNum(req?.cantidad)}</span><span className="text-lg font-black text-orange-600 ml-1">{isBolsas ? req?.presentacion : 'KG'}</span></div></div>
+
+        <div className="border-2 border-black p-2 mb-2 rounded-2xl overflow-hidden"><div className="font-black text-center border-b-2 border-black mb-2 py-0.5 text-xs bg-gray-100 uppercase font-black">Especificaciones Finales</div><div className="grid grid-cols-4 gap-2 text-center text-[9px] font-black uppercase bg-gray-50"><div>ANCHO<br/><span className="text-sm text-blue-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-blue-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-blue-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-blue-600">{req.micras}</span></div></div></div>
+        <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Parámetros de Extrusión</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">CANTIDAD KG:</span> __________________________</div><div className="col-span-2 flex justify-between"><div><span className="font-black pr-1">TRATADO: 1</span> _____ <span className="ml-4">2</span> _____</div><div><span className="font-black pr-1">COLOR:</span> {req.color}</div></div><div className="col-span-2 flex justify-between"><div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> _________________</div><div><span className="font-black pr-1">VENTILADOR:</span> _________________</div><div><span className="font-black pr-1">JALADOR:</span> _________________</div></div><div className="col-span-2 border-t border-gray-300 pt-1 mt-1"><div className="flex justify-between mb-2"><span className="font-black">ZONAS:</span><span>1 ____</span><span>2 ____</span><span>3 ____</span><span>4 ____</span><span>5 ____</span><span>6 ____</span></div><div className="flex gap-10"><span className="font-black">CABEZAL:</span><span>A ________</span><span>B ________</span></div></div></div></div>
+        <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Impresión Flexográfica</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div><div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> __________________________</div><div><span className="font-black pr-1">TEMPERATURA:</span> __________________________</div><div className="col-span-2 border-t border-gray-300 pt-1 mt-1"><div className="flex justify-between mb-1"><span className="font-black">COLORES:</span><span>1 _______</span><span>2 _______</span><span>3 _______</span><span>4 _______</span><span>5 _______</span><span>6 _______</span></div></div></div></div>
+        <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Sellado y Corte</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div><div><span className="font-black pr-1">CANT. PRODUCIDA (KG):</span> _______________</div><div><span className="font-black pr-1">CANT. PRODUCIDA MILLARES:</span> ___________</div></div></div>
+        
+        {/* NUEVA SECCIÓN: FIRMAS AMPLIADAS SEGÚN IMAGEN 5 */}
+        <div className="mt-6 border-t-2 border-black pt-2 text-black font-black uppercase text-[8px]"><div className="font-black mb-3">ESPACIO DE FIRMAS Y RESPONSABLES POR FASE:</div><div className="grid grid-cols-5 gap-3 text-center"><div className="border-t border-black pt-1">RESP. EXTRUSIÓN<br/>(OPERADOR)</div><div className="border-t border-black pt-1">RESP. IMPRESIÓN<br/>(OPERADOR)</div><div className="border-t border-black pt-1">RESP. SELLADO<br/>(OPERADOR)</div><div className="border-t border-black pt-1">CONTROL CALIDAD<br/>(INSPECTOR)</div><div className="border-t border-black pt-1">SUPERVISOR<br/>PLANTA</div></div></div>
+      </div>
+    );
+  };
+
+  const renderPhaseReport = () => {
+    const req = (requirements || []).find(r => r?.id === showPhaseReport?.reqId); if (!req) return null;
+    const pData = req?.production?.[showPhaseReport?.phase]; if (!pData) return null;
+    return (
+      <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black shadow-xl bg-white"><div data-html2canvas-ignore="true" className="flex justify-between mb-10 no-pdf bg-gray-50 p-4 rounded-xl border border-gray-200"><button onClick={() => setShowPhaseReport(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2.5 rounded-xl">VOLVER</button><button onClick={() => handleExportPDF(`ReporteFase_${showPhaseReport?.phase}_OP${req?.id}`, false)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button></div>
+        <div className="hidden pdf-header mb-6"><ReportHeader /></div>
+        <h2 className="text-2xl font-black text-center my-10 uppercase border-b-4 border-orange-500 pb-2">REPORTE FASE: {(showPhaseReport?.phase || '').toUpperCase()}</h2>
+        <div className="grid grid-cols-2 gap-x-10 gap-y-4 text-xs font-black uppercase mb-10"><div>CLIENTE: {req?.client}</div><div>EMISIÓN: {getSafeDate(Date.now())}</div><div>OP N°: {String(req?.id).replace('OP-', '').padStart(5, '0')}</div><div>VENDEDOR: {req?.vendedor || 'S/N'}</div></div>
+        <table className="w-full text-center border-collapse border-2 border-black text-black"><thead className="bg-gray-200"><tr><th className="p-3 border border-black text-[10px] tracking-widest">FECHA LOTE</th><th className="p-3 border border-black text-[10px] tracking-widest">PRODUCIDO (KG)</th><th className="p-3 border border-black text-[10px] tracking-widest">DESPERDICIO (KG)</th></tr></thead>
+          <tbody className="divide-y divide-black">{(pData?.batches || []).map((b, i)=>(<tr key={i} className="h-10 align-middle"><td className="p-3 border border-black font-bold uppercase">{b?.date}</td><td className="p-3 border border-black font-black text-base">{formatNum(b?.producedKg)}</td><td className="p-3 border border-black font-bold text-red-600">{formatNum(b?.mermaKg)}</td></tr>))}</tbody>
+        </table>
+        <div className="mt-32 flex justify-between border-t-2 border-black pt-4 font-black text-[10px] uppercase text-black"><div>REVISIÓN DE PLANTA</div><div>AUTORIZACIÓN GERENCIA</div></div>
+      </div>
+    );
+  };
+
+  const renderFiniquito = () => {
+    const req = (requirements || []).find(r => r?.id === showFiniquito); if (!req) return null;
+    const isTermo = req?.tipoProducto === 'TERMOENCOGIBLE';
+    const isBolsas = req?.tipoProducto === 'BOLSAS';
+    
+    // Calcular peso por millar real (si es bolsa)
+    const realPesoMillar = isBolsas ? parseNum(req?.micras) * (parseNum(req?.ancho) + parseNum(req?.fuelles)) * parseNum(req?.largo) / 1000 : 0;
+
+    // Obtener lotes por fase
+    const extB = req?.production?.extrusion?.batches || [];
+    const impB = req?.production?.impresion?.batches || [];
+    const selB = req?.production?.sellado?.batches || [];
+    
+    // Extracción de MP de Extrusión
+    let mpC = []; 
+    extB.forEach(b => { 
+       (b?.insumos || []).forEach(ing => { 
+          const ex = mpC.find(i => i?.id === ing?.id); 
+          if(ex) ex.qty += (ing?.qty || 0); else mpC.push({...ing}); 
+       }); 
+    });
+
+    const totMP = mpC.reduce((s, i) => s + (i?.qty || 0), 0) || 0;
+    
+    // Producción Extrusión (Kilos Reales Fabricados)
+    const extP = extB.reduce((a,b)=>a+parseNum(b?.producedKg),0);
+    const impP = impB.reduce((a,b)=>a+parseNum(b?.producedKg),0);
+    const selP = selB.reduce((a,b)=>a+parseNum(b?.producedKg),0);
+    
+    // Mermas Individuales y Globales
+    const extMerma = extB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
+    const impMerma = impB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
+    const selMerma = selB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
+    const totalMerma = extMerma + impMerma + selMerma;
+
+    // Producción Final Total (SEGÚN IMAGEN 7)
+    // Para bolsas, la meta real está en el sellado (millares)
+    // Para termo, la meta real está en el sellado (kg), o extrusión si no aplica sellado
+    const totUnid = isTermo ? (selP > 0 ? selP : extP) : selB.reduce((s, b) => s + parseNum(b?.millaresProd || b?.techParams?.millares || 0), 0);
+    const unitF = isBolsas ? 'MILLARES' : 'KG';
+
+    const getFI = () => { const bs = []; if (req?.production?.extrusion?.batches) bs.push(...req.production.extrusion.batches); if (req?.production?.impresion?.batches) bs.push(...req.production.impresion.batches); if (req?.production?.sellado?.batches) bs.push(...req.production.sellado.batches); if (bs.length === 0) return 'NO INICIADO'; bs.sort((a, b) => a.timestamp - b.timestamp); return bs[0].date; };
+    const getFF = () => { if (req?.status !== 'COMPLETADO') return 'EN PROCESO'; const bs = []; if (req?.production?.extrusion?.batches) bs.push(...req.production.extrusion.batches); if (req?.production?.impresion?.batches) bs.push(...req.production.impresion.batches); if (req?.production?.sellado?.batches) bs.push(...req.production.sellado.batches); if (bs.length === 0) return getTodayDate(); bs.sort((a, b) => b.timestamp - a.timestamp); return bs[0].date; };
+
+    return (
+      <div id="pdf-content" className="bg-white p-12 print:p-6 min-h-0 text-black shadow-none border-0 font-black uppercase text-black bg-white"><style>{`@media print { @page { size: landscape !important; margin: 5mm !important; } body { background-color: white !important; } #pdf-content { width: 100% !important; max-width: 1000px !important; margin: 0 auto !important; display: block !important; } table, tr, td, th, tbody, thead, tfoot { page-break-inside: avoid !important; } .text-orange-600 { color: #ea580c !important; } }`}</style>
+        <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowFiniquito(null)} className="text-black font-black text-xs uppercase bg-gray-100 border border-gray-200 px-6 py-2.5 rounded-xl hover:bg-gray-200">VOLVER</button><button onClick={() => handleExportPDF(`Finiquito_OP_${req?.id}`, true)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black text-[10px] uppercase shadow-lg"><Printer size={16} /> EXPORTAR PDF</button></div>
+        
+        <div className="flex justify-between items-end border-b-2 border-black pb-4 mb-6">
+           <div className="flex items-center gap-4">
+              <div className="bg-black text-white p-2 rounded-lg flex items-center print:border print:border-black print:bg-white print:text-black font-black text-2xl font-black">G&B</div>
+              <div><h1 className="text-lg font-black uppercase tracking-widest text-black">REPORTE FINAL DE PRODUCCIÓN</h1><p className="text-[10px] font-bold text-gray-500 uppercase">SERVICIOS JIRET G&B, C.A.</p></div>
+           </div>
+           <div className="text-right">
+              <p className="text-[10px] font-bold text-gray-500 uppercase">FECHA EMISIÓN: <span className="text-black font-black">{getTodayDate()}</span></p>
+              <p className="text-sm font-black text-orange-600 uppercase mt-1">OP N° {String(req?.id).replace('OP-','').padStart(5,'0')}</p>
+           </div>
+        </div>
+        
+        <div className="grid grid-cols-4 gap-4 bg-gray-50 p-4 rounded-xl mb-6 text-[10px] font-bold uppercase border border-gray-200">
+           <div><span className="text-gray-500 block mb-1">CLIENTE:</span> {req?.client}</div>
+           <div className="col-span-2"><span className="text-gray-500 block mb-1">PRODUCTO:</span> {req?.desc}</div>
+           <div className="text-right">
+              <span className="text-gray-500 block mb-1">META SOLICITADA:</span> 
+              <span className="text-orange-600 font-black text-sm">
+                 {formatNum(req?.cantidad || req?.requestedKg)} {isBolsas ? req?.presentacion : 'KG'}
+              </span>
+           </div>
+           <div><span className="text-gray-500 block mb-1">FECHA INICIO (PLANTA):</span> <span className="text-black">{getFI()}</span></div>
+           <div><span className="text-gray-500 block mb-1">FECHA CIERRE (PLANTA):</span> <span className="text-black">{getFF()}</span></div>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-gray-300 print:border-black print:rounded-none">
+           <table className="w-full text-left text-[10px] whitespace-nowrap print:whitespace-normal">
+              <thead className="bg-gray-100 text-gray-800 border-b border-gray-300 print:border-black">
+                 <tr>
+                    <th className="p-3 print:p-2 font-black uppercase">FASE / CONCEPTO</th>
+                    <th className="p-3 print:p-2 text-center font-black uppercase">CANTIDAD</th>
+                    <th className="p-3 print:p-2 text-center font-black uppercase">U.M.</th>
+                    <th className="p-3 print:p-2 text-right font-black uppercase">NOTAS / INDICADORES</th>
+                 </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200 print:divide-black">
+                 {/* MATERIA PRIMA */}
+                 <tr><td colSpan="4" className="p-2 print:p-1.5 font-black uppercase text-[11px] text-orange-600 bg-orange-50 font-black print:text-black print:bg-transparent">1. MATERIA PRIMA CONSUMIDA (EXTRUSIÓN)</td></tr>
+                 {mpC.length > 0 ? mpC.map((ing, i) => (
+                    <tr key={i} className="hover:bg-gray-50">
+                       <td className="p-2 print:p-1.5 pl-4 font-bold text-gray-800 font-black">{(inventory || []).find(inv=>inv?.id===ing?.id)?.desc || ing?.id}</td>
+                       <td className="p-2 print:p-1.5 text-center text-gray-700 font-black text-sm">{formatNum(ing?.qty)}</td>
+                       <td className="p-2 print:p-1.5 text-center text-gray-500 font-black">kg</td>
+                       <td className="p-2 print:p-1.5 text-right text-gray-600 font-black">{formatNum(((ing?.qty||0)/totMP)*100)}% de la mezcla</td>
+                    </tr>
+                 )) : (<tr><td colSpan="4" className="p-4 text-center text-gray-500 italic">Sin reporte de insumos en extrusión.</td></tr>)}
+                 <tr className="bg-gray-100 font-black border-y-2 border-gray-300 print:border-black font-black print:bg-gray-200">
+                    <td className="p-2 print:p-1.5 pl-4 text-black font-black">TOTAL MATERIA PRIMA UTILIZADA</td>
+                    <td className="p-2 print:p-1.5 text-center text-black font-black text-base print:text-sm">{formatNum(totMP)}</td>
+                    <td className="p-2 print:p-1.5 text-center text-gray-600 font-black">kg</td>
+                    <td className="p-2 print:p-1.5 text-right text-gray-600 font-black">Ingreso real a Planta</td>
+                 </tr>
+                 
+                 {/* MERMAS Y PRODUCCION INTERMEDIA */}
+                 <tr><td colSpan="4" className="p-2 print:p-1.5 pt-4 font-black uppercase text-[11px] text-orange-600 bg-orange-50 font-black print:text-black print:bg-transparent">2. DETALLE DE MERMAS POR FASE</td></tr>
+                 <tr>
+                    <td className="p-2 print:p-1.5 pl-4 font-bold text-gray-800 font-black">MERMA FASE EXTRUSIÓN</td>
+                    <td className="p-2 print:p-1.5 text-center text-red-600 font-black">{formatNum(extMerma)}</td>
+                    <td className="p-2 print:p-1.5 text-center text-gray-500 font-black">kg</td>
+                    <td className="p-2 print:p-1.5 text-right text-gray-600 font-black">{totMP > 0 ? formatNum((extMerma/totMP)*100) : '0,00'}% de la mezcla</td>
+                 </tr>
+                 {impB.length > 0 && <tr><td className="p-2 print:p-1.5 pl-4 font-bold text-gray-800 font-black">MERMA FASE IMPRESIÓN</td><td className="p-2 print:p-1.5 text-center text-red-600 font-black">{formatNum(impMerma)}</td><td className="p-2 print:p-1.5 text-center text-gray-500 font-black">kg</td><td className="p-2 print:p-1.5 text-right text-gray-600 font-black">{impP > 0 ? formatNum((impMerma/impP)*100) : '0,00'}% del impreso</td></tr>}
+                 <tr><td className="p-2 print:p-1.5 pl-4 font-bold text-gray-800 font-black">MERMA FASE SELLADO</td><td className="p-2 print:p-1.5 text-center text-red-600 font-black">{formatNum(selMerma)}</td><td className="p-2 print:p-1.5 text-center text-gray-500 font-black">kg</td><td className="p-2 print:p-1.5 text-right text-gray-600 font-black">{selP > 0 ? formatNum((selMerma/selP)*100) : '0,00'}% del sellado</td></tr>
+                 
+                 <tr><td colSpan="4" className="p-2 print:p-1.5 pt-4 font-black uppercase text-[11px] text-orange-600 bg-orange-50 font-black print:text-black print:bg-transparent">3. RESULTADO FINAL</td></tr>
+                 <tr className="bg-gray-100 font-black border-y-2 border-gray-300 print:bg-gray-200 font-black"><td className="p-2 print:p-1.5 pl-4 text-red-700 font-black">TOTAL MERMA ACUMULADA</td><td className="p-2 print:p-1.5 text-center text-red-700 font-black text-base">{formatNum(totalMerma)}</td><td className="p-2 print:p-1.5 text-center text-red-700 font-black">kg</td><td className="p-2 print:p-1.5 text-right text-red-700 font-black">Merma Total del Proceso: {totMP > 0 ? formatNum((totalMerma/totMP)*100) : '0,00'}%</td></tr>
+                 <tr className="bg-black font-black border-y-4 border-orange-500 text-[12px] text-white print:border-black print:bg-white print:text-black font-black"><td className="p-3 print:p-2 pl-4 font-black">PRODUCCIÓN FINAL LÍQUIDA</td><td className="p-3 print:p-2 text-center text-orange-600 font-black text-3xl">{isBolsas ? formatNum(totUnid) : formatNum(totUnid)}</td><td className="p-3 print:p-2 text-center text-orange-600 font-black text-2xl">{unitF}</td><td className="p-3 print:p-2 text-right text-gray-400 print:text-gray-700 text-[9px] font-black">{isBolsas ? `PESO POR MILLAR REAL: ${realPesoMillar.toFixed(3)} KG` : 'ENTREGA FINAL'}</td></tr>
+              </tbody>
+           </table>
+        </div>
       </div>
     );
   };
