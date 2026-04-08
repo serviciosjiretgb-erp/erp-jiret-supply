@@ -144,7 +144,7 @@ export default function App() {
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
   const [showMovementReceipt, setShowMovementReceipt] = useState(null);
   const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
-  const [selectedOpCost, setSelectedOpCost] = useState(''); // Para reporte detallado de costos
+  const [selectedOpCost, setSelectedOpCost] = useState('');
 
   // Formularios de Configuración
   const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
@@ -186,7 +186,7 @@ export default function App() {
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
   // ============================================================================
-  // EXPORTACIONES (Ajustado PDF con márgenes y orientación)
+  // EXPORTACIONES A PDF CON MÁRGENES FIJOS
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content'); if (!element) return;
@@ -198,7 +198,7 @@ export default function App() {
     const originalCssText = element.style.cssText; 
     const originalClasses = element.className; 
     
-    // Ajuste estricto de Virtual Width según orientación para que respete márgenes
+    // Ajuste estricto para que respete márgenes A4
     const virtualWidth = isLandscape ? 1120 : 800; 
     element.className = 'bg-white text-black p-6'; 
     element.style.width = `${virtualWidth}px`; 
@@ -240,7 +240,9 @@ export default function App() {
     const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${filename}_${getTodayDate()}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
+  // ============================================================================
   // INICIO DE SESIÓN
+  // ============================================================================
   const handleLogin = (e) => {
     e.preventDefault(); const user = loginData.username.toLowerCase().trim(); const pass = loginData.password.trim();
     const foundUser = systemUsers.find(u => u.username === user && u.password === pass);
@@ -712,7 +714,7 @@ export default function App() {
        <div className="absolute inset-0 bg-black/40"></div>
        
        <div className="absolute top-4 right-4 z-20">
-          <label className="bg-black/50 hover:bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase cursor-pointer backdrop-blur-sm transition-all flex items-center gap-2 border border-white/20 shadow-lg">
+          <label className="bg-black/50 hover:bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase cursor-pointer transition-all flex items-center gap-2 border border-white/20 shadow-lg">
              <Edit size={14}/> Cambiar Fondo
              <input type="file" accept="image/*" className="hidden" onChange={handleBgUpload} />
           </label>
@@ -772,7 +774,7 @@ export default function App() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
           {hasPerm('costos') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('costos'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Reportes de Costo</h3><p className="text-xs text-gray-400 mt-2">Análisis de Utilidad y Rentabilidad.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('costos'); setCostosView('dashboard'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Reportes de Costo</h3><p className="text-xs text-gray-400 mt-2">Análisis de Utilidad y Rentabilidad.</p></button>
           )}
           {hasPerm('configuracion') && (
              <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><Settings2 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3><p className="text-xs text-gray-400 mt-2">Usuarios y Permisos.</p></button>
@@ -1978,9 +1980,9 @@ export default function App() {
   };
 
   const renderCostosModule = () => {
-    // === CÁLCULOS GENERALES PARA DASHBOARD ===
-    const completedOps = requirements.filter(r => r.status === 'COMPLETADO');
-    const totalIncome = invoices.reduce((acc, inv) => acc + parseNum(inv.montoBase), 0);
+    // === CÁLCULOS GENERALES ===
+    const completedOps = (requirements || []).filter(r => r.status === 'COMPLETADO');
+    const totalIncome = (invoices || []).reduce((acc, inv) => acc + parseNum(inv.montoBase), 0);
     
     let totalOpCosts = 0;
     completedOps.forEach(req => {
@@ -1992,24 +1994,24 @@ export default function App() {
     const globalProfit = totalIncome - totalOpCosts;
     const globalMargin = totalIncome > 0 ? (globalProfit / totalIncome) * 100 : 0;
 
-    // === VISTA 1: DASHBOARD DE COSTOS ===
+    // === VISTA 1: DASHBOARD ===
     if (costosView === 'dashboard') {
       return (
         <div className="space-y-6 animate-in fade-in w-full">
            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
               <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-center items-center text-center">
                  <div className="bg-green-100 p-4 rounded-full text-green-600 mb-4"><DollarSign size={28}/></div>
-                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Ingresos por Facturación</p>
+                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Ingresos Facturados</p>
                  <p className="text-2xl font-black text-black">${formatNum(totalIncome)}</p>
               </div>
               <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-center items-center text-center">
                  <div className="bg-red-100 p-4 rounded-full text-red-600 mb-4"><TrendingUp size={28}/></div>
-                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Costos de Producción (OPs)</p>
+                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Costos de Producción</p>
                  <p className="text-2xl font-black text-black">${formatNum(totalOpCosts)}</p>
               </div>
               <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-center items-center text-center">
                  <div className="bg-blue-100 p-4 rounded-full text-blue-600 mb-4"><Briefcase size={28}/></div>
-                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Ganancia Bruta General</p>
+                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Ganancia Bruta (OPs)</p>
                  <p className={`text-2xl font-black ${globalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>${formatNum(globalProfit)}</p>
               </div>
               <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-center items-center text-center">
@@ -2019,57 +2021,48 @@ export default function App() {
               </div>
            </div>
 
-           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-8">
-                 <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-6">OPs Completadas Recientes</h3>
-                 <div className="space-y-4">
-                    {completedOps.slice(0, 5).map(op => {
-                       let cost = 0;
-                       ['extrusion', 'impresion', 'sellado'].forEach(p => { (op.production?.[p]?.batches || []).forEach(b => cost += parseNum(b.cost)); });
-                       return (
-                          <div key={op.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                             <div>
-                                <p className="font-black text-orange-600 uppercase text-xs">#{String(op.id).replace('OP-', '').padStart(5, '0')}</p>
-                                <p className="text-[10px] font-bold text-gray-500 uppercase truncate max-w-[200px]">{op.client}</p>
-                             </div>
-                             <div className="text-right">
-                                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Costo MP</p>
-                                <p className="font-black text-black">${formatNum(cost)}</p>
-                             </div>
+           <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-8">
+              <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-6">Órdenes de Producción Recientes (Rentabilidad)</h3>
+              <div className="space-y-4">
+                 {completedOps.slice(0, 5).map(op => {
+                    let cost = 0;
+                    ['extrusion', 'impresion', 'sellado'].forEach(p => { (op.production?.[p]?.batches || []).forEach(b => cost += parseNum(b.cost)); });
+                    const income = invoices.filter(i => i.opAsignada === op.id).reduce((s, i) => s + parseNum(i.montoBase), 0);
+                    return (
+                       <div key={op.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                          <div>
+                             <p className="font-black text-orange-600 uppercase text-xs">#{String(op.id).replace('OP-', '').padStart(5, '0')} - <span className="text-black">{op.client}</span></p>
+                             <p className="text-[10px] font-bold text-gray-500 uppercase">{op.desc}</p>
                           </div>
-                       );
-                    })}
-                    {completedOps.length === 0 && <p className="text-xs text-gray-400 font-bold uppercase text-center py-4">No hay OPs completadas</p>}
-                 </div>
-              </div>
-              <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-8 flex flex-col justify-center items-center text-center relative overflow-hidden">
-                 <div className="absolute -right-10 -bottom-10 opacity-5"><BarChart3 size={250}/></div>
-                 <h3 className="text-2xl font-black uppercase text-black tracking-widest relative z-10 mb-4">Módulo de Costos Activo</h3>
-                 <p className="text-xs font-bold text-gray-500 uppercase max-w-sm relative z-10">Genera reportes detallados por Orden de Producción o analiza el cruce general de ingresos vs costos.</p>
+                          <div className="flex gap-8 text-right">
+                             <div><p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Costo MP</p><p className="font-black text-red-600">${formatNum(cost)}</p></div>
+                             <div><p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Facturado</p><p className="font-black text-green-600">${formatNum(income)}</p></div>
+                          </div>
+                       </div>
+                    );
+                 })}
+                 {completedOps.length === 0 && <p className="text-xs text-gray-400 font-bold uppercase text-center py-4">No hay OPs completadas</p>}
               </div>
            </div>
         </div>
       );
     }
 
-    // === VISTA 2: REPORTE DETALLADO DE OP ===
+    // === VISTA 2: SÚPER FINIQUITO POR OP ===
     if (costosView === 'op_detail') {
       const selectedReq = completedOps.find(r => r.id === selectedOpCost);
       
-      let reqTotalCost = 0; let extCost = 0; let impCost = 0; let selCost = 0;
+      let reqTotalCost = 0;
       let matchedInvoices = []; let totalInvoiceIncome = 0;
       let costBreakdown = [];
+      let fechaInicio = 'N/A'; let fechaFin = 'N/A';
 
       if (selectedReq) {
-         // Calculate Costs
+         const bs = [];
          ['extrusion', 'impresion', 'sellado'].forEach(phase => {
             (selectedReq.production?.[phase]?.batches || []).forEach(b => {
-               const bCost = parseNum(b.cost);
-               reqTotalCost += bCost;
-               if(phase === 'extrusion') extCost += bCost;
-               if(phase === 'impresion') impCost += bCost;
-               if(phase === 'sellado') selCost += bCost;
-               
+               bs.push(b);
+               reqTotalCost += parseNum(b.cost);
                (b.insumos || []).forEach(ing => {
                   const existing = costBreakdown.find(c => c.id === ing.id);
                   const invItem = inventory.find(i => i.id === ing.id);
@@ -2080,8 +2073,13 @@ export default function App() {
                });
             });
          });
+         
+         if (bs.length > 0) {
+            bs.sort((a, b) => a.timestamp - b.timestamp);
+            fechaInicio = bs[0].date;
+            fechaFin = bs[bs.length - 1].date;
+         }
 
-         // Calculate Income
          matchedInvoices = invoices.filter(inv => inv.opAsignada === selectedReq.id);
          totalInvoiceIncome = matchedInvoices.reduce((sum, inv) => sum + parseNum(inv.montoBase), 0);
       }
@@ -2092,8 +2090,8 @@ export default function App() {
       return (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-              <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Detalle de Costo por OP</h2>
-              {selectedReq && <button onClick={() => handleExportPDF(`Reporte_Costos_OP_${selectedReq.id}`, false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>}
+              <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Detalle de Rentabilidad (OP)</h2>
+              {selectedReq && <button onClick={() => handleExportPDF(`SuperFiniquito_OP_${selectedReq.id}`, false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>}
            </div>
 
            <div data-html2canvas-ignore="true" className="p-8 bg-white border-b border-gray-100 flex gap-4 items-end no-pdf">
@@ -2111,23 +2109,25 @@ export default function App() {
                  <div className="hidden pdf-header mb-8"><ReportHeader /></div>
                  
                  <div className="text-center mb-8">
-                    <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">REPORTE DETALLADO DE COSTOS Y RENTABILIDAD</h1>
+                    <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">SÚPER FINIQUITO DE PRODUCCIÓN Y COSTOS</h1>
                  </div>
 
                  <div className="grid grid-cols-2 gap-4 mb-8 text-xs font-black uppercase border-2 border-black p-4 rounded-2xl bg-gray-50">
                     <div>
                        <p className="text-gray-500 mb-1">CLIENTE:</p><p className="text-sm text-black mb-4">{selectedReq.client}</p>
-                       <p className="text-gray-500 mb-1">PRODUCTO / MAQUILA:</p><p className="text-black">{selectedReq.desc}</p>
+                       <p className="text-gray-500 mb-1">PRODUCTO / MAQUILA:</p><p className="text-black mb-4">{selectedReq.desc}</p>
+                       <p className="text-gray-500 mb-1">CANTIDAD ESTIMADA:</p><p className="text-black text-orange-600">{formatNum(selectedReq.requestedKg)} KG</p>
                     </div>
                     <div className="text-right">
                        <p className="text-gray-500 mb-1">NÚMERO DE ORDEN:</p><p className="text-lg text-orange-600 mb-4">#{String(selectedReq.id).replace('OP-','').padStart(5,'0')}</p>
-                       <p className="text-gray-500 mb-1">FECHA DE EMISIÓN DE REPORTE:</p><p className="text-black">{getTodayDate()}</p>
+                       <p className="text-gray-500 mb-1">FECHA INICIO PRODUCCIÓN:</p><p className="text-black mb-4">{fechaInicio}</p>
+                       <p className="text-gray-500 mb-1">FECHA CIERRE PRODUCCIÓN:</p><p className="text-black">{fechaFin}</p>
                     </div>
                  </div>
 
-                 {/* COSTOS */}
+                 {/* COSTOS MATERIA PRIMA */}
                  <div className="mb-8">
-                    <h3 className="text-sm font-black uppercase text-white bg-black p-3 tracking-widest">1. Desglose de Costos de Producción</h3>
+                    <h3 className="text-sm font-black uppercase text-white bg-black p-3 tracking-widest">1. Desglose de Costos de Producción (MP)</h3>
                     <table className="w-full text-left text-xs border-collapse border-2 border-black mt-2">
                        <thead className="bg-gray-200">
                           <tr className="uppercase font-black text-[10px] tracking-widest text-black">
@@ -2143,31 +2143,33 @@ export default function App() {
                              <tr key={idx}>
                                 <td className="p-3 border border-black font-bold uppercase">{item.desc}</td>
                                 <td className="p-3 border border-black text-center font-bold uppercase">{item.phase}</td>
-                                <td className="p-3 border border-black text-center font-black">{formatNum(item.qty)}</td>
+                                <td className="p-3 border border-black text-center font-black">{formatNum(item.qty)} kg</td>
                                 <td className="p-3 border border-black text-right font-bold">${formatNum(item.unitCost)}</td>
-                                <td className="p-3 border border-black text-right font-black">${formatNum(item.total)}</td>
+                                <td className="p-3 border border-black text-right font-black text-red-600">${formatNum(item.total)}</td>
                              </tr>
                           ))}
                           {costBreakdown.length === 0 && <tr><td colSpan="5" className="p-4 text-center font-bold uppercase">No hay insumos reportados.</td></tr>}
                        </tbody>
                        <tfoot className="bg-gray-100">
                           <tr>
-                             <td colSpan="4" className="p-3 border border-black text-right font-black uppercase">Costo Total de Producción:</td>
+                             <td colSpan="4" className="p-3 border border-black text-right font-black uppercase">Costo Total MP:</td>
                              <td className="p-3 border border-black text-right font-black text-red-600 text-lg">${formatNum(reqTotalCost)}</td>
                           </tr>
                        </tfoot>
                     </table>
                  </div>
 
-                 {/* INGRESOS */}
+                 {/* INGRESOS FACTURAS */}
                  <div className="mb-8">
-                    <h3 className="text-sm font-black uppercase text-white bg-black p-3 tracking-widest">2. Ingresos Facturados (Asociados a la OP)</h3>
+                    <h3 className="text-sm font-black uppercase text-white bg-black p-3 tracking-widest">2. Ventas y Facturación de la OP</h3>
                     <table className="w-full text-left text-xs border-collapse border-2 border-black mt-2">
                        <thead className="bg-gray-200">
                           <tr className="uppercase font-black text-[10px] tracking-widest text-black">
                              <th className="p-3 border border-black">Factura N°</th>
                              <th className="p-3 border border-black text-center">Fecha</th>
-                             <th className="p-3 border border-black text-right">Base (Ingreso)</th>
+                             <th className="p-3 border border-black text-right">Base (Ingreso Real)</th>
+                             <th className="p-3 border border-black text-right">IVA (16%)</th>
+                             <th className="p-3 border border-black text-right">Total Cobrado</th>
                           </tr>
                        </thead>
                        <tbody>
@@ -2176,26 +2178,29 @@ export default function App() {
                                 <td className="p-3 border border-black font-black">{inv.documento}</td>
                                 <td className="p-3 border border-black text-center font-bold">{inv.fecha}</td>
                                 <td className="p-3 border border-black text-right font-black text-green-600">${formatNum(inv.montoBase)}</td>
+                                <td className="p-3 border border-black text-right font-bold text-gray-500">${formatNum(inv.iva)}</td>
+                                <td className="p-3 border border-black text-right font-black">${formatNum(inv.total)}</td>
                              </tr>
                           ))}
-                          {matchedInvoices.length === 0 && <tr><td colSpan="3" className="p-4 text-center font-bold uppercase text-red-500">No hay facturas asociadas a esta OP.</td></tr>}
+                          {matchedInvoices.length === 0 && <tr><td colSpan="5" className="p-4 text-center font-bold uppercase text-red-500">No hay facturas asociadas a esta OP.</td></tr>}
                        </tbody>
                        {matchedInvoices.length > 0 && (
                           <tfoot className="bg-gray-100">
                              <tr>
-                                <td colSpan="2" className="p-3 border border-black text-right font-black uppercase">Total Ingresos OP:</td>
+                                <td colSpan="2" className="p-3 border border-black text-right font-black uppercase">Total Ingreso OP (Base):</td>
                                 <td className="p-3 border border-black text-right font-black text-green-600 text-lg">${formatNum(totalInvoiceIncome)}</td>
+                                <td colSpan="2" className="p-3 border border-black bg-gray-200"></td>
                              </tr>
                           </tfoot>
                        )}
                     </table>
                  </div>
 
-                 {/* RESUMEN RENTABILIDAD */}
+                 {/* RENTABILIDAD FINAL */}
                  <div className="border-4 border-black p-6 rounded-2xl bg-gray-50 flex justify-between items-center">
                     <div>
-                       <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Análisis de Rentabilidad</p>
-                       <p className="text-sm font-bold uppercase text-black">Margen de Utilidad Bruta</p>
+                       <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Cruce de Información Financiera</p>
+                       <p className="text-sm font-bold uppercase text-black">Rentabilidad y Margen Neto de la OP</p>
                     </div>
                     <div className="text-right flex items-end gap-8">
                        <div>
@@ -2210,27 +2215,27 @@ export default function App() {
                  </div>
 
                  <div className="mt-20 grid grid-cols-2 gap-24 text-center font-black uppercase text-[10px] text-black">
-                    <div className="border-t-2 border-black pt-2 mx-10">ELABORADO POR<br/>(DEPARTAMENTO DE COSTOS)</div>
-                    <div className="border-t-2 border-black pt-2 mx-10">REVISADO POR<br/>(GERENCIA)</div>
+                    <div className="border-t-2 border-black pt-2 mx-10">DEPARTAMENTO DE COSTOS</div>
+                    <div className="border-t-2 border-black pt-2 mx-10">REVISADO Y APROBADO (GERENCIA)</div>
                  </div>
               </div>
            ) : (
               <div className="p-16 text-center text-gray-400">
                  <FileText size={60} className="mx-auto mb-4 opacity-50"/>
-                 <p className="font-black uppercase tracking-widest">Selecciona una OP para visualizar el reporte</p>
+                 <p className="font-black uppercase tracking-widest">Selecciona una OP para visualizar el Súper Finiquito Financiero</p>
               </div>
            )}
         </div>
       );
     }
 
-    // === VISTA 3: REPORTE GENERAL INGRESOS VS COSTOS ===
+    // === VISTA 3: REPORTE INGRESOS VS COSTOS ===
     if (costosView === 'general_sales') {
       return (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-              <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><TrendingUp className="text-orange-500" size={24}/> Reporte General: Ingresos vs Costos</h2>
-              <button onClick={() => handleExportPDF('Reporte_Ingresos_Costos_Global', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
+              <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><TrendingUp className="text-orange-500" size={24}/> General: Ingresos vs Costos</h2>
+              <button onClick={() => handleExportPDF('Reporte_Rentabilidad_Global', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
            </div>
 
            <div id="pdf-content" className="p-8 print:p-0 bg-white">
@@ -2240,7 +2245,7 @@ export default function App() {
                  <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">COMPARATIVO GLOBAL DE RENTABILIDAD POR OP</h1>
               </div>
 
-              <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
+              <div className="overflow-x-auto rounded-xl border-2 border-black print:rounded-none">
                  <table className="w-full text-left whitespace-nowrap text-xs">
                     <thead className="bg-black text-white">
                        <tr className="uppercase font-black text-[10px] tracking-widest">
@@ -2274,13 +2279,13 @@ export default function App() {
                        })}
                        {completedOps.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin OPs Completadas registradas</td></tr>}
                     </tbody>
-                    <tfoot className="bg-gray-100 border-t-2 border-black">
+                    <tfoot className="bg-gray-200 border-t-4 border-black">
                        <tr className="uppercase font-black text-[12px] text-black">
                           <td className="p-4 text-right">TOTALES GLOBALES:</td>
                           <td className="p-4 text-right text-red-600">${formatNum(totalOpCosts)}</td>
                           <td className="p-4 text-right text-green-600">${formatNum(totalIncome)}</td>
                           <td className="p-4 text-right">${formatNum(globalProfit)}</td>
-                          <td className="p-4 text-center text-blue-600">{formatNum(globalMargin)}%</td>
+                          <td className="p-4 text-center text-blue-600 bg-gray-300">{formatNum(globalMargin)}%</td>
                        </tr>
                     </tfoot>
                  </table>
@@ -2290,6 +2295,55 @@ export default function App() {
       );
     }
   };
+
+  if (!appUser) {
+     return (
+        <ErrorBoundary>
+           <div className="min-h-screen flex items-center justify-center p-4 relative" 
+                style={{ backgroundImage: `url('${settings?.loginBg || "https://images.unsplash.com/photo-1587293852726-70cdb56c2866?q=80&w=2072&auto=format&fit=crop"}')`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+              {/* Ajuste de opacidad para que la imagen se vea más nítida (bg-black/40 sin blur) */}
+              <div className="absolute inset-0 bg-black/40"></div>
+              
+              <div className="absolute top-4 right-4 z-20">
+                 <label className="bg-black/50 hover:bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase cursor-pointer transition-all flex items-center gap-2 border border-white/20 shadow-lg">
+                    <Edit size={14}/> Cambiar Fondo
+                    <input type="file" accept="image/*" className="hidden" onChange={handleBgUpload} />
+                 </label>
+              </div>
+
+              <div className="relative z-10 bg-white rounded-3xl shadow-[0_30px_60px_rgba(0,0,0,0.6)] overflow-hidden w-full max-w-4xl flex transform transition-all duration-500 hover:scale-[1.01] border border-white/20">
+                 <div className="w-1/2 bg-gradient-to-br from-gray-900 to-black p-12 flex-col justify-between hidden md:flex relative overflow-hidden shadow-[inset_-10px_0_20px_rgba(0,0,0,0.5)] border-r border-gray-800">
+                    <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-tr from-white/10 to-transparent transform -skew-x-12 pointer-events-none"></div>
+                    <div className="relative z-10">
+                      <div className="flex items-center bg-white rounded-2xl px-4 py-2 shadow-[0_10px_20px_rgba(0,0,0,0.4)] w-fit transform hover:translate-x-1 hover:-translate-y-1 transition-transform duration-300">
+                         <span className="text-black font-black text-4xl leading-none drop-shadow-sm">G</span><span className="text-orange-500 font-black text-3xl mx-1 drop-shadow-sm">&amp;</span><span className="text-black font-black text-4xl leading-none drop-shadow-sm">B</span>
+                      </div>
+                      <h1 className="text-white text-3xl font-black mt-10 uppercase tracking-widest drop-shadow-lg">Supply ERP</h1>
+                      <p className="text-gray-300 mt-4 text-sm leading-relaxed drop-shadow-md">Sistema Integrado de Producción e Inventario para Servicios Jiret G&B C.A.</p>
+                    </div>
+                    <div className="relative z-10 text-gray-500 text-xs font-bold uppercase tracking-widest">© {new Date().getFullYear()} Todos los derechos reservados</div>
+                 </div>
+                 <div className="w-full md:w-1/2 p-12 flex flex-col justify-center bg-white relative z-10">
+                    <h2 className="text-2xl font-black text-black uppercase tracking-widest mb-2">Iniciar Sesión</h2>
+                    <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-8">Ingresa tus credenciales de acceso</p>
+                    {loginError && (<div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)]"><AlertTriangle size={16}/> {loginError}</div>)}
+                    <form onSubmit={handleLogin} className="space-y-6">
+                       <div>
+                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Usuario</label>
+                         <div className="relative group"><User className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="text" value={loginData.username} onChange={e=>setLoginData({...loginData, username: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="EJ: ADMIN o PLANTA"/></div>
+                       </div>
+                       <div>
+                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Contraseña</label>
+                         <div className="relative group"><Lock className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="password" value={loginData.password} onChange={e=>setLoginData({...loginData, password: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="••••••••"/></div>
+                       </div>
+                       <button type="submit" className="w-full bg-gradient-to-r from-orange-500 to-orange-600 text-white font-black py-4 rounded-xl shadow-[0_8px_20px_rgba(249,115,22,0.4)] hover:shadow-[0_15px_25px_rgba(249,115,22,0.6)] hover:-translate-y-1 active:translate-y-1 uppercase tracking-widest text-xs flex justify-center items-center gap-2 mt-4 transform transition-all">ENTRAR AL SISTEMA <ArrowRight size={16}/></button>
+                    </form>
+                 </div>
+              </div>
+           </div>
+        </ErrorBoundary>
+     );
+  }
 
   return (
     <ErrorBoundary>
@@ -2334,7 +2388,7 @@ export default function App() {
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Planta / Producción</h3>
                   <button onClick={() => {clearAllReports(); setProdView('calculadora');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'calculadora' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Calculator size={16}/> Simulador OP</button>
-                  <button onClick={() => {clearAllReports(); setProdView('proyeccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'proyeccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase relative`}><TrendingUp size={16}/> Proyección MP</button>
+                  <button onClick={() => {clearAllReports(); setProdView('proyeccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'proyeccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase relative`}><TrendingUp size={16}/> Proyección MP {generateProjectionData().filter(mp => mp.isCritical).length > 0 && <span className="absolute right-4 top-1/2 -translate-y-1/2 bg-red-500 w-3 h-3 rounded-full animate-pulse"></span>}</button>
                   <button onClick={() => {clearAllReports(); setProdView('fases_produccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'fases_produccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Thermometer size={16}/> Fases en Proceso</button>
                   <button onClick={() => {clearAllReports(); setProdView('historial');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'historial' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><History size={16}/> Historial / Finiquitos</button>
                 </div>
@@ -2450,7 +2504,7 @@ export default function App() {
                                          <div className="flex justify-center gap-2">
                                             <button onClick={() => startEditUser(u)} className="p-2 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-all"><Edit size={14}/></button>
                                             {u.username !== 'admin' && (
-                                               <button onClick={() => handleDeleteUser(u.username)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={14}/></button>
+                                               <button onClick={() => handleDeleteUser(u.username)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all disabled:opacity-50"><Trash2 size={14}/></button>
                                             )}
                                          </div>
                                       </td>
