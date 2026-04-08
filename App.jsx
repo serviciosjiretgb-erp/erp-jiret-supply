@@ -142,7 +142,7 @@ export default function App() {
   const [showSingleReqReport, setShowSingleReqReport] = useState(null);
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
   const [showMovementReceipt, setShowMovementReceipt] = useState(null);
-  const [showPurchaseOrder, setShowPurchaseOrder] = useState(false); // NUEVO ESTADO PARA OP DE COMPRA
+  const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
 
   // Formularios de Configuración
   const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
@@ -170,8 +170,8 @@ export default function App() {
   const [phaseIngId, setPhaseIngId] = useState('');
   const [phaseIngQty, setPhaseIngQty] = useState('');
 
-  // Simulador
-  const initialCalcInputs = { ingredientes: [{ id: Date.now() + 1, nombre: 'MP-0240', pct: 80, costo: 0.96 }, { id: Date.now() + 2, nombre: 'MP-RECICLADO', pct: 20, costo: 1.00 }], mezclaTotal: '', mermaGlobalPorc: 5, tipoProducto: 'BOLSAS', ancho: '', fuelles: '', largo: '', micras: '' };
+  // Simulador Inverso
+  const initialCalcInputs = { ingredientes: [{ id: Date.now() + 1, nombre: 'MP-0240', pct: 80, costo: 0.96 }, { id: Date.now() + 2, nombre: 'MP-RECICLADO', pct: 20, costo: 1.00 }], cantidadSolicitada: '', mermaGlobalPorc: 5, tipoProducto: 'BOLSAS', ancho: '', fuelles: '', largo: '', micras: '' };
   const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
 
   // Formularios Inventario
@@ -509,43 +509,62 @@ export default function App() {
   };
 
   // ============================================================================
-  // --- LÓGICA CALCULADORA (SIMULADOR OP) ---
+  // --- LÓGICA CALCULADORA (SIMULADOR OP INVERSO) ---
   // ============================================================================
-  const handleResetCalc = () => { setCalcInputs(initialCalcInputs); };
+  const handleResetCalc = () => { setCalcInputs({...initialCalcInputs, cantidadSolicitada: ''}); };
   const handleCalcChange = (field, value) => setCalcInputs({ ...calcInputs, [field]: parseNum(value) });
   const updateCalcIng = (id, field, value) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs?.ingredientes || []).map(ing => ing?.id === id ? { ...ing, [field]: field === 'nombre' ? value : parseNum(value) } : ing) });
   const addCalcIng = () => setCalcInputs({ ...calcInputs, ingredientes: [...(calcInputs?.ingredientes || []), { id: Date.now(), nombre: '', pct: 0, costo: 0 }] });
   const removeCalcIng = (id) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs?.ingredientes || []).filter(i => i?.id !== id) });
 
-  const simW = parseNum(calcInputs?.ancho); const simL = parseNum(calcInputs?.largo); const simM = parseNum(calcInputs?.micras); const simFu = parseNum(calcInputs?.fuelles); const isBolsas = calcInputs?.tipoProducto === 'BOLSAS';
-  let simPesoMillar = 0; if (isBolsas) { simPesoMillar = (simW + simFu) * simL * simM; }
-  const inputCantidadSolicitada = calcInputs?.mezclaTotal || 0; const calcTotalMezcla = isBolsas ? (simPesoMillar > 0 ? (inputCantidadSolicitada * simPesoMillar) : 0) : inputCantidadSolicitada;
-  const calcMezclaProcesada = calcTotalMezcla; let calcCostoMezclaPreparada = 0;
+  const simW = parseNum(calcInputs?.ancho); 
+  const simL = parseNum(calcInputs?.largo); 
+  const simM = parseNum(calcInputs?.micras); 
+  const simFu = parseNum(calcInputs?.fuelles); 
+  const isBolsas = calcInputs?.tipoProducto === 'BOLSAS';
+  
+  // 1. Peso por Millar (solo para bolsas)
+  let simPesoMillar = 0; 
+  if (isBolsas) { simPesoMillar = (simW + simFu) * simL * simM; }
+  
+  // 2. Kilos Netos solicitados
+  const inputCantidadSolicitada = parseNum(calcInputs?.cantidadSolicitada) || 0; 
+  const calcKilosNetos = isBolsas ? (inputCantidadSolicitada * simPesoMillar) : inputCantidadSolicitada;
+  
+  // 3. Kilos Brutos (Total Mezcla) considerando Merma (Cálculo Inverso)
+  const mermaPorc = parseNum(calcInputs?.mermaGlobalPorc) || 5;
+  // Kilos Brutos = Kilos Netos / (1 - (Merma / 100))
+  const calcTotalMezcla = (calcKilosNetos > 0 && mermaPorc < 100) ? (calcKilosNetos / (1 - (mermaPorc / 100))) : calcKilosNetos;
+  const calcMermaGlobalKg = calcTotalMezcla - calcKilosNetos;
+
+  // 4. Costeo de la Mezcla
+  let calcCostoMezclaPreparada = 0;
   const calcIngredientesProcesados = (calcInputs?.ingredientes || []).map(ing => {
-    const kg = ((ing?.pct || 0) / 100) * calcTotalMezcla; const totalCost = kg * (ing?.costo || 0); calcCostoMezclaPreparada += totalCost;
-    const invItem = (inventory || []).find(i => i?.id === ing?.nombre); let desc = invItem ? invItem.desc : ing?.nombre;
-    if (!invItem) { if (ing?.nombre === 'MP-0240') desc = 'PEBD 240 (ESENTTIA)'; if (ing?.nombre === 'MP-11PG4') desc = 'LINEAL 11PG4 (METALOCENO)'; if (ing?.nombre === 'MP-3003') desc = 'PEBD 3003 (BAPOLENE)'; if (ing?.nombre === 'MP-RECICLADO') desc = 'MATERIAL RECICLADO'; }
+    const kg = ((ing?.pct || 0) / 100) * calcTotalMezcla; 
+    const totalCost = kg * (ing?.costo || 0); 
+    calcCostoMezclaPreparada += totalCost;
+    const invItem = (inventory || []).find(i => i?.id === ing?.nombre); 
+    let desc = invItem ? invItem.desc : ing?.nombre;
+    if (!invItem) { 
+       if (ing?.nombre === 'MP-0240') desc = 'PEBD 240 (ESENTTIA)'; 
+       if (ing?.nombre === 'MP-11PG4') desc = 'LINEAL 11PG4 (METALOCENO)'; 
+       if (ing?.nombre === 'MP-3003') desc = 'PEBD 3003 (BAPOLENE)'; 
+       if (ing?.nombre === 'MP-RECICLADO') desc = 'MATERIAL RECICLADO'; 
+    }
     return { ...ing, desc, kg, totalCost };
   });
 
   const calcCostoPromedio = calcTotalMezcla > 0 ? (calcCostoMezclaPreparada / calcTotalMezcla) : 0;
-  const calcCostoMezclaProcesada = calcCostoMezclaPreparada;
-  const calcMermaGlobalKg = calcMezclaProcesada * ((calcInputs?.mermaGlobalPorc || 0) / 100);
-  const calcProduccionNetaKg = calcMezclaProcesada - calcMermaGlobalKg;
-  const calcCostoUnitarioNeto = calcProduccionNetaKg > 0 ? (calcCostoMezclaProcesada / calcProduccionNetaKg) : 0;
-  const calcRendimientoUtil = calcMezclaProcesada > 0 ? (calcProduccionNetaKg / calcMezclaProcesada) * 100 : 0;
-  const calcProduccionFinalUnidades = isBolsas && simPesoMillar > 0 ? (calcProduccionNetaKg / simPesoMillar) : calcProduccionNetaKg;
-  const calcCostoFinalUnidad = calcProduccionFinalUnidades > 0 ? (calcCostoMezclaProcesada / calcProduccionFinalUnidades) : 0;
+  const calcCostoUnitarioNeto = calcKilosNetos > 0 ? (calcCostoMezclaPreparada / calcKilosNetos) : 0;
+  const calcCostoFinalUnidad = inputCantidadSolicitada > 0 ? (calcCostoMezclaPreparada / inputCantidadSolicitada) : 0;
   const simUmFinal = isBolsas ? 'Millares' : 'KG';
 
   // ============================================================================
-  // LÓGICA DE PROYECCIÓN DE MP Y ORDEN DE COMPRA (ACTUALIZADA 30 DÍAS)
+  // LÓGICA DE PROYECCIÓN DE MP Y ORDEN DE COMPRA
   // ============================================================================
   const generateProjectionData = () => {
     const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
-    // Consumo histórico
     const recentMovs = invMovements.filter(m => m.type === 'SALIDA' && m.timestamp >= thirtyDaysAgo);
-    // Materia Prima comprometida en Planta (OP abiertas)
     const pendingReqs = invRequisitions.filter(r => r.status === 'PENDIENTE');
 
     return inventory.filter(i => i.category === 'Materia Prima').map(mp => {
@@ -558,12 +577,10 @@ export default function App() {
             if (item) committedStock += parseNum(item.qty);
        });
 
-       // Disponible Real = Stock en Almacén - Lo que ya está comprometido para Producción
        const availableReal = mp.stock - committedStock;
        const daysRemaining = dailyAvg > 0 ? availableReal / dailyAvg : 999;
        
-       // ALARMA: Si me quedan 30 días o menos de material (porque el proveedor tarda 30 días)
-       // Se pide para cubrir los 30 días de tránsito + 15 días de stock de seguridad (45 días total)
+       // Calculo de sugerencia de compra (Alarma 30 días de reposición + 15 días extra)
        const isCritical = daysRemaining <= 30 || availableReal <= 0;
        const suggestOrder = isCritical ? Math.ceil(Math.abs(availableReal < 0 ? availableReal : 0) + (dailyAvg * 45)) : 0; 
 
@@ -1588,22 +1605,12 @@ export default function App() {
     
     // VISTA DE PROYECCIÓN DE MATERIA PRIMA
     if (prodView === 'proyeccion') {
-       if (showPurchaseOrder) return renderPurchaseOrder();
-
        const proyeccionData = generateProjectionData();
-       const criticalItems = proyeccionData.filter(mp => mp.isCritical).length;
-
        return (
          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><TrendingUp className="text-orange-500" size={24}/> Proyección de Materia Prima</h2>
-               <div className="flex gap-2">
-                 <button onClick={() => setShowPurchaseOrder(true)} className="bg-orange-500 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-lg hover:bg-orange-600 transition-colors flex items-center gap-2">
-                    <ShoppingCart size={16}/> ORDEN DE COMPRA PDF
-                    {criticalItems > 0 && <span className="bg-white text-orange-600 px-2 py-0.5 rounded-full ml-1 animate-pulse">{criticalItems}</span>}
-                 </button>
-                 <button onClick={() => handleExportPDF('Proyeccion_MP', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR REPORTE</button>
-               </div>
+               <button onClick={() => handleExportPDF('Proyeccion_MP', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR REPORTE</button>
             </div>
             <div id="pdf-content" className="p-8 print:p-0 bg-white">
                <div className="hidden pdf-header mb-8">
@@ -1615,8 +1622,8 @@ export default function App() {
                <div className="bg-blue-50 border border-blue-200 p-6 rounded-2xl mb-8 flex items-start gap-4">
                   <AlertTriangle size={24} className="text-blue-600 mt-1 flex-shrink-0" />
                   <div>
-                     <h3 className="text-sm font-black text-blue-800 uppercase tracking-widest mb-1">Módulo de Planificación Inteligente</h3>
-                     <p className="text-xs font-bold text-blue-600 leading-relaxed">El sistema analiza el inventario actual, descuenta las OP abiertas (producción activa) y calcula los días restantes según el historial. <strong className="text-red-600 uppercase">Se genera una alarma si la autonomía cae por debajo de los 30 días de reposición.</strong></p>
+                     <h3 className="text-sm font-black text-blue-800 uppercase tracking-widest mb-1">Módulo de Planificación</h3>
+                     <p className="text-xs font-bold text-blue-600 leading-relaxed">El sistema analiza el inventario actual, descuenta las requisiciones de planta no despachadas y calcula cuántos días de inventario quedan según el consumo promedio de los últimos 30 días.</p>
                   </div>
                </div>
 
@@ -1626,33 +1633,33 @@ export default function App() {
                      <tr className="uppercase font-black text-[10px] tracking-widest text-black">
                        <th className="py-3 px-4 border-r print:border-black">Insumo</th>
                        <th className="py-3 px-4 border-r print:border-black text-center">Stock Actual</th>
-                       <th className="py-3 px-4 border-r print:border-black text-center text-red-600">Comprometido<br/><span className="text-[8px] block">(OP / Planta)</span></th>
+                       <th className="py-3 px-4 border-r print:border-black text-center text-red-600">Comprometido<br/><span className="text-[8px] block">(Req. Planta)</span></th>
                        <th className="py-3 px-4 border-r print:border-black text-center text-green-600">Disponible<br/><span className="text-[8px] block">Real</span></th>
                        <th className="py-3 px-4 border-r print:border-black text-center">Consumo<br/><span className="text-[8px] block">Diario</span></th>
                        <th className="py-3 px-4 border-r print:border-black text-center">Días<br/><span className="text-[8px] block">Restantes</span></th>
-                       <th className="py-3 px-4 text-center no-pdf">Estado / Acción</th>
+                       <th className="py-3 px-4 text-center no-pdf">Acción</th>
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-gray-100 text-black print:divide-black">
                      {proyeccionData.map(mp => (
-                       <tr key={mp.id} className={`transition-colors ${mp.isCritical ? 'bg-red-50/50 hover:bg-red-50' : 'hover:bg-gray-50'}`}>
+                       <tr key={mp.id} className="hover:bg-gray-50 transition-colors">
                          <td className="py-4 px-4 font-black border-r print:border-black uppercase text-sm">{mp.desc}<br/><span className="text-[9px] text-gray-500 font-bold">{mp.id}</span></td>
                          <td className="py-4 px-4 font-black border-r print:border-black text-center text-lg">{formatNum(mp.stock)}</td>
                          <td className="py-4 px-4 font-black border-r print:border-black text-center text-red-500">{formatNum(mp.committedStock)}</td>
-                         <td className={`py-4 px-4 font-black border-r print:border-black text-center text-lg ${mp.availableReal <= 0 ? 'text-red-600' : 'text-green-600'}`}>{formatNum(mp.availableReal)}</td>
+                         <td className={`py-4 px-4 font-black border-r print:border-black text-center text-lg ${mp.availableReal < 0 ? 'text-red-600' : 'text-green-600'}`}>{formatNum(mp.availableReal)}</td>
                          <td className="py-4 px-4 font-bold border-r print:border-black text-center">{formatNum(mp.dailyAvg)} kg/d</td>
                          <td className="py-4 px-4 border-r print:border-black text-center">
-                            <span className={`px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest border ${mp.isCritical ? 'bg-red-100 text-red-700 border-red-300 shadow-sm animate-pulse' : 'bg-green-100 text-green-700 border-green-200'}`}>
+                            <span className={`px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest border ${mp.daysRemaining < 15 ? 'bg-red-100 text-red-700 border-red-200' : 'bg-green-100 text-green-700 border-green-200'}`}>
                                {mp.daysRemaining === 999 ? '+99 Días' : `${formatNum(mp.daysRemaining)} Días`}
                             </span>
                          </td>
                          <td className="py-4 px-4 text-center no-pdf">
-                            {mp.isCritical ? (
-                               <span className="text-[9px] font-black text-red-600 uppercase tracking-widest flex items-center justify-center gap-1">
-                                 <AlertTriangle size={12}/> CRÍTICO
-                               </span>
+                            {mp.suggestOrder > 0 ? (
+                               <button onClick={() => {
+                                 setDialog({title: 'Generar Orden', text: `Se recomienda comprar ${formatNum(mp.suggestOrder)} kg de ${mp.desc} para cubrir el déficit y asegurar 15 días de stock.`, type: 'alert'})
+                               }} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-1 shadow-md hover:bg-gray-800 w-full"><ShoppingCart size={14}/> PEDIR {formatNum(mp.suggestOrder)} KG</button>
                             ) : (
-                               <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Stock OK</span>
+                               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Stock OK</span>
                             )}
                          </td>
                        </tr>
@@ -1688,13 +1695,13 @@ export default function App() {
                  
                  {/* Bloque: Variables Base */}
                  <div>
-                     <h3 className="text-xs font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">1. Variables de Mezcla</h3>
+                     <h3 className="text-xs font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">1. Variables Base (Pedido)</h3>
                      <div className="space-y-4">
                         <div>
                           <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
-                             Total a Preparar ({calcInputs?.tipoProducto === 'BOLSAS' ? 'MILLARES' : 'KG'})
+                             Cantidad Solicitada ({calcInputs?.tipoProducto === 'BOLSAS' ? 'MILLARES' : 'KILOS (KG)'})
                           </label>
-                          <input type="number" value={calcInputs?.mezclaTotal === 0 ? '' : calcInputs?.mezclaTotal} onChange={(e) => handleCalcChange('mezclaTotal', e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 text-sm font-black outline-none focus:border-orange-500 text-center text-blue-600" />
+                          <input type="number" value={calcInputs?.cantidadSolicitada === 0 ? '' : calcInputs?.cantidadSolicitada} onChange={(e) => handleCalcChange('cantidadSolicitada', e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 text-sm font-black outline-none focus:border-orange-500 text-center text-blue-600" />
                         </div>
                      </div>
                  </div>
@@ -1836,18 +1843,47 @@ export default function App() {
                         </thead>
                         <tbody className="text-black divide-y divide-gray-200 print:divide-black">
                            
-                           {/* 0. CANTIDAD SOLICITADA */}
+                           {/* 0. PEDIDO DEL CLIENTE */}
                            <tr className="bg-orange-50 font-black border-y border-gray-300 print:border-black print:bg-gray-200">
-                              <td className="p-1.5 print:p-1 pl-4 text-orange-800 print:text-black">0. CANTIDAD SOLICITADA A PRODUCIR</td>
+                              <td className="p-1.5 print:p-1 pl-4 text-orange-800 print:text-black">0. PEDIDO A ENTREGAR (NETO)</td>
                               <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black text-lg print:text-xs">{formatNum(inputCantidadSolicitada)}</td>
-                              <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">{isBolsas ? 'MILLARES' : 'KG'}</td>
-                              <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">-</td>
-                              <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">-</td>
-                              <td className="p-1.5 print:p-1 text-gray-500 print:text-black">Base inicial para cálculo</td>
+                              <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">{simUmFinal}</td>
+                              <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">${formatNum(calcCostoFinalUnidad)}</td>
+                              <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">${formatNum(calcCostoMezclaPreparada)}</td>
+                              <td className="p-1.5 print:p-1 text-gray-500 print:text-black">
+                                 {isBolsas ? `Equivale a ${formatNum(calcKilosNetos)} KG Netos` : 'Kilos terminados'}
+                              </td>
                            </tr>
 
-                           {/* 1. MATERIA PRIMA */}
-                           <tr><td colSpan="6" className="p-1.5 print:p-1 pl-4 font-black uppercase bg-gray-50 print:bg-transparent">1. MATERIA PRIMA (MEZCLA)</td></tr>
+                           {/* 1. PLANIFICACIÓN Y MERMA */}
+                           <tr><td colSpan="6" className="p-1.5 print:p-1 pt-3 pl-4 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">1. PLANIFICACIÓN DE PRODUCCIÓN Y MERMA</td></tr>
+                           <tr>
+                             <td className="p-1.5 print:p-1 pl-4 font-bold">KILOS NETOS ÚTILES</td>
+                             <td className="p-1.5 print:p-1 text-center text-blue-700 font-black">{formatNum(calcKilosNetos)}</td>
+                             <td className="p-1.5 print:p-1 text-center">kg</td>
+                             <td className="p-1.5 print:p-1 text-center">${formatNum(calcCostoUnitarioNeto)}</td>
+                             <td className="p-1.5 print:p-1 text-center">-</td>
+                             <td className="p-1.5 print:p-1 text-gray-500 print:text-black">Material útil para el pedido</td>
+                           </tr>
+                           <tr>
+                             <td className="p-1.5 print:p-1 pl-4 font-bold">MERMA ESTIMADA (+{formatNum(calcInputs?.mermaGlobalPorc)}%)</td>
+                             <td className="p-1.5 print:p-1 text-center text-red-600 font-black">{formatNum(calcMermaGlobalKg)}</td>
+                             <td className="p-1.5 print:p-1 text-center">kg</td>
+                             <td className="p-1.5 print:p-1 text-center">-</td>
+                             <td className="p-1.5 print:p-1 text-center">-</td>
+                             <td className="p-1.5 print:p-1 text-gray-500 print:text-black">Desperdicio de planta</td>
+                           </tr>
+                           <tr className="bg-gray-100 font-black border-y border-gray-300 print:border-black print:bg-gray-200">
+                             <td className="p-1.5 print:p-1 pl-4 text-black">KILOS BRUTOS A EXTRUIR</td>
+                             <td className="p-1.5 print:p-1 text-center text-black text-lg print:text-[10px]">{formatNum(calcTotalMezcla)}</td>
+                             <td className="p-1.5 print:p-1 text-center">kg</td>
+                             <td className="p-1.5 print:p-1 text-center">${formatNum(calcCostoPromedio)}</td>
+                             <td className="p-1.5 print:p-1 text-center">${formatNum(calcCostoMezclaPreparada)}</td>
+                             <td className="p-1.5 print:p-1 text-gray-500 print:text-black">Total mezcla a preparar</td>
+                           </tr>
+
+                           {/* 2. MATERIA PRIMA */}
+                           <tr><td colSpan="6" className="p-1.5 print:p-1 pt-3 pl-4 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">2. RECETA DE MATERIA PRIMA</td></tr>
                            {(calcIngredientesProcesados || []).map(ing => (
                              <tr key={ing?.id}>
                                <td className="p-1.5 print:p-1 pl-4 font-bold">{ing?.desc}</td>
@@ -1855,47 +1891,9 @@ export default function App() {
                                <td className="p-1.5 print:p-1 text-center">kg</td>
                                <td className="p-1.5 print:p-1 text-center">${formatNum(ing?.costo)}</td>
                                <td className="p-1.5 print:p-1 text-center">${formatNum(ing?.totalCost)}</td>
-                               <td className="p-1.5 print:p-1 text-gray-500 print:text-black">{formatNum(ing?.pct)}% de la mezcla</td>
+                               <td className="p-1.5 print:p-1 text-gray-500 print:text-black">{formatNum(ing?.pct)}% de la mezcla bruta</td>
                              </tr>
                            ))}
-                           <tr className="bg-gray-100 font-black border-y border-gray-300 print:border-black print:bg-gray-200">
-                             <td className="p-1.5 print:p-1 pl-4">TOTAL MEZCLA A PROCESAR</td>
-                             <td className="p-1.5 print:p-1 text-center text-blue-700 text-base print:text-[10px]">{formatNum(calcTotalMezcla)}</td>
-                             <td className="p-1.5 print:p-1 text-center">kg</td>
-                             <td className="p-1.5 print:p-1 text-center">${formatNum(calcCostoPromedio)}</td>
-                             <td className="p-1.5 print:p-1 text-center">${formatNum(calcCostoMezclaPreparada)}</td>
-                             <td className="p-1.5 print:p-1 text-gray-500 print:text-black">Kilos teóricos requeridos</td>
-                           </tr>
-
-                           {/* 2. PRODUCCIÓN Y MERMA */}
-                           <tr><td colSpan="6" className="p-1.5 print:p-1 pt-3 pl-4 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">2. FASE DE PRODUCCIÓN Y MERMA</td></tr>
-                           <tr>
-                             <td className="p-1.5 print:p-1 pl-4 font-bold">MERMA GLOBAL ESTIMADA</td>
-                             <td className="p-1.5 print:p-1 text-center text-red-600">{formatNum(calcMermaGlobalKg)}</td>
-                             <td className="p-1.5 print:p-1 text-center">kg</td>
-                             <td className="p-1.5 print:p-1 text-center">$0.00</td>
-                             <td className="p-1.5 print:p-1 text-center">$0.00</td>
-                             <td className="p-1.5 print:p-1 text-gray-500 print:text-black">{formatNum(calcInputs?.mermaGlobalPorc)}% de la mezcla</td>
-                           </tr>
-                           <tr className="bg-gray-100 font-black border-y border-gray-300 print:border-black print:bg-gray-200">
-                             <td className="p-1.5 print:p-1 pl-4 text-blue-700">PRODUCCIÓN NETA (KG ÚTILES)</td>
-                             <td className="p-1.5 print:p-1 text-center text-blue-700">{formatNum(calcProduccionNetaKg)}</td>
-                             <td className="p-1.5 print:p-1 text-center text-blue-700">kg</td>
-                             <td className="p-1.5 print:p-1 text-center text-blue-700">${formatNum(calcCostoUnitarioNeto)}</td>
-                             <td className="p-1.5 print:p-1 text-center text-blue-700">${formatNum(calcCostoMezclaProcesada)}</td>
-                             <td className="p-1.5 print:p-1 text-blue-700">Rendimiento Útil: {formatNum(calcRendimientoUtil)}%</td>
-                           </tr>
-
-                           {/* 3. CONVERSIÓN */}
-                           <tr><td colSpan="6" className="p-1.5 print:p-1 pt-3 pl-4 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">3. CONVERSIÓN FINAL ({calcInputs?.tipoProducto || ''})</td></tr>
-                           <tr className="bg-green-100 print:bg-gray-300 font-black text-green-800 print:text-black border-y border-gray-400 print:border-black text-[11px] print:text-[9px]">
-                             <td className="p-2 print:p-1 pl-4">PRODUCCIÓN FINAL ESTIMADA</td>
-                             <td className="p-2 print:p-1 text-center text-lg print:text-[10px]">{formatNum(calcProduccionFinalUnidades)}</td>
-                             <td className="p-2 print:p-1 text-center">{simUmFinal}</td>
-                             <td className="p-2 print:p-1 text-center">${formatNum(calcCostoFinalUnidad)}</td>
-                             <td className="p-2 print:p-1 text-center">${formatNum(calcCostoMezclaProcesada)}</td>
-                             <td className="p-2 print:p-1 text-[8px] text-gray-600 print:text-black">{isBolsas ? `Peso Teórico: ${formatNum(simPesoMillar)} kg/M` : `Conversión directa a KG`}</td>
-                           </tr>
                         </tbody>
                      </table>
                   </div>
@@ -2000,7 +1998,15 @@ export default function App() {
     const realPesoMillar = isBolsas ? parseNum(req?.micras) * (parseNum(req?.ancho) + parseNum(req?.fuelles)) * parseNum(req?.largo) / 1000 : 0;
 
     const extB = req?.production?.extrusion?.batches || []; const impB = req?.production?.impresion?.batches || []; const selB = req?.production?.sellado?.batches || [];
-    let mpC = []; extB.forEach(b => { (b?.insumos || []).forEach(ing => { const ex = mpC.find(i => i?.id === ing?.id); if(ex) ex.qty += (ing?.qty || 0); else mpC.push({...ing}); }); });
+    let mpC = []; 
+    extB.forEach(b => { 
+       (b?.insumos || []).forEach(ing => { 
+          const ex = mpC.find(i => i?.id === ing?.id); 
+          if(ex) ex.qty += (ing?.qty || 0); 
+          else mpC.push({...ing}); 
+       }); 
+    });
+    
     const totMP = mpC.reduce((s, i) => s + (i?.qty || 0), 0) || 0;
     const extP = extB.reduce((a,b)=>a+parseNum(b?.producedKg),0); const impP = impB.reduce((a,b)=>a+parseNum(b?.producedKg),0); const selP = selB.reduce((a,b)=>a+parseNum(b?.producedKg),0);
     const extMerma = extB.reduce((a,b)=>a+parseNum(b?.mermaKg),0); const impMerma = impB.reduce((a,b)=>a+parseNum(b?.mermaKg),0); const selMerma = selB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
