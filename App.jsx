@@ -142,7 +142,6 @@ export default function App() {
   const [showSingleReqReport, setShowSingleReqReport] = useState(null);
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
   const [showMovementReceipt, setShowMovementReceipt] = useState(null);
-  const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
 
   // Formularios de Configuración
   const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
@@ -183,50 +182,19 @@ export default function App() {
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
-  // EXPORTACIONES AJUSTADAS
+  // EXPORTACIONES
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content'); if (!element) return;
-    
-    const printOnlyElements = element.querySelectorAll('.hidden.print\\:block, .hidden.pdf-header'); 
-    printOnlyElements.forEach(el => { el.style.display = 'block'; });
-    const noPdfElements = element.querySelectorAll('.no-pdf'); 
-    noPdfElements.forEach(el => { el.style.display = 'none'; });
-    
-    const originalCssText = element.style.cssText; 
-    const originalClasses = element.className; 
-    
-    element.className = 'bg-white text-black p-8'; 
-    element.style.width = '100%'; 
-    element.style.maxWidth = '1000px'; 
-    element.style.margin = '0 auto';
-    
-    const tables = element.querySelectorAll('table'); 
-    tables.forEach(t => { t.style.whiteSpace = 'normal'; t.style.tableLayout = 'auto'; t.style.width = '100%'; });
-    const overflows = element.querySelectorAll('.overflow-x-auto'); 
-    overflows.forEach(el => { el.style.overflow = 'visible'; });
-
-    const opt = { 
-       margin: [10, 10, 10, 10], 
-       filename: `${filename}_${getTodayDate()}.pdf`, 
-       image: { type: 'jpeg', quality: 1 }, 
-       html2canvas: { scale: 2, useCORS: true, logging: false }, 
-       jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' } 
-    };
-    
-    const finishExport = () => { 
-       printOnlyElements.forEach(el => { el.style.display = ''; }); 
-       noPdfElements.forEach(el => { el.style.display = ''; }); 
-       element.style.cssText = originalCssText; 
-       element.className = originalClasses; 
-       tables.forEach(t => { t.style.whiteSpace = ''; t.style.tableLayout = ''; t.style.width = ''; }); 
-       overflows.forEach(el => { el.style.overflow = ''; }); 
-    };
-    
-    if (typeof window.html2pdf === 'undefined') { 
-       const script = document.createElement('script'); script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; script.onload = () => { window.html2pdf().set(opt).from(element).save().then(finishExport); }; document.head.appendChild(script); 
-    } else { window.html2pdf().set(opt).from(element).save().then(finishExport); }
+    const printOnlyElements = element.querySelectorAll('.hidden.print\\:block, .hidden.pdf-header'); printOnlyElements.forEach(el => { el.style.display = 'block'; });
+    const noPdfElements = element.querySelectorAll('.no-pdf'); noPdfElements.forEach(el => { el.style.display = 'none'; });
+    const originalCssText = element.style.cssText; const originalClasses = element.className; const virtualWidth = isLandscape ? 1120 : 800; 
+    element.className = 'bg-white text-black p-8'; element.style.width = `${virtualWidth}px`; element.style.maxWidth = 'none'; element.style.margin = '0 auto';
+    const tables = element.querySelectorAll('table'); tables.forEach(t => { t.style.whiteSpace = 'normal'; t.style.tableLayout = 'auto'; t.style.width = '100%'; });
+    const overflows = element.querySelectorAll('.overflow-x-auto'); overflows.forEach(el => { el.style.overflow = 'visible'; });
+    const opt = { margin: [10, 10, 10, 10], filename: `${filename}_${getTodayDate()}.pdf`, image: { type: 'jpeg', quality: 1 }, html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: virtualWidth }, jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' } };
+    const finishExport = () => { printOnlyElements.forEach(el => { el.style.display = ''; }); noPdfElements.forEach(el => { el.style.display = ''; }); element.style.cssText = originalCssText; element.className = originalClasses; tables.forEach(t => { t.style.whiteSpace = ''; t.style.tableLayout = ''; t.style.width = ''; }); overflows.forEach(el => { el.style.overflow = ''; }); };
+    if (typeof window.html2pdf === 'undefined') { const script = document.createElement('script'); script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; script.onload = () => { window.html2pdf().set(opt).from(element).save().then(finishExport); }; document.head.appendChild(script); } else { window.html2pdf().set(opt).from(element).save().then(finishExport); }
   };
-
   const handleExportExcel = (tableId, filename) => {
     const table = document.getElementById(tableId); if (!table) return; const tableClone = table.cloneNode(true);
     const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8" /><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #000;padding:5px;}th{text-align:center;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><br/>${tableClone.outerHTML}</body></html>`;
@@ -239,7 +207,6 @@ export default function App() {
     const foundUser = systemUsers.find(u => u.username === user && u.password === pass);
     if (foundUser) { setAppUser(foundUser); setLoginError(''); } else { setLoginError('Credenciales incorrectas. Intente nuevamente.'); }
   };
-
   const handleBgUpload = (e) => {
     const file = e.target.files[0];
     if (file) { compressImage(file, async (base64) => { try { await setDoc(getDocRef('settings', 'general'), { loginBg: base64 }, { merge: true }); setDialog({title: 'Éxito', text: 'Fondo actualizado.', type: 'alert'}); } catch (error) { setDialog({title: 'Error', text: 'Imagen muy pesada o error de red.', type: 'alert'}); } }); }
@@ -275,7 +242,6 @@ export default function App() {
     setShowNewReqPanel(false); setShowNewInvoicePanel(false); setEditingClientId(null); setEditingReqId(null); 
     setShowSingleReqReport(null); setShowSingleInvoice(null); setInvoiceSearchTerm(''); setShowWorkOrder(null); 
     setShowPhaseReport(null); setShowFiniquito(null); setSelectedPhaseReqId(null); setReqToApprove(null); setShowMovementReceipt(null);
-    setShowPurchaseOrder(false);
   };
 
   // ============================================================================
@@ -393,50 +359,17 @@ export default function App() {
   const handleDeleteInvoice = (id) => setDialog({ title: 'Eliminar', text: `¿Eliminar factura?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('maquilaInvoices', id))});
   
   const generateReqId = () => `OP-${((requirements || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(5, '0')}`;
-  
   const handleReqFormChange = (field, value) => {
     let f = { ...newReqForm, [field]: typeof value === 'string' ? value.toUpperCase() : value };
-    
-    if (field === 'client') { 
-      const c = (clients || []).find(cl => cl.name === (value||'').toUpperCase()); 
-      if (c && c.vendedor) f.vendedor = c.vendedor.toUpperCase(); 
-    }
-    
-    if (field === 'tipoProducto' && value === 'TERMOENCOGIBLE') {
-      f.presentacion = 'KILOS';
-    }
-    
-    const w = parseNum(f.ancho);
-    const l = parseNum(f.largo);
-    const m = parseNum(f.micras);
-    const fu = parseNum(f.fuelles);
-    const c = parseNum(f.cantidad);
-    const tipo = f.tipoProducto;
-    
+    if (field === 'client') { const c = (clients || []).find(cl => cl.name === (value||'').toUpperCase()); if (c && c.vendedor) f.vendedor = c.vendedor.toUpperCase(); }
+    if (field === 'tipoProducto' && value === 'TERMOENCOGIBLE') f.presentacion = 'KILOS';
+    const w = parseNum(f.ancho), l = parseNum(f.largo), m = parseNum(f.micras), fu = parseNum(f.fuelles), c = parseNum(f.cantidad), tipo = f.tipoProducto;
     if (w > 0 && m > 0) {
       const micFmt = m < 1 && m > 0 ? Math.round(m * 1000) : m;
-      
-      if (tipo === 'BOLSAS' && l > 0) { 
-        const pEst = (w + fu) * l * m; 
-        f.pesoMillar = pEst.toFixed(2); 
-        f.desc = fu > 0 
-          ? `(${w}+${fu/2}+${fu/2})X${l}X${micFmt}MIC | ${f.color || ''}` 
-          : `${w}X${l}X${micFmt}MIC | ${f.color || ''}`; 
-        f.requestedKg = f.presentacion === 'KILOS' ? c.toFixed(2) : (pEst * c).toFixed(2); 
-      } 
-      else if (tipo === 'TERMOENCOGIBLE') { 
-        f.pesoMillar = 'N/A'; 
-        f.desc = `TERMOENCOGIBLE ${w}CM X ${micFmt}MIC | ${f.color || ''}`; 
-        f.requestedKg = c > 0 ? c.toFixed(2) : '0.00'; 
-      } 
-      else { 
-        f.pesoMillar = '0.00'; 
-        f.requestedKg = '0.00'; 
-      }
-    } else { 
-      f.pesoMillar = tipo === 'TERMOENCOGIBLE' ? 'N/A' : '0.00'; 
-      f.requestedKg = f.presentacion === 'KILOS' && c > 0 ? c.toFixed(2) : '0.00'; 
-    }
+      if (tipo === 'BOLSAS' && l > 0) { const pEst = (w + fu) * l * m; f.pesoMillar = pEst.toFixed(2); f.desc = fu > 0 ? `(${w}+${fu/2}+${fu/2})X${l}X${micFmt}MIC | ${f.color || ''}` : `${w}X${l}X${micFmt}MIC | ${f.color || ''}`; f.requestedKg = f.presentacion === 'KILOS' ? c.toFixed(2) : (pEst * c).toFixed(2); } 
+      else if (tipo === 'TERMOENCOGIBLE') { f.pesoMillar = 'N/A'; f.desc = `TERMOENCOGIBLE ${w}CM X ${micFmt}MIC | ${f.color || ''}`; f.requestedKg = c > 0 ? c.toFixed(2) : '0.00'; } 
+      else { f.pesoMillar = '0.00'; f.requestedKg = '0.00'; }
+    } else { f.pesoMillar = tipo === 'TERMOENCOGIBLE' ? 'N/A' : '0.00'; f.requestedKg = f.presentacion === 'KILOS' && c > 0 ? c.toFixed(2) : '0.00'; }
     setNewReqForm(f);
   };
 
@@ -472,11 +405,14 @@ export default function App() {
            if ((item.stock || 0) < ing.qty) throw new Error(`Stock insuficiente para ${item.desc}.`);
 
            phaseCost += (item.cost * ing.qty); totalInsumosKg += parseFloat(ing.qty);
+           // Descontar inventario
            batch.update(getDocRef('inventory', item.id), { stock: (item.stock || 0) - ing.qty });
+           // Crear Movimiento
            const movId = Date.now().toString() + Math.floor(Math.random()*1000);
            batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: getTodayDate(), itemId: item.id, itemName: item.desc, type: 'SALIDA', qty: ing.qty, cost: item.cost, totalValue: ing.qty * item.cost, reference: `REQ-${targetOP.id}-${req.phase.substring(0,3).toUpperCase()}`, opAsignada: targetOP.id, notes: 'DESPACHO ALMACÉN', timestamp: Date.now(), user: appUser?.name || 'Almacén' });
         }
 
+        // Inyectar Lote a la OP
         let currentPhase = { ...(targetOP.production?.[req.phase] || { batches: [], isClosed: false }) };
         const newProdBatch = { id: Date.now().toString(), timestamp: Date.now(), date: getTodayDate(), insumos: validItems, producedKg: 0, mermaKg: 0, totalInsumosKg, cost: phaseCost, operator: 'ALMACÉN (DESPACHO)', techParams: {} };
         if (!currentPhase.batches) currentPhase.batches = []; currentPhase.batches.push(newProdBatch);
@@ -607,38 +543,21 @@ export default function App() {
     const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
     const recentMovs = invMovements.filter(m => m.type === 'SALIDA' && m.timestamp >= thirtyDaysAgo);
     const pendingReqs = invRequisitions.filter(r => r.status === 'PENDIENTE');
-    const activeOPs = requirements.filter(r => r.status === 'EN PROCESO');
 
     return inventory.filter(i => i.category === 'Materia Prima').map(mp => {
        const consumedIn30Days = recentMovs.filter(m => m.itemId === mp.id).reduce((sum, m) => sum + parseNum(m.qty), 0);
        const dailyAvg = consumedIn30Days / 30;
        
        let committedStock = 0;
-       
-       // 1. Requisiciones de planta pendientes
        pendingReqs.forEach(req => {
             const item = req.items.find(i => i.id === mp.id);
             if (item) committedStock += parseNum(item.qty);
        });
 
-       // 2. Requisiciones de Ventas (OPs en proceso sin producir)
-       activeOPs.forEach(op => {
-          if (op.recipe && op.recipe.length > 0) {
-             const recItem = op.recipe.find(i => i.id === mp.id);
-             if (recItem) committedStock += parseNum(recItem.qty);
-          } else {
-             // Estimación 80/20 genérica si no hay receta
-             const reqKg = parseNum(op.requestedKg);
-             if (mp.id === 'MP-0240') committedStock += (reqKg * 0.80);
-             if (mp.id === 'MP-RECICLADO') committedStock += (reqKg * 0.20);
-          }
-       });
-
        const availableReal = mp.stock - committedStock;
        const daysRemaining = dailyAvg > 0 ? availableReal / dailyAvg : 999;
        
-       // Si días <= 20, sugerir compra de déficit + 90 días (por tardanza de 2-3 meses)
-       const suggestOrder = (daysRemaining <= 20 || availableReal <= 0) ? Math.abs(availableReal < 0 ? availableReal : 0) + (dailyAvg * 90) : 0; 
+       const suggestOrder = (daysRemaining < 15 || availableReal < 0) ? Math.abs(availableReal < 0 ? availableReal : 0) + (dailyAvg * 15) : 0; 
 
        return { ...mp, dailyAvg, daysRemaining, committedStock, availableReal, suggestOrder };
     });
@@ -662,6 +581,82 @@ export default function App() {
        </div>
     </div>
   );
+
+  const renderLogin = () => (
+    <div className="min-h-screen flex items-center justify-center p-4 relative" 
+         style={{ backgroundImage: `url('${settings?.loginBg || "https://images.unsplash.com/photo-1587293852726-70cdb56c2866?q=80&w=2072&auto=format&fit=crop"}')`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+       
+       <div className="absolute top-4 right-4 z-20">
+          <label className="bg-black/50 hover:bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase cursor-pointer backdrop-blur-sm transition-all flex items-center gap-2 border border-white/20 shadow-lg">
+             <Edit size={14}/> Cambiar Fondo
+             <input type="file" accept="image/*" className="hidden" onChange={handleBgUpload} />
+          </label>
+       </div>
+
+       <div className="relative z-10 bg-white rounded-3xl shadow-[0_30px_60px_rgba(0,0,0,0.6)] overflow-hidden w-full max-w-4xl flex transform transition-all duration-500 hover:scale-[1.01] border border-white/20">
+          <div className="w-1/2 bg-gradient-to-br from-gray-900 to-black p-12 flex-col justify-between hidden md:flex relative overflow-hidden shadow-[inset_-10px_0_20px_rgba(0,0,0,0.5)] border-r border-gray-800">
+             <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-tr from-white/10 to-transparent transform -skew-x-12 pointer-events-none"></div>
+             <div className="relative z-10">
+               <div className="flex items-center bg-white rounded-2xl px-4 py-2 shadow-[0_10px_20px_rgba(0,0,0,0.4)] w-fit transform hover:translate-x-1 hover:-translate-y-1 transition-transform duration-300">
+                  <span className="text-black font-black text-4xl leading-none drop-shadow-sm">G</span><span className="text-orange-500 font-black text-3xl mx-1 drop-shadow-sm">&amp;</span><span className="text-black font-black text-4xl leading-none drop-shadow-sm">B</span>
+               </div>
+               <h1 className="text-white text-3xl font-black mt-10 uppercase tracking-widest drop-shadow-lg">Supply ERP</h1>
+               <p className="text-gray-300 mt-4 text-sm leading-relaxed drop-shadow-md">Sistema Integrado de Producción e Inventario para Servicios Jiret G&B C.A.</p>
+             </div>
+             <div className="relative z-10 text-gray-500 text-xs font-bold uppercase tracking-widest">© {new Date().getFullYear()} Todos los derechos reservados</div>
+          </div>
+          <div className="w-full md:w-1/2 p-12 flex flex-col justify-center bg-white relative z-10">
+             <h2 className="text-2xl font-black text-black uppercase tracking-widest mb-2">Iniciar Sesión</h2>
+             <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-8">Ingresa tus credenciales de acceso</p>
+             {loginError && (<div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)]"><AlertTriangle size={16}/> {loginError}</div>)}
+             <form onSubmit={handleLogin} className="space-y-6">
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Usuario</label>
+                  <div className="relative group"><User className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="text" value={loginData.username} onChange={e=>setLoginData({...loginData, username: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="EJ: ADMIN o PLANTA"/></div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Contraseña</label>
+                  <div className="relative group"><Lock className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="password" value={loginData.password} onChange={e=>setLoginData({...loginData, password: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="••••••••"/></div>
+                </div>
+                <button type="submit" className="w-full bg-gradient-to-r from-orange-500 to-orange-600 text-white font-black py-4 rounded-xl shadow-[0_8px_20px_rgba(249,115,22,0.4)] hover:shadow-[0_15px_25px_rgba(249,115,22,0.6)] hover:-translate-y-1 active:translate-y-1 uppercase tracking-widest text-xs flex justify-center items-center gap-2 mt-4 transform transition-all">ENTRAR AL SISTEMA <ArrowRight size={16}/></button>
+             </form>
+          </div>
+       </div>
+    </div>
+  );
+
+  const renderHome = () => {
+    const hasPerm = (module) => appUser?.permissions ? appUser.permissions[module] : appUser?.role === 'Master';
+    
+    return (
+      <div className="w-full max-w-6xl mx-auto py-8 animate-in fade-in">
+        <div className="text-center mb-10">
+          <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
+          <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
+          {hasPerm('ventas') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Users size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3><p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p></button>
+          )}
+          {hasPerm('produccion') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
+          )}
+          {hasPerm('inventario') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p></button>
+          )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
+          {hasPerm('costos') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('costos'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Reportes de Costo</h3><p className="text-xs text-gray-400 mt-2">Módulo en construcción.</p></button>
+          )}
+          {hasPerm('configuracion') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><Settings2 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3><p className="text-xs text-gray-400 mt-2">Usuarios y Permisos.</p></button>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   const renderInventoryReports = () => {
      let filteredData = [];
@@ -1512,57 +1507,6 @@ export default function App() {
     const activeOrders = (requirements || []).filter(r => r?.status === 'EN PROCESO');
     const completedOrders = (requirements || []).filter(r => r?.status === 'COMPLETADO');
     
-    // VISTA DE LA ORDEN DE COMPRA (PROCURA)
-    if (showPurchaseOrder) {
-       const proyeccionData = generateProjectionData().filter(mp => mp.suggestOrder > 0);
-       return (
-          <div id="pdf-content" className="bg-white p-12 min-h-0 text-black shadow-xl bg-white animate-in zoom-in-95">
-            <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf">
-               <button onClick={() => setShowPurchaseOrder(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button>
-               <button onClick={() => handleExportPDF(`Orden_Compra_Procura_${getTodayDate()}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar Orden PDF</button>
-            </div>
-            <div className="hidden pdf-header mb-6"><ReportHeader /></div>
-            
-            <div className="text-center my-8 border-b-4 border-orange-500 pb-4">
-               <h1 className="text-2xl font-black text-black uppercase tracking-widest">ORDEN DE COMPRA SUGERIDA</h1>
-               <h2 className="text-lg font-bold text-gray-500 uppercase mt-1">DEPARTAMENTO DE PROCURA</h2>
-               <p className="text-xs font-black text-orange-600 uppercase mt-2">FECHA DE SOLICITUD: {getTodayDate()}</p>
-            </div>
-
-            <div className="bg-gray-50 border border-gray-200 p-6 rounded-2xl mb-8">
-               <p className="text-sm font-bold text-gray-800 uppercase leading-relaxed text-justify">El presente documento contiene la lista oficial de materias primas que han alcanzado el punto de reorden en Planta (Stock proyectado inferior a 20 días operacionales). Se solicita gestionar la compra con los proveedores habituales considerando los tiempos de entrega (Lead time) de 2 a 3 meses, para cubrir la cantidad sugerida en este reporte.</p>
-            </div>
-
-            <table className="w-full text-left text-sm whitespace-nowrap mb-10 border-collapse">
-               <thead className="bg-gray-200 border-b-2 border-black">
-                  <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                     <th className="py-4 px-4 border-r border-gray-300">Código ID</th>
-                     <th className="py-4 px-4 border-r border-gray-300">Descripción / Insumo</th>
-                     <th className="py-4 px-4 border-r border-gray-300 text-center">Stock Físico (Inv)</th>
-                     <th className="py-4 px-4 text-center bg-orange-100 text-orange-800">Cantidad Sugerida (Comprar)</th>
-                  </tr>
-               </thead>
-               <tbody className="divide-y divide-gray-200 text-black border-b-2 border-black">
-                  {proyeccionData.map(mp => (
-                     <tr key={mp.id} className="hover:bg-gray-50">
-                        <td className="py-4 px-4 font-black border-r border-gray-300">{mp.id}</td>
-                        <td className="py-4 px-4 font-black border-r border-gray-300">{mp.desc}</td>
-                        <td className="py-4 px-4 font-bold border-r border-gray-300 text-center">{formatNum(mp.stock)} kg</td>
-                        <td className="py-4 px-4 font-black text-center text-lg text-orange-600 bg-orange-50/30">{formatNum(mp.suggestOrder)} kg</td>
-                     </tr>
-                  ))}
-                  {proyeccionData.length === 0 && <tr><td colSpan="4" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">No hay requerimientos de compra actuales.</td></tr>}
-               </tbody>
-            </table>
-
-            <div className="mt-24 grid grid-cols-2 gap-24 text-center font-black text-[10px] uppercase">
-               <div className="border-t-2 border-black pt-2">FIRMA GERENCIA DE PLANTA</div>
-               <div className="border-t-2 border-black pt-2">RECIBE DEPARTAMENTO DE PROCURA</div>
-            </div>
-          </div>
-       );
-    }
-
     // VISTA DE PROYECCIÓN DE MATERIA PRIMA
     if (prodView === 'proyeccion') {
        const proyeccionData = generateProjectionData();
@@ -1570,10 +1514,7 @@ export default function App() {
          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><TrendingUp className="text-orange-500" size={24}/> Proyección de Materia Prima</h2>
-               <div className="flex gap-2">
-                 <button onClick={() => setShowPurchaseOrder(true)} className="bg-orange-500 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-600 transition-colors flex items-center gap-2"><ShoppingCart size={16}/> ORDEN DE COMPRA (PROCURA)</button>
-                 <button onClick={() => handleExportPDF('Proyeccion_MP', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR REPORTE</button>
-               </div>
+               <button onClick={() => handleExportPDF('Proyeccion_MP', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR REPORTE</button>
             </div>
             <div id="pdf-content" className="p-8 print:p-0 bg-white">
                <div className="hidden pdf-header mb-8">
@@ -1586,7 +1527,7 @@ export default function App() {
                   <AlertTriangle size={24} className="text-blue-600 mt-1 flex-shrink-0" />
                   <div>
                      <h3 className="text-sm font-black text-blue-800 uppercase tracking-widest mb-1">Módulo de Planificación</h3>
-                     <p className="text-xs font-bold text-blue-600 leading-relaxed">El sistema analiza el inventario actual, descuenta las requisiciones de planta y las Órdenes de Ventas en proceso, calculando cuántos días de inventario quedan según el consumo promedio de los últimos 30 días. Si quedan 20 días o menos, sugiere compras para 3 meses.</p>
+                     <p className="text-xs font-bold text-blue-600 leading-relaxed">El sistema analiza el inventario actual, descuenta las requisiciones de planta no despachadas y calcula cuántos días de inventario quedan según el consumo promedio de los últimos 30 días.</p>
                   </div>
                </div>
 
@@ -1596,41 +1537,37 @@ export default function App() {
                      <tr className="uppercase font-black text-[10px] tracking-widest text-black">
                        <th className="py-3 px-4 border-r print:border-black">Insumo</th>
                        <th className="py-3 px-4 border-r print:border-black text-center">Stock Actual</th>
-                       <th className="py-3 px-4 border-r print:border-black text-center text-orange-600">Comprometido<br/><span className="text-[8px] block">(OPs y Planta)</span></th>
-                       <th className="py-3 px-4 border-r print:border-black text-center text-blue-600">Disponible<br/><span className="text-[8px] block">Real</span></th>
+                       <th className="py-3 px-4 border-r print:border-black text-center text-red-600">Comprometido<br/><span className="text-[8px] block">(Req. Planta)</span></th>
+                       <th className="py-3 px-4 border-r print:border-black text-center text-green-600">Disponible<br/><span className="text-[8px] block">Real</span></th>
                        <th className="py-3 px-4 border-r print:border-black text-center">Consumo<br/><span className="text-[8px] block">Diario</span></th>
                        <th className="py-3 px-4 border-r print:border-black text-center">Días<br/><span className="text-[8px] block">Restantes</span></th>
-                       <th className="py-3 px-4 text-center">Estatus</th>
+                       <th className="py-3 px-4 text-center no-pdf">Acción</th>
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-gray-100 text-black print:divide-black">
-                     {proyeccionData.map(mp => {
-                        const outOfStock = mp.availableReal <= 0;
-                        const lowStock = mp.daysRemaining > 0 && mp.daysRemaining <= 20;
-                        return (
-                          <tr key={mp.id} className={`transition-colors ${outOfStock ? 'bg-red-50' : 'hover:bg-gray-50'}`}>
-                            <td className="py-4 px-4 font-black border-r print:border-black uppercase text-sm">{mp.desc}<br/><span className="text-[9px] text-gray-500 font-bold">{mp.id}</span></td>
-                            <td className="py-4 px-4 font-black border-r print:border-black text-center text-lg">{formatNum(mp.stock)}</td>
-                            <td className="py-4 px-4 font-black border-r print:border-black text-center text-orange-500">{formatNum(mp.committedStock)}</td>
-                            <td className={`py-4 px-4 font-black border-r print:border-black text-center text-lg ${outOfStock ? 'text-red-600' : 'text-blue-600'}`}>{formatNum(mp.availableReal)}</td>
-                            <td className="py-4 px-4 font-bold border-r print:border-black text-center">{formatNum(mp.dailyAvg)} kg/d</td>
-                            <td className="py-4 px-4 border-r print:border-black text-center">
-                               <span className={`px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest border ${outOfStock ? 'bg-red-600 text-white border-red-700' : lowStock ? 'bg-orange-100 text-orange-700 border-orange-300' : 'bg-green-100 text-green-700 border-green-200'}`}>
-                                  {mp.daysRemaining === 999 ? '+99 Días' : outOfStock ? '0 Días' : `${formatNum(mp.daysRemaining)} Días`}
-                               </span>
-                            </td>
-                            <td className="py-4 px-4 text-center font-black text-[10px]">
-                               {outOfStock ? (
-                                  <span className="text-red-600 block uppercase">SIN STOCK<br/>PEDIR INMEDIATO</span>
-                               ) : lowStock ? (
-                                  <span className="text-orange-600 block uppercase">ALERTA<br/>SUGIERE COMPRA</span>
-                               ) : (
-                                  <span className="text-green-600 block uppercase tracking-widest">STOCK SANO</span>
-                               )}
-                            </td>
-                          </tr>
-                        );
-                     })}
+                     {proyeccionData.map(mp => (
+                       <tr key={mp.id} className="hover:bg-gray-50 transition-colors">
+                         <td className="py-4 px-4 font-black border-r print:border-black uppercase text-sm">{mp.desc}<br/><span className="text-[9px] text-gray-500 font-bold">{mp.id}</span></td>
+                         <td className="py-4 px-4 font-black border-r print:border-black text-center text-lg">{formatNum(mp.stock)}</td>
+                         <td className="py-4 px-4 font-black border-r print:border-black text-center text-red-500">{formatNum(mp.committedStock)}</td>
+                         <td className={`py-4 px-4 font-black border-r print:border-black text-center text-lg ${mp.availableReal < 0 ? 'text-red-600' : 'text-green-600'}`}>{formatNum(mp.availableReal)}</td>
+                         <td className="py-4 px-4 font-bold border-r print:border-black text-center">{formatNum(mp.dailyAvg)} kg/d</td>
+                         <td className="py-4 px-4 border-r print:border-black text-center">
+                            <span className={`px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest border ${mp.daysRemaining < 15 ? 'bg-red-100 text-red-700 border-red-200' : 'bg-green-100 text-green-700 border-green-200'}`}>
+                               {mp.daysRemaining === 999 ? '+99 Días' : `${formatNum(mp.daysRemaining)} Días`}
+                            </span>
+                         </td>
+                         <td className="py-4 px-4 text-center no-pdf">
+                            {mp.suggestOrder > 0 ? (
+                               <button onClick={() => {
+                                 setDialog({title: 'Generar Orden', text: `Se recomienda comprar ${formatNum(mp.suggestOrder)} kg de ${mp.desc} para cubrir el déficit y asegurar 15 días de stock.`, type: 'alert'})
+                               }} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-1 shadow-md hover:bg-gray-800 w-full"><ShoppingCart size={14}/> PEDIR {formatNum(mp.suggestOrder)} KG</button>
+                            ) : (
+                               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Stock OK</span>
+                            )}
+                         </td>
+                       </tr>
+                     ))}
                      {proyeccionData.length === 0 && <tr><td colSpan="7" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin Materias Primas registradas</td></tr>}
                    </tbody>
                  </table>
@@ -1878,7 +1815,7 @@ export default function App() {
           </div>
         )}
 
-        {/* CONTROL DE FASES */}
+        {/* CONTROL DE FASES (REPORTE DIARIO DE INSUMOS Y PRODUCCION DIRECTA) */}
         {prodView === 'fases_produccion' && (
           <div className="space-y-6">
             {!selectedPhaseReqId ? (
@@ -2082,12 +2019,12 @@ export default function App() {
             <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
               <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 transition-all active:scale-95 uppercase tracking-widest"><Home size={18} className="text-orange-500" /> INICIO</button>
 
-              {appUser?.permissions?.costos && (
-                <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'costos' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><BarChart3 size={18} className={activeTab === 'costos' ? 'text-white' : 'text-gray-400'} /> COSTOS</button>
+              {appUser?.permissions?.costos && activeTab === 'costos' && (
+                <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><BarChart3 size={18} className="text-white" /> COSTOS</button>
               )}
 
-              {appUser?.permissions?.configuracion && (
-                <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'configuracion' ? 'bg-orange-500 text-white shadow-xl' : 'bg-white border-2 border-gray-200 text-gray-700 hover:bg-gray-50 mb-4'}`}><Settings2 size={18} className={activeTab === 'configuracion' ? 'text-white' : 'text-gray-400'} /> CONFIGURACIÓN</button>
+              {appUser?.permissions?.configuracion && activeTab === 'configuracion' && (
+                <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><Settings2 size={18} className="text-white" /> CONFIGURACIÓN</button>
               )}
 
               {activeTab === 'ventas' && appUser?.permissions?.ventas && (
