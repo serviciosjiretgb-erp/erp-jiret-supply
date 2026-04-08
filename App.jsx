@@ -1,17 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  LayoutDashboard, Package, Factory, TrendingUp, AlertTriangle, 
-  ClipboardList, PlayCircle, History, FileText, Settings2, Trash2, 
-  PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
-  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Percent, Briefcase, Zap, Wrench, CreditCard, Activity
-} from 'lucide-react';
-
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch } from "firebase/firestore";
 
 // ============================================================================
-// ESCUDO DE ERRORES EXTREMO
+// ESCUDO DE ERRORES EXTREMO (Evita pantalla blanca)
 // ============================================================================
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, errorMsg: '' }; }
@@ -120,7 +112,9 @@ export default function App() {
   const [prodView, setProdView] = useState('calculadora');
   const [invView, setInvView] = useState('catalogo');
   const [costosView, setCostosView] = useState('dashboard');
+  const [operativosView, setOperativosView] = useState('registro');
   const [invReportType, setInvReportType] = useState('entradas');
+  const [selectedProdMonth, setSelectedProdMonth] = useState('ALL');
 
   const [inventory, setInventory] = useState([]);
   const [invMovements, setInvMovements] = useState([]); 
@@ -128,7 +122,7 @@ export default function App() {
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [invRequisitions, setInvRequisitions] = useState([]);
-  const [opCosts, setOpCosts] = useState([]); // Nuevos Costos Operativos
+  const [opCosts, setOpCosts] = useState([]); 
 
   const [dialog, setDialog] = useState(null);
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
@@ -186,7 +180,7 @@ export default function App() {
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
   
-  const initialOpCostForm = { date: getTodayDate(), category: 'Nómina', description: '', amount: '' };
+  const initialOpCostForm = { date: getTodayDate(), category: 'Nómina y Beneficios', customCategory: '', description: '', amount: '' };
   const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
 
   // ============================================================================
@@ -195,18 +189,26 @@ export default function App() {
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content'); if (!element) return;
     
-    // Mostrar/ocultar elementos
     const printOnlyElements = element.querySelectorAll('.hidden.print\\:block, .hidden.pdf-header'); 
     printOnlyElements.forEach(el => { el.style.display = 'block'; });
     const noPdfElements = element.querySelectorAll('.no-pdf'); 
     noPdfElements.forEach(el => { el.style.display = 'none'; });
 
-    // Evitar recortes horizontales quitando clases overflow
-    const overflows = element.querySelectorAll('.overflow-x-auto, .overflow-hidden');
-    overflows.forEach(el => { el.setAttribute('data-overflow', el.style.overflow || ''); el.style.overflow = 'visible'; });
+    const originalCssText = element.style.cssText; 
+    const originalClasses = element.className; 
+    
+    // Ajuste estricto para que respete márgenes A4 sin desbordar
+    const virtualWidth = isLandscape ? 1120 : 800; 
+    element.className = 'bg-white text-black p-6'; 
+    element.style.width = `${virtualWidth}px`; 
+    element.style.maxWidth = 'none'; 
+    element.style.margin = '0 auto';
+    
+    const tables = element.querySelectorAll('table'); 
+    tables.forEach(t => { t.style.whiteSpace = 'normal'; t.style.tableLayout = 'fixed'; t.style.width = '100%'; t.style.wordBreak = 'break-word'; });
 
     const opt = { 
-      margin: [10, 5, 10, 5], // Márgenes superior, derecha, abajo, izquierda
+      margin: [10, 5, 10, 5], 
       filename: `${filename}_${getTodayDate()}.pdf`, 
       image: { type: 'jpeg', quality: 0.98 }, 
       html2canvas: { scale: 2, useCORS: true, logging: false }, 
@@ -216,7 +218,9 @@ export default function App() {
     const finishExport = () => { 
       printOnlyElements.forEach(el => { el.style.display = ''; }); 
       noPdfElements.forEach(el => { el.style.display = ''; }); 
-      overflows.forEach(el => { el.style.overflow = el.getAttribute('data-overflow') || ''; });
+      element.style.cssText = originalCssText; 
+      element.className = originalClasses; 
+      tables.forEach(t => { t.style.whiteSpace = ''; t.style.tableLayout = ''; t.style.width = ''; t.style.wordBreak = ''; }); 
     };
 
     if (typeof window.html2pdf === 'undefined') { 
@@ -235,11 +239,16 @@ export default function App() {
     const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${filename}_${getTodayDate()}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
-  // Función global para colores de Mermas
   const getMermaColor = (pct) => {
-     if (pct <= 5.0) return 'text-green-500';
+     if (pct <= 5.0) return 'text-green-600';
      if (pct > 5.0 && pct <= 5.5) return 'text-yellow-500';
-     return 'text-red-500';
+     return 'text-red-600';
+  };
+
+  const getMermaBgColor = (pct) => {
+     if (pct <= 5.0) return 'bg-green-50';
+     if (pct > 5.0 && pct <= 5.5) return 'bg-yellow-50';
+     return 'bg-red-50';
   };
 
   // INICIO DE SESIÓN
@@ -285,7 +294,7 @@ export default function App() {
     setShowNewReqPanel(false); setShowNewInvoicePanel(false); setEditingClientId(null); setEditingReqId(null); 
     setShowSingleReqReport(null); setShowSingleInvoice(null); setInvoiceSearchTerm(''); setShowWorkOrder(null); 
     setShowPhaseReport(null); setShowFiniquito(null); setSelectedPhaseReqId(null); setReqToApprove(null); setShowMovementReceipt(null);
-    setShowPurchaseOrder(false); setSelectedOpCost('');
+    setShowPurchaseOrder(false); setSelectedOpCost(''); setSelectedProdMonth('ALL');
   };
 
   // ============================================================================
@@ -763,23 +772,26 @@ export default function App() {
           <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
           <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 px-4">
           {hasPerm('ventas') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Users size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3><p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-8 text-left hover:bg-gray-900 transition-all shadow-xl"><Users size={32} className="text-orange-500 mb-4" /><h3 className="text-lg font-black text-white uppercase">Ventas</h3><p className="text-[10px] text-gray-400 mt-2 uppercase font-bold">Directorio y OP.</p></button>
           )}
           {hasPerm('produccion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-8 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={32} className="text-orange-500 mb-4" /><h3 className="text-lg font-black text-white uppercase">Producción</h3><p className="text-[10px] text-gray-400 mt-2 uppercase font-bold">Control de Fases.</p></button>
           )}
           {hasPerm('inventario') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-8 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={32} className="text-orange-500 mb-4" /><h3 className="text-lg font-black text-white uppercase">Inventario</h3><p className="text-[10px] text-gray-400 mt-2 uppercase font-bold">Kardex y Stock.</p></button>
+          )}
+          {hasPerm('costos') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('operativos'); setOperativosView('registro'); }} className="group bg-orange-50 border-l-4 border-orange-500 rounded-3xl p-8 text-left hover:bg-orange-100 transition-all shadow-xl"><Wrench size={32} className="text-orange-600 mb-4" /><h3 className="text-lg font-black text-orange-900 uppercase">Costos Op.</h3><p className="text-[10px] text-orange-600 mt-2 uppercase font-bold">Gastos de Planta.</p></button>
           )}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-4 mt-6">
           {hasPerm('costos') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('costos'); setCostosView('dashboard'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Reportes de Costo</h3><p className="text-xs text-gray-400 mt-2">Análisis de Utilidad y Rentabilidad.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('costos'); setCostosView('dashboard'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-8 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={32} className="text-gray-400 mb-4" /><h3 className="text-lg font-black text-gray-800 uppercase">Rentabilidad (Financiero)</h3><p className="text-[10px] text-gray-400 mt-2 uppercase font-bold">Análisis de Utilidad y Reportes.</p></button>
           )}
           {hasPerm('configuracion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><Settings2 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3><p className="text-xs text-gray-400 mt-2">Usuarios y Permisos.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-8 text-left hover:bg-gray-50 transition-all shadow-md"><Settings2 size={32} className="text-gray-400 mb-4" /><h3 className="text-lg font-black text-gray-800 uppercase">Configuración</h3><p className="text-[10px] text-gray-400 mt-2 uppercase font-bold">Usuarios y Permisos.</p></button>
           )}
         </div>
       </div>
@@ -797,8 +809,8 @@ export default function App() {
           <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
              <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Reportes de Inventario</h2>
              <div className="flex gap-2">
-                <button onClick={() => handleExportExcel('reporte-inv-filtrado', 'Reporte_Inventario')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXPORTAR EXCEL</button>
-                <button onClick={() => handleExportPDF('Reporte_Inventario_Filtrado', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
+                <button onClick={() => handleExportExcel('reporte-inv-filtrado', 'Reporte_Inventario')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
+                <button onClick={() => handleExportPDF('Reporte_Inventario_Filtrado', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
              </div>
           </div>
           <div data-html2canvas-ignore="true" className="p-6 bg-white border-b border-gray-100 flex gap-4 no-pdf">
@@ -894,7 +906,7 @@ export default function App() {
            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
              <div className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><ClipboardList className="text-orange-500" size={24}/> Requisiciones de Planta a Almacén</h2>
-               <button onClick={() => handleExportExcel('req-almacen-table', 'Requisiciones_Almacen')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXPORTAR EXCEL</button>
+               <button onClick={() => handleExportExcel('req-almacen-table', 'Requisiciones_Almacen')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
              </div>
              <div className="p-8">
                <div className="overflow-x-auto rounded-xl border border-gray-200">
@@ -2011,7 +2023,6 @@ export default function App() {
   };
 
   const renderCostosModule = () => {
-    // === CÁLCULOS GENERALES ===
     const completedOps = (requirements || []).filter(r => r.status === 'COMPLETADO');
     const totalIncome = (invoices || []).reduce((acc, inv) => acc + parseNum(inv.montoBase), 0);
     
@@ -2155,13 +2166,6 @@ export default function App() {
       const reqProfit = totalInvoiceIncome - reqTotalCost;
       const reqMargin = totalInvoiceIncome > 0 ? (reqProfit / totalInvoiceIncome) * 100 : 0;
       const mermaPct = totalMP_Kg > 0 ? (totalMerma_Kg / totalMP_Kg) * 100 : 0;
-      
-      // Lógica de colores para Merma
-      const getMermaColor = (pct) => {
-         if (pct <= 5.0) return 'text-green-500';
-         if (pct > 5.0 && pct <= 5.5) return 'text-yellow-500';
-         return 'text-red-600';
-      };
       const mermaColorClass = getMermaColor(mermaPct);
 
       return (
@@ -2191,7 +2195,7 @@ export default function App() {
                  <div className="hidden pdf-header mb-8"><ReportHeader /></div>
                  
                  <div className="text-center mb-8">
-                    <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">SÚPER FINIQUITO DE PRODUCCIÓN Y COSTOS</h1>
+                    <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">FINIQUITO DE PRODUCCIÓN Y COSTOS</h1>
                  </div>
 
                  <div className="grid grid-cols-2 gap-4 mb-4 text-xs font-black uppercase border-2 border-black p-4 rounded-t-2xl bg-gray-50">
@@ -2403,15 +2407,19 @@ export default function App() {
        const handleAddOpCost = async (e) => {
           e.preventDefault();
           if (!newOpCostForm.amount) return;
+          const finalCategory = newOpCostForm.category === 'OTRA (ESPECIFICAR)' ? newOpCostForm.customCategory.toUpperCase() : newOpCostForm.category;
+          
           try {
              await addDoc(collection(db, 'operatingCosts'), {
-                ...newOpCostForm,
+                date: newOpCostForm.date,
+                category: finalCategory,
+                description: newOpCostForm.description,
                 amount: parseNum(newOpCostForm.amount),
                 timestamp: Date.now(),
                 user: appUser?.name || 'Admin'
              });
-             setNewOpCostForm({...newOpCostForm, description: '', amount: ''});
-             setDialog({title: 'Éxito', text: 'Costo operativo registrado en el mes actual.', type: 'alert'});
+             setNewOpCostForm({...initialOpCostForm, date: getTodayDate()});
+             setDialog({title: 'Éxito', text: 'Costo operativo registrado.', type: 'alert'});
           } catch(err) {
              setDialog({title: 'Error', text: err.message, type: 'alert'});
           }
@@ -2422,6 +2430,26 @@ export default function App() {
              await deleteDoc(doc(db, 'operatingCosts', id));
           }});
        };
+
+       // Calcular datos para la gráfica de barras
+       const categoryTotals = {};
+       let totalOpCost = 0;
+       opCosts.forEach(c => {
+          const amt = parseNum(c.amount);
+          totalOpCost += amt;
+          if (!categoryTotals[c.category]) categoryTotals[c.category] = 0;
+          categoryTotals[c.category] += amt;
+       });
+
+       const sortedCategories = Object.entries(categoryTotals).map(([cat, amt]) => ({
+          category: cat,
+          amount: amt,
+          pct: totalOpCost > 0 ? (amt / totalOpCost) * 100 : 0
+       })).sort((a, b) => b.amount - a.amount);
+
+       const maxAmt = sortedCategories.length > 0 ? sortedCategories[0].amount : 1;
+
+       const globalOpPercent = totalIncome > 0 ? (totalOpCost / totalIncome) * 100 : 0;
 
        return (
          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
@@ -2436,7 +2464,7 @@ export default function App() {
             <div data-html2canvas-ignore="true" className="p-8 bg-gray-50/50 border-b border-gray-200 no-pdf">
                <form onSubmit={handleAddOpCost} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
                  <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-4 tracking-widest">Registrar Nuevo Gasto / Costo</h3>
-                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                 <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                    <div>
                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
                      <input type="date" required value={newOpCostForm.date} onChange={e=>setNewOpCostForm({...newOpCostForm, date: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-black" />
@@ -2448,10 +2476,17 @@ export default function App() {
                         <option value="Electricidad / Servicios">Electricidad / Servicios</option>
                         <option value="Mantenimiento y Repuestos">Mantenimiento y Repuestos</option>
                         <option value="Consumos Internos">Consumos Internos</option>
-                        <option value="Otros Gastos Operativos">Otros Gastos Operativos</option>
+                        <option value="Logística y Fletes">Logística y Fletes</option>
+                        <option value="OTRA (ESPECIFICAR)">OTRA (ESPECIFICAR)</option>
                      </select>
                    </div>
-                   <div>
+                   {newOpCostForm.category === 'OTRA (ESPECIFICAR)' && (
+                     <div>
+                       <label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Nueva Categoría</label>
+                       <input type="text" required value={newOpCostForm.customCategory} onChange={e=>setNewOpCostForm({...newOpCostForm, customCategory: e.target.value.toUpperCase()})} className="w-full border-2 border-orange-200 bg-orange-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="ESCRIBA AQUÍ..." />
+                     </div>
+                   )}
+                   <div className={newOpCostForm.category === 'OTRA (ESPECIFICAR)' ? 'md:col-span-1' : 'md:col-span-2'}>
                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción / Detalle</label>
                      <input type="text" required value={newOpCostForm.description} onChange={e=>setNewOpCostForm({...newOpCostForm, description: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="EJ: PAGO SEMANAL" />
                    </div>
@@ -2468,7 +2503,39 @@ export default function App() {
 
             <div id="pdf-content" className="p-8 print:p-0 bg-white">
                <div className="hidden pdf-header mb-8"><ReportHeader /></div>
-               <div className="text-center mb-8"><h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">REPORTE DE COSTOS OPERATIVOS</h1></div>
+               <div className="text-center mb-8"><h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">REPORTE DE COSTOS OPERATIVOS DE PLANTA</h1></div>
+
+               {/* GRÁFICA DE BARRAS */}
+               <div className="mb-10 bg-gray-50 p-6 rounded-2xl border-2 border-gray-200 no-pdf">
+                  <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest text-center">Distribución de Gastos Operativos</h3>
+                  <div className="space-y-4">
+                     {sortedCategories.map((item, i) => (
+                        <div key={i} className="flex items-center gap-4">
+                           <div className="w-1/4 text-right text-[10px] font-black uppercase truncate" title={item.category}>{item.category}</div>
+                           <div className="w-2/4">
+                              <div className="h-6 bg-gray-200 rounded-full overflow-hidden">
+                                 <div className="h-full bg-orange-500 rounded-full flex items-center px-2" style={{width: `${Math.max(5, (item.amount/maxAmt)*100)}%`}}></div>
+                              </div>
+                           </div>
+                           <div className="w-1/4 text-left text-xs font-black text-gray-700">
+                              ${formatNum(item.amount)} <span className="text-orange-600 ml-2">({formatNum(item.pct)}%)</span>
+                           </div>
+                        </div>
+                     ))}
+                     {sortedCategories.length === 0 && <div className="text-center text-xs font-bold text-gray-400 uppercase">Sin datos registrados</div>}
+                  </div>
+               </div>
+
+               <div className="grid grid-cols-2 gap-4 mb-8">
+                  <div className="bg-red-50 p-4 rounded-xl border border-red-200 text-center">
+                     <p className="text-[10px] font-black text-red-800 uppercase tracking-widest mb-1">Gasto Operativo Total</p>
+                     <p className="text-2xl font-black text-red-600">${formatNum(totalOpCost)}</p>
+                  </div>
+                  <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 text-center">
+                     <p className="text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1">Impacto (Gasto vs Ingresos Planta)</p>
+                     <p className="text-2xl font-black text-blue-600">{formatNum(globalOpPercent)}%</p>
+                  </div>
+               </div>
 
                <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
                  <table id="costos-operativos-table" className="w-full text-left whitespace-nowrap text-xs">
@@ -2507,6 +2574,8 @@ export default function App() {
     // === VISTA 5: REPORTE DE PRODUCCIÓN MES A MES ===
     if (costosView === 'produccion_mensual') {
        const monthlyData = {};
+       const allMonthsSet = new Set();
+
        completedOps.forEach(op => {
           let lastDate = op.fecha;
           let opMP = 0; let opMerma = 0; 
@@ -2522,7 +2591,15 @@ export default function App() {
           const finalPhase = op.tipoProducto === 'TERMOENCOGIBLE' ? 'extrusion' : 'sellado';
           const prodFinal = (op.production?.[finalPhase]?.batches || []).reduce((s,b)=>s+parseNum(b.producedKg),0);
 
-          const monthKey = lastDate.substring(0, 7); // YYYY-MM
+          // Extraer año y mes YYYY-MM
+          let monthKey = 'Sin Fecha';
+          if (lastDate && lastDate.includes('-')) {
+              const parts = lastDate.split('-');
+              if(parts.length >= 2) monthKey = `${parts[0]}-${parts[1]}`;
+          }
+          
+          allMonthsSet.add(monthKey);
+
           if (!monthlyData[monthKey]) monthlyData[monthKey] = { key: monthKey, mp: 0, merma: 0, termo: 0, bolsas: 0 };
           
           monthlyData[monthKey].mp += opMP;
@@ -2531,34 +2608,51 @@ export default function App() {
           else monthlyData[monthKey].bolsas += prodFinal;
        });
 
-       const monthlyArray = Object.values(monthlyData).sort((a,b) => b.key.localeCompare(a.key));
+       const availableMonths = Array.from(allMonthsSet).sort().reverse();
+       
+       let dataToShow = Object.values(monthlyData);
+       if (selectedProdMonth !== 'ALL') {
+           dataToShow = dataToShow.filter(d => d.key === selectedProdMonth);
+       }
+       
+       dataToShow.sort((a,b) => b.key.localeCompare(a.key));
 
        const getMermaColor = (pct) => {
-          if (pct <= 5.0) return 'text-green-600 bg-green-50 print:bg-transparent';
-          if (pct > 5.0 && pct <= 5.5) return 'text-yellow-600 bg-yellow-50 print:bg-transparent';
-          return 'text-red-600 bg-red-50 print:bg-transparent';
+          if (pct <= 5.0) return 'text-green-600 bg-green-50 print:bg-transparent print:text-black';
+          if (pct > 5.0 && pct <= 5.5) return 'text-yellow-600 bg-yellow-50 print:bg-transparent print:text-black';
+          return 'text-red-600 bg-red-50 print:bg-transparent print:text-black';
        };
 
        return (
          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Activity className="text-orange-500" size={24}/> Producción General Mes a Mes</h2>
+               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Activity className="text-orange-500" size={24}/> Producción General Mensual</h2>
                <div className="flex gap-2">
-                  <button onClick={() => handleExportExcel('produccion-mensual-table', 'Reporte_Produccion_Mensual')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
-                  <button onClick={() => handleExportPDF('Reporte_Produccion_Mensual', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
+                  <button onClick={() => handleExportExcel('produccion-mensual-table', 'Reporte_Produccion')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
+                  <button onClick={() => handleExportPDF('Reporte_Produccion', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
                </div>
+            </div>
+
+            <div data-html2canvas-ignore="true" className="p-8 border-b border-gray-100 flex gap-4 no-pdf items-center bg-white">
+               <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Filtrar por Mes:</label>
+               <select value={selectedProdMonth} onChange={e=>setSelectedProdMonth(e.target.value)} className="w-64 bg-gray-50 border-2 border-gray-200 rounded-xl p-3 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
+                  <option value="ALL">TODOS LOS MESES HISTÓRICOS</option>
+                  {availableMonths.map(m => <option key={m} value={m}>{m}</option>)}
+               </select>
             </div>
 
             <div id="pdf-content" className="p-8 print:p-0 bg-white">
                <div className="hidden pdf-header mb-8"><ReportHeader /></div>
-               <div className="text-center mb-8"><h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">REPORTE CONSOLIDADO DE PRODUCCIÓN (MES A MES)</h1></div>
+               <div className="text-center mb-8">
+                  <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">REPORTE CONSOLIDADO DE PRODUCCIÓN (MES A MES)</h1>
+               </div>
 
                <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
                  <table id="produccion-mensual-table" className="w-full text-center whitespace-nowrap text-xs">
                     <thead className="bg-black text-white">
                        <tr className="uppercase font-black text-[10px] tracking-widest">
                           <th className="p-4 border-r border-gray-700 text-left">Período (Mes)</th>
-                          <th className="p-4 border-r border-gray-700">Materia Prima Usada (KG)</th>
+                          <th className="p-4 border-r border-gray-700">MP Usada (KG)</th>
                           <th className="p-4 border-r border-gray-700 text-blue-300">Termoencogible Final (KG)</th>
                           <th className="p-4 border-r border-gray-700 text-orange-300">Bolsas Finales (KG)</th>
                           <th className="p-4 border-r border-gray-700 text-red-300">Merma Total (KG)</th>
@@ -2566,7 +2660,7 @@ export default function App() {
                        </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 text-black print:divide-black">
-                       {monthlyArray.map(m => {
+                       {dataToShow.map(m => {
                           const pct = m.mp > 0 ? (m.merma / m.mp) * 100 : 0;
                           return (
                              <tr key={m.key} className="hover:bg-gray-50 transition-colors">
@@ -2579,7 +2673,7 @@ export default function App() {
                              </tr>
                           );
                        })}
-                       {monthlyArray.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin datos de producción registrados</td></tr>}
+                       {dataToShow.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin datos de producción registrados</td></tr>}
                     </tbody>
                  </table>
                </div>
@@ -2587,6 +2681,8 @@ export default function App() {
          </div>
        );
     }
+
+    return null;
   };
 
   if (!appUser) {
@@ -2706,9 +2802,15 @@ export default function App() {
                   <button onClick={() => {clearAllReports(); setCostosView('dashboard');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'dashboard' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><BarChart3 size={16}/> Dashboard General</button>
                   <button onClick={() => {clearAllReports(); setCostosView('op_detail');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'op_detail' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Súper Finiquito (OP)</button>
                   <button onClick={() => {clearAllReports(); setCostosView('general_sales');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'general_sales' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><TrendingUp size={16}/> Ingresos vs Costos</button>
-                  <button onClick={() => {clearAllReports(); setCostosView('operativos');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'operativos' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Wrench size={16}/> Costos Operativos</button>
                   <button onClick={() => {clearAllReports(); setCostosView('produccion_mensual');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'produccion_mensual' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Activity size={16}/> Prod. Mensual</button>
                 </div>
+              )}
+
+              {appUser?.permissions?.costos && activeTab === 'operativos' && (
+                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
+                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Control Operativo</h3>
+                   <button onClick={() => {clearAllReports(); setOperativosView('registro');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${operativosView === 'registro' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Wrench size={16}/> Registro y Costos</button>
+                 </div>
               )}
 
               {appUser?.permissions?.configuracion && activeTab === 'configuracion' && (
@@ -2724,6 +2826,174 @@ export default function App() {
             {activeTab === 'inventario' && renderInventoryModule()}
             {activeTab === 'costos' && renderCostosModule()}
             
+            {activeTab === 'operativos' && operativosView === 'registro' && (() => {
+               // Renderizado del Submódulo "Costos Operativos"
+               const handleAddOpCost = async (e) => {
+                  e.preventDefault();
+                  if (!newOpCostForm.amount) return;
+                  const finalCategory = newOpCostForm.category === 'OTRA (ESPECIFICAR)' ? newOpCostForm.customCategory.toUpperCase() : newOpCostForm.category;
+                  
+                  try {
+                     await addDoc(collection(db, 'operatingCosts'), {
+                        date: newOpCostForm.date,
+                        category: finalCategory,
+                        description: newOpCostForm.description,
+                        amount: parseNum(newOpCostForm.amount),
+                        timestamp: Date.now(),
+                        user: appUser?.name || 'Admin'
+                     });
+                     setNewOpCostForm({...initialOpCostForm, date: getTodayDate()});
+                     setDialog({title: 'Éxito', text: 'Costo operativo registrado.', type: 'alert'});
+                  } catch(err) {
+                     setDialog({title: 'Error', text: err.message, type: 'alert'});
+                  }
+               };
+
+               const handleDeleteOpCost = async (id) => {
+                  setDialog({ title: 'Eliminar Costo', text: '¿Desea eliminar este registro de costo operativo?', type: 'confirm', onConfirm: async () => {
+                     await deleteDoc(doc(db, 'operatingCosts', id));
+                  }});
+               };
+
+               const categoryTotals = {};
+               let totalOpCost = 0;
+               opCosts.forEach(c => {
+                  const amt = parseNum(c.amount);
+                  totalOpCost += amt;
+                  if (!categoryTotals[c.category]) categoryTotals[c.category] = 0;
+                  categoryTotals[c.category] += amt;
+               });
+
+               const sortedCategories = Object.entries(categoryTotals).map(([cat, amt]) => ({
+                  category: cat,
+                  amount: amt,
+                  pct: totalOpCost > 0 ? (amt / totalOpCost) * 100 : 0
+               })).sort((a, b) => b.amount - a.amount);
+
+               const maxAmt = sortedCategories.length > 0 ? sortedCategories[0].amount : 1;
+               const totalIncome = (invoices || []).reduce((acc, inv) => acc + parseNum(inv.montoBase), 0);
+               const globalOpPercent = totalIncome > 0 ? (totalOpCost / totalIncome) * 100 : 0;
+
+               return (
+                 <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
+                    <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
+                       <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Wrench className="text-orange-500" size={24}/> Costos Operativos de Planta</h2>
+                       <div className="flex gap-2">
+                          <button onClick={() => handleExportExcel('costos-operativos-table', 'Costos_Operativos')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
+                          <button onClick={() => handleExportPDF('Reporte_Costos_Operativos', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
+                       </div>
+                    </div>
+
+                    <div data-html2canvas-ignore="true" className="p-8 bg-gray-50/50 border-b border-gray-200 no-pdf">
+                       <form onSubmit={handleAddOpCost} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+                         <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-4 tracking-widest">Registrar Nuevo Gasto / Costo</h3>
+                         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                           <div>
+                             <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                             <input type="date" required value={newOpCostForm.date} onChange={e=>setNewOpCostForm({...newOpCostForm, date: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-black" />
+                           </div>
+                           <div>
+                             <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
+                             <select value={newOpCostForm.category} onChange={e=>setNewOpCostForm({...newOpCostForm, category: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
+                                <option value="Nómina y Beneficios">Nómina y Beneficios</option>
+                                <option value="Electricidad / Servicios">Electricidad / Servicios</option>
+                                <option value="Mantenimiento y Repuestos">Mantenimiento y Repuestos</option>
+                                <option value="Consumos Internos">Consumos Internos</option>
+                                <option value="Logística y Fletes">Logística y Fletes</option>
+                                <option value="OTRA (ESPECIFICAR)">OTRA (ESPECIFICAR)</option>
+                             </select>
+                           </div>
+                           {newOpCostForm.category === 'OTRA (ESPECIFICAR)' && (
+                             <div>
+                               <label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Nueva Categoría</label>
+                               <input type="text" required value={newOpCostForm.customCategory} onChange={e=>setNewOpCostForm({...newOpCostForm, customCategory: e.target.value.toUpperCase()})} className="w-full border-2 border-orange-200 bg-orange-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="ESCRIBA AQUÍ..." />
+                             </div>
+                           )}
+                           <div className={newOpCostForm.category === 'OTRA (ESPECIFICAR)' ? 'md:col-span-1' : 'md:col-span-2'}>
+                             <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción / Detalle</label>
+                             <input type="text" required value={newOpCostForm.description} onChange={e=>setNewOpCostForm({...newOpCostForm, description: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="EJ: PAGO SEMANAL" />
+                           </div>
+                           <div>
+                             <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Monto ($ USD)</label>
+                             <input type="number" step="0.01" required value={newOpCostForm.amount} onChange={e=>setNewOpCostForm({...newOpCostForm, amount: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-center text-red-600" placeholder="0.00" />
+                           </div>
+                         </div>
+                         <div className="flex justify-end pt-2">
+                            <button type="submit" className="bg-black text-white px-10 py-3.5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all flex items-center gap-2"><Plus size={16}/> REGISTRAR GASTO</button>
+                         </div>
+                       </form>
+                    </div>
+
+                    <div id="pdf-content" className="p-8 print:p-0 bg-white">
+                       <div className="hidden pdf-header mb-8"><ReportHeader /></div>
+                       <div className="text-center mb-8"><h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">REPORTE DE COSTOS OPERATIVOS DE PLANTA</h1></div>
+
+                       {/* GRÁFICA DE BARRAS */}
+                       <div className="mb-10 bg-gray-50 p-6 rounded-2xl border-2 border-gray-200 no-pdf">
+                          <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest text-center">Distribución de Gastos Operativos</h3>
+                          <div className="space-y-4">
+                             {sortedCategories.map((item, i) => (
+                                <div key={i} className="flex items-center gap-4">
+                                   <div className="w-1/4 text-right text-[10px] font-black uppercase truncate" title={item.category}>{item.category}</div>
+                                   <div className="w-2/4">
+                                      <div className="h-6 bg-gray-200 rounded-full overflow-hidden">
+                                         <div className="h-full bg-orange-500 rounded-full flex items-center px-2" style={{width: `${Math.max(5, (item.amount/maxAmt)*100)}%`}}></div>
+                                      </div>
+                                   </div>
+                                   <div className="w-1/4 text-left text-xs font-black text-gray-700">
+                                      ${formatNum(item.amount)} <span className="text-orange-600 ml-2">({formatNum(item.pct)}%)</span>
+                                   </div>
+                                </div>
+                             ))}
+                             {sortedCategories.length === 0 && <div className="text-center text-xs font-bold text-gray-400 uppercase">Sin datos registrados</div>}
+                          </div>
+                       </div>
+
+                       <div className="grid grid-cols-2 gap-4 mb-8">
+                          <div className="bg-red-50 p-4 rounded-xl border border-red-200 text-center">
+                             <p className="text-[10px] font-black text-red-800 uppercase tracking-widest mb-1">Gasto Operativo Total</p>
+                             <p className="text-2xl font-black text-red-600">${formatNum(totalOpCost)}</p>
+                          </div>
+                          <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 text-center">
+                             <p className="text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1">Impacto (Gasto vs Ingresos Planta)</p>
+                             <p className="text-2xl font-black text-blue-600">{formatNum(globalOpPercent)}%</p>
+                          </div>
+                       </div>
+
+                       <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
+                         <table id="costos-operativos-table" className="w-full text-left whitespace-nowrap text-xs">
+                            <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
+                               <tr className="uppercase font-black text-[10px] tracking-widest text-black">
+                                  <th className="py-3 px-4 border-r print:border-black">Fecha</th>
+                                  <th className="py-3 px-4 border-r print:border-black">Categoría</th>
+                                  <th className="py-3 px-4 border-r print:border-black">Descripción / Detalle</th>
+                                  <th className="py-3 px-4 border-r print:border-black">Registrado Por</th>
+                                  <th className="py-3 px-4 text-right border-r print:border-black">Monto ($)</th>
+                                  <th className="py-3 px-4 text-center no-pdf">Acciones</th>
+                               </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 text-black print:divide-black">
+                               {(opCosts || []).map(c => (
+                                  <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                                     <td className="py-3 px-4 font-bold border-r print:border-black">{c.date}</td>
+                                     <td className="py-3 px-4 font-black border-r print:border-black uppercase text-gray-600">{c.category}</td>
+                                     <td className="py-3 px-4 font-bold border-r print:border-black uppercase">{c.description}</td>
+                                     <td className="py-3 px-4 font-bold border-r print:border-black uppercase text-[9px] text-gray-500">{c.user}</td>
+                                     <td className="py-3 px-4 text-right font-black border-r print:border-black text-red-600">${formatNum(c.amount)}</td>
+                                     <td className="py-3 px-4 text-center no-pdf">
+                                        <button onClick={() => handleDeleteOpCost(c.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={14}/></button>
+                                     </td>
+                                  </tr>
+                               ))}
+                               {(!opCosts || opCosts.length === 0) && <tr><td colSpan="6" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">No hay costos operativos registrados</td></tr>}
+                            </tbody>
+                         </table>
+                       </div>
+                    </div>
+                 </div>
+               );
+            })()}
+
             {activeTab === 'configuracion' && (
               <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden animate-in fade-in w-full">
                  <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center">
@@ -2750,7 +3020,7 @@ export default function App() {
                           <div className="pt-4 border-t border-gray-200 mt-4">
                              <label className="text-[10px] font-black text-black uppercase block mb-3 tracking-widest">Permisos de Acceso</label>
                              <div className="space-y-2 bg-white p-4 rounded-xl border border-gray-200">
-                                {['ventas', 'produccion', 'inventario', 'costos', 'configuracion'].map(mod => (
+                                {['ventas', 'produccion', 'inventario', 'costos', 'operativos', 'configuracion'].map(mod => (
                                    <label key={mod} className="flex items-center gap-3 cursor-pointer group">
                                       <input type="checkbox" checked={newUserForm.permissions?.[mod] || false} onChange={(e) => setNewUserForm({...newUserForm, permissions: {...newUserForm.permissions, [mod]: e.target.checked}})} className="w-4 h-4 text-orange-500 rounded focus:ring-orange-500 cursor-pointer" />
                                       <span className="text-[10px] font-black text-gray-600 uppercase group-hover:text-black transition-colors">Módulo de {mod}</span>
