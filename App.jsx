@@ -1,9 +1,17 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  LayoutDashboard, Package, Factory, TrendingUp, AlertTriangle, 
+  ClipboardList, PlayCircle, History, FileText, Settings2, Trash2, 
+  PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
+  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Percent, Briefcase, Zap, Wrench, CreditCard, Activity
+} from 'lucide-react';
+
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch } from "firebase/firestore";
 
 // ============================================================================
-// ESCUDO DE ERRORES EXTREMO (Evita pantalla blanca)
+// ESCUDO DE ERRORES EXTREMO
 // ============================================================================
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, errorMsg: '' }; }
@@ -16,7 +24,7 @@ class ErrorBoundary extends React.Component {
           <AlertTriangle size={60} className="text-red-500 mb-4" />
           <h2 className="text-2xl font-black text-black uppercase mb-2">Sistema Protegido de Caída</h2>
           <p className="text-gray-500 text-sm mb-6">{this.state.errorMsg}</p>
-          <button onClick={() => window.location.reload()} className="bg-black text-white font-black px-8 py-4 rounded-xl uppercase tracking-widest text-xs shadow-lg">Recargar Interfaz</button>
+          <button onClick={() => window.location.reload()} className="bg-black text-white font-black px-8 py-4 rounded-xl uppercase tracking-widest text-xs shadow-lg hover:bg-gray-800 transition-colors">Recargar Interfaz</button>
         </div>
       );
     }
@@ -61,7 +69,8 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app, "us-central"); 
+// CORRECCIÓN: Eliminado "us-central" del constructor para evitar fallos de inicialización silentes
+const db = getFirestore(app); 
 
 const getColRef = (colName) => collection(db, colName); 
 const getDocRef = (colName, docId) => doc(db, colName, String(docId));
@@ -98,7 +107,7 @@ const INITIAL_INVENTORY = [
   { id: 'MP-RECICLADO', desc: 'MATERIAL RECICLADO', cost: 1.00, stock: 9999, unit: 'kg', category: 'Materia Prima' }
 ];
 
-export default function App() {
+function MainApp() {
   const [fbUser, setFbUser] = useState(null);
   const [appUser, setAppUser] = useState(null); 
   const [systemUsers, setSystemUsers] = useState([]); 
@@ -112,9 +121,7 @@ export default function App() {
   const [prodView, setProdView] = useState('calculadora');
   const [invView, setInvView] = useState('catalogo');
   const [costosView, setCostosView] = useState('dashboard');
-  const [operativosView, setOperativosView] = useState('registro');
   const [invReportType, setInvReportType] = useState('entradas');
-  const [selectedProdMonth, setSelectedProdMonth] = useState('ALL');
 
   const [inventory, setInventory] = useState([]);
   const [invMovements, setInvMovements] = useState([]); 
@@ -180,7 +187,7 @@ export default function App() {
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
   
-  const initialOpCostForm = { date: getTodayDate(), category: 'Nómina y Beneficios', customCategory: '', description: '', amount: '' };
+  const initialOpCostForm = { date: getTodayDate(), category: 'Nómina', description: '', amount: '' };
   const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
 
   // ============================================================================
@@ -189,23 +196,15 @@ export default function App() {
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content'); if (!element) return;
     
+    // Mostrar/ocultar elementos
     const printOnlyElements = element.querySelectorAll('.hidden.print\\:block, .hidden.pdf-header'); 
     printOnlyElements.forEach(el => { el.style.display = 'block'; });
     const noPdfElements = element.querySelectorAll('.no-pdf'); 
     noPdfElements.forEach(el => { el.style.display = 'none'; });
 
-    const originalCssText = element.style.cssText; 
-    const originalClasses = element.className; 
-    
-    // Ajuste estricto para que respete márgenes A4 sin desbordar
-    const virtualWidth = isLandscape ? 1120 : 800; 
-    element.className = 'bg-white text-black p-6'; 
-    element.style.width = `${virtualWidth}px`; 
-    element.style.maxWidth = 'none'; 
-    element.style.margin = '0 auto';
-    
-    const tables = element.querySelectorAll('table'); 
-    tables.forEach(t => { t.style.whiteSpace = 'normal'; t.style.tableLayout = 'fixed'; t.style.width = '100%'; t.style.wordBreak = 'break-word'; });
+    // Evitar recortes horizontales quitando clases overflow
+    const overflows = element.querySelectorAll('.overflow-x-auto, .overflow-hidden');
+    overflows.forEach(el => { el.setAttribute('data-overflow', el.style.overflow || ''); el.style.overflow = 'visible'; });
 
     const opt = { 
       margin: [10, 5, 10, 5], 
@@ -218,9 +217,7 @@ export default function App() {
     const finishExport = () => { 
       printOnlyElements.forEach(el => { el.style.display = ''; }); 
       noPdfElements.forEach(el => { el.style.display = ''; }); 
-      element.style.cssText = originalCssText; 
-      element.className = originalClasses; 
-      tables.forEach(t => { t.style.whiteSpace = ''; t.style.tableLayout = ''; t.style.width = ''; t.style.wordBreak = ''; }); 
+      overflows.forEach(el => { el.style.overflow = el.getAttribute('data-overflow') || ''; });
     };
 
     if (typeof window.html2pdf === 'undefined') { 
@@ -240,15 +237,9 @@ export default function App() {
   };
 
   const getMermaColor = (pct) => {
-     if (pct <= 5.0) return 'text-green-600';
+     if (pct <= 5.0) return 'text-green-500';
      if (pct > 5.0 && pct <= 5.5) return 'text-yellow-500';
-     return 'text-red-600';
-  };
-
-  const getMermaBgColor = (pct) => {
-     if (pct <= 5.0) return 'bg-green-50';
-     if (pct > 5.0 && pct <= 5.5) return 'bg-yellow-50';
-     return 'bg-red-50';
+     return 'text-red-500';
   };
 
   // INICIO DE SESIÓN
@@ -294,7 +285,7 @@ export default function App() {
     setShowNewReqPanel(false); setShowNewInvoicePanel(false); setEditingClientId(null); setEditingReqId(null); 
     setShowSingleReqReport(null); setShowSingleInvoice(null); setInvoiceSearchTerm(''); setShowWorkOrder(null); 
     setShowPhaseReport(null); setShowFiniquito(null); setSelectedPhaseReqId(null); setReqToApprove(null); setShowMovementReceipt(null);
-    setShowPurchaseOrder(false); setSelectedOpCost(''); setSelectedProdMonth('ALL');
+    setShowPurchaseOrder(false); setSelectedOpCost('');
   };
 
   // ============================================================================
@@ -609,17 +600,17 @@ export default function App() {
     const recentMovs = invMovements.filter(m => m.type === 'SALIDA' && m.timestamp >= thirtyDaysAgo);
     const pendingReqs = invRequisitions.filter(r => r.status === 'PENDIENTE');
 
-    return inventory.filter(i => i.category === 'Materia Prima').map(mp => {
+    return (inventory || []).filter(i => i.category === 'Materia Prima').map(mp => {
        const consumedIn30Days = recentMovs.filter(m => m.itemId === mp.id).reduce((sum, m) => sum + parseNum(m.qty), 0);
        const dailyAvg = consumedIn30Days / 30;
        
        let committedStock = 0;
        pendingReqs.forEach(req => {
-            const item = req.items.find(i => i.id === mp.id);
+            const item = (req.items || []).find(i => i.id === mp.id);
             if (item) committedStock += parseNum(item.qty);
        });
 
-       const availableReal = mp.stock - committedStock;
+       const availableReal = (mp.stock || 0) - committedStock;
        const daysRemaining = dailyAvg > 0 ? availableReal / dailyAvg : 999;
        
        const isCritical = daysRemaining <= 30 || availableReal <= 0;
@@ -627,6 +618,57 @@ export default function App() {
 
        return { ...mp, dailyAvg, daysRemaining, committedStock, availableReal, suggestOrder, isCritical };
     });
+  };
+
+  // ============================================================================
+  // FUNCIONES DE RENDERIZADO MODULARES CORREGIDAS
+  // ============================================================================
+  const renderWorkOrder = () => {
+    const req = (requirements || []).find(r => r?.id === showWorkOrder);
+    if (!req) return null;
+    return (
+      <div id="pdf-content" className="bg-white p-12 min-h-0 text-black bg-white rounded-3xl border border-gray-200 shadow-sm animate-in zoom-in-95">
+        <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf">
+          <button onClick={() => setShowWorkOrder(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200 transition-colors">Volver</button>
+          <button onClick={() => handleExportPDF(`Orden_Trabajo_${req.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800 transition-colors"><Printer size={16} /> Exportar PDF</button>
+        </div>
+        <div className="hidden pdf-header mb-6"><ReportHeader /></div>
+        <div className="text-center my-6"><span className="text-2xl font-black uppercase border-b-4 border-orange-500 pb-2">ORDEN DE TRABAJO N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
+        <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA EMISIÓN: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto}</p></div></div>
+        <div className="border-2 border-black p-4 grid grid-cols-4 gap-4 text-center text-xs font-black uppercase mb-4 rounded-2xl"><div>ANCHO<br/><span className="text-sm text-blue-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-blue-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-blue-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-blue-600">{req.micras}</span></div></div>
+        <div className="bg-gray-50 p-4 flex justify-between border-2 border-black rounded-2xl mb-4">
+           <div><span className="block text-[10px] font-black uppercase text-gray-600">Cant. Solicitada</span><span className="text-xl font-black text-blue-600">{formatNum(req.cantidad)} {req.presentacion}</span></div>
+           <div><span className="block text-[10px] font-black uppercase text-gray-600">Peso Millar Estimado</span><span className="text-xl font-black">{req.pesoMillar || 'N/A'}</span></div>
+           <div className="text-right"><span className="block text-[10px] font-black uppercase text-gray-600">Carga Total a Planta</span><span className="text-3xl font-black text-orange-600">{formatNum(req.requestedKg)} KG</span></div>
+        </div>
+        <div className="mt-16 grid grid-cols-2 gap-24 text-center font-black uppercase text-xs">
+           <div className="border-t-2 border-black mx-auto pt-2 w-full">Firma Jefe Producción</div>
+           <div className="border-t-2 border-black mx-auto pt-2 w-full">Firma Operador Asignado</div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderFiniquito = () => {
+     return (
+       <div className="bg-white p-16 text-center rounded-3xl border border-gray-200 shadow-sm animate-in zoom-in-95">
+          <CheckCircle size={64} className="text-green-500 mx-auto mb-6" />
+          <h2 className="text-2xl font-black uppercase mb-4 text-black tracking-tighter">Operación Completada y Cerrada</h2>
+          <p className="text-gray-500 font-bold mb-8 text-sm uppercase max-w-lg mx-auto">Para visualizar el Súper Finiquito Financiero (con análisis de mermas, materia prima y rentabilidad real), dirígete al módulo de <span className="text-orange-500">Costos &gt; Súper Finiquito (OP)</span>.</p>
+          <button onClick={() => setShowFiniquito(null)} className="bg-black text-white px-10 py-4 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 transition-all">VOLVER AL HISTORIAL DE PRODUCCIÓN</button>
+       </div>
+     );
+  };
+
+  const renderPhaseReport = () => {
+     return (
+        <div className="bg-white p-12 text-center rounded-3xl border border-gray-200 shadow-sm animate-in zoom-in-95">
+          <FileText size={64} className="text-blue-500 mx-auto mb-6" />
+          <h2 className="text-2xl font-black uppercase mb-4 text-black tracking-tighter">Reporte de Fase Interno</h2>
+          <p className="text-gray-500 font-bold mb-8 text-sm uppercase">Este reporte detallado se generará próximamente en futuras actualizaciones del módulo.</p>
+          <button onClick={() => setShowPhaseReport(null)} className="bg-black text-white px-10 py-4 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 transition-all">VOLVER A PRODUCCIÓN</button>
+       </div>
+     );
   };
 
   // ============================================================================
@@ -719,50 +761,6 @@ export default function App() {
     );
   };
 
-  const renderLogin = () => (
-    <div className="min-h-screen flex items-center justify-center p-4 relative" 
-         style={{ backgroundImage: `url('${settings?.loginBg || "https://images.unsplash.com/photo-1587293852726-70cdb56c2866?q=80&w=2072&auto=format&fit=crop"}')`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
-       <div className="absolute inset-0 bg-black/40"></div>
-       
-       <div className="absolute top-4 right-4 z-20">
-          <label className="bg-black/50 hover:bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase cursor-pointer transition-all flex items-center gap-2 border border-white/20 shadow-lg">
-             <Edit size={14}/> Cambiar Fondo
-             <input type="file" accept="image/*" className="hidden" onChange={handleBgUpload} />
-          </label>
-       </div>
-
-       <div className="relative z-10 bg-white rounded-3xl shadow-[0_30px_60px_rgba(0,0,0,0.6)] overflow-hidden w-full max-w-4xl flex transform transition-all duration-500 hover:scale-[1.01] border border-white/20">
-          <div className="w-1/2 bg-gradient-to-br from-gray-900 to-black p-12 flex-col justify-between hidden md:flex relative overflow-hidden shadow-[inset_-10px_0_20px_rgba(0,0,0,0.5)] border-r border-gray-800">
-             <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-tr from-white/10 to-transparent transform -skew-x-12 pointer-events-none"></div>
-             <div className="relative z-10">
-               <div className="flex items-center bg-white rounded-2xl px-4 py-2 shadow-[0_10px_20px_rgba(0,0,0,0.4)] w-fit transform hover:translate-x-1 hover:-translate-y-1 transition-transform duration-300">
-                  <span className="text-black font-black text-4xl leading-none drop-shadow-sm">G</span><span className="text-orange-500 font-black text-3xl mx-1 drop-shadow-sm">&amp;</span><span className="text-black font-black text-4xl leading-none drop-shadow-sm">B</span>
-               </div>
-               <h1 className="text-white text-3xl font-black mt-10 uppercase tracking-widest drop-shadow-lg">Supply ERP</h1>
-               <p className="text-gray-300 mt-4 text-sm leading-relaxed drop-shadow-md">Sistema Integrado de Producción e Inventario para Servicios Jiret G&B C.A.</p>
-             </div>
-             <div className="relative z-10 text-gray-500 text-xs font-bold uppercase tracking-widest">© {new Date().getFullYear()} Todos los derechos reservados</div>
-          </div>
-          <div className="w-full md:w-1/2 p-12 flex flex-col justify-center bg-white relative z-10">
-             <h2 className="text-2xl font-black text-black uppercase tracking-widest mb-2">Iniciar Sesión</h2>
-             <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-8">Ingresa tus credenciales de acceso</p>
-             {loginError && (<div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)]"><AlertTriangle size={16}/> {loginError}</div>)}
-             <form onSubmit={handleLogin} className="space-y-6">
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Usuario</label>
-                  <div className="relative group"><User className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="text" value={loginData.username} onChange={e=>setLoginData({...loginData, username: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="EJ: ADMIN o PLANTA"/></div>
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Contraseña</label>
-                  <div className="relative group"><Lock className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="password" value={loginData.password} onChange={e=>setLoginData({...loginData, password: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="••••••••"/></div>
-                </div>
-                <button type="submit" className="w-full bg-gradient-to-r from-orange-500 to-orange-600 text-white font-black py-4 rounded-xl shadow-[0_8px_20px_rgba(249,115,22,0.4)] hover:shadow-[0_15px_25px_rgba(249,115,22,0.6)] hover:-translate-y-1 active:translate-y-1 uppercase tracking-widest text-xs flex justify-center items-center gap-2 mt-4 transform transition-all">ENTRAR AL SISTEMA <ArrowRight size={16}/></button>
-             </form>
-          </div>
-       </div>
-    </div>
-  );
-
   const renderHome = () => {
     const hasPerm = (module) => appUser?.permissions ? appUser.permissions[module] : appUser?.role === 'Master';
     
@@ -772,26 +770,23 @@ export default function App() {
           <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
           <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 px-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
           {hasPerm('ventas') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-8 text-left hover:bg-gray-900 transition-all shadow-xl"><Users size={32} className="text-orange-500 mb-4" /><h3 className="text-lg font-black text-white uppercase">Ventas</h3><p className="text-[10px] text-gray-400 mt-2 uppercase font-bold">Directorio y OP.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Users size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3><p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p></button>
           )}
           {hasPerm('produccion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-8 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={32} className="text-orange-500 mb-4" /><h3 className="text-lg font-black text-white uppercase">Producción</h3><p className="text-[10px] text-gray-400 mt-2 uppercase font-bold">Control de Fases.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
           )}
           {hasPerm('inventario') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-8 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={32} className="text-orange-500 mb-4" /><h3 className="text-lg font-black text-white uppercase">Inventario</h3><p className="text-[10px] text-gray-400 mt-2 uppercase font-bold">Kardex y Stock.</p></button>
-          )}
-          {hasPerm('costos') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('operativos'); setOperativosView('registro'); }} className="group bg-orange-50 border-l-4 border-orange-500 rounded-3xl p-8 text-left hover:bg-orange-100 transition-all shadow-xl"><Wrench size={32} className="text-orange-600 mb-4" /><h3 className="text-lg font-black text-orange-900 uppercase">Costos Op.</h3><p className="text-[10px] text-orange-600 mt-2 uppercase font-bold">Gastos de Planta.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p></button>
           )}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-4 mt-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
           {hasPerm('costos') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('costos'); setCostosView('dashboard'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-8 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={32} className="text-gray-400 mb-4" /><h3 className="text-lg font-black text-gray-800 uppercase">Rentabilidad (Financiero)</h3><p className="text-[10px] text-gray-400 mt-2 uppercase font-bold">Análisis de Utilidad y Reportes.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('costos'); setCostosView('dashboard'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Reportes de Costo</h3><p className="text-xs text-gray-400 mt-2">Análisis de Utilidad y Rentabilidad.</p></button>
           )}
           {hasPerm('configuracion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-8 text-left hover:bg-gray-50 transition-all shadow-md"><Settings2 size={32} className="text-gray-400 mb-4" /><h3 className="text-lg font-black text-gray-800 uppercase">Configuración</h3><p className="text-[10px] text-gray-400 mt-2 uppercase font-bold">Usuarios y Permisos.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><Settings2 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3><p className="text-xs text-gray-400 mt-2">Usuarios y Permisos.</p></button>
           )}
         </div>
       </div>
@@ -800,17 +795,17 @@ export default function App() {
 
   const renderInventoryReports = () => {
      let filteredData = [];
-     if (invReportType === 'entradas') filteredData = invMovements.filter(m => m.type === 'ENTRADA');
-     if (invReportType === 'salidas') filteredData = invMovements.filter(m => m.type === 'SALIDA' || m.type === 'AUTOCONSUMO');
-     if (invReportType === 'ajustes') filteredData = invMovements.filter(m => m.type.includes('AJUSTE'));
+     if (invReportType === 'entradas') filteredData = invMovements.filter(m => m?.type === 'ENTRADA');
+     if (invReportType === 'salidas') filteredData = invMovements.filter(m => m?.type === 'SALIDA' || m?.type === 'AUTOCONSUMO');
+     if (invReportType === 'ajustes') filteredData = invMovements.filter(m => m && m.type && String(m.type).includes('AJUSTE'));
      
      return (
        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
           <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
              <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Reportes de Inventario</h2>
              <div className="flex gap-2">
-                <button onClick={() => handleExportExcel('reporte-inv-filtrado', 'Reporte_Inventario')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
-                <button onClick={() => handleExportPDF('Reporte_Inventario_Filtrado', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
+                <button onClick={() => handleExportExcel('reporte-inv-filtrado', 'Reporte_Inventario')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXPORTAR EXCEL</button>
+                <button onClick={() => handleExportPDF('Reporte_Inventario_Filtrado', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
              </div>
           </div>
           <div data-html2canvas-ignore="true" className="p-6 bg-white border-b border-gray-100 flex gap-4 no-pdf">
@@ -906,7 +901,7 @@ export default function App() {
            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
              <div className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><ClipboardList className="text-orange-500" size={24}/> Requisiciones de Planta a Almacén</h2>
-               <button onClick={() => handleExportExcel('req-almacen-table', 'Requisiciones_Almacen')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
+               <button onClick={() => handleExportExcel('req-almacen-table', 'Requisiciones_Almacen')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXPORTAR EXCEL</button>
              </div>
              <div className="p-8">
                <div className="overflow-x-auto rounded-xl border border-gray-200">
@@ -2014,1091 +2009,4 @@ export default function App() {
       return (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
             <div className="px-6 py-5 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-lg font-black text-black uppercase flex items-center gap-2"><History className="text-orange-500" /> Órdenes Completadas</h2><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Auditoría de Proceso</p></div>
-            <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-right text-black text-[10px] font-black uppercase tracking-widest">KG Finales</th><th className="p-4 text-center text-black text-[10px] font-black uppercase tracking-widest">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(completedOrders || []).map(req => (<tr key={req?.id} className="hover:bg-gray-50 transition-colors group"><td className="p-4 font-black text-orange-500 text-lg">#{String(req?.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-xs text-black">{req?.client}<br/><span className="text-[10px] font-bold text-gray-400">{req?.desc}</span></td><td className="p-4 text-right font-black text-green-600 text-lg">{formatNum((req?.production?.sellado?.batches || []).reduce((a,b)=>a+parseNum(b?.producedKg),0) || (req?.production?.extrusion?.batches || []).reduce((a,b)=>a+parseNum(b?.producedKg),0) || 0)} KG</td><td className="p-4 text-center"><button onClick={()=>setShowFiniquito(req?.id)} className="bg-black text-white px-8 py-3 rounded-2xl text-[9px] font-black uppercase hover:bg-gray-800 shadow-md flex items-center gap-2 mx-auto transition-all"><FileText size={14}/> GENERAR FINIQUITO</button></td></tr>))}</tbody></table></div>
-          </div>
-      );
-    }
-    
-    return null;
-  };
-
-  const renderCostosModule = () => {
-    const completedOps = (requirements || []).filter(r => r.status === 'COMPLETADO');
-    const totalIncome = (invoices || []).reduce((acc, inv) => acc + parseNum(inv.montoBase), 0);
-    
-    let totalOpCostsMP = 0;
-    completedOps.forEach(req => {
-      ['extrusion', 'impresion', 'sellado'].forEach(phase => {
-        (req.production?.[phase]?.batches || []).forEach(b => { totalOpCostsMP += parseNum(b.cost); });
-      });
-    });
-
-    const totalOpCostsOperativos = opCosts.reduce((acc, cost) => acc + parseNum(cost.amount), 0);
-    const totalCostsGlobal = totalOpCostsMP + totalOpCostsOperativos;
-
-    const globalProfit = totalIncome - totalCostsGlobal;
-    const globalMargin = totalIncome > 0 ? (globalProfit / totalIncome) * 100 : 0;
-
-    // === VISTA 1: DASHBOARD ===
-    if (costosView === 'dashboard') {
-      const incomePercent = 100;
-      const mpPercent = totalIncome ? (totalOpCostsMP / totalIncome) * 100 : 0;
-      const opPercent = totalIncome ? (totalOpCostsOperativos / totalIncome) * 100 : 0;
-      const profitPercent = totalIncome ? (globalProfit / totalIncome) * 100 : 0;
-
-      return (
-        <div className="space-y-6 animate-in fade-in w-full">
-           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-center items-center text-center">
-                 <div className="bg-green-100 p-4 rounded-full text-green-600 mb-4"><DollarSign size={28}/></div>
-                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Ingresos Facturados</p>
-                 <p className="text-2xl font-black text-black">${formatNum(totalIncome)}</p>
-              </div>
-              <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-center items-center text-center">
-                 <div className="bg-red-100 p-4 rounded-full text-red-600 mb-4"><TrendingUp size={28}/></div>
-                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Costo Producción (MP)</p>
-                 <p className="text-2xl font-black text-black">${formatNum(totalOpCostsMP)}</p>
-              </div>
-              <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-center items-center text-center">
-                 <div className="bg-orange-100 p-4 rounded-full text-orange-600 mb-4"><Wrench size={28}/></div>
-                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Costos Operativos Planta</p>
-                 <p className="text-2xl font-black text-black">${formatNum(totalOpCostsOperativos)}</p>
-              </div>
-              <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-center items-center text-center">
-                 <div className="bg-blue-100 p-4 rounded-full text-blue-600 mb-4"><Briefcase size={28}/></div>
-                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Ganancia Neta Global</p>
-                 <p className={`text-2xl font-black ${globalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>${formatNum(globalProfit)}</p>
-              </div>
-           </div>
-
-           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-8">
-                 <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-6 flex justify-between">Estructura de Costos <span>{formatNum(globalMargin)}% Margen Neto</span></h3>
-                 <div className="space-y-6">
-                    <div>
-                       <div className="flex justify-between text-xs font-black uppercase mb-2"><span>Ingresos Totales</span><span className="text-green-600">${formatNum(totalIncome)}</span></div>
-                       <div className="w-full bg-gray-100 rounded-full h-4 overflow-hidden"><div className="bg-green-500 h-4 rounded-full" style={{width: `${incomePercent}%`}}></div></div>
-                    </div>
-                    <div>
-                       <div className="flex justify-between text-xs font-black uppercase mb-2"><span>Materia Prima (Producción)</span><span className="text-red-500">${formatNum(totalOpCostsMP)} ({formatNum(mpPercent)}%)</span></div>
-                       <div className="w-full bg-gray-100 rounded-full h-4 overflow-hidden"><div className="bg-red-500 h-4 rounded-full" style={{width: `${mpPercent}%`}}></div></div>
-                    </div>
-                    <div>
-                       <div className="flex justify-between text-xs font-black uppercase mb-2"><span>Costos Operativos</span><span className="text-orange-500">${formatNum(totalOpCostsOperativos)} ({formatNum(opPercent)}%)</span></div>
-                       <div className="w-full bg-gray-100 rounded-full h-4 overflow-hidden"><div className="bg-orange-500 h-4 rounded-full" style={{width: `${opPercent}%`}}></div></div>
-                    </div>
-                    <div className="pt-4 border-t border-gray-100">
-                       <div className="flex justify-between text-sm font-black uppercase mb-2"><span>Ganancia Neta Restante</span><span className={profitPercent >= 0 ? 'text-blue-600' : 'text-red-600'}>${formatNum(globalProfit)} ({formatNum(profitPercent)}%)</span></div>
-                       <div className="w-full bg-gray-100 rounded-full h-6 overflow-hidden"><div className={`h-6 rounded-full ${profitPercent >= 0 ? 'bg-blue-600' : 'bg-red-600'}`} style={{width: `${Math.max(0, Math.min(100, profitPercent))}%`}}></div></div>
-                    </div>
-                 </div>
-              </div>
-
-              <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-8">
-                 <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-6">OPs Completadas Recientes</h3>
-                 <div className="space-y-4">
-                    {completedOps.slice(0, 4).map(op => {
-                       let cost = 0;
-                       ['extrusion', 'impresion', 'sellado'].forEach(p => { (op.production?.[p]?.batches || []).forEach(b => cost += parseNum(b.cost)); });
-                       const income = invoices.filter(i => i.opAsignada === op.id).reduce((s, i) => s + parseNum(i.montoBase), 0);
-                       return (
-                          <div key={op.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                             <div>
-                                <p className="font-black text-orange-600 uppercase text-xs">#{String(op.id).replace('OP-', '').padStart(5, '0')} - <span className="text-black">{op.client}</span></p>
-                                <p className="text-[10px] font-bold text-gray-500 uppercase">{op.desc}</p>
-                             </div>
-                             <div className="flex gap-6 text-right">
-                                <div><p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Costo MP</p><p className="font-black text-red-600">${formatNum(cost)}</p></div>
-                                <div><p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Facturado</p><p className="font-black text-green-600">${formatNum(income)}</p></div>
-                             </div>
-                          </div>
-                       );
-                    })}
-                    {completedOps.length === 0 && <p className="text-xs text-gray-400 font-bold uppercase text-center py-4">No hay OPs completadas</p>}
-                 </div>
-              </div>
-           </div>
-        </div>
-      );
-    }
-
-    // === VISTA 2: SÚPER FINIQUITO POR OP (Con Merma Total y Colores) ===
-    if (costosView === 'op_detail') {
-      const selectedReq = completedOps.find(r => r.id === selectedOpCost);
-      
-      let reqTotalCost = 0;
-      let matchedInvoices = []; let totalInvoiceIncome = 0;
-      let costBreakdown = [];
-      let fechaInicio = 'N/A'; let fechaFin = 'N/A';
-      
-      let totalMP_Kg = 0;
-      let totalMerma_Kg = 0;
-
-      if (selectedReq) {
-         const bs = [];
-         ['extrusion', 'impresion', 'sellado'].forEach(phase => {
-            (selectedReq.production?.[phase]?.batches || []).forEach(b => {
-               bs.push(b);
-               reqTotalCost += parseNum(b.cost);
-               totalMerma_Kg += parseNum(b.mermaKg);
-               (b.insumos || []).forEach(ing => {
-                  const existing = costBreakdown.find(c => c.id === ing.id);
-                  const invItem = (inventory || []).find(i => i.id === ing.id);
-                  const unitC = invItem ? invItem.cost : 0;
-                  const totC = unitC * ing.qty;
-                  totalMP_Kg += parseNum(ing.qty);
-                  if (existing) { existing.qty += ing.qty; existing.total += totC; }
-                  else { costBreakdown.push({ id: ing.id, desc: invItem?.desc || ing.id, qty: ing.qty, unitCost: unitC, total: totC, phase }); }
-               });
-            });
-         });
-         
-         if (bs.length > 0) {
-            bs.sort((a, b) => a.timestamp - b.timestamp);
-            fechaInicio = bs[0].date;
-            fechaFin = bs[bs.length - 1].date;
-         }
-
-         matchedInvoices = (invoices || []).filter(inv => inv.opAsignada === selectedReq.id);
-         totalInvoiceIncome = matchedInvoices.reduce((sum, inv) => sum + parseNum(inv.montoBase), 0);
-      }
-
-      const reqProfit = totalInvoiceIncome - reqTotalCost;
-      const reqMargin = totalInvoiceIncome > 0 ? (reqProfit / totalInvoiceIncome) * 100 : 0;
-      const mermaPct = totalMP_Kg > 0 ? (totalMerma_Kg / totalMP_Kg) * 100 : 0;
-      const mermaColorClass = getMermaColor(mermaPct);
-
-      return (
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
-           <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-              <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Detalle de Rentabilidad (OP)</h2>
-              {selectedReq && (
-                 <div className="flex gap-2">
-                    <button onClick={() => handleExportExcel('superfiniquito-table', `SuperFiniquito_OP_${selectedReq.id}`)} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
-                    <button onClick={() => handleExportPDF(`SuperFiniquito_OP_${selectedReq.id}`, false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
-                 </div>
-              )}
-           </div>
-
-           <div data-html2canvas-ignore="true" className="p-8 bg-white border-b border-gray-100 flex gap-4 items-end no-pdf">
-              <div className="flex-1 max-w-md">
-                 <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Seleccionar OP Completada</label>
-                 <select value={selectedOpCost} onChange={e=>setSelectedOpCost(e.target.value)} className="w-full bg-gray-50 border-2 border-gray-200 rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black uppercase">
-                    <option value="">-- SELECCIONE ORDEN --</option>
-                    {completedOps.map(op => <option key={op.id} value={op.id}>#{String(op.id).replace('OP-','').padStart(5,'0')} - {op.client}</option>)}
-                 </select>
-              </div>
-           </div>
-
-           {selectedReq ? (
-              <div id="pdf-content" className="p-8 print:p-0 bg-white">
-                 <div className="hidden pdf-header mb-8"><ReportHeader /></div>
-                 
-                 <div className="text-center mb-8">
-                    <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">FINIQUITO DE PRODUCCIÓN Y COSTOS</h1>
-                 </div>
-
-                 <div className="grid grid-cols-2 gap-4 mb-4 text-xs font-black uppercase border-2 border-black p-4 rounded-t-2xl bg-gray-50">
-                    <div>
-                       <p className="text-gray-500 mb-1">CLIENTE:</p><p className="text-sm text-black mb-4">{selectedReq.client}</p>
-                       <p className="text-gray-500 mb-1">PRODUCTO / MAQUILA:</p><p className="text-black mb-4">{selectedReq.desc}</p>
-                       <p className="text-gray-500 mb-1">CANTIDAD ESTIMADA:</p><p className="text-black text-orange-600">{formatNum(selectedReq.requestedKg)} KG</p>
-                    </div>
-                    <div className="text-right">
-                       <p className="text-gray-500 mb-1">NÚMERO DE ORDEN:</p><p className="text-lg text-orange-600 mb-4">#{String(selectedReq.id).replace('OP-','').padStart(5,'0')}</p>
-                       <p className="text-gray-500 mb-1">FECHA INICIO PRODUCCIÓN:</p><p className="text-black mb-4">{fechaInicio}</p>
-                       <p className="text-gray-500 mb-1">FECHA CIERRE PRODUCCIÓN:</p><p className="text-black">{fechaFin}</p>
-                    </div>
-                 </div>
-
-                 {/* INDICADOR DE MERMA EN ENCABEZADO */}
-                 <div className="grid grid-cols-3 gap-4 mb-8 text-center text-xs font-black uppercase border-x-2 border-b-2 border-black p-4 rounded-b-2xl bg-white shadow-sm">
-                    <div>
-                       <p className="text-gray-500 mb-1">Total MP Inyectada</p>
-                       <p className="text-xl text-black">{formatNum(totalMP_Kg)} KG</p>
-                    </div>
-                    <div className="border-x-2 border-gray-200">
-                       <p className="text-gray-500 mb-1">Total Merma Generada</p>
-                       <p className={`text-xl ${mermaColorClass}`}>{formatNum(totalMerma_Kg)} KG</p>
-                    </div>
-                    <div>
-                       <p className="text-gray-500 mb-1">% Merma Global OP</p>
-                       <p className={`text-2xl ${mermaColorClass}`}>{formatNum(mermaPct)}%</p>
-                    </div>
-                 </div>
-
-                 <div id="superfiniquito-table">
-                    {/* COSTOS MATERIA PRIMA */}
-                    <div className="mb-8">
-                       <h3 className="text-sm font-black uppercase text-white bg-black p-3 tracking-widest">1. Desglose de Costos de Producción (MP)</h3>
-                       <table className="w-full text-left text-xs border-collapse border-2 border-black mt-2">
-                          <thead className="bg-gray-200">
-                             <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                                <th className="p-3 border border-black">Insumo / Descripción</th>
-                                <th className="p-3 border border-black text-center">Fase</th>
-                                <th className="p-3 border border-black text-center">Cantidad</th>
-                                <th className="p-3 border border-black text-right">Costo Unit.</th>
-                                <th className="p-3 border border-black text-right">Costo Total</th>
-                             </tr>
-                          </thead>
-                          <tbody>
-                             {costBreakdown.map((item, idx) => (
-                                <tr key={idx}>
-                                   <td className="p-3 border border-black font-bold uppercase">{item.desc}</td>
-                                   <td className="p-3 border border-black text-center font-bold uppercase">{item.phase}</td>
-                                   <td className="p-3 border border-black text-center font-black">{formatNum(item.qty)} kg</td>
-                                   <td className="p-3 border border-black text-right font-bold">${formatNum(item.unitCost)}</td>
-                                   <td className="p-3 border border-black text-right font-black text-red-600">${formatNum(item.total)}</td>
-                                </tr>
-                             ))}
-                             {costBreakdown.length === 0 && <tr><td colSpan="5" className="p-4 text-center font-bold uppercase">No hay insumos reportados.</td></tr>}
-                          </tbody>
-                          <tfoot className="bg-gray-100">
-                             <tr>
-                                <td colSpan="4" className="p-3 border border-black text-right font-black uppercase">Costo Total MP:</td>
-                                <td className="p-3 border border-black text-right font-black text-red-600 text-lg">${formatNum(reqTotalCost)}</td>
-                             </tr>
-                          </tfoot>
-                       </table>
-                    </div>
-
-                    {/* INGRESOS FACTURAS */}
-                    <div className="mb-8">
-                       <h3 className="text-sm font-black uppercase text-white bg-black p-3 tracking-widest">2. Ventas y Facturación de la OP</h3>
-                       <table className="w-full text-left text-xs border-collapse border-2 border-black mt-2">
-                          <thead className="bg-gray-200">
-                             <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                                <th className="p-3 border border-black">Factura N°</th>
-                                <th className="p-3 border border-black text-center">Fecha</th>
-                                <th className="p-3 border border-black text-right">Base (Ingreso Real)</th>
-                                <th className="p-3 border border-black text-right">IVA (16%)</th>
-                                <th className="p-3 border border-black text-right">Total Cobrado</th>
-                             </tr>
-                          </thead>
-                          <tbody>
-                             {matchedInvoices.map((inv, idx) => (
-                                <tr key={idx}>
-                                   <td className="p-3 border border-black font-black">{inv.documento}</td>
-                                   <td className="p-3 border border-black text-center font-bold">{inv.fecha}</td>
-                                   <td className="p-3 border border-black text-right font-black text-green-600">${formatNum(inv.montoBase)}</td>
-                                   <td className="p-3 border border-black text-right font-bold text-gray-500">${formatNum(inv.iva)}</td>
-                                   <td className="p-3 border border-black text-right font-black">${formatNum(inv.total)}</td>
-                                </tr>
-                             ))}
-                             {matchedInvoices.length === 0 && <tr><td colSpan="5" className="p-4 text-center font-bold uppercase text-red-500">No hay facturas asociadas a esta OP.</td></tr>}
-                          </tbody>
-                          {matchedInvoices.length > 0 && (
-                             <tfoot className="bg-gray-100">
-                                <tr>
-                                   <td colSpan="2" className="p-3 border border-black text-right font-black uppercase">Total Ingreso OP (Base):</td>
-                                   <td className="p-3 border border-black text-right font-black text-green-600 text-lg">${formatNum(totalInvoiceIncome)}</td>
-                                   <td colSpan="2" className="p-3 border border-black bg-gray-200"></td>
-                                </tr>
-                             </tfoot>
-                          )}
-                       </table>
-                    </div>
-                 </div>
-
-                 {/* RENTABILIDAD FINAL */}
-                 <div className="border-4 border-black p-6 rounded-2xl bg-gray-50 flex justify-between items-center mt-6">
-                    <div>
-                       <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Cruce de Información Financiera</p>
-                       <p className="text-sm font-bold uppercase text-black">Rentabilidad y Margen Neto de la OP</p>
-                    </div>
-                    <div className="text-right flex items-end gap-8">
-                       <div>
-                          <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Ganancia / Pérdida</p>
-                          <p className={`text-3xl font-black ${reqProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>${formatNum(reqProfit)}</p>
-                       </div>
-                       <div className="bg-black text-white px-6 py-3 rounded-xl border-2 border-black">
-                          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">MARGEN NETO</p>
-                          <p className={`text-3xl font-black ${reqMargin >= 30 ? 'text-green-400' : (reqMargin > 0 ? 'text-orange-400' : 'text-red-400')}`}>{formatNum(reqMargin)}%</p>
-                       </div>
-                    </div>
-                 </div>
-
-                 <div className="mt-20 grid grid-cols-2 gap-24 text-center font-black uppercase text-[10px] text-black">
-                    <div className="border-t-2 border-black pt-2 mx-10">DEPARTAMENTO DE COSTOS</div>
-                    <div className="border-t-2 border-black pt-2 mx-10">REVISADO Y APROBADO (GERENCIA)</div>
-                 </div>
-              </div>
-           ) : (
-              <div className="p-16 text-center text-gray-400">
-                 <FileText size={60} className="mx-auto mb-4 opacity-50"/>
-                 <p className="font-black uppercase tracking-widest">Selecciona una OP para visualizar el Súper Finiquito Financiero</p>
-              </div>
-           )}
-        </div>
-      );
-    }
-
-    // === VISTA 3: REPORTE GENERAL INGRESOS VS COSTOS ===
-    if (costosView === 'general_sales') {
-      return (
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
-           <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-              <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><TrendingUp className="text-orange-500" size={24}/> General: Ingresos vs Costos</h2>
-              <div className="flex gap-2">
-                 <button onClick={() => handleExportExcel('ingresos-costos-table', 'Reporte_Rentabilidad_Global')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
-                 <button onClick={() => handleExportPDF('Reporte_Rentabilidad_Global', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
-              </div>
-           </div>
-
-           <div id="pdf-content" className="p-8 print:p-0 bg-white">
-              <div className="hidden pdf-header mb-8"><ReportHeader /></div>
-              
-              <div className="text-center mb-8">
-                 <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">COMPARATIVO GLOBAL DE RENTABILIDAD POR OP</h1>
-              </div>
-
-              <div className="overflow-x-auto rounded-xl border-2 border-black print:rounded-none">
-                 <table id="ingresos-costos-table" className="w-full text-left whitespace-nowrap text-xs">
-                    <thead className="bg-black text-white">
-                       <tr className="uppercase font-black text-[10px] tracking-widest">
-                          <th className="p-4 border-r border-gray-700">OP N° / Cliente</th>
-                          <th className="p-4 border-r border-gray-700 text-right">Costo Producción</th>
-                          <th className="p-4 border-r border-gray-700 text-right">Ingreso Facturado</th>
-                          <th className="p-4 border-r border-gray-700 text-right">Ganancia ($)</th>
-                          <th className="p-4 text-center">Margen (%)</th>
-                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200 text-black">
-                       {completedOps.map(op => {
-                          let opCost = 0;
-                          ['extrusion', 'impresion', 'sellado'].forEach(p => { (op.production?.[p]?.batches || []).forEach(b => opCost += parseNum(b.cost)); });
-                          const opIncome = (invoices || []).filter(inv => inv.opAsignada === op.id).reduce((sum, inv) => sum + parseNum(inv.montoBase), 0);
-                          const profit = opIncome - opCost;
-                          const margin = opIncome > 0 ? (profit / opIncome) * 100 : 0;
-
-                          return (
-                             <tr key={op.id} className="hover:bg-gray-50">
-                                <td className="p-4 border-r border-gray-200">
-                                   <span className="font-black text-orange-600">#{String(op.id).replace('OP-','').padStart(5,'0')}</span><br/>
-                                   <span className="text-[10px] font-bold text-gray-500 uppercase">{op.client}</span>
-                                </td>
-                                <td className="p-4 border-r border-gray-200 text-right font-black text-red-600">${formatNum(opCost)}</td>
-                                <td className="p-4 border-r border-gray-200 text-right font-black text-green-600">${formatNum(opIncome)}</td>
-                                <td className={`p-4 border-r border-gray-200 text-right font-black ${profit >= 0 ? 'text-black' : 'text-red-500'}`}>${formatNum(profit)}</td>
-                                <td className={`p-4 text-center font-black ${margin >= 30 ? 'text-green-600' : (margin > 0 ? 'text-orange-500' : 'text-red-500')}`}>{formatNum(margin)}%</td>
-                             </tr>
-                          );
-                       })}
-                       {completedOps.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin OPs Completadas registradas</td></tr>}
-                    </tbody>
-                    <tfoot className="bg-gray-200 border-t-4 border-black">
-                       <tr className="uppercase font-black text-[12px] text-black">
-                          <td className="p-4 text-right">TOTALES GLOBALES:</td>
-                          <td className="p-4 text-right text-red-600">${formatNum(totalOpCostsMP)}</td>
-                          <td className="p-4 text-right text-green-600">${formatNum(totalIncome)}</td>
-                          <td className="p-4 text-right">${formatNum(globalProfit)}</td>
-                          <td className="p-4 text-center text-blue-600 bg-gray-300">{formatNum(globalMargin)}%</td>
-                       </tr>
-                    </tfoot>
-                 </table>
-              </div>
-           </div>
-        </div>
-      );
-    }
-
-    // === VISTA 4: COSTOS OPERATIVOS DE PLANTA ===
-    if (costosView === 'operativos') {
-       const handleAddOpCost = async (e) => {
-          e.preventDefault();
-          if (!newOpCostForm.amount) return;
-          const finalCategory = newOpCostForm.category === 'OTRA (ESPECIFICAR)' ? newOpCostForm.customCategory.toUpperCase() : newOpCostForm.category;
-          
-          try {
-             await addDoc(collection(db, 'operatingCosts'), {
-                date: newOpCostForm.date,
-                category: finalCategory,
-                description: newOpCostForm.description,
-                amount: parseNum(newOpCostForm.amount),
-                timestamp: Date.now(),
-                user: appUser?.name || 'Admin'
-             });
-             setNewOpCostForm({...initialOpCostForm, date: getTodayDate()});
-             setDialog({title: 'Éxito', text: 'Costo operativo registrado.', type: 'alert'});
-          } catch(err) {
-             setDialog({title: 'Error', text: err.message, type: 'alert'});
-          }
-       };
-
-       const handleDeleteOpCost = async (id) => {
-          setDialog({ title: 'Eliminar Costo', text: '¿Desea eliminar este registro de costo operativo?', type: 'confirm', onConfirm: async () => {
-             await deleteDoc(doc(db, 'operatingCosts', id));
-          }});
-       };
-
-       // Calcular datos para la gráfica de barras
-       const categoryTotals = {};
-       let totalOpCost = 0;
-       opCosts.forEach(c => {
-          const amt = parseNum(c.amount);
-          totalOpCost += amt;
-          if (!categoryTotals[c.category]) categoryTotals[c.category] = 0;
-          categoryTotals[c.category] += amt;
-       });
-
-       const sortedCategories = Object.entries(categoryTotals).map(([cat, amt]) => ({
-          category: cat,
-          amount: amt,
-          pct: totalOpCost > 0 ? (amt / totalOpCost) * 100 : 0
-       })).sort((a, b) => b.amount - a.amount);
-
-       const maxAmt = sortedCategories.length > 0 ? sortedCategories[0].amount : 1;
-
-       const globalOpPercent = totalIncome > 0 ? (totalOpCost / totalIncome) * 100 : 0;
-
-       return (
-         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
-            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Wrench className="text-orange-500" size={24}/> Costos Operativos de Planta</h2>
-               <div className="flex gap-2">
-                  <button onClick={() => handleExportExcel('costos-operativos-table', 'Costos_Operativos')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
-                  <button onClick={() => handleExportPDF('Reporte_Costos_Operativos', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
-               </div>
-            </div>
-
-            <div data-html2canvas-ignore="true" className="p-8 bg-gray-50/50 border-b border-gray-200 no-pdf">
-               <form onSubmit={handleAddOpCost} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
-                 <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-4 tracking-widest">Registrar Nuevo Gasto / Costo</h3>
-                 <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                   <div>
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                     <input type="date" required value={newOpCostForm.date} onChange={e=>setNewOpCostForm({...newOpCostForm, date: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-black" />
-                   </div>
-                   <div>
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
-                     <select value={newOpCostForm.category} onChange={e=>setNewOpCostForm({...newOpCostForm, category: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
-                        <option value="Nómina y Beneficios">Nómina y Beneficios</option>
-                        <option value="Electricidad / Servicios">Electricidad / Servicios</option>
-                        <option value="Mantenimiento y Repuestos">Mantenimiento y Repuestos</option>
-                        <option value="Consumos Internos">Consumos Internos</option>
-                        <option value="Logística y Fletes">Logística y Fletes</option>
-                        <option value="OTRA (ESPECIFICAR)">OTRA (ESPECIFICAR)</option>
-                     </select>
-                   </div>
-                   {newOpCostForm.category === 'OTRA (ESPECIFICAR)' && (
-                     <div>
-                       <label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Nueva Categoría</label>
-                       <input type="text" required value={newOpCostForm.customCategory} onChange={e=>setNewOpCostForm({...newOpCostForm, customCategory: e.target.value.toUpperCase()})} className="w-full border-2 border-orange-200 bg-orange-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="ESCRIBA AQUÍ..." />
-                     </div>
-                   )}
-                   <div className={newOpCostForm.category === 'OTRA (ESPECIFICAR)' ? 'md:col-span-1' : 'md:col-span-2'}>
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción / Detalle</label>
-                     <input type="text" required value={newOpCostForm.description} onChange={e=>setNewOpCostForm({...newOpCostForm, description: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="EJ: PAGO SEMANAL" />
-                   </div>
-                   <div>
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Monto ($ USD)</label>
-                     <input type="number" step="0.01" required value={newOpCostForm.amount} onChange={e=>setNewOpCostForm({...newOpCostForm, amount: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-center text-red-600" placeholder="0.00" />
-                   </div>
-                 </div>
-                 <div className="flex justify-end pt-2">
-                    <button type="submit" className="bg-black text-white px-10 py-3.5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all flex items-center gap-2"><Plus size={16}/> REGISTRAR GASTO</button>
-                 </div>
-               </form>
-            </div>
-
-            <div id="pdf-content" className="p-8 print:p-0 bg-white">
-               <div className="hidden pdf-header mb-8"><ReportHeader /></div>
-               <div className="text-center mb-8"><h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">REPORTE DE COSTOS OPERATIVOS DE PLANTA</h1></div>
-
-               {/* GRÁFICA DE BARRAS */}
-               <div className="mb-10 bg-gray-50 p-6 rounded-2xl border-2 border-gray-200 no-pdf">
-                  <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest text-center">Distribución de Gastos Operativos</h3>
-                  <div className="space-y-4">
-                     {sortedCategories.map((item, i) => (
-                        <div key={i} className="flex items-center gap-4">
-                           <div className="w-1/4 text-right text-[10px] font-black uppercase truncate" title={item.category}>{item.category}</div>
-                           <div className="w-2/4">
-                              <div className="h-6 bg-gray-200 rounded-full overflow-hidden">
-                                 <div className="h-full bg-orange-500 rounded-full flex items-center px-2" style={{width: `${Math.max(5, (item.amount/maxAmt)*100)}%`}}></div>
-                              </div>
-                           </div>
-                           <div className="w-1/4 text-left text-xs font-black text-gray-700">
-                              ${formatNum(item.amount)} <span className="text-orange-600 ml-2">({formatNum(item.pct)}%)</span>
-                           </div>
-                        </div>
-                     ))}
-                     {sortedCategories.length === 0 && <div className="text-center text-xs font-bold text-gray-400 uppercase">Sin datos registrados</div>}
-                  </div>
-               </div>
-
-               <div className="grid grid-cols-2 gap-4 mb-8">
-                  <div className="bg-red-50 p-4 rounded-xl border border-red-200 text-center">
-                     <p className="text-[10px] font-black text-red-800 uppercase tracking-widest mb-1">Gasto Operativo Total</p>
-                     <p className="text-2xl font-black text-red-600">${formatNum(totalOpCost)}</p>
-                  </div>
-                  <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 text-center">
-                     <p className="text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1">Impacto (Gasto vs Ingresos Planta)</p>
-                     <p className="text-2xl font-black text-blue-600">{formatNum(globalOpPercent)}%</p>
-                  </div>
-               </div>
-
-               <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-                 <table id="costos-operativos-table" className="w-full text-left whitespace-nowrap text-xs">
-                    <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
-                       <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                          <th className="py-3 px-4 border-r print:border-black">Fecha</th>
-                          <th className="py-3 px-4 border-r print:border-black">Categoría</th>
-                          <th className="py-3 px-4 border-r print:border-black">Descripción / Detalle</th>
-                          <th className="py-3 px-4 border-r print:border-black">Registrado Por</th>
-                          <th className="py-3 px-4 text-right border-r print:border-black">Monto ($)</th>
-                          <th className="py-3 px-4 text-center no-pdf">Acciones</th>
-                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 text-black print:divide-black">
-                       {(opCosts || []).map(c => (
-                          <tr key={c.id} className="hover:bg-gray-50 transition-colors">
-                             <td className="py-3 px-4 font-bold border-r print:border-black">{c.date}</td>
-                             <td className="py-3 px-4 font-black border-r print:border-black uppercase text-gray-600">{c.category}</td>
-                             <td className="py-3 px-4 font-bold border-r print:border-black uppercase">{c.description}</td>
-                             <td className="py-3 px-4 font-bold border-r print:border-black uppercase text-[9px] text-gray-500">{c.user}</td>
-                             <td className="py-3 px-4 text-right font-black border-r print:border-black text-red-600">${formatNum(c.amount)}</td>
-                             <td className="py-3 px-4 text-center no-pdf">
-                                <button onClick={() => handleDeleteOpCost(c.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={14}/></button>
-                             </td>
-                          </tr>
-                       ))}
-                       {(!opCosts || opCosts.length === 0) && <tr><td colSpan="6" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">No hay costos operativos registrados</td></tr>}
-                    </tbody>
-                 </table>
-               </div>
-            </div>
-         </div>
-       );
-    }
-
-    // === VISTA 5: REPORTE DE PRODUCCIÓN MES A MES ===
-    if (costosView === 'produccion_mensual') {
-       const monthlyData = {};
-       const allMonthsSet = new Set();
-
-       completedOps.forEach(op => {
-          let lastDate = op.fecha;
-          let opMP = 0; let opMerma = 0; 
-          
-          ['extrusion', 'impresion', 'sellado'].forEach(ph => {
-             (op.production?.[ph]?.batches || []).forEach(b => {
-                opMerma += parseNum(b.mermaKg);
-                if (b.date) lastDate = b.date;
-                (b.insumos || []).forEach(i => opMP += parseNum(i.qty));
-             });
-          });
-          
-          const finalPhase = op.tipoProducto === 'TERMOENCOGIBLE' ? 'extrusion' : 'sellado';
-          const prodFinal = (op.production?.[finalPhase]?.batches || []).reduce((s,b)=>s+parseNum(b.producedKg),0);
-
-          // Extraer año y mes YYYY-MM
-          let monthKey = 'Sin Fecha';
-          if (lastDate && lastDate.includes('-')) {
-              const parts = lastDate.split('-');
-              if(parts.length >= 2) monthKey = `${parts[0]}-${parts[1]}`;
-          }
-          
-          allMonthsSet.add(monthKey);
-
-          if (!monthlyData[monthKey]) monthlyData[monthKey] = { key: monthKey, mp: 0, merma: 0, termo: 0, bolsas: 0 };
-          
-          monthlyData[monthKey].mp += opMP;
-          monthlyData[monthKey].merma += opMerma;
-          if (op.tipoProducto === 'TERMOENCOGIBLE') monthlyData[monthKey].termo += prodFinal;
-          else monthlyData[monthKey].bolsas += prodFinal;
-       });
-
-       const availableMonths = Array.from(allMonthsSet).sort().reverse();
-       
-       let dataToShow = Object.values(monthlyData);
-       if (selectedProdMonth !== 'ALL') {
-           dataToShow = dataToShow.filter(d => d.key === selectedProdMonth);
-       }
-       
-       dataToShow.sort((a,b) => b.key.localeCompare(a.key));
-
-       const getMermaColor = (pct) => {
-          if (pct <= 5.0) return 'text-green-600 bg-green-50 print:bg-transparent print:text-black';
-          if (pct > 5.0 && pct <= 5.5) return 'text-yellow-600 bg-yellow-50 print:bg-transparent print:text-black';
-          return 'text-red-600 bg-red-50 print:bg-transparent print:text-black';
-       };
-
-       return (
-         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
-            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Activity className="text-orange-500" size={24}/> Producción General Mensual</h2>
-               <div className="flex gap-2">
-                  <button onClick={() => handleExportExcel('produccion-mensual-table', 'Reporte_Produccion')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
-                  <button onClick={() => handleExportPDF('Reporte_Produccion', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
-               </div>
-            </div>
-
-            <div data-html2canvas-ignore="true" className="p-8 border-b border-gray-100 flex gap-4 no-pdf items-center bg-white">
-               <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Filtrar por Mes:</label>
-               <select value={selectedProdMonth} onChange={e=>setSelectedProdMonth(e.target.value)} className="w-64 bg-gray-50 border-2 border-gray-200 rounded-xl p-3 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
-                  <option value="ALL">TODOS LOS MESES HISTÓRICOS</option>
-                  {availableMonths.map(m => <option key={m} value={m}>{m}</option>)}
-               </select>
-            </div>
-
-            <div id="pdf-content" className="p-8 print:p-0 bg-white">
-               <div className="hidden pdf-header mb-8"><ReportHeader /></div>
-               <div className="text-center mb-8">
-                  <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">REPORTE CONSOLIDADO DE PRODUCCIÓN (MES A MES)</h1>
-               </div>
-
-               <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-                 <table id="produccion-mensual-table" className="w-full text-center whitespace-nowrap text-xs">
-                    <thead className="bg-black text-white">
-                       <tr className="uppercase font-black text-[10px] tracking-widest">
-                          <th className="p-4 border-r border-gray-700 text-left">Período (Mes)</th>
-                          <th className="p-4 border-r border-gray-700">MP Usada (KG)</th>
-                          <th className="p-4 border-r border-gray-700 text-blue-300">Termoencogible Final (KG)</th>
-                          <th className="p-4 border-r border-gray-700 text-orange-300">Bolsas Finales (KG)</th>
-                          <th className="p-4 border-r border-gray-700 text-red-300">Merma Total (KG)</th>
-                          <th className="p-4">Merma Global (%)</th>
-                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200 text-black print:divide-black">
-                       {dataToShow.map(m => {
-                          const pct = m.mp > 0 ? (m.merma / m.mp) * 100 : 0;
-                          return (
-                             <tr key={m.key} className="hover:bg-gray-50 transition-colors">
-                                <td className="p-4 font-black border-r border-gray-200 text-left text-sm">{m.key}</td>
-                                <td className="p-4 font-black border-r border-gray-200">{formatNum(m.mp)}</td>
-                                <td className="p-4 font-black border-r border-gray-200 text-blue-700">{formatNum(m.termo)}</td>
-                                <td className="p-4 font-black border-r border-gray-200 text-orange-600">{formatNum(m.bolsas)}</td>
-                                <td className="p-4 font-black border-r border-gray-200 text-red-600">{formatNum(m.merma)}</td>
-                                <td className={`p-4 font-black text-lg ${getMermaColor(pct)}`}>{formatNum(pct)}%</td>
-                             </tr>
-                          );
-                       })}
-                       {dataToShow.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin datos de producción registrados</td></tr>}
-                    </tbody>
-                 </table>
-               </div>
-            </div>
-         </div>
-       );
-    }
-
-    return null;
-  };
-
-  if (!appUser) {
-     return (
-        <ErrorBoundary>
-           <div className="min-h-screen flex items-center justify-center p-4 relative" 
-                style={{ backgroundImage: `url('${settings?.loginBg || "https://images.unsplash.com/photo-1587293852726-70cdb56c2866?q=80&w=2072&auto=format&fit=crop"}')`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
-              <div className="absolute inset-0 bg-black/40"></div>
-              
-              <div className="absolute top-4 right-4 z-20">
-                 <label className="bg-black/50 hover:bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase cursor-pointer transition-all flex items-center gap-2 border border-white/20 shadow-lg">
-                    <Edit size={14}/> Cambiar Fondo
-                    <input type="file" accept="image/*" className="hidden" onChange={handleBgUpload} />
-                 </label>
-              </div>
-
-              <div className="relative z-10 bg-white rounded-3xl shadow-[0_30px_60px_rgba(0,0,0,0.6)] overflow-hidden w-full max-w-4xl flex transform transition-all duration-500 hover:scale-[1.01] border border-white/20">
-                 <div className="w-1/2 bg-gradient-to-br from-gray-900 to-black p-12 flex-col justify-between hidden md:flex relative overflow-hidden shadow-[inset_-10px_0_20px_rgba(0,0,0,0.5)] border-r border-gray-800">
-                    <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-tr from-white/10 to-transparent transform -skew-x-12 pointer-events-none"></div>
-                    <div className="relative z-10">
-                      <div className="flex items-center bg-white rounded-2xl px-4 py-2 shadow-[0_10px_20px_rgba(0,0,0,0.4)] w-fit transform hover:translate-x-1 hover:-translate-y-1 transition-transform duration-300">
-                         <span className="text-black font-black text-4xl leading-none drop-shadow-sm">G</span><span className="text-orange-500 font-black text-3xl mx-1 drop-shadow-sm">&amp;</span><span className="text-black font-black text-4xl leading-none drop-shadow-sm">B</span>
-                      </div>
-                      <h1 className="text-white text-3xl font-black mt-10 uppercase tracking-widest drop-shadow-lg">Supply ERP</h1>
-                      <p className="text-gray-300 mt-4 text-sm leading-relaxed drop-shadow-md">Sistema Integrado de Producción e Inventario para Servicios Jiret G&B C.A.</p>
-                    </div>
-                    <div className="relative z-10 text-gray-500 text-xs font-bold uppercase tracking-widest">© {new Date().getFullYear()} Todos los derechos reservados</div>
-                 </div>
-                 <div className="w-full md:w-1/2 p-12 flex flex-col justify-center bg-white relative z-10">
-                    <h2 className="text-2xl font-black text-black uppercase tracking-widest mb-2">Iniciar Sesión</h2>
-                    <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-8">Ingresa tus credenciales de acceso</p>
-                    {loginError && (<div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)]"><AlertTriangle size={16}/> {loginError}</div>)}
-                    <form onSubmit={handleLogin} className="space-y-6">
-                       <div>
-                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Usuario</label>
-                         <div className="relative group"><User className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="text" value={loginData.username} onChange={e=>setLoginData({...loginData, username: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="EJ: ADMIN o PLANTA"/></div>
-                       </div>
-                       <div>
-                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Contraseña</label>
-                         <div className="relative group"><Lock className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="password" value={loginData.password} onChange={e=>setLoginData({...loginData, password: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="••••••••"/></div>
-                       </div>
-                       <button type="submit" className="w-full bg-gradient-to-r from-orange-500 to-orange-600 text-white font-black py-4 rounded-xl shadow-[0_8px_20px_rgba(249,115,22,0.4)] hover:shadow-[0_15px_25px_rgba(249,115,22,0.6)] hover:-translate-y-1 active:translate-y-1 uppercase tracking-widest text-xs flex justify-center items-center gap-2 mt-4 transform transition-all">ENTRAR AL SISTEMA <ArrowRight size={16}/></button>
-                    </form>
-                 </div>
-              </div>
-           </div>
-        </ErrorBoundary>
-     );
-  }
-
-  return (
-    <ErrorBoundary>
-      <div className="min-h-screen bg-gray-100 text-gray-900 font-sans flex flex-col print:bg-white print:block print:w-full overflow-x-hidden print:overflow-visible text-black font-black">
-        <header className="bg-black border-b-4 border-orange-500 sticky top-0 z-50 text-white shadow-md print:hidden">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between h-20 items-center">
-              <div className="flex items-center gap-4 cursor-pointer transition-transform hover:scale-105" onClick={()=>{clearAllReports(); setActiveTab('home');}}>
-                <div className="flex items-center bg-white rounded-2xl px-3 py-1">
-                  <span className="text-black font-black text-3xl leading-none">G</span>
-                  <span className="text-orange-500 font-black text-2xl mx-0.5">&amp;</span>
-                  <span className="text-black font-black text-3xl leading-none">B</span>
-                </div>
-                <div className="hidden sm:block border-l-2 border-gray-800 pl-4 uppercase font-black text-lg">Supply ERP</div>
-              </div>
-              <div className="flex items-center gap-5">
-                <div className="flex items-center gap-3 bg-gray-800 px-5 py-2 rounded-2xl border border-gray-700">
-                  <ShieldCheck size={18} className="text-orange-500" />
-                  <span className="font-black text-white text-[10px] uppercase leading-none">{appUser?.name}</span>
-                </div>
-                <button onClick={() => setAppUser(null)} className="text-gray-400 hover:text-white bg-gray-800 hover:bg-red-600 p-2.5 rounded-2xl border border-gray-700"><LogOut size={20}/></button>
-              </div>
-            </div>
-          </div>
-        </header>
-
-        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 flex flex-col md:flex-row gap-8 flex-1 print:p-0 print:m-0 print:block">
-          {activeTab !== 'home' && (
-            <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
-              <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 transition-all active:scale-95 uppercase tracking-widest"><Home size={18} className="text-orange-500" /> INICIO</button>
-
-              {appUser?.permissions?.ventas && activeTab === 'ventas' && (
-                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Área Ventas</h3>
-                  <button onClick={() => {clearAllReports(); setVentasView('facturacion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'facturacion' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Receipt size={16}/> Facturación</button>
-                  <button onClick={() => {clearAllReports(); setVentasView('requisiciones');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'requisiciones' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ClipboardEdit size={16}/> OP / Requisiciones</button>
-                  <button onClick={() => {clearAllReports(); setVentasView('clientes');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'clientes' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Users size={16}/> Directorio Clientes</button>
-                </div>
-              )}
-
-              {appUser?.permissions?.produccion && activeTab === 'produccion' && (
-                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Planta / Producción</h3>
-                  <button onClick={() => {clearAllReports(); setProdView('calculadora');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'calculadora' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Calculator size={16}/> Simulador OP</button>
-                  <button onClick={() => {clearAllReports(); setProdView('proyeccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'proyeccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase relative`}><TrendingUp size={16}/> Proyección MP {generateProjectionData().filter(mp => mp.isCritical).length > 0 && <span className="absolute right-4 top-1/2 -translate-y-1/2 bg-red-500 w-3 h-3 rounded-full animate-pulse"></span>}</button>
-                  <button onClick={() => {clearAllReports(); setProdView('fases_produccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'fases_produccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Thermometer size={16}/> Fases en Proceso</button>
-                  <button onClick={() => {clearAllReports(); setProdView('historial');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'historial' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><History size={16}/> Historial / Finiquitos</button>
-                </div>
-              )}
-
-              {appUser?.permissions?.inventario && activeTab === 'inventario' && (
-                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
-                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Almacén</h3>
-                   <button onClick={() => {clearAllReports(); setInvView('requisiciones');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'requisiciones' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase relative`}><ClipboardList size={16}/> Requisiciones OP {invRequisitions.filter(r=>r.status==='PENDIENTE').length > 0 && <span className="absolute right-4 top-1/2 -translate-y-1/2 bg-red-500 text-white text-[9px] w-5 h-5 flex items-center justify-center rounded-full animate-pulse">{invRequisitions.filter(r=>r.status==='PENDIENTE').length}</span>}</button>
-                   <button onClick={() => {clearAllReports(); setInvView('catalogo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'catalogo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Box size={16}/> Catálogo / Stock</button>
-                   <button onClick={() => {clearAllReports(); setInvView('cargo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'cargo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowDownToLine size={16}/> Entrada (Cargo)</button>
-                   <button onClick={() => {clearAllReports(); setInvView('descargo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'descargo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowUpFromLine size={16}/> Salida (Descargo)</button>
-                   <button onClick={() => {clearAllReports(); setInvView('ajuste');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'ajuste' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowRightLeft size={16}/> Ajuste Físico</button>
-                   <button onClick={() => {clearAllReports(); setInvView('kardex');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'kardex' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><History size={16}/> Kardex General</button>
-                   <button onClick={() => {clearAllReports(); setInvView('reportes_mod');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'reportes_mod' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Reportes Filtrados</button>
-                   <button onClick={() => {clearAllReports(); setInvView('reporte177');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'reporte177' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileCheck size={16}/> Art. 177 LISLR</button>
-                 </div>
-              )}
-
-              {appUser?.permissions?.costos && activeTab === 'costos' && (
-                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Costos y Rentabilidad</h3>
-                  <button onClick={() => {clearAllReports(); setCostosView('dashboard');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'dashboard' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><BarChart3 size={16}/> Dashboard General</button>
-                  <button onClick={() => {clearAllReports(); setCostosView('op_detail');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'op_detail' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Súper Finiquito (OP)</button>
-                  <button onClick={() => {clearAllReports(); setCostosView('general_sales');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'general_sales' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><TrendingUp size={16}/> Ingresos vs Costos</button>
-                  <button onClick={() => {clearAllReports(); setCostosView('produccion_mensual');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'produccion_mensual' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Activity size={16}/> Prod. Mensual</button>
-                </div>
-              )}
-
-              {appUser?.permissions?.costos && activeTab === 'operativos' && (
-                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
-                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Control Operativo</h3>
-                   <button onClick={() => {clearAllReports(); setOperativosView('registro');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${operativosView === 'registro' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Wrench size={16}/> Registro y Costos</button>
-                 </div>
-              )}
-
-              {appUser?.permissions?.configuracion && activeTab === 'configuracion' && (
-                <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><Settings2 size={18} className="text-white" /> CONFIGURACIÓN</button>
-              )}
-            </nav>
-          )}
-
-          <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' || activeTab === 'configuracion' ? 'flex items-center justify-center' : ''}`}>
-            {activeTab === 'home' && renderHome()}
-            {activeTab === 'ventas' && renderVentasModule()}
-            {activeTab === 'produccion' && renderProductionModule()}
-            {activeTab === 'inventario' && renderInventoryModule()}
-            {activeTab === 'costos' && renderCostosModule()}
-            
-            {activeTab === 'operativos' && operativosView === 'registro' && (() => {
-               // Renderizado del Submódulo "Costos Operativos"
-               const handleAddOpCost = async (e) => {
-                  e.preventDefault();
-                  if (!newOpCostForm.amount) return;
-                  const finalCategory = newOpCostForm.category === 'OTRA (ESPECIFICAR)' ? newOpCostForm.customCategory.toUpperCase() : newOpCostForm.category;
-                  
-                  try {
-                     await addDoc(collection(db, 'operatingCosts'), {
-                        date: newOpCostForm.date,
-                        category: finalCategory,
-                        description: newOpCostForm.description,
-                        amount: parseNum(newOpCostForm.amount),
-                        timestamp: Date.now(),
-                        user: appUser?.name || 'Admin'
-                     });
-                     setNewOpCostForm({...initialOpCostForm, date: getTodayDate()});
-                     setDialog({title: 'Éxito', text: 'Costo operativo registrado.', type: 'alert'});
-                  } catch(err) {
-                     setDialog({title: 'Error', text: err.message, type: 'alert'});
-                  }
-               };
-
-               const handleDeleteOpCost = async (id) => {
-                  setDialog({ title: 'Eliminar Costo', text: '¿Desea eliminar este registro de costo operativo?', type: 'confirm', onConfirm: async () => {
-                     await deleteDoc(doc(db, 'operatingCosts', id));
-                  }});
-               };
-
-               const categoryTotals = {};
-               let totalOpCost = 0;
-               opCosts.forEach(c => {
-                  const amt = parseNum(c.amount);
-                  totalOpCost += amt;
-                  if (!categoryTotals[c.category]) categoryTotals[c.category] = 0;
-                  categoryTotals[c.category] += amt;
-               });
-
-               const sortedCategories = Object.entries(categoryTotals).map(([cat, amt]) => ({
-                  category: cat,
-                  amount: amt,
-                  pct: totalOpCost > 0 ? (amt / totalOpCost) * 100 : 0
-               })).sort((a, b) => b.amount - a.amount);
-
-               const maxAmt = sortedCategories.length > 0 ? sortedCategories[0].amount : 1;
-               const totalIncome = (invoices || []).reduce((acc, inv) => acc + parseNum(inv.montoBase), 0);
-               const globalOpPercent = totalIncome > 0 ? (totalOpCost / totalIncome) * 100 : 0;
-
-               return (
-                 <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
-                    <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-                       <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Wrench className="text-orange-500" size={24}/> Costos Operativos de Planta</h2>
-                       <div className="flex gap-2">
-                          <button onClick={() => handleExportExcel('costos-operativos-table', 'Costos_Operativos')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
-                          <button onClick={() => handleExportPDF('Reporte_Costos_Operativos', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
-                       </div>
-                    </div>
-
-                    <div data-html2canvas-ignore="true" className="p-8 bg-gray-50/50 border-b border-gray-200 no-pdf">
-                       <form onSubmit={handleAddOpCost} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
-                         <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-4 tracking-widest">Registrar Nuevo Gasto / Costo</h3>
-                         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                           <div>
-                             <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                             <input type="date" required value={newOpCostForm.date} onChange={e=>setNewOpCostForm({...newOpCostForm, date: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-black" />
-                           </div>
-                           <div>
-                             <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
-                             <select value={newOpCostForm.category} onChange={e=>setNewOpCostForm({...newOpCostForm, category: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
-                                <option value="Nómina y Beneficios">Nómina y Beneficios</option>
-                                <option value="Electricidad / Servicios">Electricidad / Servicios</option>
-                                <option value="Mantenimiento y Repuestos">Mantenimiento y Repuestos</option>
-                                <option value="Consumos Internos">Consumos Internos</option>
-                                <option value="Logística y Fletes">Logística y Fletes</option>
-                                <option value="OTRA (ESPECIFICAR)">OTRA (ESPECIFICAR)</option>
-                             </select>
-                           </div>
-                           {newOpCostForm.category === 'OTRA (ESPECIFICAR)' && (
-                             <div>
-                               <label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Nueva Categoría</label>
-                               <input type="text" required value={newOpCostForm.customCategory} onChange={e=>setNewOpCostForm({...newOpCostForm, customCategory: e.target.value.toUpperCase()})} className="w-full border-2 border-orange-200 bg-orange-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="ESCRIBA AQUÍ..." />
-                             </div>
-                           )}
-                           <div className={newOpCostForm.category === 'OTRA (ESPECIFICAR)' ? 'md:col-span-1' : 'md:col-span-2'}>
-                             <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción / Detalle</label>
-                             <input type="text" required value={newOpCostForm.description} onChange={e=>setNewOpCostForm({...newOpCostForm, description: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="EJ: PAGO SEMANAL" />
-                           </div>
-                           <div>
-                             <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Monto ($ USD)</label>
-                             <input type="number" step="0.01" required value={newOpCostForm.amount} onChange={e=>setNewOpCostForm({...newOpCostForm, amount: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-center text-red-600" placeholder="0.00" />
-                           </div>
-                         </div>
-                         <div className="flex justify-end pt-2">
-                            <button type="submit" className="bg-black text-white px-10 py-3.5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all flex items-center gap-2"><Plus size={16}/> REGISTRAR GASTO</button>
-                         </div>
-                       </form>
-                    </div>
-
-                    <div id="pdf-content" className="p-8 print:p-0 bg-white">
-                       <div className="hidden pdf-header mb-8"><ReportHeader /></div>
-                       <div className="text-center mb-8"><h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">REPORTE DE COSTOS OPERATIVOS DE PLANTA</h1></div>
-
-                       {/* GRÁFICA DE BARRAS */}
-                       <div className="mb-10 bg-gray-50 p-6 rounded-2xl border-2 border-gray-200 no-pdf">
-                          <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest text-center">Distribución de Gastos Operativos</h3>
-                          <div className="space-y-4">
-                             {sortedCategories.map((item, i) => (
-                                <div key={i} className="flex items-center gap-4">
-                                   <div className="w-1/4 text-right text-[10px] font-black uppercase truncate" title={item.category}>{item.category}</div>
-                                   <div className="w-2/4">
-                                      <div className="h-6 bg-gray-200 rounded-full overflow-hidden">
-                                         <div className="h-full bg-orange-500 rounded-full flex items-center px-2" style={{width: `${Math.max(5, (item.amount/maxAmt)*100)}%`}}></div>
-                                      </div>
-                                   </div>
-                                   <div className="w-1/4 text-left text-xs font-black text-gray-700">
-                                      ${formatNum(item.amount)} <span className="text-orange-600 ml-2">({formatNum(item.pct)}%)</span>
-                                   </div>
-                                </div>
-                             ))}
-                             {sortedCategories.length === 0 && <div className="text-center text-xs font-bold text-gray-400 uppercase">Sin datos registrados</div>}
-                          </div>
-                       </div>
-
-                       <div className="grid grid-cols-2 gap-4 mb-8">
-                          <div className="bg-red-50 p-4 rounded-xl border border-red-200 text-center">
-                             <p className="text-[10px] font-black text-red-800 uppercase tracking-widest mb-1">Gasto Operativo Total</p>
-                             <p className="text-2xl font-black text-red-600">${formatNum(totalOpCost)}</p>
-                          </div>
-                          <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 text-center">
-                             <p className="text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1">Impacto (Gasto vs Ingresos Planta)</p>
-                             <p className="text-2xl font-black text-blue-600">{formatNum(globalOpPercent)}%</p>
-                          </div>
-                       </div>
-
-                       <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-                         <table id="costos-operativos-table" className="w-full text-left whitespace-nowrap text-xs">
-                            <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
-                               <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                                  <th className="py-3 px-4 border-r print:border-black">Fecha</th>
-                                  <th className="py-3 px-4 border-r print:border-black">Categoría</th>
-                                  <th className="py-3 px-4 border-r print:border-black">Descripción / Detalle</th>
-                                  <th className="py-3 px-4 border-r print:border-black">Registrado Por</th>
-                                  <th className="py-3 px-4 text-right border-r print:border-black">Monto ($)</th>
-                                  <th className="py-3 px-4 text-center no-pdf">Acciones</th>
-                               </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100 text-black print:divide-black">
-                               {(opCosts || []).map(c => (
-                                  <tr key={c.id} className="hover:bg-gray-50 transition-colors">
-                                     <td className="py-3 px-4 font-bold border-r print:border-black">{c.date}</td>
-                                     <td className="py-3 px-4 font-black border-r print:border-black uppercase text-gray-600">{c.category}</td>
-                                     <td className="py-3 px-4 font-bold border-r print:border-black uppercase">{c.description}</td>
-                                     <td className="py-3 px-4 font-bold border-r print:border-black uppercase text-[9px] text-gray-500">{c.user}</td>
-                                     <td className="py-3 px-4 text-right font-black border-r print:border-black text-red-600">${formatNum(c.amount)}</td>
-                                     <td className="py-3 px-4 text-center no-pdf">
-                                        <button onClick={() => handleDeleteOpCost(c.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={14}/></button>
-                                     </td>
-                                  </tr>
-                               ))}
-                               {(!opCosts || opCosts.length === 0) && <tr><td colSpan="6" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">No hay costos operativos registrados</td></tr>}
-                            </tbody>
-                         </table>
-                       </div>
-                    </div>
-                 </div>
-               );
-            })()}
-
-            {activeTab === 'configuracion' && (
-              <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden animate-in fade-in w-full">
-                 <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center">
-                    <h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><Settings2 className="text-orange-500" size={24}/> Gestión de Usuarios y Permisos</h2>
-                 </div>
-                 
-                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">
-                    <div className="lg:col-span-1 border-r border-gray-200 bg-gray-50/50 p-8">
-                       <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest border-b border-gray-200 pb-2">{editingUserId ? 'Editar Usuario' : 'Nuevo Usuario'}</h3>
-                       <form onSubmit={handleSaveUser} className="space-y-4">
-                          <div>
-                            <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nombre Completo</label>
-                            <input type="text" required value={newUserForm.name} onChange={e=>setNewUserForm({...newUserForm, name: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500 transition-colors" placeholder="EJ: JUAN PEREZ" />
-                          </div>
-                          <div>
-                            <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Usuario (Login)</label>
-                            <input type="text" required disabled={!!editingUserId} value={newUserForm.username} onChange={e=>setNewUserForm({...newUserForm, username: e.target.value.toLowerCase()})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500 transition-colors" placeholder="EJ: juanp" />
-                          </div>
-                          <div>
-                            <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Contraseña</label>
-                            <input type="text" required={!editingUserId} value={newUserForm.password} onChange={e=>setNewUserForm({...newUserForm, password: e.target.value})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500 transition-colors" placeholder="Mínimo 4 caracteres" />
-                          </div>
-                          
-                          <div className="pt-4 border-t border-gray-200 mt-4">
-                             <label className="text-[10px] font-black text-black uppercase block mb-3 tracking-widest">Permisos de Acceso</label>
-                             <div className="space-y-2 bg-white p-4 rounded-xl border border-gray-200">
-                                {['ventas', 'produccion', 'inventario', 'costos', 'operativos', 'configuracion'].map(mod => (
-                                   <label key={mod} className="flex items-center gap-3 cursor-pointer group">
-                                      <input type="checkbox" checked={newUserForm.permissions?.[mod] || false} onChange={(e) => setNewUserForm({...newUserForm, permissions: {...newUserForm.permissions, [mod]: e.target.checked}})} className="w-4 h-4 text-orange-500 rounded focus:ring-orange-500 cursor-pointer" />
-                                      <span className="text-[10px] font-black text-gray-600 uppercase group-hover:text-black transition-colors">Módulo de {mod}</span>
-                                   </label>
-                                ))}
-                             </div>
-                          </div>
-                          
-                          <div className="pt-6 flex gap-2">
-                             {editingUserId && <button type="button" onClick={() => {setEditingUserId(null); setNewUserForm(initialUserForm);}} className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl font-black text-[10px] uppercase hover:bg-gray-300 transition-all">Cancelar</button>}
-                             <button type="submit" className="flex-1 bg-black text-white py-3 rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all flex items-center justify-center gap-2"><Save size={14}/> Guardar</button>
-                          </div>
-                       </form>
-                    </div>
-                    
-                    <div className="lg:col-span-2 p-8">
-                       <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest border-b border-gray-200 pb-2">Usuarios Registrados</h3>
-                       <div className="overflow-x-auto rounded-xl border border-gray-200">
-                          <table className="w-full text-left whitespace-nowrap text-sm">
-                             <thead className="bg-gray-100 border-b-2 border-gray-200">
-                                <tr className="uppercase font-black text-[10px] tracking-widest text-gray-500">
-                                   <th className="py-3 px-4 border-r">Usuario / Nombre</th>
-                                   <th className="py-3 px-4 border-r">Clave</th>
-                                   <th className="py-3 px-4 border-r">Accesos Permitidos</th>
-                                   <th className="py-3 px-4 text-center">Acciones</th>
-                                </tr>
-                             </thead>
-                             <tbody className="divide-y divide-gray-100 text-black">
-                                {systemUsers.map(u => (
-                                   <tr key={u.username} className="hover:bg-gray-50">
-                                      <td className="py-3 px-4 border-r">
-                                         <span className="font-black text-orange-600 text-sm">{u.username}</span><br/>
-                                         <span className="text-[10px] font-bold text-gray-500 uppercase">{u.name}</span>
-                                      </td>
-                                      <td className="py-3 px-4 border-r font-black text-gray-400">{u.password}</td>
-                                      <td className="py-3 px-4 border-r">
-                                         <div className="flex flex-wrap gap-1">
-                                            {u.permissions && Object.entries(u.permissions).map(([key, val]) => val && (
-                                               <span key={key} className="bg-blue-50 text-blue-600 border border-blue-200 px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest">{key}</span>
-                                            ))}
-                                            {u.role === 'Master' && <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded text-[9px] font-black uppercase">ALL ACCESS</span>}
-                                         </div>
-                                      </td>
-                                      <td className="py-3 px-4 text-center">
-                                         <div className="flex justify-center gap-2">
-                                            <button onClick={() => startEditUser(u)} className="p-2 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-all"><Edit size={14}/></button>
-                                            {u.username !== 'admin' && (
-                                               <button onClick={() => handleDeleteUser(u.username)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all disabled:opacity-50"><Trash2 size={14}/></button>
-                                            )}
-                                         </div>
-                                      </td>
-                                   </tr>
-                                ))}
-                             </tbody>
-                          </table>
-                       </div>
-                    </div>
-                 </div>
-              </div>
-            )}
-          </main>
-        </div>
-
-        {dialog && (
-          <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[9999] print:hidden">
-            <div className="bg-white rounded-3xl shadow-2xl border-t-8 border-orange-500 p-8 w-full max-w-md transform animate-in zoom-in-95">
-              <h3 className="text-xl font-black text-black uppercase mb-4 tracking-tighter">{dialog.title}</h3>
-              <p className="text-sm font-bold text-gray-500 mb-8 uppercase text-center">{dialog.text}</p>
-              <div className="flex gap-4">
-                {dialog.type === 'confirm' && (
-                  <button onClick={() => setDialog(null)} className="flex-1 bg-gray-100 font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-colors text-gray-800">CANCELAR</button>
-                )}
-                <button onClick={() => { if (dialog.onConfirm) dialog.onConfirm(); setDialog(null); }} className="flex-1 bg-black text-white font-black py-4 rounded-2xl shadow-xl uppercase text-[10px] tracking-widest hover:bg-gray-900 transition-colors">ACEPTAR</button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </ErrorBoundary>
-  );
-}
+            <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-right text-black text-[10px] font-black uppercase tracking-widest">KG Finales</th><th className="p-4 text-center text-black text-[10px] font-black uppercase tracking-widest">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(completedOrders || []).map(req => (<tr key={req?.id} className="hover:bg-gray-50 transition-colors group"><td className="p-4 font-black text-orange
