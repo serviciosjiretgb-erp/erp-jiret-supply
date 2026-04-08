@@ -183,19 +183,53 @@ export default function App() {
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
-  // EXPORTACIONES
+  // EXPORTACIONES (Ajustado PDF con orientación)
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content'); if (!element) return;
-    const printOnlyElements = element.querySelectorAll('.hidden.print\\:block, .hidden.pdf-header'); printOnlyElements.forEach(el => { el.style.display = 'block'; });
-    const noPdfElements = element.querySelectorAll('.no-pdf'); noPdfElements.forEach(el => { el.style.display = 'none'; });
-    const originalCssText = element.style.cssText; const originalClasses = element.className; const virtualWidth = isLandscape ? 1120 : 800; 
-    element.className = 'bg-white text-black p-8'; element.style.width = `${virtualWidth}px`; element.style.maxWidth = 'none'; element.style.margin = '0 auto';
-    const tables = element.querySelectorAll('table'); tables.forEach(t => { t.style.whiteSpace = 'normal'; t.style.tableLayout = 'auto'; t.style.width = '100%'; });
-    const overflows = element.querySelectorAll('.overflow-x-auto'); overflows.forEach(el => { el.style.overflow = 'visible'; });
-    const opt = { margin: [10, 10, 10, 10], filename: `${filename}_${getTodayDate()}.pdf`, image: { type: 'jpeg', quality: 1 }, html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: virtualWidth }, jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' } };
-    const finishExport = () => { printOnlyElements.forEach(el => { el.style.display = ''; }); noPdfElements.forEach(el => { el.style.display = ''; }); element.style.cssText = originalCssText; element.className = originalClasses; tables.forEach(t => { t.style.whiteSpace = ''; t.style.tableLayout = ''; t.style.width = ''; }); overflows.forEach(el => { el.style.overflow = ''; }); };
-    if (typeof window.html2pdf === 'undefined') { const script = document.createElement('script'); script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; script.onload = () => { window.html2pdf().set(opt).from(element).save().then(finishExport); }; document.head.appendChild(script); } else { window.html2pdf().set(opt).from(element).save().then(finishExport); }
+    const printOnlyElements = element.querySelectorAll('.hidden.print\\:block, .hidden.pdf-header'); 
+    printOnlyElements.forEach(el => { el.style.display = 'block'; });
+    const noPdfElements = element.querySelectorAll('.no-pdf'); 
+    noPdfElements.forEach(el => { el.style.display = 'none'; });
+
+    const originalCssText = element.style.cssText; 
+    const originalClasses = element.className; 
+    
+    // Ajuste de Virtual Width según orientación
+    const virtualWidth = isLandscape ? 1120 : 800; 
+    element.className = 'bg-white text-black p-6'; 
+    element.style.width = `${virtualWidth}px`; 
+    element.style.maxWidth = 'none'; 
+    element.style.margin = '0 auto';
+    
+    const tables = element.querySelectorAll('table'); 
+    tables.forEach(t => { t.style.whiteSpace = 'normal'; t.style.tableLayout = 'fixed'; t.style.width = '100%'; t.style.wordBreak = 'break-word'; });
+
+    const opt = { 
+      margin: 10, 
+      filename: `${filename}_${getTodayDate()}.pdf`, 
+      image: { type: 'jpeg', quality: 0.98 }, 
+      html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: virtualWidth }, 
+      jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' } 
+    };
+
+    const finishExport = () => { 
+      printOnlyElements.forEach(el => { el.style.display = ''; }); 
+      noPdfElements.forEach(el => { el.style.display = ''; }); 
+      element.style.cssText = originalCssText; 
+      element.className = originalClasses; 
+      tables.forEach(t => { t.style.whiteSpace = ''; t.style.tableLayout = ''; t.style.width = ''; t.style.wordBreak = ''; }); 
+    };
+
+    if (typeof window.html2pdf === 'undefined') { 
+      const script = document.createElement('script'); 
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; 
+      script.onload = () => { window.html2pdf().set(opt).from(element).save().then(finishExport); }; 
+      document.head.appendChild(script); 
+    } else { 
+      window.html2pdf().set(opt).from(element).save().then(finishExport); 
+    }
   };
+  
   const handleExportExcel = (tableId, filename) => {
     const table = document.getElementById(tableId); if (!table) return; const tableClone = table.cloneNode(true);
     const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8" /><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #000;padding:5px;}th{text-align:center;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><br/>${tableClone.outerHTML}</body></html>`;
@@ -533,7 +567,6 @@ export default function App() {
   
   // 3. Kilos Brutos (Total Mezcla) considerando Merma (Cálculo Inverso)
   const mermaPorc = parseNum(calcInputs?.mermaGlobalPorc) || 5;
-  // Kilos Brutos = Kilos Netos / (1 - (Merma / 100))
   const calcTotalMezcla = (calcKilosNetos > 0 && mermaPorc < 100) ? (calcKilosNetos / (1 - (mermaPorc / 100))) : calcKilosNetos;
   const calcMermaGlobalKg = calcTotalMezcla - calcKilosNetos;
 
@@ -580,7 +613,6 @@ export default function App() {
        const availableReal = mp.stock - committedStock;
        const daysRemaining = dailyAvg > 0 ? availableReal / dailyAvg : 999;
        
-       // Calculo de sugerencia de compra (Alarma 30 días de reposición + 15 días extra)
        const isCritical = daysRemaining <= 30 || availableReal <= 0;
        const suggestOrder = isCritical ? Math.ceil(Math.abs(availableReal < 0 ? availableReal : 0) + (dailyAvg * 45)) : 0; 
 
@@ -1845,13 +1877,20 @@ export default function App() {
                            
                            {/* 0. PEDIDO DEL CLIENTE */}
                            <tr className="bg-orange-50 font-black border-y border-gray-300 print:border-black print:bg-gray-200">
-                              <td className="p-1.5 print:p-1 pl-4 text-orange-800 print:text-black">0. PEDIDO A ENTREGAR (NETO)</td>
+                              <td className="p-1.5 print:p-1 pl-4 text-orange-800 print:text-black">0. PEDIDO A ENTREGAR ({calcInputs?.tipoProducto})</td>
                               <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black text-lg print:text-xs">{formatNum(inputCantidadSolicitada)}</td>
                               <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">{simUmFinal}</td>
                               <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">${formatNum(calcCostoFinalUnidad)}</td>
                               <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">${formatNum(calcCostoMezclaPreparada)}</td>
-                              <td className="p-1.5 print:p-1 text-gray-500 print:text-black">
-                                 {isBolsas ? `Equivale a ${formatNum(calcKilosNetos)} KG Netos` : 'Kilos terminados'}
+                              <td className="p-1.5 print:p-1 text-gray-700 print:text-black font-bold text-[9px] leading-tight">
+                                 {isBolsas ? (
+                                    <>
+                                      <span className="text-orange-600 block">PESO POR MILLAR: {formatNum(simPesoMillar)} KG</span>
+                                      Equivale a {formatNum(calcKilosNetos)} KG Netos
+                                    </>
+                                 ) : (
+                                    'Material Directo en Kilos'
+                                 )}
                               </td>
                            </tr>
 
@@ -2082,10 +2121,7 @@ export default function App() {
     );
   };
 
-  if (!appUser) return <ErrorBoundary>{renderLogin()}</ErrorBoundary>;
-
-  return (
-    <ErrorBoundary>
+  <ErrorBoundary>
       <div className="min-h-screen bg-gray-100 text-gray-900 font-sans flex flex-col print:bg-white print:block print:w-full overflow-x-hidden print:overflow-visible text-black font-black">
         <header className="bg-black border-b-4 border-orange-500 sticky top-0 z-50 text-white shadow-md print:hidden">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -2190,7 +2226,8 @@ export default function App() {
                           </div>
                           <div>
                             <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Contraseña</label>
-                            <input type="password" required={!editingUserId} value={newUserForm.password} onChange={e=>setNewUserForm({...newUserForm, password: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-sm outline-none transition-colors text-black" />
+                            {/* AQUÍ ESTÁ EL CAMBIO A TYPE="TEXT" PARA VER LA CONTRASEÑA */}
+                            <input type="text" required={!editingUserId} value={newUserForm.password} onChange={e=>setNewUserForm({...newUserForm, password: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-sm outline-none transition-colors text-black" />
                           </div>
                        </div>
                        
@@ -2224,6 +2261,7 @@ export default function App() {
                                 <tr className="uppercase font-black text-[10px] text-gray-500 tracking-widest">
                                    <th className="py-4 px-4 border-r">Usuario (ID)</th>
                                    <th className="py-4 px-4 border-r">Nombre Completo</th>
+                                   <th className="py-4 px-4 border-r">Contraseña</th>
                                    <th className="py-4 px-4 border-r">Permisos Activos</th>
                                    <th className="py-4 px-4 text-center">Acciones</th>
                                 </tr>
@@ -2233,6 +2271,8 @@ export default function App() {
                                    <tr key={u.id} className="hover:bg-gray-50 transition-colors">
                                       <td className="py-4 px-4 font-black border-r uppercase">{u.username}</td>
                                       <td className="py-4 px-4 font-bold border-r uppercase">{u.name}</td>
+                                      {/* AGREGADO PARA QUE TAMBIÉN SE VEA LA CLAVE EN LA TABLA */}
+                                      <td className="py-4 px-4 font-bold border-r text-orange-600 tracking-widest">{u.password}</td>
                                       <td className="py-4 px-4 border-r">
                                          <div className="flex gap-2 flex-wrap">
                                             {Object.entries(u.permissions || {}).filter(([_, val]) => val).map(([key]) => (
