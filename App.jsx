@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, Factory, TrendingUp, AlertTriangle, 
   ClipboardList, PlayCircle, History, FileText, Settings2, Trash2, 
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
-  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Percent, Briefcase
+  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Percent, Briefcase, Zap, Wrench, CreditCard, Activity
 } from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
@@ -128,6 +128,7 @@ export default function App() {
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [invRequisitions, setInvRequisitions] = useState([]);
+  const [opCosts, setOpCosts] = useState([]); // Nuevos Costos Operativos
 
   const [dialog, setDialog] = useState(null);
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
@@ -176,7 +177,7 @@ export default function App() {
   const initialCalcInputs = { ingredientes: [{ id: Date.now() + 1, nombre: 'MP-0240', pct: 80, costo: 0.96 }, { id: Date.now() + 2, nombre: 'MP-RECICLADO', pct: 20, costo: 1.00 }], cantidadSolicitada: '', mermaGlobalPorc: 5, tipoProducto: 'BOLSAS', ancho: '', fuelles: '', largo: '', micras: '' };
   const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
 
-  // Formularios Inventario
+  // Formularios Inventario y Costos Operativos
   const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '' };
   const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
   const [editingInvId, setEditingInvId] = useState(null);
@@ -184,44 +185,38 @@ export default function App() {
   const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
+  
+  const initialOpCostForm = { date: getTodayDate(), category: 'Nómina', description: '', amount: '' };
+  const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
 
   // ============================================================================
-  // EXPORTACIONES A PDF CON MÁRGENES FIJOS
+  // EXPORTACIONES A PDF Y EXCEL CORREGIDAS
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content'); if (!element) return;
+    
+    // Mostrar/ocultar elementos
     const printOnlyElements = element.querySelectorAll('.hidden.print\\:block, .hidden.pdf-header'); 
     printOnlyElements.forEach(el => { el.style.display = 'block'; });
     const noPdfElements = element.querySelectorAll('.no-pdf'); 
     noPdfElements.forEach(el => { el.style.display = 'none'; });
 
-    const originalCssText = element.style.cssText; 
-    const originalClasses = element.className; 
-    
-    // Ajuste estricto para que respete márgenes A4
-    const virtualWidth = isLandscape ? 1120 : 800; 
-    element.className = 'bg-white text-black p-6'; 
-    element.style.width = `${virtualWidth}px`; 
-    element.style.maxWidth = 'none'; 
-    element.style.margin = '0 auto';
-    
-    const tables = element.querySelectorAll('table'); 
-    tables.forEach(t => { t.style.whiteSpace = 'normal'; t.style.tableLayout = 'fixed'; t.style.width = '100%'; t.style.wordBreak = 'break-word'; });
+    // Evitar recortes horizontales quitando clases overflow
+    const overflows = element.querySelectorAll('.overflow-x-auto, .overflow-hidden');
+    overflows.forEach(el => { el.setAttribute('data-overflow', el.style.overflow || ''); el.style.overflow = 'visible'; });
 
     const opt = { 
-      margin: 10, 
+      margin: [10, 5, 10, 5], // Márgenes superior, derecha, abajo, izquierda
       filename: `${filename}_${getTodayDate()}.pdf`, 
       image: { type: 'jpeg', quality: 0.98 }, 
-      html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: virtualWidth }, 
+      html2canvas: { scale: 2, useCORS: true, logging: false }, 
       jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' } 
     };
 
     const finishExport = () => { 
       printOnlyElements.forEach(el => { el.style.display = ''; }); 
       noPdfElements.forEach(el => { el.style.display = ''; }); 
-      element.style.cssText = originalCssText; 
-      element.className = originalClasses; 
-      tables.forEach(t => { t.style.whiteSpace = ''; t.style.tableLayout = ''; t.style.width = ''; t.style.wordBreak = ''; }); 
+      overflows.forEach(el => { el.style.overflow = el.getAttribute('data-overflow') || ''; });
     };
 
     if (typeof window.html2pdf === 'undefined') { 
@@ -240,9 +235,14 @@ export default function App() {
     const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${filename}_${getTodayDate()}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
-  // ============================================================================
+  // Función global para colores de Mermas
+  const getMermaColor = (pct) => {
+     if (pct <= 5.0) return 'text-green-500';
+     if (pct > 5.0 && pct <= 5.5) return 'text-yellow-500';
+     return 'text-red-500';
+  };
+
   // INICIO DE SESIÓN
-  // ============================================================================
   const handleLogin = (e) => {
     e.preventDefault(); const user = loginData.username.toLowerCase().trim(); const pass = loginData.password.trim();
     const foundUser = systemUsers.find(u => u.username === user && u.password === pass);
@@ -275,7 +275,9 @@ export default function App() {
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
-    return () => { unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); };
+    const unsubOpCosts = onSnapshot(getColRef('operatingCosts'), (s) => setOpCosts(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+
+    return () => { unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); };
   }, [fbUser]);
 
   const clearAllReports = () => {
@@ -795,6 +797,7 @@ export default function App() {
           <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
              <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Reportes de Inventario</h2>
              <div className="flex gap-2">
+                <button onClick={() => handleExportExcel('reporte-inv-filtrado', 'Reporte_Inventario')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXPORTAR EXCEL</button>
                 <button onClick={() => handleExportPDF('Reporte_Inventario_Filtrado', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
              </div>
           </div>
@@ -812,7 +815,7 @@ export default function App() {
              </div>
 
              <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-               <table className="w-full text-left whitespace-nowrap text-xs">
+               <table id="reporte-inv-filtrado" className="w-full text-left whitespace-nowrap text-xs">
                  <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
                    <tr className="uppercase font-black text-[10px] tracking-widest text-black">
                      <th className="py-3 px-4 border-r print:border-black">Fecha / Usuario</th>
@@ -891,10 +894,11 @@ export default function App() {
            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
              <div className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><ClipboardList className="text-orange-500" size={24}/> Requisiciones de Planta a Almacén</h2>
+               <button onClick={() => handleExportExcel('req-almacen-table', 'Requisiciones_Almacen')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXPORTAR EXCEL</button>
              </div>
              <div className="p-8">
                <div className="overflow-x-auto rounded-xl border border-gray-200">
-                 <table className="w-full text-left text-sm whitespace-nowrap">
+                 <table id="req-almacen-table" className="w-full text-left text-sm whitespace-nowrap">
                    <thead className="bg-gray-100 border-b-2 border-gray-200">
                      <tr className="uppercase font-black text-[10px] tracking-widest text-gray-500">
                        <th className="py-4 px-4 border-r">OP / Fase</th>
@@ -991,7 +995,10 @@ export default function App() {
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Lista de Productos (Catálogo)</h2>
-               <button onClick={() => handleExportPDF('Catalogo_Inventario', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
+               <div className="flex gap-2">
+                 <button onClick={() => handleExportExcel('catalogo-table', 'Catalogo_Inventario')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
+                 <button onClick={() => handleExportPDF('Catalogo_Inventario', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
+               </div>
             </div>
             <div data-html2canvas-ignore="true" className="p-8 bg-gray-50/50 border-b border-gray-200 no-pdf">
                <form onSubmit={handleSaveInvItem} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
@@ -1055,7 +1062,7 @@ export default function App() {
                  <input type="text" placeholder="BUSCAR INSUMO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
                </div>
                <div className="overflow-x-auto rounded-xl print:border print:border-black print:rounded-none">
-                 <table className="w-full text-left whitespace-nowrap">
+                 <table id="catalogo-table" className="w-full text-left whitespace-nowrap">
                    <thead className="bg-gray-100 border-b-2 border-gray-200 print:border-black">
                      <tr className="uppercase font-black text-gray-800 text-[10px] tracking-widest print:text-black">
                        <th className="py-4 px-4">Código</th>
@@ -1167,7 +1174,10 @@ export default function App() {
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><History className="text-orange-500" size={24}/> Kardex / Historial de Movimientos</h2>
-               <button onClick={() => handleExportPDF('Kardex_Inventario', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
+               <div className="flex gap-2">
+                 <button onClick={() => handleExportExcel('kardex-table', 'Kardex_Inventario')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
+                 <button onClick={() => handleExportPDF('Kardex_Inventario', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
+               </div>
             </div>
 
             <div className="p-8 print:p-0 bg-white" id="pdf-content">
@@ -1183,7 +1193,7 @@ export default function App() {
                </div>
 
                <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-                 <table className="w-full text-left whitespace-nowrap text-xs">
+                 <table id="kardex-table" className="w-full text-left whitespace-nowrap text-xs">
                    <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
                      <tr className="uppercase font-black text-[10px] tracking-widest text-black">
                        <th className="py-3 px-4 border-r print:border-black">Fecha / Usuario</th>
@@ -1367,10 +1377,16 @@ export default function App() {
       const totalGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.total), 0);
       return (
         <div id="pdf-content" className="bg-white p-8 min-h-0 text-black bg-white">
-          <div data-html2canvas-ignore="true" className="flex justify-between mb-4 no-pdf"><button onClick={() => setShowGeneralInvoicesReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF('Reporte_General_Facturas', false)} className="bg-black text-white px-6 py-2 rounded-xl flex items-center gap-2 font-black text-xs uppercase hover:bg-gray-800"><Printer size={16}/> Exportar PDF</button></div>
+          <div data-html2canvas-ignore="true" className="flex justify-between mb-4 no-pdf">
+             <button onClick={() => setShowGeneralInvoicesReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button>
+             <div className="flex gap-2">
+               <button onClick={() => handleExportExcel('facturas-table', 'Reporte_General_Facturas')} className="bg-green-600 text-white px-6 py-2 rounded-xl flex items-center gap-2 font-black text-xs uppercase hover:bg-green-700"><Download size={16}/> Excel</button>
+               <button onClick={() => handleExportPDF('Reporte_General_Facturas', false)} className="bg-black text-white px-6 py-2 rounded-xl flex items-center gap-2 font-black text-xs uppercase hover:bg-gray-800"><Printer size={16}/> PDF</button>
+             </div>
+          </div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center mb-6"><h2 className="text-xl font-black uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte General de Facturación</h2></div>
-          <table className="w-full text-[10px] border-collapse border border-gray-300">
+          <table id="facturas-table" className="w-full text-[10px] border-collapse border border-gray-300">
             <thead className="bg-gray-100 uppercase"><tr><th className="p-2 border">Fecha</th><th className="p-2 border">Factura</th><th className="p-2 border">Cliente</th><th className="p-2 border text-right">Base ($)</th><th className="p-2 border text-right">IVA ($)</th><th className="p-2 border text-right">Total ($)</th></tr></thead>
             <tbody>{(invoices || []).map(i => (<tr key={i?.id}><td className="p-2 border">{i?.fecha}</td><td className="p-2 border font-bold">{i?.documento}</td><td className="p-2 border">{i?.clientName}</td><td className="p-2 border text-right">${formatNum(i?.montoBase)}</td><td className="p-2 border text-right">${formatNum(i?.iva)}</td><td className="p-2 border text-right font-black text-green-600">${formatNum(i?.total)}</td></tr>))}</tbody>
             <tfoot className="bg-gray-100 font-black"><tr><td colSpan="3" className="p-2 border text-right">TOTALES:</td><td className="p-2 border text-right">${formatNum(totalBaseGeneral)}</td><td className="p-2 border text-right">${formatNum(totalIvaGeneral)}</td><td className="p-2 border text-right text-orange-600">${formatNum(totalGeneral)}</td></tr></tfoot>
@@ -1431,10 +1447,16 @@ export default function App() {
     if (showClientReport) {
       return (
         <div id="pdf-content" className="bg-white p-10 min-h-0 text-black bg-white">
-          <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowClientReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF('Directorio_Clientes', true)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase hover:bg-gray-800"><Printer size={16}/> Exportar PDF</button></div>
+          <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf">
+             <button onClick={() => setShowClientReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button>
+             <div className="flex gap-2">
+               <button onClick={() => handleExportExcel('directorio-table', 'Directorio_Clientes')} className="bg-green-600 text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase hover:bg-green-700"><Download size={16}/> Excel</button>
+               <button onClick={() => handleExportPDF('Directorio_Clientes', true)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase hover:bg-gray-800"><Printer size={16}/> PDF</button>
+             </div>
+          </div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center mb-8"><h2 className="text-xl font-black uppercase border-b-2 border-orange-500 inline-block pb-1">Directorio de Clientes</h2></div>
-          <table className="w-full text-[10px] border-collapse border border-gray-300">
+          <table id="directorio-table" className="w-full text-[10px] border-collapse border border-gray-300">
             <thead className="bg-gray-100 uppercase"><tr><th className="p-2 border">RIF</th><th className="p-2 border">Razón Social</th><th className="p-2 border w-1/3">Dirección</th><th className="p-2 border">Teléfono</th><th className="p-2 border">Vendedor</th></tr></thead>
             <tbody>{(clients || []).map(c => (<tr key={c?.rif}><td className="p-2 border font-bold">{c?.rif}</td><td className="p-2 border font-black uppercase">{c?.name}</td><td className="p-2 border uppercase">{c?.direccion}</td><td className="p-2 border">{c?.telefono}</td><td className="p-2 border uppercase font-bold">{c?.vendedor}</td></tr>))}</tbody>
           </table>
@@ -1445,10 +1467,16 @@ export default function App() {
     if (showReqReport) {
       return (
         <div id="pdf-content" className="bg-white p-8 min-h-0 text-black bg-white">
-          <div data-html2canvas-ignore="true" className="flex justify-between mb-4 no-pdf"><button onClick={() => setShowReqReport(false)} className="bg-gray-100 px-4 py-2 font-bold text-xs uppercase rounded-xl hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF('Reporte_Requisiciones', true)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase hover:bg-gray-800"><Printer size={16}/> Exportar PDF</button></div>
+          <div data-html2canvas-ignore="true" className="flex justify-between mb-4 no-pdf">
+             <button onClick={() => setShowReqReport(false)} className="bg-gray-100 px-4 py-2 font-bold text-xs uppercase rounded-xl hover:bg-gray-200">Volver</button>
+             <div className="flex gap-2">
+               <button onClick={() => handleExportExcel('req-table', 'Reporte_Requisiciones')} className="bg-green-600 text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase hover:bg-green-700"><Download size={16}/> Excel</button>
+               <button onClick={() => handleExportPDF('Reporte_Requisiciones', true)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs flex items-center gap-2 uppercase hover:bg-gray-800"><Printer size={16}/> PDF</button>
+             </div>
+          </div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center mb-6"><h2 className="text-xl font-black uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte de Requisiciones (OP)</h2></div>
-          <table className="w-full text-[10px] border-collapse border border-gray-300">
+          <table id="req-table" className="w-full text-[10px] border-collapse border border-gray-300">
             <thead className="bg-gray-100 uppercase"><tr><th>OP N°</th><th>Fecha</th><th>Cliente</th><th>Vendedor</th><th>Producto</th><th className="text-right">KG Estimados</th><th className="text-center">Estatus</th></tr></thead>
             <tbody>{(requirements || []).map(r => (<tr key={r?.id}><td className="p-2 border text-center">{String(r?.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-2 border">{r?.fecha}</td><td className="p-2 border font-bold">{r?.client}</td><td className="p-2 border">{r?.vendedor}</td><td className="p-2 border">{r?.desc}</td><td className="p-2 border text-right font-black">{formatNum(r?.requestedKg)} KG</td><td className="p-2 border text-center font-bold uppercase">{r?.status}</td></tr>))}</tbody>
           </table>
@@ -1460,7 +1488,7 @@ export default function App() {
       <div className="space-y-6 animate-in fade-in">
         {ventasView === 'clientes' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-8 py-6 border-b bg-white flex justify-between items-center"><h2 className="text-xl font-black uppercase flex items-center gap-3"><Users className="text-orange-500" /> DIRECTORIO DE CLIENTES</h2><button onClick={()=>setShowClientReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50">REPORTE PDF</button></div>
+            <div className="px-8 py-6 border-b bg-white flex justify-between items-center"><h2 className="text-xl font-black uppercase flex items-center gap-3"><Users className="text-orange-500" /> DIRECTORIO DE CLIENTES</h2><button onClick={()=>setShowClientReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50">REPORTE GENERAL</button></div>
             <div className="p-8 bg-gray-50/50 border-b">
               <form onSubmit={handleAddClient} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -1639,7 +1667,10 @@ export default function App() {
          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><TrendingUp className="text-orange-500" size={24}/> Proyección de Materia Prima</h2>
-               <button onClick={() => handleExportPDF('Proyeccion_MP', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR REPORTE</button>
+               <div className="flex gap-2">
+                 <button onClick={() => handleExportExcel('proyeccion-table', 'Proyeccion_Inventario')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
+                 <button onClick={() => handleExportPDF('Proyeccion_MP', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
+               </div>
             </div>
             <div id="pdf-content" className="p-8 print:p-0 bg-white">
                <div className="hidden pdf-header mb-8">
@@ -1657,7 +1688,7 @@ export default function App() {
                </div>
 
                <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-                 <table className="w-full text-left whitespace-nowrap text-xs">
+                 <table id="proyeccion-table" className="w-full text-left whitespace-nowrap text-xs">
                    <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
                      <tr className="uppercase font-black text-[10px] tracking-widest text-black">
                        <th className="py-3 px-4 border-r print:border-black">Insumo</th>
@@ -1984,18 +2015,26 @@ export default function App() {
     const completedOps = (requirements || []).filter(r => r.status === 'COMPLETADO');
     const totalIncome = (invoices || []).reduce((acc, inv) => acc + parseNum(inv.montoBase), 0);
     
-    let totalOpCosts = 0;
+    let totalOpCostsMP = 0;
     completedOps.forEach(req => {
       ['extrusion', 'impresion', 'sellado'].forEach(phase => {
-        (req.production?.[phase]?.batches || []).forEach(b => { totalOpCosts += parseNum(b.cost); });
+        (req.production?.[phase]?.batches || []).forEach(b => { totalOpCostsMP += parseNum(b.cost); });
       });
     });
 
-    const globalProfit = totalIncome - totalOpCosts;
+    const totalOpCostsOperativos = opCosts.reduce((acc, cost) => acc + parseNum(cost.amount), 0);
+    const totalCostsGlobal = totalOpCostsMP + totalOpCostsOperativos;
+
+    const globalProfit = totalIncome - totalCostsGlobal;
     const globalMargin = totalIncome > 0 ? (globalProfit / totalIncome) * 100 : 0;
 
     // === VISTA 1: DASHBOARD ===
     if (costosView === 'dashboard') {
+      const incomePercent = 100;
+      const mpPercent = totalIncome ? (totalOpCostsMP / totalIncome) * 100 : 0;
+      const opPercent = totalIncome ? (totalOpCostsOperativos / totalIncome) * 100 : 0;
+      const profitPercent = totalIncome ? (globalProfit / totalIncome) * 100 : 0;
+
       return (
         <div className="space-y-6 animate-in fade-in w-full">
            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -2006,49 +2045,73 @@ export default function App() {
               </div>
               <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-center items-center text-center">
                  <div className="bg-red-100 p-4 rounded-full text-red-600 mb-4"><TrendingUp size={28}/></div>
-                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Costos de Producción</p>
-                 <p className="text-2xl font-black text-black">${formatNum(totalOpCosts)}</p>
+                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Costo Producción (MP)</p>
+                 <p className="text-2xl font-black text-black">${formatNum(totalOpCostsMP)}</p>
+              </div>
+              <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-center items-center text-center">
+                 <div className="bg-orange-100 p-4 rounded-full text-orange-600 mb-4"><Wrench size={28}/></div>
+                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Costos Operativos Planta</p>
+                 <p className="text-2xl font-black text-black">${formatNum(totalOpCostsOperativos)}</p>
               </div>
               <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-center items-center text-center">
                  <div className="bg-blue-100 p-4 rounded-full text-blue-600 mb-4"><Briefcase size={28}/></div>
-                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Ganancia Bruta (OPs)</p>
+                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Ganancia Neta Global</p>
                  <p className={`text-2xl font-black ${globalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>${formatNum(globalProfit)}</p>
-              </div>
-              <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-center items-center text-center">
-                 <div className="bg-orange-100 p-4 rounded-full text-orange-600 mb-4"><Percent size={28}/></div>
-                 <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Margen Global (%)</p>
-                 <p className={`text-2xl font-black ${globalMargin >= 30 ? 'text-green-600' : (globalMargin > 0 ? 'text-orange-600' : 'text-red-600')}`}>{formatNum(globalMargin)}%</p>
               </div>
            </div>
 
-           <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-8">
-              <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-6">Órdenes de Producción Recientes (Rentabilidad)</h3>
-              <div className="space-y-4">
-                 {completedOps.slice(0, 5).map(op => {
-                    let cost = 0;
-                    ['extrusion', 'impresion', 'sellado'].forEach(p => { (op.production?.[p]?.batches || []).forEach(b => cost += parseNum(b.cost)); });
-                    const income = invoices.filter(i => i.opAsignada === op.id).reduce((s, i) => s + parseNum(i.montoBase), 0);
-                    return (
-                       <div key={op.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                          <div>
-                             <p className="font-black text-orange-600 uppercase text-xs">#{String(op.id).replace('OP-', '').padStart(5, '0')} - <span className="text-black">{op.client}</span></p>
-                             <p className="text-[10px] font-bold text-gray-500 uppercase">{op.desc}</p>
+           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-8">
+                 <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-6 flex justify-between">Estructura de Costos <span>{formatNum(globalMargin)}% Margen Neto</span></h3>
+                 <div className="space-y-6">
+                    <div>
+                       <div className="flex justify-between text-xs font-black uppercase mb-2"><span>Ingresos Totales</span><span className="text-green-600">${formatNum(totalIncome)}</span></div>
+                       <div className="w-full bg-gray-100 rounded-full h-4 overflow-hidden"><div className="bg-green-500 h-4 rounded-full" style={{width: `${incomePercent}%`}}></div></div>
+                    </div>
+                    <div>
+                       <div className="flex justify-between text-xs font-black uppercase mb-2"><span>Materia Prima (Producción)</span><span className="text-red-500">${formatNum(totalOpCostsMP)} ({formatNum(mpPercent)}%)</span></div>
+                       <div className="w-full bg-gray-100 rounded-full h-4 overflow-hidden"><div className="bg-red-500 h-4 rounded-full" style={{width: `${mpPercent}%`}}></div></div>
+                    </div>
+                    <div>
+                       <div className="flex justify-between text-xs font-black uppercase mb-2"><span>Costos Operativos</span><span className="text-orange-500">${formatNum(totalOpCostsOperativos)} ({formatNum(opPercent)}%)</span></div>
+                       <div className="w-full bg-gray-100 rounded-full h-4 overflow-hidden"><div className="bg-orange-500 h-4 rounded-full" style={{width: `${opPercent}%`}}></div></div>
+                    </div>
+                    <div className="pt-4 border-t border-gray-100">
+                       <div className="flex justify-between text-sm font-black uppercase mb-2"><span>Ganancia Neta Restante</span><span className={profitPercent >= 0 ? 'text-blue-600' : 'text-red-600'}>${formatNum(globalProfit)} ({formatNum(profitPercent)}%)</span></div>
+                       <div className="w-full bg-gray-100 rounded-full h-6 overflow-hidden"><div className={`h-6 rounded-full ${profitPercent >= 0 ? 'bg-blue-600' : 'bg-red-600'}`} style={{width: `${Math.max(0, Math.min(100, profitPercent))}%`}}></div></div>
+                    </div>
+                 </div>
+              </div>
+
+              <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-8">
+                 <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-6">OPs Completadas Recientes</h3>
+                 <div className="space-y-4">
+                    {completedOps.slice(0, 4).map(op => {
+                       let cost = 0;
+                       ['extrusion', 'impresion', 'sellado'].forEach(p => { (op.production?.[p]?.batches || []).forEach(b => cost += parseNum(b.cost)); });
+                       const income = invoices.filter(i => i.opAsignada === op.id).reduce((s, i) => s + parseNum(i.montoBase), 0);
+                       return (
+                          <div key={op.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                             <div>
+                                <p className="font-black text-orange-600 uppercase text-xs">#{String(op.id).replace('OP-', '').padStart(5, '0')} - <span className="text-black">{op.client}</span></p>
+                                <p className="text-[10px] font-bold text-gray-500 uppercase">{op.desc}</p>
+                             </div>
+                             <div className="flex gap-6 text-right">
+                                <div><p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Costo MP</p><p className="font-black text-red-600">${formatNum(cost)}</p></div>
+                                <div><p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Facturado</p><p className="font-black text-green-600">${formatNum(income)}</p></div>
+                             </div>
                           </div>
-                          <div className="flex gap-8 text-right">
-                             <div><p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Costo MP</p><p className="font-black text-red-600">${formatNum(cost)}</p></div>
-                             <div><p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Facturado</p><p className="font-black text-green-600">${formatNum(income)}</p></div>
-                          </div>
-                       </div>
-                    );
-                 })}
-                 {completedOps.length === 0 && <p className="text-xs text-gray-400 font-bold uppercase text-center py-4">No hay OPs completadas</p>}
+                       );
+                    })}
+                    {completedOps.length === 0 && <p className="text-xs text-gray-400 font-bold uppercase text-center py-4">No hay OPs completadas</p>}
+                 </div>
               </div>
            </div>
         </div>
       );
     }
 
-    // === VISTA 2: SÚPER FINIQUITO POR OP ===
+    // === VISTA 2: SÚPER FINIQUITO POR OP (Con Merma Total y Colores) ===
     if (costosView === 'op_detail') {
       const selectedReq = completedOps.find(r => r.id === selectedOpCost);
       
@@ -2056,6 +2119,9 @@ export default function App() {
       let matchedInvoices = []; let totalInvoiceIncome = 0;
       let costBreakdown = [];
       let fechaInicio = 'N/A'; let fechaFin = 'N/A';
+      
+      let totalMP_Kg = 0;
+      let totalMerma_Kg = 0;
 
       if (selectedReq) {
          const bs = [];
@@ -2063,11 +2129,13 @@ export default function App() {
             (selectedReq.production?.[phase]?.batches || []).forEach(b => {
                bs.push(b);
                reqTotalCost += parseNum(b.cost);
+               totalMerma_Kg += parseNum(b.mermaKg);
                (b.insumos || []).forEach(ing => {
                   const existing = costBreakdown.find(c => c.id === ing.id);
-                  const invItem = inventory.find(i => i.id === ing.id);
+                  const invItem = (inventory || []).find(i => i.id === ing.id);
                   const unitC = invItem ? invItem.cost : 0;
                   const totC = unitC * ing.qty;
+                  totalMP_Kg += parseNum(ing.qty);
                   if (existing) { existing.qty += ing.qty; existing.total += totC; }
                   else { costBreakdown.push({ id: ing.id, desc: invItem?.desc || ing.id, qty: ing.qty, unitCost: unitC, total: totC, phase }); }
                });
@@ -2080,18 +2148,32 @@ export default function App() {
             fechaFin = bs[bs.length - 1].date;
          }
 
-         matchedInvoices = invoices.filter(inv => inv.opAsignada === selectedReq.id);
+         matchedInvoices = (invoices || []).filter(inv => inv.opAsignada === selectedReq.id);
          totalInvoiceIncome = matchedInvoices.reduce((sum, inv) => sum + parseNum(inv.montoBase), 0);
       }
 
       const reqProfit = totalInvoiceIncome - reqTotalCost;
       const reqMargin = totalInvoiceIncome > 0 ? (reqProfit / totalInvoiceIncome) * 100 : 0;
+      const mermaPct = totalMP_Kg > 0 ? (totalMerma_Kg / totalMP_Kg) * 100 : 0;
+      
+      // Lógica de colores para Merma
+      const getMermaColor = (pct) => {
+         if (pct <= 5.0) return 'text-green-500';
+         if (pct > 5.0 && pct <= 5.5) return 'text-yellow-500';
+         return 'text-red-600';
+      };
+      const mermaColorClass = getMermaColor(mermaPct);
 
       return (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Detalle de Rentabilidad (OP)</h2>
-              {selectedReq && <button onClick={() => handleExportPDF(`SuperFiniquito_OP_${selectedReq.id}`, false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>}
+              {selectedReq && (
+                 <div className="flex gap-2">
+                    <button onClick={() => handleExportExcel('superfiniquito-table', `SuperFiniquito_OP_${selectedReq.id}`)} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
+                    <button onClick={() => handleExportPDF(`SuperFiniquito_OP_${selectedReq.id}`, false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
+                 </div>
+              )}
            </div>
 
            <div data-html2canvas-ignore="true" className="p-8 bg-white border-b border-gray-100 flex gap-4 items-end no-pdf">
@@ -2112,7 +2194,7 @@ export default function App() {
                     <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">SÚPER FINIQUITO DE PRODUCCIÓN Y COSTOS</h1>
                  </div>
 
-                 <div className="grid grid-cols-2 gap-4 mb-8 text-xs font-black uppercase border-2 border-black p-4 rounded-2xl bg-gray-50">
+                 <div className="grid grid-cols-2 gap-4 mb-4 text-xs font-black uppercase border-2 border-black p-4 rounded-t-2xl bg-gray-50">
                     <div>
                        <p className="text-gray-500 mb-1">CLIENTE:</p><p className="text-sm text-black mb-4">{selectedReq.client}</p>
                        <p className="text-gray-500 mb-1">PRODUCTO / MAQUILA:</p><p className="text-black mb-4">{selectedReq.desc}</p>
@@ -2125,79 +2207,97 @@ export default function App() {
                     </div>
                  </div>
 
-                 {/* COSTOS MATERIA PRIMA */}
-                 <div className="mb-8">
-                    <h3 className="text-sm font-black uppercase text-white bg-black p-3 tracking-widest">1. Desglose de Costos de Producción (MP)</h3>
-                    <table className="w-full text-left text-xs border-collapse border-2 border-black mt-2">
-                       <thead className="bg-gray-200">
-                          <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                             <th className="p-3 border border-black">Insumo / Descripción</th>
-                             <th className="p-3 border border-black text-center">Fase</th>
-                             <th className="p-3 border border-black text-center">Cantidad</th>
-                             <th className="p-3 border border-black text-right">Costo Unit.</th>
-                             <th className="p-3 border border-black text-right">Costo Total</th>
-                          </tr>
-                       </thead>
-                       <tbody>
-                          {costBreakdown.map((item, idx) => (
-                             <tr key={idx}>
-                                <td className="p-3 border border-black font-bold uppercase">{item.desc}</td>
-                                <td className="p-3 border border-black text-center font-bold uppercase">{item.phase}</td>
-                                <td className="p-3 border border-black text-center font-black">{formatNum(item.qty)} kg</td>
-                                <td className="p-3 border border-black text-right font-bold">${formatNum(item.unitCost)}</td>
-                                <td className="p-3 border border-black text-right font-black text-red-600">${formatNum(item.total)}</td>
-                             </tr>
-                          ))}
-                          {costBreakdown.length === 0 && <tr><td colSpan="5" className="p-4 text-center font-bold uppercase">No hay insumos reportados.</td></tr>}
-                       </tbody>
-                       <tfoot className="bg-gray-100">
-                          <tr>
-                             <td colSpan="4" className="p-3 border border-black text-right font-black uppercase">Costo Total MP:</td>
-                             <td className="p-3 border border-black text-right font-black text-red-600 text-lg">${formatNum(reqTotalCost)}</td>
-                          </tr>
-                       </tfoot>
-                    </table>
+                 {/* INDICADOR DE MERMA EN ENCABEZADO */}
+                 <div className="grid grid-cols-3 gap-4 mb-8 text-center text-xs font-black uppercase border-x-2 border-b-2 border-black p-4 rounded-b-2xl bg-white shadow-sm">
+                    <div>
+                       <p className="text-gray-500 mb-1">Total MP Inyectada</p>
+                       <p className="text-xl text-black">{formatNum(totalMP_Kg)} KG</p>
+                    </div>
+                    <div className="border-x-2 border-gray-200">
+                       <p className="text-gray-500 mb-1">Total Merma Generada</p>
+                       <p className={`text-xl ${mermaColorClass}`}>{formatNum(totalMerma_Kg)} KG</p>
+                    </div>
+                    <div>
+                       <p className="text-gray-500 mb-1">% Merma Global OP</p>
+                       <p className={`text-2xl ${mermaColorClass}`}>{formatNum(mermaPct)}%</p>
+                    </div>
                  </div>
 
-                 {/* INGRESOS FACTURAS */}
-                 <div className="mb-8">
-                    <h3 className="text-sm font-black uppercase text-white bg-black p-3 tracking-widest">2. Ventas y Facturación de la OP</h3>
-                    <table className="w-full text-left text-xs border-collapse border-2 border-black mt-2">
-                       <thead className="bg-gray-200">
-                          <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                             <th className="p-3 border border-black">Factura N°</th>
-                             <th className="p-3 border border-black text-center">Fecha</th>
-                             <th className="p-3 border border-black text-right">Base (Ingreso Real)</th>
-                             <th className="p-3 border border-black text-right">IVA (16%)</th>
-                             <th className="p-3 border border-black text-right">Total Cobrado</th>
-                          </tr>
-                       </thead>
-                       <tbody>
-                          {matchedInvoices.map((inv, idx) => (
-                             <tr key={idx}>
-                                <td className="p-3 border border-black font-black">{inv.documento}</td>
-                                <td className="p-3 border border-black text-center font-bold">{inv.fecha}</td>
-                                <td className="p-3 border border-black text-right font-black text-green-600">${formatNum(inv.montoBase)}</td>
-                                <td className="p-3 border border-black text-right font-bold text-gray-500">${formatNum(inv.iva)}</td>
-                                <td className="p-3 border border-black text-right font-black">${formatNum(inv.total)}</td>
+                 <div id="superfiniquito-table">
+                    {/* COSTOS MATERIA PRIMA */}
+                    <div className="mb-8">
+                       <h3 className="text-sm font-black uppercase text-white bg-black p-3 tracking-widest">1. Desglose de Costos de Producción (MP)</h3>
+                       <table className="w-full text-left text-xs border-collapse border-2 border-black mt-2">
+                          <thead className="bg-gray-200">
+                             <tr className="uppercase font-black text-[10px] tracking-widest text-black">
+                                <th className="p-3 border border-black">Insumo / Descripción</th>
+                                <th className="p-3 border border-black text-center">Fase</th>
+                                <th className="p-3 border border-black text-center">Cantidad</th>
+                                <th className="p-3 border border-black text-right">Costo Unit.</th>
+                                <th className="p-3 border border-black text-right">Costo Total</th>
                              </tr>
-                          ))}
-                          {matchedInvoices.length === 0 && <tr><td colSpan="5" className="p-4 text-center font-bold uppercase text-red-500">No hay facturas asociadas a esta OP.</td></tr>}
-                       </tbody>
-                       {matchedInvoices.length > 0 && (
+                          </thead>
+                          <tbody>
+                             {costBreakdown.map((item, idx) => (
+                                <tr key={idx}>
+                                   <td className="p-3 border border-black font-bold uppercase">{item.desc}</td>
+                                   <td className="p-3 border border-black text-center font-bold uppercase">{item.phase}</td>
+                                   <td className="p-3 border border-black text-center font-black">{formatNum(item.qty)} kg</td>
+                                   <td className="p-3 border border-black text-right font-bold">${formatNum(item.unitCost)}</td>
+                                   <td className="p-3 border border-black text-right font-black text-red-600">${formatNum(item.total)}</td>
+                                </tr>
+                             ))}
+                             {costBreakdown.length === 0 && <tr><td colSpan="5" className="p-4 text-center font-bold uppercase">No hay insumos reportados.</td></tr>}
+                          </tbody>
                           <tfoot className="bg-gray-100">
                              <tr>
-                                <td colSpan="2" className="p-3 border border-black text-right font-black uppercase">Total Ingreso OP (Base):</td>
-                                <td className="p-3 border border-black text-right font-black text-green-600 text-lg">${formatNum(totalInvoiceIncome)}</td>
-                                <td colSpan="2" className="p-3 border border-black bg-gray-200"></td>
+                                <td colSpan="4" className="p-3 border border-black text-right font-black uppercase">Costo Total MP:</td>
+                                <td className="p-3 border border-black text-right font-black text-red-600 text-lg">${formatNum(reqTotalCost)}</td>
                              </tr>
                           </tfoot>
-                       )}
-                    </table>
+                       </table>
+                    </div>
+
+                    {/* INGRESOS FACTURAS */}
+                    <div className="mb-8">
+                       <h3 className="text-sm font-black uppercase text-white bg-black p-3 tracking-widest">2. Ventas y Facturación de la OP</h3>
+                       <table className="w-full text-left text-xs border-collapse border-2 border-black mt-2">
+                          <thead className="bg-gray-200">
+                             <tr className="uppercase font-black text-[10px] tracking-widest text-black">
+                                <th className="p-3 border border-black">Factura N°</th>
+                                <th className="p-3 border border-black text-center">Fecha</th>
+                                <th className="p-3 border border-black text-right">Base (Ingreso Real)</th>
+                                <th className="p-3 border border-black text-right">IVA (16%)</th>
+                                <th className="p-3 border border-black text-right">Total Cobrado</th>
+                             </tr>
+                          </thead>
+                          <tbody>
+                             {matchedInvoices.map((inv, idx) => (
+                                <tr key={idx}>
+                                   <td className="p-3 border border-black font-black">{inv.documento}</td>
+                                   <td className="p-3 border border-black text-center font-bold">{inv.fecha}</td>
+                                   <td className="p-3 border border-black text-right font-black text-green-600">${formatNum(inv.montoBase)}</td>
+                                   <td className="p-3 border border-black text-right font-bold text-gray-500">${formatNum(inv.iva)}</td>
+                                   <td className="p-3 border border-black text-right font-black">${formatNum(inv.total)}</td>
+                                </tr>
+                             ))}
+                             {matchedInvoices.length === 0 && <tr><td colSpan="5" className="p-4 text-center font-bold uppercase text-red-500">No hay facturas asociadas a esta OP.</td></tr>}
+                          </tbody>
+                          {matchedInvoices.length > 0 && (
+                             <tfoot className="bg-gray-100">
+                                <tr>
+                                   <td colSpan="2" className="p-3 border border-black text-right font-black uppercase">Total Ingreso OP (Base):</td>
+                                   <td className="p-3 border border-black text-right font-black text-green-600 text-lg">${formatNum(totalInvoiceIncome)}</td>
+                                   <td colSpan="2" className="p-3 border border-black bg-gray-200"></td>
+                                </tr>
+                             </tfoot>
+                          )}
+                       </table>
+                    </div>
                  </div>
 
                  {/* RENTABILIDAD FINAL */}
-                 <div className="border-4 border-black p-6 rounded-2xl bg-gray-50 flex justify-between items-center">
+                 <div className="border-4 border-black p-6 rounded-2xl bg-gray-50 flex justify-between items-center mt-6">
                     <div>
                        <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Cruce de Información Financiera</p>
                        <p className="text-sm font-bold uppercase text-black">Rentabilidad y Margen Neto de la OP</p>
@@ -2208,7 +2308,7 @@ export default function App() {
                           <p className={`text-3xl font-black ${reqProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>${formatNum(reqProfit)}</p>
                        </div>
                        <div className="bg-black text-white px-6 py-3 rounded-xl border-2 border-black">
-                          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">MARGEN</p>
+                          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">MARGEN NETO</p>
                           <p className={`text-3xl font-black ${reqMargin >= 30 ? 'text-green-400' : (reqMargin > 0 ? 'text-orange-400' : 'text-red-400')}`}>{formatNum(reqMargin)}%</p>
                        </div>
                     </div>
@@ -2229,13 +2329,16 @@ export default function App() {
       );
     }
 
-    // === VISTA 3: REPORTE INGRESOS VS COSTOS ===
+    // === VISTA 3: REPORTE GENERAL INGRESOS VS COSTOS ===
     if (costosView === 'general_sales') {
       return (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><TrendingUp className="text-orange-500" size={24}/> General: Ingresos vs Costos</h2>
-              <button onClick={() => handleExportPDF('Reporte_Rentabilidad_Global', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
+              <div className="flex gap-2">
+                 <button onClick={() => handleExportExcel('ingresos-costos-table', 'Reporte_Rentabilidad_Global')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
+                 <button onClick={() => handleExportPDF('Reporte_Rentabilidad_Global', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
+              </div>
            </div>
 
            <div id="pdf-content" className="p-8 print:p-0 bg-white">
@@ -2246,7 +2349,7 @@ export default function App() {
               </div>
 
               <div className="overflow-x-auto rounded-xl border-2 border-black print:rounded-none">
-                 <table className="w-full text-left whitespace-nowrap text-xs">
+                 <table id="ingresos-costos-table" className="w-full text-left whitespace-nowrap text-xs">
                     <thead className="bg-black text-white">
                        <tr className="uppercase font-black text-[10px] tracking-widest">
                           <th className="p-4 border-r border-gray-700">OP N° / Cliente</th>
@@ -2260,7 +2363,7 @@ export default function App() {
                        {completedOps.map(op => {
                           let opCost = 0;
                           ['extrusion', 'impresion', 'sellado'].forEach(p => { (op.production?.[p]?.batches || []).forEach(b => opCost += parseNum(b.cost)); });
-                          const opIncome = invoices.filter(inv => inv.opAsignada === op.id).reduce((sum, inv) => sum + parseNum(inv.montoBase), 0);
+                          const opIncome = (invoices || []).filter(inv => inv.opAsignada === op.id).reduce((sum, inv) => sum + parseNum(inv.montoBase), 0);
                           const profit = opIncome - opCost;
                           const margin = opIncome > 0 ? (profit / opIncome) * 100 : 0;
 
@@ -2282,7 +2385,7 @@ export default function App() {
                     <tfoot className="bg-gray-200 border-t-4 border-black">
                        <tr className="uppercase font-black text-[12px] text-black">
                           <td className="p-4 text-right">TOTALES GLOBALES:</td>
-                          <td className="p-4 text-right text-red-600">${formatNum(totalOpCosts)}</td>
+                          <td className="p-4 text-right text-red-600">${formatNum(totalOpCostsMP)}</td>
                           <td className="p-4 text-right text-green-600">${formatNum(totalIncome)}</td>
                           <td className="p-4 text-right">${formatNum(globalProfit)}</td>
                           <td className="p-4 text-center text-blue-600 bg-gray-300">{formatNum(globalMargin)}%</td>
@@ -2294,6 +2397,196 @@ export default function App() {
         </div>
       );
     }
+
+    // === VISTA 4: COSTOS OPERATIVOS DE PLANTA ===
+    if (costosView === 'operativos') {
+       const handleAddOpCost = async (e) => {
+          e.preventDefault();
+          if (!newOpCostForm.amount) return;
+          try {
+             await addDoc(collection(db, 'operatingCosts'), {
+                ...newOpCostForm,
+                amount: parseNum(newOpCostForm.amount),
+                timestamp: Date.now(),
+                user: appUser?.name || 'Admin'
+             });
+             setNewOpCostForm({...newOpCostForm, description: '', amount: ''});
+             setDialog({title: 'Éxito', text: 'Costo operativo registrado en el mes actual.', type: 'alert'});
+          } catch(err) {
+             setDialog({title: 'Error', text: err.message, type: 'alert'});
+          }
+       };
+
+       const handleDeleteOpCost = async (id) => {
+          setDialog({ title: 'Eliminar Costo', text: '¿Desea eliminar este registro de costo operativo?', type: 'confirm', onConfirm: async () => {
+             await deleteDoc(doc(db, 'operatingCosts', id));
+          }});
+       };
+
+       return (
+         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
+            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
+               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Wrench className="text-orange-500" size={24}/> Costos Operativos de Planta</h2>
+               <div className="flex gap-2">
+                  <button onClick={() => handleExportExcel('costos-operativos-table', 'Costos_Operativos')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
+                  <button onClick={() => handleExportPDF('Reporte_Costos_Operativos', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
+               </div>
+            </div>
+
+            <div data-html2canvas-ignore="true" className="p-8 bg-gray-50/50 border-b border-gray-200 no-pdf">
+               <form onSubmit={handleAddOpCost} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+                 <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-4 tracking-widest">Registrar Nuevo Gasto / Costo</h3>
+                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                   <div>
+                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                     <input type="date" required value={newOpCostForm.date} onChange={e=>setNewOpCostForm({...newOpCostForm, date: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-black" />
+                   </div>
+                   <div>
+                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
+                     <select value={newOpCostForm.category} onChange={e=>setNewOpCostForm({...newOpCostForm, category: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
+                        <option value="Nómina y Beneficios">Nómina y Beneficios</option>
+                        <option value="Electricidad / Servicios">Electricidad / Servicios</option>
+                        <option value="Mantenimiento y Repuestos">Mantenimiento y Repuestos</option>
+                        <option value="Consumos Internos">Consumos Internos</option>
+                        <option value="Otros Gastos Operativos">Otros Gastos Operativos</option>
+                     </select>
+                   </div>
+                   <div>
+                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción / Detalle</label>
+                     <input type="text" required value={newOpCostForm.description} onChange={e=>setNewOpCostForm({...newOpCostForm, description: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="EJ: PAGO SEMANAL" />
+                   </div>
+                   <div>
+                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Monto ($ USD)</label>
+                     <input type="number" step="0.01" required value={newOpCostForm.amount} onChange={e=>setNewOpCostForm({...newOpCostForm, amount: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-center text-red-600" placeholder="0.00" />
+                   </div>
+                 </div>
+                 <div className="flex justify-end pt-2">
+                    <button type="submit" className="bg-black text-white px-10 py-3.5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all flex items-center gap-2"><Plus size={16}/> REGISTRAR GASTO</button>
+                 </div>
+               </form>
+            </div>
+
+            <div id="pdf-content" className="p-8 print:p-0 bg-white">
+               <div className="hidden pdf-header mb-8"><ReportHeader /></div>
+               <div className="text-center mb-8"><h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">REPORTE DE COSTOS OPERATIVOS</h1></div>
+
+               <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
+                 <table id="costos-operativos-table" className="w-full text-left whitespace-nowrap text-xs">
+                    <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
+                       <tr className="uppercase font-black text-[10px] tracking-widest text-black">
+                          <th className="py-3 px-4 border-r print:border-black">Fecha</th>
+                          <th className="py-3 px-4 border-r print:border-black">Categoría</th>
+                          <th className="py-3 px-4 border-r print:border-black">Descripción / Detalle</th>
+                          <th className="py-3 px-4 border-r print:border-black">Registrado Por</th>
+                          <th className="py-3 px-4 text-right border-r print:border-black">Monto ($)</th>
+                          <th className="py-3 px-4 text-center no-pdf">Acciones</th>
+                       </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 text-black print:divide-black">
+                       {(opCosts || []).map(c => (
+                          <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                             <td className="py-3 px-4 font-bold border-r print:border-black">{c.date}</td>
+                             <td className="py-3 px-4 font-black border-r print:border-black uppercase text-gray-600">{c.category}</td>
+                             <td className="py-3 px-4 font-bold border-r print:border-black uppercase">{c.description}</td>
+                             <td className="py-3 px-4 font-bold border-r print:border-black uppercase text-[9px] text-gray-500">{c.user}</td>
+                             <td className="py-3 px-4 text-right font-black border-r print:border-black text-red-600">${formatNum(c.amount)}</td>
+                             <td className="py-3 px-4 text-center no-pdf">
+                                <button onClick={() => handleDeleteOpCost(c.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={14}/></button>
+                             </td>
+                          </tr>
+                       ))}
+                       {(!opCosts || opCosts.length === 0) && <tr><td colSpan="6" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">No hay costos operativos registrados</td></tr>}
+                    </tbody>
+                 </table>
+               </div>
+            </div>
+         </div>
+       );
+    }
+
+    // === VISTA 5: REPORTE DE PRODUCCIÓN MES A MES ===
+    if (costosView === 'produccion_mensual') {
+       const monthlyData = {};
+       completedOps.forEach(op => {
+          let lastDate = op.fecha;
+          let opMP = 0; let opMerma = 0; 
+          
+          ['extrusion', 'impresion', 'sellado'].forEach(ph => {
+             (op.production?.[ph]?.batches || []).forEach(b => {
+                opMerma += parseNum(b.mermaKg);
+                if (b.date) lastDate = b.date;
+                (b.insumos || []).forEach(i => opMP += parseNum(i.qty));
+             });
+          });
+          
+          const finalPhase = op.tipoProducto === 'TERMOENCOGIBLE' ? 'extrusion' : 'sellado';
+          const prodFinal = (op.production?.[finalPhase]?.batches || []).reduce((s,b)=>s+parseNum(b.producedKg),0);
+
+          const monthKey = lastDate.substring(0, 7); // YYYY-MM
+          if (!monthlyData[monthKey]) monthlyData[monthKey] = { key: monthKey, mp: 0, merma: 0, termo: 0, bolsas: 0 };
+          
+          monthlyData[monthKey].mp += opMP;
+          monthlyData[monthKey].merma += opMerma;
+          if (op.tipoProducto === 'TERMOENCOGIBLE') monthlyData[monthKey].termo += prodFinal;
+          else monthlyData[monthKey].bolsas += prodFinal;
+       });
+
+       const monthlyArray = Object.values(monthlyData).sort((a,b) => b.key.localeCompare(a.key));
+
+       const getMermaColor = (pct) => {
+          if (pct <= 5.0) return 'text-green-600 bg-green-50 print:bg-transparent';
+          if (pct > 5.0 && pct <= 5.5) return 'text-yellow-600 bg-yellow-50 print:bg-transparent';
+          return 'text-red-600 bg-red-50 print:bg-transparent';
+       };
+
+       return (
+         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none w-full">
+            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
+               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Activity className="text-orange-500" size={24}/> Producción General Mes a Mes</h2>
+               <div className="flex gap-2">
+                  <button onClick={() => handleExportExcel('produccion-mensual-table', 'Reporte_Produccion_Mensual')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
+                  <button onClick={() => handleExportPDF('Reporte_Produccion_Mensual', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
+               </div>
+            </div>
+
+            <div id="pdf-content" className="p-8 print:p-0 bg-white">
+               <div className="hidden pdf-header mb-8"><ReportHeader /></div>
+               <div className="text-center mb-8"><h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">REPORTE CONSOLIDADO DE PRODUCCIÓN (MES A MES)</h1></div>
+
+               <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
+                 <table id="produccion-mensual-table" className="w-full text-center whitespace-nowrap text-xs">
+                    <thead className="bg-black text-white">
+                       <tr className="uppercase font-black text-[10px] tracking-widest">
+                          <th className="p-4 border-r border-gray-700 text-left">Período (Mes)</th>
+                          <th className="p-4 border-r border-gray-700">Materia Prima Usada (KG)</th>
+                          <th className="p-4 border-r border-gray-700 text-blue-300">Termoencogible Final (KG)</th>
+                          <th className="p-4 border-r border-gray-700 text-orange-300">Bolsas Finales (KG)</th>
+                          <th className="p-4 border-r border-gray-700 text-red-300">Merma Total (KG)</th>
+                          <th className="p-4">Merma Global (%)</th>
+                       </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200 text-black print:divide-black">
+                       {monthlyArray.map(m => {
+                          const pct = m.mp > 0 ? (m.merma / m.mp) * 100 : 0;
+                          return (
+                             <tr key={m.key} className="hover:bg-gray-50 transition-colors">
+                                <td className="p-4 font-black border-r border-gray-200 text-left text-sm">{m.key}</td>
+                                <td className="p-4 font-black border-r border-gray-200">{formatNum(m.mp)}</td>
+                                <td className="p-4 font-black border-r border-gray-200 text-blue-700">{formatNum(m.termo)}</td>
+                                <td className="p-4 font-black border-r border-gray-200 text-orange-600">{formatNum(m.bolsas)}</td>
+                                <td className="p-4 font-black border-r border-gray-200 text-red-600">{formatNum(m.merma)}</td>
+                                <td className={`p-4 font-black text-lg ${getMermaColor(pct)}`}>{formatNum(pct)}%</td>
+                             </tr>
+                          );
+                       })}
+                       {monthlyArray.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin datos de producción registrados</td></tr>}
+                    </tbody>
+                 </table>
+               </div>
+            </div>
+         </div>
+       );
+    }
   };
 
   if (!appUser) {
@@ -2301,7 +2594,6 @@ export default function App() {
         <ErrorBoundary>
            <div className="min-h-screen flex items-center justify-center p-4 relative" 
                 style={{ backgroundImage: `url('${settings?.loginBg || "https://images.unsplash.com/photo-1587293852726-70cdb56c2866?q=80&w=2072&auto=format&fit=crop"}')`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
-              {/* Ajuste de opacidad para que la imagen se vea más nítida (bg-black/40 sin blur) */}
               <div className="absolute inset-0 bg-black/40"></div>
               
               <div className="absolute top-4 right-4 z-20">
@@ -2414,6 +2706,8 @@ export default function App() {
                   <button onClick={() => {clearAllReports(); setCostosView('dashboard');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'dashboard' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><BarChart3 size={16}/> Dashboard General</button>
                   <button onClick={() => {clearAllReports(); setCostosView('op_detail');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'op_detail' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Súper Finiquito (OP)</button>
                   <button onClick={() => {clearAllReports(); setCostosView('general_sales');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'general_sales' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><TrendingUp size={16}/> Ingresos vs Costos</button>
+                  <button onClick={() => {clearAllReports(); setCostosView('operativos');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'operativos' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Wrench size={16}/> Costos Operativos</button>
+                  <button onClick={() => {clearAllReports(); setCostosView('produccion_mensual');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'produccion_mensual' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Activity size={16}/> Prod. Mensual</button>
                 </div>
               )}
 
