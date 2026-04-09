@@ -1406,82 +1406,436 @@ const handleDeleteBatch = async (reqId, phase, batchId) => {
    });
 };
 
-const handleEditBatch = (reqId, phase, batchId) => {
-   setDialog({
-      title: `MODIFICAR LOTE`,
-      text: `El lote volverá a edición. ¿Continuar?`,
-      type: 'confirm',
-      onConfirm: async () => {
-         const req = (requirements || []).find(r => r?.id === reqId);
-         if (!req) return;
-         let currentPhase = {
-            ...(req?.production?.[phase] || {})
-         };
-         const bIdx = (currentPhase.batches || []).findIndex(b => b?.id === batchId);
-         if (bIdx >= 0) {
-            const batch = currentPhase.batches[bIdx];
-            const restoreForm = {
-               ...initialPhaseForm,
-               date: batch?.date || getTodayDate(),
-               producedKg: batch?.producedKg || '',
-               mermaKg: batch?.mermaKg || '',
-               insumos: batch?.insumos || []
+const handleReopenPhase = async (reqId, phase) => {
+      setDialog({
+         title: `REABRIR FASE`,
+         text: `¿Seguro que desea reabrir esta fase para editar o añadir más lotes?`,
+         type: 'confirm',
+         onConfirm: async () => {
+            const req = (requirements || []).find(r => r.id === reqId);
+            if (!req) return;
+            let currentPhase = {
+               ...(req.production?.[phase] || {})
             };
-            if (phase === 'extrusion' && batch?.techParams) {
-               restoreForm.operadorExt = batch.techParams.operador || '';
-               restoreForm.tratado = batch.techParams.tratado || '';
-               restoreForm.motorExt = batch.techParams.motor || '';
-               restoreForm.ventilador = batch.techParams.ventilador || '';
-               restoreForm.jalador = batch.techParams.jalador || '';
-               restoreForm.zona1 = batch.techParams.zonas?.[0] || '';
-               restoreForm.zona2 = batch.techParams.zonas?.[1] || '';
-               restoreForm.zona3 = batch.techParams.zonas?.[2] || '';
-               restoreForm.zona4 = batch.techParams.zonas?.[3] || '';
-               restoreForm.zona5 = batch.techParams.zonas?.[4] || '';
-               restoreForm.zona6 = batch.techParams.zonas?.[5] || '';
-               restoreForm.cabezalA = batch.techParams.cabezalA || '';
-               restoreForm.cabezalB = batch.techParams.cabezalB || '';
-            }
-            if (phase === 'impresion' && batch?.techParams) {
-               restoreForm.operadorImp = batch.techParams.operador || '';
-               restoreForm.kgRecibidosImp = batch.techParams.kgRecibidos || '';
-               restoreForm.cantColores = batch.techParams.cantColores || '';
-               restoreForm.relacionImp = batch.techParams.relacion || '';
-               restoreForm.motorImp = batch.techParams.motor || '';
-               restoreForm.tensores = batch.techParams.tensores || '';
-               restoreForm.tempImp = batch.techParams.temp || '';
-               restoreForm.solvente = batch.techParams.solvente || '';
-            }
-            if (phase === 'sellado' && batch?.techParams) {
-               restoreForm.operadorSel = batch.techParams.operador || '';
-               restoreForm.kgRecibidosSel = batch.techParams.kgRecibidos || '';
-               restoreForm.impresa = batch.techParams.impresa || 'NO';
-               restoreForm.tipoSello = batch.techParams.tipoSello || 'Sello FC';
-               restoreForm.tempCabezalA = batch.techParams.tempCabezalA || '';
-               restoreForm.tempCabezalB = batch.techParams.tempCabezalB || '';
-               restoreForm.tempPisoA = batch.techParams.tempPisoA || '';
-               restoreForm.tempPisoB = batch.techParams.tempPisoB || '';
-               restoreForm.velServo = batch.techParams.velServo || '';
-               restoreForm.millaresProd = batch.techParams.millares || '';
-               restoreForm.troquelSel = batch.techParams.troquel || '';
-            }
-            setPhaseForm(restoreForm);
-            const fbBatch = writeBatch(db);
-            for (let ing of (batch?.insumos || [])) {
-               const item = (inventory || []).find(i => i?.id === ing?.id);
-               if (item) fbBatch.update(getDocRef('inventory', item.id), {
-                  stock: (item?.stock || 0) + (ing?.qty || 0)
-               });
-            }
-            await fbBatch.commit();
-            currentPhase.batches.splice(bIdx, 1);
+            currentPhase.isClosed = false;
+            let newStatus = req.status;
+            if (req.status === 'COMPLETADO') newStatus = 'EN PROCESO';
+            await updateDoc(getDocRef('requirements', reqId), {
+               production: {
+                  ...(req.production || {}),
+                  [phase]: currentPhase
+               },
+               status: newStatus
+            });
+            setDialog({
+               title: 'Éxito',
+               text: 'La fase ha sido reabierta.',
+               type: 'alert'
+            });
          }
-         await updateDoc(getDocRef('requirements', reqId), {
-            production: {
-               ...(req?.production || {}),
-               [phase]: currentPhase
-            }
-         });
-      }
+      });
+   };
+
+   const handleResetCalc = () => {
+      setCalcInputs({
+         ...initialCalcInputs,
+         cantidadSolicitada: ''
+      });
+   };
+
+   const handleCalcChange = (field, value) => setCalcInputs({
+      ...calcInputs,
+      [field]: parseNum(value)
    });
-};
+
+   const updateCalcIng = (id, field, value) => setCalcInputs({
+      ...calcInputs,
+      ingredientes: (calcInputs?.ingredientes || []).map(ing => ing?.id === id ? {
+         ...ing,
+         [field]: field === 'nombre' ? value : parseNum(value)
+      } : ing)
+   });
+
+   const addCalcIng = () => setCalcInputs({
+      ...calcInputs,
+      ingredientes: [...(calcInputs?.ingredientes || []), {
+         id: Date.now(),
+         nombre: '',
+         pct: 0,
+         costo: 0
+      }]
+   });
+
+   const removeCalcIng = (id) => setCalcInputs({
+      ...calcInputs,
+      ingredientes: (calcInputs?.ingredientes || []).filter(i => i?.id !== id)
+   });
+
+   const simW = parseNum(calcInputs?.ancho);
+   const simL = parseNum(calcInputs?.largo);
+   const simM = parseNum(calcInputs?.micras);
+   const simFu = parseNum(calcInputs?.fuelles);
+   const isBolsas = calcInputs?.tipoProducto === 'BOLSAS';
+   let simPesoMillar = 0;
+   
+   if (isBolsas) {
+      simPesoMillar = (simW + simFu) * simL * simM;
+   }
+   
+   const inputCantidadSolicitada = parseNum(calcInputs?.cantidadSolicitada) || 0;
+   const calcKilosNetos = isBolsas ? (inputCantidadSolicitada * simPesoMillar) : inputCantidadSolicitada;
+   const mermaPorc = parseNum(calcInputs?.mermaGlobalPorc) || 5;
+   const calcTotalMezcla = (calcKilosNetos > 0 && mermaPorc < 100) ? (calcKilosNetos / (1 - (mermaPorc / 100))) : calcKilosNetos;
+   const calcMermaGlobalKg = calcTotalMezcla - calcKilosNetos;
+   
+   let calcCostoMezclaPreparada = 0;
+   const calcIngredientesProcesados = (calcInputs?.ingredientes || []).map(ing => {
+      const kg = ((ing?.pct || 0) / 100) * calcTotalMezcla;
+      const totalCost = kg * (ing?.costo || 0);
+      calcCostoMezclaPreparada += totalCost;
+      const invItem = (inventory || []).find(i => i?.id === ing?.nombre);
+      let desc = invItem ? invItem.desc : ing?.nombre;
+      if (!invItem) {
+         if (ing?.nombre === 'MP-0240') desc = 'PEBD 240 (ESENTTIA)';
+         if (ing?.nombre === 'MP-11PG4') desc = 'LINEAL 11PG4 (METALOCENO)';
+         if (ing?.nombre === 'MP-3003') desc = 'PEBD 3003 (BAPOLENE)';
+         if (ing?.nombre === 'MP-RECICLADO') desc = 'MATERIAL RECICLADO';
+      }
+      return {
+         ...ing,
+         desc,
+         kg,
+         totalCost
+      };
+   });
+   
+   const calcCostoPromedio = calcTotalMezcla > 0 ? (calcCostoMezclaPreparada / calcTotalMezcla) : 0;
+   const calcCostoUnitarioNeto = calcKilosNetos > 0 ? (calcCostoMezclaPreparada / calcKilosNetos) : 0;
+   const calcCostoFinalUnidad = inputCantidadSolicitada > 0 ? (calcCostoMezclaPreparada / inputCantidadSolicitada) : 0;
+   const simUmFinal = isBolsas ? 'Millares' : 'KG';
+
+   const generateProjectionData = () => {
+      const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+      const recentMovs = invMovements.filter(m => m.type === 'SALIDA' && m.timestamp >= thirtyDaysAgo);
+      const pendingReqs = invRequisitions.filter(r => r.status === 'PENDIENTE');
+      return inventory.filter(i => i.category === 'Materia Prima').map(mp => {
+         const consumedIn30Days = recentMovs.filter(m => m.itemId === mp.id).reduce((sum, m) => sum + parseNum(m.qty), 0);
+         const dailyAvg = consumedIn30Days / 30;
+         let committedStock = 0;
+         pendingReqs.forEach(req => {
+            const item = req.items.find(i => i.id === mp.id);
+            if (item) committedStock += parseNum(item.qty);
+         });
+         const availableReal = mp.stock - committedStock;
+         const daysRemaining = dailyAvg > 0 ? availableReal / dailyAvg : 999;
+         const isCritical = daysRemaining <= 30 || availableReal <= 0;
+         const suggestOrder = isCritical ? Math.ceil(Math.abs(availableReal < 0 ? availableReal : 0) + (dailyAvg * 45)) : 0;
+         return {
+            ...mp,
+            dailyAvg,
+            daysRemaining,
+            committedStock,
+            availableReal,
+            suggestOrder,
+            isCritical
+         };
+      });
+   };
+
+   const ReportHeader = () => (
+      <div className="flex items-start justify-between border-b-2 border-black pb-2 mb-4 print:border-black print:w-full print:flex-row">
+         <div className="flex flex-col items-start w-1/2 print:w-1/2">
+            <span className="text-2xl font-light tracking-widest text-gray-800 print:text-black">Supply</span>
+            <div className="flex items-center -mt-2">
+               <span className="text-black font-black text-[40px] leading-none">G</span>
+               <div className="bg-orange-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-lg font-black mx-1 print:bg-orange-500 print:text-black">&amp;</div>
+               <span className="text-black font-black text-[40px] leading-none">B</span>
+            </div>
+         </div>
+         <div className="w-1/2 text-right print:w-1/2">
+            <h1 className="text-lg font-black text-black uppercase print:text-black">SERVICIOS JIRET G&amp;B, C.A.</h1>
+            <p className="text-[10px] font-bold text-gray-700 print:text-black">RIF: J-412309374</p>
+            <p className="text-[8px] font-medium text-gray-500 mt-0.5 uppercase print:text-black">Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9, Maracaibo.</p>
+         </div>
+      </div>
+   );
+
+   const renderWorkOrder = () => {
+      const req = (requirements || []).find(r => r?.id === showWorkOrder);
+      if (!req) return null;
+      const isBolsas = req?.tipoProducto === 'BOLSAS';
+      let totalMPKgRecipe = 0;
+      (req?.recipe || []).forEach(ing => {
+         totalMPKgRecipe += parseNum(ing?.totalQty);
+      });
+      if (totalMPKgRecipe === 0) totalMPKgRecipe = parseNum(req?.requestedKg);
+      return (
+         <div id="pdf-content" className="bg-white p-6 print:p-0 min-h-screen text-black shadow-none border-0 bg-white">
+            <style>{`@media print { @page { size: portrait; margin: 5mm; } }`}</style>
+            <div data-html2canvas-ignore="true" className="flex justify-between mb-2 no-pdf">
+               <button onClick={() => setShowWorkOrder(null)} className="bg-gray-100 px-6 py-2 rounded-xl text-xs font-black uppercase">VOLVER</button>
+               <button onClick={() => handleExportPDF(`OP_${req.id}`, false)} className="bg-black text-white px-8 py-2 rounded-xl font-black flex items-center gap-2 text-xs uppercase shadow-lg"><Printer size={16} /> EXPORTAR PDF</button>
+            </div>
+            <div className="flex justify-between items-end border-b-2 border-black pb-1 mb-2">
+               <div>
+                  <div className="flex items-center -mb-1"><span className="text-black font-black text-3xl leading-none">G</span><span className="text-orange-500 font-black text-lg mx-0.5">&amp;</span><span className="text-black font-black text-3xl leading-none">B</span></div>
+                  <p className="text-[6px] font-bold text-orange-500 uppercase mt-1 tracking-widest">Servicio y Calidad</p>
+               </div>
+               <div className="text-center flex-1">
+                  <h1 className="text-lg font-black uppercase tracking-widest">ORDEN DE TRABAJO PARA OP.</h1>
+               </div>
+            </div>
+            <div className="grid grid-cols-3 text-[9px] font-bold uppercase mb-2 border-b-2 border-black pb-2">
+               <div>
+                  <p className="mb-1"><span className="w-16 inline-block font-black">CLIENTE:</span> {req.client}</p>
+                  <p className="mb-1"><span className="w-16 inline-block font-black">OP:</span> #{String(req.id).replace('OP-', '').padStart(5, '0')}</p>
+                  <p><span className="w-16 inline-block font-black">TIPO:</span> {req.tipoProducto || 'N/A'}</p>
+               </div>
+               <div>
+                  <p className="mb-1"><span className="w-20 inline-block font-black">EMISIÓN:</span> {req.fecha}</p>
+                  <p><span className="w-20 inline-block font-black text-orange-600 font-black">KG MATERIA PRIMA:</span> <span className="text-orange-600 font-black">{formatNum(totalMPKgRecipe)} KG</span></p>
+               </div>
+               <div>
+                  <p className="mb-1"><span className="w-24 inline-block font-black">FECHA ENTRADA:</span> __________________</p>
+                  <p><span className="w-24 inline-block font-black">FECHA SALIDA:</span> __________________</p>
+               </div>
+            </div>
+            <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-3 flex justify-between items-center mb-2 shadow-inner">
+               <div className="w-3/5"><span className="text-[11px] font-black text-orange-900 uppercase">META SOLICITADA POR EL CLIENTE ({isBolsas ? 'MILLARES' : 'KILOS'})</span><p className="text-[10px] font-bold text-gray-700 leading-tight">Cantidad bruta a entregar al cliente según nota de pedido. Incluye merma de sellado.</p></div>
+               <div className="text-right"><span className="text-4xl font-black text-orange-600">{isBolsas ? req?.cantidad : formatNum(req?.cantidad)}</span><span className="text-lg font-black text-orange-600 ml-1">{isBolsas ? req?.presentacion : 'KG'}</span></div>
+            </div>
+            <div className="border-2 border-black p-2 mb-2 rounded-2xl overflow-hidden">
+               <div className="font-black text-center border-b-2 border-black mb-2 py-0.5 text-xs bg-gray-100 uppercase font-black">Especificaciones Finales</div>
+               <div className="grid grid-cols-4 gap-2 text-center text-[9px] font-black uppercase bg-gray-50"><div>ANCHO<br/><span className="text-sm text-orange-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-orange-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-orange-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-orange-600">{req.micras}</span></div></div>
+            </div>
+            <div className="flex items-center gap-5">
+                <div className="flex items-center gap-3 bg-gray-800 px-5 py-2 rounded-2xl border border-gray-700">
+                  <ShieldCheck size={18} className="text-orange-500" />
+                  <span className="font-black text-white text-[10px] uppercase leading-none">{appUser?.name}</span>
+                </div>
+                <button onClick={() => setAppUser(null)} className="text-gray-400 hover:text-white bg-gray-800 hover:bg-red-600 p-2.5 rounded-2xl border border-gray-700">
+                  <LogOut size={20}/>
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 flex flex-col md:flex-row gap-8 flex-1 print:p-0 print:m-0 print:block">
+          {activeTab !== 'home' && (
+            <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
+              <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 transition-all active:scale-95 uppercase tracking-widest"><Home size={18} className="text-orange-500" /> INICIO</button>
+              
+              {appUser?.permissions?.ventas && activeTab === 'ventas' && (
+                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Área Ventas</h3>
+                  <button onClick={() => {clearAllReports(); setVentasView('facturacion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'facturacion' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Receipt size={16}/> Facturación</button>
+                  <button onClick={() => {clearAllReports(); setVentasView('requisiciones');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'requisiciones' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ClipboardEdit size={16}/> OP / Requisiciones</button>
+                  <button onClick={() => {clearAllReports(); setVentasView('clientes');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${ventasView === 'clientes' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Users size={16}/> Directorio Clientes</button>
+                </div>
+              )}
+              
+              {appUser?.permissions?.produccion && activeTab === 'produccion' && (
+                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Planta / Producción</h3>
+                  <button onClick={() => {clearAllReports(); setProdView('calculadora');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'calculadora' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Calculator size={16}/> Simulador Costo</button>
+                  <button onClick={() => {clearAllReports(); setProdView('proyeccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'proyeccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase relative`}><TrendingUp size={16}/> Proyección MP</button>
+                  <button onClick={() => {clearAllReports(); setProdView('fases_produccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'fases_produccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Thermometer size={16}/> Fases en Proceso</button>
+                  <button onClick={() => {clearAllReports(); setProdView('historial');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'historial' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><History size={16}/> Historial / Finiquitos</button>
+                </div>
+              )}
+              
+              {appUser?.permissions?.inventario && activeTab === 'inventario' && (
+                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Almacén</h3>
+                  <button onClick={() => {clearAllReports(); setInvView('requisiciones');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'requisiciones' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase relative`}><ClipboardList size={16}/> Req. a Almacén</button>
+                  <button onClick={() => {clearAllReports(); setInvView('catalogo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'catalogo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Box size={16}/> Catálogo / Stock</button>
+                  <button onClick={() => {clearAllReports(); setInvView('cargo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'cargo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowDownToLine size={16}/> Entrada (Cargo)</button>
+                  <button onClick={() => {clearAllReports(); setInvView('descargo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'descargo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowUpFromLine size={16}/> Salida (Descargo)</button>
+                  <button onClick={() => {clearAllReports(); setInvView('ajuste');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'ajuste' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowRightLeft size={16}/> Ajuste Físico</button>
+                  <button onClick={() => {clearAllReports(); setInvView('kardex');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'kardex' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><History size={16}/> Kardex General</button>
+                  <button onClick={() => {clearAllReports(); setInvView('reportes_mod');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'reportes_mod' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Reportes Filtrados</button>
+                  <button onClick={() => {clearAllReports(); setInvView('reporte177');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'reporte177' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileCheck size={16}/> Art. 177 LISLR</button>
+                </div>
+              )}
+              
+              {appUser?.permissions?.costos && activeTab === 'costos' && (
+                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Costos Rentabilidad</h3>
+                  <button onClick={() => {clearAllReports(); setCostosView('dashboard');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'dashboard' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><BarChart3 size={16}/> Dashboard</button>
+                  <button onClick={() => {clearAllReports(); setCostosView('op_detail');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'op_detail' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Finiquito (OP)</button>
+                  <button onClick={() => {clearAllReports(); setCostosView('general_sales');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'general_sales' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><TrendingUp size={16}/> Ingresos vs Costos</button>
+                  <button onClick={() => {clearAllReports(); setCostosView('produccion_mensual');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'produccion_mensual' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Activity size={16}/> Prod. Mensual</button>
+                </div>
+              )}
+              
+              {appUser?.permissions?.operativos && activeTab === 'operativos' && (
+                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Control Operativo</h3>
+                  <button onClick={() => {clearAllReports(); setOperativosView('registro');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${operativosView === 'registro' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Wrench size={16}/> Registro Gastos</button>
+                </div>
+              )}
+              
+              {appUser?.permissions?.configuracion && activeTab === 'configuracion' && (
+                <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><Settings2 size={18} className="text-white" /> CONFIGURACIÓN</button>
+              )}
+            </nav>
+          )}
+          
+          <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' || activeTab === 'configuracion' ? 'flex items-center justify-center' : ''}`}>
+            {activeTab === 'home' && renderHome()}
+            {activeTab === 'ventas' && renderVentasModule()}
+            {activeTab === 'produccion' && renderProductionModule()}
+            {activeTab === 'inventario' && renderInventoryModule()}
+            {activeTab === 'costos' && renderCostosModule()}
+            
+            {activeTab === 'operativos' && operativosView === 'registro' && (
+               <div className="space-y-6 animate-in fade-in w-full">
+                  {(()=>{
+                     const handleAddOpCost = async (e) => { 
+                       e.preventDefault(); 
+                       if (!newOpCostForm.amount) return; 
+                       const finalCategory = newOpCostForm.category === 'OTRA (ESPECIFICAR)' ? newOpCostForm.customCategory.toUpperCase() : newOpCostForm.category; 
+                       try { 
+                         await addDoc(collection(db, 'operatingCosts'), { date: newOpCostForm.date, category: finalCategory, description: newOpCostForm.description, amount: parseNum(newOpCostForm.amount), timestamp: Date.now(), user: appUser?.name || 'Admin' }); 
+                         setNewOpCostForm({...initialOpCostForm, date: getTodayDate()}); 
+                         setDialog({title: 'Éxito', text: 'Costo operativo registrado.', type: 'alert'}); 
+                       } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); } 
+                     };
+                     
+                     const handleDeleteOpCost = async (id) => { 
+                       setDialog({ title: 'Eliminar Costo', text: '¿Desea eliminar este registro?', type: 'confirm', onConfirm: async () => { await deleteDoc(doc(db, 'operatingCosts', id)); }}); 
+                     };
+                     
+                     const categoryTotals = {}; 
+                     let totalOpCost = 0; 
+                     (opCosts || []).forEach(c => { 
+                       const amt = parseNum(c.amount); 
+                       totalOpCost += amt; 
+                       if (!categoryTotals[c.category]) categoryTotals[c.category] = 0; 
+                       categoryTotals[c.category] += amt; 
+                     });
+                     
+                     const sortedCategories = Object.entries(categoryTotals).map(([cat, amt]) => ({ category: cat, amount: amt, pct: totalOpCost > 0 ? (amt / totalOpCost) * 100 : 0 })).sort((a, b) => b.amount - a.amount);
+                     const maxAmt = sortedCategories.length > 0 ? sortedCategories[0].amount : 1;
+                     const totalIncome = (invoices || []).reduce((acc, inv) => acc + parseNum(inv.montoBase), 0);
+                     const globalOpPercent = totalIncome > 0 ? (totalOpCost / totalIncome) * 100 : 0;
+                     
+                     return (
+                        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none w-full">
+                          <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
+                            <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Wrench className="text-orange-500" size={24}/> Costos Operativos de Planta</h2>
+                            <div className="flex gap-2">
+                              <button onClick={() => handleExportExcel('costos-operativos-table', 'Costos_Operativos')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
+                              <button onClick={() => handleExportPDF('Reporte_Costos_Operativos', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
+                            </div>
+                          </div>
+                          <div data-html2canvas-ignore="true" className="p-8 bg-gray-50/50 border-b border-gray-200 no-pdf">
+                            <form onSubmit={handleAddOpCost} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+                              <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-4 tracking-widest">Registrar Nuevo Gasto / Costo</h3>
+                              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                                <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label><input type="date" required value={newOpCostForm.date} onChange={e=>setNewOpCostForm({...newOpCostForm, date: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-black" /></div>
+                                <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label><select value={newOpCostForm.category} onChange={e=>setNewOpCostForm({...newOpCostForm, category: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors"><option value="Nómina y Beneficios">Nómina y Beneficios</option><option value="Electricidad / Servicios">Electricidad / Servicios</option><option value="Mantenimiento y Repuestos">Mantenimiento y Repuestos</option><option value="Consumos Internos">Consumos Internos</option><option value="Logística y Fletes">Logística y Fletes</option><option value="OTRA (ESPECIFICAR)">OTRA (ESPECIFICAR)</option></select></div>
+                                {newOpCostForm.category === 'OTRA (ESPECIFICAR)' && (<div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Nueva Categoría</label><input type="text" required value={newOpCostForm.customCategory} onChange={e=>setNewOpCostForm({...newOpCostForm, customCategory: e.target.value.toUpperCase()})} className="w-full border-2 border-orange-200 bg-orange-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="ESCRIBA AQUÍ..." /></div>)}
+                                <div className={newOpCostForm.category === 'OTRA (ESPECIFICAR)' ? 'md:col-span-1' : 'md:col-span-2'}><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción / Detalle</label><input type="text" required value={newOpCostForm.description} onChange={e=>setNewOpCostForm({...newOpCostForm, description: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="EJ: PAGO SEMANAL" /></div>
+                                <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Monto ($ USD)</label><input type="number" step="0.01" required value={newOpCostForm.amount} onChange={e=>setNewOpCostForm({...newOpCostForm, amount: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-center text-red-600" placeholder="0.00" /></div>
+                              </div>
+                              <div className="flex justify-end pt-2"><button type="submit" className="bg-black text-white px-10 py-3.5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all flex items-center gap-2"><Plus size={16}/> REGISTRAR GASTO</button></div>
+                            </form>
+                          </div>
+                          <div id="pdf-content" className="p-8 print:p-0 bg-white">
+                            <div className="hidden pdf-header mb-8"><ReportHeader /></div>
+                            <div className="text-center mb-8"><h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">REPORTE DE COSTOS OPERATIVOS DE PLANTA</h1></div>
+                            <div className="mb-10 bg-gray-50 p-6 rounded-2xl border-2 border-gray-200 no-pdf"><h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest text-center">Distribución de Gastos Operativos</h3><div className="space-y-4">{sortedCategories.map((item, i) => (<div key={i} className="flex items-center gap-4"><div className="w-1/4 text-right text-[10px] font-black uppercase truncate" title={item.category}>{item.category}</div><div className="w-2/4"><div className="h-6 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-orange-500 rounded-full flex items-center px-2" style={{width: `${Math.max(5, (item.amount/maxAmt)*100)}%`}}></div></div></div><div className="w-1/4 text-left text-xs font-black text-gray-700">${formatNum(item.amount)} <span className="text-orange-600 ml-2">({formatNum(item.pct)}%)</span></div></div>))}{sortedCategories.length === 0 && <div className="text-center text-xs font-bold text-gray-400 uppercase">Sin datos registrados</div>}</div></div>
+                            <div className="grid grid-cols-2 gap-4 mb-8"><div className="bg-red-50 p-4 rounded-xl border border-red-200 text-center"><p className="text-[10px] font-black text-red-800 uppercase tracking-widest mb-1">Gasto Operativo Total</p><p className="text-2xl font-black text-red-600">${formatNum(totalOpCost)}</p></div><div className="bg-blue-50 p-4 rounded-xl border border-blue-200 text-center"><p className="text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1">Impacto (Gasto vs Ingresos Planta)</p><p className="text-2xl font-black text-blue-600">{formatNum(globalOpPercent)}%</p></div></div>
+                            <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
+                              <table id="costos-operativos-table" className="w-full text-left whitespace-nowrap text-xs"><thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black"><tr className="uppercase font-black text-[10px] tracking-widest text-black"><th className="py-3 px-4 border-r print:border-black">Fecha</th><th className="py-3 px-4 border-r print:border-black">Categoría</th><th className="py-3 px-4 border-r print:border-black">Descripción / Detalle</th><th className="py-3 px-4 border-r print:border-black">Registrado Por</th><th className="py-3 px-4 text-right border-r print:border-black">Monto ($)</th><th className="py-3 px-4 text-center no-pdf">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black print:divide-black">{(opCosts || []).map(c => (<tr key={c.id} className="hover:bg-gray-50 transition-colors"><td className="py-3 px-4 font-bold border-r print:border-black">{c.date}</td><td className="py-3 px-4 font-black border-r print:border-black uppercase text-gray-600">{c.category}</td><td className="py-3 px-4 font-bold border-r print:border-black uppercase">{c.description}</td><td className="py-3 px-4 font-bold border-r print:border-black uppercase text-[9px] text-gray-500">{c.user}</td><td className="py-3 px-4 text-right font-black border-r print:border-black text-red-600">${formatNum(c.amount)}</td><td className="py-3 px-4 text-center no-pdf"><button onClick={() => handleDeleteOpCost(c.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={14}/></button></td></tr>))}{(!opCosts || opCosts.length === 0) && <tr><td colSpan="6" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">No hay costos operativos registrados</td></tr>}</tbody></table>
+                            </div>
+                          </div>
+                        </div>
+                     );
+                  })()}
+               </div>
+            )}
+
+            {activeTab === 'configuracion' && (
+              <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden animate-in fade-in w-full">
+                <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><Settings2 className="text-orange-500" size={24}/> Gestión de Usuarios</h2></div>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">
+                  <div className="lg:col-span-1 border-r border-gray-200 bg-gray-50/50 p-8">
+                    <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest border-b border-gray-200 pb-2">{editingUserId ? 'Editar Usuario' : 'Nuevo Usuario'}</h3>
+                    <form onSubmit={handleSaveUser} className="space-y-4">
+                      <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nombre Completo</label><input type="text" required value={newUserForm.name} onChange={e=>setNewUserForm({...newUserForm, name: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500 transition-colors" placeholder="EJ: JUAN PEREZ" /></div>
+                      <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Usuario (Login)</label><input type="text" required disabled={!!editingUserId} value={newUserForm.username} onChange={e=>setNewUserForm({...newUserForm, username: e.target.value.toLowerCase()})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500 transition-colors" placeholder="EJ: juanp" /></div>
+                      <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Contraseña</label><input type="text" required={!editingUserId} value={newUserForm.password} onChange={e=>setNewUserForm({...newUserForm, password: e.target.value})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500 transition-colors" placeholder="Mínimo 4 caracteres" /></div>
+                      <div className="pt-4 border-t border-gray-200 mt-4">
+                        <label className="text-[10px] font-black text-black uppercase block mb-3 tracking-widest">Permisos de Acceso</label>
+                        <div className="space-y-2 bg-white p-4 rounded-xl border border-gray-200">
+                          {['ventas', 'produccion', 'inventario', 'costos', 'operativos', 'configuracion'].map(mod => (<label key={mod} className="flex items-center gap-3 cursor-pointer group"><input type="checkbox" checked={newUserForm.permissions?.[mod] || false} onChange={(e) => setNewUserForm({...newUserForm, permissions: {...newUserForm.permissions, [mod]: e.target.checked}})} className="w-4 h-4 text-orange-500 rounded focus:ring-orange-500 cursor-pointer" /><span className="text-[10px] font-black text-gray-600 uppercase group-hover:text-black transition-colors">Módulo de {mod}</span></label>))}
+                        </div>
+                      </div>
+                      <div className="pt-6 flex gap-2">
+                        {editingUserId && <button type="button" onClick={() => {setEditingUserId(null); setNewUserForm(initialUserForm);}} className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl font-black text-[10px] uppercase hover:bg-gray-300 transition-all">Cancelar</button>}
+                        <button type="submit" className="flex-1 bg-black text-white py-3 rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all flex items-center justify-center gap-2"><Save size={14}/> Guardar</button>
+                      </div>
+                    </form>
+                  </div>
+                  <div className="lg:col-span-2 p-8">
+                    <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest border-b border-gray-200 pb-2">Usuarios Registrados</h3>
+                    <div className="overflow-x-auto rounded-xl border border-gray-200">
+                      <table className="w-full text-left whitespace-nowrap text-sm">
+                        <thead className="bg-gray-100 border-b-2 border-gray-200">
+                          <tr className="uppercase font-black text-[10px] tracking-widest text-gray-500">
+                            <th className="py-3 px-4 border-r">Usuario / Nombre</th>
+                            <th className="py-3 px-4 border-r">Clave</th>
+                            <th className="py-3 px-4 border-r">Accesos Permitidos</th>
+                            <th className="py-3 px-4 text-center">Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 text-black">
+                          {systemUsers.map(u => (
+                            <tr key={u.username} className="hover:bg-gray-50">
+                              <td className="py-3 px-4 border-r"><span className="font-black text-orange-600 text-sm">{u.username}</span><br/><span className="text-[10px] font-bold text-gray-500 uppercase">{u.name}</span></td>
+                              <td className="py-3 px-4 border-r font-black text-gray-400">{u.password}</td>
+                              <td className="py-3 px-4 border-r">
+                                <div className="flex flex-wrap gap-1">
+                                  {u.permissions && Object.entries(u.permissions).map(([key, val]) => val && (<span key={key} className="bg-blue-50 text-blue-600 border border-blue-200 px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest">{key}</span>))}
+                                  {u.role === 'Master' && <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded text-[9px] font-black uppercase">ALL ACCESS</span>}
+                                </div>
+                              </td>
+                              <td className="py-3 px-4 text-center">
+                                <div className="flex justify-center gap-2">
+                                  <button onClick={() => startEditUser(u)} className="p-2 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-all"><Edit size={14}/></button>
+                                  {u.username !== 'admin' && (<button onClick={() => handleDeleteUser(u.username)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all disabled:opacity-50"><Trash2 size={14}/></button>)}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+
+        {dialog && (
+          <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[9999] print:hidden">
+            <div className="bg-white rounded-3xl shadow-2xl border-t-8 border-orange-500 p-8 w-full max-w-md transform animate-in zoom-in-95">
+              <h3 className="text-xl font-black text-black uppercase mb-4 tracking-tighter">{dialog.title}</h3>
+              <p className="text-sm font-bold text-gray-500 mb-8 uppercase text-center">{dialog.text}</p>
+              <div className="flex gap-4">
+                {dialog.type === 'confirm' && (<button onClick={() => setDialog(null)} className="flex-1 bg-gray-100 font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-colors text-gray-800">CANCELAR</button>)}
+                <button onClick={() => { if (dialog.onConfirm) dialog.onConfirm(); setDialog(null); }} className="flex-1 bg-black text-white font-black py-4 rounded-2xl shadow-xl uppercase text-[10px] tracking-widest hover:bg-gray-900 transition-colors">ACEPTAR</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </ErrorBoundary>
+  );
+}
+
+export default App;
