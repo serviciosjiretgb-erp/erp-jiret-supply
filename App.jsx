@@ -128,7 +128,7 @@ export default function App() {
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [invRequisitions, setInvRequisitions] = useState([]);
-  const [opCosts, setOpCosts] = useState([]); // Nuevos Costos Operativos
+  const [opCosts, setOpCosts] = useState([]); 
 
   const [dialog, setDialog] = useState(null);
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
@@ -147,6 +147,17 @@ export default function App() {
   const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
   const [selectedOpCost, setSelectedOpCost] = useState('');
 
+  // Bloqueo de Ajuste Físico
+  const [isAjusteUnlocked, setIsAjusteUnlocked] = useState(false);
+  const [ajustePassword, setAjustePassword] = useState('');
+
+  useEffect(() => {
+     if (invView !== 'ajuste') {
+        setIsAjusteUnlocked(false);
+        setAjustePassword('');
+     }
+  }, [invView]);
+
   // Formularios de Configuración
   const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
   const [newUserForm, setNewUserForm] = useState(initialUserForm);
@@ -156,7 +167,7 @@ export default function App() {
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [editingClientId, setEditingClientId] = useState(null);
-  const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
+  const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '' };
@@ -190,23 +201,21 @@ export default function App() {
   const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
 
   // ============================================================================
-  // EXPORTACIONES A PDF Y EXCEL CORREGIDAS
+  // EXPORTACIONES A PDF Y EXCEL
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content'); if (!element) return;
     
-    // Mostrar/ocultar elementos
     const printOnlyElements = element.querySelectorAll('.hidden.print\\:block, .hidden.pdf-header'); 
     printOnlyElements.forEach(el => { el.style.display = 'block'; });
     const noPdfElements = element.querySelectorAll('.no-pdf'); 
     noPdfElements.forEach(el => { el.style.display = 'none'; });
 
-    // Evitar recortes horizontales quitando clases overflow
     const overflows = element.querySelectorAll('.overflow-x-auto, .overflow-hidden');
     overflows.forEach(el => { el.setAttribute('data-overflow', el.style.overflow || ''); el.style.overflow = 'visible'; });
 
     const opt = { 
-      margin: [10, 5, 10, 5], // Márgenes superior, derecha, abajo, izquierda
+      margin: [10, 5, 10, 5],
       filename: `${filename}_${getTodayDate()}.pdf`, 
       image: { type: 'jpeg', quality: 0.98 }, 
       html2canvas: { scale: 2, useCORS: true, logging: false }, 
@@ -235,19 +244,18 @@ export default function App() {
     const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${filename}_${getTodayDate()}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
-  // Función global para colores de Mermas
   const getMermaColor = (pct) => {
      if (pct <= 5.0) return 'text-green-500';
      if (pct > 5.0 && pct <= 5.5) return 'text-yellow-500';
      return 'text-red-500';
   };
 
-  // INICIO DE SESIÓN
   const handleLogin = (e) => {
     e.preventDefault(); const user = loginData.username.toLowerCase().trim(); const pass = loginData.password.trim();
     const foundUser = systemUsers.find(u => u.username === user && u.password === pass);
     if (foundUser) { setAppUser(foundUser); setLoginError(''); } else { setLoginError('Credenciales incorrectas. Intente nuevamente.'); }
   };
+  
   const handleBgUpload = (e) => {
     const file = e.target.files[0];
     if (file) { compressImage(file, async (base64) => { try { await setDoc(getDocRef('settings', 'general'), { loginBg: base64 }, { merge: true }); setDialog({title: 'Éxito', text: 'Fondo actualizado.', type: 'alert'}); } catch (error) { setDialog({title: 'Error', text: 'Imagen muy pesada o error de red.', type: 'alert'}); } }); }
@@ -288,9 +296,6 @@ export default function App() {
     setShowPurchaseOrder(false); setSelectedOpCost('');
   };
 
-  // ============================================================================
-  // LOGICA CONFIGURACIÓN / USUARIOS
-  // ============================================================================
   const handleSaveUser = async (e) => {
     e.preventDefault(); if (!newUserForm.username || !newUserForm.password) return setDialog({title:'Aviso', text:'Usuario y contraseña requeridos.', type:'alert'});
     const userId = newUserForm.username.toLowerCase().trim();
@@ -299,9 +304,6 @@ export default function App() {
   const startEditUser = (u) => { setEditingUserId(u.username); setNewUserForm(u); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteUser = (id) => { if(id === 'admin') return setDialog({title:'Acción Denegada', text:'No puedes eliminar al administrador.', type:'alert'}); setDialog({ title: 'Eliminar Usuario', text: `¿Desea eliminar el acceso a ${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('users', id))}); };
 
-  // ============================================================================
-  // LOGICA INVENTARIO Y COSTO PROMEDIO
-  // ============================================================================
   const handleSaveInvItem = async (e) => {
     e.preventDefault(); if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
     const itemData = { ...newInvItemForm, id: newInvItemForm.id.toUpperCase(), desc: newInvItemForm.desc.toUpperCase(), cost: parseNum(newInvItemForm.cost), stock: parseNum(newInvItemForm.stock), timestamp: Date.now() };
@@ -374,9 +376,6 @@ export default function App() {
     }); return data;
   };
 
-  // ============================================================================
-  // LOGICA VENTAS Y FACTURACIÓN
-  // ============================================================================
   const handleAddClient = async (e) => {
     if (e) e.preventDefault(); if (!newClientForm.rif || !newClientForm.razonSocial) return setDialog({ title: 'Aviso', text: 'RIF y Razón Social obligatorios.', type: 'alert' });
     const rif = newClientForm.rif.toUpperCase().trim();
@@ -420,12 +419,9 @@ export default function App() {
     e.preventDefault(); const opId = editingReqId ? editingReqId : generateReqId();
     try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', viewedByPlanta: false }, { merge: true }); setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
-  const startEditReq = (r) => { setEditingReqId(r.id); setNewReqForm({ fecha: r.fecha||getTodayDate(), client: r.client||'', tipoProducto: r.tipoProducto||'BOLSAS', desc: r.desc||'', ancho: r.ancho||'', fuelles: r.fuelles||'', largo: r.largo||'', micras: r.micras||'', pesoMillar: r.tipoProducto==='TERMOENCOGIBLE'?'N/A':(r.pesoMillar||''), presentacion: r.presentacion||'MILLAR', cantidad: r.cantidad||'', requestedKg: r.requestedKg||'', color: r.color||'NATURAL', tratamiento: r.tratamiento||'LISO', vendedor: r.vendedor||'' }); setShowNewReqPanel(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const startEditReq = (r) => { setEditingReqId(r.id); setNewReqForm({ fecha: r.fecha||getTodayDate(), client: r.client||'', tipoProducto: r.tipoProducto||'BOLSAS', categoria: r.categoria||'', desc: r.desc||'', ancho: r.ancho||'', fuelles: r.fuelles||'', largo: r.largo||'', micras: r.micras||'', pesoMillar: r.tipoProducto==='TERMOENCOGIBLE'?'N/A':(r.pesoMillar||''), presentacion: r.presentacion||'MILLAR', cantidad: r.cantidad||'', requestedKg: r.requestedKg||'', color: r.color||'NATURAL', tratamiento: r.tratamiento||'LISO', vendedor: r.vendedor||'' }); setShowNewReqPanel(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteReq = (id) => setDialog({ title: 'Eliminar OP', text: `¿Desea eliminar la OP #${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('requirements', id))});
 
-  // ============================================================================
-  // LOGICA APROBACIÓN DE REQUISICIONES DE ALMACÉN
-  // ============================================================================
   const handleSendRequisitionToAlmacen = async () => {
     if (!phaseForm.insumos || phaseForm.insumos.length === 0) { return setDialog({title: 'Aviso', text: 'Agregue insumos a la lista antes de solicitar a almacén.', type: 'alert'}); }
     const newReq = { opId: selectedPhaseReqId, phase: activePhaseTab, items: phaseForm.insumos, status: 'PENDIENTE', timestamp: Date.now(), date: getTodayDate(), user: appUser?.name || 'Operador de Planta' };
@@ -467,9 +463,6 @@ export default function App() {
     setDialog({title: 'Rechazar Requisición', text: '¿Desea rechazar esta solicitud de materiales?', type: 'confirm', onConfirm: async () => { await updateDoc(getDocRef('inventoryRequisitions', id), { status: 'RECHAZADO', dispatchDate: getTodayDate() }); setDialog({title: 'Actualizado', text: 'La solicitud ha sido rechazada.', type: 'alert'}); }});
   };
 
-  // ============================================================================
-  // LOGICA PRODUCCIÓN Y CONTROL DE FASES
-  // ============================================================================
   const renderPhaseInventoryOptions = () => {
     let mainCats = [];
     if (activePhaseTab === 'extrusion') mainCats = ['Materia Prima', 'Pigmentos', 'Consumibles', 'Herramientas', 'Seguridad Industrial'];
@@ -546,9 +539,6 @@ export default function App() {
     }});
   };
 
-  // ============================================================================
-  // --- LÓGICA CALCULADORA (SIMULADOR OP INVERSO) ---
-  // ============================================================================
   const handleResetCalc = () => { setCalcInputs({...initialCalcInputs, cantidadSolicitada: ''}); };
   const handleCalcChange = (field, value) => setCalcInputs({ ...calcInputs, [field]: parseNum(value) });
   const updateCalcIng = (id, field, value) => setCalcInputs({ ...calcInputs, ingredientes: (calcInputs?.ingredientes || []).map(ing => ing?.id === id ? { ...ing, [field]: field === 'nombre' ? value : parseNum(value) } : ing) });
@@ -592,9 +582,6 @@ export default function App() {
   const calcCostoFinalUnidad = inputCantidadSolicitada > 0 ? (calcCostoMezclaPreparada / inputCantidadSolicitada) : 0;
   const simUmFinal = isBolsas ? 'Millares' : 'KG';
 
-  // ============================================================================
-  // LÓGICA DE PROYECCIÓN DE MP Y ORDEN DE COMPRA
-  // ============================================================================
   const generateProjectionData = () => {
     const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
     const recentMovs = invMovements.filter(m => m.type === 'SALIDA' && m.timestamp >= thirtyDaysAgo);
@@ -620,9 +607,6 @@ export default function App() {
     });
   };
 
-  // ============================================================================
-  // RENDERIZADO DE MÓDULOS
-  // ============================================================================
   const ReportHeader = () => (
     <div className="flex items-start justify-between border-b-2 border-black pb-2 mb-4 print:border-black print:w-full print:flex-row">
        <div className="flex flex-col items-start w-1/2 print:w-1/2">
@@ -639,121 +623,6 @@ export default function App() {
     </div>
   );
 
-  const renderPurchaseOrder = () => {
-    const proyeccionData = generateProjectionData().filter(mp => mp.suggestOrder > 0);
-
-    return (
-      <div id="pdf-content" className="bg-white p-12 print:p-6 min-h-screen text-black shadow-none border-0 bg-white">
-        <style>{`@media print { @page { size: portrait; margin: 5mm; } }`}</style>
-        
-        <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf bg-gray-50 p-4 rounded-xl border border-gray-200">
-          <button onClick={() => setShowPurchaseOrder(false)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2.5 rounded-xl hover:bg-gray-100 transition-all">VOLVER</button>
-          <button onClick={() => handleExportPDF(`Orden_Compra_Procura_${getTodayDate()}`, false)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button>
-        </div>
-        
-        <div className="hidden pdf-header mb-6"><ReportHeader /></div>
-
-        <div className="text-center my-8">
-           <h2 className="text-2xl font-black uppercase border-b-4 border-orange-500 pb-2 inline-block">ORDEN DE COMPRA SUGERIDA</h2>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4 mb-6 text-sm uppercase font-bold border-2 border-black p-4 rounded-2xl">
-           <div>
-              <p className="mb-2">DEPARTAMENTO ORIGEN: <span className="font-black text-orange-600">PRODUCCIÓN / PLANTA</span></p>
-              <p>SOLICITANTE: <span className="font-black text-gray-700">{appUser?.name || 'ADMINISTRADOR'}</span></p>
-           </div>
-           <div className="text-right">
-              <p className="mb-2">FECHA DE EMISIÓN: <span className="font-black text-gray-700">{getTodayDate()}</span></p>
-              <p>DIRIGIDO A: <span className="font-black text-orange-600">DEPARTAMENTO DE PROCURA</span></p>
-           </div>
-        </div>
-
-        <div className="bg-red-50 border border-red-200 p-4 rounded-xl mb-6 flex items-center gap-3">
-          <AlertTriangle size={24} className="text-red-600 flex-shrink-0"/>
-          <p className="text-[10px] font-black text-red-800 uppercase tracking-widest leading-relaxed">
-            Alerta de Inventario Crítico: Los siguientes insumos tienen un tiempo de autonomía igual o menor al tiempo de reposición del proveedor (30 Días). Se ha calculado la cantidad necesaria para cubrir el tránsito más un margen de seguridad.
-          </p>
-        </div>
-
-        <table className="w-full border-collapse border-2 border-black mb-6">
-           <thead className="bg-gray-200">
-              <tr>
-                 <th className="p-3 border-b border-black text-left text-xs uppercase font-black">CÓDIGO / INSUMO</th>
-                 <th className="p-3 border-b border-black text-center text-xs uppercase font-black">STOCK RESTANTE</th>
-                 <th className="p-3 border-b border-black text-center text-xs uppercase font-black text-red-600">AUTONOMÍA</th>
-                 <th className="p-3 border-b border-black text-center text-xs uppercase font-black bg-orange-100">CANT. A PEDIR</th>
-              </tr>
-           </thead>
-           <tbody className="divide-y divide-gray-300">
-              {proyeccionData.map((mp, i) => (
-                 <tr key={i}>
-                    <td className="p-3 border-r border-black font-bold text-sm uppercase">
-                       {mp.desc}<br/><span className="text-[10px] text-gray-500 font-black">{mp.id}</span>
-                    </td>
-                    <td className="p-3 border-r border-black text-center font-black">{formatNum(mp.availableReal)} kg</td>
-                    <td className="p-3 border-r border-black text-center font-black text-red-600">{formatNum(mp.daysRemaining)} DÍAS</td>
-                    <td className="p-3 text-center font-black text-xl bg-orange-50 text-orange-700">{formatNum(mp.suggestOrder)} <span className="text-sm">KG</span></td>
-                 </tr>
-              ))}
-              {proyeccionData.length === 0 && (
-                 <tr><td colSpan="4" className="p-8 text-center font-black uppercase text-gray-400 tracking-widest">El inventario se encuentra en niveles óptimos.</td></tr>
-              )}
-           </tbody>
-        </table>
-
-        <div className="mt-32 grid grid-cols-3 gap-10 text-center font-black uppercase text-[10px]">
-           <div className="border-t-2 border-black pt-2 mx-4">SOLICITADO POR<br/>(PLANTA)</div>
-           <div className="border-t-2 border-black pt-2 mx-4">AUTORIZADO POR<br/>(GERENCIA)</div>
-           <div className="border-t-2 border-black pt-2 mx-4">RECIBIDO POR<br/>(PROCURA)</div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderLogin = () => (
-    <div className="min-h-screen flex items-center justify-center p-4 relative" 
-         style={{ backgroundImage: `url('${settings?.loginBg || "https://images.unsplash.com/photo-1587293852726-70cdb56c2866?q=80&w=2072&auto=format&fit=crop"}')`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
-       <div className="absolute inset-0 bg-black/40"></div>
-       
-       <div className="absolute top-4 right-4 z-20">
-          <label className="bg-black/50 hover:bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase cursor-pointer transition-all flex items-center gap-2 border border-white/20 shadow-lg">
-             <Edit size={14}/> Cambiar Fondo
-             <input type="file" accept="image/*" className="hidden" onChange={handleBgUpload} />
-          </label>
-       </div>
-
-       <div className="relative z-10 bg-white rounded-3xl shadow-[0_30px_60px_rgba(0,0,0,0.6)] overflow-hidden w-full max-w-4xl flex transform transition-all duration-500 hover:scale-[1.01] border border-white/20">
-          <div className="w-1/2 bg-gradient-to-br from-gray-900 to-black p-12 flex-col justify-between hidden md:flex relative overflow-hidden shadow-[inset_-10px_0_20px_rgba(0,0,0,0.5)] border-r border-gray-800">
-             <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-tr from-white/10 to-transparent transform -skew-x-12 pointer-events-none"></div>
-             <div className="relative z-10">
-               <div className="flex items-center bg-white rounded-2xl px-4 py-2 shadow-[0_10px_20px_rgba(0,0,0,0.4)] w-fit transform hover:translate-x-1 hover:-translate-y-1 transition-transform duration-300">
-                  <span className="text-black font-black text-4xl leading-none drop-shadow-sm">G</span><span className="text-orange-500 font-black text-3xl mx-1 drop-shadow-sm">&amp;</span><span className="text-black font-black text-4xl leading-none drop-shadow-sm">B</span>
-               </div>
-               <h1 className="text-white text-3xl font-black mt-10 uppercase tracking-widest drop-shadow-lg">Supply ERP</h1>
-               <p className="text-gray-300 mt-4 text-sm leading-relaxed drop-shadow-md">Sistema Integrado de Producción e Inventario para Servicios Jiret G&B C.A.</p>
-             </div>
-             <div className="relative z-10 text-gray-500 text-xs font-bold uppercase tracking-widest">© {new Date().getFullYear()} Todos los derechos reservados</div>
-          </div>
-          <div className="w-full md:w-1/2 p-12 flex flex-col justify-center bg-white relative z-10">
-             <h2 className="text-2xl font-black text-black uppercase tracking-widest mb-2">Iniciar Sesión</h2>
-             <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-8">Ingresa tus credenciales de acceso</p>
-             {loginError && (<div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)]"><AlertTriangle size={16}/> {loginError}</div>)}
-             <form onSubmit={handleLogin} className="space-y-6">
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Usuario</label>
-                  <div className="relative group"><User className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="text" value={loginData.username} onChange={e=>setLoginData({...loginData, username: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="EJ: ADMIN o PLANTA"/></div>
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">Contraseña</label>
-                  <div className="relative group"><Lock className="absolute left-4 top-3.5 text-gray-400 group-hover:text-orange-500 transition-colors z-10" size={18}/><input type="password" value={loginData.password} onChange={e=>setLoginData({...loginData, password: e.target.value})} className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl text-sm font-black outline-none transition-all shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] hover:shadow-[inset_0_2px_8px_rgba(0,0,0,0.1)]" placeholder="••••••••"/></div>
-                </div>
-                <button type="submit" className="w-full bg-gradient-to-r from-orange-500 to-orange-600 text-white font-black py-4 rounded-xl shadow-[0_8px_20px_rgba(249,115,22,0.4)] hover:shadow-[0_15px_25px_rgba(249,115,22,0.6)] hover:-translate-y-1 active:translate-y-1 uppercase tracking-widest text-xs flex justify-center items-center gap-2 mt-4 transform transition-all">ENTRAR AL SISTEMA <ArrowRight size={16}/></button>
-             </form>
-          </div>
-       </div>
-    </div>
-  );
-
   const renderHome = () => {
     const hasPerm = (module) => appUser?.permissions ? appUser.permissions[module] : appUser?.role === 'Master';
     
@@ -763,23 +632,65 @@ export default function App() {
           <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
           <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
+        
+        {/* ROW 1 */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mb-8">
           {hasPerm('ventas') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Users size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3><p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl">
+               <Users size={40} className="text-orange-500 mb-4" />
+               <h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3>
+               <p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p>
+             </button>
           )}
           {hasPerm('produccion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('fases_produccion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl">
+               <Factory size={40} className="text-orange-500 mb-4" />
+               <h3 className="text-xl font-black text-white uppercase">Producción Planta</h3>
+               <p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p>
+             </button>
           )}
           {hasPerm('inventario') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl">
+               <Package size={40} className="text-orange-500 mb-4" />
+               <h3 className="text-xl font-black text-white uppercase">Control Inventario</h3>
+               <p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p>
+             </button>
           )}
         </div>
+
+        {/* ROW 2 */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
-          {hasPerm('costos') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('costos'); setCostosView('dashboard'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Reportes de Costo</h3><p className="text-xs text-gray-400 mt-2">Análisis de Utilidad y Rentabilidad.</p></button>
+          {hasPerm('produccion') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md">
+               <Calculator size={40} className="text-gray-400 mb-4" />
+               <h3 className="text-xl font-black text-gray-800 uppercase">Simulador Producción</h3>
+               <p className="text-xs text-gray-400 mt-2">Cálculo de Insumos y Mermas.</p>
+             </button>
           )}
+          {hasPerm('costos') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('costos'); setCostosView('operativos'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md">
+               <Wrench size={40} className="text-gray-400 mb-4" />
+               <h3 className="text-xl font-black text-gray-800 uppercase">Costos Operativos</h3>
+               <p className="text-xs text-gray-400 mt-2">Gestión de Gastos de Planta.</p>
+             </button>
+          )}
+          {hasPerm('costos') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('costos'); setCostosView('dashboard'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md">
+               <BarChart3 size={40} className="text-gray-400 mb-4" />
+               <h3 className="text-xl font-black text-gray-800 uppercase">Reportes de Costo</h3>
+               <p className="text-xs text-gray-400 mt-2">Análisis de Utilidad y Rentabilidad.</p>
+             </button>
+          )}
+        </div>
+
+        {/* ROW 3 */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
           {hasPerm('configuracion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><Settings2 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3><p className="text-xs text-gray-400 mt-2">Usuarios y Permisos.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md">
+               <Settings2 size={40} className="text-gray-400 mb-4" />
+               <h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3>
+               <p className="text-xs text-gray-400 mt-2">Usuarios y Permisos.</p>
+             </button>
           )}
         </div>
       </div>
@@ -1105,68 +1016,89 @@ export default function App() {
                   {invView === 'ajuste' && 'Registrar Ajuste'}
                </h2>
             </div>
-            <div className="p-8">
-               <form onSubmit={handleSaveMovement} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-xl space-y-6 max-w-4xl mx-auto">
-                  <div className="bg-orange-50 p-4 rounded-xl border border-orange-200 text-center mb-6">
-                     <p className="text-[10px] font-black text-orange-800 uppercase tracking-widest">Atención</p>
-                     <p className="text-xs font-bold text-orange-600 uppercase">Las entradas actualizarán el Costo Promedio del catálogo y el Kardex automáticamente.</p>
+            
+            {invView === 'ajuste' && !isAjusteUnlocked ? (
+               <div className="p-12 text-center flex flex-col items-center justify-center min-h-[400px]">
+                  <Lock size={60} className="text-orange-500 mb-6" />
+                  <h2 className="text-2xl font-black uppercase mb-4 tracking-widest text-black">Acceso Restringido</h2>
+                  <p className="text-sm font-bold text-gray-500 mb-8 uppercase max-w-md">Para proteger la integridad del inventario, los ajustes físicos requieren autorización. Ingrese la clave de administrador.</p>
+                  <div className="flex gap-2 max-w-sm w-full">
+                     <input type="password" value={ajustePassword} onChange={e=>setAjustePassword(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-4 text-center font-black outline-none focus:border-orange-500 uppercase tracking-widest text-black" placeholder="Contraseña..." />
+                     <button onClick={() => {
+                        if (ajustePassword === 'ADMIN') {
+                           setIsAjusteUnlocked(true);
+                           setAjustePassword('');
+                        } else {
+                           setDialog({title: 'Acceso Denegado', text: 'La contraseña ingresada es incorrecta.', type: 'alert'});
+                           setAjustePassword('');
+                        }
+                     }} className="bg-black text-white px-8 py-4 rounded-xl font-black text-xs uppercase hover:bg-gray-800 shadow-xl transition-all">Verificar</button>
                   </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                     <div>
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tipo de Operación</label>
-                       <select required value={newMovementForm.type} onChange={e=>setNewMovementForm({...newMovementForm, type: e.target.value})} className={`w-full border-2 rounded-xl p-4 font-black text-sm uppercase outline-none transition-colors ${newMovementForm.type === 'ENTRADA' || newMovementForm.type === 'AJUSTE (POSITIVO)' ? 'border-green-200 bg-green-50 text-green-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
-                          {invView === 'cargo' && <option value="ENTRADA">ENTRADA (COMPRA/PRODUCCIÓN)</option>}
-                          {invView === 'descargo' && <>
-                             <option value="SALIDA">SALIDA (VENTA/DESPACHO)</option>
-                             <option value="AUTOCONSUMO">AUTOCONSUMO (USO INTERNO)</option>
-                          </>}
-                          {invView === 'ajuste' && <>
-                             <option value="AJUSTE (POSITIVO)">AJUSTE FÍSICO (+ SOBRANTE)</option>
-                             <option value="AJUSTE (NEGATIVO)">AJUSTE FÍSICO (- FALTANTE/MERMA)</option>
-                          </>}
-                       </select>
-                     </div>
-                     <div>
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                       <input type="date" required value={newMovementForm.date} onChange={e=>setNewMovementForm({...newMovementForm, date: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-sm outline-none transition-colors text-black" />
+               </div>
+            ) : (
+               <div className="p-8">
+                  <form onSubmit={handleSaveMovement} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-xl space-y-6 max-w-4xl mx-auto">
+                     <div className="bg-orange-50 p-4 rounded-xl border border-orange-200 text-center mb-6">
+                        <p className="text-[10px] font-black text-orange-800 uppercase tracking-widest">Atención</p>
+                        <p className="text-xs font-bold text-orange-600 uppercase">Las entradas actualizarán el Costo Promedio del catálogo y el Kardex automáticamente.</p>
                      </div>
                      
-                     <div className="md:col-span-2">
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Ítem del Inventario</label>
-                       <select required value={newMovementForm.itemId} onChange={e=>{
-                          const item = (inventory || []).find(i=>i?.id===e.target.value);
-                          setNewMovementForm({...newMovementForm, itemId: e.target.value, cost: item ? item.cost : ''});
-                       }} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black uppercase text-xs outline-none transition-colors">
-                          <option value="">Seleccione...</option>
-                          {(inventory || []).map(i => <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc} (Stock: {i?.stock} {i?.unit} | Costo Prom: ${formatNum(i?.cost)})</option>)}
-                       </select>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                          <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tipo de Operación</label>
+                          <select required value={newMovementForm.type} onChange={e=>setNewMovementForm({...newMovementForm, type: e.target.value})} className={`w-full border-2 rounded-xl p-4 font-black text-sm uppercase outline-none transition-colors ${newMovementForm.type === 'ENTRADA' || newMovementForm.type === 'AJUSTE (POSITIVO)' ? 'border-green-200 bg-green-50 text-green-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
+                             {invView === 'cargo' && <option value="ENTRADA">ENTRADA (COMPRA/PRODUCCIÓN)</option>}
+                             {invView === 'descargo' && <>
+                                <option value="SALIDA">SALIDA (VENTA/DESPACHO)</option>
+                                <option value="AUTOCONSUMO">AUTOCONSUMO (USO INTERNO)</option>
+                             </>}
+                             {invView === 'ajuste' && <>
+                                <option value="AJUSTE (POSITIVO)">AJUSTE FÍSICO (+ SOBRANTE)</option>
+                                <option value="AJUSTE (NEGATIVO)">AJUSTE FÍSICO (- FALTANTE/MERMA)</option>
+                             </>}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                          <input type="date" required value={newMovementForm.date} onChange={e=>setNewMovementForm({...newMovementForm, date: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-sm outline-none transition-colors text-black" />
+                        </div>
+                        
+                        <div className="md:col-span-2">
+                          <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Ítem del Inventario</label>
+                          <select required value={newMovementForm.itemId} onChange={e=>{
+                             const item = (inventory || []).find(i=>i?.id===e.target.value);
+                             setNewMovementForm({...newMovementForm, itemId: e.target.value, cost: item ? item.cost : ''});
+                          }} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black uppercase text-xs outline-none transition-colors">
+                             <option value="">Seleccione...</option>
+                             {(inventory || []).map(i => <option key={i?.id} value={i?.id}>{i?.id} - {i?.desc} (Stock: {i?.stock} {i?.unit} | Costo Prom: ${formatNum(i?.cost)})</option>)}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
+                          <input type="number" step="0.01" required value={newMovementForm.qty} onChange={e=>setNewMovementForm({...newMovementForm, qty: e.target.value})} placeholder="0.00" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">{invView === 'cargo' ? 'Nuevo Costo Unitario ($) Compra' : 'Costo Unitario Promedio Actual ($)'}</label>
+                          <input type="number" step="0.01" value={newMovementForm.cost} onChange={e=>setNewMovementForm({...newMovementForm, cost: e.target.value})} disabled={invView !== 'cargo'} placeholder="0.00" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black disabled:opacity-60" />
+                        </div>
+
+                        <div className="md:col-span-2">
+                          <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Documento Referencia (Factura, OP, Guía)</label>
+                          <input type="text" required value={newMovementForm.reference} onChange={e=>setNewMovementForm({...newMovementForm, reference: e.target.value.toUpperCase()})} placeholder="EJ: FACT-001 o OP-005" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-xs uppercase outline-none transition-colors" />
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones o Notas</label>
+                          <input type="text" value={newMovementForm.notes} onChange={e=>setNewMovementForm({...newMovementForm, notes: e.target.value.toUpperCase()})} placeholder="Opcional" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-xs uppercase outline-none transition-colors" />
+                        </div>
                      </div>
 
-                     <div>
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
-                       <input type="number" step="0.01" required value={newMovementForm.qty} onChange={e=>setNewMovementForm({...newMovementForm, qty: e.target.value})} placeholder="0.00" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black" />
+                     <div className="flex justify-end pt-6 mt-6 border-t border-gray-100">
+                        <button type="submit" className="bg-black text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all tracking-widest flex items-center gap-2"><CheckCircle2 size={18}/> PROCESAR MOVIMIENTO</button>
                      </div>
-                     <div>
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">{invView === 'cargo' ? 'Nuevo Costo Unitario ($) Compra' : 'Costo Unitario Promedio Actual ($)'}</label>
-                       <input type="number" step="0.01" value={newMovementForm.cost} onChange={e=>setNewMovementForm({...newMovementForm, cost: e.target.value})} disabled={invView !== 'cargo'} placeholder="0.00" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black disabled:opacity-60" />
-                     </div>
-
-                     <div className="md:col-span-2">
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Documento Referencia (Factura, OP, Guía)</label>
-                       <input type="text" required value={newMovementForm.reference} onChange={e=>setNewMovementForm({...newMovementForm, reference: e.target.value.toUpperCase()})} placeholder="EJ: FACT-001 o OP-005" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-xs uppercase outline-none transition-colors" />
-                     </div>
-                     <div className="md:col-span-2">
-                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones o Notas</label>
-                       <input type="text" value={newMovementForm.notes} onChange={e=>setNewMovementForm({...newMovementForm, notes: e.target.value.toUpperCase()})} placeholder="Opcional" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-xs uppercase outline-none transition-colors" />
-                     </div>
-                  </div>
-
-                  <div className="flex justify-end pt-6 mt-6 border-t border-gray-100">
-                     <button type="submit" className="bg-black text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all tracking-widest flex items-center gap-2"><CheckCircle2 size={18}/> PROCESAR MOVIMIENTO</button>
-                  </div>
-               </form>
-            </div>
+                  </form>
+               </div>
+            )}
           </div>
         )}
 
@@ -1430,7 +1362,7 @@ export default function App() {
           <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowSingleReqReport(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Requisicion_${req.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar PDF</button></div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center my-4"><span className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">REQUISICIÓN DE PRODUCCIÓN N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
-          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto}</p></div></div>
+          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto} {req.categoria ? `| CAT: ${req.categoria}` : ''}</p></div></div>
           <div className="border-2 border-black p-4 grid grid-cols-4 gap-4 text-center text-xs font-black uppercase mb-4 rounded-2xl"><div>ANCHO<br/><span className="text-sm text-blue-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-blue-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-blue-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-blue-600">{req.micras}</span></div></div>
           
           <div className="bg-gray-50 p-4 flex justify-between border-2 border-black rounded-2xl mb-4">
@@ -1477,8 +1409,8 @@ export default function App() {
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center mb-6"><h2 className="text-xl font-black uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte de Requisiciones (OP)</h2></div>
           <table id="req-table" className="w-full text-[10px] border-collapse border border-gray-300">
-            <thead className="bg-gray-100 uppercase"><tr><th>OP N°</th><th>Fecha</th><th>Cliente</th><th>Vendedor</th><th>Producto</th><th className="text-right">KG Estimados</th><th className="text-center">Estatus</th></tr></thead>
-            <tbody>{(requirements || []).map(r => (<tr key={r?.id}><td className="p-2 border text-center">{String(r?.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-2 border">{r?.fecha}</td><td className="p-2 border font-bold">{r?.client}</td><td className="p-2 border">{r?.vendedor}</td><td className="p-2 border">{r?.desc}</td><td className="p-2 border text-right font-black">{formatNum(r?.requestedKg)} KG</td><td className="p-2 border text-center font-bold uppercase">{r?.status}</td></tr>))}</tbody>
+            <thead className="bg-gray-100 uppercase"><tr><th>OP N°</th><th>Fecha</th><th>Cliente</th><th>Vendedor</th><th>Producto / Cat.</th><th className="text-right">KG Estimados</th><th className="text-center">Estatus</th></tr></thead>
+            <tbody>{(requirements || []).map(r => (<tr key={r?.id}><td className="p-2 border text-center">{String(r?.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-2 border">{r?.fecha}</td><td className="p-2 border font-bold">{r?.client}</td><td className="p-2 border">{r?.vendedor}</td><td className="p-2 border">{r?.desc} {r?.categoria ? `- ${r.categoria}` : ''}</td><td className="p-2 border text-right font-black">{formatNum(r?.requestedKg)} KG</td><td className="p-2 border text-center font-bold uppercase">{r?.status}</td></tr>))}</tbody>
           </table>
         </div>
       );
@@ -1621,13 +1553,17 @@ export default function App() {
                       </div>
                     </div>
                     
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-6">
                        <div>
                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Tipo de Producto</label>
                          <select value={newReqForm.tipoProducto} onChange={e=>handleReqFormChange('tipoProducto', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500">
                            <option value="BOLSAS">BOLSAS / EMPAQUES</option>
                            <option value="TERMOENCOGIBLE">TERMOENCOGIBLE</option>
                          </select>
+                       </div>
+                       <div>
+                         <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Categoría (Manual)</label>
+                         <input type="text" value={newReqForm.categoria || ''} onChange={e=>handleReqFormChange('categoria', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500 uppercase" placeholder="EJ: PAÑAL, FARDO" />
                        </div>
                        <div>
                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Cantidad Solicitada</label>
@@ -1646,7 +1582,7 @@ export default function App() {
                   </form>
                 </div>
              )}
-             <div className="p-8 overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black w-1/2">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{(requirements || []).map(r=>(<tr key={r?.id} className="hover:bg-gray-50 group transition-all"><td className="py-5 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r?.fecha}</span></td><td className="py-5 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.desc}</span></td><td className="py-5 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div>
+             <div className="p-8 overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black w-1/2">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{(requirements || []).map(r=>(<tr key={r?.id} className="hover:bg-gray-50 group transition-all"><td className="py-5 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r?.fecha}</span></td><td className="py-5 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.tipoProducto} {r?.categoria ? `- ${r.categoria}` : ''} | {r?.desc}</span></td><td className="py-5 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div>
           </div>
         )}
       </div>
@@ -1661,7 +1597,7 @@ export default function App() {
           <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowWorkOrder(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Orden_Trabajo_${req.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar PDF</button></div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center my-4"><span className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">ORDEN DE TRABAJO (PLANTA) N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
-          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto}</p></div></div>
+          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto} {req.categoria ? `| CAT: ${req.categoria}` : ''}</p></div></div>
           <div className="border-2 border-black p-4 grid grid-cols-4 gap-4 text-center text-xs font-black uppercase mb-4 rounded-2xl"><div>ANCHO<br/><span className="text-sm text-blue-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-blue-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-blue-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-blue-600">{req.micras}</span></div></div>
           <div className="bg-gray-50 p-4 flex justify-between border-2 border-black rounded-2xl mb-4">
              <div><span className="block text-[10px] font-black uppercase">Cant. Solicitada</span><span className="text-xl font-black text-blue-600">{formatNum(req.cantidad)} {req.presentacion}</span></div>
@@ -1684,7 +1620,7 @@ export default function App() {
           <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowFiniquito(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Finiquito_${req.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar PDF</button></div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center my-4"><span className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">FINIQUITO DE PRODUCCIÓN N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
-          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">PRODUCTO: {req.desc}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">ESTADO: {req.status}</p></div></div>
+          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">PRODUCTO: {req.tipoProducto} {req.categoria ? `(${req.categoria})` : ''} - {req.desc}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">ESTADO: {req.status}</p></div></div>
           <div className="bg-gray-50 p-4 flex justify-between border-2 border-black rounded-2xl mb-4">
              <div><span className="block text-[10px] font-black uppercase">Meta Inicial Requerida</span><span className="text-xl font-black text-blue-600">{formatNum(req.requestedKg)} KG</span></div>
              <div className="text-right"><span className="block text-[10px] font-black uppercase">Total Neto Producido</span><span className="text-3xl font-black text-green-600">{formatNum((req?.production?.sellado?.batches || []).reduce((a,b)=>a+parseNum(b?.producedKg),0) || (req?.production?.extrusion?.batches || []).reduce((a,b)=>a+parseNum(b?.producedKg),0) || 0)} KG</span></div>
@@ -1695,7 +1631,6 @@ export default function App() {
     };
 
     if (showWorkOrder) return renderWorkOrder();
-    if (showPhaseReport) return null; // Evita caída si la variable cambia
     if (showFiniquito) return renderFiniquito();
 
     const activeOrders = (requirements || []).filter(r => r?.status === 'EN PROCESO');
@@ -2051,7 +1986,6 @@ export default function App() {
   };
 
   const renderCostosModule = () => {
-    // === CÁLCULOS GENERALES ===
     const completedOps = (requirements || []).filter(r => r.status === 'COMPLETADO');
     const totalIncome = (invoices || []).reduce((acc, inv) => acc + parseNum(inv.montoBase), 0);
     
@@ -2068,7 +2002,6 @@ export default function App() {
     const globalProfit = totalIncome - totalCostsGlobal;
     const globalMargin = totalIncome > 0 ? (globalProfit / totalIncome) * 100 : 0;
 
-    // === VISTA 1: DASHBOARD ===
     if (costosView === 'dashboard') {
       const incomePercent = 100;
       const mpPercent = totalIncome ? (totalOpCostsMP / totalIncome) * 100 : 0;
@@ -2151,7 +2084,6 @@ export default function App() {
       );
     }
 
-    // === VISTA 2: SÚPER FINIQUITO POR OP (Con Merma Total y Colores) ===
     if (costosView === 'op_detail') {
       const selectedReq = completedOps.find(r => r.id === selectedOpCost);
       
@@ -2196,12 +2128,6 @@ export default function App() {
       const reqMargin = totalInvoiceIncome > 0 ? (reqProfit / totalInvoiceIncome) * 100 : 0;
       const mermaPct = totalMP_Kg > 0 ? (totalMerma_Kg / totalMP_Kg) * 100 : 0;
       
-      // Lógica de colores para Merma
-      const getMermaColor = (pct) => {
-         if (pct <= 5.0) return 'text-green-500';
-         if (pct > 5.0 && pct <= 5.5) return 'text-yellow-500';
-         return 'text-red-600';
-      };
       const mermaColorClass = getMermaColor(mermaPct);
 
       return (
@@ -2210,8 +2136,8 @@ export default function App() {
               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Detalle de Rentabilidad (OP)</h2>
               {selectedReq && (
                  <div className="flex gap-2">
-                    <button onClick={() => handleExportExcel('superfiniquito-table', `SuperFiniquito_OP_${selectedReq.id}`)} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
-                    <button onClick={() => handleExportPDF(`SuperFiniquito_OP_${selectedReq.id}`, false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
+                    <button onClick={() => handleExportExcel('superfiniquito-table', `Finiquito_OP_${selectedReq.id}`)} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXCEL</button>
+                    <button onClick={() => handleExportPDF(`Finiquito_OP_${selectedReq.id}`, false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> PDF</button>
                  </div>
               )}
            </div>
@@ -2227,108 +2153,105 @@ export default function App() {
            </div>
 
            {selectedReq ? (
-              <div id="pdf-content" className="p-8 print:p-0 bg-white">
-                 <div className="hidden pdf-header mb-8"><ReportHeader /></div>
+              <div id="pdf-content" className="p-8 print:p-0 print:m-0 bg-white">
+                 <div className="hidden pdf-header mb-4"><ReportHeader /></div>
                  
-                 <div className="text-center mb-8">
-                    <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2 inline-block">SÚPER FINIQUITO DE PRODUCCIÓN Y COSTOS</h1>
+                 <div className="text-center mb-4">
+                    <h1 className="text-xl font-black text-black uppercase border-b-4 border-orange-500 pb-1 inline-block">FINIQUITO FINANCIERO DE PRODUCCIÓN</h1>
                  </div>
 
-                 <div className="grid grid-cols-2 gap-4 mb-4 text-xs font-black uppercase border-2 border-black p-4 rounded-t-2xl bg-gray-50">
+                 <div className="grid grid-cols-2 gap-4 mb-4 text-[10px] font-black uppercase border-2 border-black p-3 rounded-t-xl bg-gray-50">
                     <div>
-                       <p className="text-gray-500 mb-1">CLIENTE:</p><p className="text-sm text-black mb-4">{selectedReq.client}</p>
-                       <p className="text-gray-500 mb-1">PRODUCTO / MAQUILA:</p><p className="text-black mb-4">{selectedReq.desc}</p>
-                       <p className="text-gray-500 mb-1">CANTIDAD ESTIMADA:</p><p className="text-black text-orange-600">{formatNum(selectedReq.requestedKg)} KG</p>
+                       <p className="text-gray-500 mb-0.5">CLIENTE:</p><p className="text-xs text-black mb-2">{selectedReq.client}</p>
+                       <p className="text-gray-500 mb-0.5">PRODUCTO / MAQUILA:</p><p className="text-black mb-2">{selectedReq.desc} {selectedReq.categoria ? `| CAT: ${selectedReq.categoria}` : ''}</p>
+                       <p className="text-gray-500 mb-0.5">CANTIDAD ESTIMADA:</p><p className="text-black text-orange-600">{formatNum(selectedReq.requestedKg)} KG</p>
                     </div>
                     <div className="text-right">
-                       <p className="text-gray-500 mb-1">NÚMERO DE ORDEN:</p><p className="text-lg text-orange-600 mb-4">#{String(selectedReq.id).replace('OP-','').padStart(5,'0')}</p>
-                       <p className="text-gray-500 mb-1">FECHA INICIO PRODUCCIÓN:</p><p className="text-black mb-4">{fechaInicio}</p>
-                       <p className="text-gray-500 mb-1">FECHA CIERRE PRODUCCIÓN:</p><p className="text-black">{fechaFin}</p>
+                       <p className="text-gray-500 mb-0.5">NÚMERO DE ORDEN:</p><p className="text-sm text-orange-600 mb-2">#{String(selectedReq.id).replace('OP-','').padStart(5,'0')}</p>
+                       <p className="text-gray-500 mb-0.5">FECHA INICIO PRODUCCIÓN:</p><p className="text-black mb-2">{fechaInicio}</p>
+                       <p className="text-gray-500 mb-0.5">FECHA CIERRE PRODUCCIÓN:</p><p className="text-black">{fechaFin}</p>
                     </div>
                  </div>
 
-                 {/* INDICADOR DE MERMA EN ENCABEZADO */}
-                 <div className="grid grid-cols-3 gap-4 mb-8 text-center text-xs font-black uppercase border-x-2 border-b-2 border-black p-4 rounded-b-2xl bg-white shadow-sm">
+                 <div className="grid grid-cols-3 gap-2 mb-4 text-center text-[10px] font-black uppercase border-x-2 border-b-2 border-black p-2 rounded-b-xl bg-white shadow-sm">
                     <div>
-                       <p className="text-gray-500 mb-1">Total MP Inyectada</p>
-                       <p className="text-xl text-black">{formatNum(totalMP_Kg)} KG</p>
+                       <p className="text-gray-500 mb-0.5">Total MP Inyectada</p>
+                       <p className="text-sm text-black">{formatNum(totalMP_Kg)} KG</p>
                     </div>
                     <div className="border-x-2 border-gray-200">
-                       <p className="text-gray-500 mb-1">Total Merma Generada</p>
-                       <p className={`text-xl ${mermaColorClass}`}>{formatNum(totalMerma_Kg)} KG</p>
+                       <p className="text-gray-500 mb-0.5">Total Merma Generada</p>
+                       <p className={`text-sm ${mermaColorClass}`}>{formatNum(totalMerma_Kg)} KG</p>
                     </div>
                     <div>
-                       <p className="text-gray-500 mb-1">% Merma Global OP</p>
-                       <p className={`text-2xl ${mermaColorClass}`}>{formatNum(mermaPct)}%</p>
+                       <p className="text-gray-500 mb-0.5">% Merma Global OP</p>
+                       <p className={`text-sm ${mermaColorClass}`}>{formatNum(mermaPct)}%</p>
                     </div>
                  </div>
 
                  <div id="superfiniquito-table">
-                    {/* COSTOS MATERIA PRIMA */}
-                    <div className="mb-8">
-                       <h3 className="text-sm font-black uppercase text-white bg-black p-3 tracking-widest">1. Desglose de Costos de Producción (MP)</h3>
-                       <table className="w-full text-left text-xs border-collapse border-2 border-black mt-2">
+                    <div className="mb-4">
+                       <h3 className="text-[10px] font-black uppercase text-white bg-black p-2 tracking-widest">1. Desglose de Costos de Producción (MP)</h3>
+                       <table className="w-full text-left text-[9px] border-collapse border-2 border-black mt-1">
                           <thead className="bg-gray-200">
-                             <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                                <th className="p-3 border border-black">Insumo / Descripción</th>
-                                <th className="p-3 border border-black text-center">Fase</th>
-                                <th className="p-3 border border-black text-center">Cantidad</th>
-                                <th className="p-3 border border-black text-right">Costo Unit.</th>
-                                <th className="p-3 border border-black text-right">Costo Total</th>
+                             <tr className="uppercase font-black tracking-widest text-black">
+                                <th className="p-1.5 border border-black">Insumo / Descripción</th>
+                                <th className="p-1.5 border border-black text-center">Fase</th>
+                                <th className="p-1.5 border border-black text-center">Cantidad</th>
+                                <th className="p-1.5 border border-black text-right">Costo Unit.</th>
+                                <th className="p-1.5 border border-black text-right">Costo Total</th>
                              </tr>
                           </thead>
                           <tbody>
                              {costBreakdown.map((item, idx) => (
                                 <tr key={idx}>
-                                   <td className="p-3 border border-black font-bold uppercase">{item.desc}</td>
-                                   <td className="p-3 border border-black text-center font-bold uppercase">{item.phase}</td>
-                                   <td className="p-3 border border-black text-center font-black">{formatNum(item.qty)} kg</td>
-                                   <td className="p-3 border border-black text-right font-bold">${formatNum(item.unitCost)}</td>
-                                   <td className="p-3 border border-black text-right font-black text-red-600">${formatNum(item.total)}</td>
+                                   <td className="p-1.5 border border-black font-bold uppercase">{item.desc}</td>
+                                   <td className="p-1.5 border border-black text-center font-bold uppercase">{item.phase}</td>
+                                   <td className="p-1.5 border border-black text-center font-black">{formatNum(item.qty)} kg</td>
+                                   <td className="p-1.5 border border-black text-right font-bold">${formatNum(item.unitCost)}</td>
+                                   <td className="p-1.5 border border-black text-right font-black text-red-600">${formatNum(item.total)}</td>
                                 </tr>
                              ))}
-                             {costBreakdown.length === 0 && <tr><td colSpan="5" className="p-4 text-center font-bold uppercase">No hay insumos reportados.</td></tr>}
+                             {costBreakdown.length === 0 && <tr><td colSpan="5" className="p-2 text-center font-bold uppercase">No hay insumos reportados.</td></tr>}
                           </tbody>
                           <tfoot className="bg-gray-100">
                              <tr>
-                                <td colSpan="4" className="p-3 border border-black text-right font-black uppercase">Costo Total MP:</td>
-                                <td className="p-3 border border-black text-right font-black text-red-600 text-lg">${formatNum(reqTotalCost)}</td>
+                                <td colSpan="4" className="p-1.5 border border-black text-right font-black uppercase">Costo Total MP:</td>
+                                <td className="p-1.5 border border-black text-right font-black text-red-600 text-xs">${formatNum(reqTotalCost)}</td>
                              </tr>
                           </tfoot>
                        </table>
                     </div>
 
-                    {/* INGRESOS FACTURAS */}
-                    <div className="mb-8">
-                       <h3 className="text-sm font-black uppercase text-white bg-black p-3 tracking-widest">2. Ventas y Facturación de la OP</h3>
-                       <table className="w-full text-left text-xs border-collapse border-2 border-black mt-2">
+                    <div className="mb-4">
+                       <h3 className="text-[10px] font-black uppercase text-white bg-black p-2 tracking-widest">2. Ventas y Facturación de la OP</h3>
+                       <table className="w-full text-left text-[9px] border-collapse border-2 border-black mt-1">
                           <thead className="bg-gray-200">
-                             <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                                <th className="p-3 border border-black">Factura N°</th>
-                                <th className="p-3 border border-black text-center">Fecha</th>
-                                <th className="p-3 border border-black text-right">Base (Ingreso Real)</th>
-                                <th className="p-3 border border-black text-right">IVA (16%)</th>
-                                <th className="p-3 border border-black text-right">Total Cobrado</th>
+                             <tr className="uppercase font-black tracking-widest text-black">
+                                <th className="p-1.5 border border-black">Factura N°</th>
+                                <th className="p-1.5 border border-black text-center">Fecha</th>
+                                <th className="p-1.5 border border-black text-right">Base (Ingreso Real)</th>
+                                <th className="p-1.5 border border-black text-right">IVA (16%)</th>
+                                <th className="p-1.5 border border-black text-right">Total Cobrado</th>
                              </tr>
                           </thead>
                           <tbody>
                              {matchedInvoices.map((inv, idx) => (
                                 <tr key={idx}>
-                                   <td className="p-3 border border-black font-black">{inv.documento}</td>
-                                   <td className="p-3 border border-black text-center font-bold">{inv.fecha}</td>
-                                   <td className="p-3 border border-black text-right font-black text-green-600">${formatNum(inv.montoBase)}</td>
-                                   <td className="p-3 border border-black text-right font-bold text-gray-500">${formatNum(inv.iva)}</td>
-                                   <td className="p-3 border border-black text-right font-black">${formatNum(inv.total)}</td>
+                                   <td className="p-1.5 border border-black font-black">{inv.documento}</td>
+                                   <td className="p-1.5 border border-black text-center font-bold">{inv.fecha}</td>
+                                   <td className="p-1.5 border border-black text-right font-black text-green-600">${formatNum(inv.montoBase)}</td>
+                                   <td className="p-1.5 border border-black text-right font-bold text-gray-500">${formatNum(inv.iva)}</td>
+                                   <td className="p-1.5 border border-black text-right font-black">${formatNum(inv.total)}</td>
                                 </tr>
                              ))}
-                             {matchedInvoices.length === 0 && <tr><td colSpan="5" className="p-4 text-center font-bold uppercase text-red-500">No hay facturas asociadas a esta OP.</td></tr>}
+                             {matchedInvoices.length === 0 && <tr><td colSpan="5" className="p-2 text-center font-bold uppercase text-red-500">No hay facturas asociadas a esta OP.</td></tr>}
                           </tbody>
                           {matchedInvoices.length > 0 && (
                              <tfoot className="bg-gray-100">
                                 <tr>
-                                   <td colSpan="2" className="p-3 border border-black text-right font-black uppercase">Total Ingreso OP (Base):</td>
-                                   <td className="p-3 border border-black text-right font-black text-green-600 text-lg">${formatNum(totalInvoiceIncome)}</td>
-                                   <td colSpan="2" className="p-3 border border-black bg-gray-200"></td>
+                                   <td colSpan="2" className="p-1.5 border border-black text-right font-black uppercase">Total Ingreso OP (Base):</td>
+                                   <td className="p-1.5 border border-black text-right font-black text-green-600 text-xs">${formatNum(totalInvoiceIncome)}</td>
+                                   <td colSpan="2" className="p-1.5 border border-black bg-gray-200"></td>
                                 </tr>
                              </tfoot>
                           )}
@@ -2336,33 +2259,32 @@ export default function App() {
                     </div>
                  </div>
 
-                 {/* RENTABILIDAD FINAL */}
-                 <div className="border-4 border-black p-6 rounded-2xl bg-gray-50 flex justify-between items-center mt-6">
+                 <div className="border-2 border-black p-4 rounded-xl bg-gray-50 flex justify-between items-center mt-4">
                     <div>
-                       <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Cruce de Información Financiera</p>
-                       <p className="text-sm font-bold uppercase text-black">Rentabilidad y Margen Neto de la OP</p>
+                       <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-0.5">Cruce de Información Financiera</p>
+                       <p className="text-xs font-bold uppercase text-black">Rentabilidad y Margen Neto de la OP</p>
                     </div>
-                    <div className="text-right flex items-end gap-8">
+                    <div className="text-right flex items-end gap-6">
                        <div>
-                          <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Ganancia / Pérdida</p>
-                          <p className={`text-3xl font-black ${reqProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>${formatNum(reqProfit)}</p>
+                          <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-0.5">Ganancia / Pérdida</p>
+                          <p className={`text-xl font-black ${reqProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>${formatNum(reqProfit)}</p>
                        </div>
-                       <div className="bg-black text-white px-6 py-3 rounded-xl border-2 border-black">
-                          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">MARGEN NETO</p>
-                          <p className={`text-3xl font-black ${reqMargin >= 30 ? 'text-green-400' : (reqMargin > 0 ? 'text-orange-400' : 'text-red-400')}`}>{formatNum(reqMargin)}%</p>
+                       <div className="bg-black text-white px-4 py-2 rounded-lg border-2 border-black">
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">MARGEN NETO</p>
+                          <p className={`text-xl font-black ${reqMargin >= 30 ? 'text-green-400' : (reqMargin > 0 ? 'text-orange-400' : 'text-red-400')}`}>{formatNum(reqMargin)}%</p>
                        </div>
                     </div>
                  </div>
 
-                 <div className="mt-20 grid grid-cols-2 gap-24 text-center font-black uppercase text-[10px] text-black">
-                    <div className="border-t-2 border-black pt-2 mx-10">DEPARTAMENTO DE COSTOS</div>
-                    <div className="border-t-2 border-black pt-2 mx-10">REVISADO Y APROBADO (GERENCIA)</div>
+                 <div className="mt-12 grid grid-cols-2 gap-16 text-center font-black uppercase text-[9px] text-black">
+                    <div className="border-t-2 border-black pt-1 mx-6">DEPARTAMENTO DE COSTOS</div>
+                    <div className="border-t-2 border-black pt-1 mx-6">REVISADO Y APROBADO (GERENCIA)</div>
                  </div>
               </div>
            ) : (
               <div className="p-16 text-center text-gray-400">
                  <FileText size={60} className="mx-auto mb-4 opacity-50"/>
-                 <p className="font-black uppercase tracking-widest">Selecciona una OP para visualizar el Súper Finiquito Financiero</p>
+                 <p className="font-black uppercase tracking-widest">Selecciona una OP para visualizar el Finiquito Financiero</p>
               </div>
            )}
         </div>
@@ -2832,7 +2754,7 @@ export default function App() {
                                                <span key={key} className="bg-blue-50 text-blue-600 border border-blue-200 px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest">{key}</span>
                                             ))}
                                             {u.role === 'Master' && <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded text-[9px] font-black uppercase">ALL ACCESS</span>}
-                                         </div>
+                                      </div>
                                       </td>
                                       <td className="py-3 px-4 text-center">
                                          <div className="flex justify-center gap-2">
