@@ -1587,6 +1587,46 @@ export default function App() {
   };
 
   const renderProductionModule = () => {
+    const renderWorkOrder = () => {
+      const req = (requirements || []).find(r => r?.id === showWorkOrder); if (!req) return null;
+      return (
+        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black shadow-xl bg-white">
+          <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowWorkOrder(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Orden_Trabajo_${req.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar PDF</button></div>
+          <div className="hidden pdf-header mb-6"><ReportHeader /></div>
+          <div className="text-center my-4"><span className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">ORDEN DE TRABAJO (PLANTA) N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
+          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto} {req.categoria ? `| CAT: ${req.categoria}` : ''}</p></div></div>
+          <div className="border-2 border-black p-4 grid grid-cols-4 gap-4 text-center text-xs font-black uppercase mb-4 rounded-2xl"><div>ANCHO<br/><span className="text-sm text-blue-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-blue-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-blue-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-blue-600">{req.micras}</span></div></div>
+          <div className="bg-gray-50 p-4 flex justify-between border-2 border-black rounded-2xl mb-4">
+             <div><span className="block text-[10px] font-black uppercase">Cant. Solicitada</span><span className="text-xl font-black text-blue-600">{formatNum(req.cantidad)} {req.presentacion}</span></div>
+             <div><span className="block text-[10px] font-black uppercase">Peso Millar Est.</span><span className="text-xl font-black">{req.pesoMillar || 'N/A'}</span></div>
+             <div className="text-right"><span className="block text-[10px] font-black uppercase">Meta Producción Planta</span><span className="text-3xl font-black text-orange-600">{formatNum(req.requestedKg)} KG</span></div>
+          </div>
+          <div className="mt-4 border-2 border-black p-4 rounded-xl">
+             <p className="font-black text-xs uppercase mb-1">DETALLES / PRODUCTO:</p>
+             <p className="text-sm font-bold uppercase">{req.desc || 'SIN DESCRIPCIÓN'}</p>
+          </div>
+          <div className="mt-16 grid grid-cols-2 gap-24 text-center font-black text-xs uppercase border-t-2 border-black pt-4"><div>SUPERVISOR DE PRODUCCIÓN</div><div>OPERADOR ASIGNADO</div></div>
+        </div>
+      );
+    };
+
+    const renderFiniquito = () => {
+      const req = (requirements || []).find(r => r?.id === showFiniquito); if (!req) return null;
+      return (
+        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black shadow-xl bg-white">
+          <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowFiniquito(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Finiquito_${req.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar PDF</button></div>
+          <div className="hidden pdf-header mb-6"><ReportHeader /></div>
+          <div className="text-center my-4"><span className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">FINIQUITO DE PRODUCCIÓN N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
+          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">PRODUCTO: {req.tipoProducto} {req.categoria ? `(${req.categoria})` : ''} - {req.desc}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">ESTADO: {req.status}</p></div></div>
+          <div className="bg-gray-50 p-4 flex justify-between border-2 border-black rounded-2xl mb-4">
+             <div><span className="block text-[10px] font-black uppercase">Meta Inicial Requerida</span><span className="text-xl font-black text-blue-600">{formatNum(req.requestedKg)} KG</span></div>
+             <div className="text-right"><span className="block text-[10px] font-black uppercase">Total Neto Producido</span><span className="text-3xl font-black text-green-600">{formatNum((req?.production?.sellado?.batches || []).reduce((a,b)=>a+parseNum(b?.producedKg),0) || (req?.production?.extrusion?.batches || []).reduce((a,b)=>a+parseNum(b?.producedKg),0) || 0)} KG</span></div>
+          </div>
+          <div className="mt-16 grid grid-cols-2 gap-24 text-center font-black text-xs uppercase border-t-2 border-black pt-4"><div>GERENCIA DE PLANTA</div><div>DEPARTAMENTO DE COSTOS</div></div>
+        </div>
+      );
+    };
+
     if (showWorkOrder) return renderWorkOrder();
     if (showFiniquito) return renderFiniquito();
 
@@ -2100,7 +2140,7 @@ export default function App() {
 
               {/* Botones Independientes para Simulador y Costos Operativos si tienen permiso */}
               {appUser?.permissions?.produccion && (
-                <button onClick={()=>{clearAllReports(); setActiveTab('simulador');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'simulador' ? 'bg-black text-white shadow-xl' : 'bg-white text-gray-700 shadow-sm border border-gray-200'}`}><Calculator size={18} /> SIMULADOR PRODUCCIÓN</button>
+                <button onClick={()=>{clearAllReports(); setActiveTab('simulador');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'simulador' ? 'bg-black text-white shadow-xl' : 'bg-white text-gray-700 shadow-sm border border-gray-200'}`}><Calculator size={18} /> SIM. PRODUCCIÓN</button>
               )}
               {appUser?.permissions?.costos && (
                 <button onClick={()=>{clearAllReports(); setActiveTab('operativos');}} className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'operativos' ? 'bg-black text-white shadow-xl' : 'bg-white text-gray-700 shadow-sm border border-gray-200'}`}><Wrench size={18} /> COSTOS OPERATIVOS</button>
