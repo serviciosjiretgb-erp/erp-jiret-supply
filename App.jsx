@@ -246,64 +246,74 @@ export default function App() {
   const [prodSubMode, setProdSubMode] = useState('fase'); // 'fase' | 'requisicion'
 
   // ============================================================================
-  // EXPORTACIONES CORREGIDAS PARA EVITAR DESBORDAMIENTOS (FUERA DE MARGEN)
+  // EXPORTACIONES CORREGIDAS
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content');
     if (!element) {
-      setDialog({title:'Error PDF', text:'No se encontró contenido para exportar. Asegúrese de estar en la vista correcta.', type:'alert'});
+      setDialog({title:'Error PDF', text:'No se encontró contenido para exportar.', type:'alert'});
       return;
     }
     if (typeof window.html2pdf === 'undefined') {
-      setDialog({title:'Librería no lista', text:'La librería PDF aún se está cargando. Espere 3 segundos y reintente.', type:'alert'});
+      setDialog({title:'Librería no lista', text:'La librería PDF aún carga. Espere unos segundos y reintente.', type:'alert'});
       return;
     }
 
-    // ── Ocultar elementos no-pdf, mostrar cabeceras pdf ──────────────
+    // ── Mostrar/ocultar elementos ─────────────────────────────────────
     const noPdf = element.querySelectorAll('.no-pdf, [data-html2canvas-ignore]');
-    noPdf.forEach(el => { el.dataset._prevDisplay = el.style.display; el.style.display = 'none'; });
-    const pdfHeaders = element.querySelectorAll('.pdf-header');
-    pdfHeaders.forEach(el => { el.dataset._prevDisplay = el.style.display; el.style.display = 'block'; });
+    noPdf.forEach(el => { el.dataset.prevDisplay = el.style.display || ''; el.style.setProperty('display','none','important'); });
+    const headers = element.querySelectorAll('.pdf-header');
+    headers.forEach(el => { el.dataset.prevDisplay = el.style.display || ''; el.style.setProperty('display','block','important'); });
+
+    // ── Tamaño virtual fijo tipo escritorio ───────────────────────────
+    // Portrait → 900 px  /  Landscape → 1200 px
+    // html2pdf encajará todo en hoja carta de forma automática
+    const vw = isLandscape ? 1200 : 900;
 
     const savedStyle = element.getAttribute('style') || '';
-    
-    // ── Fijar un ancho estático para que html2canvas capture todo sin desborde ──
-    const exportWidth = isLandscape ? '1200px' : '900px';
-    element.style.cssText = `width: ${exportWidth}; max-width: ${exportWidth}; margin: 0 auto; padding: 20px; background: #ffffff; color: #000000; box-sizing: border-box;`;
+    element.style.cssText = `width:${vw}px !important;max-width:${vw}px !important;margin:0 !important;padding:32px !important;background:#ffffff !important;color:#000000 !important;box-sizing:border-box !important;`;
 
     const opt = {
-      margin:       10, // Margen uniforme de 10mm
-      filename:     `${filename}_${getTodayDate()}.pdf`,
-      image:        { type: 'jpeg', quality: 0.98 },
-      html2canvas:  {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        windowWidth: isLandscape ? 1200 : 900 // Coincide con nuestro ancho estricto
+      margin:   isLandscape ? [8, 8, 8, 8] : [12, 12, 12, 12],   // mm
+      filename: `${filename}_${getTodayDate()}.pdf`,
+      image:    { type: 'jpeg', quality: 0.92 },
+      html2canvas: {
+        scale:           2,
+        useCORS:         true,
+        allowTaint:      false,
+        logging:         false,
+        backgroundColor: '#ffffff',
+        windowWidth:     vw,
+        width:           vw,
+        onclone: (cloned) => {
+          const el = cloned.getElementById('pdf-content');
+          if (el) {
+            el.style.cssText = `width:${vw}px !important;max-width:${vw}px !important;margin:0 !important;padding:32px !important;background:#ffffff !important;color:#000000 !important;box-sizing:border-box !important;`;
+          }
+          cloned.querySelectorAll('.pdf-header').forEach(h => h.style.setProperty('display','block','important'));
+          cloned.querySelectorAll('.no-pdf,[data-html2canvas-ignore]').forEach(h => h.style.setProperty('display','none','important'));
+        },
       },
       jsPDF: {
-        unit: 'mm',
-        format: 'letter',
-        orientation: isLandscape ? 'landscape' : 'portrait'
-      }
+        unit:        'mm',
+        format:      'letter',
+        orientation: isLandscape ? 'landscape' : 'portrait',
+        compress:    true,
+      },
+      pagebreak: { mode: ['css', 'legacy'] },
     };
 
     const restore = () => {
       element.setAttribute('style', savedStyle);
-      noPdf.forEach(el => { el.style.display = el.dataset._prevDisplay ?? ''; delete el.dataset._prevDisplay; });
-      pdfHeaders.forEach(el => { el.style.display = el.dataset._prevDisplay ?? ''; delete el.dataset._prevDisplay; });
+      noPdf.forEach(el => { el.style.display = el.dataset.prevDisplay || ''; delete el.dataset.prevDisplay; });
+      headers.forEach(el => { el.style.display = el.dataset.prevDisplay || ''; delete el.dataset.prevDisplay; });
     };
 
-    window.html2pdf()
-      .set(opt)
-      .from(element)
-      .save()
-      .then(restore)
-      .catch(err => {
-        restore();
-        console.error('PDF error:', err);
-        setDialog({title:'Error al generar PDF', text:'Intente nuevamente.', type:'alert'});
-      });
+    window.html2pdf().set(opt).from(element).save().then(restore).catch(err => {
+      restore();
+      console.error('PDF error:', err);
+      setDialog({title:'Error al generar PDF', text:'Intente nuevamente. Si persiste, recargue la página.', type:'alert'});
+    });
   };
   
   const handleExportExcel = (tableDataOrId, filename, headers = null) => {
@@ -312,6 +322,7 @@ export default function App() {
       const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8" /><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #000;padding:5px;}th{text-align:center;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><br/>${tableClone.outerHTML}</body></html>`;
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${filename}_${getTodayDate()}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
     } else if (Array.isArray(tableDataOrId)) {
+      // Export directly from data array using custom HTML logic
       let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8" /><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #000;padding:5px;}th{background-color:#f3f4f6;text-align:center;font-weight:bold;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><br/><table>`;
       if (headers) {
         html += `<thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>`;
@@ -1667,7 +1678,7 @@ export default function App() {
                                  </td>
                                  <td className="py-3 px-4 text-center font-black text-lg">
                                     {diff !== null ? (
-                                       <span className={diff > 0 ? 'text-green-600' : diff < 0 ? 'text-gray-400'}>
+                                       <span className={diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-600' : 'text-gray-400'}>
                                           {diff > 0 ? '+' : ''}{formatNum(diff)}
                                        </span>
                                     ) : <span className="text-gray-300">-</span>}
@@ -2707,269 +2718,243 @@ export default function App() {
   };
 
   const renderCostosOperativosModule = () => {
-    const filteredCosts = opCosts.filter(cost => {
-      const matchCategory = costFilterCategory === 'TODAS' || cost.category === costFilterCategory;
-      const matchMonth = costFilterMonth === 'TODOS' || cost.month === costFilterMonth;
-      return matchCategory && matchMonth;
-    });
+    try {
+      // ── Usar la variable de estado costCategories (incluye categorías personalizadas) ──
+      const allCats = Array.isArray(costCategories) && costCategories.length > 0 ? costCategories : COSTO_CATEGORIES;
 
-    const costsByCategory = {};
-    costCategories.forEach(cat => { costsByCategory[cat] = 0; });
-    opCosts.forEach(cost => {
-      const cat = cost.category || 'Otros Gastos';
-      if (costsByCategory[cat] !== undefined) {
-        costsByCategory[cat] += cost.amount || 0;
-      } else {
-        costsByCategory[cat] = cost.amount || 0;
-      }
-    });
+      const filteredCosts = (opCosts || []).filter(cost => {
+        if (!cost) return false;
+        const matchCategory = costFilterCategory === 'TODAS' || cost.category === costFilterCategory;
+        const matchMonth = costFilterMonth === 'TODOS' || cost.month === costFilterMonth;
+        return matchCategory && matchMonth;
+      });
 
-    const renderCostosOperativosModule = () => {
-    const filteredCosts = opCosts.filter(cost => {
-      const matchCategory = costFilterCategory === 'TODAS' || cost.category === costFilterCategory;
-      const matchMonth = costFilterMonth === 'TODOS' || cost.month === costFilterMonth;
-      return matchCategory && matchMonth;
-    });
+      // Resumen por categoría — dinámico con todas las categorías conocidas
+      const costsByCategory = {};
+      allCats.forEach(cat => { costsByCategory[cat] = 0; });
+      (opCosts || []).forEach(cost => {
+        if (!cost || !cost.category) return;
+        if (costsByCategory[cost.category] !== undefined) {
+          costsByCategory[cost.category] += parseNum(cost.amount);
+        } else {
+          // Categoría personalizada no en la lista base
+          costsByCategory[cost.category] = parseNum(cost.amount);
+        }
+      });
 
-    const costsByCategory = {};
-    // Usamos el estado dinámico costCategories para evitar choques con la constante y prevenir pantallas blancas
-    costCategories.forEach(cat => { costsByCategory[cat] = 0; });
-    
-    opCosts.forEach(cost => {
-      const cat = cost.category || 'Otros Gastos';
-      if (costsByCategory[cat] !== undefined) {
-        costsByCategory[cat] += cost.amount || 0;
-      } else {
-        costsByCategory[cat] = cost.amount || 0;
-      }
-    });
+      const totalCosts = Object.values(costsByCategory).reduce((s, v) => s + v, 0);
+      const maxCategoryAmount = Math.max(...Object.values(costsByCategory).filter(v => v > 0), 1);
 
-    const totalCosts = Object.values(costsByCategory).reduce((sum, val) => sum + val, 0);
-    const maxCategoryAmount = Math.max(...Object.values(costsByCategory), 1);
-    // Filtramos para evitar valores undefined que rompan el split('-')
-    const uniqueMonths = [...new Set(opCosts.map(c => c.month || ''))].filter(Boolean).sort().reverse();
+      // Meses únicos — protegido contra valores undefined/null
+      const uniqueMonths = [...new Set(
+        (opCosts || [])
+          .map(c => c?.month || (c?.date ? String(c.date).substring(0, 7) : null))
+          .filter(Boolean)
+      )].sort().reverse();
 
-    return (
-      <div className="w-full max-w-7xl animate-in fade-in">
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-green-50 to-green-100">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3 tracking-tighter">
-                  <DollarSign className="text-green-600" size={32}/> Costos Operativos
-                </h2>
-                <p className="text-xs font-bold text-gray-600 uppercase mt-2">Registro y Control de Gastos Operacionales</p>
+      // Nombres de mes para mostrar
+      const MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+      const formatMonth = (ym) => {
+        if (!ym || typeof ym !== 'string') return ym || '—';
+        const parts = ym.split('-');
+        if (parts.length < 2) return ym;
+        const [yr, mo] = parts;
+        const idx = parseInt(mo, 10) - 1;
+        return `${MONTH_NAMES[idx] || mo} ${yr}`;
+      };
+
+      return (
+        <div className="w-full max-w-7xl animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-green-50 to-green-100">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3 tracking-tighter">
+                    <DollarSign className="text-green-600" size={32}/> Costos Operativos
+                  </h2>
+                  <p className="text-xs font-bold text-gray-600 uppercase mt-2">Registro y Control de Gastos Operacionales</p>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div className="p-8 space-y-8">
-            <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
-              <h3 className="text-sm font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">Registrar Nuevo Costo</h3>
-              <form onSubmit={handleSaveOpCost} className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                  <input type="date" value={newOpCostForm.date} onChange={e => setNewOpCostForm({...newOpCostForm, date: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500" required />
-                </div>
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="text-[10px] font-black text-gray-500 uppercase">Categoría</label>
-                    <button type="button" onClick={() => setShowNewCategoryModal(true)} className="text-[9px] bg-green-100 text-green-700 px-2 py-1 rounded font-bold hover:bg-green-200 transition-all flex items-center gap-1">
-                      <Plus size={10}/> Nueva
-                    </button>
+            <div className="p-8 space-y-8">
+              {/* Formulario de registro */}
+              <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
+                <h3 className="text-sm font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">Registrar Nuevo Costo</h3>
+                <form onSubmit={handleSaveOpCost} className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                    <input type="date" value={newOpCostForm.date} onChange={e => setNewOpCostForm({...newOpCostForm, date: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500" required />
                   </div>
-                  <select value={newOpCostForm.category} onChange={e => setNewOpCostForm({...newOpCostForm, category: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500" required>
-                    {costCategories.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Monto ($)</label>
-                  <input type="number" step="0.01" value={newOpCostForm.amount} onChange={e => setNewOpCostForm({...newOpCostForm, amount: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500 text-center" placeholder="0.00" required />
-                </div>
-                <div className="md:col-span-4">
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción</label>
-                  <input type="text" value={newOpCostForm.description} onChange={e => setNewOpCostForm({...newOpCostForm, description: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500 uppercase" placeholder="EJ: PAGO DE FACTURA DE LUZ" />
-                </div>
-                <div className="md:col-span-4">
-                  <button type="submit" className="bg-green-600 text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-green-700 transition-all flex items-center gap-2">
-                    <PlusCircle size={16}/> Registrar Costo
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            <div className="bg-white p-6 rounded-2xl border border-gray-200">
-              <h3 className="text-sm font-black uppercase text-black mb-4">Filtros</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
-                  <select value={costFilterCategory} onChange={e => setCostFilterCategory(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500">
-                    <option value="TODAS">TODAS LAS CATEGORÍAS</option>
-                    {costCategories.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes</label>
-                  <select value={costFilterMonth} onChange={e => setCostFilterMonth(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500">
-                    <option value="TODOS">TODOS LOS MESES</option>
-                    {uniqueMonths.map(month => (<option key={month} value={month}>{month}</option>))}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-2xl border border-gray-200">
-              <h3 className="text-sm font-black uppercase text-black mb-6 border-b border-gray-200 pb-2">Resumen por Categoría</h3>
-              <div className="space-y-3">
-                {costCategories.map(cat => {
-                  const amount = costsByCategory[cat] || 0;
-                  if(amount === 0) return null; // No mostrar categorías en 0 para limpiar vista
-                  const percentage = totalCosts > 0 ? (amount / totalCosts * 100) : 0;
-                  const barWidth = maxCategoryAmount > 0 ? (amount / maxCategoryAmount * 100) : 0;
-                  return (
-                    <div key={cat} className="group">
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="text-xs font-black text-gray-700 uppercase">{cat}</span>
-                        <span className="text-xs font-bold text-gray-500">${formatNum(amount)} ({percentage.toFixed(1)}%)</span>
-                      </div>
-                      <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
-                        <div className="bg-gradient-to-r from-green-500 to-green-600 h-full rounded-full transition-all duration-500" style={{width: `${barWidth}%`}} />
-                      </div>
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-[10px] font-black text-gray-500 uppercase">Categoría</label>
+                      <button type="button" onClick={() => setShowNewCategoryModal(true)} className="text-[9px] bg-green-100 text-green-700 px-2 py-1 rounded font-bold hover:bg-green-200 transition-all flex items-center gap-1"><Plus size={10}/> Nueva</button>
                     </div>
-                  );
-                })}
+                    <select value={newOpCostForm.category} onChange={e => setNewOpCostForm({...newOpCostForm, category: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500" required>
+                      {allCats.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Monto ($)</label>
+                    <input type="number" step="0.01" min="0.01" value={newOpCostForm.amount} onChange={e => setNewOpCostForm({...newOpCostForm, amount: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500 text-center" placeholder="0.00" required />
+                  </div>
+                  <div className="md:col-span-4">
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción</label>
+                    <input type="text" value={newOpCostForm.description} onChange={e => setNewOpCostForm({...newOpCostForm, description: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500 uppercase" placeholder="EJ: PAGO DE FACTURA DE LUZ" />
+                  </div>
+                  <div className="md:col-span-4">
+                    <button type="submit" className="bg-green-600 text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-green-700 transition-all flex items-center gap-2"><PlusCircle size={16}/> Registrar Costo</button>
+                  </div>
+                </form>
               </div>
-              <div className="mt-6 pt-6 border-t border-gray-200">
-                <div className="flex justify-between items-center">
+
+              {/* Filtros */}
+              <div className="bg-white p-6 rounded-2xl border border-gray-200">
+                <h3 className="text-sm font-black uppercase text-black mb-4">Filtros</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
+                    <select value={costFilterCategory} onChange={e => setCostFilterCategory(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500">
+                      <option value="TODAS">TODAS LAS CATEGORÍAS</option>
+                      {allCats.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes</label>
+                    <select value={costFilterMonth} onChange={e => setCostFilterMonth(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500">
+                      <option value="TODOS">TODOS LOS MESES</option>
+                      {uniqueMonths.map(m => (<option key={m} value={m}>{formatMonth(m)}</option>))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Resumen por categoría */}
+              <div className="bg-white p-6 rounded-2xl border border-gray-200">
+                <h3 className="text-sm font-black uppercase text-black mb-6 border-b border-gray-200 pb-2">Resumen por Categoría (Total acumulado)</h3>
+                <div className="space-y-3">
+                  {Object.entries(costsByCategory).map(([cat, amount]) => {
+                    const percentage = totalCosts > 0 ? (amount / totalCosts * 100) : 0;
+                    const barWidth = amount > 0 ? (amount / maxCategoryAmount * 100) : 0;
+                    return (
+                      <div key={cat}>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-xs font-black text-gray-700 uppercase">{cat}</span>
+                          <span className="text-xs font-bold text-gray-500">${formatNum(amount)} ({percentage.toFixed(1)}%)</span>
+                        </div>
+                        <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+                          <div className="bg-gradient-to-r from-green-500 to-green-600 h-full rounded-full transition-all duration-500" style={{width: `${barWidth}%`}} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-6 pt-6 border-t border-gray-200 flex justify-between items-center">
                   <span className="text-lg font-black text-black uppercase">Total General</span>
                   <span className="text-2xl font-black text-green-600">${formatNum(totalCosts)}</span>
                 </div>
               </div>
-            </div>
 
-            {/* ── RESUMEN MENSUAL CON % SOBRE VENTAS ── */}
-            <div className="bg-white p-6 rounded-2xl border border-gray-200">
-              <h3 className="text-sm font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">Costos Operativos vs Ventas (% por Mes)</h3>
-              <div className="overflow-x-auto rounded-xl border border-gray-200">
-                <table className="w-full text-xs text-left">
-                  <thead className="bg-gray-100 border-b-2 border-gray-200">
-                    <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
-                      <th className="py-3 px-4 border-r">Mes</th>
-                      <th className="py-3 px-4 border-r text-right">Ingresos (Ventas)</th>
-                      <th className="py-3 px-4 border-r text-right">Costos Operativos</th>
-                      <th className="py-3 px-4 text-center">% Costo Op. / Ventas</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {uniqueMonths.length === 0 ? (
-                      <tr><td colSpan="4" className="p-8 text-center text-gray-400 font-bold uppercase">Sin datos registrados</td></tr>
-                    ) : uniqueMonths.map(ym => {
-                      const costoMes = opCosts.filter(c => c.month === ym).reduce((s,c) => s + parseNum(c.amount), 0);
-                      const ingresosMes = invoices.filter(i => (i.fecha||'').startsWith(ym)).reduce((s,i) => s + parseNum(i.total), 0);
-                      const pct = ingresosMes > 0 ? (costoMes / ingresosMes * 100) : 0;
-                      
-                      // Protegemos el split
-                      const parts = (ym || '').split('-');
-                      const yr = parts[0] || '';
-                      const mo = parts[1] || '';
-                      
-                      const monthNames = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-                      const monthLabel = mo && yr ? `${monthNames[parseInt(mo, 10)-1]} ${yr}` : ym;
-                      
-                      return (
-                        <tr key={ym} className="hover:bg-gray-50 transition-colors">
-                          <td className="py-3 px-4 border-r font-black">{monthLabel}</td>
-                          <td className="py-3 px-4 border-r text-right font-black text-green-600">${formatNum(ingresosMes)}</td>
-                          <td className="py-3 px-4 border-r text-right font-black text-orange-600">${formatNum(costoMes)}</td>
-                          <td className="py-3 px-4 text-center">
-                            <span className={`px-3 py-1 rounded-lg text-[10px] font-black ${pct > 30 ? 'bg-red-100 text-red-700' : pct > 15 ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
-                              {ingresosMes > 0 ? `${pct.toFixed(1)}%` : 'S/V'}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <p className="text-[9px] font-bold text-gray-400 mt-3 uppercase">* S/V = Sin ventas registradas ese mes | % &lt;15% = Eficiente | 15-30% = Moderado | &gt;30% = Alto</p>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <div className="p-6 bg-gray-50 border-b border-gray-200"><h3 className="text-sm font-black uppercase text-black">Costos Registrados ({filteredCosts.length})</h3></div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead className="bg-gray-100 border-b-2 border-gray-200">
-                    <tr className="uppercase font-black text-[10px] tracking-widest text-gray-500">
-                      <th className="py-3 px-4">Fecha</th>
-                      <th className="py-3 px-4">Categoría</th>
-                      <th className="py-3 px-4">Descripción</th>
-                      <th className="py-3 px-4 text-right">Monto</th>
-                      <th className="py-3 px-4 text-center">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {filteredCosts.map(cost => (
-                      <tr key={cost.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="py-3 px-4 font-bold text-xs text-gray-600">{cost.date}</td>
-                        <td className="py-3 px-4"><span className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-[10px] font-black uppercase">{cost.category}</span></td>
-                        <td className="py-3 px-4 font-bold text-xs text-gray-700 uppercase">{cost.description || '—'}</td>
-                        <td className="py-3 px-4 text-right font-black text-green-600">${formatNum(cost.amount)}</td>
-                        <td className="py-3 px-4 text-center">
-                          <button onClick={() => handleDeleteOpCost(cost.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors"><Trash2 size={14}/></button>
-                        </td>
+              {/* % Costos vs Ventas por mes */}
+              <div className="bg-white p-6 rounded-2xl border border-gray-200">
+                <h3 className="text-sm font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">Costos Operativos vs Ventas (% por Mes)</h3>
+                <div className="overflow-x-auto rounded-xl border border-gray-200">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-gray-100 border-b-2 border-gray-200">
+                      <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
+                        <th className="py-3 px-4 border-r">Mes</th>
+                        <th className="py-3 px-4 border-r text-right">Ingresos (Ventas)</th>
+                        <th className="py-3 px-4 border-r text-right">Costos Operativos</th>
+                        <th className="py-3 px-4 text-center">% Costo Op. / Ventas</th>
                       </tr>
-                    ))}
-                    {filteredCosts.length === 0 && (<tr><td colSpan="5" className="p-10 text-center text-xs text-gray-400 font-bold uppercase">No hay costos registrados</td></tr>)}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {uniqueMonths.length === 0 ? (
+                        <tr><td colSpan="4" className="p-8 text-center text-gray-400 font-bold uppercase">Sin costos registrados</td></tr>
+                      ) : uniqueMonths.map(ym => {
+                        const costoMes = (opCosts||[]).filter(c => (c?.month||'') === ym).reduce((s,c) => s + parseNum(c.amount), 0);
+                        const ingresosMes = (invoices||[]).filter(i => (i?.fecha||'').startsWith(ym)).reduce((s,i) => s + parseNum(i.total), 0);
+                        const pct = ingresosMes > 0 ? (costoMes / ingresosMes * 100) : 0;
+                        return (
+                          <tr key={ym} className="hover:bg-gray-50 transition-colors">
+                            <td className="py-3 px-4 border-r font-black">{formatMonth(ym)}</td>
+                            <td className="py-3 px-4 border-r text-right font-black text-green-600">${formatNum(ingresosMes)}</td>
+                            <td className="py-3 px-4 border-r text-right font-black text-orange-600">${formatNum(costoMes)}</td>
+                            <td className="py-3 px-4 text-center">
+                              <span className={`px-3 py-1 rounded-lg text-[10px] font-black ${pct > 30 ? 'bg-red-100 text-red-700' : pct > 15 ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
+                                {ingresosMes > 0 ? `${pct.toFixed(1)}%` : 'S/V'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[9px] font-bold text-gray-400 mt-3 uppercase">* S/V = Sin ventas ese mes | &lt;15% Eficiente | 15-30% Moderado | &gt;30% Alto</p>
               </div>
-            </div>
-          </div>
 
-          {showNewCategoryModal && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full">
-                <h3 className="text-lg font-black uppercase mb-4">Nueva Categoría de Costo</h3>
-                <input
-                  type="text"
-                  value={newCategoryName}
-                  onChange={e => setNewCategoryName(e.target.value.toUpperCase())}
-                  className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-green-500 mb-4"
-                  placeholder="EJ: SEGURIDAD INDUSTRIAL"
-                  onKeyPress={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddCategory(); } }}
-                />
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => { setShowNewCategoryModal(false); setNewCategoryName(''); }}
-                    className="flex-1 bg-gray-200 text-gray-700 px-6 py-3 rounded-2xl font-black text-xs uppercase hover:bg-gray-300 transition-colors"
-                  >
-                    CANCELAR
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!newCategoryName.trim()) return;
-                      if (costCategories.includes(newCategoryName.trim())) {
-                        setDialog({title:'Aviso', text:'Esta categoría ya existe.', type:'alert'});
-                        return;
-                      }
-                      setCostCategories(prev => [...prev, newCategoryName.trim()]);
-                      setNewOpCostForm(f => ({...f, category: newCategoryName.trim()}));
-                      setShowNewCategoryModal(false);
-                      setNewCategoryName('');
-                      setDialog({title:'✅ Éxito', text:'Categoría agregada correctamente.', type:'alert'});
-                    }}
-                    className="flex-1 bg-green-600 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase hover:bg-green-700 transition-colors"
-                  >
-                    AGREGAR
-                  </button>
+              {/* Tabla de costos registrados */}
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="p-6 bg-gray-50 border-b border-gray-200"><h3 className="text-sm font-black uppercase text-black">Costos Registrados ({filteredCosts.length})</h3></div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-gray-100 border-b-2 border-gray-200">
+                      <tr className="uppercase font-black text-[10px] tracking-widest text-gray-500">
+                        <th className="py-3 px-4">Fecha</th><th className="py-3 px-4">Categoría</th><th className="py-3 px-4">Descripción</th><th className="py-3 px-4 text-right">Monto</th><th className="py-3 px-4 text-center">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filteredCosts.map(cost => (
+                        <tr key={cost.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="py-3 px-4 font-bold text-xs text-gray-600">{cost.date}</td>
+                          <td className="py-3 px-4"><span className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-[10px] font-black uppercase">{cost.category}</span></td>
+                          <td className="py-3 px-4 font-bold text-xs text-gray-700 uppercase">{cost.description || '—'}</td>
+                          <td className="py-3 px-4 text-right font-black text-green-600">${formatNum(cost.amount)}</td>
+                          <td className="py-3 px-4 text-center"><button onClick={() => handleDeleteOpCost(cost.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors"><Trash2 size={14}/></button></td>
+                        </tr>
+                      ))}
+                      {filteredCosts.length === 0 && (<tr><td colSpan="5" className="p-10 text-center text-xs text-gray-400 font-bold uppercase">No hay costos registrados para los filtros seleccionados</td></tr>)}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
-          )}
+
+            {/* Modal nueva categoría */}
+            {showNewCategoryModal && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full">
+                  <h3 className="text-lg font-black uppercase mb-4">Nueva Categoría de Costo</h3>
+                  <input
+                    type="text"
+                    value={newCategoryName}
+                    onChange={e => setNewCategoryName(e.target.value.toUpperCase())}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-green-500 mb-4"
+                    placeholder="EJ: SEGURIDAD INDUSTRIAL"
+                    onKeyPress={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddCategory(); } }}
+                  />
+                  <div className="flex gap-3">
+                    <button onClick={() => { setShowNewCategoryModal(false); setNewCategoryName(''); }} className="flex-1 bg-gray-200 text-gray-700 px-6 py-3 rounded-2xl font-black text-xs uppercase hover:bg-gray-300 transition-colors">CANCELAR</button>
+                    <button onClick={handleAddCategory} className="flex-1 bg-green-600 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase hover:bg-green-700 transition-colors">AGREGAR</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-    );
+      );
+    } catch (err) {
+      return (
+        <div className="p-10 bg-red-50 rounded-3xl border border-red-200 text-center">
+          <AlertTriangle size={40} className="text-red-500 mx-auto mb-4" />
+          <h3 className="font-black text-red-700 uppercase mb-2">Error en Costos Operativos</h3>
+          <p className="text-sm text-red-600 font-bold">{err.message}</p>
+          <button onClick={() => window.location.reload()} className="mt-6 bg-black text-white px-6 py-2 rounded-xl font-black text-xs uppercase">Recargar</button>
+        </div>
+      );
+    }
   };
 
   const renderSimuladorModule = () => {
