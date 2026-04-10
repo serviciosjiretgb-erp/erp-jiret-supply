@@ -249,62 +249,96 @@ export default function App() {
   // EXPORTACIONES CORREGIDAS
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
-    const element = document.getElementById('pdf-content'); 
+    const element = document.getElementById('pdf-content');
     if (!element) {
-      setDialog({title: 'Error', text: 'No se encontró el contenido para exportar.', type: 'alert'});
+      setDialog({title:'Error PDF', text:'No se encontró contenido para exportar. Asegúrese de estar en la vista correcta.', type:'alert'});
       return;
     }
     if (typeof window.html2pdf === 'undefined') {
-      setDialog({title: 'Error', text: 'La librería PDF no está lista. Espere unos segundos y reintente.', type: 'alert'});
+      setDialog({title:'Librería no lista', text:'La librería PDF aún se está cargando. Espere 3 segundos y reintente.', type:'alert'});
       return;
     }
 
-    const noPdfElements = element.querySelectorAll('.no-pdf');
-    noPdfElements.forEach(el => { el.style.display = 'none'; });
-    const printOnlyElements = element.querySelectorAll('.pdf-header');
-    printOnlyElements.forEach(el => { el.style.display = 'block'; });
+    // ── Ocultar elementos no-pdf, mostrar cabeceras pdf ──────────────
+    const noPdf = element.querySelectorAll('.no-pdf, [data-html2canvas-ignore]');
+    noPdf.forEach(el => { el.dataset._prevDisplay = el.style.display; el.style.display = 'none'; });
+    const pdfHeaders = element.querySelectorAll('.pdf-header');
+    pdfHeaders.forEach(el => { el.dataset._prevDisplay = el.style.display; el.style.display = 'block'; });
 
-    const pageW = isLandscape ? 279 : 216; // mm (letter)
-    const pageH = isLandscape ? 216 : 279;
-    const scaleVal = isLandscape ? 2 : 2.5;
-    const vw = isLandscape ? 960 : 750;
+    // ── Tamaños de página (mm) ────────────────────────────────────────
+    // Carta: 215.9 × 279.4 mm  |  Carta Landscape: 279.4 × 215.9 mm
+    const PW = isLandscape ? 279.4 : 215.9;
+    const PH = isLandscape ? 215.9 : 279.4;
+    const MARGIN = isLandscape ? 8 : 12;          // mm
+    const CONTENT_W_MM = PW - MARGIN * 2;         // área útil en mm
+    // Pixels virtuales: 1 mm ≈ 3.7795 px  (96 dpi)
+    const MM_TO_PX = 3.7795;
+    const virtualPx = Math.round(CONTENT_W_MM * MM_TO_PX);
 
+    // ── Guardar y sobreescribir estilos temporalmente ─────────────────
     const savedStyle = element.getAttribute('style') || '';
-    element.style.cssText = `width:${vw}px;max-width:none;margin:0;padding:24px;background:#fff;color:#000;`;
+    element.style.cssText = [
+      `width:${virtualPx}px`,
+      'max-width:none',
+      'margin:0 auto',
+      'padding:20px',
+      'background:#ffffff',
+      'color:#000000',
+      'box-sizing:border-box',
+    ].join(';');
 
     const opt = {
-      margin: [10, 10, 10, 10],
+      margin:   [MARGIN, MARGIN, MARGIN, MARGIN],   // top right bottom left (mm)
       filename: `${filename}_${getTodayDate()}.pdf`,
-      image: { type: 'jpeg', quality: 0.97 },
+      image:    { type: 'jpeg', quality: 0.95 },
       html2canvas: {
-        scale: scaleVal,
-        useCORS: true,
-        logging: false,
-        windowWidth: vw,
-        width: vw,
+        scale:           2,            // 2× para buena resolución sin exceso de peso
+        useCORS:         true,
+        allowTaint:      false,
+        logging:         false,
         backgroundColor: '#ffffff',
-        allowTaint: false,
+        windowWidth:     virtualPx,
+        width:           virtualPx,
+        onclone: (doc) => {
+          const el = doc.getElementById('pdf-content');
+          if (el) {
+            el.style.width           = `${virtualPx}px`;
+            el.style.maxWidth        = 'none';
+            el.style.padding         = '20px';
+            el.style.backgroundColor = '#ffffff';
+            el.style.color           = '#000000';
+            // Mostrar cabeceras en el clon
+            doc.querySelectorAll('.pdf-header').forEach(h => { h.style.display = 'block'; });
+            doc.querySelectorAll('.no-pdf, [data-html2canvas-ignore]').forEach(h => { h.style.display = 'none'; });
+          }
+        },
       },
       jsPDF: {
-        unit: 'mm',
-        format: [pageW, pageH],
+        unit:        'mm',
+        format:      [PW, PH],
         orientation: isLandscape ? 'landscape' : 'portrait',
-        compress: true,
+        compress:    true,
+        precision:   2,
       },
-      pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+      pagebreak: { mode: ['css', 'legacy'], before: '.pdf-page-break' },
     };
 
     const restore = () => {
       element.setAttribute('style', savedStyle);
-      noPdfElements.forEach(el => { el.style.display = ''; });
-      printOnlyElements.forEach(el => { el.style.display = ''; });
+      noPdf.forEach(el => { el.style.display = el.dataset._prevDisplay ?? ''; delete el.dataset._prevDisplay; });
+      pdfHeaders.forEach(el => { el.style.display = el.dataset._prevDisplay ?? ''; delete el.dataset._prevDisplay; });
     };
 
-    window.html2pdf().set(opt).from(element).save().then(restore).catch(err => {
-      console.error(err);
-      restore();
-      setDialog({title: 'Error PDF', text: 'No se pudo generar el PDF. Intente nuevamente.', type: 'alert'});
-    });
+    window.html2pdf()
+      .set(opt)
+      .from(element)
+      .save()
+      .then(restore)
+      .catch(err => {
+        restore();
+        console.error('PDF error:', err);
+        setDialog({title:'Error al generar PDF', text:'Intente nuevamente. Si el error persiste recargue la página.', type:'alert'});
+      });
   };
   
   const handleExportExcel = (tableDataOrId, filename, headers = null) => {
@@ -2917,7 +2951,18 @@ export default function App() {
                     CANCELAR
                   </button>
                   <button
-                    onClick={handleAddCategory}
+                    onClick={() => {
+                      if (!newCategoryName.trim()) return;
+                      if (costCategories.includes(newCategoryName.trim())) {
+                        setDialog({title:'Aviso', text:'Esta categoría ya existe.', type:'alert'});
+                        return;
+                      }
+                      setCostCategories(prev => [...prev, newCategoryName.trim()]);
+                      setNewOpCostForm(f => ({...f, category: newCategoryName.trim()}));
+                      setShowNewCategoryModal(false);
+                      setNewCategoryName('');
+                      setDialog({title:'✅ Éxito', text:'Categoría agregada correctamente.', type:'alert'});
+                    }}
                     className="flex-1 bg-green-600 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase hover:bg-green-700 transition-colors"
                   >
                     AGREGAR
@@ -3186,41 +3231,6 @@ export default function App() {
       setDialog({ title: '✅ Éxito', text: isClose ? 'OP Finalizada y movida a Terminados.' : 'Lote guardado.', type: 'alert' });
     } catch (err) {
       setDialog({ title: 'Error', text: err.message, type: 'alert' });
-    }
-  };
-
-  // ── FINALIZAR OP SIN NECESITAR DATOS DE FORMULARIO ──────────────────────
-  const handleFinalizeOP = async (req) => {
-    if (!req) return;
-    try {
-      const prod = req.production || {};
-      // Calcular totales desde lotes ya guardados
-      const selBatches = prod.sellado?.batches || [];
-      const extBatches = prod.extrusion?.batches || [];
-      const impBatches = prod.impresion?.batches || [];
-      const allBatches = [...extBatches, ...impBatches, ...selBatches];
-
-      const totalProdKg = allBatches.reduce((s,b) => s + parseNum(b.producedKg), 0);
-      const totalMillares = selBatches.reduce((s,b) => s + parseNum(b.techParams?.millares || 0), 0)
-                          || impBatches.reduce((s,b) => s + parseNum(b.techParams?.millares || 0), 0)
-                          || extBatches.reduce((s,b) => s + parseNum(b.techParams?.millares || 0), 0);
-
-      // Marcar todas las fases como cerradas y OP como COMPLETADO
-      const newProd = { ...prod };
-      ['extrusion','impresion','sellado'].forEach(phase => {
-        if (!newProd[phase]) newProd[phase] = { batches: [], isClosed: true, skipped: true };
-        else newProd[phase] = { ...newProd[phase], isClosed: true };
-      });
-
-      await updateDoc(getDocRef('requirements', req.id), { production: newProd, status: 'COMPLETADO' });
-      await handleFinishProduction(req.id, { producedKg: totalProdKg, millaresProd: totalMillares.toString(), observations: 'Finalizado' });
-
-      setSelectedPhaseReqId(null);
-      setProdSubMode('fase');
-      setPhaseForm({...initialPhaseForm, date: getTodayDate()});
-      setDialog({ title: '✅ OP Completada', text: `La OP #${String(req.id).replace('OP-','').padStart(5,'0')} fue finalizada y movida a Inventario de Terminados.`, type: 'alert' });
-    } catch(err) {
-      setDialog({ title: 'Error al finalizar OP', text: err.message, type: 'alert' });
     }
   };
 
@@ -3802,19 +3812,8 @@ export default function App() {
                             <h3 className="font-black text-black text-sm uppercase">OP #{String(req.id).replace('OP-','').padStart(5,'0')} — {req.client}</h3>
                             <p className="text-[10px] font-bold text-gray-500 mt-1">{req.desc} | {req.ancho}cm×{req.largo}cm | {req.micras}mic | {formatNum(req.requestedKg)} KG</p>
                           </div>
-                          <div className="flex gap-2 flex-wrap">
+                          <div className="flex gap-2">
                             <button onClick={()=>setShowOrdenTrabajo(req.id)} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-gray-800 text-white hover:bg-black flex items-center gap-1 transition-all"><FileText size={13}/> ORDEN DE TRABAJO</button>
-                            {/* COMPLETAR OP: aparece si todas las fases están cerradas */}
-                            {(['extrusion','impresion','sellado'].every(ph => prod[ph]?.isClosed)) && (
-                              <button onClick={() => setDialog({
-                                title: '✅ Completar OP',
-                                text: `Todas las fases están cerradas. ¿Desea COMPLETAR la OP #${String(req.id).replace('OP-','').padStart(5,'0')} y enviar a Inventario de Terminados?`,
-                                type: 'confirm',
-                                onConfirm: () => handleFinalizeOP(req)
-                              })} className="px-5 py-2 rounded-xl text-[10px] font-black uppercase bg-green-600 text-white hover:bg-green-700 flex items-center gap-2 shadow-lg transition-all animate-pulse">
-                                <CheckCircle2 size={14}/> COMPLETAR OP
-                              </button>
-                            )}
                             <button onClick={() => {
                               if (isOpen) { setSelectedPhaseReqId(null); setProdSubMode('fase'); }
                               else { setSelectedPhaseReqId(req.id); setProdSubMode('requisicion'); setActivePhaseTab('extrusion'); setPhaseForm({...initialPhaseForm, date: getTodayDate()}); }
@@ -3974,7 +3973,7 @@ export default function App() {
                                     <div className="grid grid-cols-2 gap-3">
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Ext.</label><input type="text" value={phaseForm.operadorExt} onChange={e=>setPhaseForm({...phaseForm, operadorExt: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Motor Ext.</label><input type="number" step="0.1" value={phaseForm.motorExt} onChange={e=>setPhaseForm({...phaseForm, motorExt: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">{req.tipoProducto === 'BOLSAS' ? 'Millares Producidos' : 'KG Producidos (Final)'}</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tratado</label><select value={phaseForm.tratado} onChange={e=>setPhaseForm({...phaseForm, tratado: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white"><option value="">Sin tratado</option><option value="1 CARA">1 CARA</option><option value="2 CARAS">2 CARAS</option></select></div>
                                     </div>
                                   )}
@@ -3987,7 +3986,7 @@ export default function App() {
                                       </div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Imp.</label><input type="text" value={phaseForm.operadorImp} onChange={e=>setPhaseForm({...phaseForm, operadorImp: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cant. Colores</label><input type="number" value={phaseForm.cantColores} onChange={e=>setPhaseForm({...phaseForm, cantColores: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">{req.tipoProducto === 'BOLSAS' ? 'Millares Producidos' : 'KG Producidos (Final)'}</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Relación Imp.</label><input type="number" step="0.01" value={phaseForm.relacionImp} onChange={e=>setPhaseForm({...phaseForm, relacionImp: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
                                     </div>
                                   )}
@@ -3999,7 +3998,7 @@ export default function App() {
                                         <input type="number" step="0.01" value={phaseForm.kgRecibidosSel} onChange={e=>{const kr=e.target.value;const pd=parseNum(phaseForm.producedKg);const m=pd>0?Math.max(0,parseNum(kr)-pd).toFixed(2):phaseForm.mermaKg;setPhaseForm({...phaseForm,kgRecibidosSel:kr,mermaKg:m});}} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none bg-white text-green-700 text-center" />
                                       </div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Sell.</label><input type="text" value={phaseForm.operadorSel} onChange={e=>setPhaseForm({...phaseForm, operadorSel: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">{req.tipoProducto === 'BOLSAS' ? 'Millares Producidos' : 'KG Producidos (Final)'}</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className={`w-full border-2 rounded-xl p-2 text-sm font-black outline-none text-center ${req.tipoProducto==='BOLSAS'?'border-green-300 bg-green-50 text-green-700':'border-orange-300 bg-orange-50 text-orange-700'}`} placeholder="0.00" /></div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none bg-green-50 text-green-700 text-center" placeholder="0.00" /></div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tipo Sello</label><select value={phaseForm.tipoSello} onChange={e=>setPhaseForm({...phaseForm, tipoSello: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white"><option>Sello FC</option><option>Sello SC</option><option>Lateral</option><option>Doble Sello</option></select></div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Temp. Cabezal A</label><input type="number" value={phaseForm.tempCabezalA} onChange={e=>setPhaseForm({...phaseForm, tempCabezalA: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
                                     </div>
@@ -4092,30 +4091,16 @@ export default function App() {
                                             title: `Cerrar fase ${activePhaseTab.toUpperCase()} definitivamente`,
                                             text: `Esta fase quedará CERRADA. Puede reabrirla luego si necesita modificar. ¿Continuar?`,
                                             type: 'confirm',
-                                            onConfirm: async () => {
-                                              // Si hay datos en formulario, guardar y cerrar
-                                              const prodKg = parseNum(phaseForm?.producedKg);
-                                              const hasData = prodKg > 0 || (phaseForm?.insumos||[]).length > 0;
-                                              if (hasData) {
-                                                await handleSavePhaseDirectly(req, true);
+                                            onConfirm: () => {
+                                              if (activePhaseTab === 'sellado') {
+                                                setDialog({
+                                                  title: '¿Finalizar OP completa?',
+                                                  text: `Sellado es la fase final. ¿Desea COMPLETAR la OP y moverla a Terminados?`,
+                                                  type: 'confirm',
+                                                  onConfirm: () => handleSavePhaseDirectly(req, true)
+                                                });
                                               } else {
-                                                // Solo cerrar la fase sin nuevo lote
-                                                const cur = { ...(req.production?.[activePhaseTab]||{batches:[]}), isClosed: true };
-                                                await updateDoc(getDocRef('requirements', req.id), { [`production.${activePhaseTab}`]: cur });
-                                                // Si todas las fases quedarán cerradas, preguntar completar OP
-                                                const updatedProd = { ...(req.production||{}), [activePhaseTab]: cur };
-                                                const allClosed = ['extrusion','impresion','sellado'].every(ph => updatedProd[ph]?.isClosed);
-                                                if (allClosed) {
-                                                  setDialog({
-                                                    title: '¿Completar OP?',
-                                                    text: 'Todas las fases están cerradas. ¿Desea COMPLETAR la OP y enviarla a Inventario de Terminados?',
-                                                    type: 'confirm',
-                                                    onConfirm: () => handleFinalizeOP(req)
-                                                  });
-                                                } else {
-                                                  setPhaseForm({...initialPhaseForm, date: getTodayDate()});
-                                                  setDialog({title:'✅ Fase Cerrada', text:`La fase ${activePhaseTab} fue cerrada definitivamente.`, type:'alert'});
-                                                }
+                                                handleSavePhaseDirectly(req, true);
                                               }
                                             }
                                           })} className="bg-black text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-gray-800 flex items-center gap-1 shadow-md transition-all">
