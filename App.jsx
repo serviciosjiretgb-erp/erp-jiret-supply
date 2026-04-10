@@ -182,7 +182,7 @@ export default function App() {
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [editingClientId, setEditingClientId] = useState(null);
-  const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
+  const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '' };
@@ -224,6 +224,18 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [showReportType, setShowReportType] = useState(null); 
+
+  // Estados para Categorías Dinámicas de Costos
+  const [costCategories, setCostCategories] = useState(COSTO_CATEGORIES);
+  const [showNewCategoryModal, setShowNewCategoryModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+
+  // Estados para Orden de Compra
+  const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [showPOModal, setShowPOModal] = useState(false);
+  const [selectedPOItems, setSelectedPOItems] = useState([]);
+  const [poProvider, setPoProvider] = useState('');
+  const [poNotes, setPoNotes] = useState('');
 
   // ============================================================================
   // EXPORTACIONES
@@ -1871,13 +1883,17 @@ export default function App() {
                       </div>
                     </div>
                     
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-6">
                        <div>
                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Tipo de Producto</label>
                          <select value={newReqForm.tipoProducto} onChange={e=>handleReqFormChange('tipoProducto', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500">
                            <option value="BOLSAS">BOLSAS / EMPAQUES</option>
                            <option value="TERMOENCOGIBLE">TERMOENCOGIBLE</option>
                          </select>
+                       </div>
+                       <div>
+                         <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Categoría</label>
+                         <input type="text" value={newReqForm.categoria} onChange={e=>handleReqFormChange('categoria', e.target.value)} placeholder="EJ: PAÑAL, GALLETAS, ETC" className="w-full border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500 uppercase" />
                        </div>
                        <div>
                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Cantidad Solicitada</label>
@@ -1945,9 +1961,14 @@ export default function App() {
                   <input type="date" value={newOpCostForm.date} onChange={e => setNewOpCostForm({...newOpCostForm, date: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500" required />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-[10px] font-black text-gray-500 uppercase">Categoría</label>
+                    <button type="button" onClick={() => setShowNewCategoryModal(true)} className="text-[9px] bg-green-100 text-green-700 px-2 py-1 rounded font-bold hover:bg-green-200 transition-all flex items-center gap-1">
+                      <Plus size={10}/> Nueva
+                    </button>
+                  </div>
                   <select value={newOpCostForm.category} onChange={e => setNewOpCostForm({...newOpCostForm, category: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500" required>
-                    {COSTO_CATEGORIES.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
+                    {costCategories.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
                   </select>
                 </div>
                 <div>
@@ -2045,6 +2066,48 @@ export default function App() {
               </div>
             </div>
           </div>
+
+          {/* Modal Nueva Categoría */}
+          {showNewCategoryModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full">
+                <h3 className="text-lg font-black uppercase mb-4">Nueva Categoría de Costo</h3>
+                <input
+                  type="text"
+                  value={newCategoryName}
+                  onChange={e => setNewCategoryName(e.target.value.toUpperCase())}
+                  className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-green-500 mb-4"
+                  placeholder="EJ: SEGURIDAD INDUSTRIAL"
+                  onKeyPress={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddCategory(); } }}
+                />
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => { setShowNewCategoryModal(false); setNewCategoryName(''); }}
+                    className="flex-1 bg-gray-200 text-gray-700 px-6 py-3 rounded-2xl font-black text-xs uppercase hover:bg-gray-300 transition-colors"
+                  >
+                    CANCELAR
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!newCategoryName.trim()) return;
+                      if (costCategories.includes(newCategoryName)) {
+                        alert('Esta categoría ya existe');
+                        return;
+                      }
+                      setCostCategories([...costCategories, newCategoryName]);
+                      setNewOpCostForm({...newOpCostForm, category: newCategoryName});
+                      setShowNewCategoryModal(false);
+                      setNewCategoryName('');
+                      alert('✅ Categoría agregada exitosamente');
+                    }}
+                    className="flex-1 bg-green-600 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase hover:bg-green-700 transition-colors"
+                  >
+                    AGREGAR
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
