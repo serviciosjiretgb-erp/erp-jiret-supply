@@ -189,7 +189,7 @@ export default function App() {
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
-  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '' };
+  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
   // Formularios Producción
@@ -674,10 +674,62 @@ export default function App() {
   const generateInvoiceId = () => `FAC-${((invoices || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(4, '0')}`;
   
   const handleInvoiceFormChange = (field, value) => {
-    const valUpper = typeof value === 'string' ? value.toUpperCase() : value; let f = { ...newInvoiceForm, [field]: valUpper };
-    if (field === 'clientRif') { const c = (clients || []).find(cl => cl.rif === value); f.clientName = c?.name || ''; f.vendedor = (c?.vendedor || '').toUpperCase(); }
-    if (field === 'montoBase' || field === 'aplicaIva') { const base = parseNum(field === 'montoBase' ? value : f.montoBase); const aplica = field === 'aplicaIva' ? value : f.aplicaIva; const iva = aplica === 'SI' ? base * 0.16 : 0; f.iva = iva > 0 ? iva.toFixed(2) : '0.00'; f.total = base > 0 ? (base + iva).toFixed(2) : base.toFixed(2); }
-    if (field === 'iva' && f.aplicaIva === 'SI') { const base = parseNum(f.montoBase); const iva = parseNum(value); f.total = (base + iva).toFixed(2); }
+    const valUpper = typeof value === 'string' ? value.toUpperCase() : value;
+    let f = { ...newInvoiceForm, [field]: valUpper };
+    if (field === 'clientRif') {
+      const c = (clients || []).find(cl => cl.rif === value);
+      f.clientName = c?.name || ''; f.vendedor = (c?.vendedor || '').toUpperCase();
+    }
+    if (field === 'opAsignada') {
+      const op = (requirements || []).find(r => r.id === value);
+      if (op) {
+        f.productoMaquilado = op.desc || '';
+        f.opData = {
+          tipoProducto: op.tipoProducto || '', categoria: op.categoria || '',
+          desc: op.desc || '', ancho: op.ancho || '', fuelles: op.fuelles || '',
+          largo: op.largo || '', micras: op.micras || '', color: op.color || 'NATURAL',
+          tratamiento: op.tratamiento || '', cantidad: op.cantidad || '',
+          presentacion: op.presentacion || '', requestedKg: op.requestedKg || '',
+          pesoMillar: op.pesoMillar || '', vendedor: op.vendedor || '',
+          fecha: op.fecha || '', client: op.client || ''
+        };
+        // Auto-fill client from OP if not already set
+        if (!f.clientRif) {
+          const c = (clients || []).find(cl => cl.name === op.client);
+          if (c) { f.clientRif = c.rif; f.clientName = c.name; f.vendedor = (c.vendedor||'').toUpperCase(); }
+        }
+      } else { f.opData = null; }
+    }
+    if (field === 'fgId') {
+      const fg = (finishedGoodsInventory || []).find(fg => fg.id === value);
+      if (fg) {
+        f.productoMaquilado = fg.producto || '';
+        const op = (requirements || []).find(r => r.id === fg.opId);
+        if (op) {
+          f.opAsignada = op.id;
+          f.opData = {
+            tipoProducto: op.tipoProducto||'', categoria: op.categoria||'',
+            desc: op.desc||'', ancho: op.ancho||'', fuelles: op.fuelles||'',
+            largo: op.largo||'', micras: op.micras||'', color: op.color||'NATURAL',
+            tratamiento: op.tratamiento||'', cantidad: fg.millares||fg.kgProducidos||'',
+            presentacion: fg.millares>0?'MILLAR':'KG', requestedKg: fg.kgProducidos||'',
+            pesoMillar: op.pesoMillar||'', vendedor: op.vendedor||'',
+            fecha: fg.fechaFinalizacion||'', client: fg.cliente||''
+          };
+          const c = (clients || []).find(cl => cl.name === fg.cliente);
+          if (c && !f.clientRif) { f.clientRif = c.rif; f.clientName = c.name; f.vendedor = (c.vendedor||'').toUpperCase(); }
+        }
+      }
+    }
+    if (field === 'montoBase' || field === 'aplicaIva') {
+      const base = parseNum(field === 'montoBase' ? value : f.montoBase);
+      const aplica = field === 'aplicaIva' ? value : f.aplicaIva;
+      const iva = aplica === 'SI' ? base * 0.16 : 0;
+      f.iva = iva > 0 ? iva.toFixed(2) : '0.00'; f.total = base > 0 ? (base + iva).toFixed(2) : base.toFixed(2);
+    }
+    if (field === 'iva' && f.aplicaIva === 'SI') {
+      const base = parseNum(f.montoBase); const iva = parseNum(value); f.total = (base + iva).toFixed(2);
+    }
     setNewInvoiceForm(f);
   };
   
@@ -1458,7 +1510,8 @@ export default function App() {
                     <th className="py-3 px-4 border-r print:border-black text-center">Millares</th>
                     <th className="py-3 px-4 border-r print:border-black text-center">Fecha Finalización</th>
                     <th className="py-3 px-4 border-r print:border-black">Ubicación</th>
-                    <th className="py-3 px-4 text-center print:border-black">Estado</th>
+                    <th className="py-3 px-4 border-r print:border-black text-center">Estado</th>
+                    <th className="py-3 px-4 text-center no-pdf">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-black print:divide-black">
@@ -1475,22 +1528,33 @@ export default function App() {
                           {item.observaciones && <div><strong>Obs:</strong> {item.observaciones}</div>}
                         </div>
                       </td>
-                      <td className="py-3 px-4 border-r print:border-black text-center font-black text-lg text-green-600">
-                        {formatNum(item.kgProducidos)}
-                      </td>
-                      <td className="py-3 px-4 border-r print:border-black text-center font-black text-lg text-blue-600">
-                        {formatNum(item.millares)}
-                      </td>
+                      <td className="py-3 px-4 border-r print:border-black text-center font-black text-lg text-green-600">{formatNum(item.kgProducidos)}</td>
+                      <td className="py-3 px-4 border-r print:border-black text-center font-black text-lg text-blue-600">{formatNum(item.millares)}</td>
                       <td className="py-3 px-4 border-r print:border-black text-center font-bold">{item.fechaFinalizacion}</td>
                       <td className="py-3 px-4 border-r print:border-black font-bold uppercase">{item.ubicacion || 'ALMACÉN GENERAL'}</td>
-                      <td className="py-3 px-4 text-center">
+                      <td className="py-3 px-4 border-r print:border-black text-center">
                         <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${
-                          item.status === 'LISTO PARA ENTREGA' ? 'bg-green-100 text-green-700 print:border print:border-black' :
-                          item.status === 'ENTREGADO' ? 'bg-blue-100 text-blue-700 print:border print:border-black' :
-                          'bg-gray-100 text-gray-700 print:border print:border-black'
-                        }`}>
-                          {item.status}
-                        </span>
+                          item.status === 'LISTO PARA ENTREGA' ? 'bg-green-100 text-green-700' :
+                          item.status === 'ENTREGADO' ? 'bg-blue-100 text-blue-700' :
+                          'bg-gray-100 text-gray-700'
+                        }`}>{item.status}</span>
+                      </td>
+                      <td className="py-3 px-4 text-center no-pdf">
+                        <div className="flex flex-col gap-1">
+                          {item.status === 'LISTO PARA ENTREGA' && (
+                            <button onClick={() => {
+                              clearAllReports();
+                              setActiveTab('ventas');
+                              setVentasView('facturacion');
+                              setShowNewInvoicePanel(true);
+                              // Pre-fill invoice from this finished good
+                              setTimeout(() => handleInvoiceFormChange('fgId', item.id), 100);
+                            }} className="px-2 py-1 bg-orange-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-orange-600 flex items-center gap-1 justify-center"><Receipt size={10}/> FACTURAR</button>
+                          )}
+                          {item.status === 'LISTO PARA ENTREGA' && (
+                            <button onClick={() => updateDoc(getDocRef('finishedGoodsInventory', item.id), {status:'ENTREGADO'})} className="px-2 py-1 bg-blue-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-blue-600">ENTREGAR</button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -2301,27 +2365,85 @@ export default function App() {
     if (showSingleInvoice) {
       const inv = (invoices || []).find(i => i?.id === showSingleInvoice); if (!inv) return null;
       const client = (clients || []).find(c => c?.rif === inv.clientRif) || {};
+      const opData = inv.opData || null;
+      const op = (requirements || []).find(r => r.id === inv.opAsignada);
+      const opDisplay = opData || (op ? { tipoProducto: op.tipoProducto, categoria: op.categoria, desc: op.desc, ancho: op.ancho, fuelles: op.fuelles, largo: op.largo, micras: op.micras, color: op.color, cantidad: op.cantidad, presentacion: op.presentacion, requestedKg: op.requestedKg, pesoMillar: op.pesoMillar } : null);
       return (
-        <div id="pdf-content" className="bg-white p-12 min-h-0 text-black bg-white">
-          <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowSingleInvoice(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Factura_${inv.documento}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar PDF</button></div>
+        <div id="pdf-content" className="bg-white p-10 min-h-0 text-black">
+          <div className="flex justify-between mb-8 no-pdf">
+            <button onClick={() => setShowSingleInvoice(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button>
+            <button onClick={() => handleExportPDF(`Factura_${inv.documento}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16}/> Exportar PDF</button>
+          </div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
-          <div className="text-center my-6"><span className="text-2xl font-black uppercase border-b-4 border-orange-500 pb-2">FACTURA N° {inv.documento}</span></div>
-          <div className="grid grid-cols-2 gap-4 mb-6 text-sm uppercase font-bold">
-             <div><p>CLIENTE: {inv.clientName}</p><p>RIF: {inv.clientRif}</p><p className="text-[10px] text-gray-500">DIRECCIÓN: {client.direccion || 'N/A'}</p></div>
-             <div className="text-right"><p>FECHA: {inv.fecha}</p><p>VENDEDOR: {inv.vendedor || 'N/A'}</p><p className="text-[10px] text-gray-500">OP RELACIONADA: {inv.opAsignada || 'N/A'}</p></div>
+          <div className="text-center my-6 pb-4 border-b-4 border-orange-500">
+            <span className="text-2xl font-black uppercase">FACTURA N° {inv.documento}</span>
           </div>
+
+          {/* Datos del cliente y factura */}
+          <div className="grid grid-cols-2 gap-4 mb-6 text-sm font-bold uppercase">
+            <div>
+              <p className="text-[10px] text-gray-500 font-black">CLIENTE:</p>
+              <p className="text-lg">{inv.clientName}</p>
+              <p className="text-xs font-bold text-gray-600">RIF: {inv.clientRif}</p>
+              <p className="text-[10px] text-gray-500 mt-1">DIRECCIÓN: {client.direccion || 'N/A'}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] text-gray-500 font-black">FECHA EMISIÓN:</p>
+              <p>{inv.fecha}</p>
+              <p className="text-xs font-bold text-gray-600 mt-1">VENDEDOR: {inv.vendedor || 'N/A'}</p>
+              {inv.opAsignada && <p className="text-[10px] text-orange-600 font-black mt-1">OP RELACIONADA: #{String(inv.opAsignada).replace('OP-','').padStart(5,'0')}</p>}
+            </div>
+          </div>
+
+          {/* Bloque de detalles de la OP */}
+          {opDisplay && (
+            <div className="border-2 border-orange-200 bg-orange-50 rounded-2xl p-5 mb-6">
+              <div className="text-[10px] font-black text-orange-700 uppercase mb-3 border-b border-orange-200 pb-2">Detalle de Orden de Producción</div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                <div><span className="font-black text-gray-500 uppercase text-[9px] block">Tipo / Categoría:</span><span className="font-black text-black uppercase">{opDisplay.tipoProducto || '—'} / {opDisplay.categoria || '—'}</span></div>
+                <div><span className="font-black text-gray-500 uppercase text-[9px] block">Producto / Maquila:</span><span className="font-black text-black uppercase">{opDisplay.desc || '—'}</span></div>
+                <div><span className="font-black text-gray-500 uppercase text-[9px] block">Dimensiones:</span><span className="font-black text-black">{opDisplay.ancho}cm × {opDisplay.largo}cm | {opDisplay.micras} mic | {opDisplay.color}</span></div>
+                <div><span className="font-black text-gray-500 uppercase text-[9px] block">Cantidad Estimada:</span><span className="font-black text-black">{formatNum(opDisplay.requestedKg)} KG | {formatNum(opDisplay.cantidad)} {opDisplay.presentacion}</span></div>
+                <div><span className="font-black text-gray-500 uppercase text-[9px] block">Número de Orden:</span><span className="font-black text-orange-600 text-lg">#{String(inv.opAsignada||'').replace('OP-','').padStart(5,'0')}</span></div>
+                <div><span className="font-black text-gray-500 uppercase text-[9px] block">Fecha OP:</span><span className="font-black text-black">{opDisplay.fecha || inv.fecha}</span></div>
+              </div>
+            </div>
+          )}
+
+          {/* Tabla de factura */}
           <table className="w-full border-collapse border-2 border-black mb-6">
-             <thead className="bg-gray-100"><tr><th className="p-4 border-b border-black">Descripción Maquila</th><th className="p-4 border-b border-black text-center">Importe Base (USD)</th></tr></thead>
-             <tbody><tr><td className="p-4 border-r border-black font-bold text-sm">MAQUILA / PRODUCTO: {inv.productoMaquilado || 'S/D'}</td><td className="p-4 text-center font-bold text-lg">${formatNum(inv.montoBase)}</td></tr></tbody>
+            <thead className="bg-gray-100">
+              <tr>
+                <th className="p-4 border-b border-black text-left">Descripción / Concepto</th>
+                {opDisplay && <th className="p-4 border-b border-black text-center">Cantidad</th>}
+                <th className="p-4 border-b border-black text-right">Importe Base (USD)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="p-4 border-r border-black font-bold text-sm">
+                  {inv.productoMaquilado || 'MAQUILA / SERVICIO'}
+                  {opDisplay && <span className="block text-[10px] text-gray-500 mt-1">{opDisplay.tipoProducto} | {opDisplay.desc}</span>}
+                </td>
+                {opDisplay && <td className="p-4 border-r border-black text-center font-black">{formatNum(opDisplay.cantidad)} {opDisplay.presentacion}<br/><span className="text-[10px] text-gray-500">{formatNum(opDisplay.requestedKg)} KG</span></td>}
+                <td className="p-4 text-right font-black text-lg">${formatNum(inv.montoBase)}</td>
+              </tr>
+            </tbody>
           </table>
-          <div className="flex justify-end mb-6">
-             <div className="w-1/2 md:w-1/3 space-y-2 border-l-2 border-black pl-4">
-                <div className="flex justify-between font-bold"><span>SUBTOTAL:</span><span>${formatNum(inv.montoBase)}</span></div>
-                {inv.aplicaIva === 'SI' && <div className="flex justify-between font-bold"><span>IVA (16%):</span><span>${formatNum(inv.iva)}</span></div>}
-                <div className="flex justify-between font-black text-xl border-t-2 border-black pt-2 text-orange-600"><span>TOTAL:</span><span>${formatNum(inv.total)}</span></div>
-             </div>
+
+          {/* Totales */}
+          <div className="flex justify-end mb-8">
+            <div className="w-64 space-y-2 border-l-4 border-orange-500 pl-4">
+              <div className="flex justify-between font-bold text-sm"><span>SUBTOTAL:</span><span>${formatNum(inv.montoBase)}</span></div>
+              {inv.aplicaIva === 'SI' && <div className="flex justify-between font-bold text-sm"><span>IVA (16%):</span><span>${formatNum(inv.iva)}</span></div>}
+              <div className="flex justify-between font-black text-2xl border-t-2 border-black pt-2 text-orange-600"><span>TOTAL:</span><span>${formatNum(inv.total)}</span></div>
+            </div>
           </div>
-          <div className="mt-20 text-center font-black uppercase text-[10px]"><div className="w-48 border-t-2 border-black mx-auto pt-1">Firma / Sello Autorizado</div></div>
+
+          <div className="mt-16 grid grid-cols-2 gap-24 text-center font-black uppercase text-[10px] border-t-2 border-gray-300 pt-6">
+            <div className="border-t-2 border-black pt-2">Firma Autorizada / Vendedor</div>
+            <div className="border-t-2 border-black pt-2">Recibí Conforme / Cliente</div>
+          </div>
         </div>
       );
     }
@@ -2434,6 +2556,19 @@ export default function App() {
                     </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                      {/* Picker desde Terminados */}
+                      {finishedGoodsInventory.filter(fg=>fg.status==='LISTO PARA ENTREGA').length > 0 && (
+                        <div className="md:col-span-4 bg-green-50 border-2 border-green-200 rounded-2xl p-4">
+                          <label className="text-[10px] font-black text-green-700 uppercase block mb-2 tracking-widest">📦 Desde Inventario de Terminados (Listo para Entrega)</label>
+                          <select value={newInvoiceForm.fgId} onChange={e=>handleInvoiceFormChange('fgId', e.target.value)} className="w-full bg-white border-2 border-green-300 rounded-xl p-3 font-black text-xs outline-none focus:border-green-500 text-black">
+                            <option value="">— Seleccione producto terminado —</option>
+                            {finishedGoodsInventory.filter(fg=>fg.status==='LISTO PARA ENTREGA').map(fg=>(
+                              <option key={fg.id} value={fg.id}>{fg.cliente} | {fg.producto} | {fg.millares>0?`${formatNum(fg.millares)} Millares`:`${formatNum(fg.kgProducidos)} KG`} | OP: {fg.opId}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
                       <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
                         <select required value={newInvoiceForm.clientRif} onChange={e=>handleInvoiceFormChange('clientRif', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
@@ -2443,15 +2578,25 @@ export default function App() {
                       </div>
                       
                       <div className="md:col-span-2">
-                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">OP Relacionada (Opcional)</label>
-                        <select value={newInvoiceForm.opAsignada} onChange={e=>{
-                           const op = requirements.find(r=>r.id===e.target.value);
-                           setNewInvoiceForm({...newInvoiceForm, opAsignada: e.target.value, productoMaquilado: op ? op.desc : newInvoiceForm.productoMaquilado});
-                        }} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">OP Relacionada</label>
+                        <select value={newInvoiceForm.opAsignada} onChange={e=>handleInvoiceFormChange('opAsignada', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
                           <option value="">Seleccione OP...</option>
-                          {(requirements || []).map(r=><option key={r.id} value={r.id}>{r.id} - {r.client}</option>)}
+                          {(requirements || []).map(r=><option key={r.id} value={r.id}>#{String(r.id).replace('OP-','').padStart(5,'0')} — {r.client} | {r.desc}</option>)}
                         </select>
                       </div>
+
+                      {/* Preview de datos OP */}
+                      {newInvoiceForm.opData && (
+                        <div className="md:col-span-4 bg-orange-50 border-2 border-orange-200 rounded-2xl p-4">
+                          <div className="text-[10px] font-black text-orange-700 uppercase mb-3">Datos de la OP Seleccionada</div>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                            <div><span className="font-black text-gray-500 text-[9px] uppercase block">Tipo / Categoría</span><span className="font-black uppercase">{newInvoiceForm.opData.tipoProducto} / {newInvoiceForm.opData.categoria||'—'}</span></div>
+                            <div><span className="font-black text-gray-500 text-[9px] uppercase block">Producto</span><span className="font-black uppercase">{newInvoiceForm.opData.desc}</span></div>
+                            <div><span className="font-black text-gray-500 text-[9px] uppercase block">Dimensiones</span><span className="font-black">{newInvoiceForm.opData.ancho}cm × {newInvoiceForm.opData.largo}cm | {newInvoiceForm.opData.micras} mic</span></div>
+                            <div><span className="font-black text-gray-500 text-[9px] uppercase block">Cantidad Estimada</span><span className="font-black">{formatNum(newInvoiceForm.opData.requestedKg)} KG | {formatNum(newInvoiceForm.opData.cantidad)} {newInvoiceForm.opData.presentacion}</span></div>
+                          </div>
+                        </div>
+                      )}
 
                       <div className="md:col-span-4">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Descripción / Producto Maquilado</label>
@@ -3602,37 +3747,63 @@ export default function App() {
                               {/* Insumos consumidos */}
                               <div className="bg-white rounded-xl border border-orange-200 p-4">
                                 <h4 className="text-[9px] font-black text-gray-700 uppercase mb-3">Insumos Consumidos</h4>
-                                <div className="flex gap-2 mb-3">
-                                  <select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
-                                    {renderPhaseInventoryOptions()}
-                                  </select>
-                                  <input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} className="w-24 border border-gray-200 rounded-lg p-2 text-xs font-bold text-center outline-none" placeholder="KG" />
-                                  <button onClick={() => {
-                                    if (!phaseIngId || !phaseIngQty) return;
-                                    const newInsumos = [...(phaseForm.insumos||[]), {id: phaseIngId, qty: parseFloat(phaseIngQty)}];
-                                    const totalIns = newInsumos.reduce((s,ing)=>s+parseNum(ing.qty),0);
-                                    const prodKgActual = parseNum(phaseForm.producedKg);
-                                    const autoMerma = prodKgActual > 0 ? Math.max(0, totalIns - prodKgActual).toFixed(2) : phaseForm.mermaKg;
-                                    setPhaseForm({...phaseForm, insumos: newInsumos, mermaKg: autoMerma});
-                                    setPhaseIngId(''); setPhaseIngQty('');
-                                  }} className="bg-orange-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-orange-600 flex items-center gap-1"><Plus size={14}/></button>
-                                </div>
-                                {totalInsumosActual > 0 && (
-                                  <div className="text-[9px] font-black text-orange-700 mb-2 uppercase">Total insumos: {formatNum(totalInsumosActual)} KG</div>
-                                )}
+                                {(() => {
+                                  // Items aprobados del almacén para esta OP+fase
+                                  const approvedReqs = invRequisitions.filter(r =>
+                                    r.opId === req.id && r.phase === activePhaseTab && r.status === 'APROBADA'
+                                  );
+                                  const hasApproved = approvedReqs.length > 0;
+                                  const approvedItemIds = hasApproved
+                                    ? [...new Set(approvedReqs.flatMap(r => (r.items||[]).map(i=>i.id)))]
+                                    : null;
+                                  return (
+                                    <>
+                                      {hasApproved && (
+                                        <div className="mb-2 bg-green-50 border border-green-200 rounded-lg p-2 text-[9px] font-black text-green-700 uppercase">
+                                          ✓ Mostrando ítems aprobados por Almacén para esta fase
+                                        </div>
+                                      )}
+                                      <div className="flex gap-2 mb-3">
+                                        <select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
+                                          <option value="">Seleccione insumo...</option>
+                                          {hasApproved
+                                            ? approvedItemIds.map(id => {
+                                                const item = inventory.find(i=>i.id===id);
+                                                return item ? <option key={id} value={id}>{id} - {item.desc} ({formatNum(item.stock)} {item.unit})</option> : null;
+                                              })
+                                            : (inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} ({formatNum(i.stock)} {i.unit})</option>)
+                                          }
+                                        </select>
+                                        <input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} className="w-24 border border-gray-200 rounded-lg p-2 text-xs font-bold text-center outline-none" placeholder="KG" />
+                                        <button onClick={() => {
+                                          if (!phaseIngId || !phaseIngQty) return;
+                                          const newInsumos = [...(phaseForm.insumos||[]), {id: phaseIngId, qty: parseFloat(phaseIngQty)}];
+                                          const kgBase = activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp)
+                                                       : activePhaseTab === 'sellado'   ? parseNum(phaseForm.kgRecibidosSel)
+                                                       : newInsumos.reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                          const prodKgActual = parseNum(phaseForm.producedKg);
+                                          const autoMerma = kgBase > 0 && prodKgActual > 0 ? Math.max(0, kgBase - prodKgActual).toFixed(2) : phaseForm.mermaKg;
+                                          setPhaseForm({...phaseForm, insumos: newInsumos, mermaKg: autoMerma});
+                                          setPhaseIngId(''); setPhaseIngQty('');
+                                        }} className="bg-orange-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-orange-600 flex items-center gap-1"><Plus size={14}/></button>
+                                      </div>
+                                    </>
+                                  );
+                                })()}
                                 {(phaseForm.insumos||[]).map((ins,i)=>(
                                   <div key={i} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200 mb-1">
                                     <span className="text-xs font-black text-orange-600">{ins.id}</span>
                                     <span className="text-xs font-black">{formatNum(ins.qty)} KG</span>
                                     <button onClick={()=>{
                                       const newInsumos = phaseForm.insumos.filter((_,j)=>j!==i);
-                                      const totalIns = newInsumos.reduce((s,ing)=>s+parseNum(ing.qty),0);
-                                      const prodKgActual = parseNum(phaseForm.producedKg);
-                                      const autoMerma = prodKgActual > 0 ? Math.max(0, totalIns - prodKgActual).toFixed(2) : '0.00';
-                                      setPhaseForm({...phaseForm, insumos: newInsumos, mermaKg: autoMerma});
+                                      setPhaseForm({...phaseForm, insumos: newInsumos});
                                     }} className="text-red-400 hover:text-red-600"><X size={12}/></button>
                                   </div>
                                 ))}
+                                {/* Botón de requisición a almacén */}
+                                <button type="button" onClick={handleSendRequisitionToAlmacen} className="mt-3 w-full bg-blue-50 border border-blue-200 text-blue-700 px-4 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-blue-100 transition-all flex items-center justify-center gap-2">
+                                  <ClipboardList size={12}/> SOLICITAR MATERIALES A ALMACÉN
+                                </button>
                               </div>
 
                               {/* Botones de acción */}
