@@ -656,6 +656,19 @@ export default function App() {
     });
   };
 
+  const handleAddCategory = () => {
+    if (!newCategoryName.trim()) return;
+    if (costCategories.includes(newCategoryName.trim())) {
+      setDialog({title: 'Aviso', text: 'Esta categoría ya existe.', type: 'alert'});
+      return;
+    }
+    setCostCategories(prev => [...prev, newCategoryName.trim()]);
+    setNewOpCostForm(f => ({...f, category: newCategoryName.trim()}));
+    setShowNewCategoryModal(false);
+    setNewCategoryName('');
+    setDialog({title: 'Éxito', text: 'Categoría agregada correctamente.', type: 'alert'});
+  };
+
   // ============================================================================
   // LOGICA VENTAS Y FACTURACIÓN
   // ============================================================================
@@ -3984,24 +3997,83 @@ export default function App() {
                                     ))}
                                   </div>
 
-                                  {/* ── 3 BOTONES DE FASE ── */}
-                                  <div className="flex flex-wrap gap-3 justify-between pt-2 border-t border-orange-200">
-                                    <button onClick={() => setDialog({title: `Omitir ${activePhaseTab}`, text: `¿Desea marcar la fase de ${activePhaseTab} como OMITIDA? No se registrará producción en esta fase.`, type:'confirm', onConfirm: async () => {
-                                      const cur = {...(req.production?.[activePhaseTab]||{batches:[]}), isClosed:true, skipped:true};
-                                      await updateDoc(getDocRef('requirements', req.id), {[`production.${activePhaseTab}`]: cur});
-                                      setPhaseForm({...initialPhaseForm, date:getTodayDate()});
-                                      setDialog({title:'Fase Omitida',text:`La fase de ${activePhaseTab} fue marcada como omitida.`,type:'alert'});
-                                    }})} className="bg-gray-200 text-gray-700 px-5 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-300 flex items-center gap-2 transition-all"><X size={14}/> OMITIR FASE</button>
+                                  {/* ── 4 BOTONES DE FASE ── */}
+                                  <div className="space-y-3 pt-2 border-t border-orange-200">
+                                    {/* Lotes existentes de esta fase */}
+                                    {(prod[activePhaseTab]?.batches||[]).length > 0 && (
+                                      <div className="bg-gray-50 rounded-xl border border-gray-200 p-3">
+                                        <div className="text-[9px] font-black text-gray-600 uppercase mb-2">Lotes registrados en esta fase ({(prod[activePhaseTab]?.batches||[]).length})</div>
+                                        {(prod[activePhaseTab]?.batches||[]).map((b,i)=>(
+                                          <div key={i} className="flex justify-between items-center bg-white p-2 rounded-lg border border-gray-100 mb-1 text-[9px]">
+                                            <span className="font-black text-gray-700">Lote {i+1} — {b.date}</span>
+                                            <span className="font-bold text-green-600">{formatNum(b.producedKg)} KG prod.</span>
+                                            <span className="font-bold text-red-500">{formatNum(b.mermaKg)} KG merma</span>
+                                            {b.techParams?.millares > 0 && <span className="font-bold text-blue-600">{formatNum(b.techParams.millares)} Mill.</span>}
+                                          </div>
+                                        ))}
+                                        {prod[activePhaseTab]?.isClosed && (
+                                          <div className="text-[9px] font-black text-green-700 bg-green-50 border border-green-200 rounded-lg p-2 mt-1 text-center">✓ FASE CERRADA DEFINITIVAMENTE</div>
+                                        )}
+                                        {prod[activePhaseTab]?.skipped && (
+                                          <div className="text-[9px] font-black text-gray-500 bg-gray-100 border border-gray-200 rounded-lg p-2 mt-1 text-center">⊘ FASE OMITIDA</div>
+                                        )}
+                                      </div>
+                                    )}
 
-                                    <div className="flex gap-2">
-                                      <button onClick={() => handleSavePhaseDirectly(req, false)} className="bg-orange-500 text-white px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center gap-2 shadow-md"><Save size={14}/> GUARDAR REPORTE PARCIAL</button>
-                                      <button onClick={() => setDialog({title: `Cerrar Fase ${activePhaseTab} Definitivamente`, text: `¿Está seguro? La fase quedará CERRADA y no podrá agregar más lotes sin reabrirla.`, type:'confirm', onConfirm: () => {
-                                        if (activePhaseTab === 'sellado') {
-                                          setDialog({title:'¿Finalizar OP?', text:`La fase de sellado es la última. ¿Desea COMPLETAR la OP? Esta acción la moverá al historial.`, type:'confirm', onConfirm: () => handleSavePhaseDirectly(req, true)});
-                                        } else {
-                                          handleSavePhaseDirectly(req, true);
+                                    <div className="flex flex-wrap gap-2 justify-between">
+                                      {/* OMITIR */}
+                                      <button onClick={() => setDialog({
+                                        title: `Omitir fase: ${activePhaseTab}`,
+                                        text: `¿Marcar la fase de ${activePhaseTab.toUpperCase()} como OMITIDA? No habrá registro de producción en esta fase.`,
+                                        type: 'confirm',
+                                        onConfirm: async () => {
+                                          const cur = { ...(req.production?.[activePhaseTab] || { batches: [] }), isClosed: true, skipped: true };
+                                          await updateDoc(getDocRef('requirements', req.id), { [`production.${activePhaseTab}`]: cur });
+                                          setPhaseForm({...initialPhaseForm, date: getTodayDate()});
+                                          setDialog({title:'Fase Omitida', text:`La fase de ${activePhaseTab} fue omitida.`, type:'alert'});
                                         }
-                                      }})} className="bg-black text-white px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-800 flex items-center gap-2 shadow-md"><CheckCircle2 size={14}/> CERRAR FASE DEFINITIVA</button>
+                                      })} className="bg-gray-100 text-gray-600 border border-gray-300 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-gray-200 flex items-center gap-1 transition-all">
+                                        <X size={13}/> OMITIR FASE
+                                      </button>
+
+                                      <div className="flex gap-2 flex-wrap">
+                                        {/* REAPERTURA */}
+                                        {prod[activePhaseTab]?.isClosed && (
+                                          <button onClick={() => handleReopenPhase(req.id, activePhaseTab)} className="bg-yellow-400 text-yellow-900 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-yellow-500 flex items-center gap-1 shadow-sm transition-all">
+                                            <RefreshCw size={13}/> REABRIR FASE
+                                          </button>
+                                        )}
+
+                                        {/* GUARDAR PARCIAL */}
+                                        {!prod[activePhaseTab]?.isClosed && (
+                                          <button onClick={() => handleSavePhaseDirectly(req, false)} className="bg-orange-500 text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-orange-600 flex items-center gap-1 shadow-md transition-all">
+                                            <Save size={13}/> GUARDAR PARCIAL
+                                          </button>
+                                        )}
+
+                                        {/* CIERRE DEFINITIVO */}
+                                        {!prod[activePhaseTab]?.isClosed && (
+                                          <button onClick={() => setDialog({
+                                            title: `Cerrar fase ${activePhaseTab.toUpperCase()} definitivamente`,
+                                            text: `Esta fase quedará CERRADA. Puede reabrirla luego si necesita modificar. ¿Continuar?`,
+                                            type: 'confirm',
+                                            onConfirm: () => {
+                                              if (activePhaseTab === 'sellado') {
+                                                setDialog({
+                                                  title: '¿Finalizar OP completa?',
+                                                  text: `Sellado es la fase final. ¿Desea COMPLETAR la OP y moverla a Terminados?`,
+                                                  type: 'confirm',
+                                                  onConfirm: () => handleSavePhaseDirectly(req, true)
+                                                });
+                                              } else {
+                                                handleSavePhaseDirectly(req, true);
+                                              }
+                                            }
+                                          })} className="bg-black text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-gray-800 flex items-center gap-1 shadow-md transition-all">
+                                            <CheckCircle2 size={13}/> CIERRE DEFINITIVO
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
