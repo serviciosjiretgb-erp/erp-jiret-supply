@@ -220,7 +220,22 @@ export default function App() {
   const [reportPeriod, setReportPeriod] = useState('mensual');
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
-  const [showReportType, setShowReportType] = useState(null); // null, 'general', 'ingresos_costos', 'mermas', 'costos_detalle'
+  const [showReportType, setShowReportType] = useState(null); // null, 'general', 'ingresos_costos', 'mermas', 'por_op'
+
+  // Estados para Orden de Compra
+  const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [showNewPO, setShowNewPO] = useState(false);
+  const [newPOForm, setNewPOForm] = useState({
+    provider: '',
+    items: [],
+    notes: '',
+    deliveryDate: ''
+  });
+
+  // Estados para Categorías Dinámicas
+  const [costCategories, setCostCategories] = useState([]);
+  const [showNewCategoryModal, setShowNewCategoryModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
 
   // ============================================================================
   // EXPORTACIONES (Ajustado PDF con márgenes y orientación)
@@ -235,8 +250,8 @@ export default function App() {
     const originalCssText = element.style.cssText; 
     const originalClasses = element.className; 
     
-    // Ajuste estricto de Virtual Width según orientación
-    const virtualWidth = isLandscape ? 1120 : 800; 
+    // MEJORA: Virtual Width ajustado
+    const virtualWidth = isLandscape ? 1100 : 800; 
     element.className = 'bg-white text-black p-6'; 
     element.style.width = `${virtualWidth}px`; 
     element.style.maxWidth = 'none'; 
@@ -245,12 +260,32 @@ export default function App() {
     const tables = element.querySelectorAll('table'); 
     tables.forEach(t => { t.style.whiteSpace = 'normal'; t.style.tableLayout = 'fixed'; t.style.width = '100%'; t.style.wordBreak = 'break-word'; });
 
+    // MEJORA: Márgenes optimizados y mejor escala
     const opt = { 
-      margin: 10, 
+      margin: isLandscape ? [8, 8, 8, 8] : [12, 12, 12, 12], 
       filename: `${filename}_${getTodayDate()}.pdf`, 
       image: { type: 'jpeg', quality: 0.98 }, 
-      html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: virtualWidth }, 
-      jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' } 
+      html2canvas: { 
+        scale: 2.5,  // MEJORA: Mejor escala
+        useCORS: true, 
+        logging: false, 
+        windowWidth: virtualWidth,
+        width: virtualWidth,
+        // MEJORA: onclone para mejor renderizado
+        onclone: (clonedDoc) => {
+          const clonedElement = clonedDoc.getElementById('pdf-content');
+          if (clonedElement) {
+            clonedElement.style.width = `${virtualWidth}px`;
+            clonedElement.style.maxWidth = `${virtualWidth}px`;
+          }
+        }
+      }, 
+      jsPDF: { 
+        unit: 'mm', 
+        format: 'letter',  // MEJORA: Formato letter en vez de a4
+        orientation: isLandscape ? 'landscape' : 'portrait',
+        compress: true  // MEJORA: Compresión activada
+      } 
     };
 
     const finishExport = () => { 
