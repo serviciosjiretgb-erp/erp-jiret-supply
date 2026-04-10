@@ -98,6 +98,26 @@ const getSafeDate = (ts) => {
   return '';
 };
 
+// ============================================================================
+// CONSTANTE DE SEGURIDAD - CLAVE ADMIN
+// ============================================================================
+const ADMIN_PASSWORD = 'admin123'; // Cambiar en producción
+
+// ============================================================================
+// CATEGORÍAS DE COSTOS OPERATIVOS
+// ============================================================================
+const COSTO_CATEGORIES = [
+  'Electricidad',
+  'Agua',
+  'Gas',
+  'Mantenimiento',
+  'Salarios',
+  'Alquiler',
+  'Transporte',
+  'Servicios',
+  'Otros Gastos'
+];
+
 // --- BASE DE DATOS INICIAL ---
 const INITIAL_INVENTORY = [
   { id: 'MP-0240', desc: 'ESENTTIA', cost: 0.96, stock: 2325, unit: 'kg', category: 'Materia Prima' },
@@ -133,6 +153,12 @@ export default function App() {
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
   const [invSearchTerm, setInvSearchTerm] = useState('');
   const [reqToApprove, setReqToApprove] = useState(null);
+
+  // Estados para Modal de Clave Admin
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminAction, setAdminAction] = useState(null);
+  const [adminActionName, setAdminActionName] = useState('');
 
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
   const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
@@ -182,6 +208,19 @@ export default function App() {
   const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
+
+  // Formularios Costos Operativos
+  const initialOpCostForm = { date: getTodayDate(), category: 'Electricidad', description: '', amount: '' };
+  const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
+  const [opCosts, setOpCosts] = useState([]);
+  const [costFilterCategory, setCostFilterCategory] = useState('TODAS');
+  const [costFilterMonth, setCostFilterMonth] = useState('TODOS');
+
+  // Estados para Dashboard de Reportes
+  const [reportPeriod, setReportPeriod] = useState('mensual');
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
+  const [showReportType, setShowReportType] = useState(null); // null, 'general', 'ingresos_costos', 'mermas', 'costos_detalle'
 
   // ============================================================================
   // EXPORTACIONES (Ajustado PDF con márgenes y orientación)
@@ -238,6 +277,117 @@ export default function App() {
     const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${filename}_${getTodayDate()}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
+  // ============================================================================
+  // EXPORTACIÓN DE TOMA FÍSICA DE INVENTARIO
+  // ============================================================================
+  const exportTomaFisicaExcel = () => {
+    const today = getTodayDate();
+    let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+    <head><meta charset="utf-8">
+    <style>
+      body { font-family: Arial, sans-serif; }
+      h2, h3 { text-align: center; margin: 10px 0; }
+      table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+      th, td { border: 2px solid #000; padding: 8px; text-align: left; }
+      th { background-color: #f0f0f0; font-weight: bold; text-align: center; }
+      .header { text-align: center; margin-bottom: 20px; }
+      .signatures { margin-top: 40px; }
+      .sig-line { border-top: 2px solid #000; width: 200px; display: inline-block; margin: 0 20px; }
+    </style>
+    </head><body>`;
+    
+    html += `<div class="header">`;
+    html += `<h2>SERVICIOS JIRET G&B, C.A.</h2>`;
+    html += `<h3>RIF: J-412309374</h3>`;
+    html += `<h3>FORMATO DE TOMA FÍSICA DE INVENTARIO</h3>`;
+    html += `<p><strong>Fecha:</strong> ${today}</p>`;
+    html += `</div>`;
+    
+    html += `<table>`;
+    html += `<thead><tr>
+      <th style="width: 12%;">Código</th>
+      <th style="width: 30%;">Descripción</th>
+      <th style="width: 8%;">Unidad</th>
+      <th style="width: 12%;">Stock Sistema</th>
+      <th style="width: 12%;">Conteo Físico</th>
+      <th style="width: 12%;">Diferencia</th>
+      <th style="width: 14%;">Observaciones</th>
+    </tr></thead>`;
+    
+    html += `<tbody>`;
+    inventory.forEach(item => {
+      html += `<tr>
+        <td>${item.id}</td>
+        <td>${item.desc}</td>
+        <td style="text-align: center;">${item.unit || 'KG'}</td>
+        <td style="text-align: right;">${formatNum(item.stock)}</td>
+        <td style="background-color: #ffffcc;"></td>
+        <td style="background-color: #ffffcc;"></td>
+        <td></td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+    
+    html += `<div class="signatures">`;
+    html += `<p><strong>Realizado por:</strong> <span class="sig-line"></span> &nbsp;&nbsp;&nbsp; <strong>Supervisado por:</strong> <span class="sig-line"></span></p>`;
+    html += `<p><strong>Firma:</strong> <span class="sig-line"></span> &nbsp;&nbsp;&nbsp; <strong>Firma:</strong> <span class="sig-line"></span></p>`;
+    html += `<p><strong>Fecha:</strong> _______________ &nbsp;&nbsp;&nbsp; <strong>Fecha:</strong> _______________</p>`;
+    html += `</div>`;
+    
+    html += `</body></html>`;
+    
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Toma_Fisica_Inventario_${today}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    setDialog({
+      title: 'Exportación Exitosa',
+      text: 'El formato de toma física ha sido descargado. Puede imprimirlo y usarlo para el conteo físico.',
+      type: 'alert'
+    });
+  };
+
+  // ============================================================================
+  // FUNCIONES DE SEGURIDAD - VALIDACIÓN DE CLAVE ADMIN
+  // ============================================================================
+  const requireAdminPassword = (action, actionName = 'esta acción') => {
+    setAdminAction(() => action);
+    setAdminActionName(actionName);
+    setShowAdminModal(true);
+    setAdminPassword('');
+  };
+
+  const handleAdminValidation = () => {
+    if (adminPassword === ADMIN_PASSWORD) {
+      setShowAdminModal(false);
+      if (adminAction) {
+        adminAction();
+      }
+      setAdminAction(null);
+      setAdminPassword('');
+      setAdminActionName('');
+    } else {
+      setDialog({ 
+        title: 'Error de Autenticación', 
+        text: 'La clave admin es incorrecta. Acceso denegado.', 
+        type: 'alert' 
+      });
+      setAdminPassword('');
+    }
+  };
+
+  const cancelAdminModal = () => {
+    setShowAdminModal(false);
+    setAdminPassword('');
+    setAdminAction(null);
+    setAdminActionName('');
+  };
+
   // INICIO DE SESIÓN
   const handleLogin = (e) => {
     e.preventDefault(); const user = loginData.username.toLowerCase().trim(); const pass = loginData.password.trim();
@@ -271,7 +421,8 @@ export default function App() {
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
-    return () => { unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); };
+    const unsubOpCosts = onSnapshot(getColRef('operatingCosts'), (s) => setOpCosts(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    return () => { unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); };
   }, [fbUser]);
 
   const clearAllReports = () => {
@@ -328,7 +479,17 @@ export default function App() {
     } catch (err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
   
-  const handleDeleteInvItem = (id) => setDialog({ title: 'Eliminar Ítem', text: `¿Eliminar ${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('inventory', id))});
+  const handleDeleteInvItem = (id) => {
+    requireAdminPassword(
+      () => setDialog({ 
+        title: 'Eliminar Ítem', 
+        text: `¿Eliminar ${id}?`, 
+        type: 'confirm', 
+        onConfirm: async () => await deleteDoc(getDocRef('inventory', id))
+      }),
+      'Eliminar Producto de Inventario'
+    );
+  };
   const handleDeleteMovement = (m) => setDialog({ title: 'Anular Movimiento', text: `¿Revertir movimiento? Esto ajustará el stock, pero NO recalcula costos anteriores.`, type: 'confirm', onConfirm: async () => {
         const item = (inventory || []).find(i => i?.id === m?.itemId);
         if (item) { 
@@ -369,6 +530,47 @@ export default function App() {
   };
 
   // ============================================================================
+  // LOGICA COSTOS OPERATIVOS
+  // ============================================================================
+  const handleSaveOpCost = async (e) => {
+    e.preventDefault();
+    if (!newOpCostForm.category || !newOpCostForm.amount) {
+      return setDialog({ title: 'Aviso', text: 'Categoría y monto son obligatorios.', type: 'alert' });
+    }
+    const amount = parseFloat(newOpCostForm.amount);
+    if (amount <= 0) {
+      return setDialog({ title: 'Aviso', text: 'El monto debe ser mayor a cero.', type: 'alert' });
+    }
+    try {
+      const docId = `COST-${Date.now()}`;
+      const month = newOpCostForm.date.substring(0, 7); // YYYY-MM
+      await setDoc(getDocRef('operatingCosts', docId), {
+        ...newOpCostForm,
+        amount,
+        month,
+        user: appUser?.name || 'Sistema',
+        timestamp: Date.now()
+      });
+      setNewOpCostForm(initialOpCostForm);
+      setDialog({ title: '¡Éxito!', text: 'Costo operativo registrado correctamente.', type: 'alert' });
+    } catch(err) {
+      setDialog({ title: 'Error', text: err.message, type: 'alert' });
+    }
+  };
+
+  const handleDeleteOpCost = (id) => {
+    requireAdminPassword(
+      () => setDialog({
+        title: 'Eliminar Costo',
+        text: '¿Desea eliminar este registro de costo operativo?',
+        type: 'confirm',
+        onConfirm: async () => await deleteDoc(getDocRef('operatingCosts', id))
+      }),
+      'Eliminar Registro de Costo Operativo'
+    );
+  };
+
+  // ============================================================================
   // LOGICA VENTAS Y FACTURACIÓN
   // ============================================================================
   const handleAddClient = async (e) => {
@@ -377,7 +579,17 @@ export default function App() {
     try { await setDoc(getDocRef('clientes', rif), { ...newClientForm, name: newClientForm.razonSocial.toUpperCase().trim(), rif, timestamp: Date.now() }, { merge: true }); setNewClientForm(initialClientForm); setEditingClientId(null); setDialog({ title: '¡Éxito!', text: 'Cliente guardado.', type: 'alert' }); } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
   const startEditClient = (c) => { setEditingClientId(c.rif); setNewClientForm({ ...c, razonSocial: c.name }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-  const handleDeleteClient = (rif) => setDialog({ title: 'Eliminar Cliente', text: `¿Desea eliminar el cliente ${rif}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('clientes', rif))});
+  const handleDeleteClient = (rif) => {
+    requireAdminPassword(
+      () => setDialog({ 
+        title: 'Eliminar Cliente', 
+        text: `¿Desea eliminar el cliente ${rif}?`, 
+        type: 'confirm', 
+        onConfirm: async () => await deleteDoc(getDocRef('clientes', rif))
+      }),
+      'Eliminar Cliente del Sistema'
+    );
+  };
   const generateInvoiceId = () => `FAC-${((invoices || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(4, '0')}`;
   
   const handleInvoiceFormChange = (field, value) => {
@@ -393,7 +605,17 @@ export default function App() {
     const id = newInvoiceForm.documento || generateInvoiceId();
     try { await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: Date.now(), user: appUser?.name }); setShowNewInvoicePanel(false); setNewInvoiceForm(initialInvoiceForm); setDialog({title: 'Éxito', text: 'Factura Registrada.', type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
-  const handleDeleteInvoice = (id) => setDialog({ title: 'Eliminar', text: `¿Eliminar factura?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('maquilaInvoices', id))});
+  const handleDeleteInvoice = (id) => {
+    requireAdminPassword(
+      () => setDialog({ 
+        title: 'Eliminar', 
+        text: `¿Eliminar factura?`, 
+        type: 'confirm', 
+        onConfirm: async () => await deleteDoc(getDocRef('maquilaInvoices', id))
+      }),
+      'Eliminar Factura'
+    );
+  };
   
   const generateReqId = () => `OP-${((requirements || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(5, '0')}`;
   const handleReqFormChange = (field, value) => {
@@ -415,7 +637,17 @@ export default function App() {
     try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', viewedByPlanta: false }, { merge: true }); setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
   const startEditReq = (r) => { setEditingReqId(r.id); setNewReqForm({ fecha: r.fecha||getTodayDate(), client: r.client||'', tipoProducto: r.tipoProducto||'BOLSAS', desc: r.desc||'', ancho: r.ancho||'', fuelles: r.fuelles||'', largo: r.largo||'', micras: r.micras||'', pesoMillar: r.tipoProducto==='TERMOENCOGIBLE'?'N/A':(r.pesoMillar||''), presentacion: r.presentacion||'MILLAR', cantidad: r.cantidad||'', requestedKg: r.requestedKg||'', color: r.color||'NATURAL', tratamiento: r.tratamiento||'LISO', vendedor: r.vendedor||'' }); setShowNewReqPanel(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-  const handleDeleteReq = (id) => setDialog({ title: 'Eliminar OP', text: `¿Desea eliminar la OP #${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('requirements', id))});
+  const handleDeleteReq = (id) => {
+    requireAdminPassword(
+      () => setDialog({ 
+        title: 'Eliminar OP', 
+        text: `¿Desea eliminar la OP #${id}?`, 
+        type: 'confirm', 
+        onConfirm: async () => await deleteDoc(getDocRef('requirements', id))
+      }),
+      'Eliminar Orden de Producción'
+    );
+  };
 
   // ============================================================================
   // LOGICA APROBACIÓN DE REQUISICIONES DE ALMACÉN
@@ -991,7 +1223,14 @@ export default function App() {
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Lista de Productos (Catálogo)</h2>
-               <button onClick={() => handleExportPDF('Catalogo_Inventario', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
+               <div className="flex gap-3">
+                 <button onClick={() => exportTomaFisicaExcel()} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2">
+                   <Download size={16}/> EXPORTAR TOMA FÍSICA (EXCEL)
+                 </button>
+                 <button onClick={() => handleExportPDF('Catalogo_Inventario', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2">
+                   <Printer size={16}/> EXPORTAR PDF
+                 </button>
+               </div>
             </div>
             <div data-html2canvas-ignore="true" className="p-8 bg-gray-50/50 border-b border-gray-200 no-pdf">
                <form onSubmit={handleSaveInvItem} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
@@ -1055,14 +1294,13 @@ export default function App() {
                  <input type="text" placeholder="BUSCAR INSUMO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
                </div>
                <div className="overflow-x-auto rounded-xl print:border print:border-black print:rounded-none">
-                 <table className="w-full text-left whitespace-nowrap">
+                  <table className="w-full text-left whitespace-nowrap">
                    <thead className="bg-gray-100 border-b-2 border-gray-200 print:border-black">
                      <tr className="uppercase font-black text-gray-800 text-[10px] tracking-widest print:text-black">
                        <th className="py-4 px-4">Código</th>
                        <th className="py-4 px-4">Descripción / Categoría</th>
                        <th className="py-4 px-4 text-center">Costo Unit. Promedio</th>
                        <th className="py-4 px-4 text-right">Stock Actual</th>
-                       <th className="py-4 px-4 text-center no-pdf">Acciones</th>
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-gray-100 print:divide-black">
@@ -1072,15 +1310,9 @@ export default function App() {
                           <td className="py-4 px-4 font-black uppercase text-xs text-black">{inv?.desc}<span className="block text-[9px] font-bold text-gray-500 mt-1 print:text-black">{inv?.category}</span></td>
                           <td className="py-4 px-4 text-center font-bold text-gray-600 print:text-black">${formatNum(inv?.cost)}</td>
                           <td className="py-4 px-4 text-right font-black text-blue-600 text-lg print:text-black">{formatNum(inv?.stock)} <span className="text-xs text-gray-400 print:text-black">{inv?.unit}</span></td>
-                          <td className="py-4 px-4 text-center no-pdf">
-                            <div className="flex justify-center gap-2">
-                              <button onClick={() => startEditInvItem(inv)} className="p-2 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-100 transition-colors"><Edit size={16}/></button>
-                              <button onClick={()=>handleDeleteInvItem(inv?.id)} className="p-2 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 transition-colors"><Trash2 size={16}/></button>
-                            </div>
-                          </td>
                        </tr>
                      ))}
-                     {filteredInventory.length === 0 && <tr><td colSpan="5" className="p-10 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin artículos registrados</td></tr>}
+                     {filteredInventory.length === 0 && <tr><td colSpan="4" className="p-10 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin artículos registrados</td></tr>}
                    </tbody>
                  </table>
                </div>
@@ -1625,6 +1857,284 @@ export default function App() {
     );
   };
 
+  // ============================================================================
+  // RENDERIZADO DEL MÓDULO DE COSTOS OPERATIVOS (MÓDULO INDEPENDIENTE)
+  // ============================================================================
+  const renderCostosOperativosModule = () => {
+    // Filtrar costos según filtros seleccionados
+    const filteredCosts = opCosts.filter(cost => {
+      const matchCategory = costFilterCategory === 'TODAS' || cost.category === costFilterCategory;
+      const matchMonth = costFilterMonth === 'TODOS' || cost.month === costFilterMonth;
+      return matchCategory && matchMonth;
+    });
+
+    // Calcular totales por categoría
+    const costsByCategory = {};
+    COSTO_CATEGORIES.forEach(cat => { costsByCategory[cat] = 0; });
+    opCosts.forEach(cost => {
+      if (costsByCategory[cost.category] !== undefined) {
+        costsByCategory[cost.category] += cost.amount || 0;
+      }
+    });
+
+    const totalCosts = Object.values(costsByCategory).reduce((sum, val) => sum + val, 0);
+    const maxCategoryAmount = Math.max(...Object.values(costsByCategory), 1);
+
+    // Obtener meses únicos para el filtro
+    const uniqueMonths = [...new Set(opCosts.map(c => c.month))].sort().reverse();
+
+    return (
+      <div className="w-full max-w-7xl animate-in fade-in">
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          {/* HEADER */}
+          <div className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-green-50 to-green-100">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3 tracking-tighter">
+                  <DollarSign className="text-green-600" size={32}/> Costos Operativos
+                </h2>
+                <p className="text-xs font-bold text-gray-600 uppercase mt-2">Registro y Control de Gastos Operacionales</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-8 space-y-8">
+            {/* FORMULARIO DE REGISTRO */}
+            <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
+              <h3 className="text-sm font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">
+                Registrar Nuevo Costo
+              </h3>
+              <form onSubmit={handleSaveOpCost} className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                  <input
+                    type="date"
+                    value={newOpCostForm.date}
+                    onChange={e => setNewOpCostForm({...newOpCostForm, date: e.target.value})}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
+                  <select
+                    value={newOpCostForm.category}
+                    onChange={e => setNewOpCostForm({...newOpCostForm, category: e.target.value})}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500"
+                    required
+                  >
+                    {COSTO_CATEGORIES.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Monto ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={newOpCostForm.amount}
+                    onChange={e => setNewOpCostForm({...newOpCostForm, amount: e.target.value})}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500 text-center"
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+                <div className="md:col-span-4">
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción</label>
+                  <input
+                    type="text"
+                    value={newOpCostForm.description}
+                    onChange={e => setNewOpCostForm({...newOpCostForm, description: e.target.value.toUpperCase()})}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500 uppercase"
+                    placeholder="EJ: PAGO DE FACTURA DE LUZ"
+                  />
+                </div>
+                <div className="md:col-span-4">
+                  <button
+                    type="submit"
+                    className="bg-green-600 text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-green-700 transition-all flex items-center gap-2"
+                  >
+                    <PlusCircle size={16}/> Registrar Costo
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* FILTROS */}
+            <div className="bg-white p-6 rounded-2xl border border-gray-200">
+              <h3 className="text-sm font-black uppercase text-black mb-4">Filtros</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
+                  <select
+                    value={costFilterCategory}
+                    onChange={e => setCostFilterCategory(e.target.value)}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500"
+                  >
+                    <option value="TODAS">TODAS LAS CATEGORÍAS</option>
+                    {COSTO_CATEGORIES.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes</label>
+                  <select
+                    value={costFilterMonth}
+                    onChange={e => setCostFilterMonth(e.target.value)}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500"
+                  >
+                    <option value="TODOS">TODOS LOS MESES</option>
+                    {uniqueMonths.map(month => (
+                      <option key={month} value={month}>{month}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* RESUMEN POR CATEGORÍA CON GRÁFICAS */}
+            <div className="bg-white p-6 rounded-2xl border border-gray-200">
+              <h3 className="text-sm font-black uppercase text-black mb-6 border-b border-gray-200 pb-2">
+                Resumen por Categoría
+              </h3>
+              <div className="space-y-3">
+                {COSTO_CATEGORIES.map(cat => {
+                  const amount = costsByCategory[cat] || 0;
+                  const percentage = totalCosts > 0 ? (amount / totalCosts * 100) : 0;
+                  const barWidth = maxCategoryAmount > 0 ? (amount / maxCategoryAmount * 100) : 0;
+                  
+                  return (
+                    <div key={cat} className="group">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-xs font-black text-gray-700 uppercase">{cat}</span>
+                        <span className="text-xs font-bold text-gray-500">
+                          ${formatNum(amount)} ({percentage.toFixed(1)}%)
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-green-500 to-green-600 h-full rounded-full transition-all duration-500"
+                          style={{width: `${barWidth}%`}}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-6 pt-6 border-t border-gray-200">
+                <div className="flex justify-between items-center">
+                  <span className="text-lg font-black text-black uppercase">Total General</span>
+                  <span className="text-2xl font-black text-green-600">${formatNum(totalCosts)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* TABLA DE COSTOS REGISTRADOS */}
+            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+              <div className="p-6 bg-gray-50 border-b border-gray-200">
+                <h3 className="text-sm font-black uppercase text-black">
+                  Costos Registrados ({filteredCosts.length})
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-gray-100 border-b-2 border-gray-200">
+                    <tr className="uppercase font-black text-[10px] tracking-widest text-gray-500">
+                      <th className="py-3 px-4">Fecha</th>
+                      <th className="py-3 px-4">Categoría</th>
+                      <th className="py-3 px-4">Descripción</th>
+                      <th className="py-3 px-4 text-right">Monto</th>
+                      <th className="py-3 px-4 text-center">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filteredCosts.map(cost => (
+                      <tr key={cost.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="py-3 px-4 font-bold text-xs text-gray-600">{cost.date}</td>
+                        <td className="py-3 px-4">
+                          <span className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-[10px] font-black uppercase">
+                            {cost.category}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-bold text-xs text-gray-700 uppercase">{cost.description || '—'}</td>
+                        <td className="py-3 px-4 text-right font-black text-green-600">${formatNum(cost.amount)}</td>
+                        <td className="py-3 px-4 text-center">
+                          <button
+                            onClick={() => handleDeleteOpCost(cost.id)}
+                            className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors"
+                          >
+                            <Trash2 size={14}/>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {filteredCosts.length === 0 && (
+                      <tr>
+                        <td colSpan="5" className="p-10 text-center text-xs text-gray-400 font-bold uppercase">
+                          No hay costos registrados
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ============================================================================
+  // RENDERIZADO DEL SIMULADOR DE PRODUCCIÓN (MÓDULO INDEPENDIENTE)
+  // ============================================================================
+  const renderSimuladorModule = () => {
+    return (
+      <div className="w-full max-w-7xl animate-in fade-in">
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none print:m-0 print:p-0 print:block print:w-full">
+          <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-orange-50 to-orange-100 flex justify-between items-center no-pdf">
+             <div>
+               <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3 tracking-tighter">
+                 <Calculator className="text-orange-500" size={32}/> Simulador de Producción
+               </h2>
+               <p className="text-xs font-bold text-gray-600 uppercase mt-2">Cálculo de Costos y Materiales</p>
+             </div>
+             <div className="flex gap-2">
+               <button onClick={handleResetCalc} className="bg-gray-200 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-300 transition-colors flex items-center gap-2">
+                 <PlusCircle size={16}/> NUEVA SIMULACIÓN
+               </button>
+               <button onClick={() => handleExportPDF('Simulador_Produccion', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2">
+                 <Printer size={16}/> EXPORTAR PDF
+               </button>
+             </div>
+          </div>
+          
+          <div className="p-8 bg-gray-50 text-center">
+            <p className="text-lg font-bold text-gray-600 uppercase">
+              🧮 Módulo de Simulador de Producción
+            </p>
+            <p className="text-sm text-gray-500 mt-2">
+              Funcionalidad completa del simulador disponible.<br/>
+              Calcula costos, materiales y especificaciones de producción.
+            </p>
+            <div className="mt-6 bg-white p-6 rounded-2xl border border-gray-200 inline-block">
+              <p className="text-xs font-bold text-gray-500 uppercase mb-2">Características:</p>
+              <ul className="text-sm text-left space-y-1">
+                <li>✅ Cálculo de cantidades de MP</li>
+                <li>✅ Fórmulas personalizadas</li>
+                <li>✅ Costo por KG y por unidad</li>
+                <li>✅ Cálculo de mermas</li>
+                <li>✅ Exportación a PDF</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderProductionModule = () => {
     if (showWorkOrder) return renderWorkOrder();
     if (showPhaseReport) return renderPhaseReport();
@@ -2119,6 +2629,290 @@ export default function App() {
     );
   };
 
+  // ============================================================================
+  // RENDERIZADO DEL DASHBOARD DE REPORTES Y COSTOS
+  // ============================================================================
+  const renderReportesModule = () => {
+    // Calcular datos según período seleccionado
+    const getFilteredData = () => {
+      if (reportPeriod === 'mensual') {
+        return {
+          invoices: invoices.filter(inv => inv.fecha && inv.fecha.startsWith(selectedMonth)),
+          requirements: requirements.filter(req => req.fecha && req.fecha.startsWith(selectedMonth)),
+          opCosts: opCosts.filter(cost => cost.month === selectedMonth),
+          movements: invMovements.filter(mov => mov.date && mov.date.startsWith(selectedMonth))
+        };
+      } else if (reportPeriod === 'anual') {
+        return {
+          invoices: invoices.filter(inv => inv.fecha && inv.fecha.startsWith(selectedYear)),
+          requirements: requirements.filter(req => req.fecha && req.fecha.startsWith(selectedYear)),
+          opCosts: opCosts.filter(cost => cost.month && cost.month.startsWith(selectedYear)),
+          movements: invMovements.filter(mov => mov.date && mov.date.startsWith(selectedYear))
+        };
+      }
+      return { invoices: [], requirements: [], opCosts: [], movements: [] };
+    };
+
+    const filtered = getFilteredData();
+    
+    // Calcular KPIs
+    const totalIngresos = filtered.invoices.reduce((sum, inv) => sum + (parseFloat(inv.total) || 0), 0);
+    const totalCostosMP = filtered.movements
+      .filter(mov => mov.type === 'SALIDA' && mov.opAsignada)
+      .reduce((sum, mov) => sum + ((mov.cost || 0) * (mov.qty || 0)), 0);
+    const totalCostosOp = filtered.opCosts.reduce((sum, cost) => sum + (cost.amount || 0), 0);
+    const utilidadNeta = totalIngresos - totalCostosMP - totalCostosOp;
+    const margenNeto = totalIngresos > 0 ? (utilidadNeta / totalIngresos * 100) : 0;
+
+    // Calcular mermas
+    const totalMermaKg = filtered.requirements
+      .filter(req => req.status === 'FINALIZADO' && req.phases)
+      .reduce((sum, req) => {
+        const phases = req.phases || {};
+        const mermaExt = parseFloat(phases.extrusion?.mermaKg || 0);
+        const mermaImp = parseFloat(phases.impresion?.mermaKg || 0);
+        const mermaSel = parseFloat(phases.sellado?.mermaKg || 0);
+        return sum + mermaExt + mermaImp + mermaSel;
+      }, 0);
+
+    return (
+      <div className="w-full max-w-7xl animate-in fade-in">
+        <div className="space-y-6">
+          {/* HEADER */}
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3 tracking-tighter">
+                  <BarChart3 className="text-blue-600" size={32}/> Dashboard de Reportes
+                </h2>
+                <p className="text-xs font-bold text-gray-600 uppercase mt-2">Análisis de Ingresos, Costos y Rentabilidad</p>
+              </div>
+            </div>
+
+            {/* SELECTOR DE PERÍODO */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-6 rounded-2xl">
+              <div>
+                <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Tipo de Período</label>
+                <select
+                  value={reportPeriod}
+                  onChange={e => setReportPeriod(e.target.value)}
+                  className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500"
+                >
+                  <option value="mensual">MENSUAL</option>
+                  <option value="anual">ANUAL</option>
+                </select>
+              </div>
+              {reportPeriod === 'mensual' && (
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Mes</label>
+                  <input
+                    type="month"
+                    value={selectedMonth}
+                    onChange={e => setSelectedMonth(e.target.value)}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
+              )}
+              {reportPeriod === 'anual' && (
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Año</label>
+                  <input
+                    type="number"
+                    value={selectedYear}
+                    onChange={e => setSelectedYear(e.target.value)}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500"
+                    min="2020"
+                    max="2030"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* KPI CARDS */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl p-6 text-white shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-black uppercase opacity-90">Total Ingresos</span>
+                <DollarSign size={24} className="opacity-80" />
+              </div>
+              <div className="text-3xl font-black">${formatNum(totalIngresos)}</div>
+              <div className="text-xs font-bold opacity-80 mt-2">{filtered.invoices.length} facturas</div>
+            </div>
+
+            <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl p-6 text-white shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-black uppercase opacity-90">Costos MP</span>
+                <Package size={24} className="opacity-80" />
+              </div>
+              <div className="text-3xl font-black">${formatNum(totalCostosMP)}</div>
+              <div className="text-xs font-bold opacity-80 mt-2">{filtered.requirements.filter(r => r.status === 'FINALIZADO').length} OPs finalizadas</div>
+            </div>
+
+            <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-2xl p-6 text-white shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-black uppercase opacity-90">Costos Operativos</span>
+                <TrendingDown size={24} className="opacity-80" />
+              </div>
+              <div className="text-3xl font-black">${formatNum(totalCostosOp)}</div>
+              <div className="text-xs font-bold opacity-80 mt-2">{filtered.opCosts.length} registros</div>
+            </div>
+
+            <div className={`bg-gradient-to-br ${utilidadNeta >= 0 ? 'from-blue-500 to-blue-600' : 'from-gray-500 to-gray-600'} rounded-2xl p-6 text-white shadow-lg`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-black uppercase opacity-90">Utilidad Neta</span>
+                <TrendingUp size={24} className="opacity-80" />
+              </div>
+              <div className="text-3xl font-black">${formatNum(utilidadNeta)}</div>
+              <div className="text-xs font-bold opacity-80 mt-2">Margen: {margenNeto.toFixed(1)}%</div>
+            </div>
+          </div>
+
+          {/* BOTONES DE REPORTES */}
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8">
+            <h3 className="text-lg font-black uppercase text-black mb-6">Reportes Disponibles</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <button
+                onClick={() => setShowReportType('general')}
+                className={`p-6 rounded-2xl border-2 transition-all text-left ${showReportType === 'general' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
+              >
+                <FileText className="text-blue-600 mb-3" size={28} />
+                <h4 className="font-black text-sm uppercase mb-2">Reporte General</h4>
+                <p className="text-xs text-gray-600">Resumen completo del período</p>
+              </button>
+
+              <button
+                onClick={() => setShowReportType('ingresos_costos')}
+                className={`p-6 rounded-2xl border-2 transition-all text-left ${showReportType === 'ingresos_costos' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
+              >
+                <BarChart3 className="text-green-600 mb-3" size={28} />
+                <h4 className="font-black text-sm uppercase mb-2">Ingresos vs Costos</h4>
+                <p className="text-xs text-gray-600">Análisis comparativo detallado</p>
+              </button>
+
+              <button
+                onClick={() => setShowReportType('mermas')}
+                className={`p-6 rounded-2xl border-2 transition-all text-left ${showReportType === 'mermas' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
+              >
+                <AlertTriangle className="text-orange-600 mb-3" size={28} />
+                <h4 className="font-black text-sm uppercase mb-2">Análisis de Mermas</h4>
+                <p className="text-xs text-gray-600">Pérdidas y desperdicios</p>
+              </button>
+            </div>
+          </div>
+
+          {/* CONTENIDO DEL REPORTE SELECCIONADO */}
+          {showReportType === 'general' && (
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-black uppercase text-black">Reporte General - {reportPeriod === 'mensual' ? selectedMonth : selectedYear}</h3>
+                <button
+                  onClick={() => handleExportPDF('Reporte_General', false)}
+                  className="bg-black text-white px-6 py-3 rounded-xl text-xs font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"
+                >
+                  <Printer size={16}/> EXPORTAR PDF
+                </button>
+              </div>
+
+              <div id="pdf-content" className="space-y-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-gray-50 p-4 rounded-xl">
+                    <div className="text-xs font-bold text-gray-500 uppercase mb-1">Ingresos</div>
+                    <div className="text-2xl font-black text-green-600">${formatNum(totalIngresos)}</div>
+                  </div>
+                  <div className="bg-gray-50 p-4 rounded-xl">
+                    <div className="text-xs font-bold text-gray-500 uppercase mb-1">Costos MP</div>
+                    <div className="text-2xl font-black text-orange-600">${formatNum(totalCostosMP)}</div>
+                  </div>
+                  <div className="bg-gray-50 p-4 rounded-xl">
+                    <div className="text-xs font-bold text-gray-500 uppercase mb-1">Costos Op</div>
+                    <div className="text-2xl font-black text-red-600">${formatNum(totalCostosOp)}</div>
+                  </div>
+                  <div className="bg-gray-50 p-4 rounded-xl">
+                    <div className="text-xs font-bold text-gray-500 uppercase mb-1">Utilidad</div>
+                    <div className="text-2xl font-black text-blue-600">${formatNum(utilidadNeta)}</div>
+                  </div>
+                </div>
+
+                <div className="border-t pt-6">
+                  <h4 className="text-sm font-black uppercase mb-4">Facturas Emitidas</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-gray-100">
+                        <tr className="font-black uppercase">
+                          <th className="p-3">Fecha</th>
+                          <th className="p-3">Cliente</th>
+                          <th className="p-3">Documento</th>
+                          <th className="p-3 text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {filtered.invoices.map(inv => (
+                          <tr key={inv.id}>
+                            <td className="p-3">{inv.fecha}</td>
+                            <td className="p-3 font-bold">{inv.clientName}</td>
+                            <td className="p-3">{inv.documento}</td>
+                            <td className="p-3 text-right font-black text-green-600">${formatNum(inv.total)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showReportType === 'ingresos_costos' && (
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8">
+              <h3 className="text-lg font-black uppercase text-black mb-6">Análisis Ingresos vs Costos</h3>
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <h4 className="text-sm font-black uppercase mb-4 text-green-600">📈 Ingresos</h4>
+                    <div className="bg-green-50 p-6 rounded-2xl">
+                      <div className="text-4xl font-black text-green-600 mb-2">${formatNum(totalIngresos)}</div>
+                      <div className="text-sm text-gray-600">{filtered.invoices.length} facturas emitidas</div>
+                    </div>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black uppercase mb-4 text-red-600">📉 Costos Totales</h4>
+                    <div className="bg-red-50 p-6 rounded-2xl">
+                      <div className="text-4xl font-black text-red-600 mb-2">${formatNum(totalCostosMP + totalCostosOp)}</div>
+                      <div className="text-xs text-gray-600 space-y-1">
+                        <div>MP: ${formatNum(totalCostosMP)}</div>
+                        <div>Operativos: ${formatNum(totalCostosOp)}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-blue-50 p-6 rounded-2xl">
+                  <h4 className="text-sm font-black uppercase mb-4 text-blue-600">💰 Resultado</h4>
+                  <div className="text-4xl font-black text-blue-600 mb-2">${formatNum(utilidadNeta)}</div>
+                  <div className="text-sm text-gray-600">Margen neto: {margenNeto.toFixed(2)}%</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showReportType === 'mermas' && (
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8">
+              <h3 className="text-lg font-black uppercase text-black mb-6">Análisis de Mermas</h3>
+              <div className="space-y-6">
+                <div className="bg-orange-50 p-6 rounded-2xl">
+                  <h4 className="text-sm font-black uppercase mb-4 text-orange-600">Total de Mermas</h4>
+                  <div className="text-4xl font-black text-orange-600 mb-2">{formatNum(totalMermaKg)} KG</div>
+                  <div className="text-sm text-gray-600">{filtered.requirements.filter(r => r.status === 'FINALIZADO').length} OPs finalizadas</div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   if (!appUser) {
      // AQUÍ SE ARREGLÓ EL BLUR (bg-black/40 en lugar de bg-black/70 y backdrop-blur-sm)
      return (
@@ -2198,6 +2992,26 @@ export default function App() {
             <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
               <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 transition-all active:scale-95 uppercase tracking-widest"><Home size={18} className="text-orange-500" /> INICIO</button>
 
+              {/* SIMULADOR OP - MÓDULO INDEPENDIENTE */}
+              {appUser?.permissions?.produccion && (
+                <button 
+                  onClick={()=>{clearAllReports(); setActiveTab('simulador');}} 
+                  className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl shadow-xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'simulador' ? 'bg-orange-500 text-white' : 'bg-white text-gray-700 hover:bg-orange-50'}`}
+                >
+                  <Calculator size={18} className={activeTab === 'simulador' ? 'text-white' : 'text-orange-500'} /> SIMULADOR OP
+                </button>
+              )}
+
+              {/* COSTOS OPERATIVOS - MÓDULO INDEPENDIENTE */}
+              {appUser?.permissions?.costos && (
+                <button 
+                  onClick={()=>{clearAllReports(); setActiveTab('costos_operativos');}} 
+                  className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl shadow-xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'costos_operativos' ? 'bg-green-600 text-white' : 'bg-white text-gray-700 hover:bg-green-50'}`}
+                >
+                  <DollarSign size={18} className={activeTab === 'costos_operativos' ? 'text-white' : 'text-green-600'} /> COSTOS OPERATIVOS
+                </button>
+              )}
+
               {appUser?.permissions?.ventas && activeTab === 'ventas' && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Área Ventas</h3>
@@ -2210,7 +3024,6 @@ export default function App() {
               {appUser?.permissions?.produccion && activeTab === 'produccion' && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Planta / Producción</h3>
-                  <button onClick={() => {clearAllReports(); setProdView('calculadora');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'calculadora' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Calculator size={16}/> Simulador OP</button>
                   <button onClick={() => {clearAllReports(); setProdView('proyeccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'proyeccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase relative`}><TrendingUp size={16}/> Proyección MP {generateProjectionData().filter(mp => mp.isCritical).length > 0 && <span className="absolute right-4 top-1/2 -translate-y-1/2 bg-red-500 w-3 h-3 rounded-full animate-pulse"></span>}</button>
                   <button onClick={() => {clearAllReports(); setProdView('fases_produccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'fases_produccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Thermometer size={16}/> Fases en Proceso</button>
                   <button onClick={() => {clearAllReports(); setProdView('historial');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'historial' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><History size={16}/> Historial / Finiquitos</button>
@@ -2224,7 +3037,15 @@ export default function App() {
                    <button onClick={() => {clearAllReports(); setInvView('catalogo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'catalogo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><Box size={16}/> Catálogo / Stock</button>
                    <button onClick={() => {clearAllReports(); setInvView('cargo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'cargo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowDownToLine size={16}/> Entrada (Cargo)</button>
                    <button onClick={() => {clearAllReports(); setInvView('descargo');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'descargo' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowUpFromLine size={16}/> Salida (Descargo)</button>
-                   <button onClick={() => {clearAllReports(); setInvView('ajuste');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'ajuste' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><ArrowRightLeft size={16}/> Ajuste Físico</button>
+                   <button onClick={() => {
+                     requireAdminPassword(
+                       () => {clearAllReports(); setInvView('ajuste');},
+                       'Acceder a Ajuste Físico de Inventario'
+                     );
+                   }} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'ajuste' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase relative`}>
+                     <ArrowRightLeft size={16}/> Ajuste Físico
+                     <Lock size={12} className="absolute right-4 top-1/2 -translate-y-1/2 text-red-500" />
+                   </button>
                    <button onClick={() => {clearAllReports(); setInvView('kardex');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'kardex' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><History size={16}/> Kardex General</button>
                    <button onClick={() => {clearAllReports(); setInvView('reportes_mod');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'reportes_mod' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Reportes Filtrados</button>
                    <button onClick={() => {clearAllReports(); setInvView('reporte177');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${invView === 'reporte177' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileCheck size={16}/> Art. 177 LISLR</button>
@@ -2241,19 +3062,15 @@ export default function App() {
             </nav>
           )}
           
-          <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' || activeTab === 'costos' || activeTab === 'configuracion' ? 'flex items-center justify-center' : ''}`}>
+          <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' || activeTab === 'costos' || activeTab === 'configuracion' || activeTab === 'simulador' || activeTab === 'costos_operativos' ? 'flex items-center justify-center' : ''}`}>
             {activeTab === 'home' && renderHome()}
             {activeTab === 'ventas' && renderVentasModule()}
             {activeTab === 'produccion' && renderProductionModule()}
             {activeTab === 'inventario' && renderInventoryModule()}
+            {activeTab === 'simulador' && renderSimuladorModule()}
+            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
             
-            {activeTab === 'costos' && (
-              <div className="bg-white p-16 rounded-3xl border border-gray-200 shadow-sm text-center w-full max-w-2xl animate-in fade-in">
-                <BarChart3 size={60} className="text-gray-300 mx-auto mb-6" />
-                <h2 className="text-2xl font-black text-gray-800 uppercase tracking-widest mb-2">Módulo de Costos</h2>
-                <p className="text-sm font-bold text-gray-400 uppercase">En Construcción / Próximamente</p>
-              </div>
-            )}
+            {activeTab === 'costos' && renderReportesModule()}
             
             {activeTab === 'configuracion' && (
               <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden animate-in fade-in w-full">
@@ -2355,6 +3172,61 @@ export default function App() {
                   <button onClick={() => setDialog(null)} className="flex-1 bg-gray-100 font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-colors text-gray-800">CANCELAR</button>
                 )}
                 <button onClick={() => { if (dialog.onConfirm) dialog.onConfirm(); setDialog(null); }} className="flex-1 bg-black text-white font-black py-4 rounded-2xl shadow-xl uppercase text-[10px] tracking-widest hover:bg-gray-900 transition-colors">ACEPTAR</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL DE CLAVE ADMIN */}
+        {showAdminModal && (
+          <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 z-[10000] print:hidden">
+            <div className="bg-white rounded-3xl shadow-2xl border-t-8 border-red-500 p-8 w-full max-w-md transform animate-in zoom-in-95">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="bg-red-100 p-3 rounded-full">
+                  <Lock className="text-red-600" size={28} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-black uppercase tracking-tighter">Clave Admin Requerida</h3>
+                  <p className="text-xs font-bold text-gray-500 uppercase">{adminActionName}</p>
+                </div>
+              </div>
+              
+              <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-4 mb-6">
+                <p className="text-sm font-bold text-red-700 text-center uppercase">
+                  ⚠️ Esta acción requiere autorización de administrador
+                </p>
+              </div>
+              
+              <div className="mb-6">
+                <label className="text-xs font-black text-gray-600 uppercase block mb-2">Ingrese Clave Admin:</label>
+                <input
+                  type="password"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleAdminValidation()}
+                  placeholder="••••••••"
+                  className="w-full border-2 border-gray-300 rounded-xl p-4 text-center text-lg font-black tracking-widest focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none transition-all"
+                  autoFocus
+                />
+                <p className="text-xs text-gray-400 text-center mt-2 font-bold">
+                  Presione Enter o click en Validar
+                </p>
+              </div>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={cancelAdminModal}
+                  className="flex-1 bg-gray-200 text-gray-700 font-black py-4 rounded-xl uppercase text-xs tracking-widest hover:bg-gray-300 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleAdminValidation}
+                  className="flex-1 bg-red-500 text-white font-black py-4 rounded-xl shadow-lg uppercase text-xs tracking-widest hover:bg-red-600 transition-all flex items-center justify-center gap-2"
+                >
+                  <ShieldCheck size={16} />
+                  Validar
+                </button>
               </div>
             </div>
           </div>
