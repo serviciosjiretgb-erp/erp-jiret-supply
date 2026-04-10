@@ -242,6 +242,8 @@ export default function App() {
   const [poNotes, setPoNotes] = useState('');
   const [viewingPO, setViewingPO] = useState(null);
   const [showFiniquitoOP, setShowFiniquitoOP] = useState(null); // ID de OP para ver finiquito
+  const [showOrdenTrabajo, setShowOrdenTrabajo] = useState(null); // ID de OP para orden de trabajo
+  const [prodSubMode, setProdSubMode] = useState('fase'); // 'fase' | 'requisicion'
 
   // ============================================================================
   // EXPORTACIONES CORREGIDAS
@@ -3377,7 +3379,139 @@ export default function App() {
     );
   };
 
+  const renderOrdenTrabajo = (req) => {
+    if (!req) return null;
+    const opNum = String(req.id).replace('OP-','').padStart(5,'0');
+    return (
+      <div id="pdf-content" className="bg-white text-black">
+        <div className="flex justify-between p-4 border-b no-pdf">
+          <button onClick={()=>setShowOrdenTrabajo(null)} className="bg-gray-100 px-5 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">← Volver</button>
+          <button onClick={()=>handleExportPDF(`OT_OP_${req.id}`,false)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir OT</button>
+        </div>
+        <div className="p-6">
+          <div className="hidden pdf-header mb-4"><ReportHeader /></div>
+          {/* Encabezado */}
+          <div className="flex justify-between items-start mb-4 pb-3 border-b-2 border-black">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-2xl font-light tracking-widest text-gray-700">Supply</span>
+                <span className="font-black text-[32px] text-black leading-none">G</span><div className="bg-orange-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-base font-black">&amp;</div><span className="font-black text-[32px] text-black leading-none">B</span>
+              </div>
+              <span className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">Servicio y Calidad</span>
+            </div>
+            <div className="text-center flex-1">
+              <h1 className="text-xl font-black uppercase tracking-widest text-black">Orden de Trabajo para OP.</h1>
+            </div>
+          </div>
+
+          {/* Datos principales */}
+          <div className="grid grid-cols-3 gap-2 mb-4 text-xs border-b-2 border-gray-300 pb-3">
+            <div><span className="font-black uppercase text-[9px] text-gray-500 block">Cliente:</span><span className="font-black uppercase text-black">{req.client}</span></div>
+            <div><span className="font-black uppercase text-[9px] text-gray-500 block">OP:</span><span className="font-black text-black">#{opNum}</span></div>
+            <div><span className="font-black uppercase text-[9px] text-gray-500 block">Emisión:</span><span className="font-black text-black">{req.fecha}</span></div>
+            <div><span className="font-black uppercase text-[9px] text-orange-600 block">KG Materia Prima:</span><span className="font-black text-orange-600 text-lg">{formatNum(req.requestedKg)} KG</span></div>
+            <div><span className="font-black uppercase text-[9px] text-gray-500 block">Tipo:</span><span className="font-black uppercase text-black">{req.tipoProducto}</span></div>
+            <div className="grid grid-cols-2 gap-1">
+              <div><span className="font-black uppercase text-[9px] text-gray-500 block">Fecha Entrada:</span><div className="border-b border-gray-400 w-24 h-5"></div></div>
+              <div><span className="font-black uppercase text-[9px] text-gray-500 block">Fecha Salida:</span><div className="border-b border-gray-400 w-24 h-5"></div></div>
+            </div>
+          </div>
+
+          {/* Meta del cliente */}
+          <div className="border-2 border-orange-500 rounded-xl p-4 mb-4 flex justify-between items-center bg-orange-50">
+            <div>
+              <div className="font-black text-orange-700 uppercase text-xs">Meta Solicitada por el Cliente ({req.tipoProducto === 'BOLSAS' ? 'MILLARES' : 'KILOS'})</div>
+              <div className="text-[10px] text-orange-600 font-bold mt-1">Cantidad bruta a entregar al cliente según nota de pedido. Incluye merma de sellado.</div>
+            </div>
+            <div className="text-3xl font-black text-orange-600">{formatNum(req.cantidad)} {req.tipoProducto === 'BOLSAS' ? 'Millares' : 'KG'}</div>
+          </div>
+
+          {/* Especificaciones Finales */}
+          <div className="border-2 border-gray-800 rounded-xl mb-4 overflow-hidden">
+            <div className="bg-gray-800 text-white text-center py-2 text-[10px] font-black uppercase tracking-widest">Especificaciones Finales</div>
+            <div className="grid grid-cols-4 divide-x divide-gray-300 text-center">
+              {[['Ancho', req.ancho ? `${req.ancho} CM` : '—'],['Fuelles', req.fuelles ? `${req.fuelles} CM` : '0 CM'],['Largo', req.largo ? `${req.largo} CM` : '—'],['Micras', req.micras || '—']].map(([label,val])=>(
+                <div key={label} className="p-3"><div className="text-[9px] font-black uppercase text-gray-500">{label}</div><div className="text-lg font-black text-orange-600">{val}</div></div>
+              ))}
+            </div>
+          </div>
+
+          {/* Parámetros de Extrusión */}
+          <div className="border-2 border-gray-300 rounded-xl mb-3 overflow-hidden">
+            <div className="bg-gray-100 text-center py-1.5 text-[10px] font-black uppercase tracking-widest border-b border-gray-300">Parámetros de Extrusión</div>
+            <div className="p-3 grid grid-cols-3 gap-3 text-[9px]">
+              <div className="flex gap-2"><span className="font-black uppercase">Operador:</span><div className="flex-1 border-b border-gray-400"></div></div>
+              <div className="flex gap-2"><span className="font-black uppercase">Cantidad KG:</span><div className="flex-1 border-b border-gray-400"></div></div>
+              <div className="flex gap-2"><span className="font-black uppercase">Color:</span><span className="font-black">{req.color || 'NATURAL'}</span></div>
+              <div className="flex gap-2"><span className="font-black uppercase">Tratado:</span><span className="border-b border-gray-400 w-8"></span><span className="ml-2">1</span><span className="border-b border-gray-400 w-8 ml-1"></span><span className="ml-2">2</span></div>
+              <div className="col-span-2"></div>
+              <div className="flex gap-2"><span className="font-black uppercase">Motor Principal:</span><div className="flex-1 border-b border-gray-400"></div></div>
+              <div className="flex gap-2"><span className="font-black uppercase">Ventilador:</span><div className="flex-1 border-b border-gray-400"></div></div>
+              <div className="flex gap-2"><span className="font-black uppercase">Jalador:</span><div className="flex-1 border-b border-gray-400"></div></div>
+              <div className="col-span-3 flex gap-2 items-center">
+                <span className="font-black uppercase">Zonas:</span>
+                {[1,2,3,4,5,6].map(z=><><span className="ml-2 font-bold">{z}</span><div className="border-b border-gray-400 w-10"></div></>)}
+              </div>
+              <div className="col-span-3 flex gap-2 items-center">
+                <span className="font-black uppercase">Cabezal:</span>
+                <span className="ml-2 font-bold">A</span><div className="border-b border-gray-400 w-16"></div>
+                <span className="ml-2 font-bold">B</span><div className="border-b border-gray-400 w-16"></div>
+              </div>
+            </div>
+          </div>
+
+          {/* Impresión Flexográfica */}
+          <div className="border-2 border-gray-300 rounded-xl mb-3 overflow-hidden">
+            <div className="bg-gray-100 text-center py-1.5 text-[10px] font-black uppercase tracking-widest border-b border-gray-300">Impresión Flexográfica</div>
+            <div className="p-3 grid grid-cols-3 gap-3 text-[9px]">
+              <div className="flex gap-2"><span className="font-black uppercase">Operador:</span><div className="flex-1 border-b border-gray-400"></div></div>
+              <div className="flex gap-2"><span className="font-black uppercase">KG Recibidos:</span><div className="flex-1 border-b border-gray-400"></div></div>
+              <div className="flex gap-2"><span className="font-black uppercase">Temperatura:</span><div className="flex-1 border-b border-gray-400"></div></div>
+              <div className="flex gap-2"><span className="font-black uppercase">Motor Principal:</span><div className="flex-1 border-b border-gray-400"></div></div>
+              <div className="col-span-2"></div>
+              <div className="col-span-3 flex gap-2 items-center">
+                <span className="font-black uppercase">Colores:</span>
+                {[1,2,3,4,5,6].map(c=><><span className="ml-2 font-bold">{c}</span><div className="border-b border-gray-400 w-12"></div></>)}
+              </div>
+            </div>
+          </div>
+
+          {/* Sellado y Corte */}
+          <div className="border-2 border-gray-300 rounded-xl mb-4 overflow-hidden">
+            <div className="bg-gray-100 text-center py-1.5 text-[10px] font-black uppercase tracking-widest border-b border-gray-300">Sellado y Corte</div>
+            <div className="p-3 grid grid-cols-2 gap-3 text-[9px]">
+              <div className="flex gap-2"><span className="font-black uppercase">Operador:</span><div className="flex-1 border-b border-gray-400"></div></div>
+              <div className="flex gap-2"><span className="font-black uppercase">KG Recibidos:</span><div className="flex-1 border-b border-gray-400"></div></div>
+              <div className="flex gap-2"><span className="font-black uppercase">Cant. Producida (KG):</span><div className="flex-1 border-b border-gray-400"></div></div>
+              <div className="flex gap-2"><span className="font-black uppercase">Cant. Producida Millares:</span><div className="flex-1 border-b border-gray-400"></div></div>
+            </div>
+          </div>
+
+          {/* Firmas */}
+          <div className="border-t-2 border-gray-400 pt-3">
+            <div className="text-[9px] font-black uppercase text-gray-600 mb-3">Espacio de Firmas y Responsables por Fase:</div>
+            <div className="grid grid-cols-5 gap-2 text-center text-[8px]">
+              {[['Resp. Extrusión','(Operador)'],['Resp. Impresión','(Operador)'],['Resp. Sellado','(Operador)'],['Control Calidad','(Inspector)'],['Supervisor','Planta']].map(([title,sub])=>(
+                <div key={title} className="flex flex-col items-center gap-1">
+                  <div className="border-b-2 border-black w-full h-6"></div>
+                  <div className="font-black uppercase">{title}</div>
+                  <div className="text-gray-500">{sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderProduccionModule = () => {
+    // ── VER ORDEN DE TRABAJO ─────────────────────────────────────────
+    if (showOrdenTrabajo) {
+      const req = requirements.find(r => r.id === showOrdenTrabajo);
+      return renderOrdenTrabajo(req);
+    }
+
     // ── VER FINIQUITO DE UNA OP ───────────────────────────────────────
     if (showFiniquitoOP) {
       const req = requirements.find(r => r.id === showFiniquitoOP);
@@ -3631,189 +3765,248 @@ export default function App() {
                             <h3 className="font-black text-black text-sm uppercase">OP #{String(req.id).replace('OP-','').padStart(5,'0')} — {req.client}</h3>
                             <p className="text-[10px] font-bold text-gray-500 mt-1">{req.desc} | {req.ancho}cm×{req.largo}cm | {req.micras}mic | {formatNum(req.requestedKg)} KG</p>
                           </div>
-                          <button onClick={() => { setSelectedPhaseReqId(isOpen ? null : req.id); setActivePhaseTab('extrusion'); setPhaseForm({...initialPhaseForm, date: getTodayDate()}); }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${isOpen ? 'bg-gray-200 text-gray-700' : 'bg-orange-500 text-white hover:bg-orange-600 shadow-md'}`}>{isOpen ? <X size={14}/> : <Plus size={14}/>}{isOpen ? 'CERRAR' : 'REGISTRAR FASE'}</button>
+                          <div className="flex gap-2">
+                            <button onClick={()=>setShowOrdenTrabajo(req.id)} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-gray-800 text-white hover:bg-black flex items-center gap-1 transition-all"><FileText size={13}/> ORDEN DE TRABAJO</button>
+                            <button onClick={() => {
+                              if (isOpen) { setSelectedPhaseReqId(null); setProdSubMode('fase'); }
+                              else { setSelectedPhaseReqId(req.id); setProdSubMode('requisicion'); setActivePhaseTab('extrusion'); setPhaseForm({...initialPhaseForm, date: getTodayDate()}); }
+                            }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${isOpen ? 'bg-gray-200 text-gray-700' : 'bg-orange-500 text-white hover:bg-orange-600 shadow-md'}`}>{isOpen ? <X size={14}/> : <Plus size={14}/>}{isOpen ? 'CERRAR' : 'REGISTRAR FASE'}</button>
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-3 gap-3 p-4">
                           {[['Extrusión','extrusion'],['Impresión','impresion'],['Sellado/Corte','sellado']].map(([label, key]) => {
                             const st = phaseStatus(key);
+                            const batches = prod[key]?.batches || [];
+                            const isSkipped = prod[key]?.skipped;
                             return (
-                              <div key={key} className={`p-3 rounded-xl border-2 text-center ${st.cls}`}>
-                                <div className="text-xl font-black">{st.icon}</div>
+                              <div key={key} className={`p-3 rounded-xl border-2 text-center cursor-pointer transition-all ${st.cls} ${isOpen && activePhaseTab===key?'ring-2 ring-orange-400':''}`}
+                                onClick={()=>{ if(isOpen && prodSubMode==='fase') { setActivePhaseTab(key); let nf={...initialPhaseForm,date:getTodayDate()}; if(key==='impresion'){const ekg=(prod.extrusion?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg),0); nf.kgRecibidosImp=ekg>0?ekg.toFixed(2):'';} if(key==='sellado'){const ipb=prod.impresion?.batches||[]; const ikg=ipb.length>0?ipb.reduce((s,b)=>s+parseNum(b.producedKg),0):(prod.extrusion?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg),0); nf.kgRecibidosSel=ikg>0?ikg.toFixed(2):'';} setPhaseForm(nf); } }}>
+                                <div className="text-xl font-black">{isSkipped ? '⊘' : st.icon}</div>
                                 <div className="text-[9px] font-black uppercase mt-1">{label}</div>
-                                {(prod[key]?.batches||[]).length > 0 && <div className="text-[8px] text-gray-500">{(prod[key]?.batches||[]).length} lote(s)</div>}
+                                {batches.length > 0 && <div className="text-[8px] text-gray-500">{batches.length} lote(s)</div>}
+                                {isSkipped && <div className="text-[8px] text-red-500 font-black">OMITIDA</div>}
                               </div>
                             );
                           })}
                         </div>
 
                         {isOpen && (
-                          <div className="p-5 border-t border-gray-200 bg-white">
-                            {/* Tabs de fase */}
-                            <div className="flex gap-2 mb-5 flex-wrap">
-                              {[['extrusion','Extrusión'],['impresion','Impresión'],['sellado','Sellado']].map(([key, label]) => (
-                                <button key={key} onClick={() => {
-                                  setActivePhaseTab(key);
-                                  // Pre-fill KG recibidos from previous phase output
-                                  let newForm = {...initialPhaseForm, date: getTodayDate()};
-                                  if (key === 'impresion') {
-                                    const extBatches = prod.extrusion?.batches || [];
-                                    const extKgOut = extBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
-                                    newForm.kgRecibidosImp = extKgOut > 0 ? extKgOut.toFixed(2) : '';
-                                  }
-                                  if (key === 'sellado') {
-                                    const impBatches = prod.impresion?.batches || [];
-                                    const impKgOut = impBatches.length > 0
-                                      ? impBatches.reduce((s,b)=>s+parseNum(b.producedKg),0)
-                                      : (prod.extrusion?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg),0);
-                                    newForm.kgRecibidosSel = impKgOut > 0 ? impKgOut.toFixed(2) : '';
-                                  }
-                                  setPhaseForm(newForm);
-                                }} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${activePhaseTab===key ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{label}</button>
-                              ))}
-                            </div>
+                          <div className="border-t border-gray-200 bg-white">
+                            {/* MODO REQUISICIÓN */}
+                            {prodSubMode === 'requisicion' && (
+                              <div className="p-5">
+                                <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-5">
+                                  <div className="flex justify-between items-center mb-4">
+                                    <h4 className="font-black text-blue-800 uppercase text-sm flex items-center gap-2"><ClipboardList size={16}/> Solicitud de Insumos a Almacén</h4>
+                                    <button onClick={()=>setProdSubMode('fase')} className="text-xs font-black text-gray-500 hover:text-orange-500 underline">Ir directamente a Registro de Fase →</button>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-3 mb-4">
+                                    <div>
+                                      <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">Fase para la Solicitud</label>
+                                      <select value={activePhaseTab} onChange={e=>setActivePhaseTab(e.target.value)} className="w-full border-2 border-blue-300 rounded-xl p-2 text-xs font-black outline-none bg-white">
+                                        <option value="extrusion">Extrusión</option>
+                                        <option value="impresion">Impresión</option>
+                                        <option value="sellado">Sellado</option>
+                                      </select>
+                                    </div>
+                                    <div className="col-span-2">
+                                      <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">Observaciones de la Solicitud</label>
+                                      <input type="text" placeholder="EJ: URGENTE / TURNO MAÑANA" className="w-full border-2 border-blue-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" id={`req-notes-${req.id}`} />
+                                    </div>
+                                  </div>
 
-                            {/* Formulario de fase */}
-                            <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-5 space-y-4">
-                              <div className="grid grid-cols-3 gap-4">
-                                <div>
-                                  <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Fecha</label>
-                                  <input type="date" value={phaseForm.date} onChange={e=>setPhaseForm({...phaseForm, date: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-white" />
-                                </div>
-                                <div>
-                                  <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG Producidos</label>
-                                  <input type="number" step="0.01" value={phaseForm.producedKg}
-                                    onChange={e => {
-                                      const kg = e.target.value;
-                                      const kgBase = activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp)
-                                                   : activePhaseTab === 'sellado'   ? parseNum(phaseForm.kgRecibidosSel)
-                                                   : (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
-                                      const autoMerma = kgBase > 0 && parseNum(kg) >= 0 ? Math.max(0, kgBase - parseNum(kg)).toFixed(2) : phaseForm.mermaKg;
-                                      setPhaseForm({...phaseForm, producedKg: kg, mermaKg: autoMerma});
-                                    }}
-                                    className="w-full border-2 border-orange-300 rounded-xl p-2 text-sm font-black outline-none focus:border-orange-500 text-center bg-white" placeholder="0.00" />
-                                </div>
-                                <div>
-                                  <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Merma KG <span className="text-orange-500">(Auto)</span></label>
-                                  <input type="number" step="0.01" value={phaseForm.mermaKg} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} className="w-full border-2 border-red-200 rounded-xl p-2 text-sm font-black outline-none focus:border-red-400 text-center bg-red-50 text-red-600" placeholder="0.00" />
+                                  {/* Agregar materiales */}
+                                  <div className="bg-white rounded-xl border border-blue-200 p-4 mb-4">
+                                    <h5 className="text-[9px] font-black text-gray-700 uppercase mb-3">Materiales a Solicitar</h5>
+                                    <div className="flex gap-2 mb-3">
+                                      <select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
+                                        <option value="">Seleccione material...</option>
+                                        {(inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                                      </select>
+                                      <input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} className="w-24 border border-gray-200 rounded-lg p-2 text-xs font-bold text-center outline-none" placeholder="Cant." />
+                                      <button onClick={()=>{ if(!phaseIngId||!phaseIngQty) return; setPhaseForm({...phaseForm, insumos:[...(phaseForm.insumos||[]),{id:phaseIngId,qty:parseFloat(phaseIngQty)}]}); setPhaseIngId(''); setPhaseIngQty(''); }} className="bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-blue-600 flex items-center"><Plus size={14}/></button>
+                                    </div>
+                                    {(phaseForm.insumos||[]).map((ins,i)=>{
+                                      const invItem = inventory.find(iv=>iv.id===ins.id);
+                                      return (
+                                        <div key={i} className="flex justify-between items-center bg-blue-50 p-2 rounded-lg border border-blue-100 mb-1">
+                                          <div><span className="text-xs font-black text-blue-700">{ins.id}</span><span className="text-[9px] text-gray-500 ml-2">{invItem?.desc||''}</span></div>
+                                          <span className="text-xs font-black">{formatNum(ins.qty)} {invItem?.unit||'kg'}</span>
+                                          <button onClick={()=>setPhaseForm({...phaseForm,insumos:phaseForm.insumos.filter((_,j)=>j!==i)})} className="text-red-400 hover:text-red-600"><X size={12}/></button>
+                                        </div>
+                                      );
+                                    })}
+                                    {(phaseForm.insumos||[]).length === 0 && <div className="text-center text-xs text-gray-400 py-4 font-bold">Agregue materiales a la solicitud</div>}
+                                  </div>
+
+                                  <div className="flex gap-3 justify-end">
+                                    <button onClick={async ()=>{
+                                      if(!phaseForm.insumos||phaseForm.insumos.length===0) return setDialog({title:'Aviso',text:'Agregue al menos un material.',type:'alert'});
+                                      const notes = document.getElementById(`req-notes-${req.id}`)?.value || '';
+                                      const newReq = { opId: req.id, phase: activePhaseTab, items: phaseForm.insumos, status:'PENDIENTE', timestamp:Date.now(), date:getTodayDate(), user:appUser?.name||'Planta', notes };
+                                      try {
+                                        await addDoc(getColRef('inventoryRequisitions'), newReq);
+                                        setPhaseForm({...phaseForm, insumos:[]});
+                                        setProdSubMode('fase');
+                                        setDialog({title:'✅ Enviado',text:'Solicitud enviada al Almacén. Apruébela desde Proyección MP.',type:'alert'});
+                                      } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                                    }} className="bg-blue-600 text-white px-8 py-3 rounded-xl font-black text-xs uppercase hover:bg-blue-700 shadow-md flex items-center gap-2"><ArrowRight size={14}/> ENVIAR SOLICITUD A ALMACÉN</button>
+                                    <button onClick={()=>setProdSubMode('fase')} className="bg-orange-500 text-white px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center gap-2"><Plus size={14}/> REGISTRAR FASE SIN SOLICITUD</button>
+                                  </div>
+
+                                  {/* Solicitudes previas para esta OP */}
+                                  {invRequisitions.filter(r=>r.opId===req.id).length > 0 && (
+                                    <div className="mt-4 pt-4 border-t border-blue-200">
+                                      <h5 className="text-[9px] font-black text-blue-700 uppercase mb-2">Solicitudes de esta OP</h5>
+                                      {invRequisitions.filter(r=>r.opId===req.id).map(r=>(
+                                        <div key={r.id} className="flex justify-between items-center bg-white p-2 rounded-lg border border-blue-100 mb-1 text-xs">
+                                          <span className="font-black uppercase text-blue-600">{r.phase}</span>
+                                          <span className="font-bold">{r.date}</span>
+                                          <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${r.status==='APROBADA'?'bg-green-100 text-green-700':r.status==='RECHAZADO'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'}`}>{r.status}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
+                            )}
 
-                              {activePhaseTab === 'extrusion' && (
-                                <div className="grid grid-cols-2 gap-3">
-                                  <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Ext.</label><input type="text" value={phaseForm.operadorExt} onChange={e=>setPhaseForm({...phaseForm, operadorExt: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
-                                  <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Motor Ext.</label><input type="number" step="0.1" value={phaseForm.motorExt} onChange={e=>setPhaseForm({...phaseForm, motorExt: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
-                                  <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>
-                                  <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tratado</label><select value={phaseForm.tratado} onChange={e=>setPhaseForm({...phaseForm, tratado: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white"><option value="">Sin tratado</option><option value="1 CARA">1 CARA</option><option value="2 CARAS">2 CARAS</option></select></div>
+                            {/* MODO REGISTRO DE FASE */}
+                            {prodSubMode === 'fase' && (
+                              <div className="p-5">
+                                {/* Tabs de fase - clickables */}
+                                <div className="flex gap-2 mb-4 flex-wrap">
+                                  {[['extrusion','Extrusión'],['impresion','Impresión'],['sellado','Sellado']].map(([key, label]) => (
+                                    <button key={key} onClick={() => {
+                                      setActivePhaseTab(key);
+                                      let newForm = {...initialPhaseForm, date: getTodayDate()};
+                                      if (key === 'impresion') {
+                                        const ekg = (prod.extrusion?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg),0);
+                                        newForm.kgRecibidosImp = ekg > 0 ? ekg.toFixed(2) : '';
+                                      }
+                                      if (key === 'sellado') {
+                                        const impB = prod.impresion?.batches||[];
+                                        const ikg = impB.length>0 ? impB.reduce((s,b)=>s+parseNum(b.producedKg),0) : (prod.extrusion?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg),0);
+                                        newForm.kgRecibidosSel = ikg > 0 ? ikg.toFixed(2) : '';
+                                      }
+                                      setPhaseForm(newForm);
+                                    }} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${activePhaseTab===key ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{label}{prod[key]?.isClosed ? ' ✓' : prod[key]?.skipped ? ' ⊘' : ''}</button>
+                                  ))}
+                                  <button onClick={()=>setProdSubMode('requisicion')} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1 ml-auto"><ClipboardList size={12}/> SOLICITAR A ALMACÉN</button>
                                 </div>
-                              )}
 
-                              {activePhaseTab === 'impresion' && (
-                                <div className="grid grid-cols-2 gap-3">
-                                  <div className="col-span-2 bg-blue-50 border border-blue-200 rounded-xl p-3">
-                                    <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">KG Recibidos de Extrusión (entrada impresión)</label>
-                                    <input type="number" step="0.01" value={phaseForm.kgRecibidosImp} onChange={e=>{
-                                      const kr = e.target.value;
-                                      const prodKgActual = parseNum(phaseForm.producedKg);
-                                      const autoMerma = prodKgActual > 0 ? Math.max(0, parseNum(kr) - prodKgActual).toFixed(2) : phaseForm.mermaKg;
-                                      setPhaseForm({...phaseForm, kgRecibidosImp: kr, mermaKg: autoMerma});
-                                    }} className="w-full border-2 border-blue-300 rounded-xl p-2 text-sm font-black outline-none bg-white text-blue-700 text-center" />
-                                  </div>
-                                  <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Imp.</label><input type="text" value={phaseForm.operadorImp} onChange={e=>setPhaseForm({...phaseForm, operadorImp: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
-                                  <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cant. Colores</label><input type="number" value={phaseForm.cantColores} onChange={e=>setPhaseForm({...phaseForm, cantColores: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
-                                  <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>
-                                  <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Relación Imp.</label><input type="number" step="0.01" value={phaseForm.relacionImp} onChange={e=>setPhaseForm({...phaseForm, relacionImp: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
-                                </div>
-                              )}
-
-                              {activePhaseTab === 'sellado' && (
-                                <div className="grid grid-cols-2 gap-3">
-                                  <div className="col-span-2 bg-green-50 border border-green-200 rounded-xl p-3">
-                                    <label className="text-[9px] font-black text-green-700 uppercase block mb-1">KG Recibidos de Impresión (entrada sellado)</label>
-                                    <input type="number" step="0.01" value={phaseForm.kgRecibidosSel} onChange={e=>{
-                                      const kr = e.target.value;
-                                      const prodKgActual = parseNum(phaseForm.producedKg);
-                                      const autoMerma = prodKgActual > 0 ? Math.max(0, parseNum(kr) - prodKgActual).toFixed(2) : phaseForm.mermaKg;
-                                      setPhaseForm({...phaseForm, kgRecibidosSel: kr, mermaKg: autoMerma});
-                                    }} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none bg-white text-green-700 text-center" />
-                                  </div>
-                                  <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Sell.</label><input type="text" value={phaseForm.operadorSel} onChange={e=>setPhaseForm({...phaseForm, operadorSel: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
-                                  <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none bg-green-50 text-green-700 text-center" placeholder="0.00" /></div>
-                                  <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tipo Sello</label><select value={phaseForm.tipoSello} onChange={e=>setPhaseForm({...phaseForm, tipoSello: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white"><option>Sello FC</option><option>Sello SC</option><option>Lateral</option><option>Doble Sello</option></select></div>
-                                  <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Temp. Cabezal A</label><input type="number" value={phaseForm.tempCabezalA} onChange={e=>setPhaseForm({...phaseForm, tempCabezalA: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
-                                </div>
-                              )}
-
-                              {/* Insumos consumidos */}
-                              <div className="bg-white rounded-xl border border-orange-200 p-4">
-                                <h4 className="text-[9px] font-black text-gray-700 uppercase mb-3">Insumos Consumidos</h4>
-                                {(() => {
-                                  // Items aprobados del almacén para esta OP+fase
-                                  const approvedReqs = invRequisitions.filter(r =>
-                                    r.opId === req.id && r.phase === activePhaseTab && r.status === 'APROBADA'
-                                  );
-                                  const hasApproved = approvedReqs.length > 0;
-                                  const approvedItemIds = hasApproved
-                                    ? [...new Set(approvedReqs.flatMap(r => (r.items||[]).map(i=>i.id)))]
-                                    : null;
-                                  return (
-                                    <>
-                                      {hasApproved && (
-                                        <div className="mb-2 bg-green-50 border border-green-200 rounded-lg p-2 text-[9px] font-black text-green-700 uppercase">
-                                          ✓ Mostrando ítems aprobados por Almacén para esta fase
-                                        </div>
-                                      )}
-                                      <div className="flex gap-2 mb-3">
-                                        <select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
-                                          <option value="">Seleccione insumo...</option>
-                                          {hasApproved
-                                            ? approvedItemIds.map(id => {
-                                                const item = inventory.find(i=>i.id===id);
-                                                return item ? <option key={id} value={id}>{id} - {item.desc} ({formatNum(item.stock)} {item.unit})</option> : null;
-                                              })
-                                            : (inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} ({formatNum(i.stock)} {i.unit})</option>)
-                                          }
-                                        </select>
-                                        <input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} className="w-24 border border-gray-200 rounded-lg p-2 text-xs font-bold text-center outline-none" placeholder="KG" />
-                                        <button onClick={() => {
-                                          if (!phaseIngId || !phaseIngQty) return;
-                                          const newInsumos = [...(phaseForm.insumos||[]), {id: phaseIngId, qty: parseFloat(phaseIngQty)}];
+                                {/* Formulario de fase */}
+                                <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-5 space-y-4">
+                                  <div className="grid grid-cols-3 gap-4">
+                                    <div>
+                                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Fecha</label>
+                                      <input type="date" value={phaseForm.date} onChange={e=>setPhaseForm({...phaseForm, date: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-white" />
+                                    </div>
+                                    <div>
+                                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG Producidos</label>
+                                      <input type="number" step="0.01" value={phaseForm.producedKg}
+                                        onChange={e => {
+                                          const kg = e.target.value;
                                           const kgBase = activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp)
                                                        : activePhaseTab === 'sellado'   ? parseNum(phaseForm.kgRecibidosSel)
-                                                       : newInsumos.reduce((s,ing)=>s+parseNum(ing.qty),0);
-                                          const prodKgActual = parseNum(phaseForm.producedKg);
-                                          const autoMerma = kgBase > 0 && prodKgActual > 0 ? Math.max(0, kgBase - prodKgActual).toFixed(2) : phaseForm.mermaKg;
-                                          setPhaseForm({...phaseForm, insumos: newInsumos, mermaKg: autoMerma});
-                                          setPhaseIngId(''); setPhaseIngQty('');
-                                        }} className="bg-orange-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-orange-600 flex items-center gap-1"><Plus size={14}/></button>
-                                      </div>
-                                    </>
-                                  );
-                                })()}
-                                {(phaseForm.insumos||[]).map((ins,i)=>(
-                                  <div key={i} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200 mb-1">
-                                    <span className="text-xs font-black text-orange-600">{ins.id}</span>
-                                    <span className="text-xs font-black">{formatNum(ins.qty)} KG</span>
-                                    <button onClick={()=>{
-                                      const newInsumos = phaseForm.insumos.filter((_,j)=>j!==i);
-                                      setPhaseForm({...phaseForm, insumos: newInsumos});
-                                    }} className="text-red-400 hover:text-red-600"><X size={12}/></button>
+                                                       : (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                          const autoMerma = kgBase > 0 && parseNum(kg) >= 0 ? Math.max(0, kgBase - parseNum(kg)).toFixed(2) : phaseForm.mermaKg;
+                                          setPhaseForm({...phaseForm, producedKg: kg, mermaKg: autoMerma});
+                                        }}
+                                        className="w-full border-2 border-orange-300 rounded-xl p-2 text-sm font-black outline-none focus:border-orange-500 text-center bg-white" placeholder="0.00" />
+                                    </div>
+                                    <div>
+                                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Merma KG <span className="text-orange-500">(Auto)</span></label>
+                                      <input type="number" step="0.01" value={phaseForm.mermaKg} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} className="w-full border-2 border-red-200 rounded-xl p-2 text-sm font-black outline-none focus:border-red-400 text-center bg-red-50 text-red-600" placeholder="0.00" />
+                                    </div>
                                   </div>
-                                ))}
-                                {/* Botón de requisición a almacén */}
-                                <button type="button" onClick={handleSendRequisitionToAlmacen} className="mt-3 w-full bg-blue-50 border border-blue-200 text-blue-700 px-4 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-blue-100 transition-all flex items-center justify-center gap-2">
-                                  <ClipboardList size={12}/> SOLICITAR MATERIALES A ALMACÉN
-                                </button>
-                              </div>
 
-                              {/* Botones de acción */}
-                              <div className="flex gap-3 justify-end pt-2">
-                                <button onClick={() => handleSavePhaseDirectly(req, false)} className="bg-orange-500 text-white px-8 py-3 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center gap-2 shadow-md"><Save size={14}/> GUARDAR LOTE</button>
-                                {activePhaseTab === 'sellado' && (
-                                  <button onClick={() => setDialog({title: '¿Finalizar OP?', text: `¿Está seguro de finalizar la OP #${String(req.id).replace('OP-','').padStart(5,'0')}? Esta acción la marcará como COMPLETADA.`, type: 'confirm', onConfirm: () => handleSavePhaseDirectly(req, true)})} className="bg-black text-white px-8 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-800 flex items-center gap-2 shadow-md"><CheckCircle2 size={14}/> FINALIZAR OP</button>
-                                )}
+                                  {activePhaseTab === 'extrusion' && (
+                                    <div className="grid grid-cols-2 gap-3">
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Ext.</label><input type="text" value={phaseForm.operadorExt} onChange={e=>setPhaseForm({...phaseForm, operadorExt: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Motor Ext.</label><input type="number" step="0.1" value={phaseForm.motorExt} onChange={e=>setPhaseForm({...phaseForm, motorExt: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tratado</label><select value={phaseForm.tratado} onChange={e=>setPhaseForm({...phaseForm, tratado: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white"><option value="">Sin tratado</option><option value="1 CARA">1 CARA</option><option value="2 CARAS">2 CARAS</option></select></div>
+                                    </div>
+                                  )}
+
+                                  {activePhaseTab === 'impresion' && (
+                                    <div className="grid grid-cols-2 gap-3">
+                                      <div className="col-span-2 bg-blue-50 border border-blue-200 rounded-xl p-3">
+                                        <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">KG Recibidos de Extrusión</label>
+                                        <input type="number" step="0.01" value={phaseForm.kgRecibidosImp} onChange={e=>{const kr=e.target.value;const pd=parseNum(phaseForm.producedKg);const m=pd>0?Math.max(0,parseNum(kr)-pd).toFixed(2):phaseForm.mermaKg;setPhaseForm({...phaseForm,kgRecibidosImp:kr,mermaKg:m});}} className="w-full border-2 border-blue-300 rounded-xl p-2 text-sm font-black outline-none bg-white text-blue-700 text-center" />
+                                      </div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Imp.</label><input type="text" value={phaseForm.operadorImp} onChange={e=>setPhaseForm({...phaseForm, operadorImp: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cant. Colores</label><input type="number" value={phaseForm.cantColores} onChange={e=>setPhaseForm({...phaseForm, cantColores: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Relación Imp.</label><input type="number" step="0.01" value={phaseForm.relacionImp} onChange={e=>setPhaseForm({...phaseForm, relacionImp: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
+                                    </div>
+                                  )}
+
+                                  {activePhaseTab === 'sellado' && (
+                                    <div className="grid grid-cols-2 gap-3">
+                                      <div className="col-span-2 bg-green-50 border border-green-200 rounded-xl p-3">
+                                        <label className="text-[9px] font-black text-green-700 uppercase block mb-1">KG Recibidos de Impresión/Extrusión</label>
+                                        <input type="number" step="0.01" value={phaseForm.kgRecibidosSel} onChange={e=>{const kr=e.target.value;const pd=parseNum(phaseForm.producedKg);const m=pd>0?Math.max(0,parseNum(kr)-pd).toFixed(2):phaseForm.mermaKg;setPhaseForm({...phaseForm,kgRecibidosSel:kr,mermaKg:m});}} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none bg-white text-green-700 text-center" />
+                                      </div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Sell.</label><input type="text" value={phaseForm.operadorSel} onChange={e=>setPhaseForm({...phaseForm, operadorSel: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none bg-green-50 text-green-700 text-center" placeholder="0.00" /></div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tipo Sello</label><select value={phaseForm.tipoSello} onChange={e=>setPhaseForm({...phaseForm, tipoSello: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white"><option>Sello FC</option><option>Sello SC</option><option>Lateral</option><option>Doble Sello</option></select></div>
+                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Temp. Cabezal A</label><input type="number" value={phaseForm.tempCabezalA} onChange={e=>setPhaseForm({...phaseForm, tempCabezalA: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
+                                    </div>
+                                  )}
+
+                                  {/* Insumos */}
+                                  <div className="bg-white rounded-xl border border-orange-200 p-4">
+                                    <h4 className="text-[9px] font-black text-gray-700 uppercase mb-3">Insumos Consumidos en esta Fase</h4>
+                                    <div className="flex gap-2 mb-3">
+                                      <select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
+                                        <option value="">Seleccione insumo...</option>
+                                        {(() => {
+                                          const approved = invRequisitions.filter(r=>r.opId===req.id&&r.phase===activePhaseTab&&r.status==='APROBADA');
+                                          if (approved.length > 0) {
+                                            const ids = [...new Set(approved.flatMap(r=>(r.items||[]).map(i=>i.id)))];
+                                            return ids.map(id=>{const item=inventory.find(i=>i.id===id); return item?<option key={id} value={id}>{id} - {item.desc} (Stock:{formatNum(item.stock)})</option>:null;});
+                                          }
+                                          return (inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} ({formatNum(i.stock)} {i.unit})</option>);
+                                        })()}
+                                      </select>
+                                      <input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} className="w-24 border border-gray-200 rounded-lg p-2 text-xs font-bold text-center outline-none" placeholder="KG" />
+                                      <button onClick={()=>{ if(!phaseIngId||!phaseIngQty) return; const newIns=[...(phaseForm.insumos||[]),{id:phaseIngId,qty:parseFloat(phaseIngQty)}]; setPhaseForm({...phaseForm,insumos:newIns}); setPhaseIngId(''); setPhaseIngQty(''); }} className="bg-orange-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-orange-600"><Plus size={14}/></button>
+                                    </div>
+                                    {(phaseForm.insumos||[]).map((ins,i)=>(
+                                      <div key={i} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200 mb-1">
+                                        <span className="text-xs font-black text-orange-600">{ins.id}</span>
+                                        <span className="text-xs font-black">{formatNum(ins.qty)} KG</span>
+                                        <button onClick={()=>setPhaseForm({...phaseForm,insumos:phaseForm.insumos.filter((_,j)=>j!==i)})} className="text-red-400 hover:text-red-600"><X size={12}/></button>
+                                      </div>
+                                    ))}
+                                  </div>
+
+                                  {/* ── 3 BOTONES DE FASE ── */}
+                                  <div className="flex flex-wrap gap-3 justify-between pt-2 border-t border-orange-200">
+                                    <button onClick={() => setDialog({title: `Omitir ${activePhaseTab}`, text: `¿Desea marcar la fase de ${activePhaseTab} como OMITIDA? No se registrará producción en esta fase.`, type:'confirm', onConfirm: async () => {
+                                      const cur = {...(req.production?.[activePhaseTab]||{batches:[]}), isClosed:true, skipped:true};
+                                      await updateDoc(getDocRef('requirements', req.id), {[`production.${activePhaseTab}`]: cur});
+                                      setPhaseForm({...initialPhaseForm, date:getTodayDate()});
+                                      setDialog({title:'Fase Omitida',text:`La fase de ${activePhaseTab} fue marcada como omitida.`,type:'alert'});
+                                    }})} className="bg-gray-200 text-gray-700 px-5 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-300 flex items-center gap-2 transition-all"><X size={14}/> OMITIR FASE</button>
+
+                                    <div className="flex gap-2">
+                                      <button onClick={() => handleSavePhaseDirectly(req, false)} className="bg-orange-500 text-white px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center gap-2 shadow-md"><Save size={14}/> GUARDAR REPORTE PARCIAL</button>
+                                      <button onClick={() => setDialog({title: `Cerrar Fase ${activePhaseTab} Definitivamente`, text: `¿Está seguro? La fase quedará CERRADA y no podrá agregar más lotes sin reabrirla.`, type:'confirm', onConfirm: () => {
+                                        if (activePhaseTab === 'sellado') {
+                                          setDialog({title:'¿Finalizar OP?', text:`La fase de sellado es la última. ¿Desea COMPLETAR la OP? Esta acción la moverá al historial.`, type:'confirm', onConfirm: () => handleSavePhaseDirectly(req, true)});
+                                        } else {
+                                          handleSavePhaseDirectly(req, true);
+                                        }
+                                      }})} className="bg-black text-white px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-800 flex items-center gap-2 shadow-md"><CheckCircle2 size={14}/> CERRAR FASE DEFINITIVA</button>
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
-                            </div>
+                            )}
                           </div>
                         )}
                       </div>
