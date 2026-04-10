@@ -919,6 +919,61 @@ export default function App() {
     });
   };
 
+  const handleGeneratePurchaseOrder = () => {
+    const projection = generateProjectionData();
+    const criticalItems = projection.filter(mp => mp.isCritical || mp.suggestOrder > 0);
+    
+    if (criticalItems.length === 0) {
+      setDialog({title: 'Aviso', text: 'No hay productos con déficit para generar orden de compra.', type: 'alert'});
+      return;
+    }
+
+    setSelectedPOItems(criticalItems.map(item => ({
+      productCode: item.id,
+      productName: item.desc,
+      currentStock: item.stock,
+      deficit: Math.abs(item.availableReal < 0 ? item.availableReal : 0),
+      suggestedQty: item.suggestOrder,
+      unitCost: item.cost || 1.00
+    })));
+    setShowPOModal(true);
+  };
+
+  const handleSavePurchaseOrder = async () => {
+    if (!poProvider.trim()) {
+      setDialog({title: 'Aviso', text: 'Debe ingresar un proveedor', type: 'alert'});
+      return;
+    }
+
+    if (selectedPOItems.length === 0) {
+      setDialog({title: 'Aviso', text: 'Debe seleccionar al menos un producto', type: 'alert'});
+      return;
+    }
+
+    const po = {
+      id: `PO-${Date.now()}`,
+      date: getTodayDate(),
+      provider: poProvider.toUpperCase(),
+      items: selectedPOItems,
+      subtotal: selectedPOItems.reduce((sum, item) => sum + (item.suggestedQty * item.unitCost), 0),
+      status: 'PENDIENTE',
+      user: appUser?.name || 'Admin',
+      notes: poNotes,
+      timestamp: Date.now()
+    };
+
+    try {
+      await setDoc(getDocRef('purchaseOrders', po.id), po);
+      setDialog({title: 'Éxito', text: `Orden de compra generada exitosamente: ${po.id}`, type: 'alert'});
+      setShowPOModal(false);
+      setPoProvider('');
+      setPoNotes('');
+      setSelectedPOItems([]);
+    } catch (error) {
+      setDialog({title: 'Error', text: `Error al generar orden: ${error.message}`, type: 'alert'});
+    }
+  };
+
   // ============================================================================
   // RENDERIZADO DE MÓDULOS
   // ============================================================================
@@ -2293,8 +2348,16 @@ export default function App() {
                <div className="bg-blue-50 border border-blue-200 p-6 rounded-2xl mb-8 flex items-start gap-4">
                   <AlertTriangle size={24} className="text-blue-600 mt-1 flex-shrink-0" />
                   <div>
-                     <h3 className="text-sm font-black text-blue-800 uppercase tracking-widest mb-1">Módulo de Planificación</h3>
-                     <p className="text-xs font-bold text-blue-600 leading-relaxed">El sistema analiza el inventario actual, descuenta las requisiciones de planta no despachadas y calcula cuántos días de inventario quedan según el consumo promedio de los últimos 30 días.</p>
+                     <h3 className="text-xs font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">Módulo de Planificación</h3>
+                     <p className="text-xs font-bold text-blue-600 leading-relaxed mb-4">El sistema analiza el inventario actual, descuenta las requisiciones de planta no despachadas y calcula cuántos días de inventario quedan según el consumo promedio de los últimos 30 días.</p>
+                     
+                     {/* ✅ FUNCIONALIDAD 2B: BOTÓN GENERAR ORDEN DE COMPRA */}
+                     <button
+                        onClick={handleGeneratePurchaseOrder}
+                        className="mb-4 bg-blue-600 text-white px-6 py-3 rounded-2xl text-xs font-black uppercase shadow-lg hover:bg-blue-700 transition-all flex items-center gap-2"
+                     >
+                        <ShoppingCart size={16}/> GENERAR ORDEN DE COMPRA
+                     </button>
                   </div>
                </div>
 
@@ -2340,6 +2403,142 @@ export default function App() {
                  </table>
                </div>
             </div>
+
+            {/* ✅ FUNCIONALIDAD 2C: MODAL ORDEN DE COMPRA */}
+            {showPOModal && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4 overflow-y-auto">
+                <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                  <div className="sticky top-0 bg-white p-6 border-b z-10">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-xl font-black uppercase">Generar Orden de Compra</h3>
+                      <button onClick={() => setShowPOModal(false)} className="text-gray-400 hover:text-gray-600">
+                        <X size={24}/>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-6 space-y-6">
+                    <div>
+                      <label className="text-xs font-black text-gray-500 uppercase block mb-2">Proveedor</label>
+                      <input
+                        type="text"
+                        value={poProvider}
+                        onChange={e => setPoProvider(e.target.value.toUpperCase())}
+                        className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-blue-500"
+                        placeholder="NOMBRE DEL PROVEEDOR"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-black text-gray-500 uppercase block mb-2">Notas / Observaciones</label>
+                      <textarea
+                        value={poNotes}
+                        onChange={e => setPoNotes(e.target.value)}
+                        className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500"
+                        rows="3"
+                        placeholder="OBSERVACIONES O INSTRUCCIONES ESPECIALES"
+                      />
+                    </div>
+
+                    <div>
+                      <h4 className="text-sm font-black uppercase mb-4">Productos a Ordenar</h4>
+                      {selectedPOItems.length === 0 ? (
+                        <div className="bg-gray-50 p-8 rounded-xl text-center">
+                          <p className="text-gray-500 text-xs font-bold uppercase">No hay productos críticos</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {selectedPOItems.map((item, idx) => (
+                            <div key={idx} className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                              <div className="flex justify-between items-start mb-3">
+                                <div>
+                                  <div className="font-black text-xs text-blue-600">{item.productCode}</div>
+                                  <div className="font-bold text-xs text-gray-800 mt-1">{item.productName}</div>
+                                  <div className="text-[10px] text-gray-600 mt-1 uppercase font-bold">
+                                    Stock Actual: <span className="font-black text-red-600">{formatNum(item.currentStock)} kg</span> | 
+                                    Déficit: <span className="font-black text-orange-600">{formatNum(item.deficit)} kg</span>
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    const newItems = selectedPOItems.filter((_, i) => i !== idx);
+                                    setSelectedPOItems(newItems);
+                                  }}
+                                  className="text-red-500 hover:text-red-700 bg-red-50 p-2 rounded-lg"
+                                >
+                                  <Trash2 size={16}/>
+                                </button>
+                              </div>
+                              
+                              <div className="grid grid-cols-3 gap-3 border-t border-gray-200 pt-3">
+                                <div>
+                                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad (kg)</label>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={item.suggestedQty}
+                                    onChange={e => {
+                                      const newItems = [...selectedPOItems];
+                                      newItems[idx].suggestedQty = parseFloat(e.target.value) || 0;
+                                      setSelectedPOItems(newItems);
+                                    }}
+                                    className="w-full border-2 border-gray-200 rounded-lg p-2 text-xs font-black text-center outline-none focus:border-blue-500"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Costo Unit. ($)</label>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={item.unitCost}
+                                    onChange={e => {
+                                      const newItems = [...selectedPOItems];
+                                      newItems[idx].unitCost = parseFloat(e.target.value) || 0;
+                                      setSelectedPOItems(newItems);
+                                    }}
+                                    className="w-full border-2 border-gray-200 rounded-lg p-2 text-xs font-black text-center outline-none focus:border-blue-500"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Total ($)</label>
+                                  <div className="w-full border-2 border-gray-200 rounded-lg p-2 text-xs font-black text-center bg-white text-green-600">
+                                    ${formatNum(item.suggestedQty * item.unitCost)}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+
+                          <div className="bg-blue-50 border-2 border-blue-200 p-4 rounded-xl mt-4 shadow-inner">
+                            <div className="flex justify-between items-center">
+                              <span className="font-black text-sm uppercase text-blue-800">Subtotal Orden</span>
+                              <span className="font-black text-2xl text-blue-600">
+                                ${formatNum(selectedPOItems.reduce((sum, item) => sum + (item.suggestedQty * item.unitCost), 0))}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="sticky bottom-0 bg-white p-6 border-t flex gap-3">
+                    <button
+                      onClick={() => setShowPOModal(false)}
+                      className="flex-1 bg-gray-200 text-gray-700 px-6 py-4 rounded-2xl font-black text-[10px] uppercase hover:bg-gray-300 transition-colors"
+                    >
+                      CANCELAR
+                    </button>
+                    <button
+                      onClick={handleSavePurchaseOrder}
+                      className="flex-1 bg-blue-600 text-white px-6 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <CheckCircle2 size={16}/> GENERAR ORDEN DE COMPRA
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
          </div>
        );
     }
@@ -2354,6 +2553,18 @@ export default function App() {
             ) : (() => {
               const req = (requirements || []).find(r => r?.id === selectedPhaseReqId); if (!req) return null;
               const cPhase = req.production?.[activePhaseTab] || { batches: [], isClosed: false };
+              
+              // Mapeo para Funcionalidad 3 (Control de Fases Mejorado)
+              const selectedReq = {
+                ...req,
+                cantidadSolicitada: parseNum(req.cantidad) || parseNum(req.requestedKg),
+                phases: {
+                  extrusion: { producedKg: (req.production?.extrusion?.batches || []).reduce((a,b)=>a+parseNum(b.producedKg),0), mermaKg: (req.production?.extrusion?.batches || []).reduce((a,b)=>a+parseNum(b.mermaKg),0) },
+                  impresion: { producedKg: (req.production?.impresion?.batches || []).reduce((a,b)=>a+parseNum(b.producedKg),0), mermaKg: (req.production?.impresion?.batches || []).reduce((a,b)=>a+parseNum(b.mermaKg),0) },
+                  sellado:   { producedKg: (req.production?.sellado?.batches || []).reduce((a,b)=>a+parseNum(b.producedKg),0),   mermaKg: (req.production?.sellado?.batches || []).reduce((a,b)=>a+parseNum(b.mermaKg),0) }
+                }
+              };
+
               return (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in slide-in-from-bottom-8">
                   <div className="lg:col-span-1 space-y-6">
@@ -2378,7 +2589,69 @@ export default function App() {
                           {(phaseForm?.insumos || []).length > 0 && <p className="text-[9px] font-bold text-gray-400 mt-4 italic uppercase">Nota: Puedes "Solicitar a Almacén" o dar a "Guardar Reporte" para descargar directamente del inventario general.</p>}
                         </div>
                         
-                        <div className="grid grid-cols-2 gap-4"><div className="bg-green-50 p-4 rounded-2xl border border-green-200 shadow-inner"><label className="text-[9px] font-black text-green-800 uppercase block mb-2 tracking-widest">Producido Bruto (KG)</label><input type="number" step="0.01" value={phaseForm?.producedKg || ''} onChange={e=>setPhaseForm({...phaseForm, producedKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-green-300 rounded-xl p-3 text-lg font-black text-green-700 text-center outline-none focus:border-green-500" /></div><div className="bg-red-50 p-4 rounded-2xl border border-red-200 shadow-inner"><label className="text-[9px] font-black text-red-800 uppercase block mb-2 tracking-widest">Mermas / Desperdicio (KG)</label><input type="number" step="0.01" value={phaseForm?.mermaKg || ''} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-red-300 rounded-xl p-3 text-lg font-black text-red-700 text-center outline-none focus:border-red-500" /></div></div><div className="flex flex-col md:flex-row gap-4 pt-6 border-t-2 border-gray-100"><button type="submit" name="skip" className="w-full md:w-1/4 bg-gray-100 text-gray-500 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-gray-200 shadow-sm transition-all hover:bg-gray-200">OMITIR FASE</button><button type="submit" name="partial" className="w-full md:w-2/4 bg-blue-50 text-blue-600 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-blue-200 flex justify-center items-center gap-2 shadow-sm transition-all hover:bg-blue-100"><Plus size={16}/> GUARDAR REPORTE PARCIAL</button><button type="submit" name="close" className="w-full md:w-1/4 bg-black text-white font-black py-4 rounded-2xl uppercase text-[9px] flex justify-center items-center gap-2 shadow-xl hover:bg-slate-800 transition-all"><CheckCircle size={16}/> CERRAR FASE DEFINITIVA</button></div>
+                        {/* ✅ FUNCIONALIDAD 3: CONTROL DE FASES MEJORADO */}
+                        <div className="grid grid-cols-3 gap-4 bg-blue-50 p-4 rounded-xl mb-4">
+                          <div>
+                            <label className="text-[10px] font-black text-blue-600 uppercase block mb-1">KG Entrantes</label>
+                            <input 
+                              type="number" 
+                              step="0.01"
+                              value={
+                                activePhaseTab === 'extrusion' 
+                                  ? (selectedReq?.cantidadSolicitada || 0) 
+                                  : activePhaseTab === 'impresion'
+                                  ? (selectedReq?.phases?.extrusion?.producedKg || 0)
+                                  : (selectedReq?.phases?.impresion?.producedKg || selectedReq?.phases?.extrusion?.producedKg || 0)
+                              }
+                              disabled
+                              className="w-full border-2 border-blue-200 rounded-xl p-3 font-black text-lg text-center bg-white text-blue-600"
+                            />
+                            <div className="text-[9px] text-blue-600 text-center mt-1">
+                              {activePhaseTab === 'extrusion' ? 'De Requisición' : 'De Fase Anterior'}
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] font-black text-green-600 uppercase block mb-1">KG Producidos</label>
+                            <input 
+                              type="number" 
+                              step="0.01"
+                              value={phaseForm.producedKg || ''}
+                              onChange={e => {
+                                const produced = parseFloat(e.target.value) || 0;
+                                const entrantes = activePhaseTab === 'extrusion' 
+                                  ? (selectedReq?.cantidadSolicitada || 0)
+                                  : activePhaseTab === 'impresion'
+                                  ? (selectedReq?.phases?.extrusion?.producedKg || 0)
+                                  : (selectedReq?.phases?.impresion?.producedKg || selectedReq?.phases?.extrusion?.producedKg || 0);
+                                const merma = entrantes - produced;
+                                setPhaseForm({...phaseForm, producedKg: e.target.value, mermaKg: merma.toFixed(2)});
+                              }}
+                              className="w-full border-2 border-green-200 rounded-xl p-3 font-black text-lg text-center outline-none focus:border-green-500"
+                              placeholder="0.00"
+                            />
+                            <div className="text-[9px] text-green-600 text-center mt-1">Salida de esta Fase</div>
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] font-black text-red-600 uppercase block mb-1">KG Merma</label>
+                            <input 
+                              type="number" 
+                              step="0.01"
+                              value={phaseForm.mermaKg || ''}
+                              disabled
+                              className="w-full border-2 border-red-200 rounded-xl p-3 font-black text-lg text-center bg-red-50 text-red-600"
+                            />
+                            <div className="text-[9px] text-red-600 text-center mt-1">
+                              {phaseForm.mermaKg > 0 
+                                ? `${((phaseForm.mermaKg / (activePhaseTab === 'extrusion' ? (selectedReq?.cantidadSolicitada || 1) : activePhaseTab === 'impresion' ? (selectedReq?.phases?.extrusion?.producedKg || 1) : (selectedReq?.phases?.impresion?.producedKg || selectedReq?.phases?.extrusion?.producedKg || 1))) * 100).toFixed(2)}%`
+                                : '0.00%'
+                              }
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col md:flex-row gap-4 pt-6 border-t-2 border-gray-100"><button type="submit" name="skip" className="w-full md:w-1/4 bg-gray-100 text-gray-500 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-gray-200 shadow-sm transition-all hover:bg-gray-200">OMITIR FASE</button><button type="submit" name="partial" className="w-full md:w-2/4 bg-blue-50 text-blue-600 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-blue-200 flex justify-center items-center gap-2 shadow-sm transition-all hover:bg-blue-100"><Plus size={16}/> GUARDAR REPORTE PARCIAL</button><button type="submit" name="close" className="w-full md:w-1/4 bg-black text-white font-black py-4 rounded-2xl uppercase text-[9px] flex justify-center items-center gap-2 shadow-xl hover:bg-slate-800 transition-all"><CheckCircle size={16}/> CERRAR FASE DEFINITIVA</button></div>
                       </form>
                     )}
                   </div>
@@ -2461,6 +2734,17 @@ export default function App() {
     const getFI = () => { const bs = []; if (req?.production?.extrusion?.batches) bs.push(...req.production.extrusion.batches); if (req?.production?.impresion?.batches) bs.push(...req.production.impresion.batches); if (req?.production?.sellado?.batches) bs.push(...req.production.sellado.batches); if (bs.length === 0) return 'NO INICIADO'; bs.sort((a, b) => a.timestamp - b.timestamp); return bs[0].date; };
     const getFF = () => { if (req?.status !== 'COMPLETADO') return 'EN PROCESO'; const bs = []; if (req?.production?.extrusion?.batches) bs.push(...req.production.extrusion.batches); if (req?.production?.impresion?.batches) bs.push(...req.production.impresion.batches); if (req?.production?.sellado?.batches) bs.push(...req.production.sellado.batches); if (bs.length === 0) return getTodayDate(); bs.sort((a, b) => b.timestamp - a.timestamp); return bs[0].date; };
 
+    // Mapeo para Funcionalidad 4
+    const selectedReq = {
+      ...req,
+      cantidadSolicitada: parseNum(req.cantidad) || parseNum(req.requestedKg),
+      phases: {
+        extrusion: { producedKg: extP, mermaKg: extMerma, mpKg: totMP },
+        impresion: { producedKg: impP, mermaKg: impMerma },
+        sellado: { producedKg: selP, mermaKg: selMerma }
+      }
+    };
+
     return (
       <div id="pdf-content" className="bg-white p-12 print:p-6 min-h-0 text-black shadow-none border-0 font-black uppercase text-black bg-white"><style>{`@media print { @page { size: landscape !important; margin: 5mm !important; } body { background-color: white !important; } #pdf-content { width: 100% !important; max-width: 1000px !important; margin: 0 auto !important; display: block !important; } table, tr, td, th, tbody, thead, tfoot { page-break-inside: avoid !important; } .text-orange-600 { color: #ea580c !important; } }`}</style>
         <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowFiniquito(null)} className="text-black font-black text-xs uppercase bg-gray-100 border border-gray-200 px-6 py-2.5 rounded-xl hover:bg-gray-200">VOLVER</button><button onClick={() => handleExportPDF(`Finiquito_OP_${req?.id}`, true)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black text-[10px] uppercase shadow-lg"><Printer size={16} /> EXPORTAR PDF</button></div>
@@ -2482,6 +2766,191 @@ export default function App() {
            <div className="text-right"><span className="text-gray-500 block mb-1">META SOLICITADA:</span> <span className="text-orange-600 font-black text-sm">{formatNum(req?.cantidad || req?.requestedKg)} {isBolsas ? req?.presentacion : 'KG'}</span></div>
            <div><span className="text-gray-500 block mb-1">FECHA INICIO (PLANTA):</span> <span className="text-black">{getFI()}</span></div>
            <div><span className="text-gray-500 block mb-1">FECHA CIERRE (PLANTA):</span> <span className="text-black">{getFF()}</span></div>
+        </div>
+
+        {/* ✅ FUNCIONALIDAD 4: FINIQUITO COMPLETO MEJORADO */}
+        {/* Información de Producto */}
+        <div className="bg-gray-50 p-6 rounded-2xl mb-6">
+          <h4 className="text-sm font-black uppercase text-gray-700 mb-4">Información del Producto</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+            <div>
+              <div className="text-gray-600 mb-1">Tipo de Producto</div>
+              <div className="font-black text-gray-800">{selectedReq?.tipoProducto || 'BOLSAS'}</div>
+            </div>
+            <div>
+              <div className="text-gray-600 mb-1">Categoría</div>
+              <div className="font-black text-gray-800">{selectedReq?.categoria || 'N/A'}</div>
+            </div>
+            <div>
+              <div className="text-gray-600 mb-1">Descripción</div>
+              <div className="font-black text-gray-800">{selectedReq?.desc || 'N/A'}</div>
+            </div>
+            <div>
+              <div className="text-gray-600 mb-1">Vendedor</div>
+              <div className="font-black text-gray-800">{selectedReq?.vendedor || 'N/A'}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Flujo de Producción por Fase */}
+        <div className="mb-6">
+          <h4 className="text-sm font-black uppercase text-gray-700 mb-4">Flujo de Producción por Fase</h4>
+          <div className="space-y-3">
+            {/* Extrusión */}
+            <div className="border-l-4 border-orange-500 bg-orange-50 p-4 rounded-r-xl">
+              <div className="font-black text-xs text-orange-600 mb-3">1. EXTRUSIÓN</div>
+              <div className="grid grid-cols-4 gap-3 text-xs">
+                <div>
+                  <div className="text-gray-600">KG Entrantes</div>
+                  <div className="font-black text-orange-600">{formatNum(selectedReq?.cantidadSolicitada || 0)} kg</div>
+                  <div className="text-[9px] text-gray-500">De Requisición</div>
+                </div>
+                <div>
+                  <div className="text-gray-600">KG Producidos</div>
+                  <div className="font-black text-green-600">{formatNum(selectedReq?.phases?.extrusion?.producedKg || 0)} kg</div>
+                  <div className="text-[9px] text-gray-500">Salida de Extrusión</div>
+                </div>
+                <div>
+                  <div className="text-gray-600">KG Merma</div>
+                  <div className="font-black text-red-600">{formatNum(selectedReq?.phases?.extrusion?.mermaKg || 0)} kg</div>
+                  <div className="text-[9px] text-gray-500">
+                    {selectedReq?.cantidadSolicitada > 0 
+                      ? `${((selectedReq?.phases?.extrusion?.mermaKg / selectedReq?.cantidadSolicitada) * 100).toFixed(2)}%`
+                      : '0.00%'
+                    }
+                  </div>
+                </div>
+                <div>
+                  <div className="text-gray-600">Eficiencia</div>
+                  <div className="font-black text-blue-600">
+                    {selectedReq?.cantidadSolicitada > 0 
+                      ? `${((selectedReq?.phases?.extrusion?.producedKg / selectedReq?.cantidadSolicitada) * 100).toFixed(2)}%`
+                      : '0.00%'
+                    }
+                  </div>
+                  <div className="text-[9px] text-gray-500">Rendimiento</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Impresión */}
+            {selectedReq?.phases?.impresion && selectedReq?.phases?.impresion?.producedKg > 0 && (
+              <div className="border-l-4 border-purple-500 bg-purple-50 p-4 rounded-r-xl">
+                <div className="font-black text-xs text-purple-600 mb-3">2. IMPRESIÓN</div>
+                <div className="grid grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <div className="text-gray-600">KG Entrantes</div>
+                    <div className="font-black text-purple-600">{formatNum(selectedReq?.phases?.extrusion?.producedKg || 0)} kg</div>
+                    <div className="text-[9px] text-gray-500">De Extrusión</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600">KG Producidos</div>
+                    <div className="font-black text-green-600">{formatNum(selectedReq?.phases?.impresion?.producedKg || 0)} kg</div>
+                    <div className="text-[9px] text-gray-500">Salida de Impresión</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600">KG Merma</div>
+                    <div className="font-black text-red-600">{formatNum(selectedReq?.phases?.impresion?.mermaKg || 0)} kg</div>
+                    <div className="text-[9px] text-gray-500">
+                      {selectedReq?.phases?.extrusion?.producedKg > 0 
+                        ? `${((selectedReq?.phases?.impresion?.mermaKg / selectedReq?.phases?.extrusion?.producedKg) * 100).toFixed(2)}%`
+                        : '0.00%'
+                      }
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600">Eficiencia</div>
+                    <div className="font-black text-blue-600">
+                      {selectedReq?.phases?.extrusion?.producedKg > 0 
+                        ? `${((selectedReq?.phases?.impresion?.producedKg / selectedReq?.phases?.extrusion?.producedKg) * 100).toFixed(2)}%`
+                        : '0.00%'
+                      }
+                    </div>
+                    <div className="text-[9px] text-gray-500">Rendimiento</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Sellado */}
+            {selectedReq?.phases?.sellado && selectedReq?.phases?.sellado?.producedKg > 0 && (
+              <div className="border-l-4 border-blue-500 bg-blue-50 p-4 rounded-r-xl">
+                <div className="font-black text-xs text-blue-600 mb-3">3. SELLADO</div>
+                <div className="grid grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <div className="text-gray-600">KG Entrantes</div>
+                    <div className="font-black text-blue-600">{formatNum(selectedReq?.phases?.impresion?.producedKg || selectedReq?.phases?.extrusion?.producedKg || 0)} kg</div>
+                    <div className="text-[9px] text-gray-500">De Fase Anterior</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600">KG Producidos</div>
+                    <div className="font-black text-green-600">{formatNum(selectedReq?.phases?.sellado?.producedKg || 0)} kg</div>
+                    <div className="text-[9px] text-gray-500">Producción Final</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600">KG Merma</div>
+                    <div className="font-black text-red-600">{formatNum(selectedReq?.phases?.sellado?.mermaKg || 0)} kg</div>
+                    <div className="text-[9px] text-gray-500">
+                      {(selectedReq?.phases?.impresion?.producedKg || selectedReq?.phases?.extrusion?.producedKg) > 0 
+                        ? `${((selectedReq?.phases?.sellado?.mermaKg / (selectedReq?.phases?.impresion?.producedKg || selectedReq?.phases?.extrusion?.producedKg)) * 100).toFixed(2)}%`
+                        : '0.00%'
+                      }
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600">Eficiencia</div>
+                    <div className="font-black text-blue-600">
+                      {(selectedReq?.phases?.impresion?.producedKg || selectedReq?.phases?.extrusion?.producedKg) > 0 
+                        ? `${((selectedReq?.phases?.sellado?.producedKg / (selectedReq?.phases?.impresion?.producedKg || selectedReq?.phases?.extrusion?.producedKg)) * 100).toFixed(2)}%`
+                        : '0.00%'
+                      }
+                    </div>
+                    <div className="text-[9px] text-gray-500">Rendimiento</div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Resumen Final de Producción */}
+        <div className="bg-gradient-to-r from-green-50 to-blue-50 p-6 rounded-2xl border-2 border-green-200 mb-6">
+          <h4 className="text-sm font-black uppercase text-green-700 mb-4">Resumen Final de Producción</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-white p-4 rounded-xl">
+              <div className="text-xs text-gray-600 mb-1">Meta Solicitada</div>
+              <div className="text-2xl font-black text-blue-600">{formatNum(selectedReq?.cantidadSolicitada || 0)}</div>
+              <div className="text-[10px] text-gray-500">KG</div>
+            </div>
+            <div className="bg-white p-4 rounded-xl">
+              <div className="text-xs text-gray-600 mb-1">Producción Final</div>
+              <div className="text-2xl font-black text-green-600">
+                {formatNum(selectedReq?.phases?.sellado?.producedKg || selectedReq?.phases?.impresion?.producedKg || selectedReq?.phases?.extrusion?.producedKg || 0)}
+              </div>
+              <div className="text-[10px] text-gray-500">KG</div>
+            </div>
+            <div className="bg-white p-4 rounded-xl">
+              <div className="text-xs text-gray-600 mb-1">Merma Total</div>
+              <div className="text-2xl font-black text-red-600">
+                {formatNum(
+                  (parseFloat(selectedReq?.phases?.extrusion?.mermaKg) || 0) +
+                  (parseFloat(selectedReq?.phases?.impresion?.mermaKg) || 0) +
+                  (parseFloat(selectedReq?.phases?.sellado?.mermaKg) || 0)
+                )}
+              </div>
+              <div className="text-[10px] text-gray-500">KG</div>
+            </div>
+            <div className="bg-white p-4 rounded-xl">
+              <div className="text-xs text-gray-600 mb-1">Eficiencia Global</div>
+              <div className="text-2xl font-black text-purple-600">
+                {selectedReq?.cantidadSolicitada > 0 
+                  ? `${(((selectedReq?.phases?.sellado?.producedKg || selectedReq?.phases?.impresion?.producedKg || selectedReq?.phases?.extrusion?.producedKg || 0) / selectedReq?.cantidadSolicitada) * 100).toFixed(1)}%`
+                  : '0.0%'
+                }
+              </div>
+              <div className="text-[10px] text-gray-500">Rendimiento</div>
+            </div>
+          </div>
         </div>
 
         <div className="overflow-hidden rounded-xl border border-gray-300 print:border-black print:rounded-none">
@@ -3063,21 +3532,22 @@ export default function App() {
             <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
               <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 transition-all active:scale-95 uppercase tracking-widest"><Home size={18} className="text-orange-500" /> INICIO</button>
 
-              {/* SIMULADOR OP - MÓDULO INDEPENDIENTE */}
-              {appUser?.permissions?.produccion && (
+              {/* ✅ FUNCIONALIDAD 1: MENÚ LATERAL DINÁMICO */}
+              {/* Mostrar SIMULADOR solo si NO está en costos operativos */}
+              {activeTab !== 'costos_operativos' && appUser?.permissions?.produccion && (
                 <button 
                   onClick={()=>{clearAllReports(); setActiveTab('simulador');}} 
-                  className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl shadow-xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'simulador' ? 'bg-orange-500 text-white' : 'bg-white text-gray-700 hover:bg-orange-50'}`}
+                  className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl shadow-xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'simulador' ? 'bg-orange-500 text-white' : 'bg-white text-gray-700 hover:bg-orange-50 border border-gray-200'}`}
                 >
                   <Calculator size={18} className={activeTab === 'simulador' ? 'text-white' : 'text-orange-500'} /> SIMULADOR OP
                 </button>
               )}
 
-              {/* COSTOS OPERATIVOS - MÓDULO INDEPENDIENTE */}
-              {appUser?.permissions?.costos && (
+              {/* Mostrar COSTOS OPERATIVOS solo si NO está en simulador */}
+              {activeTab !== 'simulador' && appUser?.permissions?.costos && (
                 <button 
                   onClick={()=>{clearAllReports(); setActiveTab('costos_operativos');}} 
-                  className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl shadow-xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'costos_operativos' ? 'bg-green-600 text-white' : 'bg-white text-gray-700 hover:bg-green-50'}`}
+                  className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl shadow-xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'costos_operativos' ? 'bg-green-600 text-white' : 'bg-white text-gray-700 hover:bg-green-50 border border-gray-200'}`}
                 >
                   <DollarSign size={18} className={activeTab === 'costos_operativos' ? 'text-white' : 'text-green-600'} /> COSTOS OPERATIVOS
                 </button>
