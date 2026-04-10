@@ -4076,7 +4076,7 @@ export default function App() {
     }
 
     return <div className="text-center font-bold p-10 bg-white rounded-3xl text-gray-500">Seleccione una pestaña de producción</div>;
-  };
+  
 
   // ── REPORTES FINANCIEROS ──────────────────────────────────────────────────
   const renderReportesFinancierosModule = () => {
