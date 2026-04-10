@@ -246,7 +246,7 @@ export default function App() {
   const [prodSubMode, setProdSubMode] = useState('fase'); // 'fase' | 'requisicion'
 
   // ============================================================================
-  // EXPORTACIONES CORREGIDAS
+  // EXPORTACIONES CORREGIDAS PARA EVITAR DESBORDAMIENTOS (FUERA DE MARGEN)
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content');
@@ -265,62 +265,27 @@ export default function App() {
     const pdfHeaders = element.querySelectorAll('.pdf-header');
     pdfHeaders.forEach(el => { el.dataset._prevDisplay = el.style.display; el.style.display = 'block'; });
 
-    // ── Tamaños de página (mm) ────────────────────────────────────────
-    // Carta: 215.9 × 279.4 mm  |  Carta Landscape: 279.4 × 215.9 mm
-    const PW = isLandscape ? 279.4 : 215.9;
-    const PH = isLandscape ? 215.9 : 279.4;
-    const MARGIN = isLandscape ? 8 : 12;          // mm
-    const CONTENT_W_MM = PW - MARGIN * 2;         // área útil en mm
-    // Pixels virtuales: 1 mm ≈ 3.7795 px  (96 dpi)
-    const MM_TO_PX = 3.7795;
-    const virtualPx = Math.round(CONTENT_W_MM * MM_TO_PX);
-
-    // ── Guardar y sobreescribir estilos temporalmente ─────────────────
     const savedStyle = element.getAttribute('style') || '';
-    element.style.cssText = [
-      `width:${virtualPx}px`,
-      'max-width:none',
-      'margin:0 auto',
-      'padding:20px',
-      'background:#ffffff',
-      'color:#000000',
-      'box-sizing:border-box',
-    ].join(';');
+    
+    // ── Fijar un ancho estático para que html2canvas capture todo sin desborde ──
+    const exportWidth = isLandscape ? '1200px' : '900px';
+    element.style.cssText = `width: ${exportWidth}; max-width: ${exportWidth}; margin: 0 auto; padding: 20px; background: #ffffff; color: #000000; box-sizing: border-box;`;
 
     const opt = {
-      margin:   [MARGIN, MARGIN, MARGIN, MARGIN],   // top right bottom left (mm)
-      filename: `${filename}_${getTodayDate()}.pdf`,
-      image:    { type: 'jpeg', quality: 0.95 },
-      html2canvas: {
-        scale:           2,            // 2× para buena resolución sin exceso de peso
-        useCORS:         true,
-        allowTaint:      false,
-        logging:         false,
-        backgroundColor: '#ffffff',
-        windowWidth:     virtualPx,
-        width:           virtualPx,
-        onclone: (doc) => {
-          const el = doc.getElementById('pdf-content');
-          if (el) {
-            el.style.width           = `${virtualPx}px`;
-            el.style.maxWidth        = 'none';
-            el.style.padding         = '20px';
-            el.style.backgroundColor = '#ffffff';
-            el.style.color           = '#000000';
-            // Mostrar cabeceras en el clon
-            doc.querySelectorAll('.pdf-header').forEach(h => { h.style.display = 'block'; });
-            doc.querySelectorAll('.no-pdf, [data-html2canvas-ignore]').forEach(h => { h.style.display = 'none'; });
-          }
-        },
+      margin:       10, // Margen uniforme de 10mm
+      filename:     `${filename}_${getTodayDate()}.pdf`,
+      image:        { type: 'jpeg', quality: 0.98 },
+      html2canvas:  {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        windowWidth: isLandscape ? 1200 : 900 // Coincide con nuestro ancho estricto
       },
       jsPDF: {
-        unit:        'mm',
-        format:      [PW, PH],
-        orientation: isLandscape ? 'landscape' : 'portrait',
-        compress:    true,
-        precision:   2,
-      },
-      pagebreak: { mode: ['css', 'legacy'], before: '.pdf-page-break' },
+        unit: 'mm',
+        format: 'letter',
+        orientation: isLandscape ? 'landscape' : 'portrait'
+      }
     };
 
     const restore = () => {
@@ -337,7 +302,7 @@ export default function App() {
       .catch(err => {
         restore();
         console.error('PDF error:', err);
-        setDialog({title:'Error al generar PDF', text:'Intente nuevamente. Si el error persiste recargue la página.', type:'alert'});
+        setDialog({title:'Error al generar PDF', text:'Intente nuevamente.', type:'alert'});
       });
   };
   
@@ -347,7 +312,6 @@ export default function App() {
       const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8" /><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #000;padding:5px;}th{text-align:center;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><br/>${tableClone.outerHTML}</body></html>`;
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${filename}_${getTodayDate()}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
     } else if (Array.isArray(tableDataOrId)) {
-      // Export directly from data array using custom HTML logic
       let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8" /><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #000;padding:5px;}th{background-color:#f3f4f6;text-align:center;font-weight:bold;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><br/><table>`;
       if (headers) {
         html += `<thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>`;
@@ -1703,7 +1667,7 @@ export default function App() {
                                  </td>
                                  <td className="py-3 px-4 text-center font-black text-lg">
                                     {diff !== null ? (
-                                       <span className={diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-600' : 'text-gray-400'}>
+                                       <span className={diff > 0 ? 'text-green-600' : diff < 0 ? 'text-gray-400'}>
                                           {diff > 0 ? '+' : ''}{formatNum(diff)}
                                        </span>
                                     ) : <span className="text-gray-300">-</span>}
@@ -2750,16 +2714,40 @@ export default function App() {
     });
 
     const costsByCategory = {};
-    COSTO_CATEGORIES.forEach(cat => { costsByCategory[cat] = 0; });
+    costCategories.forEach(cat => { costsByCategory[cat] = 0; });
     opCosts.forEach(cost => {
-      if (costsByCategory[cost.category] !== undefined) {
-        costsByCategory[cost.category] += cost.amount || 0;
+      const cat = cost.category || 'Otros Gastos';
+      if (costsByCategory[cat] !== undefined) {
+        costsByCategory[cat] += cost.amount || 0;
+      } else {
+        costsByCategory[cat] = cost.amount || 0;
+      }
+    });
+
+    const renderCostosOperativosModule = () => {
+    const filteredCosts = opCosts.filter(cost => {
+      const matchCategory = costFilterCategory === 'TODAS' || cost.category === costFilterCategory;
+      const matchMonth = costFilterMonth === 'TODOS' || cost.month === costFilterMonth;
+      return matchCategory && matchMonth;
+    });
+
+    const costsByCategory = {};
+    // Usamos el estado dinámico costCategories para evitar choques con la constante y prevenir pantallas blancas
+    costCategories.forEach(cat => { costsByCategory[cat] = 0; });
+    
+    opCosts.forEach(cost => {
+      const cat = cost.category || 'Otros Gastos';
+      if (costsByCategory[cat] !== undefined) {
+        costsByCategory[cat] += cost.amount || 0;
+      } else {
+        costsByCategory[cat] = cost.amount || 0;
       }
     });
 
     const totalCosts = Object.values(costsByCategory).reduce((sum, val) => sum + val, 0);
     const maxCategoryAmount = Math.max(...Object.values(costsByCategory), 1);
-    const uniqueMonths = [...new Set(opCosts.map(c => c.month))].sort().reverse();
+    // Filtramos para evitar valores undefined que rompan el split('-')
+    const uniqueMonths = [...new Set(opCosts.map(c => c.month || ''))].filter(Boolean).sort().reverse();
 
     return (
       <div className="w-full max-w-7xl animate-in fade-in">
@@ -2817,7 +2805,7 @@ export default function App() {
                   <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
                   <select value={costFilterCategory} onChange={e => setCostFilterCategory(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500">
                     <option value="TODAS">TODAS LAS CATEGORÍAS</option>
-                    {COSTO_CATEGORIES.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
+                    {costCategories.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
                   </select>
                 </div>
                 <div>
@@ -2833,8 +2821,9 @@ export default function App() {
             <div className="bg-white p-6 rounded-2xl border border-gray-200">
               <h3 className="text-sm font-black uppercase text-black mb-6 border-b border-gray-200 pb-2">Resumen por Categoría</h3>
               <div className="space-y-3">
-                {COSTO_CATEGORIES.map(cat => {
+                {costCategories.map(cat => {
                   const amount = costsByCategory[cat] || 0;
+                  if(amount === 0) return null; // No mostrar categorías en 0 para limpiar vista
                   const percentage = totalCosts > 0 ? (amount / totalCosts * 100) : 0;
                   const barWidth = maxCategoryAmount > 0 ? (amount / maxCategoryAmount * 100) : 0;
                   return (
@@ -2878,11 +2867,18 @@ export default function App() {
                       const costoMes = opCosts.filter(c => c.month === ym).reduce((s,c) => s + parseNum(c.amount), 0);
                       const ingresosMes = invoices.filter(i => (i.fecha||'').startsWith(ym)).reduce((s,i) => s + parseNum(i.total), 0);
                       const pct = ingresosMes > 0 ? (costoMes / ingresosMes * 100) : 0;
-                      const [yr, mo] = ym.split('-');
+                      
+                      // Protegemos el split
+                      const parts = (ym || '').split('-');
+                      const yr = parts[0] || '';
+                      const mo = parts[1] || '';
+                      
                       const monthNames = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                      const monthLabel = mo && yr ? `${monthNames[parseInt(mo, 10)-1]} ${yr}` : ym;
+                      
                       return (
                         <tr key={ym} className="hover:bg-gray-50 transition-colors">
-                          <td className="py-3 px-4 border-r font-black">{monthNames[parseInt(mo)-1]} {yr}</td>
+                          <td className="py-3 px-4 border-r font-black">{monthLabel}</td>
                           <td className="py-3 px-4 border-r text-right font-black text-green-600">${formatNum(ingresosMes)}</td>
                           <td className="py-3 px-4 border-r text-right font-black text-orange-600">${formatNum(costoMes)}</td>
                           <td className="py-3 px-4 text-center">
