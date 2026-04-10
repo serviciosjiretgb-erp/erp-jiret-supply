@@ -101,7 +101,7 @@ const getSafeDate = (ts) => {
 // ============================================================================
 // CONSTANTE DE SEGURIDAD - CLAVE ADMIN
 // ============================================================================
-const ADMIN_PASSWORD = 'admin123'; // Cambiar en producción
+const ADMIN_PASSWORD = '1234'; 
 
 // ============================================================================
 // CATEGORÍAS DE COSTOS OPERATIVOS
@@ -137,8 +137,9 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState('home'); 
   const [ventasView, setVentasView] = useState('facturacion'); 
-  const [prodView, setProdView] = useState('proyeccion');
+  const [prodView, setProdView] = useState('calculadora');
   const [invView, setInvView] = useState('catalogo');
+  const [costosView, setCostosView] = useState('dashboard');
   const [invReportType, setInvReportType] = useState('entradas');
 
   const [inventory, setInventory] = useState([]);
@@ -169,6 +170,7 @@ export default function App() {
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
   const [showMovementReceipt, setShowMovementReceipt] = useState(null);
   const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
+  const [showSuperFiniquito, setShowSuperFiniquito] = useState(null);
 
   // Estados para Toma Física
   const [physicalCounts, setPhysicalCounts] = useState({});
@@ -226,7 +228,7 @@ export default function App() {
   const [showReportType, setShowReportType] = useState(null); 
 
   // ============================================================================
-  // EXPORTACIONES
+  // EXPORTACIONES 
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content'); if (!element) return;
@@ -235,59 +237,29 @@ export default function App() {
     const noPdfElements = element.querySelectorAll('.no-pdf'); 
     noPdfElements.forEach(el => { el.style.display = 'none'; });
 
-    const originalCssText = element.style.cssText; 
-    const originalClasses = element.className; 
-    
-    const virtualWidth = isLandscape ? 1100 : 800; 
-    element.className = 'bg-white text-black p-6'; 
-    element.style.width = `${virtualWidth}px`; 
-    element.style.maxWidth = 'none'; 
-    element.style.margin = '0 auto';
-    
-    const tables = element.querySelectorAll('table'); 
-    tables.forEach(t => { t.style.whiteSpace = 'normal'; t.style.tableLayout = 'fixed'; t.style.width = '100%'; t.style.wordBreak = 'break-word'; });
-
     const opt = { 
-      margin: isLandscape ? [8, 8, 8, 8] : [12, 12, 12, 12], 
+      margin: [10, 10, 10, 10], 
       filename: `${filename}_${getTodayDate()}.pdf`, 
       image: { type: 'jpeg', quality: 0.98 }, 
-      html2canvas: { 
-        scale: 2.5,  
-        useCORS: true, 
-        logging: false, 
-        windowWidth: virtualWidth,
-        width: virtualWidth,
-        onclone: (clonedDoc) => {
-          const clonedElement = clonedDoc.getElementById('pdf-content');
-          if (clonedElement) {
-            clonedElement.style.width = `${virtualWidth}px`;
-            clonedElement.style.maxWidth = `${virtualWidth}px`;
-          }
-        }
-      }, 
-      jsPDF: { 
-        unit: 'mm', 
-        format: 'letter', 
-        orientation: isLandscape ? 'landscape' : 'portrait',
-        compress: true  
-      } 
-    };
-
-    const finishExport = () => { 
-      printOnlyElements.forEach(el => { el.style.display = ''; }); 
-      noPdfElements.forEach(el => { el.style.display = ''; }); 
-      element.style.cssText = originalCssText; 
-      element.className = originalClasses; 
-      tables.forEach(t => { t.style.whiteSpace = ''; t.style.tableLayout = ''; t.style.width = ''; t.style.wordBreak = ''; }); 
+      html2canvas: { scale: 2, useCORS: true, logging: false }, 
+      jsPDF: { unit: 'mm', format: 'letter', orientation: isLandscape ? 'landscape' : 'portrait' } 
     };
 
     if (typeof window.html2pdf === 'undefined') { 
       const script = document.createElement('script'); 
       script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; 
-      script.onload = () => { window.html2pdf().set(opt).from(element).save().then(finishExport); }; 
+      script.onload = () => { 
+        window.html2pdf().set(opt).from(element).save().then(() => {
+          printOnlyElements.forEach(el => { el.style.display = ''; }); 
+          noPdfElements.forEach(el => { el.style.display = ''; });
+        }); 
+      }; 
       document.head.appendChild(script); 
     } else { 
-      window.html2pdf().set(opt).from(element).save().then(finishExport); 
+      window.html2pdf().set(opt).from(element).save().then(() => {
+        printOnlyElements.forEach(el => { el.style.display = ''; }); 
+        noPdfElements.forEach(el => { el.style.display = ''; });
+      }); 
     }
   };
   
@@ -447,7 +419,7 @@ export default function App() {
     setShowNewReqPanel(false); setShowNewInvoicePanel(false); setEditingClientId(null); setEditingReqId(null); 
     setShowSingleReqReport(null); setShowSingleInvoice(null); setInvoiceSearchTerm(''); setShowWorkOrder(null); 
     setShowPhaseReport(null); setShowFiniquito(null); setSelectedPhaseReqId(null); setReqToApprove(null); setShowMovementReceipt(null);
-    setShowPurchaseOrder(false);
+    setShowPurchaseOrder(false); setShowSuperFiniquito(null);
   };
 
   // ============================================================================
@@ -693,7 +665,7 @@ export default function App() {
     const w = parseNum(f.ancho), l = parseNum(f.largo), m = parseNum(f.micras), fu = parseNum(f.fuelles), c = parseNum(f.cantidad), tipo = f.tipoProducto;
     if (w > 0 && m > 0) {
       const micFmt = m < 1 && m > 0 ? Math.round(m * 1000) : m;
-      if (tipo === 'BOLSAS' && l > 0) { const pEst = (w + fu) * l * m; f.pesoMillar = pEst.toFixed(2); f.desc = fu > 0 ? `(${w}+${fu/2}+${fu/2})X${l}X${micFmt}MIC | ${f.color || ''}` : `${w}X${l}X${micFmt}MIC | ${f.color || ''}`; f.requestedKg = f.presentacion === 'KILOS' ? c.toFixed(2) : (pEst * c).toFixed(2); } 
+      if (tipo === 'BOLSAS' && l > 0) { const pEst = (w + fu) * l * m; f.pesoMillar = pEst.toFixed(2); f.desc = fu > 0 ? `(${w}+${fu/2}+${fu/2})X${l}X${micFmt}MIC | ${f.color || ''}`; f.requestedKg = f.presentacion === 'KILOS' ? c.toFixed(2) : (pEst * c).toFixed(2); } 
       else if (tipo === 'TERMOENCOGIBLE') { f.pesoMillar = 'N/A'; f.desc = `TERMOENCOGIBLE ${w}CM X ${micFmt}MIC | ${f.color || ''}`; f.requestedKg = c > 0 ? c.toFixed(2) : '0.00'; } 
       else { f.pesoMillar = '0.00'; f.requestedKg = '0.00'; }
     } else { f.pesoMillar = tipo === 'TERMOENCOGIBLE' ? 'N/A' : '0.00'; f.requestedKg = f.presentacion === 'KILOS' && c > 0 ? c.toFixed(2) : '0.00'; }
@@ -951,45 +923,18 @@ export default function App() {
              <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Users size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3><p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p></button>
           )}
           {hasPerm('produccion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('proyeccion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
+             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('calculadora'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
           )}
           {hasPerm('inventario') && (
              <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p></button>
           )}
         </div>
-        
-        {/* MODULOS INDEPENDIENTES INTEGRADOS EN EL HOME COMO SE SOLICITÓ */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
-          {hasPerm('produccion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('simulador'); }} className="group bg-white border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-orange-50 transition-all shadow-md">
-               <Calculator size={40} className="text-orange-500 mb-4" />
-               <h3 className="text-xl font-black text-gray-800 uppercase">Simulador OP</h3>
-               <p className="text-xs text-gray-500 mt-2">Calculadora Inversa de Producción y Mermas.</p>
-             </button>
-          )}
           {hasPerm('costos') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('costos_operativos'); }} className="group bg-white border-l-4 border-green-500 rounded-3xl p-10 text-left hover:bg-green-50 transition-all shadow-md">
-               <DollarSign size={40} className="text-green-600 mb-4" />
-               <h3 className="text-xl font-black text-gray-800 uppercase">Costos Operativos</h3>
-               <p className="text-xs text-gray-500 mt-2">Registro de gastos y resumen visual por categoría.</p>
-             </button>
+             <button onClick={() => { clearAllReports(); setActiveTab('costos'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><BarChart3 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Costos y Rentabilidad</h3><p className="text-xs text-gray-400 mt-2">Análisis Financiero y Finiquitos.</p></button>
           )}
-          {hasPerm('costos') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('costos'); }} className="group bg-white border-l-4 border-blue-500 rounded-3xl p-10 text-left hover:bg-blue-50 transition-all shadow-md">
-               <BarChart3 size={40} className="text-blue-600 mb-4" />
-               <h3 className="text-xl font-black text-gray-800 uppercase">Reportes Financieros</h3>
-               <p className="text-xs text-gray-500 mt-2">Dashboard de Rentabilidad, Ingresos vs Costos.</p>
-             </button>
-          )}
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
           {hasPerm('configuracion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md">
-               <Settings2 size={40} className="text-gray-400 mb-4" />
-               <h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3>
-               <p className="text-xs text-gray-400 mt-2">Usuarios y Permisos.</p>
-             </button>
+             <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md"><Settings2 size={40} className="text-gray-400 mb-4" /><h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3><p className="text-xs text-gray-400 mt-2">Usuarios y Permisos.</p></button>
           )}
         </div>
       </div>
@@ -1090,83 +1035,6 @@ export default function App() {
     }
 
     if (invView === 'reportes_mod') return renderInventoryReports();
-
-    // VISTA TOMA FÍSICA Y AJUSTE MASIVO (NUEVO)
-    if (invView === 'toma_fisica') {
-       return (
-         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
-            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-orange-50 flex justify-between items-center no-pdf">
-               <div>
-                  <h2 className="text-xl font-black text-orange-800 uppercase flex items-center gap-3 tracking-tighter">
-                    <ClipboardEdit className="text-orange-600" size={24}/> Toma Física de Inventario
-                  </h2>
-                  <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase tracking-widest">Ajuste Masivo Directo al Sistema</p>
-               </div>
-               <div className="flex gap-2">
-                 <button onClick={exportTomaFisicaExcel} className="bg-white border-2 border-gray-200 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-2"><Download size={16}/> PLANILLA EXCEL</button>
-                 <button onClick={handleProcessTomaFisica} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 transition-colors flex items-center gap-2"><CheckCircle2 size={16}/> PROCESAR AJUSTES</button>
-               </div>
-            </div>
-            
-            <div className="p-8">
-               <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl mb-6 flex items-start gap-4">
-                  <AlertTriangle size={24} className="text-blue-600 mt-1 flex-shrink-0" />
-                  <div>
-                     <h3 className="text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1">Instrucciones de Toma Física</h3>
-                     <p className="text-xs font-bold text-blue-600">Ingresa el conteo físico real de los ítems en la columna "Conteo Físico". El sistema calculará la diferencia y generará automáticamente los movimientos de "AJUSTE" correspondientes (Positivos o Negativos) al procesar.</p>
-                  </div>
-               </div>
-
-               <div className="overflow-x-auto rounded-xl border border-gray-200">
-                  <table className="w-full text-left whitespace-nowrap text-sm">
-                     <thead className="bg-gray-100 border-b-2 border-gray-200">
-                        <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
-                           <th className="py-3 px-4 border-r">Ítem / Código</th>
-                           <th className="py-3 px-4 border-r text-center">Unidad</th>
-                           <th className="py-3 px-4 border-r text-center">Stock Sistema</th>
-                           <th className="py-3 px-4 border-r text-center bg-orange-100 text-orange-800 w-48">Conteo Físico Real</th>
-                           <th className="py-3 px-4 text-center">Diferencia Estimada</th>
-                        </tr>
-                     </thead>
-                     <tbody className="divide-y divide-gray-100 text-black">
-                        {(inventory || []).map(item => {
-                           const physicalStr = physicalCounts[item.id];
-                           const physicalNum = physicalStr !== undefined && physicalStr !== '' ? parseNum(physicalStr) : null;
-                           const diff = physicalNum !== null ? physicalNum - item.stock : null;
-
-                           return (
-                              <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                                 <td className="py-3 px-4 border-r font-black text-xs uppercase">{item.desc}<br/><span className="text-[10px] text-gray-500 font-bold">{item.id}</span></td>
-                                 <td className="py-3 px-4 border-r text-center font-bold text-gray-500">{item.unit || 'KG'}</td>
-                                 <td className="py-3 px-4 border-r text-center font-black text-blue-600 text-lg">{formatNum(item.stock)}</td>
-                                 <td className="py-2 px-4 border-r text-center bg-orange-50/30">
-                                    <input 
-                                       type="number" 
-                                       step="0.01"
-                                       value={physicalCounts[item.id] ?? ''} 
-                                       onChange={e => setPhysicalCounts({...physicalCounts, [item.id]: e.target.value})}
-                                       className="w-full border-2 border-orange-200 rounded-lg p-2 text-center font-black text-lg outline-none focus:border-orange-500 focus:bg-white bg-gray-50 transition-all text-black"
-                                       placeholder="-"
-                                    />
-                                 </td>
-                                 <td className="py-3 px-4 text-center font-black text-lg">
-                                    {diff !== null ? (
-                                       <span className={diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-600' : 'text-gray-400'}>
-                                          {diff > 0 ? '+' : ''}{formatNum(diff)}
-                                       </span>
-                                    ) : <span className="text-gray-300">-</span>}
-                                 </td>
-                              </tr>
-                           );
-                        })}
-                        {inventory.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">El catálogo está vacío.</td></tr>}
-                     </tbody>
-                  </table>
-               </div>
-            </div>
-         </div>
-       );
-    }
 
     const searchInvUpper = (invSearchTerm || '').toUpperCase();
     const filteredInventory = (inventory || []).filter(i => (i?.id || '').includes(searchInvUpper) || (i?.desc || '').includes(searchInvUpper));
@@ -1281,8 +1149,8 @@ export default function App() {
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Lista de Productos (Catálogo)</h2>
                <div className="flex gap-3">
-                 <button onClick={() => {clearAllReports(); setInvView('toma_fisica'); setPhysicalCounts({});}} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 transition-colors flex items-center gap-2">
-                   <ClipboardEdit size={16}/> TOMA FÍSICA / AJUSTE
+                 <button onClick={() => exportTomaFisicaExcel()} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2">
+                   <Download size={16}/> EXPORTAR TOMA FÍSICA (EXCEL)
                  </button>
                  <button onClick={() => handleExportPDF('Catalogo_Inventario', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2">
                    <Printer size={16}/> EXPORTAR PDF
@@ -1384,7 +1252,7 @@ export default function App() {
                   <ArrowRightLeft className="text-orange-500" size={24}/> 
                   {invView === 'cargo' && 'Registrar Cargo (Entrada)'}
                   {invView === 'descargo' && 'Registrar Descargo (Salida)'}
-                  {invView === 'ajuste' && 'Registrar Ajuste Manual Unico'}
+                  {invView === 'ajuste' && 'Registrar Ajuste'}
                </h2>
             </div>
             <div className="p-8">
@@ -1914,482 +1782,16 @@ export default function App() {
     );
   };
 
-  const renderCostosOperativosModule = () => {
-    const filteredCosts = opCosts.filter(cost => {
-      const matchCategory = costFilterCategory === 'TODAS' || cost.category === costFilterCategory;
-      const matchMonth = costFilterMonth === 'TODOS' || cost.month === costFilterMonth;
-      return matchCategory && matchMonth;
-    });
-
-    const costsByCategory = {};
-    COSTO_CATEGORIES.forEach(cat => { costsByCategory[cat] = 0; });
-    opCosts.forEach(cost => {
-      if (costsByCategory[cost.category] !== undefined) {
-        costsByCategory[cost.category] += cost.amount || 0;
-      }
-    });
-
-    const totalCosts = Object.values(costsByCategory).reduce((sum, val) => sum + val, 0);
-    const maxCategoryAmount = Math.max(...Object.values(costsByCategory), 1);
-    const uniqueMonths = [...new Set(opCosts.map(c => c.month))].sort().reverse();
-
-    return (
-      <div className="w-full max-w-7xl animate-in fade-in">
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-green-50 to-green-100">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3 tracking-tighter">
-                  <DollarSign className="text-green-600" size={32}/> Costos Operativos
-                </h2>
-                <p className="text-xs font-bold text-gray-600 uppercase mt-2">Registro y Control de Gastos Operacionales</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="p-8 space-y-8">
-            <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
-              <h3 className="text-sm font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">Registrar Nuevo Costo</h3>
-              <form onSubmit={handleSaveOpCost} className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                  <input type="date" value={newOpCostForm.date} onChange={e => setNewOpCostForm({...newOpCostForm, date: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500" required />
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
-                  <select value={newOpCostForm.category} onChange={e => setNewOpCostForm({...newOpCostForm, category: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500" required>
-                    {COSTO_CATEGORIES.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Monto ($)</label>
-                  <input type="number" step="0.01" value={newOpCostForm.amount} onChange={e => setNewOpCostForm({...newOpCostForm, amount: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500 text-center" placeholder="0.00" required />
-                </div>
-                <div className="md:col-span-4">
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción</label>
-                  <input type="text" value={newOpCostForm.description} onChange={e => setNewOpCostForm({...newOpCostForm, description: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500 uppercase" placeholder="EJ: PAGO DE FACTURA DE LUZ" />
-                </div>
-                <div className="md:col-span-4">
-                  <button type="submit" className="bg-green-600 text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-green-700 transition-all flex items-center gap-2">
-                    <PlusCircle size={16}/> Registrar Costo
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            <div className="bg-white p-6 rounded-2xl border border-gray-200">
-              <h3 className="text-sm font-black uppercase text-black mb-4">Filtros</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
-                  <select value={costFilterCategory} onChange={e => setCostFilterCategory(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500">
-                    <option value="TODAS">TODAS LAS CATEGORÍAS</option>
-                    {COSTO_CATEGORIES.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes</label>
-                  <select value={costFilterMonth} onChange={e => setCostFilterMonth(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500">
-                    <option value="TODOS">TODOS LOS MESES</option>
-                    {uniqueMonths.map(month => (<option key={month} value={month}>{month}</option>))}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-2xl border border-gray-200">
-              <h3 className="text-sm font-black uppercase text-black mb-6 border-b border-gray-200 pb-2">Resumen por Categoría</h3>
-              <div className="space-y-3">
-                {COSTO_CATEGORIES.map(cat => {
-                  const amount = costsByCategory[cat] || 0;
-                  const percentage = totalCosts > 0 ? (amount / totalCosts * 100) : 0;
-                  const barWidth = maxCategoryAmount > 0 ? (amount / maxCategoryAmount * 100) : 0;
-                  return (
-                    <div key={cat} className="group">
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="text-xs font-black text-gray-700 uppercase">{cat}</span>
-                        <span className="text-xs font-bold text-gray-500">${formatNum(amount)} ({percentage.toFixed(1)}%)</span>
-                      </div>
-                      <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
-                        <div className="bg-gradient-to-r from-green-500 to-green-600 h-full rounded-full transition-all duration-500" style={{width: `${barWidth}%`}} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="mt-6 pt-6 border-t border-gray-200">
-                <div className="flex justify-between items-center">
-                  <span className="text-lg font-black text-black uppercase">Total General</span>
-                  <span className="text-2xl font-black text-green-600">${formatNum(totalCosts)}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <div className="p-6 bg-gray-50 border-b border-gray-200"><h3 className="text-sm font-black uppercase text-black">Costos Registrados ({filteredCosts.length})</h3></div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead className="bg-gray-100 border-b-2 border-gray-200">
-                    <tr className="uppercase font-black text-[10px] tracking-widest text-gray-500">
-                      <th className="py-3 px-4">Fecha</th>
-                      <th className="py-3 px-4">Categoría</th>
-                      <th className="py-3 px-4">Descripción</th>
-                      <th className="py-3 px-4 text-right">Monto</th>
-                      <th className="py-3 px-4 text-center">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {filteredCosts.map(cost => (
-                      <tr key={cost.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="py-3 px-4 font-bold text-xs text-gray-600">{cost.date}</td>
-                        <td className="py-3 px-4"><span className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-[10px] font-black uppercase">{cost.category}</span></td>
-                        <td className="py-3 px-4 font-bold text-xs text-gray-700 uppercase">{cost.description || '—'}</td>
-                        <td className="py-3 px-4 text-right font-black text-green-600">${formatNum(cost.amount)}</td>
-                        <td className="py-3 px-4 text-center">
-                          <button onClick={() => handleDeleteOpCost(cost.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors"><Trash2 size={14}/></button>
-                        </td>
-                      </tr>
-                    ))}
-                    {filteredCosts.length === 0 && (<tr><td colSpan="5" className="p-10 text-center text-xs text-gray-400 font-bold uppercase">No hay costos registrados</td></tr>)}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderSimuladorModule = () => {
-    return (
-      <div className="w-full max-w-7xl animate-in fade-in">
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none print:m-0 print:p-0 print:block print:w-full">
-          <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-             <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Calculator className="text-orange-500" size={24}/> Simulador de Producción</h2>
-             <div className="flex gap-2">
-               <button onClick={handleResetCalc} className="bg-gray-200 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-300 transition-colors flex items-center gap-2"><PlusCircle size={16}/> NUEVA SIMULACIÓN</button>
-               <button onClick={() => handleExportPDF('Simulador_Produccion', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
-             </div>
-          </div>
-          
-          <div id="pdf-content" className="grid grid-cols-1 lg:grid-cols-12 gap-0 print:block print:w-full print:mx-auto bg-white">
-             <div data-html2canvas-ignore="true" className="lg:col-span-4 border-r border-gray-200 bg-gray-50 p-8 no-pdf space-y-8">
-               <div>
-                   <h3 className="text-xs font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">1. Variables Base (Pedido)</h3>
-                   <div className="space-y-4">
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Cantidad Solicitada ({calcInputs?.tipoProducto === 'BOLSAS' ? 'MILLARES' : 'KILOS (KG)'})</label>
-                        <input type="number" value={calcInputs?.cantidadSolicitada === 0 ? '' : calcInputs?.cantidadSolicitada} onChange={(e) => handleCalcChange('cantidadSolicitada', e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 text-sm font-black outline-none focus:border-orange-500 text-center text-blue-600" />
-                      </div>
-                   </div>
-               </div>
-
-               <div>
-                   <div className="flex justify-between items-end border-b border-gray-200 pb-2 mb-4">
-                     <h3 className="text-xs font-black uppercase text-black">2. Fórmula de MP</h3>
-                     <button onClick={addCalcIng} className="text-[9px] bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-black font-bold uppercase transition-all">+ Insumo</button>
-                   </div>
-                   <div className="space-y-3">
-                      {(calcInputs?.ingredientes || []).map(ing => (
-                         <div key={ing?.id} className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm relative">
-                            <button onClick={() => removeCalcIng(ing?.id)} className="absolute -top-2 -right-2 bg-red-100 text-red-500 rounded-full p-1 hover:bg-red-50 hover:text-white transition-all"><X size={12}/></button>
-                            <select value={ing?.nombre || ''} onChange={(e) => {
-                                 const selectedId = e.target.value;
-                                 let defaultCost = 0;
-                                 if (selectedId === 'MP-RECICLADO') defaultCost = 1.00;
-                                 else if (selectedId === 'MP-0240') defaultCost = 0.96;
-                                 else if (selectedId === 'MP-11PG4') defaultCost = 0.91;
-                                 else if (selectedId === 'MP-3003') defaultCost = 0.96;
-                                 const invItem = (inventory || []).find(i => i?.id === selectedId);
-                                 const finalCost = invItem ? invItem.cost : defaultCost;
-                                 const newIngs = (calcInputs?.ingredientes || []).map(i => i?.id === ing?.id ? { ...i, nombre: selectedId, costo: finalCost } : i);
-                                 setCalcInputs({ ...calcInputs, ingredientes: newIngs });
-                              }} className="w-full text-[10px] font-bold uppercase outline-none mb-2 border-b border-gray-200 pb-1 bg-transparent text-gray-800">
-                              <option value="">SELECCIONE MATERIA PRIMA...</option>
-                              {(inventory || []).filter(i => i?.category === 'Materia Prima' || i?.category === 'Pigmentos').map(i => (<option key={i?.id} value={i?.id}>{i?.id} - {i?.desc}</option>))}
-                              <option value="MP-RECICLADO">MP-RECICLADO - MATERIAL RECICLADO</option>
-                              {!(inventory || []).find(i => i?.id === 'MP-0240') && <option value="MP-0240">MP-0240 - PEBD 240 (ESENTTIA)</option>}
-                              {!(inventory || []).find(i => i?.id === 'MP-11PG4') && <option value="MP-11PG4">MP-11PG4 - LINEAL 11PG4 (METALOCENO)</option>}
-                              {!(inventory || []).find(i => i?.id === 'MP-3003') && <option value="MP-3003">MP-3003 - PEBD 3003 (BAPOLENE)</option>}
-                            </select>
-                            <div className="flex gap-2 mt-1">
-                              <div className="w-1/2">
-                                 <label className="text-[8px] font-bold text-gray-400 uppercase">Proporción (%)</label>
-                                 <input type="number" value={ing?.pct === 0 ? '' : ing?.pct} onChange={(e) => updateCalcIng(ing?.id, 'pct', e.target.value)} className="w-full text-xs font-black text-center outline-none bg-gray-50 rounded p-1 border border-gray-100 text-black" />
-                              </div>
-                              <div className="w-1/2">
-                                 <label className="text-[8px] font-bold text-gray-400 uppercase">Costo ($/KG)</label>
-                                 <input type="number" step="0.01" value={ing?.costo === 0 ? '' : ing?.costo} onChange={(e) => updateCalcIng(ing?.id, 'costo', e.target.value)} className="w-full text-xs font-black text-center outline-none bg-gray-50 rounded p-1 border border-gray-100 text-black" />
-                              </div>
-                            </div>
-                         </div>
-                      ))}
-                   </div>
-                   <div className="mt-2 text-right">
-                     <span className={`text-[10px] font-black uppercase ${(calcInputs?.ingredientes || []).reduce((a,b)=>a+(b?.pct||0),0) !== 100 ? 'text-red-500' : 'text-green-500'}`}>Total Fórmula: {(calcInputs?.ingredientes || []).reduce((a,b)=>a+(b?.pct||0),0)}%</span>
-                   </div>
-               </div>
-
-               <div>
-                   <h3 className="text-xs font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">3. Proyección de Merma Global</h3>
-                   <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-4">
-                        <label className="text-[9px] font-bold text-gray-500 uppercase flex-1">Merma Global Esperada (%)</label>
-                        <input type="number" step="0.1" value={calcInputs?.mermaGlobalPorc === 0 ? '' : calcInputs?.mermaGlobalPorc} onChange={(e) => handleCalcChange('mermaGlobalPorc', e.target.value)} className="w-24 border-2 border-gray-200 rounded-lg p-2 text-xs font-black text-center text-red-500" />
-                      </div>
-                   </div>
-               </div>
-
-               <div>
-                   <h3 className="text-xs font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">4. Parámetros del Producto Final</h3>
-                   <div className="space-y-3">
-                      <div>
-                        <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Tipo de Producto</label>
-                        <select value={calcInputs?.tipoProducto || 'BOLSAS'} onChange={e=>setCalcInputs({...calcInputs, tipoProducto: e.target.value})} className="w-full border-2 border-gray-200 rounded-lg p-2 text-xs font-black text-center text-blue-600 outline-none">
-                          <option value="BOLSAS">BOLSAS / EMPAQUES</option>
-                          <option value="TERMOENCOGIBLE">TERMOENCOGIBLE</option>
-                        </select>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div><label className="text-[8px] font-bold text-gray-400 uppercase">ANCHO (CM)</label><input type="number" step="0.1" value={calcInputs?.ancho === 0 ? '' : calcInputs?.ancho} onChange={e=>setCalcInputs({...calcInputs, ancho: e.target.value})} className="w-full border p-2 text-xs text-center font-bold" /></div>
-                        <div><label className="text-[8px] font-bold text-gray-400 uppercase">FUELLES (CM)</label><input type="number" step="0.1" disabled={calcInputs?.tipoProducto === 'TERMOENCOGIBLE'} value={calcInputs?.fuelles === 0 ? '' : calcInputs?.fuelles} onChange={e=>setCalcInputs({...calcInputs, fuelles: e.target.value})} className="w-full border p-2 text-xs text-center font-bold disabled:bg-gray-100" /></div>
-                        <div><label className="text-[8px] font-bold text-gray-400 uppercase">LARGO (CM)</label><input type="number" step="0.1" disabled={calcInputs?.tipoProducto === 'TERMOENCOGIBLE'} value={calcInputs?.largo === 0 ? '' : calcInputs?.largo} onChange={e=>setCalcInputs({...calcInputs, largo: e.target.value})} className="w-full border p-2 text-xs text-center font-bold disabled:bg-gray-100" /></div>
-                        <div><label className="text-[8px] font-bold text-gray-400 uppercase">MICRAS</label><input type="number" step="0.001" value={calcInputs?.micras === 0 ? '' : calcInputs?.micras} onChange={e=>setCalcInputs({...calcInputs, micras: e.target.value})} className="w-full border p-2 text-xs text-center font-bold" /></div>
-                      </div>
-                   </div>
-               </div>
-             </div>
-
-             <div className="lg:col-span-8 p-10 bg-white print:w-full print:p-4 print:m-0">
-                <div className="hidden pdf-header mb-4">
-                   <ReportHeader />
-                   <h1 className="text-xl font-black text-black uppercase border-b-2 border-orange-500 pb-1 mt-2">PROYECCIÓN Y COSTEO DE PRODUCCIÓN</h1>
-                   <div className="flex justify-between items-start mt-2 border-b border-gray-200 pb-2 mb-2">
-                      <p className="text-[10px] font-bold text-gray-500 uppercase">FECHA DE SIMULACIÓN: {getTodayDate()}</p>
-                      <div className="text-right border-l-2 border-orange-500 pl-4"><p className="text-[10px] font-black text-black uppercase">TIPO: {calcInputs?.tipoProducto}</p></div>
-                   </div>
-                </div>
-                
-                {calcInputs?.tipoProducto === 'BOLSAS' && simPesoMillar === 0 && (
-                   <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold mb-6 uppercase border border-red-200 flex items-center gap-2 no-pdf"><AlertTriangle size={16}/> Debes ingresar las medidas (Ancho, Fuelle, Largo, Micras) para calcular los KG.</div>
-                )}
-
-                <div className="overflow-x-auto rounded-xl border border-gray-300 print:border-black print:rounded-none print:overflow-hidden print:w-full">
-                   <table className="w-full text-left text-[10px] print-text-xs print:whitespace-normal">
-                      <thead className="bg-gray-200 print:bg-gray-300 border-b border-gray-400 print:border-black">
-                         <tr className="font-black uppercase text-black">
-                            <th className="p-2 print:p-1 pl-4">Fase / Concepto</th>
-                            <th className="p-2 print:p-1 text-center border-l border-gray-300 print:border-black">Cantidad</th>
-                            <th className="p-2 print:p-1 text-center border-l border-gray-300 print:border-black">U.M.</th>
-                            <th className="p-2 print:p-1 text-center border-l border-gray-300 print:border-black">Costo Unit.</th>
-                            <th className="p-2 print:p-1 text-center border-l border-gray-300 print:border-black">Costo Total</th>
-                            <th className="p-2 print:p-1 border-l border-gray-300 print:border-black">Notas</th>
-                         </tr>
-                      </thead>
-                      <tbody className="text-black divide-y divide-gray-200 print:divide-black">
-                         <tr className="bg-orange-50 font-black border-y border-gray-300 print:border-black print:bg-gray-200">
-                            <td className="p-1.5 print:p-1 pl-4 text-orange-800 print:text-black">0. PEDIDO A ENTREGAR ({calcInputs?.tipoProducto})</td>
-                            <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black text-lg print:text-xs">{formatNum(inputCantidadSolicitada)}</td>
-                            <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">{simUmFinal}</td>
-                            <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">${formatNum(calcCostoFinalUnidad)}</td>
-                            <td className="p-1.5 print:p-1 text-center text-orange-800 print:text-black">${formatNum(calcCostoMezclaPreparada)}</td>
-                            <td className="p-1.5 print:p-1 text-gray-700 print:text-black font-bold text-[9px] leading-tight">{isBolsas ? (<><span className="text-orange-600 block">PESO POR MILLAR: {formatNum(simPesoMillar)} KG</span>Equivale a {formatNum(calcKilosNetos)} KG Netos</>) : ('Material Directo en Kilos')}</td>
-                         </tr>
-                         <tr><td colSpan="6" className="p-1.5 print:p-1 pt-3 pl-4 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">1. PLANIFICACIÓN DE PRODUCCIÓN Y MERMA</td></tr>
-                         <tr><td className="p-1.5 print:p-1 pl-4 font-bold">KILOS NETOS ÚTILES</td><td className="p-1.5 print:p-1 text-center text-blue-700 font-black">{formatNum(calcKilosNetos)}</td><td className="p-1.5 print:p-1 text-center">kg</td><td className="p-1.5 print:p-1 text-center">${formatNum(calcCostoUnitarioNeto)}</td><td className="p-1.5 print:p-1 text-center">-</td><td className="p-1.5 print:p-1 text-gray-500 print:text-black">Material útil para el pedido</td></tr>
-                         <tr><td className="p-1.5 print:p-1 pl-4 font-bold">MERMA ESTIMADA (+{formatNum(calcInputs?.mermaGlobalPorc)}%)</td><td className="p-1.5 print:p-1 text-center text-red-600 font-black">{formatNum(calcMermaGlobalKg)}</td><td className="p-1.5 print:p-1 text-center">kg</td><td className="p-1.5 print:p-1 text-center">-</td><td className="p-1.5 print:p-1 text-center">-</td><td className="p-1.5 print:p-1 text-gray-500 print:text-black">Desperdicio de planta</td></tr>
-                         <tr className="bg-gray-100 font-black border-y border-gray-300 print:border-black print:bg-gray-200"><td className="p-1.5 print:p-1 pl-4 text-black">KILOS BRUTOS A EXTRUIR</td><td className="p-1.5 print:p-1 text-center text-black text-lg print:text-[10px]">{formatNum(calcTotalMezcla)}</td><td className="p-1.5 print:p-1 text-center">kg</td><td className="p-1.5 print:p-1 text-center">${formatNum(calcCostoPromedio)}</td><td className="p-1.5 print:p-1 text-center">${formatNum(calcCostoMezclaPreparada)}</td><td className="p-1.5 print:p-1 text-gray-500 print:text-black">Total mezcla a preparar</td></tr>
-                         <tr><td colSpan="6" className="p-1.5 print:p-1 pt-3 pl-4 font-black uppercase bg-gray-50 print:bg-transparent border-t border-gray-400 print:border-black">2. RECETA DE MATERIA PRIMA</td></tr>
-                         {(calcIngredientesProcesados || []).map(ing => (
-                           <tr key={ing?.id}><td className="p-1.5 print:p-1 pl-4 font-bold">{ing?.desc}</td><td className="p-1.5 print:p-1 text-center">{formatNum(ing?.kg)}</td><td className="p-1.5 print:p-1 text-center">kg</td><td className="p-1.5 print:p-1 text-center">${formatNum(ing?.costo)}</td><td className="p-1.5 print:p-1 text-center">${formatNum(ing?.totalCost)}</td><td className="p-1.5 print:p-1 text-gray-500 print:text-black">{formatNum(ing?.pct)}% de la mezcla bruta</td></tr>
-                         ))}
-                      </tbody>
-                   </table>
-                </div>
-             </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderProductionModule = () => {
-    if (showWorkOrder) return renderWorkOrder();
-    if (showPhaseReport) return renderPhaseReport();
-    if (showFiniquito) return renderFiniquito();
-
-    const activeOrders = (requirements || []).filter(r => r?.status === 'EN PROCESO');
-    const completedOrders = (requirements || []).filter(r => r?.status === 'COMPLETADO');
-    
-    // VISTA DE PROYECCIÓN DE MATERIA PRIMA
-    if (prodView === 'proyeccion') {
-       const proyeccionData = generateProjectionData();
-       return (
-         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
-            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><TrendingUp className="text-orange-500" size={24}/> Proyección de Materia Prima</h2>
-               <button onClick={() => handleExportPDF('Proyeccion_MP', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR REPORTE</button>
-            </div>
-            <div id="pdf-content" className="p-8 print:p-0 bg-white">
-               <div className="hidden pdf-header mb-8">
-                 <ReportHeader />
-                 <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2">PROYECCIÓN DE CONSUMO DE MATERIA PRIMA</h1>
-                 <p className="text-sm font-bold text-gray-500 uppercase mt-2">FECHA: {getTodayDate()}</p>
-               </div>
-               
-               <div className="bg-blue-50 border border-blue-200 p-6 rounded-2xl mb-8 flex items-start gap-4">
-                  <AlertTriangle size={24} className="text-blue-600 mt-1 flex-shrink-0" />
-                  <div>
-                     <h3 className="text-sm font-black text-blue-800 uppercase tracking-widest mb-1">Módulo de Planificación</h3>
-                     <p className="text-xs font-bold text-blue-600 leading-relaxed">El sistema analiza el inventario actual, descuenta las requisiciones de planta no despachadas y calcula cuántos días de inventario quedan según el consumo promedio de los últimos 30 días.</p>
-                  </div>
-               </div>
-
-               <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-                 <table className="w-full text-left whitespace-nowrap text-xs">
-                   <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
-                     <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                       <th className="py-3 px-4 border-r print:border-black">Insumo</th>
-                       <th className="py-3 px-4 border-r print:border-black text-center">Stock Actual</th>
-                       <th className="py-3 px-4 border-r print:border-black text-center text-red-600">Comprometido<br/><span className="text-[8px] block">(Req. Planta)</span></th>
-                       <th className="py-3 px-4 border-r print:border-black text-center text-green-600">Disponible<br/><span className="text-[8px] block">Real</span></th>
-                       <th className="py-3 px-4 border-r print:border-black text-center">Consumo<br/><span className="text-[8px] block">Diario</span></th>
-                       <th className="py-3 px-4 border-r print:border-black text-center">Días<br/><span className="text-[8px] block">Restantes</span></th>
-                       <th className="py-3 px-4 text-center no-pdf">Acción</th>
-                     </tr>
-                   </thead>
-                   <tbody className="divide-y divide-gray-100 text-black print:divide-black">
-                     {proyeccionData.map(mp => (
-                       <tr key={mp.id} className="hover:bg-gray-50 transition-colors">
-                         <td className="py-4 px-4 font-black border-r print:border-black uppercase text-sm">{mp.desc}<br/><span className="text-[9px] text-gray-500 font-bold">{mp.id}</span></td>
-                         <td className="py-4 px-4 font-black border-r print:border-black text-center text-lg">{formatNum(mp.stock)}</td>
-                         <td className="py-4 px-4 font-black border-r print:border-black text-center text-red-500">{formatNum(mp.committedStock)}</td>
-                         <td className={`py-4 px-4 font-black border-r print:border-black text-center text-lg ${mp.availableReal < 0 ? 'text-red-600' : 'text-green-600'}`}>{formatNum(mp.availableReal)}</td>
-                         <td className="py-4 px-4 font-bold border-r print:border-black text-center">{formatNum(mp.dailyAvg)} kg/d</td>
-                         <td className="py-4 px-4 border-r print:border-black text-center">
-                            <span className={`px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest border ${mp.daysRemaining < 15 ? 'bg-red-100 text-red-700 border-red-200' : 'bg-green-100 text-green-700 border-green-200'}`}>
-                               {mp.daysRemaining === 999 ? '+99 Días' : `${formatNum(mp.daysRemaining)} Días`}
-                            </span>
-                         </td>
-                         <td className="py-4 px-4 text-center no-pdf">
-                            {mp.suggestOrder > 0 ? (
-                               <button onClick={() => {
-                                 setDialog({title: 'Generar Orden', text: `Se recomienda comprar ${formatNum(mp.suggestOrder)} kg de ${mp.desc} para cubrir el déficit y asegurar 15 días de stock.`, type: 'alert'})
-                               }} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-1 shadow-md hover:bg-gray-800 w-full"><ShoppingCart size={14}/> PEDIR {formatNum(mp.suggestOrder)} KG</button>
-                            ) : (
-                               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Stock OK</span>
-                            )}
-                         </td>
-                       </tr>
-                     ))}
-                     {proyeccionData.length === 0 && <tr><td colSpan="7" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin Materias Primas registradas</td></tr>}
-                   </tbody>
-                 </table>
-               </div>
-            </div>
-         </div>
-       );
-    }
-
-    return (
-      <div className="animate-in fade-in space-y-6">
-        {/* CONTROL DE FASES (REPORTE DIARIO DE INSUMOS Y PRODUCCION DIRECTA) */}
-        {prodView === 'fases_produccion' && (
-          <div className="space-y-6">
-            {!selectedPhaseReqId ? (
-              <div className="p-12 bg-white rounded-3xl border border-gray-200 shadow-sm text-center animate-in fade-in"><div className="bg-black p-5 rounded-full inline-block mb-6 text-orange-500 shadow-lg"><Factory size={40}/></div><h2 className="text-2xl font-black uppercase text-black tracking-tighter mb-2">Control de Producción Activo</h2><p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-10">Reporte el consumo de insumos y mermas por fase</p><div className="mt-12 border-t border-gray-200 pt-8 overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-center text-black tracking-widest">Acción de Planta</th></tr></thead><tbody className="divide-y divide-gray-100">{(activeOrders || []).map(r => (<tr key={r?.id} className="group hover:bg-gray-50 transition-colors"><td className="p-4 font-black text-orange-500 text-lg">#{String(r?.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-sm text-black">{r?.client}<br/><span className="text-[10px] text-gray-400 font-bold">{r?.desc}</span></td><td className="p-4 text-center"><div className="flex justify-center gap-2"><button onClick={() => setShowWorkOrder(r?.id)} className="bg-white border-2 border-gray-100 text-gray-700 px-4 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm hover:bg-gray-50 transition-all" title="Imprimir"><Printer size={16}/> ORDEN TRABAJO</button><button onClick={() => { setSelectedPhaseReqId(r?.id); setActivePhaseTab('extrusion'); setPhaseForm({...initialPhaseForm, date: getTodayDate()}); }} className="bg-black text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 shadow-md hover:bg-slate-800 transition-all"><PlayCircle size={16}/> ENTRAR A FASES</button></div></td></tr>))}</tbody></table></div></div>
-            ) : (() => {
-              const req = (requirements || []).find(r => r?.id === selectedPhaseReqId); if (!req) return null;
-              const cPhase = req.production?.[activePhaseTab] || { batches: [], isClosed: false };
-              return (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in slide-in-from-bottom-8">
-                  <div className="lg:col-span-1 space-y-6">
-                    <div className="bg-black rounded-3xl shadow-xl p-8 text-white relative overflow-hidden"><div className="absolute -right-6 -bottom-6 opacity-10"><Factory size={160}/></div><div className="relative z-10"><span className="bg-orange-500 text-white px-3 py-1.5 rounded-lg text-[9px] font-black uppercase mb-4 inline-block shadow-sm">EN PRODUCCIÓN</span><h2 className="text-4xl font-black uppercase tracking-tighter mb-2">#{String(req.id).replace('OP-', '').padStart(5, '0')}</h2><p className="text-sm font-bold text-gray-300 uppercase leading-relaxed mb-6 border-b border-gray-700 pb-6">{req.client}<br/><span className="text-orange-400 text-lg">{req.desc}</span></p><div className="bg-gray-800 p-5 rounded-2xl border border-gray-700 shadow-inner"><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 tracking-widest">META A PRODUCIR:</p><p className="text-3xl font-black text-white">{formatNum(req.requestedKg)} KG</p></div></div></div>
-                    <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-3 space-y-2">{[{ id: 'extrusion', label: '1. Extrusión' }, { id: 'impresion', label: '2. Impresión' }, { id: 'sellado', label: '3. Sellado' }].map(tab => (<button key={tab.id} onClick={() => {setActivePhaseTab(tab.id); setPhaseForm({...initialPhaseForm, date: getTodayDate()});}} className={`w-full flex justify-between items-center p-5 rounded-2xl text-[10px] font-black uppercase transition-all ${activePhaseTab === tab.id ? 'bg-orange-50 text-orange-700 border-2 border-orange-200' : 'text-gray-500 hover:bg-gray-50'}`}><span>{tab.label}</span>{req.production?.[tab.id]?.isClosed && <CheckCircle size={18} className="text-green-500"/>}</button>))}</div>
-                  </div>
-                  
-                  <div className="lg:col-span-2 bg-white rounded-3xl shadow-sm border border-gray-200 p-8 lg:p-10 text-black">
-                    <div className="border-b-2 border-gray-100 pb-6 mb-8 flex justify-between items-center"><h3 className="text-2xl font-black uppercase text-black tracking-tighter">Fase: {activePhaseTab.toUpperCase()}</h3><button onClick={()=>{setSelectedPhaseReqId(null); setPhaseForm(initialPhaseForm);}} className="bg-gray-100 p-2.5 rounded-xl text-gray-500 hover:text-black"><X size={18}/></button></div>
-                    {cPhase.batches && cPhase.batches.length > 0 && (<div className="mb-8 overflow-hidden rounded-2xl border border-gray-200"><table className="w-full text-center text-xs"><thead className="bg-gray-50 border-b border-gray-200"><tr className="uppercase font-black text-[9px] text-gray-500 tracking-widest"><th className="p-3 border-r border-gray-200">Fecha</th><th className="p-3 border-r border-gray-200">Producido</th><th className="p-3 border-r border-gray-200">Merma</th><th className="p-3">Acción</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(cPhase.batches || []).map(b => (<tr key={b?.id} className="hover:bg-gray-50"><td className="p-3 border-r border-gray-200 font-bold">{b?.date}</td><td className="p-3 border-r border-gray-200 font-black text-green-600">{formatNum(b?.producedKg)} kg</td><td className="p-3 border-r border-gray-200 font-black text-red-500">{formatNum(b?.mermaKg)} kg</td><td className="p-3 text-center flex justify-center gap-2"><button onClick={() => handleEditBatch(req.id, activePhaseTab, b?.id)} className="bg-blue-50 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors p-1.5 rounded-lg" title="Modificar"><Edit size={14}/></button><button onClick={() => handleDeleteBatch(req.id, activePhaseTab, b?.id)} className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-colors p-1.5 rounded-lg" title="Eliminar"><Trash2 size={14}/></button></td></tr>))}</tbody></table></div>)}
-                    {cPhase.isClosed ? (<div className="text-center py-10 bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200 shadow-inner"><CheckCircle size={56} className="text-green-500 mx-auto mb-6"/><h4 className="text-xl font-black text-black uppercase tracking-widest">Esta Fase se encuentra cerrada</h4><p className="text-[10px] font-bold text-gray-400 uppercase mt-2 mb-6">Ya no se permiten reportes parciales en esta etapa.</p><button onClick={() => handleReopenPhase(req.id, activePhaseTab)} className="bg-orange-500 text-white px-6 py-2 rounded-xl text-[10px] font-black uppercase shadow-md hover:bg-orange-600 transition-all flex items-center gap-2 mx-auto"><Edit size={14}/> REABRIR FASE PARA EDITAR</button></div>) : (
-                      <form onSubmit={handleSavePhase} className="space-y-8">
-                        <div className="flex gap-4 items-center"><label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Fecha Reporte:</label><input type="date" value={phaseForm?.date || getTodayDate()} onChange={e=>setPhaseForm({...phaseForm, date: e.target.value})} className="border-2 border-gray-200 rounded-xl p-2 font-black text-xs outline-none text-black focus:border-orange-500" /></div>
-                        
-                        <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
-                          <div className="flex justify-between items-center mb-6 border-b border-gray-200 pb-2">
-                             <h4 className="text-[10px] font-black text-gray-600 uppercase flex items-center gap-2"><Box size={16}/> Lista de Insumos</h4>
-                             <button type="button" onClick={handleSendRequisitionToAlmacen} className="bg-orange-500 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase shadow-sm hover:bg-orange-600 transition-all flex items-center gap-2"><ArrowRight size={14}/> SOLICITAR A ALMACÉN</button>
-                          </div>
-                          
-                          <div className="flex gap-3 mb-6"><select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border-2 border-gray-200 rounded-xl p-3.5 font-black text-xs text-black outline-none focus:border-orange-500">{renderPhaseInventoryOptions()}</select><input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} placeholder="Cant" className="w-32 border-2 border-gray-200 rounded-xl p-3.5 text-xs font-black text-center text-black outline-none focus:border-orange-500" /><button type="button" onClick={handleAddPhaseIng} className="bg-black text-white px-5 rounded-xl shadow-md transition-all hover:bg-slate-800"><Plus size={20}/></button></div><ul className="space-y-3">{(phaseForm?.insumos || []).map((ing, idx) => (<li key={idx} className="flex justify-between items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm"><span className="text-xs font-black uppercase text-gray-800">{(inventory || []).find(i=>i?.id===ing?.id)?.desc || ing?.id}</span><div className="flex items-center gap-4"><span className="text-sm font-black text-black bg-gray-100 px-3 py-1.5 rounded-lg">{ing?.qty}</span><button type="button" onClick={() => setPhaseForm({...phaseForm, insumos: (phaseForm?.insumos || []).filter((_, i) => i !== idx)})} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 size={18}/></button></div></li>))}</ul>
-                          {(phaseForm?.insumos || []).length > 0 && <p className="text-[9px] font-bold text-gray-400 mt-4 italic uppercase">Nota: Puedes "Solicitar a Almacén" o dar a "Guardar Reporte" para descargar directamente del inventario general.</p>}
-                        </div>
-                        
-                        <div className="grid grid-cols-2 gap-4"><div className="bg-green-50 p-4 rounded-2xl border border-green-200 shadow-inner"><label className="text-[9px] font-black text-green-800 uppercase block mb-2 tracking-widest">Producido Bruto (KG)</label><input type="number" step="0.01" value={phaseForm?.producedKg || ''} onChange={e=>setPhaseForm({...phaseForm, producedKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-green-300 rounded-xl p-3 text-lg font-black text-green-700 text-center outline-none focus:border-green-500" /></div><div className="bg-red-50 p-4 rounded-2xl border border-red-200 shadow-inner"><label className="text-[9px] font-black text-red-800 uppercase block mb-2 tracking-widest">Mermas / Desperdicio (KG)</label><input type="number" step="0.01" value={phaseForm?.mermaKg || ''} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} placeholder="0.00 KG" className="w-full border-2 border-red-300 rounded-xl p-3 text-lg font-black text-red-700 text-center outline-none focus:border-red-500" /></div></div><div className="flex flex-col md:flex-row gap-4 pt-6 border-t-2 border-gray-100"><button type="submit" name="skip" className="w-full md:w-1/4 bg-gray-100 text-gray-500 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-gray-200 shadow-sm transition-all hover:bg-gray-200">OMITIR FASE</button><button type="submit" name="partial" className="w-full md:w-2/4 bg-blue-50 text-blue-600 font-black py-4 rounded-2xl uppercase text-[9px] border-2 border-blue-200 flex justify-center items-center gap-2 shadow-sm transition-all hover:bg-blue-100"><Plus size={16}/> GUARDAR REPORTE PARCIAL</button><button type="submit" name="close" className="w-full md:w-1/4 bg-black text-white font-black py-4 rounded-2xl uppercase text-[9px] flex justify-center items-center gap-2 shadow-xl hover:bg-slate-800 transition-all"><CheckCircle size={16}/> CERRAR FASE DEFINITIVA</button></div>
-                      </form>
-                    )}
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-        )}
-
-       {/* HISTORIAL Y FINIQUITOS */}
-        {prodView === 'historial' && (
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
-            <div className="px-6 py-5 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-lg font-black text-black uppercase flex items-center gap-2"><History className="text-orange-500" /> Órdenes Completadas</h2><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Auditoría de Proceso</p></div>
-            <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-right text-black text-[10px] font-black uppercase tracking-widest">KG Finales</th><th className="p-4 text-center text-black text-[10px] font-black uppercase tracking-widest">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(completedOrders || []).map(req => (<tr key={req?.id} className="hover:bg-gray-50 transition-colors group"><td className="p-4 font-black text-orange-500 text-lg">#{String(req?.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-xs text-black">{req?.client}<br/><span className="text-[10px] font-bold text-gray-400">{req?.desc}</span></td><td className="p-4 text-right font-black text-green-600 text-lg">{formatNum((req?.production?.sellado?.batches || []).reduce((a,b)=>a+parseNum(b?.producedKg),0) || (req?.production?.extrusion?.batches || []).reduce((a,b)=>a+parseNum(b?.producedKg),0) || 0)} KG</td><td className="p-4 text-center"><button onClick={()=>setShowFiniquito(req?.id)} className="bg-black text-white px-8 py-3 rounded-2xl text-[9px] font-black uppercase hover:bg-gray-800 shadow-md flex items-center gap-2 mx-auto transition-all"><FileText size={14}/> GENERAR FINIQUITO</button></td></tr>))}</tbody></table></div>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // --- VISTAS DE IMPRESIÓN (PRODUCCIÓN) ---
-  const renderWorkOrder = () => {
-    const req = (requirements || []).find(r => r?.id === showWorkOrder); if (!req) return null;
-    const isBolsas = req?.tipoProducto === 'BOLSAS';
-    let totalMPKgRecipe = 0; (req?.recipe || []).forEach(ing => { totalMPKgRecipe += parseNum(ing?.totalQty); }); if(totalMPKgRecipe === 0) totalMPKgRecipe = parseNum(req?.requestedKg);
-    return (
-      <div id="pdf-content" className="bg-white p-6 print:p-0 min-h-screen text-black shadow-none border-0 bg-white"><style>{`@media print { @page { size: portrait; margin: 5mm; } }`}</style>
-        <div data-html2canvas-ignore="true" className="flex justify-between mb-2 no-pdf"><button onClick={() => setShowWorkOrder(null)} className="bg-gray-100 px-6 py-2 rounded-xl text-xs font-black uppercase">VOLVER</button><button onClick={() => handleExportPDF(`OP_${req.id}`, false)} className="bg-black text-white px-8 py-2 rounded-xl font-black flex items-center gap-2 text-xs uppercase shadow-lg"><Printer size={16} /> EXPORTAR PDF</button></div>
-        <div className="flex justify-between items-end border-b-2 border-black pb-1 mb-2"><div><div className="flex items-center -mb-1"><span className="text-black font-black text-3xl leading-none">G</span><span className="text-orange-500 font-black text-lg mx-0.5">&amp;</span><span className="text-black font-black text-3xl leading-none">B</span></div><p className="text-[6px] font-bold text-orange-500 uppercase mt-1 tracking-widest">Servicio y Calidad</p></div><div className="text-center flex-1"><h1 className="text-lg font-black uppercase tracking-widest">ORDEN DE TRABAJO PARA OP.</h1></div></div>
-        <div className="grid grid-cols-3 text-[9px] font-bold uppercase mb-2 border-b-2 border-black pb-2"><div><p className="mb-1"><span className="w-16 inline-block font-black">CLIENTE:</span> {req.client}</p><p className="mb-1"><span className="w-16 inline-block font-black">OP:</span> #{String(req.id).replace('OP-', '').padStart(5, '0')}</p><p><span className="w-16 inline-block font-black">TIPO:</span> {req.tipoProducto || 'N/A'}</p></div><div><p className="mb-1"><span className="w-20 inline-block font-black">EMISIÓN:</span> {req.fecha}</p><p><span className="w-20 inline-block font-black text-orange-600 font-black">KG MATERIA PRIMA:</span> <span className="text-orange-600 font-black">{formatNum(totalMPKgRecipe)} KG</span></p></div><div><p className="mb-1"><span className="w-24 inline-block font-black">FECHA ENTRADA:</span> __________________</p><p><span className="w-24 inline-block font-black">FECHA SALIDA:</span> __________________</p></div></div>
-        <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-3 flex justify-between items-center mb-2 shadow-inner"><div className="w-3/5"><span className="text-[11px] font-black text-orange-900 uppercase">META SOLICITADA POR EL CLIENTE ({isBolsas ? 'MILLARES' : 'KILOS'})</span><p className="text-[10px] font-bold text-gray-700 leading-tight">Cantidad bruta a entregar al cliente según nota de pedido. Incluye merma de sellado.</p></div><div className="text-right"><span className="text-4xl font-black text-orange-600">{isBolsas ? req?.cantidad : formatNum(req?.cantidad)}</span><span className="text-lg font-black text-orange-600 ml-1">{isBolsas ? req?.presentacion : 'KG'}</span></div></div>
-        <div className="border-2 border-black p-2 mb-2 rounded-2xl overflow-hidden"><div className="font-black text-center border-b-2 border-black mb-2 py-0.5 text-xs bg-gray-100 uppercase font-black">Especificaciones Finales</div><div className="grid grid-cols-4 gap-2 text-center text-[9px] font-black uppercase bg-gray-50"><div>ANCHO<br/><span className="text-sm text-orange-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-orange-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-orange-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-orange-600">{req.micras}</span></div></div></div>
-        <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Parámetros de Extrusión</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">CANTIDAD KG:</span> __________________________</div><div className="col-span-2 flex justify-between"><div><span className="font-black pr-1">TRATADO: 1</span> _____ <span className="ml-4">2</span> _____</div><div><span className="font-black pr-1">COLOR:</span> {req.color}</div></div><div className="col-span-2 flex justify-between"><div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> _________________</div><div><span className="font-black pr-1">VENTILADOR:</span> _________________</div><div><span className="font-black pr-1">JALADOR:</span> _________________</div></div><div className="col-span-2 border-t border-gray-300 pt-1 mt-1"><div className="flex justify-between mb-2"><span className="font-black">ZONAS:</span><span>1 ____</span><span>2 ____</span><span>3 ____</span><span>4 ____</span><span>5 ____</span><span>6 ____</span></div><div className="flex gap-10"><span className="font-black">CABEZAL:</span><span>A ________</span><span>B ________</span></div></div></div></div>
-        <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Impresión Flexográfica</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div><div><span className="font-black pr-1">MOTOR PRINCIPAL:</span> __________________________</div><div><span className="font-black pr-1">TEMPERATURA:</span> __________________________</div><div className="col-span-2 border-t border-gray-300 pt-1 mt-1"><div className="flex justify-between mb-1"><span className="font-black">COLORES:</span><span>1 _______</span><span>2 _______</span><span>3 _______</span><span>4 _______</span><span>5 _______</span><span>6 _______</span></div></div></div></div>
-        <div className="border-2 border-black rounded-xl mb-2 overflow-hidden"><div className="bg-gray-200 font-black text-[9px] uppercase text-center p-1 border-b-2 border-black">Sellado y Corte</div><div className="p-2 text-[8px] font-bold uppercase grid grid-cols-2 gap-y-2"><div><span className="font-black pr-1">OPERADOR:</span> __________________________</div><div><span className="font-black pr-1">KG RECIBIDOS:</span> __________________________</div><div><span className="font-black pr-1">CANT. PRODUCIDA (KG):</span> _______________</div><div><span className="font-black pr-1">CANT. PRODUCIDA MILLARES:</span> ___________</div></div></div>
-        <div className="mt-6 border-t-2 border-black pt-2 text-black font-black uppercase text-[8px]"><div className="font-black mb-3">ESPACIO DE FIRMAS Y RESPONSABLES POR FASE:</div><div className="grid grid-cols-5 gap-3 text-center"><div className="border-t border-black pt-1">RESP. EXTRUSIÓN<br/>(OPERADOR)</div><div className="border-t border-black pt-1">RESP. IMPRESIÓN<br/>(OPERADOR)</div><div className="border-t border-black pt-1">RESP. SELLADO<br/>(OPERADOR)</div><div className="border-t border-black pt-1">CONTROL CALIDAD<br/>(INSPECTOR)</div><div className="border-t border-black pt-1">SUPERVISOR<br/>PLANTA</div></div></div>
-      </div>
-    );
-  };
-
-  const renderPhaseReport = () => {
-    const req = (requirements || []).find(r => r?.id === showPhaseReport?.reqId); if (!req) return null;
-    const pData = req?.production?.[showPhaseReport?.phase]; if (!pData) return null;
-    return (
-      <div id="pdf-content" className="bg-white p-12 print:p-0 min-h-screen text-black shadow-xl bg-white"><div data-html2canvas-ignore="true" className="flex justify-between mb-10 no-pdf bg-gray-50 p-4 rounded-xl border border-gray-200"><button onClick={() => setShowPhaseReport(null)} className="text-gray-700 font-black text-xs uppercase bg-white border border-gray-300 px-6 py-2.5 rounded-xl">VOLVER</button><button onClick={() => handleExportPDF(`ReporteFase_${showPhaseReport?.phase}_OP${req?.id}`, false)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black flex items-center gap-2 text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all"><Printer size={16} /> EXPORTAR PDF</button></div>
-        <div className="hidden pdf-header mb-6"><ReportHeader /></div>
-        <h2 className="text-2xl font-black text-center my-10 uppercase border-b-4 border-orange-500 pb-2">REPORTE FASE: {(showPhaseReport?.phase || '').toUpperCase()}</h2>
-        <div className="grid grid-cols-2 gap-x-10 gap-y-4 text-xs font-black uppercase mb-10"><div>CLIENTE: {req?.client}</div><div>EMISIÓN: {getSafeDate(Date.now())}</div><div>OP N°: {String(req?.id).replace('OP-', '').padStart(5, '0')}</div><div>VENDEDOR: {req?.vendedor || 'S/N'}</div></div>
-        <table className="w-full text-center border-collapse border-2 border-black text-black"><thead className="bg-gray-200"><tr><th className="p-3 border border-black text-[10px] tracking-widest">FECHA LOTE</th><th className="p-3 border border-black text-[10px] tracking-widest">PRODUCIDO (KG)</th><th className="p-3 border border-black text-[10px] tracking-widest">DESPERDICIO (KG)</th></tr></thead>
-          <tbody className="divide-y divide-black">{(pData?.batches || []).map((b, i)=>(<tr key={i} className="h-10 align-middle"><td className="p-3 border border-black font-bold uppercase">{b?.date}</td><td className="p-3 border border-black font-black text-base">{formatNum(b?.producedKg)}</td><td className="p-3 border border-black font-bold text-red-600">{formatNum(b?.mermaKg)}</td></tr>))}</tbody>
-        </table>
-        <div className="mt-32 flex justify-between border-t-2 border-black pt-4 font-black text-[10px] uppercase text-black"><div>REVISIÓN DE PLANTA</div><div>AUTORIZACIÓN GERENCIA</div></div>
-      </div>
-    );
-  };
-
-  const renderFiniquito = () => {
-    const req = (requirements || []).find(r => r?.id === showFiniquito); if (!req) return null;
+  // ============================================================================
+  // MÓDULO DE COSTOS GENERAL (Integra Súper Finiquito, Dashboard, etc)
+  // ============================================================================
+  const renderSuperFiniquito = () => {
+    const req = (requirements || []).find(r => r?.id === showSuperFiniquito); if (!req) return null;
     const isTermo = req?.tipoProducto === 'TERMOENCOGIBLE';
     const isBolsas = req?.tipoProducto === 'BOLSAS';
-    const realPesoMillar = isBolsas ? parseNum(req?.micras) * (parseNum(req?.ancho) + parseNum(req?.fuelles)) * parseNum(req?.largo) / 1000 : 0;
-
-    const extB = req?.production?.extrusion?.batches || []; const impB = req?.production?.impresion?.batches || []; const selB = req?.production?.sellado?.batches || [];
+    
+    // Cálculo de MP Inyectada
+    const extB = req?.production?.extrusion?.batches || []; 
     let mpC = []; 
     extB.forEach(b => { 
        (b?.insumos || []).forEach(ing => { 
@@ -2400,85 +1802,152 @@ export default function App() {
     });
     
     const totMP = mpC.reduce((s, i) => s + (i?.qty || 0), 0) || 0;
-    const extP = extB.reduce((a,b)=>a+parseNum(b?.producedKg),0); const impP = impB.reduce((a,b)=>a+parseNum(b?.producedKg),0); const selP = selB.reduce((a,b)=>a+parseNum(b?.producedKg),0);
-    const extMerma = extB.reduce((a,b)=>a+parseNum(b?.mermaKg),0); const impMerma = impB.reduce((a,b)=>a+parseNum(b?.mermaKg),0); const selMerma = selB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
+    
+    let costTotalMP = 0;
+    const mpTable = mpC.map(ing => {
+      const item = (inventory || []).find(inv => inv.id === ing.id);
+      const costU = item ? item.cost : 0;
+      const costT = costU * ing.qty;
+      costTotalMP += costT;
+      return { desc: item?.desc || ing.id, phase: 'EXTRUSIÓN', qty: ing.qty, costU, costT };
+    });
+
+    // Cálculo de Mermas Totales
+    const extMerma = extB.reduce((a,b)=>a+parseNum(b?.mermaKg),0); 
+    const impB = req?.production?.impresion?.batches || []; 
+    const impMerma = impB.reduce((a,b)=>a+parseNum(b?.mermaKg),0); 
+    const selB = req?.production?.sellado?.batches || [];
+    const selMerma = selB.reduce((a,b)=>a+parseNum(b?.mermaKg),0);
     const totalMerma = extMerma + impMerma + selMerma;
-    const totUnid = isTermo ? (selP > 0 ? selP : extP) : selB.reduce((s, b) => s + parseNum(b?.millaresProd || b?.techParams?.millares || 0), 0);
-    const unitF = isBolsas ? 'MILLARES' : 'KG';
+    const porcMerma = totMP > 0 ? (totalMerma / totMP) * 100 : 0;
+
+    // Obtener Facturas de Venta cruzadas con la OP
+    const opInvoices = (invoices || []).filter(inv => inv.opAsignada === req.id);
+    const totalBaseInv = opInvoices.reduce((s, inv) => s + parseNum(inv.montoBase), 0);
+
+    // Cruzar información para ganancia/pérdida (Ingreso Real - Costo de Material)
+    const ganancia = totalBaseInv - costTotalMP;
+    const margenNeto = totalBaseInv > 0 ? (ganancia / totalBaseInv) * 100 : 0;
 
     const getFI = () => { const bs = []; if (req?.production?.extrusion?.batches) bs.push(...req.production.extrusion.batches); if (req?.production?.impresion?.batches) bs.push(...req.production.impresion.batches); if (req?.production?.sellado?.batches) bs.push(...req.production.sellado.batches); if (bs.length === 0) return 'NO INICIADO'; bs.sort((a, b) => a.timestamp - b.timestamp); return bs[0].date; };
-    const getFF = () => { if (req?.status !== 'COMPLETADO') return 'EN PROCESO'; const bs = []; if (req?.production?.extrusion?.batches) bs.push(...req.production.extrusion.batches); if (req?.production?.impresion?.batches) bs.push(...req.production.impresion.batches); if (req?.production?.sellado?.batches) bs.push(...req.production.sellado.batches); if (bs.length === 0) return getTodayDate(); bs.sort((a, b) => b.timestamp - a.timestamp); return bs[0].date; };
+    const getFF = () => { if (req?.status !== 'COMPLETADO') return 'EN PROCESO'; const bs = []; if (req?.production?.extrusion?.batches) bs.push(...req.production.extrusion.batches); if (req?.production?.impresion?.batches) bs.push(...req.production.impresion.batches); if (req?.production?.sellado?.batches) bs.push(...req.production.sellado.batches); if (bs.length === 0) return 'NO INICIADO'; bs.sort((a, b) => b.timestamp - a.timestamp); return bs[0].date; };
 
     return (
-      <div id="pdf-content" className="bg-white p-12 print:p-6 min-h-0 text-black shadow-none border-0 font-black uppercase text-black bg-white"><style>{`@media print { @page { size: landscape !important; margin: 5mm !important; } body { background-color: white !important; } #pdf-content { width: 100% !important; max-width: 1000px !important; margin: 0 auto !important; display: block !important; } table, tr, td, th, tbody, thead, tfoot { page-break-inside: avoid !important; } .text-orange-600 { color: #ea580c !important; } }`}</style>
-        <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowFiniquito(null)} className="text-black font-black text-xs uppercase bg-gray-100 border border-gray-200 px-6 py-2.5 rounded-xl hover:bg-gray-200">VOLVER</button><button onClick={() => handleExportPDF(`Finiquito_OP_${req?.id}`, true)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black text-[10px] uppercase shadow-lg"><Printer size={16} /> EXPORTAR PDF</button></div>
-        
-        <div className="flex justify-between items-end border-b-2 border-black pb-4 mb-6">
-           <div className="flex items-center gap-4">
-              <div className="bg-black text-white p-2 rounded-lg flex items-center print:border print:border-black print:bg-white print:text-black font-black text-2xl font-black">G&B</div>
-              <div><h1 className="text-lg font-black uppercase tracking-widest text-black">REPORTE FINAL DE PRODUCCIÓN</h1><p className="text-[10px] font-bold text-gray-500 uppercase">SERVICIOS JIRET G&B, C.A.</p></div>
-           </div>
-           <div className="text-right">
-              <p className="text-[10px] font-bold text-gray-500 uppercase">FECHA EMISIÓN: <span className="text-black font-black">{getTodayDate()}</span></p>
-              <p className="text-sm font-black text-orange-600 uppercase mt-1">OP N° {String(req?.id).replace('OP-','').padStart(5,'0')}</p>
-           </div>
+      <div id="pdf-content" className="bg-white p-10 min-h-0 text-black shadow-none border-0 font-black uppercase text-black bg-white">
+        <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf">
+           <button onClick={() => setShowSuperFiniquito(null)} className="text-black font-black text-xs uppercase bg-gray-100 border border-gray-200 px-6 py-2.5 rounded-xl hover:bg-gray-200">VOLVER</button>
+           <button onClick={() => handleExportPDF(`SuperFiniquito_OP_${req.id}`, false)} className="bg-black text-white px-8 py-2.5 rounded-xl font-black text-[10px] uppercase shadow-lg"><Printer size={16} /> EXPORTAR PDF</button>
         </div>
-        
-        <div className="grid grid-cols-4 gap-4 bg-gray-50 p-4 rounded-xl mb-6 text-[10px] font-bold uppercase border border-gray-200">
-           <div><span className="text-gray-500 block mb-1">CLIENTE:</span> {req?.client}</div>
-           <div className="col-span-2"><span className="text-gray-500 block mb-1">PRODUCTO:</span> {req?.desc}</div>
-           <div className="text-right"><span className="text-gray-500 block mb-1">META SOLICITADA:</span> <span className="text-orange-600 font-black text-sm">{formatNum(req?.cantidad || req?.requestedKg)} {isBolsas ? req?.presentacion : 'KG'}</span></div>
-           <div><span className="text-gray-500 block mb-1">FECHA INICIO (PLANTA):</span> <span className="text-black">{getFI()}</span></div>
-           <div><span className="text-gray-500 block mb-1">FECHA CIERRE (PLANTA):</span> <span className="text-black">{getFF()}</span></div>
+        <div className="flex justify-between items-end border-b-4 border-black pb-4 mb-6">
+           <div className="flex items-center gap-4">
+              <div className="bg-black text-white p-2 rounded-lg flex items-center print:border print:border-black print:bg-white print:text-black font-black text-2xl">G&B</div>
+              <div><h1 className="text-lg font-black uppercase tracking-widest text-black">SÚPER FINIQUITO DE PRODUCCIÓN Y COSTOS</h1><p className="text-[10px] font-bold text-gray-500 uppercase">SERVICIOS JIRET G&B, C.A.</p></div>
+           </div>
         </div>
 
-        <div className="overflow-hidden rounded-xl border border-gray-300 print:border-black print:rounded-none">
-           <table className="w-full text-left text-[10px] whitespace-nowrap print:whitespace-normal">
-              <thead className="bg-gray-100 text-gray-800 border-b border-gray-300 print:border-black">
-                 <tr>
-                    <th className="p-3 print:p-2 font-black uppercase">FASE / CONCEPTO</th>
-                    <th className="p-3 print:p-2 text-center font-black uppercase">CANTIDAD</th>
-                    <th className="p-3 print:p-2 text-center font-black uppercase">U.M.</th>
-                    <th className="p-3 print:p-2 text-right font-black uppercase">NOTAS / INDICADORES</th>
+        <div className="grid grid-cols-2 gap-y-4 gap-x-8 text-xs font-bold uppercase mb-8">
+           <div><span className="text-gray-500 block text-[9px] mb-1">CLIENTE:</span> <span className="font-black text-sm">{req.client}</span></div>
+           <div><span className="text-gray-500 block text-[9px] mb-1">NÚMERO DE ORDEN:</span> <span className="font-black text-sm text-orange-600">#{String(req.id).replace('OP-','').padStart(5,'0')}</span></div>
+           <div><span className="text-gray-500 block text-[9px] mb-1">PRODUCTO/MAQUILA:</span> <span className="font-black">{req.desc}</span></div>
+           <div><span className="text-gray-500 block text-[9px] mb-1">FECHA INICIO PRODUCCIÓN:</span> <span className="font-black">{getFI()}</span></div>
+           <div><span className="text-gray-500 block text-[9px] mb-1">CANTIDAD ESTIMADA:</span> <span className="font-black">{formatNum(req.cantidad || req.requestedKg)} {req.tipoProducto === 'BOLSAS' ? req.presentacion : 'KG'}</span></div>
+           <div><span className="text-gray-500 block text-[9px] mb-1">FECHA CIERRE PRODUCCIÓN:</span> <span className="font-black">{getFF()}</span></div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4 mb-8 text-center border-y-2 border-black py-4">
+           <div><span className="text-gray-500 block text-[10px] mb-1">TOTAL MP INYECTADA</span> <span className="font-black text-lg">{formatNum(totMP)} KG</span></div>
+           <div><span className="text-gray-500 block text-[10px] mb-1">TOTAL MERMA GENERADA</span> <span className="font-black text-lg text-red-600">{formatNum(totalMerma)} KG</span></div>
+           <div><span className="text-gray-500 block text-[10px] mb-1">% MERMA GLOBAL OP</span> <span className="font-black text-lg text-red-600">{formatNum(porcMerma)}%</span></div>
+        </div>
+
+        <h3 className="text-sm font-black mb-2 text-black bg-gray-200 p-2 border-b-2 border-black">1. DESGLOSE DE COSTOS DE PRODUCCIÓN (MP)</h3>
+        <table className="w-full text-left text-[10px] whitespace-nowrap mb-8 border-collapse border-2 border-black">
+           <thead className="bg-gray-100">
+              <tr>
+                 <th className="p-2 border border-black font-black">INSUMO / DESCRIPCIÓN</th>
+                 <th className="p-2 border border-black text-center font-black">FASE</th>
+                 <th className="p-2 border border-black text-center font-black">CANTIDAD</th>
+                 <th className="p-2 border border-black text-right font-black">COSTO UNIT.</th>
+                 <th className="p-2 border border-black text-right font-black">COSTO TOTAL</th>
+              </tr>
+           </thead>
+           <tbody>
+              {mpTable.map((m, i) => (
+                 <tr key={i}>
+                    <td className="p-2 border border-black font-bold">{m.desc}</td>
+                    <td className="p-2 border border-black text-center">{m.phase}</td>
+                    <td className="p-2 border border-black text-center">{formatNum(m.qty)} kg</td>
+                    <td className="p-2 border border-black text-right">${formatNum(m.costU)}</td>
+                    <td className="p-2 border border-black text-right">${formatNum(m.costT)}</td>
                  </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200 print:divide-black">
-                 <tr><td colSpan="4" className="p-2 print:p-1.5 font-black uppercase text-[11px] text-orange-600 bg-orange-50 font-black print:text-black print:bg-transparent">1. MATERIA PRIMA CONSUMIDA (EXTRUSIÓN)</td></tr>
-                 {mpC.length > 0 ? mpC.map((ing, i) => (
-                    <tr key={i} className="hover:bg-gray-50">
-                       <td className="p-2 print:p-1.5 pl-4 font-bold text-gray-800 font-black">{(inventory || []).find(inv=>inv?.id===ing?.id)?.desc || ing?.id}</td>
-                       <td className="p-2 print:p-1.5 text-center text-gray-700 font-black text-sm">{formatNum(ing?.qty)}</td>
-                       <td className="p-2 print:p-1.5 text-center text-gray-500 font-black">kg</td>
-                       <td className="p-2 print:p-1.5 text-right text-gray-600 font-black">{formatNum(((ing?.qty||0)/totMP)*100)}% de la mezcla</td>
-                    </tr>
-                 )) : (<tr><td colSpan="4" className="p-4 text-center text-gray-500 italic">Sin reporte de insumos en extrusión.</td></tr>)}
-                 <tr className="bg-gray-100 font-black border-y-2 border-gray-300 print:border-black font-black print:bg-gray-200">
-                    <td className="p-2 print:p-1.5 pl-4 text-black font-black">TOTAL MATERIA PRIMA UTILIZADA</td>
-                    <td className="p-2 print:p-1.5 text-center text-black font-black text-base print:text-sm">{formatNum(totMP)}</td>
-                    <td className="p-2 print:p-1.5 text-center text-gray-600 font-black">kg</td>
-                    <td className="p-2 print:p-1.5 text-right text-gray-600 font-black">Ingreso real a Planta</td>
+              ))}
+              <tr className="bg-gray-100">
+                 <td colSpan="4" className="p-2 border border-black text-right font-black text-xs">COSTO TOTAL MP:</td>
+                 <td className="p-2 border border-black text-right font-black text-xs text-orange-600">${formatNum(costTotalMP)}</td>
+              </tr>
+           </tbody>
+        </table>
+
+        <h3 className="text-sm font-black mb-2 text-black bg-gray-200 p-2 border-b-2 border-black">2. VENTAS Y FACTURACIÓN DE LA OP</h3>
+        <table className="w-full text-left text-[10px] whitespace-nowrap mb-8 border-collapse border-2 border-black">
+           <thead className="bg-gray-100">
+              <tr>
+                 <th className="p-2 border border-black font-black">FACTURA N°</th>
+                 <th className="p-2 border border-black text-center font-black">FECHA</th>
+                 <th className="p-2 border border-black text-right font-black">BASE (INGRESO REAL)</th>
+                 <th className="p-2 border border-black text-right font-black">IVA (16%)</th>
+                 <th className="p-2 border border-black text-right font-black">TOTAL COBRADO</th>
+              </tr>
+           </thead>
+           <tbody>
+              {opInvoices.length > 0 ? opInvoices.map(inv => (
+                 <tr key={inv.id}>
+                    <td className="p-2 border border-black font-bold">{inv.documento}</td>
+                    <td className="p-2 border border-black text-center">{inv.fecha}</td>
+                    <td className="p-2 border border-black text-right text-green-600 font-black">${formatNum(inv.montoBase)}</td>
+                    <td className="p-2 border border-black text-right">${formatNum(inv.iva)}</td>
+                    <td className="p-2 border border-black text-right">${formatNum(inv.total)}</td>
                  </tr>
-                 
-                 <tr><td colSpan="4" className="p-2 print:p-1.5 pt-4 font-black uppercase text-[11px] text-orange-600 bg-orange-50 font-black print:text-black print:bg-transparent">2. DETALLE DE MERMAS POR FASE</td></tr>
-                 <tr><td className="p-2 print:p-1.5 pl-4 font-bold text-gray-800 font-black">MERMA FASE EXTRUSIÓN</td><td className="p-2 print:p-1.5 text-center text-red-600 font-black">{formatNum(extMerma)}</td><td className="p-2 print:p-1.5 text-center text-gray-500 font-black">kg</td><td className="p-2 print:p-1.5 text-right text-gray-600 font-black">{totMP > 0 ? formatNum((extMerma/totMP)*100) : '0,00'}% de la mezcla</td></tr>
-                 {impB.length > 0 && <tr><td className="p-2 print:p-1.5 pl-4 font-bold text-gray-800 font-black">MERMA FASE IMPRESIÓN</td><td className="p-2 print:p-1.5 text-center text-red-600 font-black">{formatNum(impMerma)}</td><td className="p-2 print:p-1.5 text-center text-gray-500 font-black">kg</td><td className="p-2 print:p-1.5 text-right text-gray-600 font-black">{impP > 0 ? formatNum((impMerma/impP)*100) : '0,00'}% del impreso</td></tr>}
-                 <tr><td className="p-2 print:p-1.5 pl-4 font-bold text-gray-800 font-black">MERMA FASE SELLADO</td><td className="p-2 print:p-1.5 text-center text-red-600 font-black">{formatNum(selMerma)}</td><td className="p-2 print:p-1.5 text-center text-gray-500 font-black">kg</td><td className="p-2 print:p-1.5 text-right text-gray-600 font-black">{selP > 0 ? formatNum((selMerma/selP)*100) : '0,00'}% del sellado</td></tr>
-                 
-                 <tr><td colSpan="4" className="p-2 print:p-1.5 pt-4 font-black uppercase text-[11px] text-orange-600 bg-orange-50 font-black print:text-black print:bg-transparent">3. RESULTADO FINAL</td></tr>
-                 <tr className="bg-gray-100 font-black border-y-2 border-gray-300 print:bg-gray-200 font-black"><td className="p-2 print:p-1.5 pl-4 text-red-700 font-black">TOTAL MERMA ACUMULADA</td><td className="p-2 print:p-1.5 text-center text-red-700 font-black text-base">{formatNum(totalMerma)}</td><td className="p-2 print:p-1.5 text-center text-red-700 font-black">kg</td><td className="p-2 print:p-1.5 text-right text-red-700 font-black">Merma Total del Proceso: {totMP > 0 ? formatNum((totalMerma/totMP)*100) : '0,00'}%</td></tr>
-                 <tr className="bg-black font-black border-y-4 border-orange-500 text-[12px] text-white print:border-black print:bg-white print:text-black font-black"><td className="p-3 print:p-2 pl-4 font-black">PRODUCCIÓN FINAL LÍQUIDA</td><td className="p-3 print:p-2 text-center text-orange-600 font-black text-3xl">{formatNum(totUnid)}</td><td className="p-3 print:p-2 text-center text-orange-600 font-black text-2xl">{unitF}</td><td className="p-3 print:p-2 text-right text-gray-400 print:text-gray-700 text-[9px] font-black">{isBolsas ? `PESO POR MILLAR REAL: ${realPesoMillar.toFixed(3)} KG` : 'ENTREGA FINAL'}</td></tr>
-              </tbody>
-           </table>
+              )) : (
+                 <tr><td colSpan="5" className="p-4 text-center font-bold text-gray-500">NO HAY FACTURAS ASOCIADAS A ESTA OP.</td></tr>
+              )}
+           </tbody>
+        </table>
+
+        <h3 className="text-sm font-black mb-2 text-black bg-gray-200 p-2 border-b-2 border-black">3. CRUCE DE INFORMACIÓN FINANCIERA</h3>
+        <p className="text-[10px] font-bold text-gray-500 mb-4">RENTABILIDAD Y MARGEN NETO DE LA OP</p>
+        <div className="grid grid-cols-2 gap-4">
+           <div className={`p-4 border-2 border-black rounded-xl text-center ${ganancia < 0 ? 'bg-red-50' : 'bg-green-50'}`}>
+              <span className="block text-[10px] font-black mb-1">GANANCIA / PÉRDIDA</span>
+              <span className={`text-2xl font-black ${ganancia < 0 ? 'text-red-600' : 'text-green-600'}`}>${formatNum(ganancia)}</span>
+           </div>
+           <div className={`p-4 border-2 border-black rounded-xl text-center ${margenNeto < 0 ? 'bg-red-50' : 'bg-blue-50'}`}>
+              <span className="block text-[10px] font-black mb-1">MARGEN NETO</span>
+              <span className={`text-2xl font-black ${margenNeto < 0 ? 'text-red-600' : 'text-blue-600'}`}>{formatNum(margenNeto)}%</span>
+           </div>
         </div>
       </div>
     );
   };
 
-  // ============================================================================
-  // RENDERIZADO DEL DASHBOARD DE REPORTES Y COSTOS
-  // ============================================================================
   const renderReportesModule = () => {
-    // Calcular datos según período seleccionado
+    if (showSuperFiniquito) return renderSuperFiniquito();
+
+    if (costosView === 'costos_operativos') {
+       return renderCostosOperativosModule();
+    }
+
+    if (costosView === 'super_finiquito') {
+       const completedOrders = (requirements || []).filter(r => r?.status === 'COMPLETADO');
+       return (
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
+            <div className="px-6 py-5 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-lg font-black text-black uppercase flex items-center gap-2"><FileText className="text-orange-500" /> Súper Finiquitos de OP</h2><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Análisis Financiero por Orden</p></div>
+            <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-gray-50 border-b border-gray-200"><tr><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">OP N°</th><th className="p-4 text-[10px] font-black uppercase text-black tracking-widest">Cliente / Producto</th><th className="p-4 text-center text-black text-[10px] font-black uppercase tracking-widest">Fecha Cierre</th><th className="p-4 text-center text-black text-[10px] font-black uppercase tracking-widest">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(completedOrders || []).map(req => (<tr key={req?.id} className="hover:bg-gray-50 transition-colors group"><td className="p-4 font-black text-orange-500 text-lg">#{String(req?.id).replace('OP-', '').padStart(5, '0')}</td><td className="p-4 font-black uppercase text-xs text-black">{req?.client}<br/><span className="text-[10px] font-bold text-gray-400">{req?.desc}</span></td><td className="p-4 text-center font-bold text-gray-600">{getTodayDate()}</td><td className="p-4 text-center"><button onClick={()=>setShowSuperFiniquito(req?.id)} className="bg-black text-white px-8 py-3 rounded-2xl text-[9px] font-black uppercase hover:bg-gray-800 shadow-md flex items-center gap-2 mx-auto transition-all"><FileText size={14}/> ABRIR SÚPER FINIQUITO</button></td></tr>))}</tbody></table></div>
+            {completedOrders.length === 0 && <div className="p-10 text-center font-bold uppercase text-gray-400 text-sm">No hay Órdenes de Producción Completadas</div>}
+          </div>
+       );
+    }
+
     const getFilteredData = () => {
       if (reportPeriod === 'mensual') {
         return {
@@ -2499,8 +1968,6 @@ export default function App() {
     };
 
     const filtered = getFilteredData();
-    
-    // Calcular KPIs
     const totalIngresos = filtered.invoices.reduce((sum, inv) => sum + (parseFloat(inv.total) || 0), 0);
     const totalCostosMP = filtered.movements
       .filter(mov => mov.type === 'SALIDA' && mov.opAsignada)
@@ -2509,249 +1976,68 @@ export default function App() {
     const utilidadNeta = totalIngresos - totalCostosMP - totalCostosOp;
     const margenNeto = totalIngresos > 0 ? (utilidadNeta / totalIngresos * 100) : 0;
 
-    // Calcular mermas
-    const totalMermaKg = filtered.requirements
-      .filter(req => req.status === 'FINALIZADO' && req.phases)
-      .reduce((sum, req) => {
-        const phases = req.phases || {};
-        const mermaExt = parseFloat(phases.extrusion?.mermaKg || 0);
-        const mermaImp = parseFloat(phases.impresion?.mermaKg || 0);
-        const mermaSel = parseFloat(phases.sellado?.mermaKg || 0);
-        return sum + mermaExt + mermaImp + mermaSel;
-      }, 0);
-
     return (
       <div className="w-full max-w-7xl animate-in fade-in">
         <div className="space-y-6">
-          {/* HEADER */}
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8">
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3 tracking-tighter">
-                  <BarChart3 className="text-blue-600" size={32}/> Dashboard de Reportes
+                  <BarChart3 className="text-blue-600" size={32}/> {costosView === 'ingresos_costos' ? 'Ingresos VS Costos' : 'Dashboard Financiero'}
                 </h2>
-                <p className="text-xs font-bold text-gray-600 uppercase mt-2">Análisis de Ingresos, Costos y Rentabilidad</p>
+                <p className="text-xs font-bold text-gray-600 uppercase mt-2">Análisis de Ingresos, Costos y Rentabilidad General</p>
               </div>
             </div>
 
-            {/* SELECTOR DE PERÍODO */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-6 rounded-2xl">
               <div>
                 <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Tipo de Período</label>
-                <select
-                  value={reportPeriod}
-                  onChange={e => setReportPeriod(e.target.value)}
-                  className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500"
-                >
-                  <option value="mensual">MENSUAL</option>
-                  <option value="anual">ANUAL</option>
+                <select value={reportPeriod} onChange={e => setReportPeriod(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500">
+                  <option value="mensual">MENSUAL</option><option value="anual">ANUAL</option>
                 </select>
               </div>
               {reportPeriod === 'mensual' && (
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Mes</label>
-                  <input
-                    type="month"
-                    value={selectedMonth}
-                    onChange={e => setSelectedMonth(e.target.value)}
-                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500"
-                  />
-                </div>
+                <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Mes</label><input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500" /></div>
               )}
               {reportPeriod === 'anual' && (
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Año</label>
-                  <input
-                    type="number"
-                    value={selectedYear}
-                    onChange={e => setSelectedYear(e.target.value)}
-                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500"
-                    min="2020"
-                    max="2030"
-                  />
-                </div>
+                <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Año</label><input type="number" value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500" min="2020" max="2030" /></div>
               )}
             </div>
           </div>
 
-          {/* KPI CARDS */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl p-6 text-white shadow-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-black uppercase opacity-90">Total Ingresos</span>
-                <DollarSign size={24} className="opacity-80" />
-              </div>
-              <div className="text-3xl font-black">${formatNum(totalIngresos)}</div>
-              <div className="text-xs font-bold opacity-80 mt-2">{filtered.invoices.length} facturas</div>
-            </div>
-
-            <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl p-6 text-white shadow-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-black uppercase opacity-90">Costos MP</span>
-                <Package size={24} className="opacity-80" />
-              </div>
-              <div className="text-3xl font-black">${formatNum(totalCostosMP)}</div>
-              <div className="text-xs font-bold opacity-80 mt-2">{filtered.requirements.filter(r => r.status === 'FINALIZADO').length} OPs finalizadas</div>
-            </div>
-
-            <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-2xl p-6 text-white shadow-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-black uppercase opacity-90">Costos Operativos</span>
-                <TrendingDown size={24} className="opacity-80" />
-              </div>
-              <div className="text-3xl font-black">${formatNum(totalCostosOp)}</div>
-              <div className="text-xs font-bold opacity-80 mt-2">{filtered.opCosts.length} registros</div>
-            </div>
-
-            <div className={`bg-gradient-to-br ${utilidadNeta >= 0 ? 'from-blue-500 to-blue-600' : 'from-gray-500 to-gray-600'} rounded-2xl p-6 text-white shadow-lg`}>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-black uppercase opacity-90">Utilidad Neta</span>
-                <TrendingUp size={24} className="opacity-80" />
-              </div>
-              <div className="text-3xl font-black">${formatNum(utilidadNeta)}</div>
-              <div className="text-xs font-bold opacity-80 mt-2">Margen: {margenNeto.toFixed(1)}%</div>
-            </div>
+            <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl p-6 text-white shadow-lg"><div className="flex items-center justify-between mb-2"><span className="text-xs font-black uppercase opacity-90">Total Ingresos</span><DollarSign size={24} className="opacity-80" /></div><div className="text-3xl font-black">${formatNum(totalIngresos)}</div><div className="text-xs font-bold opacity-80 mt-2">{filtered.invoices.length} facturas</div></div>
+            <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl p-6 text-white shadow-lg"><div className="flex items-center justify-between mb-2"><span className="text-xs font-black uppercase opacity-90">Costos MP</span><Package size={24} className="opacity-80" /></div><div className="text-3xl font-black">${formatNum(totalCostosMP)}</div><div className="text-xs font-bold opacity-80 mt-2">Materia Prima</div></div>
+            <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-2xl p-6 text-white shadow-lg"><div className="flex items-center justify-between mb-2"><span className="text-xs font-black uppercase opacity-90">Costos Operativos</span><TrendingDown size={24} className="opacity-80" /></div><div className="text-3xl font-black">${formatNum(totalCostosOp)}</div><div className="text-xs font-bold opacity-80 mt-2">{filtered.opCosts.length} registros</div></div>
+            <div className={`bg-gradient-to-br ${utilidadNeta >= 0 ? 'from-blue-500 to-blue-600' : 'from-gray-500 to-gray-600'} rounded-2xl p-6 text-white shadow-lg`}><div className="flex items-center justify-between mb-2"><span className="text-xs font-black uppercase opacity-90">Utilidad Neta</span><TrendingUp size={24} className="opacity-80" /></div><div className="text-3xl font-black">${formatNum(utilidadNeta)}</div><div className="text-xs font-bold opacity-80 mt-2">Margen: {margenNeto.toFixed(1)}%</div></div>
           </div>
 
-          {/* BOTONES DE REPORTES */}
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8">
-            <h3 className="text-lg font-black uppercase text-black mb-6">Reportes Disponibles</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <button
-                onClick={() => setShowReportType('general')}
-                className={`p-6 rounded-2xl border-2 transition-all text-left ${showReportType === 'general' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
-              >
-                <FileText className="text-blue-600 mb-3" size={28} />
-                <h4 className="font-black text-sm uppercase mb-2">Reporte General</h4>
-                <p className="text-xs text-gray-600">Resumen completo del período</p>
-              </button>
+          {costosView === 'ingresos_costos' && (
+             <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8">
+               <div className="flex justify-between items-center mb-6">
+                 <h3 className="text-lg font-black uppercase text-black">Reporte Financiero Detallado - {reportPeriod === 'mensual' ? selectedMonth : selectedYear}</h3>
+                 <button onClick={() => handleExportPDF('Reporte_Financiero', false)} className="bg-black text-white px-6 py-3 rounded-xl text-xs font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> EXPORTAR PDF</button>
+               </div>
 
-              <button
-                onClick={() => setShowReportType('ingresos_costos')}
-                className={`p-6 rounded-2xl border-2 transition-all text-left ${showReportType === 'ingresos_costos' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
-              >
-                <BarChart3 className="text-green-600 mb-3" size={28} />
-                <h4 className="font-black text-sm uppercase mb-2">Ingresos vs Costos</h4>
-                <p className="text-xs text-gray-600">Análisis comparativo detallado</p>
-              </button>
-
-              <button
-                onClick={() => setShowReportType('mermas')}
-                className={`p-6 rounded-2xl border-2 transition-all text-left ${showReportType === 'mermas' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
-              >
-                <AlertTriangle className="text-orange-600 mb-3" size={28} />
-                <h4 className="font-black text-sm uppercase mb-2">Análisis de Mermas</h4>
-                <p className="text-xs text-gray-600">Pérdidas y desperdicios</p>
-              </button>
-            </div>
-          </div>
-
-          {/* CONTENIDO DEL REPORTE SELECCIONADO */}
-          {showReportType === 'general' && (
-            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-black uppercase text-black">Reporte General - {reportPeriod === 'mensual' ? selectedMonth : selectedYear}</h3>
-                <button
-                  onClick={() => handleExportPDF('Reporte_General', false)}
-                  className="bg-black text-white px-6 py-3 rounded-xl text-xs font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"
-                >
-                  <Printer size={16}/> EXPORTAR PDF
-                </button>
-              </div>
-
-              <div id="pdf-content" className="space-y-6">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="bg-gray-50 p-4 rounded-xl">
-                    <div className="text-xs font-bold text-gray-500 uppercase mb-1">Ingresos</div>
-                    <div className="text-2xl font-black text-green-600">${formatNum(totalIngresos)}</div>
-                  </div>
-                  <div className="bg-gray-50 p-4 rounded-xl">
-                    <div className="text-xs font-bold text-gray-500 uppercase mb-1">Costos MP</div>
-                    <div className="text-2xl font-black text-orange-600">${formatNum(totalCostosMP)}</div>
-                  </div>
-                  <div className="bg-gray-50 p-4 rounded-xl">
-                    <div className="text-xs font-bold text-gray-500 uppercase mb-1">Costos Op</div>
-                    <div className="text-2xl font-black text-red-600">${formatNum(totalCostosOp)}</div>
-                  </div>
-                  <div className="bg-gray-50 p-4 rounded-xl">
-                    <div className="text-xs font-bold text-gray-500 uppercase mb-1">Utilidad</div>
-                    <div className="text-2xl font-black text-blue-600">${formatNum(utilidadNeta)}</div>
-                  </div>
-                </div>
-
-                <div className="border-t pt-6">
-                  <h4 className="text-sm font-black uppercase mb-4">Facturas Emitidas</h4>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-gray-100">
-                        <tr className="font-black uppercase">
-                          <th className="p-3">Fecha</th>
-                          <th className="p-3">Cliente</th>
-                          <th className="p-3">Documento</th>
-                          <th className="p-3 text-right">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {filtered.invoices.map(inv => (
-                          <tr key={inv.id}>
-                            <td className="p-3">{inv.fecha}</td>
-                            <td className="p-3 font-bold">{inv.clientName}</td>
-                            <td className="p-3">{inv.documento}</td>
-                            <td className="p-3 text-right font-black text-green-600">${formatNum(inv.total)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {showReportType === 'ingresos_costos' && (
-            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8">
-              <h3 className="text-lg font-black uppercase text-black mb-6">Análisis Ingresos vs Costos</h3>
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <h4 className="text-sm font-black uppercase mb-4 text-green-600">📈 Ingresos</h4>
-                    <div className="bg-green-50 p-6 rounded-2xl">
-                      <div className="text-4xl font-black text-green-600 mb-2">${formatNum(totalIngresos)}</div>
-                      <div className="text-sm text-gray-600">{filtered.invoices.length} facturas emitidas</div>
-                    </div>
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-black uppercase mb-4 text-red-600">📉 Costos Totales</h4>
-                    <div className="bg-red-50 p-6 rounded-2xl">
-                      <div className="text-4xl font-black text-red-600 mb-2">${formatNum(totalCostosMP + totalCostosOp)}</div>
-                      <div className="text-xs text-gray-600 space-y-1">
-                        <div>MP: ${formatNum(totalCostosMP)}</div>
-                        <div>Operativos: ${formatNum(totalCostosOp)}</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-blue-50 p-6 rounded-2xl">
-                  <h4 className="text-sm font-black uppercase mb-4 text-blue-600">💰 Resultado</h4>
-                  <div className="text-4xl font-black text-blue-600 mb-2">${formatNum(utilidadNeta)}</div>
-                  <div className="text-sm text-gray-600">Margen neto: {margenNeto.toFixed(2)}%</div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {showReportType === 'mermas' && (
-            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8">
-              <h3 className="text-lg font-black uppercase text-black mb-6">Análisis de Mermas</h3>
-              <div className="space-y-6">
-                <div className="bg-orange-50 p-6 rounded-2xl">
-                  <h4 className="text-sm font-black uppercase mb-4 text-orange-600">Total de Mermas</h4>
-                  <div className="text-4xl font-black text-orange-600 mb-2">{formatNum(totalMermaKg)} KG</div>
-                  <div className="text-sm text-gray-600">{filtered.requirements.filter(r => r.status === 'FINALIZADO').length} OPs finalizadas</div>
-                </div>
-              </div>
-            </div>
+               <div id="pdf-content" className="space-y-6">
+                 <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-2 border-orange-500 pb-1">REPORTE FINANCIERO DETALLADO</h1></div>
+                 <div className="border-t pt-6">
+                   <h4 className="text-sm font-black uppercase mb-4 text-green-600">Facturación e Ingresos</h4>
+                   <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-gray-100"><tr className="font-black uppercase"><th className="p-3 border border-gray-300">Fecha</th><th className="p-3 border border-gray-300">Cliente</th><th className="p-3 border border-gray-300">Documento</th><th className="p-3 text-right border border-gray-300">Total</th></tr></thead><tbody className="divide-y">
+                         {filtered.invoices.map(inv => (<tr key={inv.id}><td className="p-3 border border-gray-300">{inv.fecha}</td><td className="p-3 font-bold border border-gray-300">{inv.clientName}</td><td className="p-3 border border-gray-300">{inv.documento}</td><td className="p-3 text-right font-black text-green-600 border border-gray-300">${formatNum(inv.total)}</td></tr>))}
+                         <tr className="bg-green-50 font-black text-lg"><td colSpan="3" className="p-3 text-right text-green-800">TOTAL INGRESOS:</td><td className="p-3 text-right text-green-600">${formatNum(totalIngresos)}</td></tr>
+                   </tbody></table></div>
+                 </div>
+                 
+                 <div className="border-t pt-6">
+                   <h4 className="text-sm font-black uppercase mb-4 text-red-600">Gastos Operativos Registrados</h4>
+                   <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-gray-100"><tr className="font-black uppercase"><th className="p-3 border border-gray-300">Fecha</th><th className="p-3 border border-gray-300">Categoría / Descripción</th><th className="p-3 text-right border border-gray-300">Total</th></tr></thead><tbody className="divide-y">
+                         {filtered.opCosts.map(cost => (<tr key={cost.id}><td className="p-3 border border-gray-300">{cost.date}</td><td className="p-3 font-bold border border-gray-300">{cost.category} - {cost.description}</td><td className="p-3 text-right font-black text-red-600 border border-gray-300">${formatNum(cost.amount)}</td></tr>))}
+                         <tr className="bg-red-50 font-black text-lg"><td colSpan="2" className="p-3 text-right text-red-800">TOTAL GASTOS OPERATIVOS:</td><td className="p-3 text-right text-red-600">${formatNum(totalCostosOp)}</td></tr>
+                   </tbody></table></div>
+                 </div>
+               </div>
+             </div>
           )}
         </div>
       </div>
@@ -2836,26 +2122,6 @@ export default function App() {
             <nav className="md:w-64 flex-shrink-0 space-y-4 print:hidden animate-in slide-in-from-left">
               <button onClick={()=>{clearAllReports(); setActiveTab('home');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl bg-black text-white shadow-xl hover:bg-gray-800 mb-4 transition-all active:scale-95 uppercase tracking-widest"><Home size={18} className="text-orange-500" /> INICIO</button>
 
-              {/* SIMULADOR OP - MÓDULO INDEPENDIENTE */}
-              {appUser?.permissions?.produccion && (
-                <button 
-                  onClick={()=>{clearAllReports(); setActiveTab('simulador');}} 
-                  className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl shadow-xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'simulador' ? 'bg-orange-500 text-white' : 'bg-white text-gray-700 hover:bg-orange-50'}`}
-                >
-                  <Calculator size={18} className={activeTab === 'simulador' ? 'text-white' : 'text-orange-500'} /> SIMULADOR OP
-                </button>
-              )}
-
-              {/* COSTOS OPERATIVOS - MÓDULO INDEPENDIENTE */}
-              {appUser?.permissions?.costos && (
-                <button 
-                  onClick={()=>{clearAllReports(); setActiveTab('costos_operativos');}} 
-                  className={`w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl shadow-xl transition-all active:scale-95 uppercase tracking-widest ${activeTab === 'costos_operativos' ? 'bg-green-600 text-white' : 'bg-white text-gray-700 hover:bg-green-50'}`}
-                >
-                  <DollarSign size={18} className={activeTab === 'costos_operativos' ? 'text-white' : 'text-green-600'} /> COSTOS OPERATIVOS
-                </button>
-              )}
-
               {appUser?.permissions?.ventas && activeTab === 'ventas' && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Área Ventas</h3>
@@ -2868,9 +2134,10 @@ export default function App() {
               {appUser?.permissions?.produccion && activeTab === 'produccion' && (
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Planta / Producción</h3>
-                  <button onClick={() => {clearAllReports(); setProdView('proyeccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'proyeccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase relative`}><TrendingUp size={16}/> Proyección MP {generateProjectionData().filter(mp => mp.isCritical).length > 0 && <span className="absolute right-4 top-1/2 -translate-y-1/2 bg-red-500 w-3 h-3 rounded-full animate-pulse"></span>}</button>
+                  <button onClick={() => {clearAllReports(); setProdView('proyeccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'proyeccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase relative`}><TrendingUp size={16}/> Proyección MP</button>
                   <button onClick={() => {clearAllReports(); setProdView('fases_produccion');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'fases_produccion' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Thermometer size={16}/> Fases en Proceso</button>
-                  <button onClick={() => {clearAllReports(); setProdView('historial');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'historial' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><History size={16}/> Historial / Finiquitos</button>
+                  <button onClick={() => {clearAllReports(); setProdView('historial');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'historial' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><History size={16}/> Historial Órdenes</button>
+                  <button onClick={() => {clearAllReports(); setProdView('calculadora');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${prodView === 'calculadora' ? 'bg-black text-white shadow-lg' : 'text-slate-500 hover:bg-gray-50'} uppercase`}><Calculator size={16}/> Simulador OP</button>
                 </div>
               )}
 
@@ -2897,50 +2164,53 @@ export default function App() {
               )}
 
               {appUser?.permissions?.costos && activeTab === 'costos' && (
-                <button onClick={()=>{clearAllReports(); setActiveTab('costos');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><BarChart3 size={18} className="text-white" /> COSTOS</button>
+                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm space-y-2">
+                   <h3 className="text-[10px] font-black text-gray-500 uppercase mb-4 border-b pb-3 tracking-widest">Costos e Finanças</h3>
+                   <button onClick={() => {clearAllReports(); setCostosView('dashboard');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'dashboard' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><BarChart3 size={16}/> Dashboard General</button>
+                   <button onClick={() => {clearAllReports(); setCostosView('super_finiquito');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'super_finiquito' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><FileText size={16}/> Súper Finiquitos OP</button>
+                   <button onClick={() => {clearAllReports(); setCostosView('ingresos_costos');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'ingresos_costos' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><TrendingUp size={16}/> Ingresos VS Custos</button>
+                   <button onClick={() => {clearAllReports(); setCostosView('costos_operativos');}} className={`w-full flex items-center justify-start gap-3 px-5 py-4 text-[11px] font-black rounded-2xl transition-all ${costosView === 'costos_operativos' ? 'bg-black text-white shadow-xl' : 'text-slate-500 hover:bg-slate-100'} uppercase`}><DollarSign size={16}/> Custos Operativos</button>
+                 </div>
               )}
 
               {appUser?.permissions?.configuracion && activeTab === 'configuracion' && (
-                <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><Settings2 size={18} className="text-white" /> CONFIGURACIÓN</button>
+                <button onClick={()=>{clearAllReports(); setActiveTab('configuracion');}} className="w-full flex items-center justify-center gap-3 px-5 py-4 text-xs font-black rounded-2xl transition-all active:scale-95 uppercase tracking-widest bg-orange-500 text-white shadow-xl"><Settings2 size={18} className="text-white" /> CONFIGURAÇÃO</button>
               )}
             </nav>
           )}
           
-          <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' || activeTab === 'costos' || activeTab === 'configuracion' || activeTab === 'simulador' || activeTab === 'costos_operativos' ? 'flex items-center justify-center' : ''}`}>
+          <main className={`flex-1 min-w-0 pb-12 print:pb-0 print:m-0 print:p-0 print:block print:w-full ${activeTab === 'home' || activeTab === 'costos' || activeTab === 'configuracion' || activeTab === 'simulador' || activeTab === 'costos_operativos' ? 'flex items-start justify-center' : ''}`}>
             {activeTab === 'home' && renderHome()}
             {activeTab === 'ventas' && renderVentasModule()}
-            {activeTab === 'produccion' && renderProductionModule()}
+            {activeTab === 'produccion' && (prodView === 'calculadora' ? renderSimuladorModule() : renderProductionModule())}
             {activeTab === 'inventario' && renderInventoryModule()}
-            {activeTab === 'simulador' && renderSimuladorModule()}
-            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
-            
             {activeTab === 'costos' && renderReportesModule()}
             
             {activeTab === 'configuracion' && (
-              <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden animate-in fade-in w-full">
+              <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden animate-in fade-in w-full max-w-6xl">
                  <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center">
-                    <h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><Settings2 className="text-orange-500" size={24}/> Gestión de Usuarios y Permisos</h2>
+                    <h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><Settings2 className="text-orange-500" size={24}/> Gestão de Usuários e Permissões</h2>
                  </div>
                  
                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">
                     <div className="lg:col-span-1 border-r border-gray-200 bg-gray-50/50 p-8">
-                       <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest border-b border-gray-200 pb-2">{editingUserId ? 'Editar Usuario' : 'Nuevo Usuario'}</h3>
+                       <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest border-b border-gray-200 pb-2">{editingUserId ? 'Editar Usuário' : 'Novo Usuário'}</h3>
                        <form onSubmit={handleSaveUser} className="space-y-4">
                           <div>
-                            <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nombre Completo</label>
-                            <input type="text" required value={newUserForm.name} onChange={e=>setNewUserForm({...newUserForm, name: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500 transition-colors" placeholder="EJ: JUAN PEREZ" />
+                            <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nome Completo</label>
+                            <input type="text" required value={newUserForm.name} onChange={e=>setNewUserForm({...newUserForm, name: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500 transition-colors" placeholder="EX: JOAO SILVA" />
                           </div>
                           <div>
-                            <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Usuario (Login)</label>
-                            <input type="text" required disabled={!!editingUserId} value={newUserForm.username} onChange={e=>setNewUserForm({...newUserForm, username: e.target.value.toLowerCase()})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500 transition-colors" placeholder="EJ: juanp" />
+                            <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Usuário (Login)</label>
+                            <input type="text" required disabled={!!editingUserId} value={newUserForm.username} onChange={e=>setNewUserForm({...newUserForm, username: e.target.value.toLowerCase()})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500 transition-colors" placeholder="EX: joaos" />
                           </div>
                           <div>
-                            <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Contraseña</label>
+                            <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Senha</label>
                             <input type="text" required={!editingUserId} value={newUserForm.password} onChange={e=>setNewUserForm({...newUserForm, password: e.target.value})} className="w-full border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500 transition-colors" placeholder="Mínimo 4 caracteres" />
                           </div>
                           
                           <div className="pt-4 border-t border-gray-200 mt-4">
-                             <label className="text-[10px] font-black text-black uppercase block mb-3 tracking-widest">Permisos de Acceso</label>
+                             <label className="text-[10px] font-black text-black uppercase block mb-3 tracking-widest">Permissões de Acesso</label>
                              <div className="space-y-2 bg-white p-4 rounded-xl border border-gray-200">
                                 {['ventas', 'produccion', 'inventario', 'costos', 'configuracion'].map(mod => (
                                    <label key={mod} className="flex items-center gap-3 cursor-pointer group">
@@ -2953,21 +2223,21 @@ export default function App() {
                           
                           <div className="pt-6 flex gap-2">
                              {editingUserId && <button type="button" onClick={() => {setEditingUserId(null); setNewUserForm(initialUserForm);}} className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl font-black text-[10px] uppercase hover:bg-gray-300 transition-all">Cancelar</button>}
-                             <button type="submit" className="flex-1 bg-black text-white py-3 rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all flex items-center justify-center gap-2"><Save size={14}/> Guardar</button>
+                             <button type="submit" className="flex-1 bg-black text-white py-3 rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all flex items-center justify-center gap-2"><Save size={14}/> Salvar</button>
                           </div>
                        </form>
                     </div>
                     
                     <div className="lg:col-span-2 p-8">
-                       <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest border-b border-gray-200 pb-2">Usuarios Registrados</h3>
+                       <h3 className="text-sm font-black uppercase text-black mb-6 tracking-widest border-b border-gray-200 pb-2">Usuários Registrados</h3>
                        <div className="overflow-x-auto rounded-xl border border-gray-200">
                           <table className="w-full text-left whitespace-nowrap text-sm">
                              <thead className="bg-gray-100 border-b-2 border-gray-200">
                                 <tr className="uppercase font-black text-[10px] tracking-widest text-gray-500">
-                                   <th className="py-3 px-4 border-r">Usuario / Nombre</th>
-                                   <th className="py-3 px-4 border-r">Clave</th>
-                                   <th className="py-3 px-4 border-r">Accesos Permitidos</th>
-                                   <th className="py-3 px-4 text-center">Acciones</th>
+                                   <th className="py-3 px-4 border-r">Usuário / Nome</th>
+                                   <th className="py-3 px-4 border-r">Senha</th>
+                                   <th className="py-3 px-4 border-r">Acessos Permitidos</th>
+                                   <th className="py-3 px-4 text-center">Ações</th>
                                 </tr>
                              </thead>
                              <tbody className="divide-y divide-gray-100 text-black">
@@ -3015,13 +2285,13 @@ export default function App() {
                 {dialog.type === 'confirm' && (
                   <button onClick={() => setDialog(null)} className="flex-1 bg-gray-100 font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-colors text-gray-800">CANCELAR</button>
                 )}
-                <button onClick={() => { if (dialog.onConfirm) dialog.onConfirm(); setDialog(null); }} className="flex-1 bg-black text-white font-black py-4 rounded-2xl shadow-xl uppercase text-[10px] tracking-widest hover:bg-gray-900 transition-colors">ACEPTAR</button>
+                <button onClick={() => { if (dialog.onConfirm) dialog.onConfirm(); setDialog(null); }} className="flex-1 bg-black text-white font-black py-4 rounded-2xl shadow-xl uppercase text-[10px] tracking-widest hover:bg-gray-900 transition-colors">ACEITAR</button>
               </div>
             </div>
           </div>
         )}
 
-        {/* MODAL DE CLAVE ADMIN */}
+        {/* MODAL DE SENHA DO ADMIN */}
         {showAdminModal && (
           <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 z-[10000] print:hidden">
             <div className="bg-white rounded-3xl shadow-2xl border-t-8 border-red-500 p-8 w-full max-w-md transform animate-in zoom-in-95">
@@ -3030,19 +2300,19 @@ export default function App() {
                   <Lock className="text-red-600" size={28} />
                 </div>
                 <div>
-                  <h3 className="text-xl font-black text-black uppercase tracking-tighter">Clave Admin Requerida</h3>
+                  <h3 className="text-xl font-black text-black uppercase tracking-tighter">Senha Admin Requerida</h3>
                   <p className="text-xs font-bold text-gray-500 uppercase">{adminActionName}</p>
                 </div>
               </div>
               
               <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-4 mb-6">
                 <p className="text-sm font-bold text-red-700 text-center uppercase">
-                  ⚠️ Esta acción requiere autorización de administrador
+                  ⚠️ Esta ação requer autorização do administrador
                 </p>
               </div>
               
               <div className="mb-6">
-                <label className="text-xs font-black text-gray-600 uppercase block mb-2">Ingrese Clave Admin:</label>
+                <label className="text-xs font-black text-gray-600 uppercase block mb-2">Digite a Senha Admin:</label>
                 <input
                   type="password"
                   value={adminPassword}
@@ -3053,7 +2323,7 @@ export default function App() {
                   autoFocus
                 />
                 <p className="text-xs text-gray-400 text-center mt-2 font-bold">
-                  Presione Enter o click en Validar
+                  Pressione Enter ou clique em Validar
                 </p>
               </div>
               
