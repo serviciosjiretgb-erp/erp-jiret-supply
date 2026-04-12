@@ -8,7 +8,7 @@ import {
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshoEt, deleteDoc, writeBatch } from "firebase/firestore";
+import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch } from "firebase/firestore";
 
 // ============================================================================
 // ESCUDO DE ERRORES EXTREMO
@@ -1341,38 +1341,41 @@ export default function App() {
     if (invView === 'reportes_mod') return renderInventoryReports();
 
     if (invView === 'wip') {
-      // Construir movimientos WIP: ENTRADAS desde wipInventory + SALIDAS desde invMovements de producción
-      const wipEntradas = wipInventory.map(item => ({
-        ...item,
+      // Construir movimientos WIP con chequeos defensivos
+      const safeWipInventory = Array.isArray(wipInventory) ? wipInventory : [];
+      const safeInvMovements = Array.isArray(invMovements) ? invMovements : [];
+
+      const wipEntradas = safeWipInventory.map(item => ({
+        ...(item || {}),
         movType: 'ENTRADA',
-        fecha: item.fechaAsignacion,
-        kg: item.kgAsignados,
-        descripcion: 'Traslado Almacén → WIP',
+        fecha: item?.fechaAsignacion || '—',
+        kg: parseNum(item?.kgAsignados),
+        descripcion: 'Traslado Almacén a WIP',
       }));
 
-      const wipSalidas = invMovements
-        .filter(m => m.type === 'SALIDA' && m.notes && (
-          m.notes.includes('PRODUCCIÓN') || m.notes.includes('PRODUCCION')
+      const wipSalidas = safeInvMovements
+        .filter(m => m && m.type === 'SALIDA' && m.notes && (
+          String(m.notes).includes('PRODUCCI') // captura PRODUCCIÓN y PRODUCCION
         ))
         .map(m => ({
           id: m.id,
           movType: 'SALIDA',
           opId: m.opAsignada || m.reference || '—',
-          fecha: m.date,
-          kg: m.qty,
-          itemId: m.itemId,
-          itemName: m.itemName,
-          fase: (m.notes || '').replace('PRODUCCIÓN', '').replace('PRODUCCION', '').trim(),
-          descripcion: 'Consumo en Producción',
+          fecha: m.date || '—',
+          kg: parseNum(m.qty),
+          itemId: m.itemId || '—',
+          itemName: m.itemName || m.itemId || '—',
+          fase: String(m.notes || '').replace(/PRODUCCI[OÓ]N?\s*/gi, '').trim() || '—',
+          descripcion: 'Consumo en Produccion',
           status: 'CONSUMIDO',
           materiales: [{ id: m.itemId, qty: m.qty }],
           cliente: '—',
-          user: m.user,
-          timestamp: m.timestamp,
+          user: m.user || '—',
+          timestamp: m.timestamp || 0,
         }));
 
-      // Combinar y ordenar por timestamp desc
-      const allWipMovs = [...wipEntradas, ...wipSalidas].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      const allWipMovs = [...wipEntradas, ...wipSalidas]
+        .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
       return (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
@@ -1382,7 +1385,7 @@ export default function App() {
                 <Beaker className="text-purple-600" size={24}/> Inventario de Productos en Proceso (WIP)
               </h2>
               <p className="text-[10px] font-bold text-purple-600 mt-1 uppercase tracking-widest">
-                Movimientos: Entradas (Almacén → WIP) y Salidas (WIP → Producción)
+                Movimientos: Entradas (Almacen a WIP) y Salidas (WIP a Produccion)
               </p>
             </div>
             <div className="flex gap-3">
@@ -1504,8 +1507,8 @@ export default function App() {
 
             <div className="mt-6 bg-purple-50 border border-purple-200 p-4 rounded-xl print:border-black text-xs font-bold text-purple-700">
               <span className="font-black uppercase">Nota: </span>
-              Las <span className="text-green-700 font-black">ENTRADAS</span> corresponden al traslado de materiales desde el almacén principal al WIP (aprobación de requisición de planta).
-              Las <span className="text-red-700 font-black">SALIDAS</span> corresponden al consumo de materiales en las fases de producción.
+              Las <span className="text-green-700 font-black">ENTRADAS</span> son traslados del almacen principal al WIP (aprobacion de requisicion de planta).
+              Las <span className="text-red-700 font-black">SALIDAS</span> son consumos de materiales en las fases de produccion.
             </div>
           </div>
         </div>
@@ -3579,6 +3582,93 @@ export default function App() {
     );
   };
 
+  // ── HELPER: Panel de insumos filtrado por requisiciones aprobadas ──────────
+  const renderInsumosPhasePanel = (req, phase) => {
+    if (!req || !phase) return null;
+    const approved = (invRequisitions || []).filter(r =>
+      r.opId === req.id && r.phase === phase &&
+      (r.status === 'APROBADA' || r.status === 'APROBADO')
+    );
+    const approvedItems = approved.flatMap(r => r.items || []);
+    const groupedApproved = {};
+    approvedItems.forEach(it => {
+      if (it && it.id) {
+        if (!groupedApproved[it.id]) groupedApproved[it.id] = 0;
+        groupedApproved[it.id] += parseNum(it.qty);
+      }
+    });
+    const approvedIds = Object.keys(groupedApproved);
+
+    if (approvedIds.length === 0) {
+      return (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
+          <p className="text-[10px] font-black text-yellow-700 uppercase">Sin requisicion aprobada para esta fase</p>
+          <p className="text-[9px] font-bold text-yellow-600 mt-1">Solicite insumos a almacen antes de registrar consumo</p>
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 mb-3">
+          <p className="text-[9px] font-black text-blue-700 uppercase mb-1">Insumos despachados por almacen:</p>
+          {approvedIds.map(id => {
+            const invItem = (inventory || []).find(i => i && i.id === id);
+            return (
+              <div key={id} className="flex justify-between text-[9px] font-bold text-blue-600">
+                <span>{invItem ? invItem.desc : id}</span>
+                <span className="font-black">{formatNum(groupedApproved[id])} {invItem ? (invItem.unit || 'KG') : 'KG'}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex gap-2 mb-3">
+          <select value={phaseIngId} onChange={e => setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
+            <option value="">Seleccione insumo despachado...</option>
+            {approvedIds.map(id => {
+              const invItem = (inventory || []).find(i => i && i.id === id);
+              if (!invItem) return null;
+              return (
+                <option key={id} value={id}>
+                  {id} - {invItem.desc} (Desp: {formatNum(groupedApproved[id])} {invItem.unit || 'KG'})
+                </option>
+              );
+            })}
+          </select>
+          <input
+            type="number" step="0.01" value={phaseIngQty}
+            onChange={e => setPhaseIngQty(e.target.value)}
+            className="w-24 border border-gray-200 rounded-lg p-2 text-xs font-bold text-center outline-none"
+            placeholder="KG"
+          />
+          <button
+            onClick={() => {
+              if (!phaseIngId || !phaseIngQty) return;
+              const newIns = [...(phaseForm.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }];
+              setPhaseForm({ ...phaseForm, insumos: newIns });
+              setPhaseIngId(''); setPhaseIngQty('');
+            }}
+            className="bg-orange-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-orange-600"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
+        {(phaseForm.insumos || []).map((ins, i) => (
+          <div key={i} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200 mb-1">
+            <span className="text-xs font-black text-orange-600">{ins.id}</span>
+            <span className="text-xs font-black">{formatNum(ins.qty)} KG</span>
+            <button
+              onClick={() => setPhaseForm({ ...phaseForm, insumos: (phaseForm.insumos || []).filter((_, j) => j !== i) })}
+              className="text-red-400 hover:text-red-600"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   const renderProduccionModule = () => {
     // ── VER ORDEN DE TRABAJO ─────────────────────────────────────────
     if (showOrdenTrabajo) {
@@ -4034,60 +4124,7 @@ export default function App() {
                                   {/* Insumos */}
                                   <div className="bg-white rounded-xl border border-orange-200 p-4">
                                     <h4 className="text-[9px] font-black text-gray-700 uppercase mb-3">Insumos Consumidos en esta Fase</h4>
-                                    {(() => {
-                                      const approved = invRequisitions.filter(r => r.opId === req.id && r.phase === activePhaseTab && (r.status === 'APROBADA' || r.status === 'APROBADO'));
-                                      const approvedItems = approved.flatMap(r => r.items || []);
-                                      const groupedApproved = {};
-                                      approvedItems.forEach(it => {
-                                        if (!groupedApproved[it.id]) groupedApproved[it.id] = 0;
-                                        groupedApproved[it.id] += parseNum(it.qty);
-                                      });
-                                      const approvedIds = Object.keys(groupedApproved);
-
-                                      if (approvedIds.length === 0) {
-                                        return (
-                                          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
-                                            <p className="text-[10px] font-black text-yellow-700 uppercase">Sin requisición aprobada para esta fase</p>
-                                            <p className="text-[9px] font-bold text-yellow-600 mt-1">Solicite insumos a almacén antes de registrar consumo</p>
-                                          </div>
-                                        );
-                                      }
-
-                                      return (
-                                        <>
-                                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 mb-3">
-                                            <p className="text-[9px] font-black text-blue-700 uppercase mb-1">Insumos despachados por almacén:</p>
-                                            {approvedIds.map(id => {
-                                              const invItem = inventory.find(i => i.id === id);
-                                              return (
-                                                <div key={id} className="flex justify-between text-[9px] font-bold text-blue-600">
-                                                  <span>{invItem?.desc || id}</span>
-                                                  <span className="font-black">{formatNum(groupedApproved[id])} {invItem?.unit || 'KG'}</span>
-                                                </div>
-                                              );
-                                            })}
-                                          </div>
-                                          <div className="flex gap-2 mb-3">
-                                            <select value={phaseIngId} onChange={e => setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
-                                              <option value="">Seleccione insumo despachado...</option>
-                                              {approvedIds.map(id => {
-                                                const item = inventory.find(i => i.id === id);
-                                                return item ? <option key={id} value={id}>{id} - {item.desc} (Desp: {formatNum(groupedApproved[id])} {item.unit})</option> : null;
-                                              })}
-                                            </select>
-                                            <input type="number" step="0.01" value={phaseIngQty} onChange={e => setPhaseIngQty(e.target.value)} className="w-24 border border-gray-200 rounded-lg p-2 text-xs font-bold text-center outline-none" placeholder="KG" />
-                                            <button onClick={() => { if (!phaseIngId || !phaseIngQty) return; const newIns = [...(phaseForm.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }]; setPhaseForm({ ...phaseForm, insumos: newIns }); setPhaseIngId(''); setPhaseIngQty(''); }} className="bg-orange-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-orange-600"><Plus size={14} /></button>
-                                          </div>
-                                          {(phaseForm.insumos || []).map((ins, i) => (
-                                            <div key={i} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200 mb-1">
-                                              <span className="text-xs font-black text-orange-600">{ins.id}</span>
-                                              <span className="text-xs font-black">{formatNum(ins.qty)} KG</span>
-                                              <button onClick={() => setPhaseForm({ ...phaseForm, insumos: phaseForm.insumos.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-600"><X size={12} /></button>
-                                            </div>
-                                          ))}
-                                        </>
-                                      );
-                                    })()}
+                                    {renderInsumosPhasePanel(req, activePhaseTab)}
                                   </div>
 
                                   {/* ── 4 BOTONES DE FASE ── */}
