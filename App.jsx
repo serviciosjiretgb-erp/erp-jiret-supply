@@ -8,7 +8,7 @@ import {
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch } from "firebase/firestore";
+import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshoEt, deleteDoc, writeBatch } from "firebase/firestore";
 
 // ============================================================================
 // ESCUDO DE ERRORES EXTREMO
@@ -266,17 +266,18 @@ export default function App() {
     headers.forEach(el => { el.dataset.prevDisplay = el.style.display || ''; el.style.setProperty('display','block','important'); });
 
     // ── Tamaño virtual fijo tipo escritorio ───────────────────────────
-    // Portrait → 900 px  /  Landscape → 1200 px
-    // html2pdf encajará todo en hoja carta de forma automática
-    const vw = isLandscape ? 1200 : 900;
+    // Portrait → 794 px (equivale exactamente a carta a 96dpi sin margen)
+    // Landscape → 1060 px
+    const vw = isLandscape ? 1060 : 794;
+    const pad = isLandscape ? '20px 24px' : '16px 20px';
 
     const savedStyle = element.getAttribute('style') || '';
-    element.style.cssText = `width:${vw}px !important;max-width:${vw}px !important;margin:0 !important;padding:32px !important;background:#ffffff !important;color:#000000 !important;box-sizing:border-box !important;`;
+    element.style.cssText = `width:${vw}px !important;max-width:${vw}px !important;margin:0 !important;padding:${pad} !important;background:#ffffff !important;color:#000000 !important;box-sizing:border-box !important;`;
 
     const opt = {
-      margin:   isLandscape ? [8, 8, 8, 8] : [12, 12, 12, 12],   // mm
+      margin:   isLandscape ? [5, 5, 5, 5] : [8, 8, 8, 8],   // mm
       filename: `${filename}_${getTodayDate()}.pdf`,
-      image:    { type: 'jpeg', quality: 0.92 },
+      image:    { type: 'jpeg', quality: 0.95 },
       html2canvas: {
         scale:           2,
         useCORS:         true,
@@ -288,7 +289,7 @@ export default function App() {
         onclone: (cloned) => {
           const el = cloned.getElementById('pdf-content');
           if (el) {
-            el.style.cssText = `width:${vw}px !important;max-width:${vw}px !important;margin:0 !important;padding:32px !important;background:#ffffff !important;color:#000000 !important;box-sizing:border-box !important;`;
+            el.style.cssText = `width:${vw}px !important;max-width:${vw}px !important;margin:0 !important;padding:${pad} !important;background:#ffffff !important;color:#000000 !important;box-sizing:border-box !important;`;
           }
           cloned.querySelectorAll('.pdf-header').forEach(h => h.style.setProperty('display','block','important'));
           cloned.querySelectorAll('.no-pdf,[data-html2canvas-ignore]').forEach(h => h.style.setProperty('display','none','important'));
@@ -1340,6 +1341,39 @@ export default function App() {
     if (invView === 'reportes_mod') return renderInventoryReports();
 
     if (invView === 'wip') {
+      // Construir movimientos WIP: ENTRADAS desde wipInventory + SALIDAS desde invMovements de producción
+      const wipEntradas = wipInventory.map(item => ({
+        ...item,
+        movType: 'ENTRADA',
+        fecha: item.fechaAsignacion,
+        kg: item.kgAsignados,
+        descripcion: 'Traslado Almacén → WIP',
+      }));
+
+      const wipSalidas = invMovements
+        .filter(m => m.type === 'SALIDA' && m.notes && (
+          m.notes.includes('PRODUCCIÓN') || m.notes.includes('PRODUCCION')
+        ))
+        .map(m => ({
+          id: m.id,
+          movType: 'SALIDA',
+          opId: m.opAsignada || m.reference || '—',
+          fecha: m.date,
+          kg: m.qty,
+          itemId: m.itemId,
+          itemName: m.itemName,
+          fase: (m.notes || '').replace('PRODUCCIÓN', '').replace('PRODUCCION', '').trim(),
+          descripcion: 'Consumo en Producción',
+          status: 'CONSUMIDO',
+          materiales: [{ id: m.itemId, qty: m.qty }],
+          cliente: '—',
+          user: m.user,
+          timestamp: m.timestamp,
+        }));
+
+      // Combinar y ordenar por timestamp desc
+      const allWipMovs = [...wipEntradas, ...wipSalidas].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
       return (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
           <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-purple-50 flex justify-between items-center no-pdf">
@@ -1348,31 +1382,31 @@ export default function App() {
                 <Beaker className="text-purple-600" size={24}/> Inventario de Productos en Proceso (WIP)
               </h2>
               <p className="text-[10px] font-bold text-purple-600 mt-1 uppercase tracking-widest">
-                Materiales e insumos asignados a órdenes de producción activas
+                Movimientos: Entradas (Almacén → WIP) y Salidas (WIP → Producción)
               </p>
             </div>
             <div className="flex gap-3">
-              <button 
+              <button
                 onClick={() => {
-                  const data = wipInventory.map(item => [
+                  const data = allWipMovs.map(item => [
+                    item.movType,
                     item.opId,
-                    item.cliente,
-                    item.producto,
-                    formatNum(item.kgAsignados),
-                    item.fase,
-                    item.fechaAsignacion,
-                    item.status
+                    item.cliente || '—',
+                    item.fecha,
+                    item.fase || '—',
+                    formatNum(item.kg),
+                    item.status || item.descripcion,
                   ]);
-                  handleExportExcel(data, 'Inventario_WIP', 
-                    ['OP ID', 'Cliente', 'Producto', 'KG Asignados', 'Fase', 'Fecha', 'Estado']
+                  handleExportExcel(data, 'Inventario_WIP',
+                    ['Tipo', 'OP ID', 'Cliente', 'Fecha', 'Fase', 'KG', 'Estado']
                   );
                 }}
                 className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"
               >
                 <Download size={16}/> EXPORTAR EXCEL
               </button>
-              <button 
-                onClick={() => handleExportPDF('Inventario_WIP', true)} 
+              <button
+                onClick={() => handleExportPDF('Inventario_WIP', true)}
                 className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"
               >
                 <Printer size={16}/> EXPORTAR PDF
@@ -1389,83 +1423,89 @@ export default function App() {
               <p className="text-sm font-bold text-gray-500 uppercase mt-2">AL: {getTodayDate()}</p>
             </div>
 
+            {/* Resumen KG en proceso */}
+            <div className="grid grid-cols-3 gap-4 mb-6">
+              <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+                <span className="text-[10px] font-black text-green-700 uppercase block mb-1">Total KG Entradas</span>
+                <span className="text-2xl font-black text-green-600">{formatNum(wipEntradas.reduce((s, i) => s + parseNum(i.kg), 0))}</span>
+              </div>
+              <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-center">
+                <span className="text-[10px] font-black text-red-700 uppercase block mb-1">Total KG Salidas</span>
+                <span className="text-2xl font-black text-red-600">{formatNum(wipSalidas.reduce((s, i) => s + parseNum(i.kg), 0))}</span>
+              </div>
+              <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 text-center">
+                <span className="text-[10px] font-black text-purple-700 uppercase block mb-1">KG Neto en WIP</span>
+                <span className="text-2xl font-black text-purple-600">
+                  {formatNum(wipEntradas.reduce((s, i) => s + parseNum(i.kg), 0) - wipSalidas.reduce((s, i) => s + parseNum(i.kg), 0))}
+                </span>
+              </div>
+            </div>
+
             <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
               <table className="w-full text-left whitespace-nowrap text-xs">
                 <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
                   <tr className="uppercase font-black text-[10px] tracking-widest text-black">
+                    <th className="py-3 px-4 border-r print:border-black">Tipo Mov.</th>
                     <th className="py-3 px-4 border-r print:border-black">OP ID</th>
-                    <th className="py-3 px-4 border-r print:border-black">Cliente</th>
-                    <th className="py-3 px-4 border-r print:border-black">Producto</th>
-                    <th className="py-3 px-4 border-r print:border-black text-center">Materiales Asignados</th>
-                    <th className="py-3 px-4 border-r print:border-black text-center">KG Asignados</th>
-                    <th className="py-3 px-4 border-r print:border-black">Fase Actual</th>
-                    <th className="py-3 px-4 border-r print:border-black text-center">Fecha Asignación</th>
-                    <th className="py-3 px-4 text-center print:border-black">Estado</th>
+                    <th className="py-3 px-4 border-r print:border-black">Fecha</th>
+                    <th className="py-3 px-4 border-r print:border-black">Cliente / Producto</th>
+                    <th className="py-3 px-4 border-r print:border-black">Fase</th>
+                    <th className="py-3 px-4 border-r print:border-black">Materiales</th>
+                    <th className="py-3 px-4 text-center print:border-black">KG</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-black print:divide-black">
-                  {wipInventory.map(item => (
-                    <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="py-3 px-4 border-r print:border-black font-black text-purple-600">{item.opId}</td>
-                      <td className="py-3 px-4 border-r print:border-black font-bold uppercase">{item.cliente}</td>
-                      <td className="py-3 px-4 border-r print:border-black font-bold uppercase">
-                        {item.producto}
-                        <br/>
-                        <span className="text-[9px] text-gray-500 print:text-black">{item.especificaciones}</span>
-                      </td>
-                      <td className="py-3 px-4 border-r print:border-black">
-                        <ul className="text-[9px] space-y-1">
-                          {item.materiales?.map((mat, idx) => (
-                            <li key={idx} className="font-bold">
-                              <span className="bg-gray-100 px-2 rounded print:border print:border-black">{formatNum(mat.qty)}</span> x {mat.id}
-                            </li>
-                          ))}
-                        </ul>
-                      </td>
-                      <td className="py-3 px-4 border-r print:border-black text-center font-black text-lg text-purple-600">
-                        {formatNum(item.kgAsignados)}
-                      </td>
-                      <td className="py-3 px-4 border-r print:border-black font-bold uppercase">{item.fase}</td>
-                      <td className="py-3 px-4 border-r print:border-black text-center font-bold">{item.fechaAsignacion}</td>
-                      <td className="py-3 px-4 text-center">
-                        <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${
-                          item.status === 'EN PROCESO' ? 'bg-yellow-100 text-yellow-700 print:border print:border-black' :
-                          item.status === 'COMPLETADO' ? 'bg-green-100 text-green-700 print:border print:border-black' :
-                          'bg-gray-100 text-gray-700 print:border print:border-black'
-                        }`}>
-                          {item.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                  {wipInventory.length === 0 && (
-                    <tr><td colSpan="8" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">
-                      No hay productos en proceso registrados
+                  {allWipMovs.map((item, idx) => {
+                    const isEntrada = item.movType === 'ENTRADA';
+                    return (
+                      <tr key={`${item.id}-${idx}`} className={`hover:bg-gray-50 transition-colors ${isEntrada ? 'bg-green-50/30' : 'bg-red-50/30'}`}>
+                        <td className="py-3 px-4 border-r print:border-black">
+                          <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${isEntrada ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {isEntrada ? '↓ ENTRADA' : '↑ SALIDA'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 border-r print:border-black font-black text-purple-600">{item.opId}</td>
+                        <td className="py-3 px-4 border-r print:border-black font-bold">{item.fecha}</td>
+                        <td className="py-3 px-4 border-r print:border-black font-bold uppercase">
+                          {isEntrada ? (
+                            <>{item.cliente}<br/><span className="text-[9px] text-gray-500">{item.producto}</span></>
+                          ) : (
+                            <>{item.itemName || item.itemId}<br/><span className="text-[9px] text-gray-500">{item.descripcion}</span></>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 border-r print:border-black font-bold uppercase">{item.fase || '—'}</td>
+                        <td className="py-3 px-4 border-r print:border-black">
+                          {isEntrada ? (
+                            <ul className="text-[9px] space-y-0.5">
+                              {(item.materiales || []).map((mat, i) => (
+                                <li key={i} className="font-bold">
+                                  <span className="bg-gray-100 px-1 rounded print:border print:border-black">{formatNum(mat.qty)}</span> × {mat.id}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <span className="text-[9px] font-bold">{item.itemId}</span>
+                          )}
+                        </td>
+                        <td className={`py-3 px-4 text-center font-black text-lg print:border-black ${isEntrada ? 'text-green-600' : 'text-red-600'}`}>
+                          {isEntrada ? '+' : '-'}{formatNum(item.kg)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {allWipMovs.length === 0 && (
+                    <tr><td colSpan="7" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">
+                      No hay movimientos WIP registrados
                     </td></tr>
                   )}
                 </tbody>
-                <tfoot className="bg-gray-100 border-t-2 border-gray-300 print:border-black">
-                  <tr className="font-black text-sm">
-                    <td colSpan="4" className="py-4 px-4 text-right uppercase border-r print:border-black">TOTAL KG EN PROCESO:</td>
-                    <td className="py-4 px-4 text-center text-lg text-purple-700 border-r print:border-black">
-                      {formatNum(wipInventory.reduce((sum, item) => sum + parseNum(item.kgAsignados), 0))}
-                    </td>
-                    <td colSpan="3"></td>
-                  </tr>
-                </tfoot>
               </table>
             </div>
 
-            <div className="mt-8 bg-purple-50 border border-purple-200 p-6 rounded-xl print:border-black">
-              <h3 className="text-sm font-black text-purple-800 uppercase mb-3 flex items-center gap-2">
-                <AlertTriangle size={18} className="text-purple-600" />
-                Información sobre WIP
-              </h3>
-              <p className="text-xs font-bold text-purple-700">
-                Este inventario refleja materiales e insumos que han sido asignados automáticamente a órdenes de producción activas 
-                (requisiciones aprobadas desde almacén). Los materiales se descargan "face to face" del inventario principal 
-                cuando se aprueban las requisiciones de planta.
-              </p>
+            <div className="mt-6 bg-purple-50 border border-purple-200 p-4 rounded-xl print:border-black text-xs font-bold text-purple-700">
+              <span className="font-black uppercase">Nota: </span>
+              Las <span className="text-green-700 font-black">ENTRADAS</span> corresponden al traslado de materiales desde el almacén principal al WIP (aprobación de requisición de planta).
+              Las <span className="text-red-700 font-black">SALIDAS</span> corresponden al consumo de materiales en las fases de producción.
             </div>
           </div>
         </div>
@@ -2479,7 +2519,7 @@ export default function App() {
           <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowSingleReqReport(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Requisicion_${req.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Exportar PDF</button></div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center my-4"><span className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">REQUISICIÓN DE PRODUCCIÓN N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
-          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto}</p></div></div>
+          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto}</p>{req.categoria && <p className="mt-1 text-orange-600">CATEGORÍA: {req.categoria}</p>}</div></div>
           <div className="border-2 border-black p-4 grid grid-cols-4 gap-4 text-center text-xs font-black uppercase mb-4 rounded-2xl"><div>ANCHO<br/><span className="text-sm text-blue-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-blue-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-blue-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-blue-600">{req.micras}</span></div></div>
           
           <div className="bg-gray-50 p-4 flex justify-between border-2 border-black rounded-2xl mb-4">
@@ -3198,7 +3238,12 @@ export default function App() {
       if (isClose) currentPhase.isClosed = true;
 
       const newProd = { ...(req.production || {}), [activePhaseTab]: currentPhase };
-      const newStatus = (activePhaseTab === 'sellado' && isClose) ? 'COMPLETADO' : 'EN PROCESO';
+      
+      // Determinar nuevo status: COMPLETADO si todas las fases están cerradas o saltadas
+      const allPhases = ['extrusion', 'impresion', 'sellado'];
+      const updatedProd = { ...(req.production || {}), [activePhaseTab]: currentPhase };
+      const allClosed = allPhases.every(p => updatedProd[p]?.isClosed === true || updatedProd[p]?.skipped === true);
+      const newStatus = (isClose && allClosed) ? 'COMPLETADO' : 'EN PROCESO';
 
       fbBatch.update(getDocRef('requirements', req.id), { production: newProd, status: newStatus });
       await fbBatch.commit();
@@ -3439,9 +3484,10 @@ export default function App() {
             <div><span className="font-black uppercase text-[9px] text-gray-500 block">Emisión:</span><span className="font-black text-black">{req.fecha}</span></div>
             <div><span className="font-black uppercase text-[9px] text-orange-600 block">KG Materia Prima:</span><span className="font-black text-orange-600 text-lg">{formatNum(req.requestedKg)} KG</span></div>
             <div><span className="font-black uppercase text-[9px] text-gray-500 block">Tipo:</span><span className="font-black uppercase text-black">{req.tipoProducto}</span></div>
-            <div className="grid grid-cols-2 gap-1">
-              <div><span className="font-black uppercase text-[9px] text-gray-500 block">Fecha Entrada:</span><div className="border-b border-gray-400 w-24 h-5"></div></div>
-              <div><span className="font-black uppercase text-[9px] text-gray-500 block">Fecha Salida:</span><div className="border-b border-gray-400 w-24 h-5"></div></div>
+            <div><span className="font-black uppercase text-[9px] text-gray-500 block">Categoría del Producto:</span><span className="font-black uppercase text-black">{req.categoria || '—'}</span></div>
+            <div className="col-span-3 grid grid-cols-2 gap-1 mt-1">
+              <div><span className="font-black uppercase text-[9px] text-gray-500 block">Fecha Entrada:</span><div className="border-b border-gray-400 w-36 h-5"></div></div>
+              <div><span className="font-black uppercase text-[9px] text-gray-500 block">Fecha Salida:</span><div className="border-b border-gray-400 w-36 h-5"></div></div>
             </div>
           </div>
 
@@ -3988,28 +4034,60 @@ export default function App() {
                                   {/* Insumos */}
                                   <div className="bg-white rounded-xl border border-orange-200 p-4">
                                     <h4 className="text-[9px] font-black text-gray-700 uppercase mb-3">Insumos Consumidos en esta Fase</h4>
-                                    <div className="flex gap-2 mb-3">
-                                      <select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
-                                        <option value="">Seleccione insumo...</option>
-                                        {(() => {
-                                          const approved = invRequisitions.filter(r=>r.opId===req.id&&r.phase===activePhaseTab&&r.status==='APROBADA');
-                                          if (approved.length > 0) {
-                                            const ids = [...new Set(approved.flatMap(r=>(r.items||[]).map(i=>i.id)))];
-                                            return ids.map(id=>{const item=inventory.find(i=>i.id===id); return item?<option key={id} value={id}>{id} - {item.desc} (Stock:{formatNum(item.stock)})</option>:null;});
-                                          }
-                                          return (inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} ({formatNum(i.stock)} {i.unit})</option>);
-                                        })()}
-                                      </select>
-                                      <input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} className="w-24 border border-gray-200 rounded-lg p-2 text-xs font-bold text-center outline-none" placeholder="KG" />
-                                      <button onClick={()=>{ if(!phaseIngId||!phaseIngQty) return; const newIns=[...(phaseForm.insumos||[]),{id:phaseIngId,qty:parseFloat(phaseIngQty)}]; setPhaseForm({...phaseForm,insumos:newIns}); setPhaseIngId(''); setPhaseIngQty(''); }} className="bg-orange-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-orange-600"><Plus size={14}/></button>
-                                    </div>
-                                    {(phaseForm.insumos||[]).map((ins,i)=>(
-                                      <div key={i} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200 mb-1">
-                                        <span className="text-xs font-black text-orange-600">{ins.id}</span>
-                                        <span className="text-xs font-black">{formatNum(ins.qty)} KG</span>
-                                        <button onClick={()=>setPhaseForm({...phaseForm,insumos:phaseForm.insumos.filter((_,j)=>j!==i)})} className="text-red-400 hover:text-red-600"><X size={12}/></button>
-                                      </div>
-                                    ))}
+                                    {(() => {
+                                      const approved = invRequisitions.filter(r => r.opId === req.id && r.phase === activePhaseTab && (r.status === 'APROBADA' || r.status === 'APROBADO'));
+                                      const approvedItems = approved.flatMap(r => r.items || []);
+                                      const groupedApproved = {};
+                                      approvedItems.forEach(it => {
+                                        if (!groupedApproved[it.id]) groupedApproved[it.id] = 0;
+                                        groupedApproved[it.id] += parseNum(it.qty);
+                                      });
+                                      const approvedIds = Object.keys(groupedApproved);
+
+                                      if (approvedIds.length === 0) {
+                                        return (
+                                          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
+                                            <p className="text-[10px] font-black text-yellow-700 uppercase">Sin requisición aprobada para esta fase</p>
+                                            <p className="text-[9px] font-bold text-yellow-600 mt-1">Solicite insumos a almacén antes de registrar consumo</p>
+                                          </div>
+                                        );
+                                      }
+
+                                      return (
+                                        <>
+                                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 mb-3">
+                                            <p className="text-[9px] font-black text-blue-700 uppercase mb-1">Insumos despachados por almacén:</p>
+                                            {approvedIds.map(id => {
+                                              const invItem = inventory.find(i => i.id === id);
+                                              return (
+                                                <div key={id} className="flex justify-between text-[9px] font-bold text-blue-600">
+                                                  <span>{invItem?.desc || id}</span>
+                                                  <span className="font-black">{formatNum(groupedApproved[id])} {invItem?.unit || 'KG'}</span>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                          <div className="flex gap-2 mb-3">
+                                            <select value={phaseIngId} onChange={e => setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
+                                              <option value="">Seleccione insumo despachado...</option>
+                                              {approvedIds.map(id => {
+                                                const item = inventory.find(i => i.id === id);
+                                                return item ? <option key={id} value={id}>{id} - {item.desc} (Desp: {formatNum(groupedApproved[id])} {item.unit})</option> : null;
+                                              })}
+                                            </select>
+                                            <input type="number" step="0.01" value={phaseIngQty} onChange={e => setPhaseIngQty(e.target.value)} className="w-24 border border-gray-200 rounded-lg p-2 text-xs font-bold text-center outline-none" placeholder="KG" />
+                                            <button onClick={() => { if (!phaseIngId || !phaseIngQty) return; const newIns = [...(phaseForm.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }]; setPhaseForm({ ...phaseForm, insumos: newIns }); setPhaseIngId(''); setPhaseIngQty(''); }} className="bg-orange-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-orange-600"><Plus size={14} /></button>
+                                          </div>
+                                          {(phaseForm.insumos || []).map((ins, i) => (
+                                            <div key={i} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200 mb-1">
+                                              <span className="text-xs font-black text-orange-600">{ins.id}</span>
+                                              <span className="text-xs font-black">{formatNum(ins.qty)} KG</span>
+                                              <button onClick={() => setPhaseForm({ ...phaseForm, insumos: phaseForm.insumos.filter((_, j) => j !== i) })} className="text-red-400 hover:text-red-600"><X size={12} /></button>
+                                            </div>
+                                          ))}
+                                        </>
+                                      );
+                                    })()}
                                   </div>
 
                                   {/* ── 4 BOTONES DE FASE ── */}
