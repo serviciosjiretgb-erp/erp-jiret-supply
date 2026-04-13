@@ -177,8 +177,21 @@ export default function App() {
   // Estados para Toma Física
   const [physicalCounts, setPhysicalCounts] = useState({});
 
-  // Formularios de Configuración
-  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
+  const [planDeCuentas, setPlanDeCuentas] = useState([]);
+  const [erView, setErView] = useState('estado'); // 'estado' | 'variaciones'
+  const [erMes, setErMes] = useState(new Date().getMonth() + 1);
+  const [erAno, setErAno] = useState(new Date().getFullYear());
+  const [erTasa, setErTasa] = useState('');
+  const prevMonth = () => { const d = new Date(); d.setMonth(d.getMonth()-1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
+  const [varMesA, setVarMesA] = useState(new Date().toISOString().substring(0,7));
+  const [varMesB, setVarMesB] = useState(prevMonth());
+
+  // Estados Plan de Cuentas
+  const [showPDCImport, setShowPDCImport] = useState(false);
+  const [pdcSearchTerm, setPdcSearchTerm] = useState('');
+  // Cuenta contable para ingresos (configurable)
+  const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
+ = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
   const [newUserForm, setNewUserForm] = useState(initialUserForm);
   const [editingUserId, setEditingUserId] = useState(null);
 
@@ -217,7 +230,7 @@ export default function App() {
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
   // Formularios Costos Operativos
-  const initialOpCostForm = { date: getTodayDate(), category: 'Electricidad', description: '', amount: '' };
+  const initialOpCostForm = { date: getTodayDate(), category: 'Electricidad', description: '', amount: '', cuentaContable: '' };
   const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
   const [opCosts, setOpCosts] = useState([]);
   const [costFilterCategory, setCostFilterCategory] = useState('TODAS');
@@ -259,31 +272,19 @@ export default function App() {
       return;
     }
 
-    // ── Mostrar/ocultar elementos ─────────────────────────────────────
-    const noPdf = element.querySelectorAll('.no-pdf, [data-html2canvas-ignore]');
-    noPdf.forEach(el => { el.dataset.prevDisplay = el.style.display || ''; el.style.setProperty('display','none','important'); });
-    const headers = element.querySelectorAll('.pdf-header');
-    headers.forEach(el => { el.dataset.prevDisplay = el.style.display || ''; el.style.setProperty('display','block','important'); });
+    // ── Show/hide en el DOM real (para que se clone correctamente) ─────────
+    const noPdfEls = element.querySelectorAll('.no-pdf, [data-html2canvas-ignore]');
+    noPdfEls.forEach(el => { el.dataset.prevDisplay = el.style.display || ''; el.style.setProperty('display','none','important'); });
+    const headerEls = element.querySelectorAll('.pdf-header');
+    headerEls.forEach(el => { el.dataset.prevDisplay = el.style.display || ''; el.style.setProperty('display','block','important'); });
 
-    // ── Tamaño virtual fijo tipo escritorio ───────────────────────────
-    // Portrait → 794 px (equivale exactamente a carta a 96dpi sin margen)
-    // Landscape → 1060 px
-    const vw = isLandscape ? 1060 : 794;
-    const pad = isLandscape ? '20px 24px' : '16px 20px';
-
-    const savedStyle = element.getAttribute('style') || '';
-    // position:fixed at 0,0 garantiza que html2canvas capture desde la esquina correcta
-    element.style.cssText = `
-      width:${vw}px !important;max-width:${vw}px !important;min-width:${vw}px !important;
-      margin:0 !important;padding:${pad} !important;
-      background:#ffffff !important;color:#000000 !important;
-      box-sizing:border-box !important;
-      position:fixed !important;top:0 !important;left:0 !important;
-      z-index:99999 !important;overflow:visible !important;
-    `;
+    // ── Ancho virtual = hoja carta a 96dpi ────────────────────────────────
+    // Portrait  8.5" × 96 = 816px  |  Landscape 11" × 96 = 1056px
+    const vw  = isLandscape ? 1056 : 816;
+    const pad = '20px 24px';
 
     const opt = {
-      margin:   isLandscape ? [5, 5, 5, 5] : [8, 8, 8, 8],
+      margin:   isLandscape ? [6, 6, 6, 6] : [8, 8, 8, 8],
       filename: `${filename}_${getTodayDate()}.pdf`,
       image:    { type: 'jpeg', quality: 0.95 },
       html2canvas: {
@@ -295,21 +296,40 @@ export default function App() {
         windowWidth:     vw,
         scrollX:         0,
         scrollY:         0,
-        onclone: (cloned) => {
-          // Limpiar body del clon para que no haya offsets
-          cloned.body.style.cssText = 'margin:0!important;padding:0!important;background:#fff!important;';
-          const el = cloned.getElementById('pdf-content');
-          if (el) {
-            el.style.cssText = `
-              width:${vw}px !important;max-width:${vw}px !important;min-width:${vw}px !important;
-              margin:0 !important;padding:${pad} !important;
-              background:#ffffff !important;color:#000000 !important;
-              box-sizing:border-box !important;position:relative !important;
-              left:0 !important;top:0 !important;overflow:visible !important;
-            `;
-          }
-          cloned.querySelectorAll('.pdf-header').forEach(h => h.style.setProperty('display','block','important'));
-          cloned.querySelectorAll('.no-pdf,[data-html2canvas-ignore]').forEach(h => h.style.setProperty('display','none','important'));
+        onclone: (clonedDoc) => {
+          // ── 1. Limpiar body del clon ──────────────────────────────────
+          clonedDoc.body.style.cssText =
+            'margin:0!important;padding:0!important;background:#fff!important;' +
+            'width:' + vw + 'px!important;overflow:visible!important;';
+
+          // ── 2. Encontrar el elemento en el clon ──────────────────────
+          const el = clonedDoc.getElementById('pdf-content');
+          if (!el) return;
+
+          // ── 3. Mover el elemento al inicio del body (posición 0,0) ───
+          // Esto elimina cualquier offset del layout centrado
+          clonedDoc.body.innerHTML = '';
+          clonedDoc.body.appendChild(el);
+
+          // ── 4. Aplicar estilos de impresión al elemento ───────────────
+          el.style.cssText =
+            'width:' + vw + 'px!important;' +
+            'max-width:' + vw + 'px!important;' +
+            'min-width:' + vw + 'px!important;' +
+            'margin:0!important;' +
+            'padding:' + pad + '!important;' +
+            'background:#ffffff!important;' +
+            'color:#000000!important;' +
+            'box-sizing:border-box!important;' +
+            'position:relative!important;' +
+            'left:0!important;top:0!important;' +
+            'overflow:visible!important;';
+
+          // ── 5. Mostrar headers, ocultar elementos no-pdf ──────────────
+          el.querySelectorAll('.pdf-header').forEach(h =>
+            h.style.setProperty('display','block','important'));
+          el.querySelectorAll('.no-pdf,[data-html2canvas-ignore]').forEach(h =>
+            h.style.setProperty('display','none','important'));
         },
       },
       jsPDF: {
@@ -321,17 +341,19 @@ export default function App() {
       pagebreak: { mode: ['css', 'legacy'] },
     };
 
+    // ── Restaurar DOM real después de exportar ─────────────────────────────
     const restore = () => {
-      element.setAttribute('style', savedStyle);
-      noPdf.forEach(el => { el.style.display = el.dataset.prevDisplay || ''; delete el.dataset.prevDisplay; });
-      headers.forEach(el => { el.style.display = el.dataset.prevDisplay || ''; delete el.dataset.prevDisplay; });
+      noPdfEls.forEach(el => { el.style.display = el.dataset.prevDisplay || ''; delete el.dataset.prevDisplay; });
+      headerEls.forEach(el => { el.style.display = el.dataset.prevDisplay || ''; delete el.dataset.prevDisplay; });
     };
 
-    window.html2pdf().set(opt).from(element).save().then(restore).catch(err => {
-      restore();
-      console.error('PDF error:', err);
-      setDialog({title:'Error al generar PDF', text:'Intente nuevamente. Si persiste, recargue la página.', type:'alert'});
-    });
+    window.html2pdf().set(opt).from(element).save()
+      .then(restore)
+      .catch(err => {
+        restore();
+        console.error('PDF error:', err);
+        setDialog({title:'Error al generar PDF', text:'Intente nuevamente. Si persiste, recargue la página.', type:'alert'});
+      });
   };
   
   const handleExportExcel = (tableDataOrId, filename, headers = null) => {
@@ -508,9 +530,11 @@ export default function App() {
     const unsubWIP = onSnapshot(getColRef('wipInventory'), (s) => setWipInventory(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubFinished = onSnapshot(getColRef('finishedGoodsInventory'), (s) => setFinishedGoodsInventory(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     
+    const unsubPDC = onSnapshot(getColRef('planDeCuentas'), (s) => setPlanDeCuentas(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
+    
     return () => { 
       unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
-      unsubPOs(); unsubWIP(); unsubFinished(); 
+      unsubPOs(); unsubWIP(); unsubFinished(); unsubPDC();
     };
   }, [fbUser]);
 
@@ -2937,6 +2961,18 @@ export default function App() {
                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción</label>
                     <input type="text" value={newOpCostForm.description} onChange={e => setNewOpCostForm({...newOpCostForm, description: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500 uppercase" placeholder="EJ: PAGO DE FACTURA DE LUZ" />
                   </div>
+                  <div className="md:col-span-3">
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cuenta Contable (Plan de Cuentas)</label>
+                    <select value={newOpCostForm.cuentaContable} onChange={e => setNewOpCostForm({...newOpCostForm, cuentaContable: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500">
+                      <option value="">Sin cuenta asignada</option>
+                      {planDeCuentas.filter(p => p.grupo && (p.grupo.includes('COSTO') || p.grupo.includes('GASTO'))).map(p => (
+                        <option key={p.id} value={p.codigo}>{p.codigo} — {p.nombre}</option>
+                      ))}
+                      {planDeCuentas.filter(p => !p.grupo || (!p.grupo.includes('COSTO') && !p.grupo.includes('GASTO'))).map(p => (
+                        <option key={p.id} value={p.codigo}>[{p.grupo||'OTROS'}] {p.codigo} — {p.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="md:col-span-4">
                     <button type="submit" className="bg-green-600 text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-green-700 transition-all flex items-center gap-2"><PlusCircle size={16}/> Registrar Costo</button>
                   </div>
@@ -3406,7 +3442,7 @@ export default function App() {
         {/* Controles no-pdf */}
         <div className="flex justify-between p-6 border-b border-gray-200 no-pdf">
           <button onClick={() => setShowFiniquitoOP(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200 flex items-center gap-2">← Volver</button>
-          <button onClick={() => handleExportPDF(`Finiquito_OP_${req.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16}/> Exportar PDF</button>
+          <button onClick={() => handleExportPDF(`Finiquito_OP_${req.id}`, true)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16}/> Exportar PDF</button>
         </div>
         <div className="p-8">
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
@@ -4670,6 +4706,460 @@ export default function App() {
     );
   };
 
+  // ============================================================================
+  // PLAN DE CUENTAS — IMPORTAR TXT
+  // ============================================================================
+  const handleImportPlanCuentasTXT = async (file) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const lines = text.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+      const batch = writeBatch(db);
+      let count = 0;
+      for (const line of lines) {
+        const sep = line.includes('\t') ? '\t' : line.includes('|') ? '|' : ';';
+        const parts = line.split(sep).map(p => p.trim());
+        if (parts.length < 2) continue;
+        const [codigo, nombre, grupo, subGrupo, cuenta, subcuenta] = parts;
+        if (!codigo || !nombre) continue;
+        const docId = codigo.replace(/\./g, '_').replace(/\s/g, '_');
+        batch.set(getDocRef('planDeCuentas', docId), {
+          codigo, nombre: nombre.toUpperCase(), grupo: (grupo||'').toUpperCase(),
+          subGrupo: (subGrupo||'').toUpperCase(), cuenta: (cuenta||'').toUpperCase(),
+          subcuenta: (subcuenta||'').toUpperCase(), timestamp: Date.now()
+        });
+        count++;
+      }
+      await batch.commit();
+      setShowPDCImport(false);
+      setDialog({title:'Importacion Exitosa', text:`Se importaron ${count} cuentas al plan de cuentas.`, type:'alert'});
+    } catch(err) {
+      setDialog({title:'Error', text:'No se pudo importar el archivo: ' + err.message, type:'alert'});
+    }
+  };
+
+  const handleDeleteCuenta = (id) => {
+    setDialog({title:'Eliminar Cuenta', text:'Eliminar esta cuenta del plan?', type:'confirm',
+      onConfirm: async () => await deleteDoc(getDocRef('planDeCuentas', id))});
+  };
+
+  // ============================================================================
+  // CALCULAR ESTADO DE RESULTADO PARA UN PERIODO
+  // ============================================================================
+  const calcEstadoData = (ym) => {
+    // Ingresos: facturas del periodo
+    const facturasperiodo = (invoices || []).filter(i => {
+      const d = i.fecha || (typeof i.timestamp==='number' ? new Date(i.timestamp).toISOString().substring(0,7) : '');
+      return d.startsWith(ym);
+    });
+    const totalIngresos = facturasperiodo.reduce((s,i) => s + parseNum(i.montoBase), 0);
+
+    // Costos operativos del periodo, agrupados por cuenta contable
+    const costosPeriodo = (opCosts || []).filter(c => (c.month || (c.date||'').substring(0,7) || '').startsWith(ym));
+
+    // Movimientos de produccion del periodo
+    const movsProd = (invMovements || []).filter(m =>
+      m.type === 'SALIDA' && String(m.notes||'').toUpperCase().includes('PRODUCCI') &&
+      (m.date||'').startsWith(ym)
+    );
+    const totalCostoProd = movsProd.reduce((s,m) => s + parseNum(m.totalValue), 0);
+
+    // Agrupar costos operativos por cuenta contable
+    const costosPorCuenta = {};
+    costosPeriodo.forEach(c => {
+      const key = c.cuentaContable || ('CAT::' + (c.category||'OTROS'));
+      if (!costosPorCuenta[key]) {
+        const pdc = planDeCuentas.find(p => p.codigo === c.cuentaContable);
+        costosPorCuenta[key] = {
+          codigo: c.cuentaContable || '',
+          nombre: pdc ? pdc.nombre : (c.category || 'OTROS'),
+          grupo: pdc ? pdc.grupo : 'COSTOS OPERATIVOS',
+          subGrupo: pdc ? pdc.subGrupo : c.category || 'OTROS',
+          total: 0, movs: []
+        };
+      }
+      costosPorCuenta[key].total += parseNum(c.amount);
+      costosPorCuenta[key].movs.push(c);
+    });
+
+    const totalCostosOp = costosPeriodo.reduce((s,c) => s + parseNum(c.amount), 0);
+    const totalCostos = totalCostoProd + totalCostosOp;
+    const resultado = totalIngresos - totalCostos;
+
+    return { facturasperiodo, totalIngresos, costosPorCuenta, costosPeriodo, movsProd, totalCostoProd, totalCostosOp, totalCostos, resultado };
+  };
+
+  // ============================================================================
+  // RENDER — ESTADO DE RESULTADO
+  // ============================================================================
+  const renderEstadoResultadoModule = () => {
+    const MONTHS = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    const tasa = parseNum(erTasa) || 1;
+
+    const ymA = `${erAno}-${String(erMes).padStart(2,'0')}`;
+    const dataA = calcEstadoData(ymA);
+    const dataB = calcEstadoData(varMesB);
+
+    const pctOf = (val, base) => base !== 0 ? ((val / base) * 100).toFixed(2) + '%' : '0.00%';
+    const bs = (usd) => formatNum(usd * tasa);
+
+    // Agrupar plan de cuentas por jerarquía
+    const groupedPDC = {};
+    planDeCuentas.forEach(c => {
+      const g = c.grupo || 'OTROS'; const sg = c.subGrupo || g;
+      if (!groupedPDC[g]) groupedPDC[g] = {};
+      if (!groupedPDC[g][sg]) groupedPDC[g][sg] = [];
+      groupedPDC[g][sg].push(c);
+    });
+
+    // Construir filas del estado financiero
+    const buildRows = (data) => {
+      const rows = [];
+      // INGRESOS
+      rows.push({type:'grupo', label:'INGRESOS', className:'bg-orange-500 text-white font-black'});
+      rows.push({type:'subgrupo', label:'VENTAS BRUTAS', className:'bg-orange-100 text-orange-800 font-black'});
+      // Factura por cuenta
+      const ingresosPDC = planDeCuentas.filter(p => p.grupo === 'INGRESOS' || (p.codigo||'').startsWith('4.'));
+      if (ingresosPDC.length > 0) {
+        ingresosPDC.forEach(p => {
+          // All invoices go to income accounts
+          const amt = data.totalIngresos; // simplified: all invoices to first income account
+          rows.push({type:'cuenta', codigo:p.codigo, label:p.nombre, usd: amt, pct: pctOf(amt, data.totalIngresos)});
+        });
+      } else {
+        rows.push({type:'cuenta', codigo:'', label:'INGRESOS POR VENTAS / MAQUILA', usd: data.totalIngresos, pct:'100.00%'});
+      }
+      rows.push({type:'subtotal', label:'Total VENTAS BRUTAS', usd: data.totalIngresos, pct: pctOf(data.totalIngresos, data.totalIngresos), className:'bg-orange-50 font-black text-orange-700'});
+      rows.push({type:'total_grupo', label:'Total INGRESOS', usd: data.totalIngresos, pct: pctOf(data.totalIngresos, data.totalIngresos), className:'bg-orange-200 font-black text-orange-900'});
+
+      rows.push({type:'spacer'});
+
+      // COSTOS
+      rows.push({type:'grupo', label:'COSTOS', className:'bg-gray-800 text-white font-black'});
+
+      // COSTO PRODUCCION
+      rows.push({type:'subgrupo', label:'COSTO PRODUCCION', className:'bg-gray-200 text-gray-800 font-black'});
+      const prodPDC = planDeCuentas.filter(p => p.grupo === 'COSTO PRODUCCION' || (p.codigo||'').startsWith('5.1.01'));
+      if (prodPDC.length > 0) {
+        prodPDC.forEach(p => rows.push({type:'cuenta', codigo:p.codigo, label:p.nombre, usd: data.totalCostoProd, pct: pctOf(data.totalCostoProd, data.totalIngresos)}));
+      } else {
+        rows.push({type:'cuenta', codigo:'', label:'COSTO DE PRODUCCION Y VENTAS', usd: data.totalCostoProd, pct: pctOf(data.totalCostoProd, data.totalIngresos)});
+      }
+      rows.push({type:'subtotal', label:'Total COSTO PRODUCCION', usd: data.totalCostoProd, pct: pctOf(data.totalCostoProd, data.totalIngresos), className:'bg-gray-100 font-black'});
+
+      // COSTOS OPERATIVOS — agrupados por cuenta/categoría
+      const opGroups = {};
+      Object.values(data.costosPorCuenta).forEach(c => {
+        const sg = c.subGrupo || c.grupo || 'COSTOS OPERATIVOS';
+        if (!opGroups[sg]) opGroups[sg] = [];
+        opGroups[sg].push(c);
+      });
+
+      Object.entries(opGroups).forEach(([sg, cuentas]) => {
+        rows.push({type:'subgrupo', label:sg, className:'bg-gray-100 text-gray-700 font-black'});
+        cuentas.forEach(c => {
+          rows.push({type:'cuenta', codigo:c.codigo, label:c.nombre, usd: c.total, pct: pctOf(c.total, data.totalIngresos)});
+        });
+        const sgTotal = cuentas.reduce((s,c)=>s+c.total,0);
+        rows.push({type:'subtotal', label:`Total ${sg}`, usd: sgTotal, pct: pctOf(sgTotal, data.totalIngresos), className:'bg-gray-100 font-black'});
+      });
+
+      rows.push({type:'total_grupo', label:'Total COSTOS', usd: data.totalCostos, pct: pctOf(data.totalCostos, data.totalIngresos), className:'bg-gray-700 text-white font-black'});
+      rows.push({type:'spacer'});
+      rows.push({type:'resultado', label:'RESULTADO DEL EJERCICIO', usd: dataA.resultado, pct: pctOf(dataA.resultado, dataA.totalIngresos), className: dataA.resultado >= 0 ? 'bg-green-600 text-white font-black' : 'bg-red-600 text-white font-black'});
+      return rows;
+    };
+
+    const rows = buildRows(dataA);
+
+    return (
+      <div className="space-y-6 animate-in fade-in">
+        {/* Header + Tabs */}
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-gray-900 to-gray-700">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-2xl font-black text-white uppercase flex items-center gap-3">
+                  <BarChart3 className="text-orange-400" size={30}/> Estado de Resultado
+                </h2>
+                <p className="text-xs font-bold text-gray-400 uppercase mt-1">Analisis Financiero y Variaciones</p>
+              </div>
+              <div className="flex gap-2">
+                {[{id:'estado',label:'Estado Financiero'},{id:'variaciones',label:'Variaciones'}].map(t=>(
+                  <button key={t.id} onClick={()=>setErView(t.id)} className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all ${erView===t.id?'bg-orange-500 text-white':'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>{t.label}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Filtros */}
+          <div className="px-8 py-4 bg-gray-50 border-b border-gray-200 flex flex-wrap gap-4 items-end">
+            {erView === 'estado' ? (
+              <>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes</label>
+                  <select value={erMes} onChange={e=>setErMes(parseInt(e.target.value))} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none bg-white">
+                    {MONTHS.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Año</label>
+                  <input type="number" value={erAno} onChange={e=>setErAno(parseInt(e.target.value))} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-24 text-center" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa Cambio (Bs/$)</label>
+                  <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="Ej: 392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-32 text-center" />
+                </div>
+                <button onClick={()=>handleExportPDF('Estado_Resultado', false)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> PDF</button>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Actual (A)</label>
+                  <input type="month" value={varMesA} onChange={e=>setVarMesA(e.target.value)} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Anterior (B)</label>
+                  <input type="month" value={varMesB} onChange={e=>setVarMesB(e.target.value)} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none" />
+                </div>
+                <button onClick={()=>handleExportPDF('Variaciones_ER', true)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> PDF</button>
+              </>
+            )}
+          </div>
+
+          {/* ESTADO FINANCIERO */}
+          {erView === 'estado' && (
+            <div id="pdf-content" className="p-0">
+              <div className="hidden pdf-header p-6 border-b-2 border-gray-300">
+                <ReportHeader />
+                <h1 className="text-2xl font-black text-center uppercase border-b-4 border-orange-500 pb-2 mt-4">ESTADO DE RESULTADO INTEGRAL</h1>
+                <p className="text-xs text-center font-bold text-gray-500 mt-1">PERIODO: {MONTHS[erMes-1]} {erAno} | TASA: {tasa > 1 ? formatNum(tasa) + ' Bs/$' : 'Sin tasa'}</p>
+              </div>
+
+              {/* Resultado resumen top */}
+              <div className="grid grid-cols-3 gap-0 border-b-2 border-gray-300">
+                <div className="p-4 border-r border-gray-200 text-center">
+                  <div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Ingresos</div>
+                  <div className="font-black text-lg text-green-600">${formatNum(dataA.totalIngresos)}</div>
+                </div>
+                <div className="p-4 border-r border-gray-200 text-center">
+                  <div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Costos</div>
+                  <div className="font-black text-lg text-red-600">${formatNum(dataA.totalCostos)}</div>
+                </div>
+                <div className={`p-4 text-center ${dataA.resultado>=0?'bg-green-50':'bg-red-50'}`}>
+                  <div className="text-[9px] font-black text-gray-400 uppercase mb-1">RESULTADO USD</div>
+                  <div className={`font-black text-xl ${dataA.resultado>=0?'text-green-700':'text-red-700'}`}>${formatNum(dataA.resultado)}</div>
+                  {tasa > 1 && <div className={`font-black text-xs ${dataA.resultado>=0?'text-green-600':'text-red-600'}`}>Bs. {bs(dataA.resultado)}</div>}
+                </div>
+              </div>
+
+              {/* Tabla principal */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-gray-800 text-white">
+                      <th className="py-2 px-4 text-left font-black uppercase text-[9px]">Cuenta / Concepto</th>
+                      <th className="py-2 px-3 text-center font-black uppercase text-[9px] w-16">UM</th>
+                      <th className="py-2 px-3 text-right font-black uppercase text-[9px] w-28">Saldo Neto USD</th>
+                      <th className="py-2 px-3 text-center font-black uppercase text-[9px] w-16">%</th>
+                      {tasa > 1 && <th className="py-2 px-3 text-right font-black uppercase text-[9px] w-32">Saldo Neto Bs.</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, i) => {
+                      if (row.type === 'spacer') return <tr key={i}><td colSpan={tasa>1?5:4} className="py-2"></td></tr>;
+                      if (row.type === 'resultado') return (
+                        <tr key={i} className={row.className}>
+                          <td className="py-3 px-4 font-black text-sm uppercase" colSpan={2}>{row.label}</td>
+                          <td className="py-3 px-3 text-right font-black text-sm">{row.usd >= 0 ? '' : '-'}${formatNum(Math.abs(row.usd))}</td>
+                          <td className="py-3 px-3 text-center font-black text-xs">{row.pct}</td>
+                          {tasa>1 && <td className="py-3 px-3 text-right font-black text-xs">{bs(row.usd)}</td>}
+                        </tr>
+                      );
+                      if (row.type === 'grupo') return (
+                        <tr key={i} className={row.className}>
+                          <td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>{row.label}</td>
+                        </tr>
+                      );
+                      if (row.type === 'subgrupo') return (
+                        <tr key={i} className={row.className || 'bg-gray-100'}>
+                          <td className="py-2 px-4 font-black text-[10px] uppercase pl-8" colSpan={tasa>1?5:4}>{row.label}</td>
+                        </tr>
+                      );
+                      if (row.type === 'cuenta') return (
+                        <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14">
+                            {row.codigo && <span className="text-orange-600 mr-2">{row.codigo}</span>}
+                            {row.label}
+                          </td>
+                          <td className="py-2 px-3 text-center font-bold text-[9px] text-gray-500">USD</td>
+                          <td className="py-2 px-3 text-right font-black">{formatNum(row.usd)}</td>
+                          <td className="py-2 px-3 text-center font-bold text-[9px]">{row.pct}</td>
+                          {tasa>1 && <td className="py-2 px-3 text-right font-bold text-gray-600">{bs(row.usd)}</td>}
+                        </tr>
+                      );
+                      if (row.type === 'subtotal' || row.type === 'total_grupo') return (
+                        <tr key={i} className={row.className || 'bg-gray-100'}>
+                          <td className="py-2.5 px-4 font-black text-[10px] uppercase pl-8" colSpan={2}>{row.label}</td>
+                          <td className="py-2.5 px-3 text-right font-black">{row.type==='total_grupo'?'':''}{formatNum(row.usd)}</td>
+                          <td className="py-2.5 px-3 text-center font-black text-[9px]">{row.pct}</td>
+                          {tasa>1 && <td className="py-2.5 px-3 text-right font-black">{bs(row.usd)}</td>}
+                        </tr>
+                      );
+                      return null;
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* VARIACIONES */}
+          {erView === 'variaciones' && (
+            <div id="pdf-content" className="p-0">
+              <div className="hidden pdf-header p-6 border-b-2 border-gray-300">
+                <ReportHeader />
+                <h1 className="text-2xl font-black text-center uppercase border-b-4 border-orange-500 pb-2 mt-4">CUADRO COMPARATIVO DE VARIACIONES</h1>
+                <p className="text-xs text-center font-bold text-gray-500 mt-1">Mes A: {varMesA} vs Mes B: {varMesB}</p>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-orange-500 text-white">
+                      <th className="py-3 px-4 text-left font-black uppercase text-[9px]" colSpan={2}>Cuenta / Concepto</th>
+                      <th className="py-3 px-3 text-center font-black uppercase text-[9px]" colSpan={2}>Mes Actual ({varMesA})</th>
+                      <th className="py-3 px-3 text-center font-black uppercase text-[9px]" colSpan={2}>Mes Anterior ({varMesB})</th>
+                      <th className="py-3 px-3 text-center font-black uppercase text-[9px]" colSpan={2}>Variacion Absoluta</th>
+                      <th className="py-3 px-3 text-center font-black uppercase text-[9px]">Var. %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* INGRESOS */}
+                    <tr className="bg-orange-100"><td colSpan={9} className="py-2 px-4 font-black uppercase text-orange-800">INGRESOS</td></tr>
+                    <tr className="bg-orange-50"><td className="py-1.5 px-4 text-[9px] font-black uppercase pl-8 text-orange-700" colSpan={2}>VENTAS BRUTAS</td><td colSpan={7}></td></tr>
+                    {(() => {
+                      const a = dataA.totalIngresos; const b = dataB.totalIngresos;
+                      const varAbs = a - b; const varRel = b !== 0 ? ((varAbs/b)*100).toFixed(2) : '—';
+                      return (
+                        <tr className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>INGRESOS POR VENTAS / MAQUILA</td>
+                          <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
+                          <td className="py-2 px-3 text-right font-black">{formatNum(a)}</td>
+                          <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
+                          <td className="py-2 px-3 text-right font-black">{formatNum(b)}</td>
+                          <td className="py-2 px-3 text-center text-[9px] font-bold">{varAbs>0?'▲':'▼'} USD</td>
+                          <td className={`py-2 px-3 text-right font-black ${varAbs>=0?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(varAbs))}</td>
+                          <td className={`py-2 px-3 text-center font-black text-[10px] ${varAbs>=0?'text-green-600':'text-red-600'}`}>{typeof varRel==='string'?varRel:varRel+'%'}</td>
+                        </tr>
+                      );
+                    })()}
+                    <tr className="bg-orange-100 font-black"><td className="py-2 px-4 text-[10px] uppercase font-black text-orange-800" colSpan={2}>Total INGRESOS</td>
+                      <td className="py-2 px-3 text-center text-[9px] text-orange-700 font-black">USD</td>
+                      <td className="py-2 px-3 text-right font-black text-orange-700">{formatNum(dataA.totalIngresos)}</td>
+                      <td className="py-2 px-3 text-center text-[9px] text-orange-700 font-black">USD</td>
+                      <td className="py-2 px-3 text-right font-black text-orange-700">{formatNum(dataB.totalIngresos)}</td>
+                      <td className="py-2 px-3 text-center font-black text-[9px]">{dataA.totalIngresos>=dataB.totalIngresos?'▲':'▼'} USD</td>
+                      <td className={`py-2 px-3 text-right font-black ${dataA.totalIngresos>=dataB.totalIngresos?'text-green-700':'text-red-700'}`}>{formatNum(Math.abs(dataA.totalIngresos-dataB.totalIngresos))}</td>
+                      <td className={`py-2 px-3 text-center font-black ${dataA.totalIngresos>=dataB.totalIngresos?'text-green-700':'text-red-700'}`}>{dataB.totalIngresos>0?((((dataA.totalIngresos-dataB.totalIngresos)/dataB.totalIngresos)*100).toFixed(2)+'%'):'—'}</td>
+                    </tr>
+
+                    <tr><td colSpan={9} className="py-2"></td></tr>
+
+                    {/* COSTOS */}
+                    <tr className="bg-gray-800 text-white"><td colSpan={9} className="py-2 px-4 font-black uppercase">COSTOS</td></tr>
+
+                    {/* Costo Produccion */}
+                    <tr className="bg-gray-200"><td colSpan={9} className="py-1.5 px-4 font-black uppercase text-[10px] pl-8 text-gray-700">COSTO PRODUCCION</td></tr>
+                    {(() => {
+                      const a = dataA.totalCostoProd; const b = dataB.totalCostoProd;
+                      const varAbs = a - b; const varRel = b !== 0 ? ((varAbs/b)*100).toFixed(2) : '—';
+                      return (<tr className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>COSTO DE PRODUCCION Y VENTAS</td>
+                        <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(a)}</td>
+                        <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(b)}</td>
+                        <td className="py-2 px-3 text-center text-[9px] font-bold">{varAbs>0?'▲':'▼'} USD</td>
+                        <td className={`py-2 px-3 text-right font-black ${varAbs<=0?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(varAbs))}</td>
+                        <td className={`py-2 px-3 text-center font-black text-[10px] ${varAbs<=0?'text-green-600':'text-red-600'}`}>{typeof varRel==='string'?varRel:varRel+'%'}</td>
+                      </tr>);
+                    })()}
+
+                    {/* Costos Operativos por cuenta */}
+                    {(() => {
+                      const allKeys = new Set([...Object.keys(dataA.costosPorCuenta), ...Object.keys(dataB.costosPorCuenta)]);
+                      const groups = {};
+                      allKeys.forEach(k => {
+                        const ca = dataA.costosPorCuenta[k]; const cb = dataB.costosPorCuenta[k];
+                        const sg = (ca||cb)?.subGrupo || (ca||cb)?.grupo || 'COSTOS OPERATIVOS';
+                        if (!groups[sg]) groups[sg] = [];
+                        groups[sg].push({ key:k, a: ca?.total||0, b: cb?.total||0, nombre:(ca||cb)?.nombre||k, codigo:(ca||cb)?.codigo||'' });
+                      });
+                      return Object.entries(groups).map(([sg, items]) => {
+                        const totalA = items.reduce((s,i)=>s+i.a,0); const totalB = items.reduce((s,i)=>s+i.b,0);
+                        return (
+                          <React.Fragment key={sg}>
+                            <tr className="bg-gray-100"><td colSpan={9} className="py-1.5 px-4 font-black uppercase text-[10px] pl-8 text-gray-700">{sg}</td></tr>
+                            {items.map((item,ii) => {
+                              const varAbs = item.a - item.b; const varRel = item.b!==0?((varAbs/item.b)*100).toFixed(2):'—';
+                              return (<tr key={ii} className="border-b border-gray-100 hover:bg-gray-50">
+                                <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>
+                                  {item.codigo&&<span className="text-orange-600 mr-1">{item.codigo}</span>}{item.nombre}
+                                </td>
+                                <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(item.a)}</td>
+                                <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(item.b)}</td>
+                                <td className="py-2 px-3 text-center text-[9px] font-bold">{varAbs>0?'▲':'▼'} USD</td>
+                                <td className={`py-2 px-3 text-right font-black ${varAbs<=0?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(varAbs))}</td>
+                                <td className={`py-2 px-3 text-center font-black text-[10px] ${varAbs<=0?'text-green-600':'text-red-600'}`}>{typeof varRel==='string'?varRel:varRel+'%'}</td>
+                              </tr>);
+                            })}
+                            <tr className="bg-gray-100 font-black">
+                              <td className="py-2 px-4 text-[10px] uppercase font-black pl-10" colSpan={2}>Total {sg}</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-black text-gray-600">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(totalA)}</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-black text-gray-600">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(totalB)}</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-black">{totalA>totalB?'▲':'▼'} USD</td>
+                              <td className={`py-2 px-3 text-right font-black ${totalA<=totalB?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(totalA-totalB))}</td>
+                              <td className={`py-2 px-3 text-center font-black ${totalA<=totalB?'text-green-600':'text-red-600'}`}>{totalB>0?((((totalA-totalB)/totalB)*100).toFixed(2)+'%'):'—'}</td>
+                            </tr>
+                          </React.Fragment>
+                        );
+                      });
+                    })()}
+
+                    {/* Total Costos */}
+                    <tr className="bg-gray-800 text-white font-black">
+                      <td className="py-3 px-4 text-sm uppercase font-black" colSpan={2}>Total COSTOS</td>
+                      <td className="py-3 px-3 text-center text-[9px] font-black">USD</td><td className="py-3 px-3 text-right font-black text-lg">{formatNum(dataA.totalCostos)}</td>
+                      <td className="py-3 px-3 text-center text-[9px] font-black">USD</td><td className="py-3 px-3 text-right font-black text-lg">{formatNum(dataB.totalCostos)}</td>
+                      <td className="py-3 px-3 text-center text-[9px] font-black">{dataA.totalCostos>dataB.totalCostos?'▲':'▼'} USD</td>
+                      <td className={`py-3 px-3 text-right font-black text-lg ${dataA.totalCostos<=dataB.totalCostos?'text-green-400':'text-red-400'}`}>{formatNum(Math.abs(dataA.totalCostos-dataB.totalCostos))}</td>
+                      <td className={`py-3 px-3 text-center font-black ${dataA.totalCostos<=dataB.totalCostos?'text-green-400':'text-red-400'}`}>{dataB.totalCostos>0?((((dataA.totalCostos-dataB.totalCostos)/dataB.totalCostos)*100).toFixed(2)+'%'):'—'}</td>
+                    </tr>
+
+                    <tr><td colSpan={9} className="py-2"></td></tr>
+
+                    {/* Resultado */}
+                    {(() => {
+                      const a = dataA.resultado; const b = dataB.resultado;
+                      const varAbs = a - b; const varRel = b!==0?((varAbs/b)*100).toFixed(2):'—';
+                      return (<tr className={a>=0?'bg-green-600 text-white':'bg-red-600 text-white'}>
+                        <td className="py-3 px-4 font-black text-sm uppercase" colSpan={2}>RESULTADO DEL EJERCICIO</td>
+                        <td className="py-3 px-3 text-center text-[9px] font-black">USD</td><td className="py-3 px-3 text-right font-black text-xl">{formatNum(a)}</td>
+                        <td className="py-3 px-3 text-center text-[9px] font-black">USD</td><td className="py-3 px-3 text-right font-black text-xl">{formatNum(b)}</td>
+                        <td className="py-3 px-3 text-center font-black text-[9px]">{varAbs>=0?'▲':'▼'} USD</td>
+                        <td className="py-3 px-3 text-right font-black text-xl">{formatNum(Math.abs(varAbs))}</td>
+                        <td className="py-3 px-3 text-center font-black">{typeof varRel==='string'?varRel:varRel+'%'}</td>
+                      </tr>);
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const renderConfiguracionModule = () => {
     return (
       <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
@@ -4741,13 +5231,77 @@ export default function App() {
               </table>
            </div>
         </div>
+        <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
+           <div className="flex justify-between items-center mb-6 border-b pb-4">
+             <h2 className="text-xl font-black uppercase text-black flex items-center gap-3">
+               <FileText className="text-blue-500"/> Plan de Cuentas
+             </h2>
+             <div className="flex gap-2">
+               <button onClick={()=>setShowPDCImport(true)} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-blue-700"><ArrowDownToLine size={14}/> IMPORTAR TXT</button>
+               {planDeCuentas.length > 0 && <button onClick={()=>setDialog({title:'Limpiar Plan',text:'Eliminar TODAS las cuentas del plan? Esta accion es irreversible.',type:'confirm',onConfirm:async()=>{const b=writeBatch(db);planDeCuentas.forEach(p=>b.delete(getDocRef('planDeCuentas',p.id)));await b.commit();}})} className="bg-red-100 text-red-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-red-200"><Trash2 size={14}/></button>}
+             </div>
+           </div>
+
+           {showPDCImport && (
+             <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-6 mb-6">
+               <h3 className="text-sm font-black uppercase text-blue-800 mb-3">Importar Plan de Cuentas desde TXT</h3>
+               <p className="text-xs font-bold text-blue-600 mb-4">Formato requerido (separado por tabulaciones o pipes):<br/>
+                 <code className="bg-white px-2 py-1 rounded font-mono text-[10px]">Codigo | Nombre | Grupo | Sub-grupo | Cuenta | Subcuenta</code>
+               </p>
+               <div className="flex gap-3 items-center">
+                 <input type="file" accept=".txt,.csv,.tsv" onChange={e=>{ if(e.target.files[0]) handleImportPlanCuentasTXT(e.target.files[0]); }} className="flex-1 text-xs file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:font-black file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200" />
+                 <button onClick={()=>setShowPDCImport(false)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+               </div>
+             </div>
+           )}
+
+           <div className="mb-4 relative max-w-sm">
+             <Search className="absolute left-3 top-3 text-gray-400" size={16}/>
+             <input type="text" placeholder="Buscar cuenta..." value={pdcSearchTerm} onChange={e=>setPdcSearchTerm(e.target.value)} className="w-full pl-9 pr-4 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500" />
+           </div>
+
+           {planDeCuentas.length === 0 ? (
+             <div className="text-center py-16 text-gray-400">
+               <FileText size={48} className="mx-auto mb-4 opacity-30"/>
+               <p className="font-black text-xs uppercase">Plan de cuentas vacio</p>
+               <p className="text-xs mt-2">Importe un archivo TXT con el formato indicado</p>
+             </div>
+           ) : (
+             <div className="overflow-x-auto rounded-xl border border-gray-200 max-h-[500px] overflow-y-auto">
+               <table className="w-full text-xs text-left">
+                 <thead className="bg-gray-100 border-b-2 border-gray-200 sticky top-0">
+                   <tr className="uppercase font-black text-[9px] text-gray-600 tracking-widest">
+                     <th className="py-2 px-3 border-r">Codigo</th>
+                     <th className="py-2 px-3 border-r">Nombre / Cuenta</th>
+                     <th className="py-2 px-3 border-r">Grupo</th>
+                     <th className="py-2 px-3 border-r">Sub-grupo</th>
+                     <th className="py-2 px-3 text-center">Accion</th>
+                   </tr>
+                 </thead>
+                 <tbody className="divide-y divide-gray-100">
+                   {planDeCuentas.filter(p => {
+                     const q = pdcSearchTerm.toUpperCase();
+                     return !q || (p.codigo||'').includes(q) || (p.nombre||'').includes(q) || (p.grupo||'').includes(q);
+                   }).map(p => (
+                     <tr key={p.id} className="hover:bg-gray-50">
+                       <td className="py-2 px-3 border-r font-black text-blue-600 font-mono text-[10px]">{p.codigo}</td>
+                       <td className="py-2 px-3 border-r font-bold uppercase text-[10px]">{p.nombre}</td>
+                       <td className="py-2 px-3 border-r font-bold text-[9px]">{p.grupo}</td>
+                       <td className="py-2 px-3 border-r font-bold text-[9px]">{p.subGrupo}</td>
+                       <td className="py-2 px-3 text-center">
+                         <button onClick={()=>handleDeleteCuenta(p.id)} className="p-1 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
+                       </td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </table>
+               <div className="px-4 py-2 bg-gray-50 border-t text-xs font-bold text-gray-500">{planDeCuentas.length} cuentas en el plan</div>
+             </div>
+           )}
+        </div>
       </div>
     );
   };
-
-  // ============================================================================
-  // RENDER PRINCIPAL Y ENRUTADOR DE MÓDULOS
-  // ============================================================================
 
   if (!appUser) {
     return (
@@ -4802,6 +5356,7 @@ export default function App() {
                     {hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
                     {hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
                     {hasPerm('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario</button>}
+                    {hasPerm('costos') && <button onClick={() => {clearAllReports(); setActiveTab('estado_resultado');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'estado_resultado' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Est. Resultado</button>}
                  </div>
               </div>
               <div className="flex items-center gap-4">
@@ -4876,6 +5431,7 @@ export default function App() {
            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
            {activeTab === 'configuracion' && renderConfiguracionModule()}
            {activeTab === 'costos' && renderReportesFinancierosModule()}
+           {activeTab === 'estado_resultado' && renderEstadoResultadoModule()}
         </main>
 
         {dialog && (
