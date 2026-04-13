@@ -272,10 +272,18 @@ export default function App() {
     const pad = isLandscape ? '20px 24px' : '16px 20px';
 
     const savedStyle = element.getAttribute('style') || '';
-    element.style.cssText = `width:${vw}px !important;max-width:${vw}px !important;margin:0 !important;padding:${pad} !important;background:#ffffff !important;color:#000000 !important;box-sizing:border-box !important;`;
+    // position:fixed at 0,0 garantiza que html2canvas capture desde la esquina correcta
+    element.style.cssText = `
+      width:${vw}px !important;max-width:${vw}px !important;min-width:${vw}px !important;
+      margin:0 !important;padding:${pad} !important;
+      background:#ffffff !important;color:#000000 !important;
+      box-sizing:border-box !important;
+      position:fixed !important;top:0 !important;left:0 !important;
+      z-index:99999 !important;overflow:visible !important;
+    `;
 
     const opt = {
-      margin:   isLandscape ? [5, 5, 5, 5] : [8, 8, 8, 8],   // mm
+      margin:   isLandscape ? [5, 5, 5, 5] : [8, 8, 8, 8],
       filename: `${filename}_${getTodayDate()}.pdf`,
       image:    { type: 'jpeg', quality: 0.95 },
       html2canvas: {
@@ -285,11 +293,20 @@ export default function App() {
         logging:         false,
         backgroundColor: '#ffffff',
         windowWidth:     vw,
-        width:           vw,
+        scrollX:         0,
+        scrollY:         0,
         onclone: (cloned) => {
+          // Limpiar body del clon para que no haya offsets
+          cloned.body.style.cssText = 'margin:0!important;padding:0!important;background:#fff!important;';
           const el = cloned.getElementById('pdf-content');
           if (el) {
-            el.style.cssText = `width:${vw}px !important;max-width:${vw}px !important;margin:0 !important;padding:${pad} !important;background:#ffffff !important;color:#000000 !important;box-sizing:border-box !important;`;
+            el.style.cssText = `
+              width:${vw}px !important;max-width:${vw}px !important;min-width:${vw}px !important;
+              margin:0 !important;padding:${pad} !important;
+              background:#ffffff !important;color:#000000 !important;
+              box-sizing:border-box !important;position:relative !important;
+              left:0 !important;top:0 !important;overflow:visible !important;
+            `;
           }
           cloned.querySelectorAll('.pdf-header').forEach(h => h.style.setProperty('display','block','important'));
           cloned.querySelectorAll('.no-pdf,[data-html2canvas-ignore]').forEach(h => h.style.setProperty('display','none','important'));
@@ -888,35 +905,70 @@ export default function App() {
     try {
       const reqDoc = (requirements || []).find(r => r.id === reqId);
       if (!reqDoc) {
-        setDialog({title: 'Error', text: 'Requisición no encontrada', type: 'alert'});
+        setDialog({title: 'Error', text: 'Requisicion no encontrada', type: 'alert'});
         return;
       }
       const wipEntries = wipInventory.filter(wip => wip.opId === reqId);
-      
+      const esTermo = reqDoc.tipoProducto === 'TERMOENCOGIBLE';
+
+      // Para TERMOENCOGIBLE: millares=0, kgProducidos es la cantidad principal
+      // Para BOLSAS: millares es la cantidad principal
+      const millaresFinales = esTermo ? 0 : (parseNum(phaseData.millaresProd) || parseNum(reqDoc.cantidad) || 0);
+      const kgFinales = parseNum(phaseData.producedKg) || parseNum(reqDoc.requestedKg) || 0;
+
+      if (wipEntries.length === 0) {
+        // Crear entrada sin WIP (cierre directo)
+        const finishedEntry = {
+          id: `FG-${Date.now()}`,
+          opId: reqId,
+          reqId: reqId,
+          cliente: reqDoc.client || 'N/A',
+          tipoProducto: reqDoc.tipoProducto || 'BOLSAS',
+          categoria: reqDoc.categoria || '',
+          producto: reqDoc.desc || reqDoc.categoria || 'Producto',
+          ancho: reqDoc.ancho || 0,
+          largo: reqDoc.largo || 0,
+          micras: reqDoc.micras || 0,
+          color: reqDoc.color || 'NATURAL',
+          tratamiento: reqDoc.tratamiento || 'LISO',
+          kgProducidos: kgFinales,
+          millares: millaresFinales,
+          costoUnitario: 0,
+          fechaFinalizacion: getTodayDate(),
+          ubicacion: 'ALMACEN GENERAL',
+          status: 'LISTO PARA ENTREGA',
+          observaciones: phaseData.observations || '',
+          timestamp: Date.now()
+        };
+        await setDoc(getDocRef('finishedGoodsInventory', finishedEntry.id), finishedEntry);
+        return;
+      }
+
       for (const wipEntry of wipEntries) {
         const finishedEntry = {
           id: `FG-${Date.now()}`,
           opId: wipEntry.opId,
           reqId: reqId,
           cliente: wipEntry.cliente,
-          producto: reqDoc.desc || reqDoc.categoria,
+          tipoProducto: reqDoc.tipoProducto || 'BOLSAS',
+          categoria: reqDoc.categoria || '',
+          producto: reqDoc.desc || reqDoc.categoria || 'Producto',
           ancho: reqDoc.ancho || 0,
           largo: reqDoc.largo || 0,
           micras: reqDoc.micras || 0,
           color: reqDoc.color || 'NATURAL',
           tratamiento: reqDoc.tratamiento || 'LISO',
-          kgProducidos: phaseData.producedKg || 0,
-          millares: phaseData.millaresProd || (reqDoc.cantidad / 1000) || 0,
-          costoUnitario: wipEntry.costoPromedio,
+          kgProducidos: kgFinales,
+          millares: millaresFinales,
+          costoUnitario: wipEntry.costoPromedio || 0,
           fechaFinalizacion: getTodayDate(),
-          ubicacion: 'ALMACÉN GENERAL',
+          ubicacion: 'ALMACEN GENERAL',
           status: 'LISTO PARA ENTREGA',
           observaciones: phaseData.observations || '',
           timestamp: Date.now()
         };
 
         await setDoc(getDocRef('finishedGoodsInventory', finishedEntry.id), finishedEntry);
-
         await updateDoc(getDocRef('wipInventory', wipEntry.id), {
           status: 'COMPLETADO',
           fechaCompletado: getTodayDate()
@@ -1516,6 +1568,15 @@ export default function App() {
     }
 
     if (invView === 'finished') {
+      // Calcular totales para el Excel: cada item es una ENTRADA desde produccion
+      // Las SALIDAS son items con status ENTREGADO
+      const totalEntradaKg = finishedGoodsInventory.reduce((s, i) => s + parseNum(i.kgProducidos), 0);
+      const totalEntradaMill = finishedGoodsInventory.filter(i => i.tipoProducto !== 'TERMOENCOGIBLE').reduce((s, i) => s + parseNum(i.millares), 0);
+      const totalSalidaKg = finishedGoodsInventory.filter(i => i.status === 'ENTREGADO').reduce((s, i) => s + parseNum(i.kgProducidos), 0);
+      const totalSalidaMill = finishedGoodsInventory.filter(i => i.status === 'ENTREGADO' && i.tipoProducto !== 'TERMOENCOGIBLE').reduce((s, i) => s + parseNum(i.millares), 0);
+      const stockKg = totalEntradaKg - totalSalidaKg;
+      const stockMill = totalEntradaMill - totalSalidaMill;
+
       return (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
           <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-green-50 flex justify-between items-center no-pdf">
@@ -1524,32 +1585,47 @@ export default function App() {
                 <Package className="text-green-600" size={24}/> Inventario de Productos Terminados
               </h2>
               <p className="text-[10px] font-bold text-green-600 mt-1 uppercase tracking-widest">
-                Productos finalizados listos para entrega al cliente
+                Bolsas en Millares — Termoencogible en KG
               </p>
             </div>
             <div className="flex gap-3">
-              <button 
+              <button
                 onClick={() => {
-                  const data = finishedGoodsInventory.map(item => [
-                    item.opId,
-                    item.cliente,
-                    item.producto,
-                    formatNum(item.kgProducidos),
-                    formatNum(item.millares),
-                    item.fechaFinalizacion,
-                    item.ubicacion,
-                    item.status
+                  // Excel con entradas, salidas y stock actual
+                  const headers = ['OP ID','Cliente','Tipo','Producto','KG Entrada','Millares Entrada','KG Salida','Millares Salida','KG Stock Actual','Millares Stock','Fecha','Estado'];
+                  const data = finishedGoodsInventory.map(item => {
+                    const esTermo = item.tipoProducto === 'TERMOENCOGIBLE';
+                    const entKg = parseNum(item.kgProducidos);
+                    const entMill = esTermo ? 0 : parseNum(item.millares);
+                    const salKg = item.status === 'ENTREGADO' ? entKg : 0;
+                    const salMill = item.status === 'ENTREGADO' ? entMill : 0;
+                    return [
+                      item.opId, item.cliente,
+                      item.tipoProducto || 'BOLSAS',
+                      item.producto,
+                      formatNum(entKg), esTermo ? '—' : formatNum(entMill),
+                      formatNum(salKg), esTermo ? '—' : formatNum(salMill),
+                      item.status === 'ENTREGADO' ? '0.00' : formatNum(entKg),
+                      esTermo ? '—' : (item.status === 'ENTREGADO' ? '0' : formatNum(entMill)),
+                      item.fechaFinalizacion, item.status
+                    ];
+                  });
+                  // Fila totales
+                  data.push([
+                    'TOTALES','','','',
+                    formatNum(totalEntradaKg), formatNum(totalEntradaMill),
+                    formatNum(totalSalidaKg), formatNum(totalSalidaMill),
+                    formatNum(stockKg), formatNum(stockMill),
+                    '','',
                   ]);
-                  handleExportExcel(data, 'Inventario_Productos_Terminados', 
-                    ['OP ID', 'Cliente', 'Producto', 'KG Producidos', 'Millares', 'Fecha Finalización', 'Ubicación', 'Estado']
-                  );
+                  handleExportExcel(data, 'Inventario_Productos_Terminados', headers);
                 }}
                 className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"
               >
                 <Download size={16}/> EXPORTAR EXCEL
               </button>
-              <button 
-                onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)} 
+              <button
+                onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)}
                 className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"
               >
                 <Printer size={16}/> EXPORTAR PDF
@@ -1558,104 +1634,119 @@ export default function App() {
           </div>
 
           <div className="p-8 print:p-0 bg-white" id="pdf-content">
-            <div className="hidden pdf-header mb-8">
+            <div className="hidden pdf-header mb-6">
               <ReportHeader />
-              <h1 className="text-2xl font-black text-black uppercase border-b-4 border-green-500 pb-2">
-                INVENTARIO DE PRODUCTOS TERMINADOS
-              </h1>
-              <p className="text-sm font-bold text-gray-500 uppercase mt-2">AL: {getTodayDate()}</p>
+              <h1 className="text-xl font-black text-black uppercase border-b-4 border-green-500 pb-2">INVENTARIO DE PRODUCTOS TERMINADOS</h1>
+              <p className="text-xs font-bold text-gray-500 uppercase mt-1">AL: {getTodayDate()} — Bolsas en Millares / Termoencogible en KG</p>
+            </div>
+
+            {/* Resumen de Entradas / Salidas / Stock */}
+            <div className="grid grid-cols-3 gap-4 mb-6">
+              <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+                <div className="text-[10px] font-black text-green-700 uppercase mb-1">Total Entradas (Produccion)</div>
+                <div className="font-black text-green-600 text-sm">{formatNum(totalEntradaKg)} KG</div>
+                <div className="font-black text-blue-600 text-sm">{formatNum(totalEntradaMill)} Millares</div>
+              </div>
+              <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-center">
+                <div className="text-[10px] font-black text-red-700 uppercase mb-1">Total Salidas (Entregado)</div>
+                <div className="font-black text-red-600 text-sm">{formatNum(totalSalidaKg)} KG</div>
+                <div className="font-black text-orange-600 text-sm">{formatNum(totalSalidaMill)} Millares</div>
+              </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
+                <div className="text-[10px] font-black text-blue-700 uppercase mb-1">Stock Actual (Disponible)</div>
+                <div className="font-black text-blue-600 text-sm">{formatNum(stockKg)} KG</div>
+                <div className="font-black text-purple-600 text-sm">{formatNum(stockMill)} Millares</div>
+              </div>
             </div>
 
             <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-              <table className="w-full text-left whitespace-nowrap text-xs">
+              <table className="w-full text-left text-xs">
                 <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
                   <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                    <th className="py-3 px-4 border-r print:border-black">OP ID</th>
-                    <th className="py-3 px-4 border-r print:border-black">Cliente</th>
-                    <th className="py-3 px-4 border-r print:border-black">Producto / Especificaciones</th>
-                    <th className="py-3 px-4 border-r print:border-black text-center">KG Producidos</th>
-                    <th className="py-3 px-4 border-r print:border-black text-center">Millares</th>
-                    <th className="py-3 px-4 border-r print:border-black text-center">Fecha Finalización</th>
-                    <th className="py-3 px-4 border-r print:border-black">Ubicación</th>
-                    <th className="py-3 px-4 border-r print:border-black text-center">Estado</th>
-                    <th className="py-3 px-4 text-center no-pdf">Acciones</th>
+                    <th className="py-3 px-3 border-r print:border-black">OP / Cliente</th>
+                    <th className="py-3 px-3 border-r print:border-black">Producto / Specs</th>
+                    <th className="py-3 px-3 border-r print:border-black text-center">Cantidad Principal</th>
+                    <th className="py-3 px-3 border-r print:border-black text-center">KG</th>
+                    <th className="py-3 px-3 border-r print:border-black text-center">Entrada</th>
+                    <th className="py-3 px-3 border-r print:border-black text-center">Salida</th>
+                    <th className="py-3 px-3 border-r print:border-black text-center">Stock</th>
+                    <th className="py-3 px-3 border-r print:border-black text-center">Fecha</th>
+                    <th className="py-3 px-3 border-r print:border-black text-center">Estado</th>
+                    <th className="py-3 px-3 text-center no-pdf">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-black print:divide-black">
-                  {finishedGoodsInventory.map(item => (
-                    <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="py-3 px-4 border-r print:border-black font-black text-green-600">{item.opId}</td>
-                      <td className="py-3 px-4 border-r print:border-black font-bold uppercase">{item.cliente}</td>
-                      <td className="py-3 px-4 border-r print:border-black">
-                        <div className="font-bold uppercase">{item.producto}</div>
-                        <div className="text-[9px] text-gray-500 print:text-black mt-1 space-y-0.5">
-                          <div><strong>Medidas:</strong> {item.ancho}cm x {item.largo}cm</div>
-                          <div><strong>Micras:</strong> {item.micras} | <strong>Color:</strong> {item.color}</div>
-                          <div><strong>Tratamiento:</strong> {item.tratamiento}</div>
-                          {item.observaciones && <div><strong>Obs:</strong> {item.observaciones}</div>}
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 border-r print:border-black text-center font-black text-lg text-green-600">{formatNum(item.kgProducidos)}</td>
-                      <td className="py-3 px-4 border-r print:border-black text-center font-black text-lg text-blue-600">{formatNum(item.millares)}</td>
-                      <td className="py-3 px-4 border-r print:border-black text-center font-bold">{item.fechaFinalizacion}</td>
-                      <td className="py-3 px-4 border-r print:border-black font-bold uppercase">{item.ubicacion || 'ALMACÉN GENERAL'}</td>
-                      <td className="py-3 px-4 border-r print:border-black text-center">
-                        <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${
-                          item.status === 'LISTO PARA ENTREGA' ? 'bg-green-100 text-green-700' :
-                          item.status === 'ENTREGADO' ? 'bg-blue-100 text-blue-700' :
-                          'bg-gray-100 text-gray-700'
-                        }`}>{item.status}</span>
-                      </td>
-                      <td className="py-3 px-4 text-center no-pdf">
-                        <div className="flex flex-col gap-1">
-                          {item.status === 'LISTO PARA ENTREGA' && (
-                            <button onClick={() => {
-                              clearAllReports();
-                              setActiveTab('ventas');
-                              setVentasView('facturacion');
-                              setShowNewInvoicePanel(true);
-                              // Pre-fill invoice from this finished good
-                              setTimeout(() => handleInvoiceFormChange('fgId', item.id), 100);
-                            }} className="px-2 py-1 bg-orange-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-orange-600 flex items-center gap-1 justify-center"><Receipt size={10}/> FACTURAR</button>
-                          )}
-                          {item.status === 'LISTO PARA ENTREGA' && (
-                            <button onClick={() => updateDoc(getDocRef('finishedGoodsInventory', item.id), {status:'ENTREGADO'})} className="px-2 py-1 bg-blue-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-blue-600">ENTREGAR</button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {finishedGoodsInventory.map(item => {
+                    const esTermo = item.tipoProducto === 'TERMOENCOGIBLE';
+                    const cantPrincipal = esTermo ? parseNum(item.kgProducidos) : parseNum(item.millares);
+                    const umPrincipal = esTermo ? 'KG' : 'Millares';
+                    const entVal = cantPrincipal;
+                    const salVal = item.status === 'ENTREGADO' ? cantPrincipal : 0;
+                    const stockVal = entVal - salVal;
+                    return (
+                      <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="py-3 px-3 border-r print:border-black">
+                          <div className="font-black text-green-600 text-xs">{item.opId}</div>
+                          <div className="font-bold uppercase text-[10px]">{item.cliente}</div>
+                        </td>
+                        <td className="py-3 px-3 border-r print:border-black">
+                          <div className="font-bold uppercase text-[10px]">{item.producto}</div>
+                          <div className="text-[9px] text-gray-500 mt-0.5 space-y-0.5">
+                            <div>{item.ancho}cm×{item.largo}cm | {item.micras}mic | {item.color}</div>
+                            {item.categoria && <div className="text-orange-600 font-bold">{item.categoria}</div>}
+                            {item.observaciones && <div>{item.observaciones}</div>}
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 border-r print:border-black text-center">
+                          <div className={`font-black text-lg ${esTermo ? 'text-green-600' : 'text-blue-600'}`}>
+                            {formatNum(cantPrincipal)}
+                          </div>
+                          <div className="text-[9px] font-black text-gray-500 uppercase">{umPrincipal}</div>
+                          {!esTermo && <div className="text-[9px] text-gray-400">{formatNum(item.kgProducidos)} KG</div>}
+                        </td>
+                        <td className="py-3 px-3 border-r print:border-black text-center font-bold text-gray-600">{formatNum(item.kgProducidos)}</td>
+                        <td className="py-3 px-3 border-r print:border-black text-center font-black text-green-600">{formatNum(entVal)}</td>
+                        <td className="py-3 px-3 border-r print:border-black text-center font-black text-red-500">{formatNum(salVal)}</td>
+                        <td className="py-3 px-3 border-r print:border-black text-center font-black text-blue-600">{formatNum(stockVal)}</td>
+                        <td className="py-3 px-3 border-r print:border-black text-center font-bold text-[10px]">{item.fechaFinalizacion}</td>
+                        <td className="py-3 px-3 border-r print:border-black text-center">
+                          <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase ${
+                            item.status === 'LISTO PARA ENTREGA' ? 'bg-green-100 text-green-700' :
+                            item.status === 'ENTREGADO' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
+                          }`}>{item.status}</span>
+                        </td>
+                        <td className="py-3 px-3 text-center no-pdf">
+                          <div className="flex flex-col gap-1">
+                            {item.status === 'LISTO PARA ENTREGA' && (
+                              <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); setShowNewInvoicePanel(true); setTimeout(() => handleInvoiceFormChange('fgId', item.id), 100); }} className="px-2 py-1 bg-orange-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-orange-600 flex items-center gap-1 justify-center"><Receipt size={10}/> FACTURAR</button>
+                            )}
+                            {item.status === 'LISTO PARA ENTREGA' && (
+                              <button onClick={() => updateDoc(getDocRef('finishedGoodsInventory', item.id), {status:'ENTREGADO'})} className="px-2 py-1 bg-blue-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-blue-600">ENTREGAR</button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {finishedGoodsInventory.length === 0 && (
-                    <tr><td colSpan="8" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">
-                      No hay productos terminados registrados
-                    </td></tr>
+                    <tr><td colSpan="10" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">No hay productos terminados registrados</td></tr>
                   )}
                 </tbody>
-                <tfoot className="bg-gray-100 border-t-2 border-gray-300 print:border-black">
-                  <tr className="font-black text-sm">
-                    <td colSpan="3" className="py-4 px-4 text-right uppercase border-r print:border-black">TOTALES:</td>
-                    <td className="py-4 px-4 text-center text-lg text-green-700 border-r print:border-black">
-                      {formatNum(finishedGoodsInventory.reduce((sum, item) => sum + parseNum(item.kgProducidos), 0))} KG
+                <tfoot className="bg-gray-100 border-t-2 border-gray-300 print:border-black font-black text-[10px]">
+                  <tr>
+                    <td colSpan="2" className="py-3 px-3 text-right uppercase border-r print:border-black">TOTALES:</td>
+                    <td className="py-3 px-3 text-center border-r print:border-black">
+                      <div className="text-blue-700">{formatNum(totalEntradaMill)} Mill.</div>
+                      <div className="text-green-700 text-[9px]">Bolsas</div>
                     </td>
-                    <td className="py-4 px-4 text-center text-lg text-blue-700 border-r print:border-black">
-                      {formatNum(finishedGoodsInventory.reduce((sum, item) => sum + parseNum(item.millares), 0))} M
-                    </td>
+                    <td className="py-3 px-3 text-center text-green-700 border-r print:border-black">{formatNum(totalEntradaKg)} KG</td>
+                    <td className="py-3 px-3 text-center text-green-600 border-r print:border-black">{formatNum(totalEntradaKg)}</td>
+                    <td className="py-3 px-3 text-center text-red-600 border-r print:border-black">{formatNum(totalSalidaKg)}</td>
+                    <td className="py-3 px-3 text-center text-blue-700 border-r print:border-black">{formatNum(stockKg)}</td>
                     <td colSpan="3"></td>
                   </tr>
                 </tfoot>
               </table>
-            </div>
-
-            <div className="mt-8 bg-green-50 border border-green-200 p-6 rounded-xl print:border-black">
-              <h3 className="text-sm font-black text-green-800 uppercase mb-3 flex items-center gap-2">
-                <CheckCircle2 size={18} className="text-green-600" />
-                Información sobre Productos Terminados
-              </h3>
-              <p className="text-xs font-bold text-green-700">
-                Este inventario muestra los productos que han completado todo el proceso de producción (Extrusión → Impresión → Sellado/Corte) 
-                y están listos para entrega al cliente. Incluye todos los datos relevantes: kilos producidos, millares, especificaciones técnicas 
-                del producto, fechas de finalización, y estado de entrega.
-              </p>
             </div>
           </div>
         </div>
@@ -3109,12 +3200,26 @@ export default function App() {
                    <p className="text-sm font-bold text-gray-500 uppercase mt-2">FECHA DE EMISIÓN: {getTodayDate()}</p>
                  </div>
 
-                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                   <div className="bg-gray-50 border border-gray-200 p-6 rounded-2xl">
-                     <span className="text-[10px] font-black text-gray-500 uppercase block mb-1">Demanda Neta (Requerida)</span>
-                     <span className="text-3xl font-black text-blue-600 block">{formatNum(calcKilosNetos)} <span className="text-sm">KG</span></span>
-                     {isBolsas && <span className="text-[10px] font-bold text-gray-400 mt-2 block">Basado en Peso Millar: {formatNum(simPesoMillar)} g</span>}
+                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+                   <div className="bg-gray-50 border border-gray-200 p-5 rounded-2xl">
+                     <span className="text-[10px] font-black text-gray-500 uppercase block mb-1">Demanda Neta (KG)</span>
+                     <span className="text-2xl font-black text-blue-600 block">{formatNum(calcKilosNetos)} <span className="text-sm">KG</span></span>
+                     {isBolsas && <span className="text-[10px] font-bold text-gray-400 mt-1 block">Peso Millar: {formatNum(simPesoMillar)} g</span>}
                    </div>
+                   {isBolsas && simPesoMillar > 0 && (
+                     <div className="bg-blue-50 border-2 border-blue-400 p-5 rounded-2xl">
+                       <span className="text-[10px] font-black text-blue-700 uppercase block mb-1">Millares a Producir</span>
+                       <span className="text-2xl font-black text-blue-700 block">{formatNum(inputCantidadSolicitada)} <span className="text-sm">Mill.</span></span>
+                       <span className="text-[10px] font-bold text-blue-500 mt-1 block">= {formatNum(calcKilosNetos)} KG netos</span>
+                     </div>
+                   )}
+                   {!isBolsas && (
+                     <div className="bg-green-50 border-2 border-green-400 p-5 rounded-2xl">
+                       <span className="text-[10px] font-black text-green-700 uppercase block mb-1">KG a Producir (Termo)</span>
+                       <span className="text-2xl font-black text-green-700 block">{formatNum(inputCantidadSolicitada)} <span className="text-sm">KG</span></span>
+                       <span className="text-[10px] font-bold text-green-500 mt-1 block">Millares: N/A</span>
+                     </div>
+                   )}
                    <div className="bg-orange-50 border border-orange-200 p-6 rounded-2xl">
                      <span className="text-[10px] font-black text-orange-800 uppercase block mb-1">Merma Proyectada ({mermaPorc}%)</span>
                      <span className="text-3xl font-black text-orange-600 block">{formatNum(calcMermaGlobalKg)} <span className="text-sm">KG</span></span>
@@ -3327,9 +3432,18 @@ export default function App() {
           </div>
 
           {/* KPIs */}
-          <div className="grid grid-cols-3 gap-0 border-2 border-gray-300 rounded-xl overflow-hidden mb-6">
-            {[['Total MP Inyectada', formatNum(totalInsumosKg)+' KG','text-black'],['Total Merma Generada', formatNum(totalMermaKg)+' KG','text-red-600'],['% Merma Global OP', pctMerma.toFixed(2)+'%','text-orange-600']].map(([label,val,color],i)=>(
-              <div key={i} className={`p-5 text-center bg-gray-50 ${i<2?'border-r border-gray-300':''}`}>
+          <div className="grid grid-cols-4 gap-0 border-2 border-gray-300 rounded-xl overflow-hidden mb-6">
+            {[
+              ['Total MP Inyectada', formatNum(totalInsumosKg)+' KG','text-black'],
+              ['Total Merma Generada', formatNum(totalMermaKg)+' KG','text-red-600'],
+              ['% Merma Global OP', pctMerma.toFixed(2)+'%','text-orange-600'],
+              [req.tipoProducto==='TERMOENCOGIBLE'?'KG Producidos (Termo)':'Millares Producidos',
+               req.tipoProducto==='TERMOENCOGIBLE'
+                 ? formatNum(totalProdKg)+' KG'
+                 : (totalMillares>0 ? formatNum(totalMillares)+' Mill.' : formatNum(totalProdKg)+' KG'),
+               'text-blue-600']
+            ].map(([label,val,color],i)=>(
+              <div key={i} className={`p-5 text-center bg-gray-50 ${i<3?'border-r border-gray-300':''}`}>
                 <div className="text-[9px] font-black uppercase text-gray-500 mb-1">{label}</div>
                 <div className={`text-2xl font-black ${color}`}>{val}</div>
               </div>
@@ -3394,7 +3508,7 @@ export default function App() {
                       <td className="p-3 border-r text-center font-black text-blue-600">{formatNum(b.kgRecibidos||b.totalInsumosKg||0)} kg</td>
                       <td className="p-3 border-r text-center font-black text-green-600">{formatNum(b.producedKg)} kg</td>
                       <td className="p-3 border-r text-center font-black text-red-500">{formatNum(b.mermaKg)} kg</td>
-                      <td className="p-3 text-center font-black">{b.fase==='SELLADO'&&parseNum(b.techParams?.millares||0)>0?formatNum(parseNum(b.techParams.millares)):'—'}</td>
+                      <td className="p-3 text-center font-black">{parseNum(b.techParams?.millares||0)>0?formatNum(parseNum(b.techParams.millares))+' Mill.':'—'}</td>
                     </tr>
                   ))}
                   {allBatches.length===0&&<tr><td colSpan="6" className="p-4 text-center text-gray-400 font-bold">Sin lotes registrados</td></tr>}
