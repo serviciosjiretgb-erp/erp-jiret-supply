@@ -256,9 +256,13 @@ export default function App() {
   const [poProvider, setPoProvider] = useState('');
   const [poNotes, setPoNotes] = useState('');
   const [viewingPO, setViewingPO] = useState(null);
-  const [showFiniquitoOP, setShowFiniquitoOP] = useState(null); // ID de OP para ver finiquito
-  const [showOrdenTrabajo, setShowOrdenTrabajo] = useState(null); // ID de OP para orden de trabajo
-  const [prodSubMode, setProdSubMode] = useState('fase'); // 'fase' | 'requisicion'
+  const [showFiniquitoOP, setShowFiniquitoOP] = useState(null);
+  const [showOrdenTrabajo, setShowOrdenTrabajo] = useState(null);
+  const [prodSubMode, setProdSubMode] = useState('fase');
+  // Estado para agregar items a PO manualmente
+  const [poAddId, setPoAddId] = useState('');
+  const [poAddQty, setPoAddQty] = useState('');
+  const [poAddCost, setPoAddCost] = useState('');
 
   // ============================================================================
   // EXPORTACIONES CORREGIDAS
@@ -276,44 +280,65 @@ export default function App() {
 
     const vw = isLandscape ? 1056 : 816;
 
-    // Clonar contenido en un div temporal fuera del viewport (no hidden, para que html2canvas pueda capturarlo)
-    const temp = document.createElement('div');
-    temp.style.cssText =
-      'position:absolute;top:-9999px;left:0;width:' + vw + 'px;' +
-      'background:#ffffff;color:#000000;padding:20px 24px;box-sizing:border-box;overflow:visible;';
-
-    const clone = element.cloneNode(true);
-    clone.style.cssText = 'width:' + vw + 'px;background:#ffffff;color:#000000;box-sizing:border-box;';
-    clone.removeAttribute('id');
-
-    // Mostrar headers, ocultar no-pdf
-    clone.querySelectorAll('.pdf-header').forEach(h => { h.style.display = 'block'; });
-    clone.querySelectorAll('.no-pdf,[data-html2canvas-ignore]').forEach(h => { h.style.display = 'none'; });
-
-    temp.appendChild(clone);
-    document.body.appendChild(temp);
+    // Mostrar headers, ocultar no-pdf antes de clonar
+    const noPdfEls = element.querySelectorAll('.no-pdf,[data-html2canvas-ignore]');
+    const headerEls = element.querySelectorAll('.pdf-header');
+    noPdfEls.forEach(el => { el.dataset.pd = el.style.display||''; el.style.setProperty('display','none','important'); });
+    headerEls.forEach(el => { el.dataset.pd = el.style.display||''; el.style.setProperty('display','block','important'); });
 
     const opt = {
-      margin:   isLandscape ? [6,6,6,6] : [8,8,8,8],
+      margin: isLandscape ? [6,6,6,6] : [8,8,8,8],
       filename: `${filename}_${getTodayDate()}.pdf`,
-      image:    { type:'jpeg', quality:0.96 },
+      image: { type:'jpeg', quality:0.96 },
       html2canvas: {
         scale: 2, useCORS: true, allowTaint: false, logging: false,
-        backgroundColor: '#ffffff', windowWidth: vw, scrollX: 0, scrollY: -9999,
+        backgroundColor: '#ffffff', windowWidth: vw, scrollX: 0, scrollY: 0,
+        onclone: (clonedDoc) => {
+          const el = clonedDoc.getElementById('pdf-content');
+          if (!el) return;
+
+          // Recorrer todos los ancestros y quitar centering/max-width
+          let node = el.parentElement;
+          while (node && node !== clonedDoc.body) {
+            node.style.setProperty('max-width', 'none', 'important');
+            node.style.setProperty('margin-left', '0', 'important');
+            node.style.setProperty('margin-right', '0', 'important');
+            node.style.setProperty('padding-left', '0', 'important');
+            node.style.setProperty('padding-right', '0', 'important');
+            node.style.setProperty('width', '100%', 'important');
+            node = node.parentElement;
+          }
+
+          // Body limpio
+          clonedDoc.body.style.setProperty('margin', '0', 'important');
+          clonedDoc.body.style.setProperty('padding', '0', 'important');
+          clonedDoc.body.style.setProperty('background', '#fff', 'important');
+
+          // El elemento pdf-content
+          el.style.cssText =
+            'width:' + vw + 'px!important;max-width:' + vw + 'px!important;' +
+            'margin:0!important;padding:20px 24px!important;background:#ffffff!important;' +
+            'color:#000000!important;box-sizing:border-box!important;overflow:visible!important;';
+
+          // Ocultar nav/header si quedaron en el clon
+          clonedDoc.querySelectorAll('nav,header').forEach(h => h.style.setProperty('display','none','important'));
+          el.querySelectorAll('.pdf-header').forEach(h => h.style.setProperty('display','block','important'));
+          el.querySelectorAll('.no-pdf,[data-html2canvas-ignore]').forEach(h => h.style.setProperty('display','none','important'));
+        },
       },
-      jsPDF: {
-        unit:'mm', format:'letter',
-        orientation: isLandscape ? 'landscape' : 'portrait',
-        compress: true
-      },
+      jsPDF: { unit:'mm', format:'letter', orientation: isLandscape?'landscape':'portrait', compress:true },
       pagebreak: { mode:['css','legacy'] },
     };
 
-    const cleanup = () => { if (document.body.contains(temp)) document.body.removeChild(temp); };
+    const restore = () => {
+      noPdfEls.forEach(el => { el.style.display = el.dataset.pd||''; delete el.dataset.pd; });
+      headerEls.forEach(el => { el.style.display = el.dataset.pd||''; delete el.dataset.pd; });
+    };
 
-    window.html2pdf().set(opt).from(temp).save()
-      .then(cleanup)
-      .catch(err => { cleanup(); console.error('PDF error:', err); setDialog({title:'Error al generar PDF', text:'Intente nuevamente o recargue la pagina.', type:'alert'}); });
+    window.html2pdf().set(opt).from(element).save().then(restore).catch(err => {
+      restore(); console.error('PDF error:', err);
+      setDialog({title:'Error al generar PDF', text:'Intente nuevamente o recargue la pagina.', type:'alert'});
+    });
   };
   
   const handleExportExcel = (tableDataOrId, filename, headers = null) => {
@@ -1741,7 +1766,11 @@ export default function App() {
                </div>
                <div className="flex gap-2">
                  <button onClick={exportTomaFisicaExcel} className="bg-white border-2 border-gray-200 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-2"><Download size={16}/> PLANILLA EXCEL</button>
-                 <button onClick={handleProcessTomaFisica} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 transition-colors flex items-center gap-2"><CheckCircle2 size={16}/> PROCESAR AJUSTES</button>
+                 <button onClick={() => {
+                   // Guardar parcial: solo confirma sin procesar ajustes
+                   setDialog({title:'Conteo Guardado', text:'Los conteos fisicos han sido guardados temporalmente. Cuando estes listo, usa PROCESAR AJUSTES para aplicarlos al inventario.', type:'alert'});
+                 }} className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-blue-700 transition-colors flex items-center gap-2"><Save size={16}/> GUARDAR PARCIAL</button>
+                 <button onClick={() => requireAdminPassword(handleProcessTomaFisica, 'Procesar Ajuste de Toma Fisica')} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 transition-colors flex items-center gap-2"><CheckCircle2 size={16}/> PROCESAR AJUSTES</button>
                </div>
             </div>
             
@@ -4041,15 +4070,9 @@ export default function App() {
             </div>
           )}
           {showPOModal && (() => {
-            // Proyeccion para mostrar sugerencias
             const proj = generateProjectionData();
             const projMap = {};
             proj.forEach(p => { projMap[p.id] = p; });
-
-            // Estado local del item que se está agregando
-            const [poAddId, setPoAddId] = React.useState('');
-            const [poAddQty, setPoAddQty] = React.useState('');
-            const [poAddCost, setPoAddCost] = React.useState('');
 
             const addItemToPO = () => {
               if (!poAddId || !poAddQty) return;
@@ -4057,155 +4080,82 @@ export default function App() {
               if (!invItem) return;
               const alreadyIdx = selectedPOItems.findIndex(x => x.productCode === poAddId);
               if (alreadyIdx >= 0) {
-                // Update existing
                 setSelectedPOItems(selectedPOItems.map((it, idx) =>
                   idx === alreadyIdx ? {...it, suggestedQty: parseNum(poAddQty), unitCost: parseNum(poAddCost) || it.unitCost} : it
                 ));
               } else {
                 setSelectedPOItems([...selectedPOItems, {
-                  productCode: invItem.id,
-                  productName: invItem.desc,
-                  currentStock: invItem.stock,
-                  suggestedQty: parseNum(poAddQty),
+                  productCode: invItem.id, productName: invItem.desc,
+                  currentStock: invItem.stock, suggestedQty: parseNum(poAddQty),
                   unitCost: parseNum(poAddCost) || invItem.cost || 0,
                 }]);
               }
               setPoAddId(''); setPoAddQty(''); setPoAddCost('');
             };
 
-            const subtotal = selectedPOItems.reduce((s, it) => s + (parseNum(it.suggestedQty) * parseNum(it.unitCost)), 0);
+            const subtotal = selectedPOItems.reduce((s,it) => s + (parseNum(it.suggestedQty) * parseNum(it.unitCost)), 0);
 
             return (
               <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
                 <div className="bg-white rounded-3xl p-8 max-w-3xl w-full shadow-2xl border-t-8 border-orange-500 max-h-[92vh] overflow-y-auto">
                   <div className="flex justify-between items-center mb-6">
                     <h3 className="text-lg font-black uppercase">Nueva Orden de Compra</h3>
-                    <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');}} className="p-2 text-gray-400 hover:text-red-500"><X size={20}/></button>
+                    <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');setPoAddId('');setPoAddQty('');setPoAddCost('');}} className="p-2 text-gray-400 hover:text-red-500"><X size={20}/></button>
                   </div>
-
-                  {/* Proveedor y Notas */}
                   <div className="grid grid-cols-2 gap-4 mb-6">
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Proveedor *</label>
-                      <input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="NOMBRE DEL PROVEEDOR" />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Notas / Referencia</label>
-                      <input type="text" value={poNotes} onChange={e=>setPoNotes(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="OPCIONAL" />
-                    </div>
+                    <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Proveedor *</label><input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="NOMBRE DEL PROVEEDOR" /></div>
+                    <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Notas / Referencia</label><input type="text" value={poNotes} onChange={e=>setPoNotes(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="OPCIONAL" /></div>
                   </div>
-
-                  {/* Agregar producto */}
                   <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-4 mb-4">
                     <h4 className="text-[10px] font-black uppercase text-orange-800 mb-3">Agregar Producto / Insumo</h4>
                     <div className="grid grid-cols-12 gap-2 items-end">
                       <div className="col-span-5">
                         <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Producto</label>
-                        <select value={poAddId} onChange={e => {
-                          setPoAddId(e.target.value);
-                          const invItem = inventory.find(i => i.id === e.target.value);
-                          if (invItem) setPoAddCost(invItem.cost ? String(invItem.cost) : '');
-                        }} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-orange-500 bg-white">
+                        <select value={poAddId} onChange={e => { setPoAddId(e.target.value); const inv=inventory.find(i=>i.id===e.target.value); if(inv) setPoAddCost(inv.cost?String(inv.cost):''); }} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-orange-500 bg-white">
                           <option value="">Seleccione...</option>
-                          {(inventory||[]).map(i => {
-                            const pp = projMap[i.id];
-                            const tag = pp?.isCritical ? ' ⚠ CRITICO' : '';
-                            return <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit}){tag}</option>;
-                          })}
+                          {(inventory||[]).map(i => { const pp=projMap[i.id]; return <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit}){pp?.isCritical?' ⚠':''}</option>; })}
                         </select>
                       </div>
-                      <div className="col-span-2">
-                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
-                        <input type="number" step="0.01" min="0.01" value={poAddQty} onChange={e=>setPoAddQty(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs text-center outline-none focus:border-orange-500" placeholder="0.00" />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Costo U. ($)</label>
-                        <input type="number" step="0.01" min="0" value={poAddCost} onChange={e=>setPoAddCost(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs text-center outline-none focus:border-orange-500" placeholder="0.00" />
-                      </div>
-                      <div className="col-span-3">
-                        <button onClick={addItemToPO} className="w-full bg-orange-500 text-white px-3 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center justify-center gap-1">
-                          <Plus size={14}/> Agregar
-                        </button>
-                      </div>
+                      <div className="col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label><input type="number" step="0.01" min="0.01" value={poAddQty} onChange={e=>setPoAddQty(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs text-center outline-none focus:border-orange-500" placeholder="0.00" /></div>
+                      <div className="col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Costo U. ($)</label><input type="number" step="0.01" min="0" value={poAddCost} onChange={e=>setPoAddCost(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs text-center outline-none focus:border-orange-500" placeholder="0.00" /></div>
+                      <div className="col-span-3"><button onClick={addItemToPO} className="w-full bg-orange-500 text-white px-3 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center justify-center gap-1"><Plus size={14}/> Agregar</button></div>
                     </div>
-
-                    {/* Sugerencias rapidas de items criticos */}
-                    {proj.filter(p => p.isCritical && !selectedPOItems.find(s => s.productCode === p.id)).length > 0 && (
+                    {proj.filter(p=>p.isCritical && !selectedPOItems.find(s=>s.productCode===p.id)).length>0 && (
                       <div className="mt-3 pt-3 border-t border-orange-200">
-                        <p className="text-[9px] font-black text-orange-700 uppercase mb-2">Items criticos sugeridos:</p>
+                        <p className="text-[9px] font-black text-orange-700 uppercase mb-2">Items criticos:</p>
                         <div className="flex flex-wrap gap-2">
-                          {proj.filter(p => p.isCritical && !selectedPOItems.find(s => s.productCode === p.id)).map(p => (
-                            <button key={p.id} onClick={() => {
-                              setSelectedPOItems(prev => [...prev, {
-                                productCode: p.id, productName: p.desc,
-                                currentStock: p.stock, suggestedQty: p.suggestOrder || 500,
-                                unitCost: p.cost || 0
-                              }]);
-                            }} className="bg-red-100 text-red-700 px-3 py-1 rounded-lg text-[9px] font-black hover:bg-red-200 border border-red-200">
-                              + {p.id} ({formatNum(p.stock)} stock)
-                            </button>
+                          {proj.filter(p=>p.isCritical&&!selectedPOItems.find(s=>s.productCode===p.id)).map(p=>(
+                            <button key={p.id} onClick={()=>setSelectedPOItems(prev=>[...prev,{productCode:p.id,productName:p.desc,currentStock:p.stock,suggestedQty:p.suggestOrder||500,unitCost:p.cost||0}])} className="bg-red-100 text-red-700 px-3 py-1 rounded-lg text-[9px] font-black hover:bg-red-200 border border-red-200">+ {p.id}</button>
                           ))}
                         </div>
                       </div>
                     )}
                   </div>
-
-                  {/* Lista de productos seleccionados */}
-                  {selectedPOItems.length > 0 ? (
+                  {selectedPOItems.length>0 ? (
                     <div className="overflow-x-auto rounded-xl border border-gray-200 mb-6">
                       <table className="w-full text-xs">
-                        <thead className="bg-gray-100 border-b-2 border-gray-200">
-                          <tr className="uppercase font-black text-[10px]">
-                            <th className="p-3 border-r text-left">Producto</th>
-                            <th className="p-3 border-r text-center">Stock Actual</th>
-                            <th className="p-3 border-r text-center">Cantidad a Pedir</th>
-                            <th className="p-3 border-r text-right">Costo U. ($)</th>
-                            <th className="p-3 text-right">Subtotal</th>
-                            <th className="p-3 text-center w-10"></th>
-                          </tr>
-                        </thead>
+                        <thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px]"><th className="p-3 border-r text-left">Producto</th><th className="p-3 border-r text-center">Stock</th><th className="p-3 border-r text-center">Cantidad</th><th className="p-3 border-r text-right">Costo U.</th><th className="p-3 text-right">Subtotal</th><th className="p-3 w-8"></th></tr></thead>
                         <tbody>
-                          {selectedPOItems.map((item, i) => (
-                            <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-                              <td className="p-3 border-r font-black text-orange-600 text-xs">
-                                {item.productCode}<br/>
-                                <span className="text-[9px] text-gray-500 font-bold">{item.productName}</span>
-                              </td>
+                          {selectedPOItems.map((item,i)=>(
+                            <tr key={i} className="border-b border-gray-100">
+                              <td className="p-3 border-r font-black text-orange-600 text-xs">{item.productCode}<br/><span className="text-[9px] text-gray-500 font-bold">{item.productName}</span></td>
                               <td className="p-3 border-r text-center font-bold">{formatNum(item.currentStock)}</td>
-                              <td className="p-3 border-r text-center">
-                                <input type="number" value={item.suggestedQty} onChange={e => setSelectedPOItems(selectedPOItems.map((it,j) => j===i ? {...it, suggestedQty: parseNum(e.target.value)} : it))} className="w-24 border border-gray-200 rounded-lg p-1 text-center font-black text-xs outline-none focus:border-orange-400" />
-                              </td>
-                              <td className="p-3 border-r text-right">
-                                <input type="number" step="0.01" value={item.unitCost} onChange={e => setSelectedPOItems(selectedPOItems.map((it,j) => j===i ? {...it, unitCost: parseNum(e.target.value)} : it))} className="w-24 border border-gray-200 rounded-lg p-1 text-center font-black text-xs outline-none focus:border-orange-400" />
-                              </td>
-                              <td className="p-3 text-right font-black text-green-600">${formatNum(parseNum(item.suggestedQty) * parseNum(item.unitCost))}</td>
-                              <td className="p-3 text-center">
-                                <button onClick={() => setSelectedPOItems(selectedPOItems.filter((_,j) => j!==i))} className="text-red-400 hover:text-red-600"><X size={14}/></button>
-                              </td>
+                              <td className="p-3 border-r text-center"><input type="number" value={item.suggestedQty} onChange={e=>setSelectedPOItems(selectedPOItems.map((it,j)=>j===i?{...it,suggestedQty:parseNum(e.target.value)}:it))} className="w-20 border border-gray-200 rounded-lg p-1 text-center font-black text-xs outline-none" /></td>
+                              <td className="p-3 border-r text-right"><input type="number" step="0.01" value={item.unitCost} onChange={e=>setSelectedPOItems(selectedPOItems.map((it,j)=>j===i?{...it,unitCost:parseNum(e.target.value)}:it))} className="w-20 border border-gray-200 rounded-lg p-1 text-center font-black text-xs outline-none" /></td>
+                              <td className="p-3 text-right font-black text-green-600">${formatNum(parseNum(item.suggestedQty)*parseNum(item.unitCost))}</td>
+                              <td className="p-3 text-center"><button onClick={()=>setSelectedPOItems(selectedPOItems.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
                             </tr>
                           ))}
                         </tbody>
-                        <tfoot className="bg-gray-100 border-t-2 border-gray-300">
-                          <tr>
-                            <td colSpan={4} className="p-3 text-right font-black uppercase text-[10px]">SUBTOTAL ESTIMADO:</td>
-                            <td className="p-3 text-right font-black text-orange-600 text-base">${formatNum(subtotal)}</td>
-                            <td></td>
-                          </tr>
-                        </tfoot>
+                        <tfoot className="bg-gray-100 border-t-2 border-gray-300"><tr><td colSpan={4} className="p-3 text-right font-black uppercase text-[10px]">SUBTOTAL:</td><td className="p-3 text-right font-black text-orange-600 text-base">${formatNum(subtotal)}</td><td></td></tr></tfoot>
                       </table>
                     </div>
                   ) : (
-                    <div className="bg-gray-50 rounded-2xl p-8 text-center text-gray-400 mb-6">
-                      <ShoppingCart size={32} className="mx-auto mb-2 opacity-30"/>
-                      <p className="text-xs font-bold uppercase">Agregue productos a la orden</p>
-                    </div>
+                    <div className="bg-gray-50 rounded-2xl p-8 text-center text-gray-400 mb-6"><ShoppingCart size={32} className="mx-auto mb-2 opacity-30"/><p className="text-xs font-bold uppercase">Agregue productos a la orden</p></div>
                   )}
-
                   <div className="flex gap-3 justify-end">
-                    <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');}} className="bg-gray-200 text-gray-700 px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-300">Cancelar</button>
-                    <button onClick={handleSavePurchaseOrder} disabled={selectedPOItems.length===0 || !poProvider.trim()} className="bg-black text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <CheckCircle2 size={16}/> GUARDAR ORDEN
-                    </button>
+                    <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');setPoAddId('');setPoAddQty('');setPoAddCost('');}} className="bg-gray-200 text-gray-700 px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-300">Cancelar</button>
+                    <button onClick={handleSavePurchaseOrder} disabled={selectedPOItems.length===0||!poProvider.trim()} className="bg-black text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"><CheckCircle2 size={16}/> GUARDAR ORDEN</button>
                   </div>
                 </div>
               </div>
@@ -5224,65 +5174,8 @@ export default function App() {
       groupedPDC[g][sg].push(c);
     });
 
-    // Construir filas del estado financiero
-    const buildRows = (data) => {
-      const rows = [];
-      // INGRESOS
-      rows.push({type:'grupo', label:'INGRESOS', className:'bg-orange-500 text-white font-black'});
-      rows.push({type:'subgrupo', label:'VENTAS BRUTAS', className:'bg-orange-100 text-orange-800 font-black'});
-      // Factura por cuenta
-      const ingresosPDC = planDeCuentas.filter(p => p.grupo === 'INGRESOS' || (p.codigo||'').startsWith('4.'));
-      if (ingresosPDC.length > 0) {
-        ingresosPDC.forEach(p => {
-          // All invoices go to income accounts
-          const amt = data.totalIngresos; // simplified: all invoices to first income account
-          rows.push({type:'cuenta', codigo:p.codigo, label:p.nombre, usd: amt, pct: pctOf(amt, data.totalIngresos)});
-        });
-      } else {
-        rows.push({type:'cuenta', codigo:'', label:'INGRESOS POR VENTAS / MAQUILA', usd: data.totalIngresos, pct:'100.00%'});
-      }
-      rows.push({type:'subtotal', label:'Total VENTAS BRUTAS', usd: data.totalIngresos, pct: pctOf(data.totalIngresos, data.totalIngresos), className:'bg-orange-50 font-black text-orange-700'});
-      rows.push({type:'total_grupo', label:'Total INGRESOS', usd: data.totalIngresos, pct: pctOf(data.totalIngresos, data.totalIngresos), className:'bg-orange-200 font-black text-orange-900'});
-
-      rows.push({type:'spacer'});
-
-      // COSTOS
-      rows.push({type:'grupo', label:'COSTOS', className:'bg-gray-800 text-white font-black'});
-
-      // COSTO PRODUCCION
-      rows.push({type:'subgrupo', label:'COSTO PRODUCCION', className:'bg-gray-200 text-gray-800 font-black'});
-      const prodPDC = planDeCuentas.filter(p => p.grupo === 'COSTO PRODUCCION' || (p.codigo||'').startsWith('5.1.01'));
-      if (prodPDC.length > 0) {
-        prodPDC.forEach(p => rows.push({type:'cuenta', codigo:p.codigo, label:p.nombre, usd: data.totalCostoProd, pct: pctOf(data.totalCostoProd, data.totalIngresos)}));
-      } else {
-        rows.push({type:'cuenta', codigo:'', label:'COSTO DE PRODUCCION Y VENTAS', usd: data.totalCostoProd, pct: pctOf(data.totalCostoProd, data.totalIngresos)});
-      }
-      rows.push({type:'subtotal', label:'Total COSTO PRODUCCION', usd: data.totalCostoProd, pct: pctOf(data.totalCostoProd, data.totalIngresos), className:'bg-gray-100 font-black'});
-
-      // COSTOS OPERATIVOS — agrupados por cuenta/categoría
-      const opGroups = {};
-      Object.values(data.costosPorCuenta).forEach(c => {
-        const sg = c.subGrupo || c.grupo || 'COSTOS OPERATIVOS';
-        if (!opGroups[sg]) opGroups[sg] = [];
-        opGroups[sg].push(c);
-      });
-
-      Object.entries(opGroups).forEach(([sg, cuentas]) => {
-        rows.push({type:'subgrupo', label:sg, className:'bg-gray-100 text-gray-700 font-black'});
-        cuentas.forEach(c => {
-          rows.push({type:'cuenta', codigo:c.codigo, label:c.nombre, usd: c.total, pct: pctOf(c.total, data.totalIngresos)});
-        });
-        const sgTotal = cuentas.reduce((s,c)=>s+c.total,0);
-        rows.push({type:'subtotal', label:`Total ${sg}`, usd: sgTotal, pct: pctOf(sgTotal, data.totalIngresos), className:'bg-gray-100 font-black'});
-      });
-
-      rows.push({type:'total_grupo', label:'Total COSTOS', usd: data.totalCostos, pct: pctOf(data.totalCostos, data.totalIngresos), className:'bg-gray-700 text-white font-black'});
-      rows.push({type:'spacer'});
-      rows.push({type:'resultado', label:'RESULTADO DEL EJERCICIO', usd: dataA.resultado, pct: pctOf(dataA.resultado, dataA.totalIngresos), className: dataA.resultado >= 0 ? 'bg-green-600 text-white font-black' : 'bg-red-600 text-white font-black'});
-      return rows;
-    };
-
-    const rows = buildRows(dataA);
+    // Construir filas: UNA sola línea de ingresos, costos operativos flat
+    const colSpan = tasa > 1 ? 5 : 4;
 
     return (
       <div className="space-y-6 animate-in fade-in">
@@ -5308,30 +5201,25 @@ export default function App() {
           <div className="px-8 py-4 bg-gray-50 border-b border-gray-200 flex flex-wrap gap-4 items-end">
             {erView === 'estado' ? (
               <>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes</label>
+                <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes</label>
                   <select value={erMes} onChange={e=>setErMes(parseInt(e.target.value))} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none bg-white">
                     {MONTHS.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Año</label>
+                <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Año</label>
                   <input type="number" value={erAno} onChange={e=>setErAno(parseInt(e.target.value))} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-24 text-center" />
                 </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa Cambio (Bs/$)</label>
-                  <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="Ej: 392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-32 text-center" />
+                <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa (Bs/$)</label>
+                  <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-32 text-center" />
                 </div>
                 <button onClick={()=>handleExportPDF('Estado_Resultado', false)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> PDF</button>
               </>
             ) : (
               <>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Actual (A)</label>
+                <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Actual (A)</label>
                   <input type="month" value={varMesA} onChange={e=>setVarMesA(e.target.value)} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none" />
                 </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Anterior (B)</label>
+                <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Anterior (B)</label>
                   <input type="month" value={varMesB} onChange={e=>setVarMesB(e.target.value)} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none" />
                 </div>
                 <button onClick={()=>handleExportPDF('Variaciones_ER', true)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> PDF</button>
@@ -5345,84 +5233,89 @@ export default function App() {
               <div className="hidden pdf-header p-6 border-b-2 border-gray-300">
                 <ReportHeader />
                 <h1 className="text-2xl font-black text-center uppercase border-b-4 border-orange-500 pb-2 mt-4">ESTADO DE RESULTADO INTEGRAL</h1>
-                <p className="text-xs text-center font-bold text-gray-500 mt-1">PERIODO: {MONTHS[erMes-1]} {erAno} | TASA: {tasa > 1 ? formatNum(tasa) + ' Bs/$' : 'Sin tasa'}</p>
+                <p className="text-xs text-center font-bold text-gray-500 mt-1">PERIODO: {MONTHS[erMes-1]} {erAno}{tasa>1?` | TASA: ${formatNum(tasa)} Bs/$`:''}</p>
               </div>
-
-              {/* Resultado resumen top */}
               <div className="grid grid-cols-3 gap-0 border-b-2 border-gray-300">
-                <div className="p-4 border-r border-gray-200 text-center">
-                  <div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Ingresos</div>
-                  <div className="font-black text-lg text-green-600">${formatNum(dataA.totalIngresos)}</div>
-                </div>
-                <div className="p-4 border-r border-gray-200 text-center">
-                  <div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Costos</div>
-                  <div className="font-black text-lg text-red-600">${formatNum(dataA.totalCostos)}</div>
-                </div>
-                <div className={`p-4 text-center ${dataA.resultado>=0?'bg-green-50':'bg-red-50'}`}>
-                  <div className="text-[9px] font-black text-gray-400 uppercase mb-1">RESULTADO USD</div>
-                  <div className={`font-black text-xl ${dataA.resultado>=0?'text-green-700':'text-red-700'}`}>${formatNum(dataA.resultado)}</div>
-                  {tasa > 1 && <div className={`font-black text-xs ${dataA.resultado>=0?'text-green-600':'text-red-600'}`}>Bs. {bs(dataA.resultado)}</div>}
-                </div>
+                <div className="p-4 border-r border-gray-200 text-center"><div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Ingresos</div><div className="font-black text-lg text-green-600">${formatNum(dataA.totalIngresos)}</div>{tasa>1&&<div className="text-[9px] text-green-500 font-bold">Bs. {bs(dataA.totalIngresos)}</div>}</div>
+                <div className="p-4 border-r border-gray-200 text-center"><div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Costos</div><div className="font-black text-lg text-red-600">${formatNum(dataA.totalCostos)}</div>{tasa>1&&<div className="text-[9px] text-red-500 font-bold">Bs. {bs(dataA.totalCostos)}</div>}</div>
+                <div className={`p-4 text-center ${dataA.resultado>=0?'bg-green-50':'bg-red-50'}`}><div className="text-[9px] font-black text-gray-400 uppercase mb-1">Resultado Ejercicio</div><div className={`font-black text-xl ${dataA.resultado>=0?'text-green-700':'text-red-700'}`}>${formatNum(dataA.resultado)}</div>{tasa>1&&<div className={`text-xs font-black ${dataA.resultado>=0?'text-green-600':'text-red-600'}`}>Bs. {bs(dataA.resultado)}</div>}</div>
               </div>
-
-              {/* Tabla principal */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs border-collapse">
-                  <thead>
-                    <tr className="bg-gray-800 text-white">
-                      <th className="py-2 px-4 text-left font-black uppercase text-[9px]">Cuenta / Concepto</th>
-                      <th className="py-2 px-3 text-center font-black uppercase text-[9px] w-16">UM</th>
-                      <th className="py-2 px-3 text-right font-black uppercase text-[9px] w-28">Saldo Neto USD</th>
-                      <th className="py-2 px-3 text-center font-black uppercase text-[9px] w-16">%</th>
-                      {tasa > 1 && <th className="py-2 px-3 text-right font-black uppercase text-[9px] w-32">Saldo Neto Bs.</th>}
+              <table className="w-full text-xs border-collapse">
+                <thead><tr className="bg-gray-800 text-white">
+                  <th className="py-2 px-4 text-left font-black uppercase text-[9px]">Cuenta / Concepto</th>
+                  <th className="py-2 px-3 text-center font-black text-[9px] w-14">UM</th>
+                  <th className="py-2 px-3 text-right font-black text-[9px] w-28">Saldo USD</th>
+                  <th className="py-2 px-3 text-center font-black text-[9px] w-14">%</th>
+                  {tasa>1&&<th className="py-2 px-3 text-right font-black text-[9px] w-32">Saldo Bs.</th>}
+                </tr></thead>
+                <tbody>
+                  {/* INGRESOS */}
+                  <tr className="bg-orange-500 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={colSpan}>INGRESOS</td></tr>
+                  <tr className="bg-orange-50"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-orange-800" colSpan={colSpan}>VENTAS BRUTAS</td></tr>
+                  {dataA.facturasperiodo.length>0 ? (
+                    <tr className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-2 px-4 font-bold text-[10px] pl-14"><span className="text-orange-600 font-black mr-2">4.1.01.01.000</span>INGRESOS POR MAQUILA</td>
+                      <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
+                      <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalIngresos)}</td>
+                      <td className="py-2 px-3 text-center text-[9px]">100.00%</td>
+                      {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(dataA.totalIngresos)}</td>}
                     </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row, i) => {
-                      if (row.type === 'spacer') return <tr key={i}><td colSpan={tasa>1?5:4} className="py-2"></td></tr>;
-                      if (row.type === 'resultado') return (
-                        <tr key={i} className={row.className}>
-                          <td className="py-3 px-4 font-black text-sm uppercase" colSpan={2}>{row.label}</td>
-                          <td className="py-3 px-3 text-right font-black text-sm">{row.usd >= 0 ? '' : '-'}${formatNum(Math.abs(row.usd))}</td>
-                          <td className="py-3 px-3 text-center font-black text-xs">{row.pct}</td>
-                          {tasa>1 && <td className="py-3 px-3 text-right font-black text-xs">{bs(row.usd)}</td>}
-                        </tr>
-                      );
-                      if (row.type === 'grupo') return (
-                        <tr key={i} className={row.className}>
-                          <td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>{row.label}</td>
-                        </tr>
-                      );
-                      if (row.type === 'subgrupo') return (
-                        <tr key={i} className={row.className || 'bg-gray-100'}>
-                          <td className="py-2 px-4 font-black text-[10px] uppercase pl-8" colSpan={tasa>1?5:4}>{row.label}</td>
-                        </tr>
-                      );
-                      if (row.type === 'cuenta') return (
-                        <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14">
-                            {row.codigo && <span className="text-orange-600 mr-2">{row.codigo}</span>}
-                            {row.label}
-                          </td>
-                          <td className="py-2 px-3 text-center font-bold text-[9px] text-gray-500">USD</td>
-                          <td className="py-2 px-3 text-right font-black">{formatNum(row.usd)}</td>
-                          <td className="py-2 px-3 text-center font-bold text-[9px]">{row.pct}</td>
-                          {tasa>1 && <td className="py-2 px-3 text-right font-bold text-gray-600">{bs(row.usd)}</td>}
-                        </tr>
-                      );
-                      if (row.type === 'subtotal' || row.type === 'total_grupo') return (
-                        <tr key={i} className={row.className || 'bg-gray-100'}>
-                          <td className="py-2.5 px-4 font-black text-[10px] uppercase pl-8" colSpan={2}>{row.label}</td>
-                          <td className="py-2.5 px-3 text-right font-black">{row.type==='total_grupo'?'':''}{formatNum(row.usd)}</td>
-                          <td className="py-2.5 px-3 text-center font-black text-[9px]">{row.pct}</td>
-                          {tasa>1 && <td className="py-2.5 px-3 text-right font-black">{bs(row.usd)}</td>}
-                        </tr>
-                      );
-                      return null;
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                  ) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={colSpan}>Sin ingresos en este periodo</td></tr>}
+                  <tr className="bg-orange-100">
+                    <td className="py-2.5 px-4 text-[10px] uppercase pl-8 text-orange-800 font-black" colSpan={2}>Total INGRESOS</td>
+                    <td className="py-2.5 px-3 text-right font-black text-orange-700">{formatNum(dataA.totalIngresos)}</td>
+                    <td className="py-2.5 px-3 text-center text-[9px] font-black">100.00%</td>
+                    {tasa>1&&<td className="py-2.5 px-3 text-right font-black text-orange-700">{bs(dataA.totalIngresos)}</td>}
+                  </tr>
+                  <tr><td colSpan={colSpan} className="py-2"></td></tr>
+                  {/* COSTOS */}
+                  <tr className="bg-gray-800 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={colSpan}>COSTOS</td></tr>
+                  <tr className="bg-gray-200"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={colSpan}>COSTO DE PRODUCCION</td></tr>
+                  {dataA.movsProd.length>0 ? dataA.movsProd.map((m,i)=>(
+                    <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-2 px-4 font-bold text-[10px] pl-14">{m.itemName} ({m.reference})</td>
+                      <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
+                      <td className="py-2 px-3 text-right font-black">{formatNum(parseNum(m.totalValue))}</td>
+                      <td className="py-2 px-3 text-center text-[9px]">{pctOf(parseNum(m.totalValue),dataA.totalIngresos)}</td>
+                      {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(parseNum(m.totalValue))}</td>}
+                    </tr>
+                  )) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={colSpan}>Sin movimientos de produccion</td></tr>}
+                  <tr className="bg-gray-100 border-b border-gray-300">
+                    <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total COSTO PRODUCCION</td>
+                    <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalCostoProd)}</td>
+                    <td className="py-2 px-3 text-center text-[9px] font-black">{pctOf(dataA.totalCostoProd,dataA.totalIngresos)}</td>
+                    {tasa>1&&<td className="py-2 px-3 text-right font-black">{bs(dataA.totalCostoProd)}</td>}
+                  </tr>
+                  {/* COSTOS OPERATIVOS FLAT */}
+                  {Object.values(dataA.costosPorCuenta).length>0&&<>
+                    <tr className="bg-gray-200"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={colSpan}>OTROS COSTOS OPERATIVOS</td></tr>
+                    {Object.values(dataA.costosPorCuenta).map((c,i)=>(
+                      <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="py-2 px-4 font-bold text-[10px] pl-14">{c.codigo&&<span className="text-orange-600 font-black mr-2">{c.codigo}</span>}{c.nombre}</td>
+                        <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
+                        <td className="py-2 px-3 text-right font-black">{formatNum(c.total)}</td>
+                        <td className="py-2 px-3 text-center text-[9px]">{pctOf(c.total,dataA.totalIngresos)}</td>
+                        {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(c.total)}</td>}
+                      </tr>
+                    ))}
+                    <tr className="bg-gray-100 border-b border-gray-300">
+                      <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total OTROS COSTOS OPERATIVOS</td>
+                      <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalCostosOp)}</td>
+                      <td className="py-2 px-3 text-center text-[9px] font-black">{pctOf(dataA.totalCostosOp,dataA.totalIngresos)}</td>
+                      {tasa>1&&<td className="py-2 px-3 text-right font-black">{bs(dataA.totalCostosOp)}</td>}
+                    </tr>
+                  </>}
+                  {/* TOTAL COSTOS + RESULTADO */}
+                  <tr className="bg-gray-700 text-white"><td className="py-3 px-4 text-sm uppercase font-black" colSpan={2}>Total COSTOS</td><td className="py-3 px-3 text-right font-black text-lg">{formatNum(dataA.totalCostos)}</td><td className="py-3 px-3 text-center text-[9px] font-black">{pctOf(dataA.totalCostos,dataA.totalIngresos)}</td>{tasa>1&&<td className="py-3 px-3 text-right font-black text-lg">{bs(dataA.totalCostos)}</td>}</tr>
+                  <tr><td colSpan={colSpan} className="py-1"></td></tr>
+                  <tr className={dataA.resultado>=0?'bg-green-600 text-white':'bg-red-600 text-white'}>
+                    <td className="py-3 px-4 font-black text-sm uppercase" colSpan={2}>RESULTADO DEL EJERCICIO</td>
+                    <td className="py-3 px-3 text-right font-black text-xl">${formatNum(dataA.resultado)}</td>
+                    <td className="py-3 px-3 text-center font-black">{pctOf(dataA.resultado,dataA.totalIngresos)}</td>
+                    {tasa>1&&<td className="py-3 px-3 text-right font-black text-xl">{bs(dataA.resultado)}</td>}
+                  </tr>
+                </tbody>
+              </table>
             </div>
           )}
 
