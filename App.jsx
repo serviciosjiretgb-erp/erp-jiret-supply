@@ -191,7 +191,7 @@ export default function App() {
   const [pdcSearchTerm, setPdcSearchTerm] = useState('');
   // Cuenta contable para ingresos (configurable)
   const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
-const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
+ = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
   const [newUserForm, setNewUserForm] = useState(initialUserForm);
   const [editingUserId, setEditingUserId] = useState(null);
 
@@ -264,96 +264,65 @@ const initialUserForm = { username: '', password: '', name: '', role: 'Usuario',
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content');
     if (!element) {
-      setDialog({title:'Error PDF', text:'No se encontró contenido para exportar.', type:'alert'});
+      setDialog({title:'Error PDF', text:'No se encontro contenido para exportar. Seleccione un reporte primero.', type:'alert'});
       return;
     }
     if (typeof window.html2pdf === 'undefined') {
-      setDialog({title:'Librería no lista', text:'La librería PDF aún carga. Espere unos segundos y reintente.', type:'alert'});
+      setDialog({title:'Libreria no lista', text:'La libreria PDF aun carga. Espere unos segundos y reintente.', type:'alert'});
       return;
     }
 
-    // ── Show/hide en el DOM real (para que se clone correctamente) ─────────
     const noPdfEls = element.querySelectorAll('.no-pdf, [data-html2canvas-ignore]');
-    noPdfEls.forEach(el => { el.dataset.prevDisplay = el.style.display || ''; el.style.setProperty('display','none','important'); });
+    noPdfEls.forEach(el => { el.dataset.pd = el.style.display || ''; el.style.setProperty('display','none','important'); });
     const headerEls = element.querySelectorAll('.pdf-header');
-    headerEls.forEach(el => { el.dataset.prevDisplay = el.style.display || ''; el.style.setProperty('display','block','important'); });
+    headerEls.forEach(el => { el.dataset.pd = el.style.display || ''; el.style.setProperty('display','block','important'); });
 
-    // ── Ancho virtual = hoja carta a 96dpi ────────────────────────────────
-    // Portrait  8.5" × 96 = 816px  |  Landscape 11" × 96 = 1056px
-    const vw  = isLandscape ? 1056 : 816;
-    const pad = '20px 24px';
+    const vw = isLandscape ? 1056 : 816;
 
     const opt = {
-      margin:   isLandscape ? [6, 6, 6, 6] : [8, 8, 8, 8],
+      margin:   isLandscape ? [6,6,6,6] : [8,8,8,8],
       filename: `${filename}_${getTodayDate()}.pdf`,
-      image:    { type: 'jpeg', quality: 0.95 },
+      image:    { type:'jpeg', quality:0.95 },
       html2canvas: {
-        scale:           2,
-        useCORS:         true,
-        allowTaint:      false,
-        logging:         false,
-        backgroundColor: '#ffffff',
-        windowWidth:     vw,
-        scrollX:         0,
-        scrollY:         0,
+        scale: 2, useCORS: true, allowTaint: false, logging: false,
+        backgroundColor: '#ffffff', windowWidth: vw, scrollX: 0, scrollY: 0,
         onclone: (clonedDoc) => {
-          // ── 1. Limpiar body del clon ──────────────────────────────────
-          clonedDoc.body.style.cssText =
-            'margin:0!important;padding:0!important;background:#fff!important;' +
-            'width:' + vw + 'px!important;overflow:visible!important;';
-
-          // ── 2. Encontrar el elemento en el clon ──────────────────────
+          // Set body style without destroying content
+          clonedDoc.body.style.margin = '0';
+          clonedDoc.body.style.padding = '0';
+          clonedDoc.body.style.background = '#fff';
+          clonedDoc.body.style.width = vw + 'px';
+          // Find and style the pdf-content element
           const el = clonedDoc.getElementById('pdf-content');
           if (!el) return;
-
-          // ── 3. Mover el elemento al inicio del body (posición 0,0) ───
-          // Esto elimina cualquier offset del layout centrado
-          clonedDoc.body.innerHTML = '';
-          clonedDoc.body.appendChild(el);
-
-          // ── 4. Aplicar estilos de impresión al elemento ───────────────
-          el.style.cssText =
-            'width:' + vw + 'px!important;' +
-            'max-width:' + vw + 'px!important;' +
-            'min-width:' + vw + 'px!important;' +
-            'margin:0!important;' +
-            'padding:' + pad + '!important;' +
-            'background:#ffffff!important;' +
-            'color:#000000!important;' +
-            'box-sizing:border-box!important;' +
-            'position:relative!important;' +
-            'left:0!important;top:0!important;' +
-            'overflow:visible!important;';
-
-          // ── 5. Mostrar headers, ocultar elementos no-pdf ──────────────
-          el.querySelectorAll('.pdf-header').forEach(h =>
-            h.style.setProperty('display','block','important'));
-          el.querySelectorAll('.no-pdf,[data-html2canvas-ignore]').forEach(h =>
-            h.style.setProperty('display','none','important'));
+          // Move it to a clean wrapper at the top of body
+          const wrapper = clonedDoc.createElement('div');
+          wrapper.style.cssText = 'margin:0;padding:0;background:#fff;width:' + vw + 'px;';
+          clonedDoc.body.insertBefore(wrapper, clonedDoc.body.firstChild);
+          wrapper.appendChild(el);
+          el.style.cssText = [
+            'width:' + vw + 'px', 'max-width:' + vw + 'px', 'min-width:' + vw + 'px',
+            'margin:0', 'padding:20px 24px', 'background:#ffffff', 'color:#000000',
+            'box-sizing:border-box', 'position:relative', 'left:0', 'top:0', 'overflow:visible'
+          ].join('!important;') + '!important;';
+          el.querySelectorAll('.pdf-header').forEach(h => h.style.setProperty('display','block','important'));
+          el.querySelectorAll('.no-pdf,[data-html2canvas-ignore]').forEach(h => h.style.setProperty('display','none','important'));
         },
       },
-      jsPDF: {
-        unit:        'mm',
-        format:      'letter',
-        orientation: isLandscape ? 'landscape' : 'portrait',
-        compress:    true,
-      },
-      pagebreak: { mode: ['css', 'legacy'] },
+      jsPDF: { unit:'mm', format:'letter', orientation: isLandscape ? 'landscape' : 'portrait', compress:true },
+      pagebreak: { mode:['css','legacy'] },
     };
 
-    // ── Restaurar DOM real después de exportar ─────────────────────────────
     const restore = () => {
-      noPdfEls.forEach(el => { el.style.display = el.dataset.prevDisplay || ''; delete el.dataset.prevDisplay; });
-      headerEls.forEach(el => { el.style.display = el.dataset.prevDisplay || ''; delete el.dataset.prevDisplay; });
+      noPdfEls.forEach(el => { el.style.display = el.dataset.pd || ''; delete el.dataset.pd; });
+      headerEls.forEach(el => { el.style.display = el.dataset.pd || ''; delete el.dataset.pd; });
     };
 
-    window.html2pdf().set(opt).from(element).save()
-      .then(restore)
-      .catch(err => {
-        restore();
-        console.error('PDF error:', err);
-        setDialog({title:'Error al generar PDF', text:'Intente nuevamente. Si persiste, recargue la página.', type:'alert'});
-      });
+    window.html2pdf().set(opt).from(element).save().then(restore).catch(err => {
+      restore();
+      console.error('PDF error:', err);
+      setDialog({title:'Error al generar PDF', text:'Intente nuevamente. Si persiste, recargue la pagina.', type:'alert'});
+    });
   };
   
   const handleExportExcel = (tableDataOrId, filename, headers = null) => {
@@ -674,8 +643,9 @@ const initialUserForm = { username: '', password: '', name: '', role: 'Usuario',
   // ============================================================================
   const handleSaveOpCost = async (e) => {
     e.preventDefault();
-    if (!newOpCostForm.category || !newOpCostForm.amount) {
-      return setDialog({ title: 'Aviso', text: 'Categoría y monto son obligatorios.', type: 'alert' });
+    const tieneIdentificador = planDeCuentas.length > 0 ? !!newOpCostForm.cuentaContable : !!newOpCostForm.category;
+    if (!tieneIdentificador || !newOpCostForm.amount) {
+      return setDialog({ title: 'Aviso', text: 'Seleccione una cuenta/categoria y el monto.', type: 'alert' });
     }
     const amount = parseFloat(newOpCostForm.amount);
     if (amount <= 0) {
@@ -683,16 +653,18 @@ const initialUserForm = { username: '', password: '', name: '', role: 'Usuario',
     }
     try {
       const docId = `COST-${Date.now()}`;
-      const month = newOpCostForm.date.substring(0, 7); // YYYY-MM
+      const month = newOpCostForm.date.substring(0, 7);
+      const pdc = planDeCuentas.find(p => p.codigo === newOpCostForm.cuentaContable);
+      const categoryFinal = pdc ? (pdc.nombre || pdc.subGrupo || pdc.grupo) : newOpCostForm.category;
       await setDoc(getDocRef('operatingCosts', docId), {
         ...newOpCostForm,
-        amount,
-        month,
+        category: categoryFinal,
+        amount, month,
         user: appUser?.name || 'Sistema',
         timestamp: Date.now()
       });
       setNewOpCostForm(initialOpCostForm);
-      setDialog({ title: '¡Éxito!', text: 'Costo operativo registrado correctamente.', type: 'alert' });
+      setDialog({ title: 'Exito!', text: 'Costo operativo registrado correctamente.', type: 'alert' });
     } catch(err) {
       setDialog({ title: 'Error', text: err.message, type: 'alert' });
     }
@@ -2944,37 +2916,57 @@ const initialUserForm = { username: '', password: '', name: '', role: 'Usuario',
                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
                     <input type="date" value={newOpCostForm.date} onChange={e => setNewOpCostForm({...newOpCostForm, date: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500" required />
                   </div>
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="text-[10px] font-black text-gray-500 uppercase">Categoría</label>
-                      <button type="button" onClick={() => setShowNewCategoryModal(true)} className="text-[9px] bg-green-100 text-green-700 px-2 py-1 rounded font-bold hover:bg-green-200 transition-all flex items-center gap-1"><Plus size={10}/> Nueva</button>
-                    </div>
-                    <select value={newOpCostForm.category} onChange={e => setNewOpCostForm({...newOpCostForm, category: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500" required>
-                      {allCats.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
-                    </select>
+                  <div className="md:col-span-2">
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
+                      Nombre / Cuenta {planDeCuentas.length > 0 ? <span className="text-green-600 font-black">(Plan de Cuentas activo)</span> : <span className="text-gray-400">(Categoria manual)</span>}
+                    </label>
+                    {planDeCuentas.length > 0 ? (
+                      <select
+                        value={newOpCostForm.cuentaContable}
+                        onChange={e => {
+                          const codigo = e.target.value;
+                          const pdc = planDeCuentas.find(p => p.codigo === codigo);
+                          setNewOpCostForm({
+                            ...newOpCostForm,
+                            cuentaContable: codigo,
+                            category: pdc ? (pdc.nombre || pdc.subGrupo || pdc.grupo || codigo) : newOpCostForm.category
+                          });
+                        }}
+                        className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500"
+                        required
+                      >
+                        <option value="">Seleccione cuenta contable...</option>
+                        {planDeCuentas.map(p => (
+                          <option key={p.id} value={p.codigo}>
+                            {p.codigo} — {p.nombre}{p.grupo ? ` [${p.grupo}]` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="flex gap-2 items-center">
+                        <select value={newOpCostForm.category} onChange={e => setNewOpCostForm({...newOpCostForm, category: e.target.value})} className="flex-1 border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500" required>
+                          {allCats.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
+                        </select>
+                        <button type="button" onClick={() => setShowNewCategoryModal(true)} className="text-[9px] bg-green-100 text-green-700 px-3 py-3 rounded-xl font-bold hover:bg-green-200 flex items-center gap-1 whitespace-nowrap"><Plus size={10}/> Nueva</button>
+                      </div>
+                    )}
+                    {newOpCostForm.cuentaContable && (
+                      <p className="text-[9px] font-black text-green-600 mt-1 bg-green-50 px-2 py-1 rounded-lg">
+                        Cuenta: <span className="font-mono">{newOpCostForm.cuentaContable}</span> — Categoria: {newOpCostForm.category}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Monto ($)</label>
                     <input type="number" step="0.01" min="0.01" value={newOpCostForm.amount} onChange={e => setNewOpCostForm({...newOpCostForm, amount: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500 text-center" placeholder="0.00" required />
                   </div>
-                  <div className="md:col-span-4">
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción</label>
+                  <div className="md:col-span-3">
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripcion</label>
                     <input type="text" value={newOpCostForm.description} onChange={e => setNewOpCostForm({...newOpCostForm, description: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500 uppercase" placeholder="EJ: PAGO DE FACTURA DE LUZ" />
                   </div>
-                  <div className="md:col-span-3">
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cuenta Contable (Plan de Cuentas)</label>
-                    <select value={newOpCostForm.cuentaContable} onChange={e => setNewOpCostForm({...newOpCostForm, cuentaContable: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500">
-                      <option value="">Sin cuenta asignada</option>
-                      {planDeCuentas.filter(p => p.grupo && (p.grupo.includes('COSTO') || p.grupo.includes('GASTO'))).map(p => (
-                        <option key={p.id} value={p.codigo}>{p.codigo} — {p.nombre}</option>
-                      ))}
-                      {planDeCuentas.filter(p => !p.grupo || (!p.grupo.includes('COSTO') && !p.grupo.includes('GASTO'))).map(p => (
-                        <option key={p.id} value={p.codigo}>[{p.grupo||'OTROS'}] {p.codigo} — {p.nombre}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="md:col-span-4">
-                    <button type="submit" className="bg-green-600 text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-green-700 transition-all flex items-center gap-2"><PlusCircle size={16}/> Registrar Costo</button>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">&nbsp;</label>
+                    <button type="submit" className="w-full bg-green-600 text-white px-4 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-green-700 transition-all flex items-center justify-center gap-2"><PlusCircle size={16}/> Registrar</button>
                   </div>
                 </form>
               </div>
@@ -4530,11 +4522,21 @@ const initialUserForm = { username: '', password: '', name: '', role: 'Usuario',
       return s + [...(prod.extrusion?.batches||[]), ...(prod.impresion?.batches||[]), ...(prod.sellado?.batches||[])].reduce((sb, b) => sb + parseNum(b.mermaKg||0), 0);
     }, 0);
 
+    const MONTH_NAMES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    const tasa = parseNum(erTasa) || 1;
+    const ymA = `${erAno}-${String(erMes).padStart(2,'0')}`;
+    const dataA = calcEstadoData(ymA);
+    const dataB = calcEstadoData(varMesB);
+    const bs = (usd) => formatNum(usd * tasa);
+    const pctOf = (val, base) => base !== 0 ? ((val/base)*100).toFixed(2)+'%' : '0.00%';
+
     const REPORT_CARDS = [
-      { id: 'general', icon: <FileText size={32}/>, label: 'Reporte General', desc: 'Resumen completo del período', color: 'blue' },
-      { id: 'ingresos_vs_costos', icon: <BarChart3 size={32}/>, label: 'Ingresos vs Costos', desc: 'Análisis comparativo detallado', color: 'green' },
-      { id: 'mermas', icon: <AlertTriangle size={32}/>, label: 'Análisis de Mermas', desc: 'Pérdidas y desperdicios', color: 'orange' },
-      { id: 'super_finiquito', icon: <FileCheck size={32}/>, label: 'Súper Finiquito (OP)', desc: 'Análisis por orden individual', color: 'purple' },
+      { id: 'general', icon: <FileText size={26}/>, label: 'Reporte General', desc: 'Resumen completo del periodo', color: 'blue' },
+      { id: 'ingresos_vs_costos', icon: <BarChart3 size={26}/>, label: 'Ingresos vs Costos', desc: 'Comparativo 12 meses', color: 'green' },
+      { id: 'mermas', icon: <AlertTriangle size={26}/>, label: 'Mermas', desc: 'Perdidas y desperdicios', color: 'orange' },
+      { id: 'super_finiquito', icon: <FileCheck size={26}/>, label: 'Finiquito por OP', desc: 'Por orden individual', color: 'purple' },
+      { id: 'estado_financiero', icon: <TrendingUp size={26}/>, label: 'Estado Financiero', desc: 'Estado de resultado integral', color: 'gray' },
+      { id: 'variaciones', icon: <TrendingDown size={26}/>, label: 'Variaciones', desc: 'Mes actual vs anterior', color: 'red' },
     ];
 
     return (
@@ -4545,26 +4547,28 @@ const initialUserForm = { username: '', password: '', name: '', role: 'Usuario',
             <p className="text-xs font-bold text-gray-500 uppercase mt-2">Dashboard de Ingresos, Costos y Utilidad</p>
           </div>
 
-          <div className="p-8 space-y-8">
+          <div className="p-8 space-y-6">
             <div>
-              <h3 className="text-sm font-black uppercase text-black mb-4">Reportes Disponibles</h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                 {REPORT_CARDS.map(card => (
-                  <button key={card.id} onClick={() => { setShowReportType(card.id); setShowFiniquitoOP(null); }} className={`p-6 rounded-2xl border-2 text-left transition-all hover:shadow-lg ${showReportType === card.id ? `border-${card.color}-400 bg-${card.color}-50 shadow-lg` : 'border-gray-200 bg-white hover:border-gray-300'}`}>
-                    <div className={`text-${card.color}-500 mb-3`}>{card.icon}</div>
-                    <div className="font-black text-xs uppercase text-black">{card.label}</div>
-                    <div className="text-[10px] text-gray-500 mt-1">{card.desc}</div>
+                  <button key={card.id} onClick={() => { setShowReportType(card.id); setShowFiniquitoOP(null); }}
+                    className={`p-4 rounded-2xl border-2 text-left transition-all hover:shadow-md ${showReportType === card.id ? 'border-orange-400 bg-orange-50 shadow-md' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                    <div className={`mb-2 ${showReportType===card.id?'text-orange-500':'text-gray-400'}`}>{card.icon}</div>
+                    <div className="font-black text-[10px] uppercase text-black leading-tight">{card.label}</div>
+                    <div className="text-[9px] text-gray-400 mt-0.5 leading-tight">{card.desc}</div>
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="flex gap-4 items-center">
-              <div>
-                <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes de Análisis</label>
-                <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500" />
+            {['general','ingresos_vs_costos','mermas','super_finiquito'].includes(showReportType) && (
+              <div className="flex gap-4 items-center">
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes de Analisis</label>
+                  <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500" />
+                </div>
               </div>
-            </div>
+            )}
 
             {showReportType === 'general' && (
               <div id="pdf-content" className="space-y-6">
@@ -4694,6 +4698,271 @@ const initialUserForm = { username: '', password: '', name: '', role: 'Usuario',
                     </table>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* ── ESTADO FINANCIERO ── */}
+            {showReportType === 'estado_financiero' && (
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-4 items-end bg-gray-50 p-4 rounded-2xl border border-gray-200">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes</label>
+                    <select value={erMes} onChange={e=>setErMes(parseInt(e.target.value))} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none bg-white">
+                      {MONTH_NAMES_ES.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Año</label>
+                    <input type="number" value={erAno} onChange={e=>setErAno(parseInt(e.target.value))} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-24 text-center" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$</label>
+                    <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-28 text-center" />
+                  </div>
+                  <button onClick={()=>handleExportPDF('Estado_Resultado_Integral', false)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> PDF</button>
+                </div>
+                <div id="pdf-content" className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+                  <div className="hidden pdf-header p-6 border-b-2 border-gray-300">
+                    <ReportHeader />
+                    <h1 className="text-2xl font-black text-center uppercase border-b-4 border-orange-500 pb-2 mt-4">ESTADO DE RESULTADO INTEGRAL</h1>
+                    <p className="text-xs text-center font-bold text-gray-500 mt-1">PERIODO: {MONTH_NAMES_ES[erMes-1]} {erAno}{tasa>1?` | TASA: ${formatNum(tasa)} Bs/$`:''}</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-0 border-b-2 border-gray-200">
+                    <div className="p-5 border-r border-gray-200 text-center">
+                      <div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Ingresos</div>
+                      <div className="font-black text-xl text-green-600">${formatNum(dataA.totalIngresos)}</div>
+                      {tasa>1&&<div className="text-[9px] text-green-500 font-bold">Bs. {bs(dataA.totalIngresos)}</div>}
+                    </div>
+                    <div className="p-5 border-r border-gray-200 text-center">
+                      <div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Costos</div>
+                      <div className="font-black text-xl text-red-600">${formatNum(dataA.totalCostos)}</div>
+                      {tasa>1&&<div className="text-[9px] text-red-500 font-bold">Bs. {bs(dataA.totalCostos)}</div>}
+                    </div>
+                    <div className={`p-5 text-center ${dataA.resultado>=0?'bg-green-50':'bg-red-50'}`}>
+                      <div className="text-[9px] font-black text-gray-400 uppercase mb-1">Resultado del Ejercicio</div>
+                      <div className={`font-black text-2xl ${dataA.resultado>=0?'text-green-700':'text-red-700'}`}>${formatNum(dataA.resultado)}</div>
+                      {tasa>1&&<div className={`text-xs font-black ${dataA.resultado>=0?'text-green-600':'text-red-600'}`}>Bs. {bs(dataA.resultado)}</div>}
+                    </div>
+                  </div>
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-gray-800 text-white">
+                        <th className="py-2 px-4 text-left font-black uppercase text-[9px]">Cuenta / Concepto</th>
+                        <th className="py-2 px-3 text-center font-black text-[9px] w-14">UM</th>
+                        <th className="py-2 px-3 text-right font-black text-[9px] w-28">Saldo USD</th>
+                        <th className="py-2 px-3 text-center font-black text-[9px] w-14">%</th>
+                        {tasa>1&&<th className="py-2 px-3 text-right font-black text-[9px] w-32">Saldo Bs.</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="bg-orange-500 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>INGRESOS</td></tr>
+                      <tr className="bg-orange-50"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-orange-800" colSpan={tasa>1?5:4}>VENTAS BRUTAS</td></tr>
+                      {dataA.facturasperiodo.length>0 ? dataA.facturasperiodo.map((inv,i)=>(
+                        <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-2 px-4 font-bold text-[10px] pl-14">{inv.clientName} — {inv.documento}</td>
+                          <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
+                          <td className="py-2 px-3 text-right font-black">{formatNum(parseNum(inv.montoBase))}</td>
+                          <td className="py-2 px-3 text-center text-[9px]">{pctOf(parseNum(inv.montoBase),dataA.totalIngresos)}</td>
+                          {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(parseNum(inv.montoBase))}</td>}
+                        </tr>
+                      )) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={tasa>1?5:4}>Sin ingresos en este periodo</td></tr>}
+                      <tr className="bg-orange-100">
+                        <td className="py-2.5 px-4 text-[10px] uppercase pl-8 text-orange-800 font-black" colSpan={2}>Total INGRESOS</td>
+                        <td className="py-2.5 px-3 text-right font-black text-orange-700">{formatNum(dataA.totalIngresos)}</td>
+                        <td className="py-2.5 px-3 text-center text-[9px] font-black">100.00%</td>
+                        {tasa>1&&<td className="py-2.5 px-3 text-right font-black text-orange-700">{bs(dataA.totalIngresos)}</td>}
+                      </tr>
+                      <tr><td colSpan={tasa>1?5:4} className="py-2"></td></tr>
+                      <tr className="bg-gray-800 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>COSTOS</td></tr>
+                      <tr className="bg-gray-200"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={tasa>1?5:4}>COSTO DE PRODUCCION</td></tr>
+                      {dataA.movsProd.length>0 ? dataA.movsProd.map((m,i)=>(
+                        <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-2 px-4 font-bold text-[10px] pl-14">{m.itemName} ({m.reference})</td>
+                          <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
+                          <td className="py-2 px-3 text-right font-black">{formatNum(parseNum(m.totalValue))}</td>
+                          <td className="py-2 px-3 text-center text-[9px]">{pctOf(parseNum(m.totalValue),dataA.totalIngresos)}</td>
+                          {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(parseNum(m.totalValue))}</td>}
+                        </tr>
+                      )) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={tasa>1?5:4}>Sin movimientos de produccion</td></tr>}
+                      <tr className="bg-gray-100">
+                        <td className="py-2.5 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total COSTO PRODUCCION</td>
+                        <td className="py-2.5 px-3 text-right font-black">{formatNum(dataA.totalCostoProd)}</td>
+                        <td className="py-2.5 px-3 text-center text-[9px] font-black">{pctOf(dataA.totalCostoProd,dataA.totalIngresos)}</td>
+                        {tasa>1&&<td className="py-2.5 px-3 text-right font-black">{bs(dataA.totalCostoProd)}</td>}
+                      </tr>
+                      {Object.entries(Object.values(dataA.costosPorCuenta).reduce((grps,c)=>{
+                        const sg=c.subGrupo||c.grupo||'COSTOS OPERATIVOS';
+                        if(!grps[sg])grps[sg]=[];grps[sg].push(c);return grps;
+                      },{})).map(([sg,cuentas])=>{
+                        const sgTot=cuentas.reduce((s,c)=>s+c.total,0);
+                        return (<React.Fragment key={sg}>
+                          <tr className="bg-gray-100"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={tasa>1?5:4}>{sg}</td></tr>
+                          {cuentas.map((c,i)=>(
+                            <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                              <td className="py-2 px-4 font-bold text-[10px] pl-14">{c.codigo&&<span className="text-orange-600 font-black mr-2">{c.codigo}</span>}{c.nombre}</td>
+                              <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
+                              <td className="py-2 px-3 text-right font-black">{formatNum(c.total)}</td>
+                              <td className="py-2 px-3 text-center text-[9px]">{pctOf(c.total,dataA.totalIngresos)}</td>
+                              {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(c.total)}</td>}
+                            </tr>
+                          ))}
+                          <tr className="bg-gray-100">
+                            <td className="py-2.5 px-4 text-[10px] uppercase pl-8 font-black" colSpan={2}>Total {sg}</td>
+                            <td className="py-2.5 px-3 text-right font-black">{formatNum(sgTot)}</td>
+                            <td className="py-2.5 px-3 text-center text-[9px] font-black">{pctOf(sgTot,dataA.totalIngresos)}</td>
+                            {tasa>1&&<td className="py-2.5 px-3 text-right font-black">{bs(sgTot)}</td>}
+                          </tr>
+                        </React.Fragment>);
+                      })}
+                      <tr className="bg-gray-700 text-white">
+                        <td className="py-3 px-4 text-sm uppercase font-black" colSpan={2}>Total COSTOS</td>
+                        <td className="py-3 px-3 text-right font-black text-lg">{formatNum(dataA.totalCostos)}</td>
+                        <td className="py-3 px-3 text-center text-[9px] font-black">{pctOf(dataA.totalCostos,dataA.totalIngresos)}</td>
+                        {tasa>1&&<td className="py-3 px-3 text-right font-black text-lg">{bs(dataA.totalCostos)}</td>}
+                      </tr>
+                      <tr><td colSpan={tasa>1?5:4} className="py-1"></td></tr>
+                      <tr className={dataA.resultado>=0?'bg-green-600 text-white':'bg-red-600 text-white'}>
+                        <td className="py-3 px-4 font-black text-sm uppercase" colSpan={2}>RESULTADO DEL EJERCICIO</td>
+                        <td className="py-3 px-3 text-right font-black text-xl">${formatNum(dataA.resultado)}</td>
+                        <td className="py-3 px-3 text-center font-black">{pctOf(dataA.resultado,dataA.totalIngresos)}</td>
+                        {tasa>1&&<td className="py-3 px-3 text-right font-black text-xl">{bs(dataA.resultado)}</td>}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ── VARIACIONES ── */}
+            {showReportType === 'variaciones' && (
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-4 items-end bg-gray-50 p-4 rounded-2xl border border-gray-200">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Actual (A)</label>
+                    <input type="month" value={varMesA} onChange={e=>setVarMesA(e.target.value)} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Anterior (B)</label>
+                    <input type="month" value={varMesB} onChange={e=>setVarMesB(e.target.value)} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none" />
+                  </div>
+                  <button onClick={()=>handleExportPDF('Variaciones_ER', true)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> PDF</button>
+                </div>
+                <div id="pdf-content" className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+                  <div className="hidden pdf-header p-6 border-b-2 border-gray-300">
+                    <ReportHeader />
+                    <h1 className="text-2xl font-black text-center uppercase border-b-4 border-orange-500 pb-2 mt-4">CUADRO COMPARATIVO DE VARIACIONES</h1>
+                    <p className="text-xs text-center font-bold text-gray-500 mt-1">Mes A: {varMesA} vs Mes B: {varMesB}</p>
+                  </div>
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-orange-500 text-white">
+                        <th className="py-3 px-4 text-left font-black uppercase text-[9px]" colSpan={2}>Cuenta / Concepto</th>
+                        <th className="py-3 px-3 text-center font-black uppercase text-[9px]" colSpan={2}>Mes Actual ({varMesA})</th>
+                        <th className="py-3 px-3 text-center font-black uppercase text-[9px]" colSpan={2}>Mes Anterior ({varMesB})</th>
+                        <th className="py-3 px-3 text-center font-black uppercase text-[9px]" colSpan={2}>Variacion Absoluta</th>
+                        <th className="py-3 px-3 text-center font-black uppercase text-[9px]">Var.%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="bg-orange-100"><td colSpan={9} className="py-2 px-4 font-black uppercase text-orange-800">INGRESOS</td></tr>
+                      <tr className="bg-orange-50"><td colSpan={9} className="py-1.5 px-4 font-black text-[9px] uppercase pl-8 text-orange-700">VENTAS BRUTAS</td></tr>
+                      {(()=>{
+                        const a=dataA.totalIngresos,b=dataB.totalIngresos,v=a-b,vr=b!==0?((v/b)*100).toFixed(2)+'%':'—';
+                        return(<tr className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>INGRESOS POR VENTAS / MAQUILA</td>
+                          <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td><td className="py-2 px-3 text-right font-black text-green-600">{formatNum(a)}</td>
+                          <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(b)}</td>
+                          <td className="py-2 px-3 text-center text-[9px] font-black">{v>=0?'▲':'▼'} USD</td>
+                          <td className={`py-2 px-3 text-right font-black ${v>=0?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(v))}</td>
+                          <td className={`py-2 px-3 text-center font-black ${v>=0?'text-green-600':'text-red-600'}`}>{vr}</td>
+                        </tr>);
+                      })()}
+                      {(()=>{
+                        const a=dataA.totalIngresos,b=dataB.totalIngresos,v=a-b;
+                        return(<tr className="bg-orange-100">
+                          <td className="py-2 px-4 font-black text-[10px] uppercase" colSpan={2}>Total INGRESOS</td>
+                          <td className="py-2 px-3 text-center text-[9px] font-black text-orange-700">USD</td><td className="py-2 px-3 text-right font-black text-orange-700">{formatNum(a)}</td>
+                          <td className="py-2 px-3 text-center text-[9px] font-black text-orange-700">USD</td><td className="py-2 px-3 text-right font-black text-orange-700">{formatNum(b)}</td>
+                          <td className="py-2 px-3 text-center font-black text-[9px]">{v>=0?'▲':'▼'} USD</td>
+                          <td className={`py-2 px-3 text-right font-black ${v>=0?'text-green-700':'text-red-700'}`}>{formatNum(Math.abs(v))}</td>
+                          <td className={`py-2 px-3 text-center font-black ${v>=0?'text-green-700':'text-red-700'}`}>{b>0?((v/b)*100).toFixed(2)+'%':'—'}</td>
+                        </tr>);
+                      })()}
+                      <tr><td colSpan={9} className="py-2"></td></tr>
+                      <tr className="bg-gray-800 text-white"><td colSpan={9} className="py-2 px-4 font-black uppercase">COSTOS</td></tr>
+                      <tr className="bg-gray-200"><td colSpan={9} className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700">COSTO PRODUCCION</td></tr>
+                      {(()=>{
+                        const a=dataA.totalCostoProd,b=dataB.totalCostoProd,v=a-b,vr=b!==0?((v/b)*100).toFixed(2)+'%':'—';
+                        return(<tr className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>COSTO DE PRODUCCION Y VENTAS</td>
+                          <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(a)}</td>
+                          <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(b)}</td>
+                          <td className="py-2 px-3 text-center text-[9px] font-black">{v>0?'▲':'▼'} USD</td>
+                          <td className={`py-2 px-3 text-right font-black ${v<=0?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(v))}</td>
+                          <td className={`py-2 px-3 text-center font-black ${v<=0?'text-green-600':'text-red-600'}`}>{vr}</td>
+                        </tr>);
+                      })()}
+                      {(()=>{
+                        const allK=new Set([...Object.keys(dataA.costosPorCuenta),...Object.keys(dataB.costosPorCuenta)]);
+                        const grps={};
+                        allK.forEach(k=>{
+                          const ca=dataA.costosPorCuenta[k],cb=dataB.costosPorCuenta[k];
+                          const sg=(ca||cb)?.subGrupo||(ca||cb)?.grupo||'COSTOS OPERATIVOS';
+                          if(!grps[sg])grps[sg]=[];
+                          grps[sg].push({a:ca?.total||0,b:cb?.total||0,nombre:(ca||cb)?.nombre||k,codigo:(ca||cb)?.codigo||''});
+                        });
+                        return Object.entries(grps).map(([sg,items])=>{
+                          const tA=items.reduce((s,i)=>s+i.a,0),tB=items.reduce((s,i)=>s+i.b,0);
+                          return(<React.Fragment key={sg}>
+                            <tr className="bg-gray-100"><td colSpan={9} className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700">{sg}</td></tr>
+                            {items.map((item,ii)=>{
+                              const v=item.a-item.b,vr=item.b!==0?((v/item.b)*100).toFixed(2)+'%':'—';
+                              return(<tr key={ii} className="border-b border-gray-100 hover:bg-gray-50">
+                                <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>{item.codigo&&<span className="text-orange-600 mr-1 font-black">{item.codigo}</span>}{item.nombre}</td>
+                                <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(item.a)}</td>
+                                <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(item.b)}</td>
+                                <td className="py-2 px-3 text-center text-[9px] font-black">{v>0?'▲':'▼'} USD</td>
+                                <td className={`py-2 px-3 text-right font-black ${v<=0?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(v))}</td>
+                                <td className={`py-2 px-3 text-center font-black ${v<=0?'text-green-600':'text-red-600'}`}>{vr}</td>
+                              </tr>);
+                            })}
+                            <tr className="bg-gray-100">
+                              <td className="py-2 px-4 text-[10px] uppercase font-black pl-10" colSpan={2}>Total {sg}</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-black text-gray-600">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(tA)}</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-black text-gray-600">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(tB)}</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-black">{tA>tB?'▲':'▼'} USD</td>
+                              <td className={`py-2 px-3 text-right font-black ${tA<=tB?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(tA-tB))}</td>
+                              <td className={`py-2 px-3 text-center font-black ${tA<=tB?'text-green-600':'text-red-600'}`}>{tB>0?((((tA-tB)/tB)*100).toFixed(2)+'%'):'—'}</td>
+                            </tr>
+                          </React.Fragment>);
+                        });
+                      })()}
+                      {(()=>{
+                        const a=dataA.totalCostos,b=dataB.totalCostos,v=a-b;
+                        return(<tr className="bg-gray-800 text-white">
+                          <td className="py-3 px-4 font-black text-sm uppercase" colSpan={2}>Total COSTOS</td>
+                          <td className="py-3 px-3 text-center text-[9px] font-black">USD</td><td className="py-3 px-3 text-right font-black text-lg">{formatNum(a)}</td>
+                          <td className="py-3 px-3 text-center text-[9px] font-black">USD</td><td className="py-3 px-3 text-right font-black text-lg">{formatNum(b)}</td>
+                          <td className="py-3 px-3 text-center text-[9px] font-black">{v>0?'▲':'▼'} USD</td>
+                          <td className={`py-3 px-3 text-right font-black text-lg ${v<=0?'text-green-400':'text-red-400'}`}>{formatNum(Math.abs(v))}</td>
+                          <td className={`py-3 px-3 text-center font-black ${v<=0?'text-green-400':'text-red-400'}`}>{b>0?((v/b)*100).toFixed(2)+'%':'—'}</td>
+                        </tr>);
+                      })()}
+                      <tr><td colSpan={9} className="py-2"></td></tr>
+                      {(()=>{
+                        const a=dataA.resultado,b=dataB.resultado,v=a-b,vr=b!==0?((v/b)*100).toFixed(2)+'%':'—';
+                        return(<tr className={a>=0?'bg-green-600 text-white':'bg-red-600 text-white'}>
+                          <td className="py-3 px-4 font-black text-sm uppercase" colSpan={2}>RESULTADO DEL EJERCICIO</td>
+                          <td className="py-3 px-3 text-center text-[9px] font-black">USD</td><td className="py-3 px-3 text-right font-black text-xl">{formatNum(a)}</td>
+                          <td className="py-3 px-3 text-center text-[9px] font-black">USD</td><td className="py-3 px-3 text-right font-black text-xl">{formatNum(b)}</td>
+                          <td className="py-3 px-3 text-center font-black text-[9px]">{v>=0?'▲':'▼'} USD</td>
+                          <td className="py-3 px-3 text-right font-black text-xl">{formatNum(Math.abs(v))}</td>
+                          <td className="py-3 px-3 text-center font-black">{vr}</td>
+                        </tr>);
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
