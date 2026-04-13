@@ -181,6 +181,9 @@ export default function App() {
   const [asientosContables, setAsientosContables] = useState([]);
   const [ldSearch, setLdSearch] = useState('');
   const [ldFiltro, setLdFiltro] = useState('TODOS');
+  const [showInvImport, setShowInvImport] = useState(false);
+  const [invImportPreview, setInvImportPreview] = useState([]);
+  const [invImportLoading, setInvImportLoading] = useState(false);
   const [erView, setErView] = useState('estado'); // 'estado' | 'variaciones'
   const [erMes, setErMes] = useState(new Date().getMonth() + 1);
   const [erAno, setErAno] = useState(new Date().getFullYear());
@@ -5693,6 +5696,202 @@ export default function App() {
     );
   };
 
+  // ============================================================================
+  // RESPALDO COMPLETO DEL SISTEMA (JSON)
+  // ============================================================================
+  const handleBackupData = async () => {
+    try {
+      const backup = {
+        _meta: { fecha: getTodayDate(), timestamp: Date.now(), version: '1.0', empresa: 'SERVICIOS JIRET G&B, C.A.' },
+        inventory,
+        inventoryMovements: invMovements,
+        clientes: clients,
+        requirements,
+        maquilaInvoices: invoices,
+        inventoryRequisitions: invRequisitions,
+        operatingCosts: opCosts,
+        purchaseOrders,
+        wipInventory,
+        finishedGoodsInventory,
+        planDeCuentas,
+        asientosContables,
+      };
+      const json = JSON.stringify(backup, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Respaldo_GYB_${getTodayDate()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setDialog({ title: '✅ Respaldo Exitoso', text: `Se exportaron todos los datos del sistema al archivo Respaldo_GYB_${getTodayDate()}.json. Guárdelo en un lugar seguro.`, type: 'alert' });
+    } catch (err) {
+      setDialog({ title: 'Error', text: 'No se pudo generar el respaldo: ' + err.message, type: 'alert' });
+    }
+  };
+
+  // ============================================================================
+  // RESETEO TOTAL DEL SISTEMA (requiere clave admin)
+  // ============================================================================
+  const RESET_COLLECTIONS = [
+    'inventory', 'inventoryMovements', 'clientes', 'requirements',
+    'maquilaInvoices', 'inventoryRequisitions', 'operatingCosts',
+    'purchaseOrders', 'wipInventory', 'finishedGoodsInventory',
+    'planDeCuentas', 'asientosContables',
+  ];
+
+  const handleResetSystem = () => {
+    requireAdminPassword(async () => {
+      setDialog({
+        title: '⚠️ ÚLTIMO AVISO',
+        text: 'Se borrarán TODOS los datos operativos (inventario, movimientos, facturas, OPs, costos, asientos, etc.). Los usuarios y configuración se conservan. Esta acción es IRREVERSIBLE. ¿Confirmar?',
+        type: 'confirm',
+        onConfirm: async () => {
+          try {
+            let totalDeleted = 0;
+            for (const colName of RESET_COLLECTIONS) {
+              // Firestore no permite borrar colecciones de golpe — borramos doc a doc en batch
+              const snap = await new Promise((res) => {
+                const unsub = onSnapshot(collection(db, colName), (s) => { unsub(); res(s); });
+              });
+              const docs = snap.docs;
+              // Firestore batch max 500 ops
+              for (let i = 0; i < docs.length; i += 400) {
+                const b = writeBatch(db);
+                docs.slice(i, i + 400).forEach(d => b.delete(d.ref));
+                await b.commit();
+              }
+              totalDeleted += docs.length;
+            }
+            // Restaurar inventario inicial
+            for (const item of INITIAL_INVENTORY) {
+              await setDoc(getDocRef('inventory', item.id), item);
+            }
+            setDialog({ title: '✅ Sistema Reiniciado', text: `Se eliminaron ${totalDeleted} registros. El inventario base fue restaurado. El sistema está listo para comenzar de cero.`, type: 'alert' });
+          } catch (err) {
+            setDialog({ title: 'Error en Reset', text: err.message, type: 'alert' });
+          }
+        }
+      });
+    }, 'RESETEAR SISTEMA COMPLETO');
+  };
+
+  // ============================================================================
+  // IMPORTAR INVENTARIO INICIAL DESDE TXT
+  // ============================================================================
+  const parseInvNum = (s) => {
+    if (!s) return 0;
+    s = String(s).trim();
+    if (s.includes(',') && s.includes('.')) s = s.replace(/\./g, '').replace(',', '.');
+    else if (s.includes(',')) s = s.replace(',', '.');
+    else s = s.replace(/\./g, ''); // remove thousand separators
+    return parseFloat(s) || 0;
+  };
+
+  const parseInventoryTXT = (text) => {
+    const lines = text.replace(/\r/g, '').split('\n').map(l => l.trim()).filter(Boolean);
+    const items = [];
+    let category = 'Materia Prima';
+
+    const isCodeLine    = (l) => /^[A-Z][A-Z0-9\-\.]+$/.test(l);
+    const isOnlyNum     = (l) => /^[\d\.,]+$/.test(l);
+    const isTwoNums     = (l) => /^[\d\.,]+\s+[\d\.,]+$/.test(l);
+    const isDept        = (l) => /^Departamento\s*:/i.test(l);
+    const isHeader      = (l) => /^C.*digo/i.test(l);
+
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+
+      if (isHeader(line)) { i++; continue; }
+
+      if (isDept(line)) {
+        const d = line.replace(/Departamento\s*:\s*/i, '').trim().toUpperCase();
+        if (d.includes('MATERIA'))      category = 'Materia Prima';
+        else if (d.includes('QUIM'))    category = 'Consumibles';
+        else if (d.includes('PINT'))    category = 'Consumibles';
+        else                            category = 'Consumibles';
+        i++; continue;
+      }
+
+      // ── Línea completa: CÓDIGO DESC... COSTO STOCK [VALOR] ──
+      const full = line.match(/^([A-Z][A-Z0-9\-\.]+)\s+(.+?)\s+([\d\.,]+)\s+([\d\.,]+)(?:\s+[\d\.,]+)?$/);
+      if (full) {
+        const [, code, desc, cost, stock] = full;
+        items.push({ id: code.replace(/\.+$/, ''), desc: desc.toUpperCase(), cost: parseInvNum(cost), stock: parseInvNum(stock), category, unit: 'kg' });
+        i++; continue;
+      }
+
+      // ── Bloque agrupado: N códigos, N descrips, N costos, N "stock valor" ──
+      if (isCodeLine(line)) {
+        const codes = [];
+        while (i < lines.length && isCodeLine(lines[i])) { codes.push(lines[i]); i++; }
+
+        const descs = [];
+        while (i < lines.length && !isCodeLine(lines[i]) && !isOnlyNum(lines[i]) && !isTwoNums(lines[i]) && !isDept(lines[i])) { descs.push(lines[i]); i++; }
+
+        const costs = [];
+        while (i < lines.length && isOnlyNum(lines[i]) && !isTwoNums(lines[i])) { costs.push(lines[i]); i++; }
+
+        const stockVals = [];
+        while (i < lines.length && isTwoNums(lines[i])) { const p = lines[i].split(/\s+/); stockVals.push(p); i++; }
+
+        for (let j = 0; j < codes.length; j++) {
+          const code = codes[j].replace(/\.+$/, '');
+          const desc = (descs[j] || codes[j]).toUpperCase();
+          const cost = parseInvNum(costs[j] || '0');
+          const stock = parseInvNum(stockVals[j]?.[0] || '0');
+          items.push({ id: code, desc, cost, stock, category, unit: 'kg' });
+        }
+        continue;
+      }
+
+      i++;
+    }
+    return items;
+  };
+
+  const handleInvImportFile = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = parseInventoryTXT(e.target.result);
+        setInvImportPreview(parsed);
+        setShowInvImport(true);
+      } catch (err) {
+        setDialog({ title: 'Error', text: 'No se pudo leer el archivo: ' + err.message, type: 'alert' });
+      }
+    };
+    reader.readAsText(file, 'utf-8');
+  };
+
+  const handleConfirmInvImport = async () => {
+    if (invImportPreview.length === 0) return;
+    requireAdminPassword(async () => {
+      try {
+        setInvImportLoading(true);
+        const b = writeBatch(db);
+        for (const item of invImportPreview) {
+          b.set(getDocRef('inventory', item.id), {
+            ...item,
+            timestamp: Date.now(),
+          }, { merge: true }); // merge: true conserva stock existente si el ítem ya existe con ese ID
+        }
+        await b.commit();
+        setShowInvImport(false);
+        setInvImportPreview([]);
+        setInvImportLoading(false);
+        setDialog({ title: '✅ Inventario Importado', text: `Se cargaron ${invImportPreview.length} ítems al catálogo de inventario correctamente.`, type: 'alert' });
+      } catch (err) {
+        setInvImportLoading(false);
+        setDialog({ title: 'Error', text: err.message, type: 'alert' });
+      }
+    }, 'Importar Inventario Inicial');
+  };
+
   const renderConfiguracionModule = () => {
     return (
       <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
@@ -5832,11 +6031,175 @@ export default function App() {
              </div>
            )}
         </div>
+        {/* ── IMPORTAR INVENTARIO INICIAL ── */}
+        <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
+          <div className="flex justify-between items-center mb-6 border-b pb-4">
+            <div>
+              <h2 className="text-xl font-black uppercase text-black flex items-center gap-3">
+                <Package className="text-orange-500"/> Importar Inventario Inicial
+              </h2>
+              <p className="text-xs font-bold text-gray-500 mt-1 uppercase tracking-wide">Carga masiva desde archivo TXT exportado del sistema contable</p>
+            </div>
+            <label className="cursor-pointer bg-orange-500 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-orange-600 transition-all shadow-md">
+              <ArrowDownToLine size={16}/> SELECCIONAR ARCHIVO
+              <input type="file" accept=".txt,.csv,.tsv" className="hidden" onChange={e => { if(e.target.files[0]) handleInvImportFile(e.target.files[0]); e.target.value=''; }} />
+            </label>
+          </div>
+
+          {!showInvImport && (
+            <div className="text-center py-10 text-gray-400">
+              <Package size={48} className="mx-auto mb-4 opacity-20"/>
+              <p className="font-black text-xs uppercase">Ningún archivo cargado aún</p>
+              <p className="text-xs mt-2 font-bold">Seleccione un archivo TXT con el formato del sistema contable.<br/>
+                Soporta departamentos: <span className="text-orange-500 font-black">MATERIA PRIMA · QUÍMICOS · PINTURA</span></p>
+              <div className="mt-6 inline-block bg-gray-50 border border-gray-200 rounded-2xl p-4 text-left text-[10px] font-mono text-gray-500">
+                <p className="font-black text-gray-700 mb-2 uppercase font-sans text-[9px]">Formato esperado (columnas separadas por espacio/tab):</p>
+                <p>Departamento : MATERIA PRIMA</p>
+                <p>MP-0240  ESENTTIA  2,15  2.325,00  4.998,75</p>
+                <p>Departamento : QUIMICOS</p>
+                <p>PRI0020  ALCOHOL ISOPROPILICO  2,37  50,00  118,50</p>
+              </div>
+            </div>
+          )}
+
+          {showInvImport && invImportPreview.length > 0 && (
+            <div>
+              {/* Resumen por categoría */}
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                {['Materia Prima', 'Consumibles'].map(cat => {
+                  const catItems = invImportPreview.filter(i => i.category === cat);
+                  const totalVal = catItems.reduce((s, i) => s + i.cost * i.stock, 0);
+                  return (
+                    <div key={cat} className={`rounded-2xl p-4 border-2 text-center ${cat === 'Materia Prima' ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'}`}>
+                      <p className={`text-[9px] font-black uppercase mb-1 ${cat === 'Materia Prima' ? 'text-blue-600' : 'text-orange-600'}`}>{cat}</p>
+                      <p className={`text-2xl font-black ${cat === 'Materia Prima' ? 'text-blue-700' : 'text-orange-700'}`}>{catItems.length}</p>
+                      <p className="text-[9px] font-bold text-gray-500 mt-1">ítems · ${formatNum(totalVal)} USD</p>
+                    </div>
+                  );
+                })}
+                <div className="bg-gray-800 rounded-2xl p-4 border-2 border-gray-700 text-center">
+                  <p className="text-[9px] font-black uppercase mb-1 text-gray-400">TOTAL</p>
+                  <p className="text-2xl font-black text-white">{invImportPreview.length}</p>
+                  <p className="text-[9px] font-bold text-gray-400 mt-1">ítems · ${formatNum(invImportPreview.reduce((s,i) => s + i.cost*i.stock, 0))} USD</p>
+                </div>
+              </div>
+
+              {/* Tabla de vista previa */}
+              <div className="overflow-x-auto rounded-xl border border-gray-200 max-h-[420px] overflow-y-auto mb-6">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-gray-900 text-white sticky top-0">
+                    <tr className="text-[9px] font-black uppercase tracking-widest">
+                      <th className="py-2 px-4 border-r border-gray-700">#</th>
+                      <th className="py-2 px-4 border-r border-gray-700">Código</th>
+                      <th className="py-2 px-4 border-r border-gray-700">Descripción</th>
+                      <th className="py-2 px-4 border-r border-gray-700">Categoría</th>
+                      <th className="py-2 px-4 border-r border-gray-700 text-right">Costo USD</th>
+                      <th className="py-2 px-4 text-right">Existencia (kg)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {invImportPreview.map((item, idx) => (
+                      <tr key={item.id} className={`hover:bg-orange-50 transition-colors ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'}`}>
+                        <td className="py-2 px-4 font-bold text-gray-400 border-r border-gray-100">{idx + 1}</td>
+                        <td className="py-2 px-4 font-black text-orange-600 border-r border-gray-100 font-mono">{item.id}</td>
+                        <td className="py-2 px-4 font-bold border-r border-gray-100 max-w-xs">{item.desc}</td>
+                        <td className="py-2 px-4 border-r border-gray-100">
+                          <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${item.category === 'Materia Prima' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>{item.category}</span>
+                        </td>
+                        <td className="py-2 px-4 text-right font-black border-r border-gray-100">${formatNum(item.cost)}</td>
+                        <td className="py-2 px-4 text-right font-black">{formatNum(item.stock)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex gap-3 justify-between items-center bg-orange-50 border-2 border-orange-200 rounded-2xl p-4">
+                <div>
+                  <p className="text-xs font-black text-orange-800 uppercase">¿Todo correcto?</p>
+                  <p className="text-[10px] font-bold text-orange-600">Los ítems existentes con el mismo código se actualizarán (merge). Los nuevos se crearán.</p>
+                </div>
+                <div className="flex gap-3 shrink-0">
+                  <button onClick={() => { setShowInvImport(false); setInvImportPreview([]); }} className="bg-gray-200 text-gray-700 px-6 py-3 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+                  <button onClick={handleConfirmInvImport} disabled={invImportLoading} className="bg-orange-500 text-white px-8 py-3 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 shadow-md flex items-center gap-2 disabled:opacity-60">
+                    {invImportLoading ? <Loader2 size={14} className="animate-spin"/> : <CheckCircle size={14}/>}
+                    CONFIRMAR IMPORTACIÓN
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── RESPALDO Y RESET ── */}
+        <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
+          <h2 className="text-xl font-black uppercase text-black mb-2 flex items-center gap-3 border-b pb-4">
+            <Save className="text-green-500"/> Respaldo y Reinicio del Sistema
+          </h2>
+          <p className="text-xs font-bold text-gray-500 mb-6 uppercase tracking-wide">Ambas acciones requieren clave de administrador.</p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+            {/* RESPALDO */}
+            <div className="bg-green-50 border-2 border-green-200 rounded-2xl p-6">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
+                  <Download size={24} className="text-green-600"/>
+                </div>
+                <div>
+                  <h3 className="font-black text-green-800 uppercase text-sm">Respaldar Datos</h3>
+                  <p className="text-[10px] font-bold text-green-600">Exportar todo a un archivo JSON</p>
+                </div>
+              </div>
+              <p className="text-xs font-bold text-green-700 mb-4">
+                Descarga un archivo con <span className="font-black">todos los datos registrados</span>: inventario, movimientos, OPs, facturas, clientes, costos, asientos contables y plan de cuentas. Guárdelo como respaldo de seguridad.
+              </p>
+              <div className="text-[9px] font-bold text-green-600 bg-green-100 rounded-xl p-3 mb-4 space-y-0.5">
+                {['Inventario y Movimientos (Kardex)', 'Clientes y OPs', 'Facturas y Asientos Contables', 'Costos Operativos y Órdenes de Compra', 'Plan de Cuentas', 'WIP y Productos Terminados'].map(item => (
+                  <div key={item} className="flex items-center gap-1.5"><CheckCircle size={10} className="text-green-500 shrink-0"/> {item}</div>
+                ))}
+              </div>
+              <button
+                onClick={() => requireAdminPassword(handleBackupData, 'Generar Respaldo de Datos')}
+                className="w-full bg-green-600 text-white py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-all flex items-center justify-center gap-2 shadow-md"
+              >
+                <Download size={16}/> DESCARGAR RESPALDO
+              </button>
+            </div>
+
+            {/* RESET */}
+            <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-6">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center">
+                  <RefreshCw size={24} className="text-red-600"/>
+                </div>
+                <div>
+                  <h3 className="font-black text-red-800 uppercase text-sm">Reiniciar Sistema</h3>
+                  <p className="text-[10px] font-bold text-red-600">Borrar todos los datos operativos</p>
+                </div>
+              </div>
+              <p className="text-xs font-bold text-red-700 mb-4">
+                Elimina <span className="font-black">permanentemente</span> todos los datos operativos y deja el sistema limpio para comenzar a usarlo desde cero. <span className="font-black underline">Los usuarios y la configuración se conservan.</span>
+              </p>
+              <div className="text-[9px] font-bold text-red-600 bg-red-100 rounded-xl p-3 mb-4 space-y-0.5">
+                {['Inventario y Movimientos', 'Clientes, OPs y Facturas', 'Asientos Contables', 'Costos Operativos', 'Órdenes de Compra', 'WIP y Productos Terminados'].map(item => (
+                  <div key={item} className="flex items-center gap-1.5"><Trash2 size={10} className="text-red-500 shrink-0"/> Se borrará: {item}</div>
+                ))}
+              </div>
+              <button
+                onClick={handleResetSystem}
+                className="w-full bg-red-600 text-white py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all flex items-center justify-center gap-2 shadow-md"
+              >
+                <RefreshCw size={16}/> REINICIAR SISTEMA
+              </button>
+            </div>
+
+          </div>
+        </div>
+
       </div>
     );
   };
-
-  if (!appUser) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center p-4 relative" style={{ backgroundImage: settings?.loginBg ? `url(${settings.loginBg})` : 'none', backgroundSize: 'cover', backgroundPosition: 'center' }}>
         {settings?.loginBg && <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>}
