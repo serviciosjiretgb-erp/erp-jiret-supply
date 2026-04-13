@@ -276,23 +276,19 @@ export default function App() {
 
     const vw = isLandscape ? 1056 : 816;
 
-    // ── Crear un contenedor temporal LIMPIO en el body ────────────────────
+    // Clonar contenido en un div temporal fuera del viewport (no hidden, para que html2canvas pueda capturarlo)
     const temp = document.createElement('div');
-    temp.id = 'pdf-temp-render';
-    temp.style.cssText = [
-      'position:fixed', 'top:0', 'left:0', 'z-index:-9999',
-      'width:' + vw + 'px', 'background:#fff', 'color:#000',
-      'padding:20px 24px', 'box-sizing:border-box', 'overflow:visible'
-    ].join('!important;') + '!important;';
+    temp.style.cssText =
+      'position:absolute;top:-9999px;left:0;width:' + vw + 'px;' +
+      'background:#ffffff;color:#000000;padding:20px 24px;box-sizing:border-box;overflow:visible;';
 
-    // Clonar el contenido (incluyendo estilos computados via innerHTML)
     const clone = element.cloneNode(true);
-    clone.style.cssText = '';
+    clone.style.cssText = 'width:' + vw + 'px;background:#ffffff;color:#000000;box-sizing:border-box;';
     clone.removeAttribute('id');
 
-    // Mostrar headers, ocultar no-pdf en el clon
-    clone.querySelectorAll('.pdf-header').forEach(h => { h.style.display = 'block'; h.style.setProperty('display','block','important'); });
-    clone.querySelectorAll('.no-pdf,[data-html2canvas-ignore]').forEach(h => h.style.setProperty('display','none','important'));
+    // Mostrar headers, ocultar no-pdf
+    clone.querySelectorAll('.pdf-header').forEach(h => { h.style.display = 'block'; });
+    clone.querySelectorAll('.no-pdf,[data-html2canvas-ignore]').forEach(h => { h.style.display = 'none'; });
 
     temp.appendChild(clone);
     document.body.appendChild(temp);
@@ -303,8 +299,7 @@ export default function App() {
       image:    { type:'jpeg', quality:0.96 },
       html2canvas: {
         scale: 2, useCORS: true, allowTaint: false, logging: false,
-        backgroundColor: '#ffffff',
-        windowWidth: vw, scrollX: 0, scrollY: 0,
+        backgroundColor: '#ffffff', windowWidth: vw, scrollX: 0, scrollY: -9999,
       },
       jsPDF: {
         unit:'mm', format:'letter',
@@ -314,17 +309,11 @@ export default function App() {
       pagebreak: { mode:['css','legacy'] },
     };
 
-    const cleanup = () => {
-      if (document.body.contains(temp)) document.body.removeChild(temp);
-    };
+    const cleanup = () => { if (document.body.contains(temp)) document.body.removeChild(temp); };
 
     window.html2pdf().set(opt).from(temp).save()
       .then(cleanup)
-      .catch(err => {
-        cleanup();
-        console.error('PDF error:', err);
-        setDialog({title:'Error al generar PDF', text:'Intente nuevamente o recargue la pagina.', type:'alert'});
-      });
+      .catch(err => { cleanup(); console.error('PDF error:', err); setDialog({title:'Error al generar PDF', text:'Intente nuevamente o recargue la pagina.', type:'alert'}); });
   };
   
   const handleExportExcel = (tableDataOrId, filename, headers = null) => {
@@ -4898,6 +4887,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
+                      {/* ── INGRESOS ── */}
                       <tr className="bg-orange-500 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>INGRESOS</td></tr>
                       <tr className="bg-orange-50"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-orange-800" colSpan={tasa>1?5:4}>VENTAS BRUTAS</td></tr>
                       {dataA.facturasperiodo.length>0 ? (
@@ -4918,8 +4908,13 @@ export default function App() {
                         <td className="py-2.5 px-3 text-center text-[9px] font-black">100.00%</td>
                         {tasa>1&&<td className="py-2.5 px-3 text-right font-black text-orange-700">{bs(dataA.totalIngresos)}</td>}
                       </tr>
+
                       <tr><td colSpan={tasa>1?5:4} className="py-2"></td></tr>
+
+                      {/* ── COSTOS ── */}
                       <tr className="bg-gray-800 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>COSTOS</td></tr>
+
+                      {/* Costo produccion */}
                       <tr className="bg-gray-200"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={tasa>1?5:4}>COSTO DE PRODUCCION</td></tr>
                       {dataA.movsProd.length>0 ? dataA.movsProd.map((m,i)=>(
                         <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
@@ -4930,36 +4925,39 @@ export default function App() {
                           {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(parseNum(m.totalValue))}</td>}
                         </tr>
                       )) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={tasa>1?5:4}>Sin movimientos de produccion</td></tr>}
-                      <tr className="bg-gray-100">
-                        <td className="py-2.5 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total COSTO PRODUCCION</td>
-                        <td className="py-2.5 px-3 text-right font-black">{formatNum(dataA.totalCostoProd)}</td>
-                        <td className="py-2.5 px-3 text-center text-[9px] font-black">{pctOf(dataA.totalCostoProd,dataA.totalIngresos)}</td>
-                        {tasa>1&&<td className="py-2.5 px-3 text-right font-black">{bs(dataA.totalCostoProd)}</td>}
+                      <tr className="bg-gray-100 border-b border-gray-300">
+                        <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total COSTO PRODUCCION</td>
+                        <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalCostoProd)}</td>
+                        <td className="py-2 px-3 text-center text-[9px] font-black">{pctOf(dataA.totalCostoProd,dataA.totalIngresos)}</td>
+                        {tasa>1&&<td className="py-2 px-3 text-right font-black">{bs(dataA.totalCostoProd)}</td>}
                       </tr>
-                      {Object.entries(Object.values(dataA.costosPorCuenta).reduce((grps,c)=>{
-                        const sg=c.subGrupo||c.grupo||'COSTOS OPERATIVOS';
-                        if(!grps[sg])grps[sg]=[];grps[sg].push(c);return grps;
-                      },{})).map(([sg,cuentas])=>{
-                        const sgTot=cuentas.reduce((s,c)=>s+c.total,0);
-                        return (<React.Fragment key={sg}>
-                          <tr className="bg-gray-100"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={tasa>1?5:4}>{sg}</td></tr>
-                          {cuentas.map((c,i)=>(
+
+                      {/* Costos Operativos — FLAT, sin subtotales por subgrupo */}
+                      {Object.values(dataA.costosPorCuenta).length > 0 && (
+                        <>
+                          <tr className="bg-gray-200"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={tasa>1?5:4}>OTROS COSTOS OPERATIVOS</td></tr>
+                          {Object.values(dataA.costosPorCuenta).map((c,i)=>(
                             <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-                              <td className="py-2 px-4 font-bold text-[10px] pl-14">{c.codigo&&<span className="text-orange-600 font-black mr-2">{c.codigo}</span>}{c.nombre}</td>
+                              <td className="py-2 px-4 font-bold text-[10px] pl-14">
+                                {c.codigo&&<span className="text-orange-600 font-black mr-2">{c.codigo}</span>}
+                                {c.nombre}
+                              </td>
                               <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
                               <td className="py-2 px-3 text-right font-black">{formatNum(c.total)}</td>
                               <td className="py-2 px-3 text-center text-[9px]">{pctOf(c.total,dataA.totalIngresos)}</td>
                               {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(c.total)}</td>}
                             </tr>
                           ))}
-                          <tr className="bg-gray-100">
-                            <td className="py-2.5 px-4 text-[10px] uppercase pl-8 font-black" colSpan={2}>Total {sg}</td>
-                            <td className="py-2.5 px-3 text-right font-black">{formatNum(sgTot)}</td>
-                            <td className="py-2.5 px-3 text-center text-[9px] font-black">{pctOf(sgTot,dataA.totalIngresos)}</td>
-                            {tasa>1&&<td className="py-2.5 px-3 text-right font-black">{bs(sgTot)}</td>}
+                          <tr className="bg-gray-100 border-b border-gray-300">
+                            <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total OTROS COSTOS OPERATIVOS</td>
+                            <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalCostosOp)}</td>
+                            <td className="py-2 px-3 text-center text-[9px] font-black">{pctOf(dataA.totalCostosOp,dataA.totalIngresos)}</td>
+                            {tasa>1&&<td className="py-2 px-3 text-right font-black">{bs(dataA.totalCostosOp)}</td>}
                           </tr>
-                        </React.Fragment>);
-                      })}
+                        </>
+                      )}
+
+                      {/* Total Costos + Resultado */}
                       <tr className="bg-gray-700 text-white">
                         <td className="py-3 px-4 text-sm uppercase font-black" colSpan={2}>Total COSTOS</td>
                         <td className="py-3 px-3 text-right font-black text-lg">{formatNum(dataA.totalCostos)}</td>
@@ -5050,38 +5048,37 @@ export default function App() {
                       })()}
                       {(()=>{
                         const allK=new Set([...Object.keys(dataA.costosPorCuenta),...Object.keys(dataB.costosPorCuenta)]);
-                        const grps={};
+                        const allItems=[];
                         allK.forEach(k=>{
                           const ca=dataA.costosPorCuenta[k],cb=dataB.costosPorCuenta[k];
-                          const sg=(ca||cb)?.subGrupo||(ca||cb)?.grupo||'COSTOS OPERATIVOS';
-                          if(!grps[sg])grps[sg]=[];
-                          grps[sg].push({a:ca?.total||0,b:cb?.total||0,nombre:(ca||cb)?.nombre||k,codigo:(ca||cb)?.codigo||''});
+                          allItems.push({a:ca?.total||0,b:cb?.total||0,nombre:(ca||cb)?.nombre||k,codigo:(ca||cb)?.codigo||''});
                         });
-                        return Object.entries(grps).map(([sg,items])=>{
-                          const tA=items.reduce((s,i)=>s+i.a,0),tB=items.reduce((s,i)=>s+i.b,0);
-                          return(<React.Fragment key={sg}>
-                            <tr className="bg-gray-100"><td colSpan={9} className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700">{sg}</td></tr>
-                            {items.map((item,ii)=>{
-                              const v=item.a-item.b,vr=item.b!==0?((v/item.b)*100).toFixed(2)+'%':'—';
-                              return(<tr key={ii} className="border-b border-gray-100 hover:bg-gray-50">
-                                <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>{item.codigo&&<span className="text-orange-600 mr-1 font-black">{item.codigo}</span>}{item.nombre}</td>
-                                <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(item.a)}</td>
-                                <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(item.b)}</td>
-                                <td className="py-2 px-3 text-center text-[9px] font-black">{v>0?'▲':'▼'} USD</td>
-                                <td className={`py-2 px-3 text-right font-black ${v<=0?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(v))}</td>
-                                <td className={`py-2 px-3 text-center font-black ${v<=0?'text-green-600':'text-red-600'}`}>{vr}</td>
-                              </tr>);
-                            })}
-                            <tr className="bg-gray-100">
-                              <td className="py-2 px-4 text-[10px] uppercase font-black pl-10" colSpan={2}>Total {sg}</td>
-                              <td className="py-2 px-3 text-center text-[9px] font-black text-gray-600">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(tA)}</td>
-                              <td className="py-2 px-3 text-center text-[9px] font-black text-gray-600">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(tB)}</td>
-                              <td className="py-2 px-3 text-center text-[9px] font-black">{tA>tB?'▲':'▼'} USD</td>
-                              <td className={`py-2 px-3 text-right font-black ${tA<=tB?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(tA-tB))}</td>
-                              <td className={`py-2 px-3 text-center font-black ${tA<=tB?'text-green-600':'text-red-600'}`}>{tB>0?((((tA-tB)/tB)*100).toFixed(2)+'%'):'—'}</td>
-                            </tr>
-                          </React.Fragment>);
-                        });
+                        const totOpA=allItems.reduce((s,i)=>s+i.a,0),totOpB=allItems.reduce((s,i)=>s+i.b,0);
+                        return(<React.Fragment>
+                          <tr className="bg-gray-100"><td colSpan={9} className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700">OTROS COSTOS OPERATIVOS</td></tr>
+                          {allItems.map((item,ii)=>{
+                            const v=item.a-item.b,vr=item.b!==0?((v/item.b)*100).toFixed(2)+'%':'—';
+                            return(<tr key={ii} className="border-b border-gray-100 hover:bg-gray-50">
+                              <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>{item.codigo&&<span className="text-orange-600 mr-1 font-black">{item.codigo}</span>}{item.nombre}</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(item.a)}</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(item.b)}</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-black">{v>0?'▲':'▼'} USD</td>
+                              <td className={`py-2 px-3 text-right font-black ${v<=0?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(v))}</td>
+                              <td className={`py-2 px-3 text-center font-black ${v<=0?'text-green-600':'text-red-600'}`}>{vr}</td>
+                            </tr>);
+                          })}
+                          {allItems.length>0&&(()=>{
+                            const v=totOpA-totOpB,vr=totOpB!==0?((v/totOpB)*100).toFixed(2)+'%':'—';
+                            return(<tr className="bg-gray-100 border-b border-gray-300">
+                              <td className="py-2 px-4 text-[10px] uppercase font-black pl-8" colSpan={2}>Total OTROS COSTOS OPERATIVOS</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-black text-gray-600">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(totOpA)}</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-black text-gray-600">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(totOpB)}</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-black">{v>0?'▲':'▼'} USD</td>
+                              <td className={`py-2 px-3 text-right font-black ${v<=0?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(v))}</td>
+                              <td className={`py-2 px-3 text-center font-black ${v<=0?'text-green-600':'text-red-600'}`}>{vr}</td>
+                            </tr>);
+                          })()}
+                        </React.Fragment>);
                       })()}
                       {(()=>{
                         const a=dataA.totalCostos,b=dataB.totalCostos,v=a-b;
@@ -5499,45 +5496,42 @@ export default function App() {
                       </tr>);
                     })()}
 
-                    {/* Costos Operativos por cuenta */}
+                    {/* Costos Operativos por cuenta - FLAT */}
                     {(() => {
                       const allKeys = new Set([...Object.keys(dataA.costosPorCuenta), ...Object.keys(dataB.costosPorCuenta)]);
-                      const groups = {};
+                      const flatItems = [];
                       allKeys.forEach(k => {
                         const ca = dataA.costosPorCuenta[k]; const cb = dataB.costosPorCuenta[k];
-                        const sg = (ca||cb)?.subGrupo || (ca||cb)?.grupo || 'COSTOS OPERATIVOS';
-                        if (!groups[sg]) groups[sg] = [];
-                        groups[sg].push({ key:k, a: ca?.total||0, b: cb?.total||0, nombre:(ca||cb)?.nombre||k, codigo:(ca||cb)?.codigo||'' });
+                        flatItems.push({ a: ca?.total||0, b: cb?.total||0, nombre:(ca||cb)?.nombre||k, codigo:(ca||cb)?.codigo||'' });
                       });
-                      return Object.entries(groups).map(([sg, items]) => {
-                        const totalA = items.reduce((s,i)=>s+i.a,0); const totalB = items.reduce((s,i)=>s+i.b,0);
-                        return (
-                          <React.Fragment key={sg}>
-                            <tr className="bg-gray-100"><td colSpan={9} className="py-1.5 px-4 font-black uppercase text-[10px] pl-8 text-gray-700">{sg}</td></tr>
-                            {items.map((item,ii) => {
-                              const varAbs = item.a - item.b; const varRel = item.b!==0?((varAbs/item.b)*100).toFixed(2):'—';
-                              return (<tr key={ii} className="border-b border-gray-100 hover:bg-gray-50">
-                                <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>
-                                  {item.codigo&&<span className="text-orange-600 mr-1">{item.codigo}</span>}{item.nombre}
-                                </td>
-                                <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(item.a)}</td>
-                                <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(item.b)}</td>
-                                <td className="py-2 px-3 text-center text-[9px] font-bold">{varAbs>0?'▲':'▼'} USD</td>
-                                <td className={`py-2 px-3 text-right font-black ${varAbs<=0?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(varAbs))}</td>
-                                <td className={`py-2 px-3 text-center font-black text-[10px] ${varAbs<=0?'text-green-600':'text-red-600'}`}>{typeof varRel==='string'?varRel:varRel+'%'}</td>
-                              </tr>);
-                            })}
-                            <tr className="bg-gray-100 font-black">
-                              <td className="py-2 px-4 text-[10px] uppercase font-black pl-10" colSpan={2}>Total {sg}</td>
-                              <td className="py-2 px-3 text-center text-[9px] font-black text-gray-600">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(totalA)}</td>
-                              <td className="py-2 px-3 text-center text-[9px] font-black text-gray-600">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(totalB)}</td>
-                              <td className="py-2 px-3 text-center text-[9px] font-black">{totalA>totalB?'▲':'▼'} USD</td>
-                              <td className={`py-2 px-3 text-right font-black ${totalA<=totalB?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(totalA-totalB))}</td>
-                              <td className={`py-2 px-3 text-center font-black ${totalA<=totalB?'text-green-600':'text-red-600'}`}>{totalB>0?((((totalA-totalB)/totalB)*100).toFixed(2)+'%'):'—'}</td>
-                            </tr>
-                          </React.Fragment>
-                        );
-                      });
+                      const totA = flatItems.reduce((s,i)=>s+i.a,0); const totB = flatItems.reduce((s,i)=>s+i.b,0);
+                      if (flatItems.length === 0) return null;
+                      return (
+                        <React.Fragment>
+                          <tr className="bg-gray-100"><td colSpan={9} className="py-1.5 px-4 font-black uppercase text-[10px] pl-8 text-gray-700">OTROS COSTOS OPERATIVOS</td></tr>
+                          {flatItems.map((item,ii) => {
+                            const varAbs = item.a - item.b; const varRel = item.b!==0?((varAbs/item.b)*100).toFixed(2):'—';
+                            return (<tr key={ii} className="border-b border-gray-100 hover:bg-gray-50">
+                              <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>
+                                {item.codigo&&<span className="text-orange-600 mr-1">{item.codigo}</span>}{item.nombre}
+                              </td>
+                              <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(item.a)}</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(item.b)}</td>
+                              <td className="py-2 px-3 text-center text-[9px] font-bold">{varAbs>0?'▲':'▼'} USD</td>
+                              <td className={`py-2 px-3 text-right font-black ${varAbs<=0?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(varAbs))}</td>
+                              <td className={`py-2 px-3 text-center font-black text-[10px] ${varAbs<=0?'text-green-600':'text-red-600'}`}>{typeof varRel==='string'?varRel:varRel+'%'}</td>
+                            </tr>);
+                          })}
+                          <tr className="bg-gray-100 border-b border-gray-300 font-black">
+                            <td className="py-2 px-4 text-[10px] uppercase font-black pl-8" colSpan={2}>Total OTROS COSTOS OPERATIVOS</td>
+                            <td className="py-2 px-3 text-center text-[9px] font-black text-gray-600">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(totA)}</td>
+                            <td className="py-2 px-3 text-center text-[9px] font-black text-gray-600">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(totB)}</td>
+                            <td className="py-2 px-3 text-center text-[9px] font-black">{totA>totB?'▲':'▼'} USD</td>
+                            <td className={`py-2 px-3 text-right font-black ${totA<=totB?'text-green-600':'text-red-600'}`}>{formatNum(Math.abs(totA-totB))}</td>
+                            <td className={`py-2 px-3 text-center font-black ${totA<=totB?'text-green-600':'text-red-600'}`}>{totB>0?((((totA-totB)/totB)*100).toFixed(2)+'%'):'—'}</td>
+                          </tr>
+                        </React.Fragment>
+                      );
                     })()}
 
                     {/* Total Costos */}
