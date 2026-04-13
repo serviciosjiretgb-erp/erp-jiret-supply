@@ -266,7 +266,7 @@ export default function App() {
   const handleExportPDF = (filename, isLandscape = false) => {
     const element = document.getElementById('pdf-content');
     if (!element) {
-      setDialog({title:'Error PDF', text:'No se encontro contenido para exportar. Seleccione un reporte primero.', type:'alert'});
+      setDialog({title:'Error PDF', text:'No se encontro contenido. Seleccione un reporte primero.', type:'alert'});
       return;
     }
     if (typeof window.html2pdf === 'undefined') {
@@ -274,57 +274,57 @@ export default function App() {
       return;
     }
 
-    const noPdfEls = element.querySelectorAll('.no-pdf, [data-html2canvas-ignore]');
-    noPdfEls.forEach(el => { el.dataset.pd = el.style.display || ''; el.style.setProperty('display','none','important'); });
-    const headerEls = element.querySelectorAll('.pdf-header');
-    headerEls.forEach(el => { el.dataset.pd = el.style.display || ''; el.style.setProperty('display','block','important'); });
-
     const vw = isLandscape ? 1056 : 816;
+
+    // ── Crear un contenedor temporal LIMPIO en el body ────────────────────
+    const temp = document.createElement('div');
+    temp.id = 'pdf-temp-render';
+    temp.style.cssText = [
+      'position:fixed', 'top:0', 'left:0', 'z-index:-9999',
+      'width:' + vw + 'px', 'background:#fff', 'color:#000',
+      'padding:20px 24px', 'box-sizing:border-box', 'overflow:visible'
+    ].join('!important;') + '!important;';
+
+    // Clonar el contenido (incluyendo estilos computados via innerHTML)
+    const clone = element.cloneNode(true);
+    clone.style.cssText = '';
+    clone.removeAttribute('id');
+
+    // Mostrar headers, ocultar no-pdf en el clon
+    clone.querySelectorAll('.pdf-header').forEach(h => { h.style.display = 'block'; h.style.setProperty('display','block','important'); });
+    clone.querySelectorAll('.no-pdf,[data-html2canvas-ignore]').forEach(h => h.style.setProperty('display','none','important'));
+
+    temp.appendChild(clone);
+    document.body.appendChild(temp);
 
     const opt = {
       margin:   isLandscape ? [6,6,6,6] : [8,8,8,8],
       filename: `${filename}_${getTodayDate()}.pdf`,
-      image:    { type:'jpeg', quality:0.95 },
+      image:    { type:'jpeg', quality:0.96 },
       html2canvas: {
         scale: 2, useCORS: true, allowTaint: false, logging: false,
-        backgroundColor: '#ffffff', windowWidth: vw, scrollX: 0, scrollY: 0,
-        onclone: (clonedDoc) => {
-          // Set body style without destroying content
-          clonedDoc.body.style.margin = '0';
-          clonedDoc.body.style.padding = '0';
-          clonedDoc.body.style.background = '#fff';
-          clonedDoc.body.style.width = vw + 'px';
-          // Find and style the pdf-content element
-          const el = clonedDoc.getElementById('pdf-content');
-          if (!el) return;
-          // Move it to a clean wrapper at the top of body
-          const wrapper = clonedDoc.createElement('div');
-          wrapper.style.cssText = 'margin:0;padding:0;background:#fff;width:' + vw + 'px;';
-          clonedDoc.body.insertBefore(wrapper, clonedDoc.body.firstChild);
-          wrapper.appendChild(el);
-          el.style.cssText = [
-            'width:' + vw + 'px', 'max-width:' + vw + 'px', 'min-width:' + vw + 'px',
-            'margin:0', 'padding:20px 24px', 'background:#ffffff', 'color:#000000',
-            'box-sizing:border-box', 'position:relative', 'left:0', 'top:0', 'overflow:visible'
-          ].join('!important;') + '!important;';
-          el.querySelectorAll('.pdf-header').forEach(h => h.style.setProperty('display','block','important'));
-          el.querySelectorAll('.no-pdf,[data-html2canvas-ignore]').forEach(h => h.style.setProperty('display','none','important'));
-        },
+        backgroundColor: '#ffffff',
+        windowWidth: vw, scrollX: 0, scrollY: 0,
       },
-      jsPDF: { unit:'mm', format:'letter', orientation: isLandscape ? 'landscape' : 'portrait', compress:true },
+      jsPDF: {
+        unit:'mm', format:'letter',
+        orientation: isLandscape ? 'landscape' : 'portrait',
+        compress: true
+      },
       pagebreak: { mode:['css','legacy'] },
     };
 
-    const restore = () => {
-      noPdfEls.forEach(el => { el.style.display = el.dataset.pd || ''; delete el.dataset.pd; });
-      headerEls.forEach(el => { el.style.display = el.dataset.pd || ''; delete el.dataset.pd; });
+    const cleanup = () => {
+      if (document.body.contains(temp)) document.body.removeChild(temp);
     };
 
-    window.html2pdf().set(opt).from(element).save().then(restore).catch(err => {
-      restore();
-      console.error('PDF error:', err);
-      setDialog({title:'Error al generar PDF', text:'Intente nuevamente. Si persiste, recargue la pagina.', type:'alert'});
-    });
+    window.html2pdf().set(opt).from(temp).save()
+      .then(cleanup)
+      .catch(err => {
+        cleanup();
+        console.error('PDF error:', err);
+        setDialog({title:'Error al generar PDF', text:'Intente nuevamente o recargue la pagina.', type:'alert'});
+      });
   };
   
   const handleExportExcel = (tableDataOrId, filename, headers = null) => {
@@ -1134,22 +1134,11 @@ export default function App() {
   };
 
   const handleGeneratePurchaseOrder = () => {
-    const projection = generateProjectionData();
-    const criticalItems = projection.filter(mp => mp.isCritical || mp.suggestOrder > 0);
-    
-    if (criticalItems.length === 0) {
-      setDialog({title: 'Aviso', text: 'No hay productos con déficit para generar orden de compra.', type: 'alert'});
-      return;
-    }
-
-    setSelectedPOItems(criticalItems.map(item => ({
-      productCode: item.id,
-      productName: item.desc,
-      currentStock: item.stock,
-      deficit: Math.abs(item.availableReal < 0 ? item.availableReal : 0),
-      suggestedQty: item.suggestOrder,
-      unitCost: item.cost || 1.00
-    })));
+    // Always open the PO modal — user selects products and quantities manually
+    // Pre-populate with all inventory items so user can choose
+    setSelectedPOItems([]);  // start empty — user adds from the modal
+    setPoProvider('');
+    setPoNotes('');
     setShowPOModal(true);
   };
 
@@ -4062,25 +4051,177 @@ export default function App() {
               </div>
             </div>
           )}
-          {showPOModal && (
-            <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-3xl p-8 max-w-2xl w-full shadow-2xl border-t-8 border-orange-500 max-h-[90vh] overflow-y-auto">
-                <h3 className="text-lg font-black uppercase mb-6">Nueva Orden de Compra</h3>
-                <div className="space-y-4 mb-6">
-                  <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Proveedor</label><input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="NOMBRE DEL PROVEEDOR" /></div>
-                  <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Notas</label><input type="text" value={poNotes} onChange={e=>setPoNotes(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" /></div>
-                </div>
-                <div className="overflow-x-auto rounded-xl border border-gray-200 mb-6">
-                  <table className="w-full text-xs"><thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px]"><th className="p-3 border-r">Producto</th><th className="p-3 border-r text-center">Stock</th><th className="p-3 border-r text-center">Cantidad</th><th className="p-3 text-right">Costo U.</th></tr></thead>
-                  <tbody>{selectedPOItems.map((item,i)=>(<tr key={i} className="border-b border-gray-100"><td className="p-3 border-r font-black text-orange-600">{item.productCode}<br/><span className="text-[9px] text-gray-500">{item.productName}</span></td><td className="p-3 border-r text-center font-bold">{formatNum(item.currentStock)}</td><td className="p-3 border-r text-center"><input type="number" value={item.suggestedQty} onChange={e=>setSelectedPOItems(selectedPOItems.map((it,j)=>j===i?{...it,suggestedQty:parseNum(e.target.value)}:it))} className="w-24 border border-gray-200 rounded-lg p-1 text-center font-black text-xs outline-none" /></td><td className="p-3 text-right font-bold">${formatNum(item.unitCost)}</td></tr>))}</tbody></table>
-                </div>
-                <div className="flex gap-3 justify-end">
-                  <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');}} className="bg-gray-200 text-gray-700 px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-300">Cancelar</button>
-                  <button onClick={handleSavePurchaseOrder} className="bg-black text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2"><CheckCircle2 size={16}/> GUARDAR ORDEN</button>
+          {showPOModal && (() => {
+            // Proyeccion para mostrar sugerencias
+            const proj = generateProjectionData();
+            const projMap = {};
+            proj.forEach(p => { projMap[p.id] = p; });
+
+            // Estado local del item que se está agregando
+            const [poAddId, setPoAddId] = React.useState('');
+            const [poAddQty, setPoAddQty] = React.useState('');
+            const [poAddCost, setPoAddCost] = React.useState('');
+
+            const addItemToPO = () => {
+              if (!poAddId || !poAddQty) return;
+              const invItem = inventory.find(i => i.id === poAddId);
+              if (!invItem) return;
+              const alreadyIdx = selectedPOItems.findIndex(x => x.productCode === poAddId);
+              if (alreadyIdx >= 0) {
+                // Update existing
+                setSelectedPOItems(selectedPOItems.map((it, idx) =>
+                  idx === alreadyIdx ? {...it, suggestedQty: parseNum(poAddQty), unitCost: parseNum(poAddCost) || it.unitCost} : it
+                ));
+              } else {
+                setSelectedPOItems([...selectedPOItems, {
+                  productCode: invItem.id,
+                  productName: invItem.desc,
+                  currentStock: invItem.stock,
+                  suggestedQty: parseNum(poAddQty),
+                  unitCost: parseNum(poAddCost) || invItem.cost || 0,
+                }]);
+              }
+              setPoAddId(''); setPoAddQty(''); setPoAddCost('');
+            };
+
+            const subtotal = selectedPOItems.reduce((s, it) => s + (parseNum(it.suggestedQty) * parseNum(it.unitCost)), 0);
+
+            return (
+              <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-3xl p-8 max-w-3xl w-full shadow-2xl border-t-8 border-orange-500 max-h-[92vh] overflow-y-auto">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-lg font-black uppercase">Nueva Orden de Compra</h3>
+                    <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');}} className="p-2 text-gray-400 hover:text-red-500"><X size={20}/></button>
+                  </div>
+
+                  {/* Proveedor y Notas */}
+                  <div className="grid grid-cols-2 gap-4 mb-6">
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Proveedor *</label>
+                      <input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="NOMBRE DEL PROVEEDOR" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Notas / Referencia</label>
+                      <input type="text" value={poNotes} onChange={e=>setPoNotes(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="OPCIONAL" />
+                    </div>
+                  </div>
+
+                  {/* Agregar producto */}
+                  <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-4 mb-4">
+                    <h4 className="text-[10px] font-black uppercase text-orange-800 mb-3">Agregar Producto / Insumo</h4>
+                    <div className="grid grid-cols-12 gap-2 items-end">
+                      <div className="col-span-5">
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Producto</label>
+                        <select value={poAddId} onChange={e => {
+                          setPoAddId(e.target.value);
+                          const invItem = inventory.find(i => i.id === e.target.value);
+                          if (invItem) setPoAddCost(invItem.cost ? String(invItem.cost) : '');
+                        }} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-orange-500 bg-white">
+                          <option value="">Seleccione...</option>
+                          {(inventory||[]).map(i => {
+                            const pp = projMap[i.id];
+                            const tag = pp?.isCritical ? ' ⚠ CRITICO' : '';
+                            return <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit}){tag}</option>;
+                          })}
+                        </select>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
+                        <input type="number" step="0.01" min="0.01" value={poAddQty} onChange={e=>setPoAddQty(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs text-center outline-none focus:border-orange-500" placeholder="0.00" />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Costo U. ($)</label>
+                        <input type="number" step="0.01" min="0" value={poAddCost} onChange={e=>setPoAddCost(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs text-center outline-none focus:border-orange-500" placeholder="0.00" />
+                      </div>
+                      <div className="col-span-3">
+                        <button onClick={addItemToPO} className="w-full bg-orange-500 text-white px-3 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center justify-center gap-1">
+                          <Plus size={14}/> Agregar
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Sugerencias rapidas de items criticos */}
+                    {proj.filter(p => p.isCritical && !selectedPOItems.find(s => s.productCode === p.id)).length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-orange-200">
+                        <p className="text-[9px] font-black text-orange-700 uppercase mb-2">Items criticos sugeridos:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {proj.filter(p => p.isCritical && !selectedPOItems.find(s => s.productCode === p.id)).map(p => (
+                            <button key={p.id} onClick={() => {
+                              setSelectedPOItems(prev => [...prev, {
+                                productCode: p.id, productName: p.desc,
+                                currentStock: p.stock, suggestedQty: p.suggestOrder || 500,
+                                unitCost: p.cost || 0
+                              }]);
+                            }} className="bg-red-100 text-red-700 px-3 py-1 rounded-lg text-[9px] font-black hover:bg-red-200 border border-red-200">
+                              + {p.id} ({formatNum(p.stock)} stock)
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Lista de productos seleccionados */}
+                  {selectedPOItems.length > 0 ? (
+                    <div className="overflow-x-auto rounded-xl border border-gray-200 mb-6">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-100 border-b-2 border-gray-200">
+                          <tr className="uppercase font-black text-[10px]">
+                            <th className="p-3 border-r text-left">Producto</th>
+                            <th className="p-3 border-r text-center">Stock Actual</th>
+                            <th className="p-3 border-r text-center">Cantidad a Pedir</th>
+                            <th className="p-3 border-r text-right">Costo U. ($)</th>
+                            <th className="p-3 text-right">Subtotal</th>
+                            <th className="p-3 text-center w-10"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedPOItems.map((item, i) => (
+                            <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                              <td className="p-3 border-r font-black text-orange-600 text-xs">
+                                {item.productCode}<br/>
+                                <span className="text-[9px] text-gray-500 font-bold">{item.productName}</span>
+                              </td>
+                              <td className="p-3 border-r text-center font-bold">{formatNum(item.currentStock)}</td>
+                              <td className="p-3 border-r text-center">
+                                <input type="number" value={item.suggestedQty} onChange={e => setSelectedPOItems(selectedPOItems.map((it,j) => j===i ? {...it, suggestedQty: parseNum(e.target.value)} : it))} className="w-24 border border-gray-200 rounded-lg p-1 text-center font-black text-xs outline-none focus:border-orange-400" />
+                              </td>
+                              <td className="p-3 border-r text-right">
+                                <input type="number" step="0.01" value={item.unitCost} onChange={e => setSelectedPOItems(selectedPOItems.map((it,j) => j===i ? {...it, unitCost: parseNum(e.target.value)} : it))} className="w-24 border border-gray-200 rounded-lg p-1 text-center font-black text-xs outline-none focus:border-orange-400" />
+                              </td>
+                              <td className="p-3 text-right font-black text-green-600">${formatNum(parseNum(item.suggestedQty) * parseNum(item.unitCost))}</td>
+                              <td className="p-3 text-center">
+                                <button onClick={() => setSelectedPOItems(selectedPOItems.filter((_,j) => j!==i))} className="text-red-400 hover:text-red-600"><X size={14}/></button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot className="bg-gray-100 border-t-2 border-gray-300">
+                          <tr>
+                            <td colSpan={4} className="p-3 text-right font-black uppercase text-[10px]">SUBTOTAL ESTIMADO:</td>
+                            <td className="p-3 text-right font-black text-orange-600 text-base">${formatNum(subtotal)}</td>
+                            <td></td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="bg-gray-50 rounded-2xl p-8 text-center text-gray-400 mb-6">
+                      <ShoppingCart size={32} className="mx-auto mb-2 opacity-30"/>
+                      <p className="text-xs font-bold uppercase">Agregue productos a la orden</p>
+                    </div>
+                  )}
+
+                  <div className="flex gap-3 justify-end">
+                    <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');}} className="bg-gray-200 text-gray-700 px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-300">Cancelar</button>
+                    <button onClick={handleSavePurchaseOrder} disabled={selectedPOItems.length===0 || !poProvider.trim()} className="bg-black text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <CheckCircle2 size={16}/> GUARDAR ORDEN
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       );
     }
