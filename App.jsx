@@ -191,7 +191,7 @@ export default function App() {
   const [pdcSearchTerm, setPdcSearchTerm] = useState('');
   // Cuenta contable para ingresos (configurable)
   const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
- = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
+const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
   const [newUserForm, setNewUserForm] = useState(initialUserForm);
   const [editingUserId, setEditingUserId] = useState(null);
 
