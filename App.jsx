@@ -3238,26 +3238,22 @@ export default function App() {
 
       if (!currentPhase.batches) currentPhase.batches = [];
       currentPhase.batches.push(newBatch);
+      // isClose cierra SOLO esta fase — la OP sigue EN PROCESO hasta "Cierre OP"
       if (isClose) currentPhase.isClosed = true;
 
       const newProd = { ...(req.production || {}), [activePhaseTab]: currentPhase };
-      
-      // Determinar nuevo status: COMPLETADO si todas las fases están cerradas o saltadas
-      const allPhases = ['extrusion', 'impresion', 'sellado'];
-      const updatedProd = { ...(req.production || {}), [activePhaseTab]: currentPhase };
-      const allClosed = allPhases.every(p => updatedProd[p]?.isClosed === true || updatedProd[p]?.skipped === true);
-      const newStatus = (isClose && allClosed) ? 'COMPLETADO' : 'EN PROCESO';
-
-      fbBatch.update(getDocRef('requirements', req.id), { production: newProd, status: newStatus });
+      // El status de la OP NUNCA cambia aquí — solo cambia en handleCloseOP
+      fbBatch.update(getDocRef('requirements', req.id), { production: newProd, status: 'EN PROCESO' });
       await fbBatch.commit();
 
-      if (newStatus === 'COMPLETADO' && isClose) {
-        await handleFinishProduction(req.id, { producedKg: prodKg, millaresProd: phaseForm.millaresProd, observations: 'Finalizado' });
-      }
-
       setPhaseForm({ ...initialPhaseForm, date: getTodayDate() });
-      setSelectedPhaseReqId(null);
-      setDialog({ title: '✅ Éxito', text: isClose ? 'OP Finalizada y movida a Terminados.' : 'Lote guardado.', type: 'alert' });
+      setDialog({
+        title: isClose ? 'Fase Cerrada' : 'Lote Guardado',
+        text: isClose
+          ? `La fase de ${activePhaseTab.toUpperCase()} fue cerrada. La OP sigue activa. Use "Cierre OP" para finalizar.`
+          : 'Lote parcial guardado correctamente.',
+        type: 'alert'
+      });
     } catch (err) {
       setDialog({ title: 'Error', text: err.message, type: 'alert' });
     }
@@ -3580,6 +3576,61 @@ export default function App() {
         </div>
       </div>
     );
+  };
+
+  // ── CIERRE TOTAL DE OP → mueve a Terminados ──────────────────────────────
+  const handleCloseOP = (req) => {
+    if (!req) return;
+    setDialog({
+      title: 'Cierre de OP ' + String(req.id).replace('OP-', '').padStart(5, '0'),
+      text: 'Se cerrara la OP completa y el producto pasara a Inventario de Terminados. Esta accion no se puede deshacer. Continuar?',
+      type: 'confirm',
+      onConfirm: async () => {
+        try {
+          const prod = req.production || {};
+          // Calcular KG y millares producidos totales
+          const allBatches = [
+            ...(prod.extrusion?.batches || []),
+            ...(prod.impresion?.batches || []),
+            ...(prod.sellado?.batches || []),
+          ];
+          const totalKgProd = allBatches.reduce((s, b) => s + parseNum(b.producedKg), 0);
+          const totalMillares = (prod.sellado?.batches || []).reduce((s, b) => s + parseNum(b.techParams?.millares || 0), 0)
+            || (prod.impresion?.batches || []).reduce((s, b) => s + parseNum(b.techParams?.millares || 0), 0)
+            || (prod.extrusion?.batches || []).reduce((s, b) => s + parseNum(b.techParams?.millares || 0), 0);
+
+          // Marcar todas las fases abiertas como cerradas
+          const updatedProd = { ...prod };
+          ['extrusion', 'impresion', 'sellado'].forEach(phase => {
+            if (updatedProd[phase] && !updatedProd[phase].isClosed) {
+              updatedProd[phase] = { ...updatedProd[phase], isClosed: true };
+            }
+          });
+
+          await updateDoc(getDocRef('requirements', req.id), {
+            production: updatedProd,
+            status: 'COMPLETADO',
+            fechaCierre: getTodayDate(),
+          });
+
+          // Mover a Terminados
+          await handleFinishProduction(req.id, {
+            producedKg: totalKgProd,
+            millaresProd: totalMillares,
+            observations: 'Cierre OP manual'
+          });
+
+          setSelectedPhaseReqId(null);
+          setDialog({
+            title: 'OP Cerrada',
+            text: 'La OP fue cerrada y movida a Inventario de Terminados correctamente.',
+            type: 'alert'
+          });
+        } catch (err) {
+          setDialog({ title: 'Error', text: err.message, type: 'alert' });
+        }
+      }
+    });
   };
 
   // ── HELPER: Panel de insumos filtrado por requisiciones aprobadas ──────────
@@ -3929,12 +3980,20 @@ export default function App() {
                             <h3 className="font-black text-black text-sm uppercase">OP #{String(req.id).replace('OP-','').padStart(5,'0')} — {req.client}</h3>
                             <p className="text-[10px] font-bold text-gray-500 mt-1">{req.desc} | {req.ancho}cm×{req.largo}cm | {req.micras}mic | {formatNum(req.requestedKg)} KG</p>
                           </div>
-                          <div className="flex gap-2">
+                          <div className="flex gap-2 flex-wrap justify-end">
                             <button onClick={()=>setShowOrdenTrabajo(req.id)} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-gray-800 text-white hover:bg-black flex items-center gap-1 transition-all"><FileText size={13}/> ORDEN DE TRABAJO</button>
                             <button onClick={() => {
                               if (isOpen) { setSelectedPhaseReqId(null); setProdSubMode('fase'); }
                               else { setSelectedPhaseReqId(req.id); setProdSubMode('requisicion'); setActivePhaseTab('extrusion'); setPhaseForm({...initialPhaseForm, date: getTodayDate()}); }
                             }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${isOpen ? 'bg-gray-200 text-gray-700' : 'bg-orange-500 text-white hover:bg-orange-600 shadow-md'}`}>{isOpen ? <X size={14}/> : <Plus size={14}/>}{isOpen ? 'CERRAR' : 'REGISTRAR FASE'}</button>
+                            {/* BOTÓN CIERRE OP — destaca en rojo */}
+                            <button
+                              onClick={() => handleCloseOP(req)}
+                              className="px-5 py-2 rounded-xl text-[10px] font-black uppercase bg-red-600 text-white hover:bg-red-700 shadow-md flex items-center gap-1 transition-all"
+                              title="Cerrar la OP completa y mover a Inventario de Terminados"
+                            >
+                              <CheckCircle size={14}/> CIERRE OP
+                            </button>
                           </div>
                         </div>
 
@@ -4127,7 +4186,7 @@ export default function App() {
                                     {renderInsumosPhasePanel(req, activePhaseTab)}
                                   </div>
 
-                                  {/* ── 4 BOTONES DE FASE ── */}
+                                  {/* ── BOTONES DE FASE ── */}
                                   <div className="space-y-3 pt-2 border-t border-orange-200">
                                     {/* Lotes existentes de esta fase */}
                                     {(prod[activePhaseTab]?.batches||[]).length > 0 && (
@@ -4142,32 +4201,32 @@ export default function App() {
                                           </div>
                                         ))}
                                         {prod[activePhaseTab]?.isClosed && (
-                                          <div className="text-[9px] font-black text-green-700 bg-green-50 border border-green-200 rounded-lg p-2 mt-1 text-center">✓ FASE CERRADA DEFINITIVAMENTE</div>
+                                          <div className="text-[9px] font-black text-green-700 bg-green-50 border border-green-200 rounded-lg p-2 mt-1 text-center">✓ FASE CERRADA — puede reabrirla sin afectar otras fases</div>
                                         )}
                                         {prod[activePhaseTab]?.skipped && (
-                                          <div className="text-[9px] font-black text-gray-500 bg-gray-100 border border-gray-200 rounded-lg p-2 mt-1 text-center">⊘ FASE OMITIDA</div>
+                                          <div className="text-[9px] font-black text-gray-500 bg-gray-100 border border-gray-200 rounded-lg p-2 mt-1 text-center">FASE OMITIDA</div>
                                         )}
                                       </div>
                                     )}
 
-                                    <div className="flex flex-wrap gap-2 justify-between">
+                                    <div className="flex flex-wrap gap-2 justify-between items-center">
                                       {/* OMITIR */}
                                       <button onClick={() => setDialog({
                                         title: `Omitir fase: ${activePhaseTab}`,
-                                        text: `¿Marcar la fase de ${activePhaseTab.toUpperCase()} como OMITIDA? No habrá registro de producción en esta fase.`,
+                                        text: `Marcar la fase de ${activePhaseTab.toUpperCase()} como OMITIDA? No afecta las otras fases.`,
                                         type: 'confirm',
                                         onConfirm: async () => {
                                           const cur = { ...(req.production?.[activePhaseTab] || { batches: [] }), isClosed: true, skipped: true };
                                           await updateDoc(getDocRef('requirements', req.id), { [`production.${activePhaseTab}`]: cur });
                                           setPhaseForm({...initialPhaseForm, date: getTodayDate()});
-                                          setDialog({title:'Fase Omitida', text:`La fase de ${activePhaseTab} fue omitida.`, type:'alert'});
+                                          setDialog({title:'Fase Omitida', text:`La fase de ${activePhaseTab} fue omitida. Las demas fases no se ven afectadas.`, type:'alert'});
                                         }
                                       })} className="bg-gray-100 text-gray-600 border border-gray-300 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-gray-200 flex items-center gap-1 transition-all">
                                         <X size={13}/> OMITIR FASE
                                       </button>
 
                                       <div className="flex gap-2 flex-wrap">
-                                        {/* REAPERTURA */}
+                                        {/* REAPERTURA — independiente por fase */}
                                         {prod[activePhaseTab]?.isClosed && (
                                           <button onClick={() => handleReopenPhase(req.id, activePhaseTab)} className="bg-yellow-400 text-yellow-900 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-yellow-500 flex items-center gap-1 shadow-sm transition-all">
                                             <RefreshCw size={13}/> REABRIR FASE
@@ -4181,26 +4240,15 @@ export default function App() {
                                           </button>
                                         )}
 
-                                        {/* CIERRE DEFINITIVO */}
+                                        {/* CIERRE DEFINITIVO — solo cierra ESTA fase */}
                                         {!prod[activePhaseTab]?.isClosed && (
                                           <button onClick={() => setDialog({
-                                            title: `Cerrar fase ${activePhaseTab.toUpperCase()} definitivamente`,
-                                            text: `Esta fase quedará CERRADA. Puede reabrirla luego si necesita modificar. ¿Continuar?`,
+                                            title: `Cerrar fase ${activePhaseTab.toUpperCase()}`,
+                                            text: `Se cerrara unicamente la fase de ${activePhaseTab.toUpperCase()}. Las otras fases no se ven afectadas y la OP seguira activa.`,
                                             type: 'confirm',
-                                            onConfirm: () => {
-                                              if (activePhaseTab === 'sellado') {
-                                                setDialog({
-                                                  title: '¿Finalizar OP completa?',
-                                                  text: `Sellado es la fase final. ¿Desea COMPLETAR la OP y moverla a Terminados?`,
-                                                  type: 'confirm',
-                                                  onConfirm: () => handleSavePhaseDirectly(req, true)
-                                                });
-                                              } else {
-                                                handleSavePhaseDirectly(req, true);
-                                              }
-                                            }
-                                          })} className="bg-black text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-gray-800 flex items-center gap-1 shadow-md transition-all">
-                                            <CheckCircle2 size={13}/> CIERRE DEFINITIVO
+                                            onConfirm: () => handleSavePhaseDirectly(req, true)
+                                          })} className="bg-gray-800 text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-black flex items-center gap-1 shadow-md transition-all">
+                                            <CheckCircle2 size={13}/> CIERRE DEFINITIVO FASE
                                           </button>
                                         )}
                                       </div>
