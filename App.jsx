@@ -178,6 +178,8 @@ export default function App() {
   const [physicalCounts, setPhysicalCounts] = useState({});
 
   const [asientosContables, setAsientosContables] = useState([]);
+  const [ldSearch, setLdSearch] = useState('');
+  const [ldFiltro, setLdFiltro] = useState('TODOS');
   const [erView, setErView] = useState('estado'); // 'estado' | 'variaciones'
   const [erMes, setErMes] = useState(new Date().getMonth() + 1);
   const [erAno, setErAno] = useState(new Date().getFullYear());
@@ -5174,9 +5176,6 @@ export default function App() {
       '5.1.01.01.001': { label: 'COSTO DE PRODUCCIÓN Y VENTAS', color: 'red' },
       '4.1.01.01.000': { label: 'INGRESOS POR MAQUILA', color: 'emerald' },
     };
-
-    const [ldSearch, setLdSearch] = React.useState('');
-    const [ldFiltro, setLdFiltro] = React.useState('TODOS');
 
     const cuentasFiltro = ['TODOS', ...Object.keys(CUENTAS_INFO)];
     const asientosFiltrados = (asientosContables || []).filter(a => {
