@@ -118,13 +118,7 @@ const COSTO_CATEGORIES = [
   'Otros Gastos'
 ];
 
-// --- BASE DE DATOS INICIAL ---
-const INITIAL_INVENTORY = [
-  { id: 'MP-0240', desc: 'ESENTTIA', cost: 0.96, stock: 2325, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-11PG4', desc: 'METALOCENO', cost: 0.91, stock: 1735, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-3003', desc: 'BAPOLENE', cost: 0.96, stock: 500, unit: 'kg', category: 'Materia Prima' },
-  { id: 'MP-RECICLADO', desc: 'MATERIAL RECICLADO', cost: 1.00, stock: 9999, unit: 'kg', category: 'Materia Prima' }
-];
+// --- FIN CONSTANTES ---
 
 export default function App() {
   const [fbUser, setFbUser] = useState(null);
@@ -417,7 +411,7 @@ export default function App() {
   useEffect(() => { signInAnonymously(auth).catch(err => console.error(err)); const unsubscribe = onAuthStateChanged(auth, setFbUser); return () => unsubscribe(); }, []);
   
   useEffect(() => {
-    if (!fbUser) return; let isFirstInv = true;
+    if (!fbUser) return;
     const unsubUsers = onSnapshot(getColRef('users'), (s) => {
       const loadedUsers = s.docs.map(d => ({ id: d.id, ...d.data() })); setSystemUsers(loadedUsers);
       if (s.empty) {
@@ -428,8 +422,6 @@ export default function App() {
     const unsubSettings = onSnapshot(getDocRef('settings', 'general'), (d) => { if(d.exists()) setSettings(d.data()); });
     const unsubInv = onSnapshot(getColRef('inventory'), (s) => {
       const data = s.docs.map(d => ({ id: d.id, ...d.data() })); setInventory(data);
-      if (s.empty && isFirstInv) { INITIAL_INVENTORY.forEach(item => setDoc(getDocRef('inventory', item.id), item)); }
-      isFirstInv = false;
     });
     const unsubMovs = onSnapshot(getColRef('inventoryMovements'), (s) => setInvMovements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubCli = onSnapshot(getColRef('clientes'), (s) => setClients(s.docs.map(d => ({ id: d.id, ...d.data() }))));
@@ -5765,11 +5757,7 @@ export default function App() {
               }
               totalDeleted += docs.length;
             }
-            // Restaurar inventario inicial
-            for (const item of INITIAL_INVENTORY) {
-              await setDoc(getDocRef('inventory', item.id), item);
-            }
-            setDialog({ title: '✅ Sistema Reiniciado', text: `Se eliminaron ${totalDeleted} registros. El inventario base fue restaurado. El sistema está listo para comenzar de cero.`, type: 'alert' });
+            setDialog({ title: '✅ Sistema Reiniciado', text: `Se eliminaron ${totalDeleted} registros. El sistema está completamente limpio y listo para comenzar desde cero. Importe su inventario desde Configuración.`, type: 'alert' });
           } catch (err) {
             setDialog({ title: 'Error en Reset', text: err.message, type: 'alert' });
           }
