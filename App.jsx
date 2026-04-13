@@ -191,7 +191,9 @@ export default function App() {
   const [pdcSearchTerm, setPdcSearchTerm] = useState('');
   // Cuenta contable para ingresos (configurable)
   const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
- = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
+
+  // Formularios de Configuración
+  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
   const [newUserForm, setNewUserForm] = useState(initialUserForm);
   const [editingUserId, setEditingUserId] = useState(null);
 
@@ -4757,15 +4759,18 @@ export default function App() {
                     <tbody>
                       <tr className="bg-orange-500 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>INGRESOS</td></tr>
                       <tr className="bg-orange-50"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-orange-800" colSpan={tasa>1?5:4}>VENTAS BRUTAS</td></tr>
-                      {dataA.facturasperiodo.length>0 ? dataA.facturasperiodo.map((inv,i)=>(
-                        <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="py-2 px-4 font-bold text-[10px] pl-14">{inv.clientName} — {inv.documento}</td>
+                      {dataA.facturasperiodo.length>0 ? (
+                        <tr className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-2 px-4 font-bold text-[10px] pl-14">
+                            <span className="text-orange-600 font-black mr-2">4.1.01.01.000</span>
+                            INGRESOS POR MAQUILA
+                          </td>
                           <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
-                          <td className="py-2 px-3 text-right font-black">{formatNum(parseNum(inv.montoBase))}</td>
-                          <td className="py-2 px-3 text-center text-[9px]">{pctOf(parseNum(inv.montoBase),dataA.totalIngresos)}</td>
-                          {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(parseNum(inv.montoBase))}</td>}
+                          <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalIngresos)}</td>
+                          <td className="py-2 px-3 text-center text-[9px]">100.00%</td>
+                          {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(dataA.totalIngresos)}</td>}
                         </tr>
-                      )) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={tasa>1?5:4}>Sin ingresos en este periodo</td></tr>}
+                      ) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={tasa>1?5:4}>Sin ingresos en este periodo</td></tr>}
                       <tr className="bg-orange-100">
                         <td className="py-2.5 px-4 text-[10px] uppercase pl-8 text-orange-800 font-black" colSpan={2}>Total INGRESOS</td>
                         <td className="py-2.5 px-3 text-right font-black text-orange-700">{formatNum(dataA.totalIngresos)}</td>
