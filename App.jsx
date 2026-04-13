@@ -177,6 +177,7 @@ export default function App() {
   // Estados para Toma Física
   const [physicalCounts, setPhysicalCounts] = useState({});
 
+  const [planDeCuentas, setPlanDeCuentas] = useState([]);
   const [asientosContables, setAsientosContables] = useState([]);
   const [ldSearch, setLdSearch] = useState('');
   const [ldFiltro, setLdFiltro] = useState('TODOS');
