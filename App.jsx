@@ -3602,7 +3602,7 @@ export default function App() {
     }
   };
 
-  const renderFiniquitoOP = (req) => {
+  const renderFiniquitoOP = (req, costsMode = false) => {
     if (!req) return null;
     const prod = req.production || {};
     // Filtrar lotes fantasma (creados por almacén con producedKg=0 y sin insumos del operador)
@@ -3650,12 +3650,14 @@ export default function App() {
         {/* Controles no-pdf */}
         <div className="flex justify-between p-6 border-b border-gray-200 no-pdf">
           <button onClick={() => setShowFiniquitoOP(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200 flex items-center gap-2">← Volver</button>
-          <button onClick={() => handleExportPDF(`Finiquito_OP_${req.id}`, true)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
+          <button onClick={() => handleExportPDF(`${costsMode?'Finiquito':'Reporte_Produccion'}_OP_${req.id}`, true)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
         </div>
         <div className="p-8">
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center mb-6 pb-4 border-b-4 border-orange-500">
-            <h1 className="text-2xl font-black uppercase tracking-widest">Finiquito Financiero de Producción</h1>
+            <h1 className="text-2xl font-black uppercase tracking-widest">
+              {costsMode ? 'Finiquito Financiero de Producción' : 'Reporte de Producción'}
+            </h1>
           </div>
 
           {/* Info OP */}
@@ -3711,25 +3713,69 @@ export default function App() {
             <div className="bg-orange-500 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">1. Desglose de Producción (MP)</div>
             <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
               <table className="w-full text-xs">
-                <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600"><th className="p-3 border-r text-left">Insumo / Descripción</th><th className="p-3 border-r text-center">Fase</th><th className="p-3 text-center">Cantidad (KG)</th></tr></thead>
+                <thead className="bg-gray-100">
+                  <tr className="uppercase font-black text-[9px] text-gray-600">
+                    <th className="p-3 border-r text-left">Insumo / Descripción</th>
+                    <th className="p-3 border-r text-center">Fase</th>
+                    <th className={`p-3 ${costsMode ? 'border-r' : ''} text-center`}>Cantidad (KG)</th>
+                    {costsMode && <th className="p-3 border-r text-right">Costo Unit.</th>}
+                    {costsMode && <th className="p-3 text-right">Costo Total</th>}
+                  </tr>
+                </thead>
                 <tbody className="divide-y divide-gray-100">
                   {insumosList.map((ins,i)=>(
                     <tr key={i} className="hover:bg-gray-50">
                       <td className="p-3 border-r font-black text-orange-600 uppercase">{ins.desc}</td>
                       <td className="p-3 border-r text-center font-bold">{ins.fase}</td>
-                      <td className="p-3 text-center font-black">{formatNum(ins.qty)} kg</td>
+                      <td className={`p-3 ${costsMode ? 'border-r' : ''} text-center font-black`}>{formatNum(ins.qty)} kg</td>
+                      {costsMode && <td className="p-3 border-r text-right font-bold">${formatNum(ins.cost)}</td>}
+                      {costsMode && <td className="p-3 text-right font-black">${formatNum(ins.qty*ins.cost)}</td>}
                     </tr>
                   ))}
-                  {insumosList.length===0&&<tr><td colSpan="3" className="p-4 text-center text-gray-400 font-bold">Sin insumos</td></tr>}
+                  {insumosList.length===0&&<tr><td colSpan={costsMode?5:3} className="p-4 text-center text-gray-400 font-bold">Sin insumos</td></tr>}
                 </tbody>
-                <tfoot className="bg-gray-100 border-t-2 border-gray-300"><tr className="font-black"><td colSpan="2" className="p-3 text-right uppercase text-[10px]">Total MP Inyectada:</td><td className="p-3 text-center text-orange-600 text-sm">{formatNum(totalInsumosKg)} KG</td></tr></tfoot>
+                <tfoot className="bg-gray-100 border-t-2 border-gray-300">
+                  <tr className="font-black">
+                    <td colSpan={costsMode?4:2} className="p-3 text-right uppercase text-[10px]">
+                      {costsMode ? 'Costo Total MP:' : 'Total MP Inyectada:'}
+                    </td>
+                    <td className={`p-3 ${costsMode ? 'text-right' : 'text-center'} text-orange-600 ${costsMode ? 'text-lg' : 'text-sm'}`}>
+                      {costsMode ? `$${formatNum(totalCostoMP)}` : `${formatNum(totalInsumosKg)} KG`}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </div>
 
-          {/* Sección 2: Detalle por Fase */}
+          {/* Sección 2 (solo costsMode): Indicadores de Costo */}
+          {costsMode && (
+            <div className="mb-6">
+              <div className="bg-blue-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">2. Indicadores de Costo — Desglose de Formulación</div>
+              <div className="border-2 border-gray-200 rounded-b-lg p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  ['Demanda Neta (Requerida)', formatNum(parseNum(req.requestedKg))+' KG', 'text-blue-600'],
+                  ['Costo Promedio Mezcla', '$'+formatNum(costoPromMezcla)+' / KG', 'text-gray-700'],
+                  ['Costo Neto x KG Terminado', '$'+formatNum(costoNetoPorKg)+' / KG', 'text-gray-700'],
+                  req.tipoProducto === 'TERMOENCOGIBLE'
+                    ? ['Costo por KG (Termo)', '$'+formatNum(costoNetoPorKg)+' / KG', 'text-green-600']
+                    : ['Costo por '+(totalMillares>0?'Millar':'KG')+' (Final)', '$'+formatNum(totalMillares>0?costoPorMillar:costoNetoPorKg), 'text-green-600'],
+                ].map(([label,val,color],i)=>(
+                  <div key={i} className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-center">
+                    <div className="text-[9px] font-black text-gray-500 uppercase mb-2">{label}</div>
+                    <div className={`text-lg font-black ${color}`}>{val}</div>
+                    {i===1 && <div className="text-[8px] text-gray-400 mt-1">(Total / KG Planta)</div>}
+                    {i===2 && <div className="text-[8px] text-gray-400 mt-1">(Absorbiendo Merma)</div>}
+                    {i===3 && <div className="text-[8px] text-green-600 mt-1 uppercase font-black">COSTO REAL MATERIA PRIMA</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Sección 2 (producción) / 3 (costos): Detalle por Fase */}
           <div className="mb-6">
-            <div className="bg-gray-800 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">2. Detalle de Producción por Fase</div>
+            <div className="bg-gray-800 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">{costsMode ? '3' : '2'}. Detalle de Producción por Fase</div>
             <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
               <table className="w-full text-xs">
                 <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600">
@@ -3760,9 +3806,9 @@ export default function App() {
             </div>
           </div>
 
-          {/* Sección 3: Ventas y Facturación */}
+          {/* Sección 3 (producción) / 4 (costos): Ventas y Facturación */}
           <div className="mb-6">
-            <div className="bg-green-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">3. Ventas y Facturación de la OP</div>
+            <div className="bg-green-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">{costsMode ? '4' : '3'}. Ventas y Facturación de la OP</div>
             <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
               <table className="w-full text-xs">
                 <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600"><th className="p-3 border-r text-left">Factura N°</th><th className="p-3 border-r text-center">Fecha</th><th className="p-3 border-r text-right">Base (Ingreso Real)</th><th className="p-3 border-r text-right">IVA (16%)</th><th className="p-3 text-right">Total Cobrado</th></tr></thead>
@@ -3778,10 +3824,10 @@ export default function App() {
             </div>
           </div>
 
-          {/* Sección 3.1: Entregas Parciales (si existen) */}
+          {/* Sección 3.1 (producción) / 4.1 (costos): Entregas Parciales */}
           {(req.entregasParciales||[]).length > 0 && (
             <div className="mb-6">
-              <div className="bg-blue-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">3.1 Entregas Parciales Registradas</div>
+              <div className="bg-blue-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">{costsMode ? '4.1' : '3.1'} Entregas Parciales Registradas</div>
               <div className="border-2 border-blue-200 rounded-b-lg overflow-hidden">
                 <table className="w-full text-xs">
                   <thead className="bg-blue-50"><tr className="uppercase font-black text-[9px] text-blue-700">
@@ -4932,7 +4978,7 @@ export default function App() {
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
               <div>
-                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><History className="text-gray-500" size={24}/> Historial de Producción / Finiquitos</h2>
+                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><History className="text-gray-500" size={24}/> Historial de Producción / Reportes</h2>
                 <p className="text-[10px] font-bold text-gray-500 mt-1 uppercase">{completedReqs.length} órdenes completadas</p>
               </div>
               <button onClick={() => handleExportPDF('Historial_Produccion', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
@@ -4952,7 +4998,7 @@ export default function App() {
                         <th className="py-3 px-4 border-r text-center">KG Solicitados</th>
                         <th className="py-3 px-4 border-r text-center">KG Producidos</th>
                         <th className="py-3 px-4 border-r text-center">Millares</th>
-                        <th className="py-3 px-4 text-center">Acciones</th>
+                        <th className="py-3 px-4 text-center">Reporte</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
@@ -4970,7 +5016,7 @@ export default function App() {
                             <td className="py-3 px-4 border-r text-center font-black text-green-600">{formatNum(totalKg)}</td>
                             <td className="py-3 px-4 border-r text-center font-bold">{req.tipoProducto === 'TERMOENCOGIBLE' ? <span className="text-[9px] text-gray-400">— KG</span> : (totalMill > 0 ? formatNum(totalMill) : '—')}</td>
                             <td className="py-3 px-4 text-center">
-                              <button onClick={() => setShowFiniquitoOP(req.id)} className="px-4 py-2 bg-orange-500 text-white rounded-xl text-[9px] font-black uppercase hover:bg-orange-600 transition-all flex items-center gap-1 mx-auto"><FileText size={12}/> VER FINIQUITO</button>
+                              <button onClick={() => setShowFiniquitoOP(req.id)} className="px-4 py-2 bg-orange-500 text-white rounded-xl text-[9px] font-black uppercase hover:bg-orange-600 transition-all flex items-center gap-1 mx-auto"><FileText size={12}/> VER REPORTE</button>
                             </td>
                           </tr>
                         );
@@ -5308,7 +5354,7 @@ export default function App() {
               <div className="space-y-6">
                 <h3 className="text-lg font-black uppercase">Súper Finiquito por OP — Seleccione una orden</h3>
                 {showFiniquitoOP ? (
-                  renderFiniquitoOP(requirements.find(r=>r.id===showFiniquitoOP))
+                  renderFiniquitoOP(requirements.find(r=>r.id===showFiniquitoOP), true)
                 ) : (
                   <div className="overflow-x-auto rounded-xl border border-gray-200">
                     <table className="w-full text-xs text-left">
