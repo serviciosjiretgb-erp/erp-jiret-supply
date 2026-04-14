@@ -1997,6 +1997,42 @@ export default function App() {
                  <button onClick={() => {clearAllReports(); setInvView('toma_fisica'); setPhysicalCounts({});}} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 transition-colors flex items-center gap-2">
                    <ClipboardEdit size={16}/> TOMA FÍSICA / AJUSTE
                  </button>
+                 <button onClick={() => {
+                   // Excel con membrete por categoría seleccionada
+                   const empresa = 'SERVICIOS JIRET G&B, C.A.';
+                   const rif = 'J-412309374';
+                   const dir = 'Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9, Maracaibo.';
+                   const catLabel = catalogCatFilter === 'TODAS' ? 'TODAS LAS CATEGORÍAS' : catalogCatFilter.toUpperCase();
+                   let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>body{font-family:Arial;font-size:11px;}h2,h3,p{text-align:center;margin:4px 0;}table{border-collapse:collapse;width:100%;margin-top:14px;}th,td{border:1px solid #000;padding:6px 8px;}th{background:#1a1a1a;color:#fff;text-align:center;font-weight:bold;}tr.catHeader td{background:#ea580c;color:#fff;font-weight:bold;}.subtot td{background:#f3f4f6;font-weight:bold;}.grandtot td{background:#000;color:#fff;font-weight:bold;font-size:12px;}</style></head><body>`;
+                   html += `<h2>${empresa}</h2><h3>RIF: ${rif}</h3><p>${dir}</p>`;
+                   html += `<h3>CATÁLOGO DE INVENTARIO — ${catLabel}</h3><p>Fecha: ${getTodayDate()}</p>`;
+                   html += `<table><thead><tr><th>Código</th><th>Descripción</th><th>Categoría</th><th>U.M.</th><th>Costo Unit. ($)</th><th>Stock Actual</th><th>Valor Total ($)</th></tr></thead><tbody>`;
+                   const grouped = {};
+                   filteredInventory.forEach(i => { const c = i?.category||'Otros'; if(!grouped[c]) grouped[c]=[]; grouped[c].push(i); });
+                   const catOrder = ['Materia Prima','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                   const cats = Object.keys(grouped).sort((a,b)=>{const ia=catOrder.indexOf(a),ib=catOrder.indexOf(b);if(ia===-1&&ib===-1)return a.localeCompare(b);if(ia===-1)return 1;if(ib===-1)return -1;return ia-ib;});
+                   let grandStock=0,grandVal=0;
+                   cats.forEach(cat=>{
+                     const items=grouped[cat];
+                     const catStock=items.reduce((s,i)=>s+parseNum(i?.stock),0);
+                     const catVal=items.reduce((s,i)=>s+(parseNum(i?.cost)*parseNum(i?.stock)),0);
+                     html+=`<tr class="catHeader"><td colspan="5">${cat.toUpperCase()} — ${items.length} artículos</td><td style="text-align:right">${formatNum(catStock)}</td><td style="text-align:right">$${formatNum(catVal)}</td></tr>`;
+                     items.forEach(inv=>{
+                       const val=parseNum(inv?.cost)*parseNum(inv?.stock);
+                       html+=`<tr><td>${inv?.id}</td><td>${inv?.desc}</td><td>${inv?.category}</td><td style="text-align:center">${inv?.unit||'KG'}</td><td style="text-align:right">$${formatNum(inv?.cost)}</td><td style="text-align:right">${formatNum(inv?.stock)}</td><td style="text-align:right">$${formatNum(val)}</td></tr>`;
+                     });
+                     html+=`<tr class="subtot"><td colspan="4" style="text-align:right">Subtotal ${cat}:</td><td></td><td style="text-align:right">${formatNum(catStock)}</td><td style="text-align:right">$${formatNum(catVal)}</td></tr>`;
+                     grandStock+=catStock; grandVal+=catVal;
+                   });
+                   html+=`</tbody><tfoot><tr class="grandtot"><td colspan="5" style="text-align:right">TOTAL INVENTARIO:</td><td style="text-align:right">${formatNum(grandStock)}</td><td style="text-align:right">$${formatNum(grandVal)}</td></tr></tfoot></table>`;
+                   html+=`<p style="margin-top:14px;font-size:9px;text-align:center">Generado por Supply G&B ERP — ${getTodayDate()}</p></body></html>`;
+                   const blob=new Blob([html],{type:'application/vnd.ms-excel'});
+                   const url=URL.createObjectURL(blob);
+                   const a=document.createElement('a');a.href=url;a.download=`Catalogo_${catalogCatFilter}_${getTodayDate()}.xls`;
+                   document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+                 }} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2">
+                   <Download size={16}/> EXCEL {catalogCatFilter === 'TODAS' ? 'TODOS' : catalogCatFilter.toUpperCase()}
+                 </button>
                  <button onClick={() => handleExportPDF(`Catalogo_${catalogCatFilter}_Inventario`, true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2">
                    <Printer size={16}/> {catalogCatFilter === 'TODAS' ? 'IMPRIMIR TODO' : `IMPRIMIR: ${catalogCatFilter.toUpperCase()}`}
                  </button>
@@ -2136,7 +2172,7 @@ export default function App() {
                                <td className="py-3 px-4 text-right font-black text-green-600 text-sm print:text-black">${formatNum(totalVal)}</td>
                                <td className="py-3 px-4 text-center no-pdf print:hidden">
                                  <div className="flex gap-1 justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                   <button onClick={()=>startEditInvItem(inv)} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white transition-all"><Edit size={12}/></button>
+                                   <button onClick={()=>requireAdminPassword(()=>startEditInvItem(inv),'Editar artículo del catálogo')} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white transition-all"><Edit size={12}/></button>
                                    <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('inventory',inv.id));setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});},'Eliminar artículo de catálogo')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={12}/></button>
                                  </div>
                                </td>
@@ -3675,50 +3711,25 @@ export default function App() {
             <div className="bg-orange-500 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">1. Desglose de Producción (MP)</div>
             <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
               <table className="w-full text-xs">
-                <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600"><th className="p-3 border-r text-left">Insumo / Descripción</th><th className="p-3 border-r text-center">Fase</th><th className="p-3 border-r text-center">Cantidad</th><th className="p-3 border-r text-right">Costo Unit.</th><th className="p-3 text-right">Costo Total</th></tr></thead>
+                <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600"><th className="p-3 border-r text-left">Insumo / Descripción</th><th className="p-3 border-r text-center">Fase</th><th className="p-3 text-center">Cantidad (KG)</th></tr></thead>
                 <tbody className="divide-y divide-gray-100">
                   {insumosList.map((ins,i)=>(
                     <tr key={i} className="hover:bg-gray-50">
                       <td className="p-3 border-r font-black text-orange-600 uppercase">{ins.desc}</td>
                       <td className="p-3 border-r text-center font-bold">{ins.fase}</td>
-                      <td className="p-3 border-r text-center font-black">{formatNum(ins.qty)} kg</td>
-                      <td className="p-3 border-r text-right font-bold">${formatNum(ins.cost)}</td>
-                      <td className="p-3 text-right font-black">${formatNum(ins.qty*ins.cost)}</td>
+                      <td className="p-3 text-center font-black">{formatNum(ins.qty)} kg</td>
                     </tr>
                   ))}
-                  {insumosList.length===0&&<tr><td colSpan="5" className="p-4 text-center text-gray-400 font-bold">Sin insumos</td></tr>}
+                  {insumosList.length===0&&<tr><td colSpan="3" className="p-4 text-center text-gray-400 font-bold">Sin insumos</td></tr>}
                 </tbody>
-                <tfoot className="bg-gray-100 border-t-2 border-gray-300"><tr className="font-black"><td colSpan="4" className="p-3 text-right uppercase text-[10px]">Costo Total MP:</td><td className="p-3 text-right text-orange-600 text-lg">${formatNum(totalCostoMP)}</td></tr></tfoot>
+                <tfoot className="bg-gray-100 border-t-2 border-gray-300"><tr className="font-black"><td colSpan="2" className="p-3 text-right uppercase text-[10px]">Total MP Inyectada:</td><td className="p-3 text-center text-orange-600 text-sm">{formatNum(totalInsumosKg)} KG</td></tr></tfoot>
               </table>
             </div>
           </div>
 
-          {/* Sección 2: Indicadores de Costo */}
+          {/* Sección 2: Detalle por Fase */}
           <div className="mb-6">
-            <div className="bg-blue-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">2. Indicadores de Costo — Desglose de Formulación</div>
-            <div className="border-2 border-gray-200 rounded-b-lg p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-              {[
-                ['Demanda Neta (Requerida)', formatNum(parseNum(req.requestedKg))+' KG', 'text-blue-600'],
-                ['Costo Promedio Mezcla', '$'+formatNum(costoPromMezcla)+' / KG', 'text-gray-700'],
-                ['Costo Neto x KG Terminado', '$'+formatNum(costoNetoPorKg)+' / KG', 'text-gray-700'],
-                req.tipoProducto === 'TERMOENCOGIBLE'
-                  ? ['Costo por KG (Termo)', '$'+formatNum(costoNetoPorKg)+' / KG', 'text-green-600']
-                  : ['Costo por '+(totalMillares>0?'Millar':'KG')+' (Final)', '$'+formatNum(totalMillares>0?costoPorMillar:costoNetoPorKg), 'text-green-600'],
-              ].map(([label,val,color],i)=>(
-                <div key={i} className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-center">
-                  <div className="text-[9px] font-black text-gray-500 uppercase mb-2">{label}</div>
-                  <div className={`text-lg font-black ${color}`}>{val}</div>
-                  {i===1 && <div className="text-[8px] text-gray-400 mt-1">(Total / KG Planta)</div>}
-                  {i===2 && <div className="text-[8px] text-gray-400 mt-1">(Absorbiendo Merma)</div>}
-                  {i===3 && <div className="text-[8px] text-green-600 mt-1 uppercase font-black">COSTO REAL MATERIA PRIMA</div>}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Sección 3: Detalle por Fase */}
-          <div className="mb-6">
-            <div className="bg-gray-800 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">3. Detalle de Producción por Fase</div>
+            <div className="bg-gray-800 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">2. Detalle de Producción por Fase</div>
             <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
               <table className="w-full text-xs">
                 <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600">
@@ -3749,9 +3760,9 @@ export default function App() {
             </div>
           </div>
 
-          {/* Sección 4: Ventas y Facturación */}
+          {/* Sección 3: Ventas y Facturación */}
           <div className="mb-6">
-            <div className="bg-green-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">4. Ventas y Facturación de la OP</div>
+            <div className="bg-green-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">3. Ventas y Facturación de la OP</div>
             <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
               <table className="w-full text-xs">
                 <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600"><th className="p-3 border-r text-left">Factura N°</th><th className="p-3 border-r text-center">Fecha</th><th className="p-3 border-r text-right">Base (Ingreso Real)</th><th className="p-3 border-r text-right">IVA (16%)</th><th className="p-3 text-right">Total Cobrado</th></tr></thead>
@@ -3767,10 +3778,10 @@ export default function App() {
             </div>
           </div>
 
-          {/* Sección 4.1: Entregas Parciales (si existen) */}
+          {/* Sección 3.1: Entregas Parciales (si existen) */}
           {(req.entregasParciales||[]).length > 0 && (
             <div className="mb-6">
-              <div className="bg-blue-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">4.1 Entregas Parciales Registradas</div>
+              <div className="bg-blue-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">3.1 Entregas Parciales Registradas</div>
               <div className="border-2 border-blue-200 rounded-b-lg overflow-hidden">
                 <table className="w-full text-xs">
                   <thead className="bg-blue-50"><tr className="uppercase font-black text-[9px] text-blue-700">
@@ -3962,6 +3973,8 @@ export default function App() {
   const [partialMillares, setPartialMillares] = useState('');
   const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
   const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
+  const [backupFreq, setBackupFreq] = useState(() => localStorage.getItem('backupFreq') || 'manual');
+  const [backupLastRun, setBackupLastRun] = useState(() => localStorage.getItem('backupLastRun') || '');
 
   const handlePartialDelivery = async () => {
     if (!showPartialModal) return;
@@ -6176,39 +6189,44 @@ export default function App() {
   };
 
   // ============================================================================
-  // RESPALDO COMPLETO DEL SISTEMA (JSON)
+  // RESPALDO COMPLETO DEL SISTEMA (JSON + App.jsx)
   // ============================================================================
-  const handleBackupData = async () => {
+  const handleBackupData = async (includeAppJsx = false) => {
     try {
+      const ts = getTodayDate();
       const backup = {
-        _meta: { fecha: getTodayDate(), timestamp: Date.now(), version: '1.0', empresa: 'SERVICIOS JIRET G&B, C.A.' },
-        inventory,
-        inventoryMovements: invMovements,
-        clientes: clients,
-        requirements,
-        maquilaInvoices: invoices,
-        inventoryRequisitions: invRequisitions,
-        operatingCosts: opCosts,
-        purchaseOrders,
-        wipInventory,
-        finishedGoodsInventory,
-        planDeCuentas,
-        asientosContables,
+        _meta: { fecha: ts, timestamp: Date.now(), version: '1.0', empresa: 'SERVICIOS JIRET G&B, C.A.' },
+        inventory, inventoryMovements: invMovements, clientes: clients, requirements,
+        maquilaInvoices: invoices, inventoryRequisitions: invRequisitions,
+        operatingCosts: opCosts, purchaseOrders, wipInventory, finishedGoodsInventory,
+        planDeCuentas, asientosContables,
       };
-      const json = JSON.stringify(backup, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `Respaldo_GYB_${getTodayDate()}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      setDialog({ title: '✅ Respaldo Exitoso', text: `Se exportaron todos los datos del sistema al archivo Respaldo_GYB_${getTodayDate()}.json. Guárdelo en un lugar seguro.`, type: 'alert' });
+      // Descargar JSON de datos
+      const jsonBlob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const jsonUrl = URL.createObjectURL(jsonBlob);
+      const jsonLink = document.createElement('a');
+      jsonLink.href = jsonUrl;
+      jsonLink.download = `Respaldo_GYB_Datos_${ts}.json`;
+      document.body.appendChild(jsonLink); jsonLink.click(); document.body.removeChild(jsonLink);
+      URL.revokeObjectURL(jsonUrl);
+
+      // Actualizar fecha de último respaldo
+      localStorage.setItem('backupLastRun', ts);
+      setBackupLastRun(ts);
+
+      setDialog({ title: '✅ Respaldo de Datos Exitoso', text: `Archivo: Respaldo_GYB_Datos_${ts}.json descargado. Guárdelo en su carpeta de respaldos.`, type: 'alert' });
     } catch (err) {
       setDialog({ title: 'Error', text: 'No se pudo generar el respaldo: ' + err.message, type: 'alert' });
     }
+  };
+
+  const handleBackupAppJsx = () => {
+    // Instrucciones para respaldar el App.jsx desde el repositorio/fuente
+    setDialog({
+      title: 'Respaldar App.jsx',
+      text: 'Para respaldar el código fuente App.jsx: 1) Descárguelo desde su entorno de desarrollo (GitHub, carpeta local, etc.) 2) Cópielo en su carpeta de respaldos. El archivo de datos JSON ya fue descargado por separado.',
+      type: 'alert'
+    });
   };
 
   // ============================================================================
@@ -6616,30 +6634,89 @@ export default function App() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
             {/* RESPALDO */}
-            <div className="bg-green-50 border-2 border-green-200 rounded-2xl p-6">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
+            <div className="bg-green-50 border-2 border-green-200 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center gap-3 mb-1">
+                <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center shrink-0">
                   <Download size={24} className="text-green-600"/>
                 </div>
                 <div>
-                  <h3 className="font-black text-green-800 uppercase text-sm">Respaldar Datos</h3>
-                  <p className="text-[10px] font-bold text-green-600">Exportar todo a un archivo JSON</p>
+                  <h3 className="font-black text-green-800 uppercase text-sm">Respaldar Sistema</h3>
+                  <p className="text-[10px] font-bold text-green-600">Datos JSON + instrucciones App.jsx</p>
                 </div>
               </div>
-              <p className="text-xs font-bold text-green-700 mb-4">
-                Descarga un archivo con <span className="font-black">todos los datos registrados</span>: inventario, movimientos, OPs, facturas, clientes, costos, asientos contables y plan de cuentas. Guárdelo como respaldo de seguridad.
-              </p>
-              <div className="text-[9px] font-bold text-green-600 bg-green-100 rounded-xl p-3 mb-4 space-y-0.5">
-                {['Inventario y Movimientos (Kardex)', 'Clientes y OPs', 'Facturas y Asientos Contables', 'Costos Operativos y Órdenes de Compra', 'Plan de Cuentas', 'WIP y Productos Terminados'].map(item => (
+
+              {/* Contenido del respaldo */}
+              <div className="text-[9px] font-bold text-green-600 bg-green-100 rounded-xl p-3 space-y-0.5">
+                {['Inventario y Movimientos (Kardex)', 'Clientes, OPs y Facturas', 'Asientos Contables y Plan de Cuentas', 'Costos Operativos y Órdenes de Compra', 'WIP y Productos Terminados', 'Requisiciones de Planta'].map(item => (
                   <div key={item} className="flex items-center gap-1.5"><CheckCircle size={10} className="text-green-500 shrink-0"/> {item}</div>
                 ))}
               </div>
-              <button
-                onClick={() => requireAdminPassword(handleBackupData, 'Generar Respaldo de Datos')}
-                className="w-full bg-green-600 text-white py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-all flex items-center justify-center gap-2 shadow-md"
-              >
-                <Download size={16}/> DESCARGAR RESPALDO
-              </button>
+
+              {/* Carpeta destino */}
+              <div>
+                <label className="text-[10px] font-black text-green-700 uppercase block mb-1">📁 Carpeta de Respaldo (nombre referencia)</label>
+                <input
+                  type="text"
+                  id="backupFolderPath"
+                  defaultValue={localStorage.getItem('backupFolder') || 'C:\\Respaldos\\GYB_ERP'}
+                  onChange={e => localStorage.setItem('backupFolder', e.target.value)}
+                  className="w-full border-2 border-green-200 rounded-xl p-2.5 text-xs font-bold bg-white outline-none focus:border-green-500"
+                  placeholder="C:\Respaldos\GYB_ERP"
+                />
+                <p className="text-[9px] text-green-600 font-bold mt-1">⚠ El navegador descargará a tu carpeta de Descargas. Mueve el archivo a la ruta indicada.</p>
+              </div>
+
+              {/* Programación */}
+              <div>
+                <label className="text-[10px] font-black text-green-700 uppercase block mb-2">⏰ Frecuencia de Recordatorio</label>
+                <div className="flex gap-2 flex-wrap">
+                  {[['manual','Manual'],['diario','Diario'],['semanal','Semanal'],['mensual','Mensual']].map(([val,label])=>(
+                    <button key={val} onClick={()=>{setBackupFreq(val);localStorage.setItem('backupFreq',val);}}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase border-2 transition-all ${backupFreq===val?'bg-green-600 text-white border-green-600':'bg-white text-green-700 border-green-300 hover:border-green-500'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {backupLastRun && <p className="text-[9px] font-bold text-green-600 mt-2">✓ Último respaldo: <span className="font-black">{backupLastRun}</span></p>}
+                {backupFreq !== 'manual' && (() => {
+                  const hoy = getTodayDate();
+                  const last = backupLastRun;
+                  let needsBackup = false;
+                  if (!last) { needsBackup = true; }
+                  else {
+                    const diffDays = Math.floor((new Date(hoy) - new Date(last)) / 86400000);
+                    if (backupFreq === 'diario' && diffDays >= 1) needsBackup = true;
+                    if (backupFreq === 'semanal' && diffDays >= 7) needsBackup = true;
+                    if (backupFreq === 'mensual' && diffDays >= 30) needsBackup = true;
+                  }
+                  return needsBackup ? (
+                    <div className="bg-yellow-100 border border-yellow-300 rounded-lg p-2 mt-2 text-[9px] font-black text-yellow-700 uppercase">
+                      ⚠ Respaldo {backupFreq} pendiente — haga clic en "Respaldar" ahora
+                    </div>
+                  ) : (
+                    <div className="bg-green-100 border border-green-200 rounded-lg p-2 mt-2 text-[9px] font-black text-green-700 uppercase">
+                      ✓ Respaldo al día según frecuencia {backupFreq}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Botones de respaldo */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => requireAdminPassword(() => handleBackupData(), 'Generar Respaldo de Datos')}
+                  className="flex-1 bg-green-600 text-white py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-all flex items-center justify-center gap-2 shadow-md"
+                >
+                  <Download size={14}/> RESPALDAR DATOS
+                </button>
+                <button
+                  onClick={() => requireAdminPassword(handleBackupAppJsx, 'Instrucciones respaldo App.jsx')}
+                  className="px-4 bg-blue-600 text-white py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 transition-all flex items-center justify-center gap-2 shadow-md"
+                  title="Instrucciones para respaldar App.jsx"
+                >
+                  <FileText size={14}/> APP.JSX
+                </button>
+              </div>
             </div>
 
             {/* RESET */}
@@ -6654,7 +6731,7 @@ export default function App() {
                 </div>
               </div>
               <p className="text-xs font-bold text-red-700 mb-4">
-                Elimina <span className="font-black">permanentemente</span> todos los datos operativos y deja el sistema limpio para comenzar a usarlo desde cero. <span className="font-black underline">Los usuarios y la configuración se conservan.</span>
+                Elimina <span className="font-black">permanentemente</span> todos los datos operativos y deja el sistema limpio. <span className="font-black underline">Los usuarios y la configuración se conservan.</span>
               </p>
               <div className="text-[9px] font-bold text-red-600 bg-red-100 rounded-xl p-3 mb-4 space-y-0.5">
                 {['Inventario y Movimientos', 'Clientes, OPs y Facturas', 'Asientos Contables', 'Costos Operativos', 'Órdenes de Compra', 'WIP y Productos Terminados'].map(item => (
@@ -6662,7 +6739,7 @@ export default function App() {
                 ))}
               </div>
               <button
-                onClick={handleResetSystem}
+                onClick={() => requireAdminPassword(handleResetSystem, 'Reiniciar Sistema Completo')}
                 className="w-full bg-red-600 text-white py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all flex items-center justify-center gap-2 shadow-md"
               >
                 <RefreshCw size={16}/> REINICIAR SISTEMA
