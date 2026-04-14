@@ -1206,7 +1206,9 @@ export default function App() {
     }
 
     const nextPONum = ((purchaseOrders || []).reduce((m, p) => {
-      const n = parseInt(String(p.id || '').replace(/\D/g, '') || '0', 10);
+      // Solo contar IDs con patrón OC-NNNNN (5 dígitos), ignorar IDs de timestamp
+      const match = String(p.id || '').match(/^OC-(\d{1,6})$/);
+      const n = match ? parseInt(match[1], 10) : 0;
       return Math.max(m, n);
     }, 0) + 1).toString().padStart(5, '0');
     const po = {
@@ -1877,10 +1879,9 @@ export default function App() {
     }
 
     const searchInvUpper = (invSearchTerm || '').toUpperCase();
-    const [catalogCatFilter, setCatalogCatFilter] = React.useState('TODAS');
     const allCatalogCats = ['TODAS', ...Array.from(new Set((inventory||[]).map(i=>i?.category||'Otros')))].sort((a,b)=>a==='TODAS'?-1:a.localeCompare(b));
     const filteredInventory = (inventory || []).filter(i => {
-      const matchSearch = (i?.id || '').includes(searchInvUpper) || (i?.desc || '').includes(searchInvUpper);
+      const matchSearch = (i?.id || '').toUpperCase().includes(searchInvUpper) || (i?.desc || '').toUpperCase().includes(searchInvUpper);
       const matchCat = catalogCatFilter === 'TODAS' || (i?.category||'Otros') === catalogCatFilter;
       return matchSearch && matchCat;
     });
@@ -3910,6 +3911,8 @@ export default function App() {
   const [showPartialModal, setShowPartialModal] = useState(null); // req
   const [partialKg, setPartialKg] = useState('');
   const [partialMillares, setPartialMillares] = useState('');
+  const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
+  const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
 
   const handlePartialDelivery = async () => {
     if (!showPartialModal) return;
@@ -5037,40 +5040,165 @@ export default function App() {
               </div>
             )}
 
-            {showReportType === 'mermas' && (
-              <div id="pdf-content" className="space-y-6">
-                <div className="flex justify-between items-center no-pdf">
-                  <h3 className="text-lg font-black uppercase">Análisis de Mermas — {selMonth.replace('-', '/')}</h3>
-                  <button onClick={() => handleExportPDF('Analisis_Mermas', false)} className="bg-black text-white px-6 py-3 rounded-xl font-black text-xs uppercase flex items-center gap-2 shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
-                </div>
-                <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-orange-500 pb-2">ANÁLISIS DE MERMAS</h1></div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-orange-50 border border-orange-200 rounded-2xl p-6"><span className="text-[10px] font-black text-orange-700 uppercase block mb-1">Total Merma KG (Mes)</span><span className="text-3xl font-black text-orange-600">{formatNum(selMermaKg)} <span className="text-sm">KG</span></span></div>
-                  <div className="bg-red-50 border border-red-200 rounded-2xl p-6"><span className="text-[10px] font-black text-red-700 uppercase block mb-1">Costo Estimado Merma</span><span className="text-3xl font-black text-red-600">${formatNum(selMermaKg * 0.96)}</span></div>
-                </div>
-                <div className="overflow-x-auto rounded-xl border border-gray-200">
-                  <table className="w-full text-xs text-left">
-                    <thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px]"><th className="py-3 px-4 border-r">OP</th><th className="py-3 px-4 border-r">Cliente</th><th className="py-3 px-4 border-r">Fase</th><th className="py-3 px-4 text-right">Merma KG</th></tr></thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {requirements.filter(r => (r.fecha||'').startsWith(selMonth)).flatMap(req => {
-                        const prod = req.production || {};
-                        return ['extrusion','impresion','sellado'].flatMap(phase =>
-                          (prod[phase]?.batches||[]).filter(b => parseNum(b.mermaKg) > 0).map((b, i) => (
-                            <tr key={`${req.id}-${phase}-${i}`} className="hover:bg-gray-50">
-                              <td className="py-3 px-4 border-r font-black text-orange-600">#{String(req.id).replace('OP-','').padStart(5,'0')}</td>
-                              <td className="py-3 px-4 border-r font-bold uppercase">{req.client}</td>
-                              <td className="py-3 px-4 border-r font-bold capitalize">{phase}</td>
-                              <td className="py-3 px-4 text-right font-black text-red-600">{formatNum(parseNum(b.mermaKg))} KG</td>
-                            </tr>
-                          ))
+            {showReportType === 'mermas' && (() => {
+              // Construir datos de merma agrupados por OP
+              const mermaRows = [];
+              requirements.filter(r => {
+                const fechaOk = (r.fecha||'').startsWith(selMonth) ||
+                  Object.values(r.production||{}).some(ph => (ph.batches||[]).some(b => (b.date||'').startsWith(selMonth)));
+                return fechaOk;
+              }).forEach(req => {
+                const prod = req.production || {};
+                ['extrusion','impresion','sellado'].forEach(phase => {
+                  (prod[phase]?.batches||[]).filter(b => parseNum(b.mermaKg) > 0 && (b.date||'').startsWith(selMonth)).forEach((b, i) => {
+                    const kgUsados = parseNum(b.totalInsumosKg || b.kgRecibidos || 0);
+                    const mermaKg = parseNum(b.mermaKg);
+                    const pct = kgUsados > 0 ? ((mermaKg / kgUsados) * 100).toFixed(1) : b.mermaPorc > 0 ? b.mermaPorc : 0;
+                    // Estimar costo merma: mermaKg * costo promedio de insumos del lote
+                    const costoPromLote = kgUsados > 0 && parseNum(b.cost) > 0 ? parseNum(b.cost) / kgUsados : 0;
+                    const costoMerma = mermaKg * costoPromLote;
+                    mermaRows.push({ opId: req.id, opNum: String(req.id).replace('OP-','').padStart(5,'0'), client: req.client, phase, date: b.date, mermaKg, kgUsados, pct: parseFloat(pct), costoMerma });
+                  });
+                });
+              });
+
+              // Agrupar por OP
+              const byOP = {};
+              mermaRows.forEach(r => {
+                if (!byOP[r.opId]) byOP[r.opId] = { opId: r.opId, opNum: r.opNum, client: r.client, rows: [], totalMermaKg: 0, totalKgUsados: 0, totalCosto: 0 };
+                byOP[r.opId].rows.push(r);
+                byOP[r.opId].totalMermaKg += r.mermaKg;
+                byOP[r.opId].totalKgUsados += r.kgUsados;
+                byOP[r.opId].totalCosto += r.costoMerma;
+              });
+              const opGroups = Object.values(byOP).sort((a,b) => a.opNum.localeCompare(b.opNum));
+
+              // Totales globales
+              const grandMermaKg = mermaRows.reduce((s,r)=>s+r.mermaKg,0);
+              const grandKgUsados = mermaRows.reduce((s,r)=>s+r.kgUsados,0);
+              const grandPct = grandKgUsados > 0 ? ((grandMermaKg/grandKgUsados)*100).toFixed(1) : 0;
+              const grandCosto = mermaRows.reduce((s,r)=>s+r.costoMerma,0);
+
+              // OPs únicas para filtro
+              const opOptions = ['TODAS', ...opGroups.map(g=>`#${g.opNum} — ${g.client}`)];
+              const filteredGroups = mermaOpFilter === 'TODAS' ? opGroups : opGroups.filter(g=>`#${g.opNum} — ${g.client}` === mermaOpFilter);
+
+              return (
+                <div id="pdf-content" className="space-y-6">
+                  <div className="flex justify-between items-center no-pdf">
+                    <h3 className="text-lg font-black uppercase">Análisis de Mermas — {selMonth.replace('-', '/')}</h3>
+                    <button onClick={() => handleExportPDF('Analisis_Mermas', false)} className="bg-black text-white px-6 py-3 rounded-xl font-black text-xs uppercase flex items-center gap-2 shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
+                  </div>
+                  <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-orange-500 pb-2">ANÁLISIS DE MERMAS — {selMonth}</h1></div>
+
+                  {/* KPIs globales */}
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-6">
+                      <span className="text-[10px] font-black text-orange-700 uppercase block mb-1">Total Merma KG (Mes)</span>
+                      <span className="text-3xl font-black text-orange-600">{formatNum(grandMermaKg)} <span className="text-sm">KG</span></span>
+                    </div>
+                    <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-6">
+                      <span className="text-[10px] font-black text-red-700 uppercase block mb-1">Costo Estimado Merma</span>
+                      <span className="text-3xl font-black text-red-600">${formatNum(grandCosto)}</span>
+                    </div>
+                    <div className="bg-yellow-50 border-2 border-yellow-200 rounded-2xl p-6">
+                      <span className="text-[10px] font-black text-yellow-700 uppercase block mb-1">% Merma Global del Mes</span>
+                      <span className="text-3xl font-black text-yellow-600">{grandPct}<span className="text-xl">%</span></span>
+                      <span className="text-[9px] font-bold text-yellow-600 block mt-1">({formatNum(grandMermaKg)} KG de {formatNum(grandKgUsados)} KG usados)</span>
+                    </div>
+                  </div>
+
+                  {/* Filtro por OP */}
+                  <div className="flex flex-wrap gap-2 items-center no-pdf">
+                    <span className="text-[10px] font-black text-gray-500 uppercase">Filtrar por OP:</span>
+                    {opOptions.map(op => (
+                      <button key={op} onClick={() => setMermaOpFilter(op)}
+                        className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all border-2 ${mermaOpFilter === op ? 'bg-orange-500 text-white border-orange-500 shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-orange-300 hover:text-orange-600'}`}>
+                        {op === 'TODAS' ? `Todas las OPs (${opGroups.length})` : op}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Tabla agrupada por OP */}
+                  {filteredGroups.length === 0 ? (
+                    <div className="text-center py-12 text-gray-400 font-bold uppercase text-xs border border-gray-200 rounded-2xl">
+                      Sin mermas registradas en este período
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {filteredGroups.map(group => {
+                        const groupPct = group.totalKgUsados > 0 ? ((group.totalMermaKg/group.totalKgUsados)*100).toFixed(1) : 0;
+                        return (
+                          <div key={group.opId} className="rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+                            {/* Encabezado de OP */}
+                            <div className="bg-gray-800 text-white px-4 py-3 flex justify-between items-center">
+                              <div className="flex items-center gap-4">
+                                <span className="font-black text-orange-400 text-sm">OP #{group.opNum}</span>
+                                <span className="font-bold text-white uppercase text-xs">{group.client}</span>
+                              </div>
+                              <div className="flex gap-6 text-right">
+                                <div><span className="text-[9px] text-gray-400 block">Total Merma</span><span className="font-black text-orange-400">{formatNum(group.totalMermaKg)} KG</span></div>
+                                <div><span className="text-[9px] text-gray-400 block">% Merma OP</span><span className={`font-black text-lg ${parseFloat(groupPct)>5?'text-red-400':'text-yellow-300'}`}>{groupPct}%</span></div>
+                                <div><span className="text-[9px] text-gray-400 block">Costo Merma</span><span className="font-black text-red-400">${formatNum(group.totalCosto)}</span></div>
+                              </div>
+                            </div>
+                            {/* Filas de lotes */}
+                            <table className="w-full text-xs">
+                              <thead className="bg-gray-50">
+                                <tr className="uppercase font-black text-[9px] text-gray-500 border-b border-gray-200">
+                                  <th className="py-2 px-4 border-r text-left">Fase</th>
+                                  <th className="py-2 px-4 border-r text-center">Fecha</th>
+                                  <th className="py-2 px-4 border-r text-center">KG Usados</th>
+                                  <th className="py-2 px-4 border-r text-center">Merma KG</th>
+                                  <th className="py-2 px-4 border-r text-center">% Merma</th>
+                                  <th className="py-2 px-4 text-right">Costo Merma ($)</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {group.rows.map((r, i) => (
+                                  <tr key={i} className="hover:bg-gray-50">
+                                    <td className="py-2 px-4 border-r font-bold capitalize text-gray-700">{r.phase}</td>
+                                    <td className="py-2 px-4 border-r text-center font-bold text-gray-500">{r.date}</td>
+                                    <td className="py-2 px-4 border-r text-center font-black text-blue-600">{formatNum(r.kgUsados)} KG</td>
+                                    <td className="py-2 px-4 border-r text-center font-black text-red-600">{formatNum(r.mermaKg)} KG</td>
+                                    <td className="py-2 px-4 border-r text-center">
+                                      <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black ${r.pct > 5 ? 'bg-red-100 text-red-700' : r.pct > 2 ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
+                                        {r.pct}%
+                                      </span>
+                                    </td>
+                                    <td className="py-2 px-4 text-right font-black text-red-500">${formatNum(r.costoMerma)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                              <tfoot className="bg-orange-50 border-t-2 border-orange-200">
+                                <tr className="font-black text-[10px]">
+                                  <td colSpan="2" className="py-2 px-4 text-right uppercase text-gray-600">Subtotal OP #{group.opNum}:</td>
+                                  <td className="py-2 px-4 text-center text-blue-700">{formatNum(group.totalKgUsados)} KG</td>
+                                  <td className="py-2 px-4 text-center text-red-700">{formatNum(group.totalMermaKg)} KG</td>
+                                  <td className="py-2 px-4 text-center text-orange-700">{groupPct}%</td>
+                                  <td className="py-2 px-4 text-right text-red-700">${formatNum(group.totalCosto)}</td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
                         );
                       })}
-                      {selMermaKg === 0 && <tr><td colSpan="4" className="p-8 text-center text-gray-400 font-bold uppercase">Sin mermas registradas en este período</td></tr>}
-                    </tbody>
-                  </table>
+
+                      {/* Gran Total */}
+                      <div className="bg-black text-white rounded-2xl p-4 flex justify-between items-center">
+                        <span className="font-black uppercase text-sm">Gran Total — {filteredGroups.length} OP{filteredGroups.length!==1?'s':''}</span>
+                        <div className="flex gap-8 text-right">
+                          <div><span className="text-[9px] text-gray-400 block">KG Usados</span><span className="font-black">{formatNum(filteredGroups.reduce((s,g)=>s+g.totalKgUsados,0))} KG</span></div>
+                          <div><span className="text-[9px] text-gray-400 block">Total Merma</span><span className="font-black text-orange-400">{formatNum(filteredGroups.reduce((s,g)=>s+g.totalMermaKg,0))} KG</span></div>
+                          <div><span className="text-[9px] text-gray-400 block">% Global</span><span className="font-black text-yellow-400 text-lg">{grandPct}%</span></div>
+                          <div><span className="text-[9px] text-gray-400 block">Costo Total</span><span className="font-black text-red-400">${formatNum(filteredGroups.reduce((s,g)=>s+g.totalCosto,0))}</span></div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {showReportType === 'super_finiquito' && (
               <div className="space-y-6">
