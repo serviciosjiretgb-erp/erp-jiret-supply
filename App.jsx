@@ -885,11 +885,9 @@ export default function App() {
            batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: getTodayDate(), itemId: item.id, itemName: item.desc, type: 'SALIDA', qty: ing.qty, cost: item.cost, totalValue: ing.qty * item.cost, reference: `REQ-${targetOP.id}-${req.phase.substring(0,3).toUpperCase()}`, opAsignada: targetOP.id, notes: 'DESPACHO ALMACÉN', timestamp: Date.now(), user: appUser?.name || 'Almacén' });
         }
 
-        let currentPhase = { ...(targetOP.production?.[req.phase] || { batches: [], isClosed: false }) };
-        const newProdBatch = { id: Date.now().toString(), timestamp: Date.now(), date: getTodayDate(), insumos: validItems, producedKg: 0, mermaKg: 0, totalInsumosKg, cost: phaseCost, operator: 'ALMACÉN (DESPACHO)', techParams: {} };
-        if (!currentPhase.batches) currentPhase.batches = []; currentPhase.batches.push(newProdBatch);
-        batch.update(getDocRef('requirements', targetOP.id), { [`production.${req.phase}`]: currentPhase });
-        batch.update(getDocRef('inventoryRequisitions', req.id), { status: 'APROBADO', dispatchDate: getTodayDate(), items: validItems, approvedBy: appUser?.name });
+        // NO creamos batch aquí — el operador registrará cuánto usó realmente
+        // Solo actualizamos la requisición como APROBADA con los KG despachados
+        batch.update(getDocRef('inventoryRequisitions', req.id), { status: 'APROBADO', dispatchDate: getTodayDate(), items: validItems, approvedBy: appUser?.name, kgDespachados: totalInsumosKg, costoDespachado: phaseCost });
 
         await batch.commit(); 
         
@@ -1207,8 +1205,12 @@ export default function App() {
       return;
     }
 
+    const nextPONum = ((purchaseOrders || []).reduce((m, p) => {
+      const n = parseInt(String(p.id || '').replace(/\D/g, '') || '0', 10);
+      return Math.max(m, n);
+    }, 0) + 1).toString().padStart(5, '0');
     const po = {
-      id: `PO-${Date.now()}`,
+      id: `OC-${nextPONum}`,
       date: getTodayDate(),
       provider: poProvider.toUpperCase(),
       items: selectedPOItems,
@@ -1875,7 +1877,13 @@ export default function App() {
     }
 
     const searchInvUpper = (invSearchTerm || '').toUpperCase();
-    const filteredInventory = (inventory || []).filter(i => (i?.id || '').includes(searchInvUpper) || (i?.desc || '').includes(searchInvUpper));
+    const [catalogCatFilter, setCatalogCatFilter] = React.useState('TODAS');
+    const allCatalogCats = ['TODAS', ...Array.from(new Set((inventory||[]).map(i=>i?.category||'Otros')))].sort((a,b)=>a==='TODAS'?-1:a.localeCompare(b));
+    const filteredInventory = (inventory || []).filter(i => {
+      const matchSearch = (i?.id || '').includes(searchInvUpper) || (i?.desc || '').includes(searchInvUpper);
+      const matchCat = catalogCatFilter === 'TODAS' || (i?.category||'Otros') === catalogCatFilter;
+      return matchSearch && matchCat;
+    });
     const filteredMovements = (invMovements || []).filter(m => (m?.itemId || '').toUpperCase().includes(searchInvUpper) || (m?.itemName || '').toUpperCase().includes(searchInvUpper) || (m?.reference || '').toUpperCase().includes(searchInvUpper));
 
     return (
@@ -1984,12 +1992,12 @@ export default function App() {
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Lista de Productos (Catálogo)</h2>
-               <div className="flex gap-3">
+               <div className="flex gap-3 flex-wrap justify-end">
                  <button onClick={() => {clearAllReports(); setInvView('toma_fisica'); setPhysicalCounts({});}} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 transition-colors flex items-center gap-2">
                    <ClipboardEdit size={16}/> TOMA FÍSICA / AJUSTE
                  </button>
-                 <button onClick={() => handleExportPDF('Catalogo_Inventario', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2">
-                   <Printer size={16}/> IMPRIMIR
+                 <button onClick={() => handleExportPDF(`Catalogo_${catalogCatFilter}_Inventario`, true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2">
+                   <Printer size={16}/> {catalogCatFilter === 'TODAS' ? 'IMPRIMIR TODO' : `IMPRIMIR: ${catalogCatFilter.toUpperCase()}`}
                  </button>
                </div>
             </div>
@@ -2050,30 +2058,112 @@ export default function App() {
                  <p className="text-sm font-bold text-gray-500 uppercase mt-2">FECHA DE EMISIÓN: {getTodayDate()}</p>
                </div>
 
-               <div data-html2canvas-ignore="true" className="relative max-w-2xl mb-8 no-pdf">
-                 <Search className="absolute left-4 top-4 text-gray-400" size={18} />
-                 <input type="text" placeholder="BUSCAR INSUMO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
+               <div data-html2canvas-ignore="true" className="flex flex-wrap gap-3 mb-6 no-pdf items-center">
+                 <div className="relative flex-1 min-w-48">
+                   <Search className="absolute left-4 top-4 text-gray-400" size={18} />
+                   <input type="text" placeholder="BUSCAR INSUMO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
+                 </div>
+                 <div className="flex flex-wrap gap-2">
+                   {allCatalogCats.map(cat => (
+                     <button key={cat} onClick={()=>setCatalogCatFilter(cat)}
+                       className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all border-2 ${catalogCatFilter===cat ? 'bg-orange-500 text-white border-orange-500 shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-orange-300 hover:text-orange-600'}`}>
+                       {cat === 'TODAS' ? `Todas (${(inventory||[]).length})` : `${cat} (${(inventory||[]).filter(i=>(i?.category||'Otros')===cat).length})`}
+                     </button>
+                   ))}
+                 </div>
                </div>
                <div className="overflow-x-auto rounded-xl print:border print:border-black print:rounded-none">
                   <table className="w-full text-left whitespace-nowrap">
                    <thead className="bg-gray-100 border-b-2 border-gray-200 print:border-black">
                      <tr className="uppercase font-black text-gray-800 text-[10px] tracking-widest print:text-black">
                        <th className="py-4 px-4">Código</th>
-                       <th className="py-4 px-4">Descripción / Categoría</th>
-                       <th className="py-4 px-4 text-center">Costo Unit. Promedio</th>
+                       <th className="py-4 px-4">Descripción</th>
+                       <th className="py-4 px-4 text-center">Categoría</th>
+                       <th className="py-4 px-4 text-center">Costo Unit. ($)</th>
                        <th className="py-4 px-4 text-right">Stock Actual</th>
+                       <th className="py-4 px-4 text-right">Valor Total ($)</th>
+                       <th className="py-4 px-4 text-center no-pdf print:hidden">Acciones</th>
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-gray-100 print:divide-black">
-                     {filteredInventory.map(inv => (
-                       <tr key={inv?.id} className="hover:bg-gray-50 transition-colors group">
-                          <td className="py-4 px-4 font-black text-orange-600 text-xs print:text-black">{inv?.id}</td>
-                          <td className="py-4 px-4 font-black uppercase text-xs text-black">{inv?.desc}<span className="block text-[9px] font-bold text-gray-500 mt-1 print:text-black">{inv?.category}</span></td>
-                          <td className="py-4 px-4 text-center font-bold text-gray-600 print:text-black">${formatNum(inv?.cost)}</td>
-                          <td className="py-4 px-4 text-right font-black text-blue-600 text-lg print:text-black">{formatNum(inv?.stock)} <span className="text-xs text-gray-400 print:text-black">{inv?.unit}</span></td>
-                       </tr>
-                     ))}
-                     {filteredInventory.length === 0 && <tr><td colSpan="4" className="p-10 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin artículos registrados</td></tr>}
+                     {(() => {
+                       if (filteredInventory.length === 0) return (
+                         <tr><td colSpan="7" className="p-10 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin artículos registrados</td></tr>
+                       );
+                       // Group by category
+                       const grouped = {};
+                       filteredInventory.forEach(inv => {
+                         const cat = inv?.category || 'Otros';
+                         if (!grouped[cat]) grouped[cat] = [];
+                         grouped[cat].push(inv);
+                       });
+                       const catOrder = ['Materia Prima','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                       const sortedCats = Object.keys(grouped).sort((a,b) => {
+                         const ia = catOrder.indexOf(a); const ib = catOrder.indexOf(b);
+                         if (ia === -1 && ib === -1) return a.localeCompare(b);
+                         if (ia === -1) return 1; if (ib === -1) return -1;
+                         return ia - ib;
+                       });
+                       const catColors = { 'Materia Prima':'bg-blue-600','Pigmentos':'bg-purple-600','Tintas':'bg-pink-600','Químicos':'bg-teal-600','Consumibles':'bg-orange-600','Herramientas':'bg-yellow-600','Seguridad Industrial':'bg-green-600','Otros':'bg-gray-600' };
+                       const rows = [];
+                       sortedCats.forEach(cat => {
+                         const items = grouped[cat];
+                         const catTotalVal = items.reduce((s,i)=>s+(parseNum(i?.cost)*parseNum(i?.stock)),0);
+                         const catTotalStock = items.reduce((s,i)=>s+parseNum(i?.stock),0);
+                         const colClass = catColors[cat] || 'bg-gray-600';
+                         rows.push(
+                           <tr key={`cat-${cat}`} className={`${colClass} text-white`}>
+                             <td colSpan="4" className="py-2 px-4 font-black text-[10px] uppercase tracking-widest">
+                               📂 {cat} — {items.length} artículo{items.length!==1?'s':''}
+                             </td>
+                             <td className="py-2 px-4 text-right font-black text-[10px]">{formatNum(catTotalStock)}</td>
+                             <td className="py-2 px-4 text-right font-black text-[10px]">${formatNum(catTotalVal)}</td>
+                             <td className="py-2 px-4 print:hidden"></td>
+                           </tr>
+                         );
+                         items.forEach(inv => {
+                           const totalVal = parseNum(inv?.cost) * parseNum(inv?.stock);
+                           rows.push(
+                             <tr key={inv?.id} className="hover:bg-gray-50 transition-colors group">
+                               <td className="py-3 px-4 font-black text-orange-600 text-xs print:text-black">{inv?.id}</td>
+                               <td className="py-3 px-4 font-black uppercase text-xs text-black">{inv?.desc}</td>
+                               <td className="py-3 px-4 text-center">
+                                 <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${colClass}`}>{inv?.category}</span>
+                               </td>
+                               <td className="py-3 px-4 text-center font-bold text-gray-600 print:text-black">${formatNum(inv?.cost)}</td>
+                               <td className="py-3 px-4 text-right font-black text-blue-600 text-sm print:text-black">{formatNum(inv?.stock)} <span className="text-xs text-gray-400">{inv?.unit}</span></td>
+                               <td className="py-3 px-4 text-right font-black text-green-600 text-sm print:text-black">${formatNum(totalVal)}</td>
+                               <td className="py-3 px-4 text-center no-pdf print:hidden">
+                                 <div className="flex gap-1 justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                   <button onClick={()=>startEditInvItem(inv)} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white transition-all"><Edit size={12}/></button>
+                                   <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('inventory',inv.id));setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});},'Eliminar artículo de catálogo')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={12}/></button>
+                                 </div>
+                               </td>
+                             </tr>
+                           );
+                         });
+                         // Category subtotal row
+                         rows.push(
+                           <tr key={`subtot-${cat}`} className="bg-gray-50 border-t-2 border-gray-200">
+                             <td colSpan="4" className="py-2 px-4 text-right text-[10px] font-black uppercase text-gray-500">Subtotal {cat}:</td>
+                             <td className="py-2 px-4 text-right font-black text-blue-700 text-[10px]">{formatNum(catTotalStock)}</td>
+                             <td className="py-2 px-4 text-right font-black text-green-700 text-[10px]">${formatNum(catTotalVal)}</td>
+                             <td className="print:hidden"></td>
+                           </tr>
+                         );
+                       });
+                       // Grand total
+                       const grandTotal = filteredInventory.reduce((s,i)=>s+(parseNum(i?.cost)*parseNum(i?.stock)),0);
+                       rows.push(
+                         <tr key="grand-total" className="bg-black text-white">
+                           <td colSpan="4" className="py-3 px-4 text-right font-black uppercase text-[10px] tracking-widest">TOTAL INVENTARIO:</td>
+                           <td className="py-3 px-4 text-right font-black">{formatNum(filteredInventory.reduce((s,i)=>s+parseNum(i?.stock),0))}</td>
+                           <td className="py-3 px-4 text-right font-black text-orange-400 text-base">${formatNum(grandTotal)}</td>
+                           <td className="print:hidden"></td>
+                         </tr>
+                       );
+                       return rows;
+                     })()}
                    </tbody>
                  </table>
                </div>
@@ -3376,7 +3466,10 @@ export default function App() {
     const kgRecibidos = activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp)
                       : activePhaseTab === 'sellado'   ? parseNum(phaseForm.kgRecibidosSel)
                       : totalInsumosKg;
-    const mermaKg = kgRecibidos > 0 && prodKg >= 0 ? Math.max(0, kgRecibidos - prodKg) : parseNum(phaseForm?.mermaKg);
+    // Merma = KG usados - KG producidos (basada en insumos registrados)
+    const baseParaMerma = totalInsumosKg > 0 ? totalInsumosKg : kgRecibidos;
+    const mermaKg = baseParaMerma > 0 && prodKg >= 0 ? Math.max(0, baseParaMerma - prodKg) : parseNum(phaseForm?.mermaKg);
+    const mermaPorc = baseParaMerma > 0 ? ((mermaKg / baseParaMerma) * 100).toFixed(2) : 0;
 
     if (prodKg === 0 && kgRecibidos === 0 && (phaseForm?.insumos || []).length === 0) {
       return setDialog({ title: 'Aviso', text: 'Ingrese KG producidos y/o insumos consumidos antes de guardar.', type: 'alert' });
@@ -3411,7 +3504,7 @@ export default function App() {
         id: Date.now().toString(), timestamp: Date.now(),
         date: phaseForm.date || getTodayDate(),
         insumos: phaseForm.insumos || [],
-        producedKg: prodKg, mermaKg,
+        producedKg: prodKg, mermaKg, mermaPorc: parseFloat(mermaPorc),
         kgRecibidos,
         totalInsumosKg,
         cost: phaseCost,
@@ -3550,7 +3643,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Sección 2: Indicadores de Costo (Simulador) */}
+          {/* Sección 2: Indicadores de Costo */}
           <div className="mb-6">
             <div className="bg-blue-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">2. Indicadores de Costo — Desglose de Formulación</div>
             <div className="border-2 border-gray-200 rounded-b-lg p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -3558,7 +3651,9 @@ export default function App() {
                 ['Demanda Neta (Requerida)', formatNum(parseNum(req.requestedKg))+' KG', 'text-blue-600'],
                 ['Costo Promedio Mezcla', '$'+formatNum(costoPromMezcla)+' / KG', 'text-gray-700'],
                 ['Costo Neto x KG Terminado', '$'+formatNum(costoNetoPorKg)+' / KG', 'text-gray-700'],
-                ['Costo por '+( totalMillares>0?'Millar':'KG')+' (Final)', '$'+formatNum(totalMillares>0?costoPorMillar:costoNetoPorKg), 'text-green-600'],
+                req.tipoProducto === 'TERMOENCOGIBLE'
+                  ? ['Costo por KG (Termo)', '$'+formatNum(costoNetoPorKg)+' / KG', 'text-green-600']
+                  : ['Costo por '+(totalMillares>0?'Millar':'KG')+' (Final)', '$'+formatNum(totalMillares>0?costoPorMillar:costoNetoPorKg), 'text-green-600'],
               ].map(([label,val,color],i)=>(
                 <div key={i} className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-center">
                   <div className="text-[9px] font-black text-gray-500 uppercase mb-2">{label}</div>
@@ -3576,7 +3671,14 @@ export default function App() {
             <div className="bg-gray-800 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">3. Detalle de Producción por Fase</div>
             <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
               <table className="w-full text-xs">
-                <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600"><th className="p-3 border-r text-left">Fase / Lote</th><th className="p-3 border-r text-center">Fecha</th><th className="p-3 border-r text-center">KG Recibidos</th><th className="p-3 border-r text-center">KG Producidos</th><th className="p-3 border-r text-center">Merma KG</th><th className="p-3 text-center">Millares</th></tr></thead>
+                <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600">
+                  <th className="p-3 border-r text-left">Fase / Lote</th>
+                  <th className="p-3 border-r text-center">Fecha</th>
+                  <th className="p-3 border-r text-center">KG Recibidos</th>
+                  <th className="p-3 border-r text-center">KG Producidos</th>
+                  <th className="p-3 border-r text-center">Merma KG (%)</th>
+                  {req.tipoProducto !== 'TERMOENCOGIBLE' && <th className="p-3 text-center">Millares</th>}
+                </tr></thead>
                 <tbody className="divide-y divide-gray-100">
                   {allBatches.map((b,i)=>(
                     <tr key={i} className="hover:bg-gray-50">
@@ -3584,14 +3686,14 @@ export default function App() {
                       <td className="p-3 border-r text-center font-bold">{b.date}</td>
                       <td className="p-3 border-r text-center font-black text-blue-600">{formatNum(b.kgRecibidos||b.totalInsumosKg||0)} kg</td>
                       <td className="p-3 border-r text-center font-black text-green-600">{formatNum(b.producedKg)} kg</td>
-                      <td className="p-3 border-r text-center font-black text-red-500">{formatNum(b.mermaKg)} kg</td>
-                      <td className="p-3 text-center font-black">{parseNum(b.techParams?.millares||0)>0?formatNum(parseNum(b.techParams.millares))+' Mill.':'—'}</td>
+                      <td className="p-3 border-r text-center font-black text-red-500">{formatNum(b.mermaKg)} kg{b.mermaPorc > 0 ? ` (${b.mermaPorc}%)` : ''}</td>
+                      {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center font-black">{parseNum(b.techParams?.millares||0)>0?formatNum(parseNum(b.techParams.millares))+' Mill.':'—'}</td>}
                     </tr>
                   ))}
                   {allBatches.length===0&&<tr><td colSpan="6" className="p-4 text-center text-gray-400 font-bold">Sin lotes registrados</td></tr>}
                 </tbody>
                 <tfoot className="bg-gray-100 border-t-2 border-gray-300 font-black">
-                  <tr><td colSpan="2" className="p-3 text-right uppercase text-[10px]">TOTALES:</td><td className="p-3 text-center text-blue-700">{formatNum(totalInsumosKg)} kg</td><td className="p-3 text-center text-green-700">{formatNum(totalProdKg)} kg</td><td className="p-3 text-center text-red-600">{formatNum(totalMermaKg)} kg</td><td className="p-3 text-center">{totalMillares>0?formatNum(totalMillares):'—'}</td></tr>
+                  <tr><td colSpan="2" className="p-3 text-right uppercase text-[10px]">TOTALES:</td><td className="p-3 text-center text-blue-700">{formatNum(totalInsumosKg)} kg</td><td className="p-3 text-center text-green-700">{formatNum(totalProdKg)} kg</td><td className="p-3 text-center text-red-600">{formatNum(totalMermaKg)} kg ({pctMerma.toFixed(1)}%)</td>{req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center">{totalMillares>0?formatNum(totalMillares)+' Mill.':'—'}</td>}</tr>
                 </tfoot>
               </table>
             </div>
@@ -3614,6 +3716,40 @@ export default function App() {
               </table>
             </div>
           </div>
+
+          {/* Sección 4.1: Entregas Parciales (si existen) */}
+          {(req.entregasParciales||[]).length > 0 && (
+            <div className="mb-6">
+              <div className="bg-blue-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">4.1 Entregas Parciales Registradas</div>
+              <div className="border-2 border-blue-200 rounded-b-lg overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-blue-50"><tr className="uppercase font-black text-[9px] text-blue-700">
+                    <th className="p-3 border-r text-center">#</th>
+                    <th className="p-3 border-r text-center">Fecha</th>
+                    <th className="p-3 border-r text-center">KG Entregados</th>
+                    {req.tipoProducto !== 'TERMOENCOGIBLE' && <th className="p-3 text-center">Millares</th>}
+                  </tr></thead>
+                  <tbody className="divide-y divide-blue-100">
+                    {(req.entregasParciales||[]).map((ep,i)=>(
+                      <tr key={i} className="hover:bg-blue-50">
+                        <td className="p-3 border-r text-center font-black text-blue-600">Parcial {i+1}</td>
+                        <td className="p-3 border-r text-center font-bold">{ep.fecha}</td>
+                        <td className="p-3 border-r text-center font-black text-green-600">{formatNum(ep.kg)} KG</td>
+                        {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center font-bold">{ep.millares > 0 ? formatNum(ep.millares)+' Mill.' : '—'}</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-blue-100 border-t-2 border-blue-300 font-black">
+                    <tr>
+                      <td colSpan={req.tipoProducto !== 'TERMOENCOGIBLE' ? 2 : 2} className="p-3 text-right uppercase text-[10px]">Total Entregado:</td>
+                      <td className="p-3 text-center text-green-700">{formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0))} KG</td>
+                      {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center">{formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0))} Mill.</td>}
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Indicadores Financieros */}
           <div className="grid grid-cols-3 gap-0 border-2 border-gray-300 rounded-xl overflow-hidden mb-6">
@@ -3770,6 +3906,50 @@ export default function App() {
   };
 
   // ── CIERRE TOTAL DE OP → mueve a Terminados ──────────────────────────────
+  // ── ENTREGA PARCIAL: mover KG a Terminados sin cerrar la OP ─────────
+  const [showPartialModal, setShowPartialModal] = useState(null); // req
+  const [partialKg, setPartialKg] = useState('');
+  const [partialMillares, setPartialMillares] = useState('');
+
+  const handlePartialDelivery = async () => {
+    if (!showPartialModal) return;
+    const req = showPartialModal;
+    const kgEntrega = parseNum(partialKg);
+    const millEntrega = parseNum(partialMillares);
+    if (kgEntrega <= 0) return setDialog({ title: 'Aviso', text: 'Ingrese los KG a entregar.', type: 'alert' });
+    try {
+      const fgId = `FG-${Date.now()}`;
+      const fgEntry = {
+        id: fgId, opId: req.id, reqId: req.id,
+        cliente: req.client || 'N/A',
+        tipoProducto: req.tipoProducto || 'BOLSAS',
+        categoria: req.categoria || '',
+        producto: req.desc || 'Producto',
+        ancho: req.ancho || 0, largo: req.largo || 0, micras: req.micras || 0,
+        color: req.color || 'NATURAL', tratamiento: req.tratamiento || 'LISO',
+        kgProducidos: kgEntrega,
+        millares: req.tipoProducto === 'TERMOENCOGIBLE' ? 0 : millEntrega,
+        costoUnitario: 0,
+        fechaFinalizacion: getTodayDate(),
+        ubicacion: 'ALMACEN GENERAL',
+        status: 'LISTO PARA ENTREGA',
+        esEntregaParcial: true,
+        observaciones: `ENTREGA PARCIAL — ${formatNum(kgEntrega)} KG`,
+        timestamp: Date.now()
+      };
+      await setDoc(getDocRef('finishedGoodsInventory', fgId), fgEntry);
+      // Registrar en OP que hubo entrega parcial
+      const prevParciales = req.entregasParciales || [];
+      await updateDoc(getDocRef('requirements', req.id), {
+        entregasParciales: [...prevParciales, { fgId, kg: kgEntrega, millares: millEntrega, fecha: getTodayDate() }]
+      });
+      setShowPartialModal(null); setPartialKg(''); setPartialMillares('');
+      setDialog({ title: '✅ Entrega Parcial Registrada', text: `Se movieron ${formatNum(kgEntrega)} KG a Terminados. La OP sigue abierta para producción adicional.`, type: 'alert' });
+    } catch (err) {
+      setDialog({ title: 'Error', text: err.message, type: 'alert' });
+    }
+  };
+
   const handleCloseOP = (req) => {
     if (!req) return;
     setDialog({
@@ -3865,20 +4045,38 @@ export default function App() {
       );
     }
 
+    // Calcular KG totales despachados y usados para merma automática
+    const totalDespachado = approvedIds.reduce((s, id) => s + parseNum(groupedApproved[id]), 0);
+    const totalUsado = (phaseForm.insumos || []).reduce((s, ing) => s + parseNum(ing.qty), 0);
+    const sobrante = Math.max(0, totalDespachado - totalUsado);
+    const prodKg = parseNum(phaseForm.producedKg);
+    const mermaAuto = totalUsado > 0 ? Math.max(0, totalUsado - prodKg) : 0;
+    const mermaPorc = totalUsado > 0 ? ((mermaAuto / totalUsado) * 100).toFixed(1) : '0.0';
+
     return (
       <div>
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 mb-3">
-          <p className="text-[9px] font-black text-blue-700 uppercase mb-1">Insumos despachados por almacen:</p>
+        {/* Banner KG despachados por almacén */}
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
+          <p className="text-[9px] font-black text-blue-700 uppercase mb-2">📦 Insumos Despachados por Almacén:</p>
           {approvedIds.map(id => {
             const invItem = (inventory || []).find(i => i && i.id === id);
+            const usado = (phaseForm.insumos || []).filter(ing => ing.id === id).reduce((s, ing) => s + parseNum(ing.qty), 0);
+            const sobrItem = Math.max(0, parseNum(groupedApproved[id]) - usado);
             return (
-              <div key={id} className="flex justify-between text-[9px] font-bold text-blue-600">
-                <span>{invItem ? invItem.desc : id}</span>
-                <span className="font-black">{formatNum(groupedApproved[id])} {invItem ? (invItem.unit || 'KG') : 'KG'}</span>
+              <div key={id} className="flex justify-between items-center text-[9px] font-bold text-blue-600 mb-1 bg-white rounded px-2 py-1 border border-blue-100">
+                <span className="font-black">{invItem ? invItem.desc : id}</span>
+                <div className="flex gap-3 text-right">
+                  <span className="text-blue-700 font-black">Desp: {formatNum(groupedApproved[id])} {invItem?.unit || 'KG'}</span>
+                  {usado > 0 && <span className="text-green-600 font-black">Usado: {formatNum(usado)}</span>}
+                  {sobrItem > 0 && <span className="text-orange-500 font-black">Sobrante: {formatNum(sobrItem)}</span>}
+                </div>
               </div>
             );
           })}
         </div>
+
+        {/* Selector de insumo usado (solo del despachado) */}
+        <p className="text-[9px] font-black text-gray-600 uppercase mb-1">Registrar KG Usados Realmente:</p>
         <div className="flex gap-2 mb-3">
           <select value={phaseIngId} onChange={e => setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
             <option value="">Seleccione insumo despachado...</option>
@@ -3896,13 +4094,21 @@ export default function App() {
             type="number" step="0.01" value={phaseIngQty}
             onChange={e => setPhaseIngQty(e.target.value)}
             className="w-24 border border-gray-200 rounded-lg p-2 text-xs font-bold text-center outline-none"
-            placeholder="KG"
+            placeholder="KG usados"
           />
           <button
             onClick={() => {
               if (!phaseIngId || !phaseIngQty) return;
-              const newIns = [...(phaseForm.insumos || []), { id: phaseIngId, qty: parseFloat(phaseIngQty) }];
-              setPhaseForm({ ...phaseForm, insumos: newIns });
+              const maxDesp = parseNum(groupedApproved[phaseIngId] || 0);
+              const yaUsado = (phaseForm.insumos || []).filter(ing => ing.id === phaseIngId).reduce((s, ing) => s + parseNum(ing.qty), 0);
+              const kgIngresado = parseFloat(phaseIngQty);
+              if (yaUsado + kgIngresado > maxDesp + 0.001) {
+                return setDialog({ title: 'Aviso', text: `No puede usar más de ${formatNum(maxDesp)} KG (despachado por almacén). Ya registró ${formatNum(yaUsado)} KG.`, type: 'alert' });
+              }
+              const newIns = [...(phaseForm.insumos || []), { id: phaseIngId, qty: kgIngresado }];
+              const nuevoTotalUsado = newIns.reduce((s, ing) => s + parseNum(ing.qty), 0);
+              const nuevaMerma = prodKg > 0 ? Math.max(0, nuevoTotalUsado - prodKg) : 0;
+              setPhaseForm({ ...phaseForm, insumos: newIns, mermaKg: nuevaMerma > 0 ? nuevaMerma.toFixed(2) : phaseForm.mermaKg });
               setPhaseIngId(''); setPhaseIngQty('');
             }}
             className="bg-orange-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-orange-600"
@@ -3910,18 +4116,45 @@ export default function App() {
             <Plus size={14} />
           </button>
         </div>
-        {(phaseForm.insumos || []).map((ins, i) => (
-          <div key={i} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200 mb-1">
-            <span className="text-xs font-black text-orange-600">{ins.id}</span>
-            <span className="text-xs font-black">{formatNum(ins.qty)} KG</span>
-            <button
-              onClick={() => setPhaseForm({ ...phaseForm, insumos: (phaseForm.insumos || []).filter((_, j) => j !== i) })}
-              className="text-red-400 hover:text-red-600"
-            >
-              <X size={12} />
-            </button>
+
+        {/* Lista insumos usados */}
+        {(phaseForm.insumos || []).length > 0 && (
+          <div className="mb-3">
+            {(phaseForm.insumos || []).map((ins, i) => {
+              const invItem = (inventory || []).find(iv => iv.id === ins.id);
+              return (
+                <div key={i} className="flex justify-between items-center bg-green-50 p-2 rounded-lg border border-green-200 mb-1">
+                  <span className="text-xs font-black text-green-700">{invItem?.desc || ins.id}</span>
+                  <span className="text-xs font-black text-green-800">{formatNum(ins.qty)} KG usados</span>
+                  <button onClick={() => {
+                    const nuevoIns = (phaseForm.insumos || []).filter((_, j) => j !== i);
+                    const nuevoTotal = nuevoIns.reduce((s, ing) => s + parseNum(ing.qty), 0);
+                    const nuevaMerma = prodKg > 0 ? Math.max(0, nuevoTotal - prodKg) : 0;
+                    setPhaseForm({ ...phaseForm, insumos: nuevoIns, mermaKg: nuevaMerma > 0 ? nuevaMerma.toFixed(2) : '' });
+                  }} className="text-red-400 hover:text-red-600"><X size={12} /></button>
+                </div>
+              );
+            })}
           </div>
-        ))}
+        )}
+
+        {/* Indicadores merma automática */}
+        {totalUsado > 0 && (
+          <div className="grid grid-cols-3 gap-2 mt-2">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 text-center">
+              <span className="text-[8px] font-black text-blue-600 uppercase block">KG Usados</span>
+              <span className="text-sm font-black text-blue-700">{formatNum(totalUsado)}</span>
+            </div>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-2 text-center">
+              <span className="text-[8px] font-black text-red-600 uppercase block">Merma Auto</span>
+              <span className="text-sm font-black text-red-700">{formatNum(mermaAuto)} KG ({mermaPorc}%)</span>
+            </div>
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-2 text-center">
+              <span className="text-[8px] font-black text-orange-600 uppercase block">Sobrante WIP</span>
+              <span className="text-sm font-black text-orange-700">{formatNum(sobrante)} KG</span>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -4258,6 +4491,21 @@ export default function App() {
                           <div>
                             <h3 className="font-black text-black text-sm uppercase">OP #{String(req.id).replace('OP-','').padStart(5,'0')} — {req.client}</h3>
                             <p className="text-[10px] font-bold text-gray-500 mt-1">{req.desc} | {req.ancho}cm×{req.largo}cm | {req.micras}mic | {formatNum(req.requestedKg)} KG</p>
+                            {/* Resumen entregas parciales */}
+                            {(req.entregasParciales||[]).length > 0 && (() => {
+                              const prod = req.production || {};
+                              const allB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])];
+                              const totalProd = allB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+                              const totalEntregado = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0);
+                              const pendiente = Math.max(0, totalProd - totalEntregado);
+                              return (
+                                <div className="flex gap-3 mt-2 flex-wrap">
+                                  <span className="text-[9px] font-black bg-blue-100 text-blue-700 px-2 py-0.5 rounded-lg">📦 Prod: {formatNum(totalProd)} KG</span>
+                                  <span className="text-[9px] font-black bg-green-100 text-green-700 px-2 py-0.5 rounded-lg">✓ Entregado: {formatNum(totalEntregado)} KG ({(req.entregasParciales||[]).length} parcial{(req.entregasParciales||[]).length!==1?'es':''})</span>
+                                  {pendiente > 0 && <span className="text-[9px] font-black bg-orange-100 text-orange-700 px-2 py-0.5 rounded-lg">⏳ Pendiente: {formatNum(pendiente)} KG</span>}
+                                </div>
+                              );
+                            })()}
                           </div>
                           <div className="flex gap-2 flex-wrap justify-end">
                             <button onClick={()=>setShowOrdenTrabajo(req.id)} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-gray-800 text-white hover:bg-black flex items-center gap-1 transition-all"><FileText size={13}/> ORDEN DE TRABAJO</button>
@@ -4265,6 +4513,14 @@ export default function App() {
                               if (isOpen) { setSelectedPhaseReqId(null); setProdSubMode('fase'); }
                               else { setSelectedPhaseReqId(req.id); setProdSubMode('requisicion'); setActivePhaseTab('extrusion'); setPhaseForm({...initialPhaseForm, date: getTodayDate()}); }
                             }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${isOpen ? 'bg-gray-200 text-gray-700' : 'bg-orange-500 text-white hover:bg-orange-600 shadow-md'}`}>{isOpen ? <X size={14}/> : <Plus size={14}/>}{isOpen ? 'CERRAR' : 'REGISTRAR FASE'}</button>
+                            {/* BOTÓN ENTREGA PARCIAL */}
+                            <button
+                              onClick={() => { setShowPartialModal(req); setPartialKg(''); setPartialMillares(''); }}
+                              className="px-5 py-2 rounded-xl text-[10px] font-black uppercase bg-blue-600 text-white hover:bg-blue-700 shadow-md flex items-center gap-1 transition-all"
+                              title="Mover producción parcial a Terminados sin cerrar la OP"
+                            >
+                              <ArrowUpFromLine size={14}/> ENTREGA PARCIAL
+                            </button>
                             {/* BOTÓN CIERRE OP — destaca en rojo */}
                             <button
                               onClick={() => handleCloseOP(req)}
@@ -4410,9 +4666,12 @@ export default function App() {
                                       <input type="number" step="0.01" value={phaseForm.producedKg}
                                         onChange={e => {
                                           const kg = e.target.value;
-                                          const kgBase = activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp)
+                                          // Merma basada en insumos usados (prioritario) o KG recibidos
+                                          const insumosTotal = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                          const kgBase = insumosTotal > 0 ? insumosTotal
+                                                       : activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp)
                                                        : activePhaseTab === 'sellado'   ? parseNum(phaseForm.kgRecibidosSel)
-                                                       : (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                                       : 0;
                                           const autoMerma = kgBase > 0 && parseNum(kg) >= 0 ? Math.max(0, kgBase - parseNum(kg)).toFixed(2) : phaseForm.mermaKg;
                                           setPhaseForm({...phaseForm, producedKg: kg, mermaKg: autoMerma});
                                         }}
@@ -4420,7 +4679,14 @@ export default function App() {
                                     </div>
                                     <div>
                                       <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Merma KG <span className="text-orange-500">(Auto)</span></label>
-                                      <input type="number" step="0.01" value={phaseForm.mermaKg} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} className="w-full border-2 border-red-200 rounded-xl p-2 text-sm font-black outline-none focus:border-red-400 text-center bg-red-50 text-red-600" placeholder="0.00" />
+                                      <div className="relative">
+                                        <input type="number" step="0.01" value={phaseForm.mermaKg} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} className="w-full border-2 border-red-200 rounded-xl p-2 text-sm font-black outline-none focus:border-red-400 text-center bg-red-50 text-red-600" placeholder="0.00" />
+                                        {parseNum(phaseForm.mermaKg) > 0 && (() => {
+                                          const base = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0) || parseNum(phaseForm.kgRecibidosImp) || parseNum(phaseForm.kgRecibidosSel);
+                                          const pct = base > 0 ? ((parseNum(phaseForm.mermaKg)/base)*100).toFixed(1) : null;
+                                          return pct ? <span className="absolute -top-5 right-0 text-[9px] font-black text-red-500">{pct}%</span> : null;
+                                        })()}
+                                      </div>
                                     </div>
                                   </div>
 
@@ -4428,7 +4694,9 @@ export default function App() {
                                     <div className="grid grid-cols-2 gap-3">
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Ext.</label><input type="text" value={phaseForm.operadorExt} onChange={e=>setPhaseForm({...phaseForm, operadorExt: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Motor Ext.</label><input type="number" step="0.1" value={phaseForm.motorExt} onChange={e=>setPhaseForm({...phaseForm, motorExt: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>
+                                      {req.tipoProducto !== 'TERMOENCOGIBLE' && (
+                                        <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>
+                                      )}
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tratado</label><select value={phaseForm.tratado} onChange={e=>setPhaseForm({...phaseForm, tratado: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white"><option value="">Sin tratado</option><option value="1 CARA">1 CARA</option><option value="2 CARAS">2 CARAS</option></select></div>
                                     </div>
                                   )}
@@ -4475,7 +4743,7 @@ export default function App() {
                                           <div key={i} className="flex justify-between items-center bg-white p-2 rounded-lg border border-gray-100 mb-1 text-[9px]">
                                             <span className="font-black text-gray-700">Lote {i+1} — {b.date}</span>
                                             <span className="font-bold text-green-600">{formatNum(b.producedKg)} KG prod.</span>
-                                            <span className="font-bold text-red-500">{formatNum(b.mermaKg)} KG merma</span>
+                                            <span className="font-bold text-red-500">{formatNum(b.mermaKg)} KG merma{b.mermaPorc > 0 ? ` (${b.mermaPorc}%)` : ''}</span>
                                             {b.techParams?.millares > 0 && <span className="font-bold text-blue-600">{formatNum(b.techParams.millares)} Mill.</span>}
                                           </div>
                                         ))}
@@ -4593,7 +4861,7 @@ export default function App() {
                             <td className="py-3 px-4 border-r font-bold">{req.desc}<br/><span className="text-[9px] text-gray-400">{req.ancho}×{req.largo}cm | {req.micras}mic | {req.color}</span></td>
                             <td className="py-3 px-4 border-r text-center font-black text-blue-600">{formatNum(req.requestedKg)}</td>
                             <td className="py-3 px-4 border-r text-center font-black text-green-600">{formatNum(totalKg)}</td>
-                            <td className="py-3 px-4 border-r text-center font-bold">{totalMill > 0 ? formatNum(totalMill) : '—'}</td>
+                            <td className="py-3 px-4 border-r text-center font-bold">{req.tipoProducto === 'TERMOENCOGIBLE' ? <span className="text-[9px] text-gray-400">— KG</span> : (totalMill > 0 ? formatNum(totalMill) : '—')}</td>
                             <td className="py-3 px-4 text-center">
                               <button onClick={() => setShowFiniquitoOP(req.id)} className="px-4 py-2 bg-orange-500 text-white rounded-xl text-[9px] font-black uppercase hover:bg-orange-600 transition-all flex items-center gap-1 mx-auto"><FileText size={12}/> VER FINIQUITO</button>
                             </td>
@@ -6341,6 +6609,56 @@ export default function App() {
              </div>
           </div>
         )}
+
+        {/* ── MODAL ENTREGA PARCIAL ── */}
+        {showPartialModal && (() => {
+          const req = showPartialModal;
+          const prod = req.production || {};
+          const allB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])];
+          const totalKgProd = allB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+          const totalMillProd = (prod.sellado?.batches||[]).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+            || (prod.impresion?.batches||[]).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+          const yaEntregado = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0);
+          const yaMillares = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0);
+          const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
+          return (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[99999] p-4 print:hidden">
+              <div className="bg-white p-10 rounded-[2rem] shadow-2xl max-w-md w-full border-t-8 border-blue-500">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-lg font-black uppercase text-blue-800">Entrega Parcial de Producción</h3>
+                  <button onClick={()=>setShowPartialModal(null)} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
+                </div>
+                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 mb-6 text-xs font-bold">
+                  <p className="text-blue-800 font-black uppercase mb-2">OP #{String(req.id).replace('OP-','').padStart(5,'0')} — {req.client}</p>
+                  <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div><span className="text-gray-500">KG Producidos:</span> <span className="font-black text-blue-700">{formatNum(totalKgProd)} KG</span></div>
+                    <div><span className="text-gray-500">Ya Entregado:</span> <span className="font-black text-green-700">{formatNum(yaEntregado)} KG</span></div>
+                    {!esTermo && <div><span className="text-gray-500">Millares Prod.:</span> <span className="font-black text-blue-700">{formatNum(totalMillProd)}</span></div>}
+                    {!esTermo && <div><span className="text-gray-500">Mill. Entregados:</span> <span className="font-black text-green-700">{formatNum(yaMillares)}</span></div>}
+                    <div className="col-span-2"><span className="text-gray-500">Pendiente:</span> <span className="font-black text-orange-600">{formatNum(Math.max(0,totalKgProd-yaEntregado))} KG</span></div>
+                  </div>
+                </div>
+                <div className="space-y-4 mb-6">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">KG a Entregar *</label>
+                    <input type="number" step="0.01" value={partialKg} onChange={e=>setPartialKg(e.target.value)} className="w-full border-2 border-blue-300 rounded-xl p-3 font-black text-lg text-center outline-none focus:border-blue-500" placeholder="0.00" autoFocus />
+                  </div>
+                  {!esTermo && (
+                    <div>
+                      <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Millares a Entregar</label>
+                      <input type="number" step="0.01" value={partialMillares} onChange={e=>setPartialMillares(e.target.value)} className="w-full border-2 border-blue-200 rounded-xl p-3 font-black text-lg text-center outline-none focus:border-blue-500" placeholder="0.00" />
+                    </div>
+                  )}
+                </div>
+                <p className="text-[9px] font-bold text-gray-400 mb-4 text-center uppercase">La OP permanece activa para producción adicional. Se genera una entrada en Productos Terminados.</p>
+                <div className="flex gap-3">
+                  <button onClick={()=>setShowPartialModal(null)} className="flex-1 bg-gray-200 text-gray-700 font-black py-4 rounded-xl uppercase text-xs hover:bg-gray-300">Cancelar</button>
+                  <button onClick={handlePartialDelivery} className="flex-1 bg-blue-600 text-white font-black py-4 rounded-xl uppercase text-xs shadow-lg hover:bg-blue-700 flex items-center justify-center gap-2"><ArrowUpFromLine size={16}/> Confirmar Entrega</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {showAdminModal && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[99999] p-4 print:hidden">
