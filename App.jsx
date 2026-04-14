@@ -3522,6 +3522,37 @@ export default function App() {
       fbBatch.update(getDocRef('requirements', req.id), { production: newProd, status: 'EN PROCESO' });
       await fbBatch.commit();
 
+      // Si hay KG producidos, moverlos automáticamente a Productos Terminados
+      if (prodKg > 0) {
+        const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
+        const millEntrada = esTermo ? 0 : parseNum(techParams.millares || 0);
+        const fgId = `FG-${Date.now()}`;
+        await setDoc(getDocRef('finishedGoodsInventory', fgId), {
+          id: fgId, opId: req.id, reqId: req.id,
+          cliente: req.client || 'N/A',
+          tipoProducto: req.tipoProducto || 'BOLSAS',
+          categoria: req.categoria || '',
+          producto: req.desc || 'Producto',
+          ancho: req.ancho || 0, largo: req.largo || 0, micras: req.micras || 0,
+          color: req.color || 'NATURAL', tratamiento: req.tratamiento || 'LISO',
+          kgProducidos: prodKg,
+          millares: millEntrada,
+          costoUnitario: phaseCost > 0 && prodKg > 0 ? phaseCost / prodKg : 0,
+          fechaFinalizacion: phaseForm.date || getTodayDate(),
+          ubicacion: 'ALMACEN GENERAL',
+          status: 'LISTO PARA ENTREGA',
+          esEntregaParcial: true,
+          fase: activePhaseTab,
+          observaciones: `PRODUCCIÓN PARCIAL — Fase: ${activePhaseTab.toUpperCase()}`,
+          timestamp: Date.now()
+        });
+        // Registrar en OP las entregas parciales
+        const prevParciales = req.entregasParciales || [];
+        await updateDoc(getDocRef('requirements', req.id), {
+          entregasParciales: [...prevParciales, { fgId, kg: prodKg, millares: millEntrada, fecha: phaseForm.date || getTodayDate(), fase: activePhaseTab }]
+        });
+      }
+
       setPhaseForm({ ...initialPhaseForm, date: getTodayDate() });
       setDialog({
         title: isClose ? 'Fase Cerrada' : 'Lote Guardado',
@@ -3538,17 +3569,23 @@ export default function App() {
   const renderFiniquitoOP = (req) => {
     if (!req) return null;
     const prod = req.production || {};
+    // Filtrar lotes fantasma (creados por almacén con producedKg=0 y sin insumos del operador)
+    const filterRealBatches = (batches) => (batches||[]).filter(b =>
+      b.operator !== 'ALMACÉN (DESPACHO)' && (parseNum(b.producedKg) > 0 || (b.insumos||[]).length > 0)
+    );
     const allBatches = [
-      ...(prod.extrusion?.batches || []).map(b => ({ ...b, fase: 'EXTRUSIÓN' })),
-      ...(prod.impresion?.batches || []).map(b => ({ ...b, fase: 'IMPRESIÓN' })),
-      ...(prod.sellado?.batches || []).map(b => ({ ...b, fase: 'SELLADO' })),
+      ...filterRealBatches(prod.extrusion?.batches).map(b => ({ ...b, fase: 'EXTRUSIÓN' })),
+      ...filterRealBatches(prod.impresion?.batches).map(b => ({ ...b, fase: 'IMPRESIÓN' })),
+      ...filterRealBatches(prod.sellado?.batches).map(b => ({ ...b, fase: 'SELLADO' })),
     ];
     const totalInsumosKg = allBatches.reduce((s,b)=>s+parseNum(b.totalInsumosKg||b.kgRecibidos||0),0);
     const totalMermaKg   = allBatches.reduce((s,b)=>s+parseNum(b.mermaKg),0);
     const totalProdKg    = allBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
     const totalCostoMP   = allBatches.reduce((s,b)=>s+parseNum(b.cost),0);
     const pctMerma = totalInsumosKg > 0 ? (totalMermaKg / totalInsumosKg * 100) : 0;
-    const totalMillares  = (prod.sellado?.batches||[]).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+    const totalMillares  = filterRealBatches(prod.sellado?.batches).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+      || filterRealBatches(prod.impresion?.batches).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+      || filterRealBatches(prod.extrusion?.batches).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
     const costoPorMillar = totalMillares > 0 ? totalCostoMP / totalMillares : 0;
     const relatedInvoices = invoices.filter(i => i.opAsignada === req.id);
     const totalIngresos  = relatedInvoices.reduce((s,i)=>s+parseNum(i.total),0);
@@ -3604,26 +3641,38 @@ export default function App() {
 
           {/* KPIs */}
           <div className="grid grid-cols-4 gap-0 border-2 border-gray-300 rounded-xl overflow-hidden mb-6">
-            {[
-              ['Total MP Inyectada', formatNum(totalInsumosKg)+' KG','text-black'],
-              ['Total Merma Generada', formatNum(totalMermaKg)+' KG','text-red-600'],
-              ['% Merma Global OP', pctMerma.toFixed(2)+'%','text-orange-600'],
-              [req.tipoProducto==='TERMOENCOGIBLE'?'KG Producidos (Termo)':'Millares Producidos',
-               req.tipoProducto==='TERMOENCOGIBLE'
-                 ? formatNum(totalProdKg)+' KG'
-                 : (totalMillares>0 ? formatNum(totalMillares)+' Mill.' : formatNum(totalProdKg)+' KG'),
-               'text-blue-600']
-            ].map(([label,val,color],i)=>(
-              <div key={i} className={`p-5 text-center bg-gray-50 ${i<3?'border-r border-gray-300':''}`}>
-                <div className="text-[9px] font-black uppercase text-gray-500 mb-1">{label}</div>
-                <div className={`text-2xl font-black ${color}`}>{val}</div>
-              </div>
-            ))}
+            {(() => {
+              const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
+              const kpi4Label = esTermo ? 'KG Producidos (Termo)' : 'Millares Producidos';
+              const kpi4Value = esTermo
+                ? formatNum(totalProdKg) + ' KG'
+                : (totalMillares > 0 ? formatNum(totalMillares) + ' Mill.' : formatNum(totalProdKg) + ' KG');
+              // Pendiente producir
+              const solicitado = esTermo ? parseNum(req.requestedKg) : parseNum(req.cantidad);
+              const producido = esTermo ? totalProdKg : (totalMillares || totalProdKg);
+              const pendiente = Math.max(0, solicitado - producido);
+              return [
+                ['Total MP Inyectada', formatNum(totalInsumosKg)+' KG','text-black'],
+                ['Total Merma Generada', formatNum(totalMermaKg)+' KG','text-red-600'],
+                ['% Merma Global OP', pctMerma.toFixed(2)+'%','text-orange-600'],
+                [kpi4Label, kpi4Value, 'text-blue-600'],
+              ].map(([label,val,color],i)=>(
+                <div key={i} className={`p-5 text-center bg-gray-50 ${i<3?'border-r border-gray-300':''}`}>
+                  <div className="text-[9px] font-black uppercase text-gray-500 mb-1">{label}</div>
+                  <div className={`text-2xl font-black ${color}`}>{val}</div>
+                  {i === 3 && pendiente > 0 && (
+                    <div className="text-[9px] font-bold text-orange-500 mt-1">
+                      Solicitado: {formatNum(solicitado)} | Pendiente: {formatNum(pendiente)} {esTermo?'KG':'Mill.'}
+                    </div>
+                  )}
+                </div>
+              ));
+            })()}
           </div>
 
-          {/* Sección 1: Desglose de Costos de Producción (MP) */}
+          {/* Sección 1: Desglose de Producción (MP) */}
           <div className="mb-6">
-            <div className="bg-orange-500 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">1. Desglose de Costos de Producción (MP)</div>
+            <div className="bg-orange-500 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">1. Desglose de Producción (MP)</div>
             <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
               <table className="w-full text-xs">
                 <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600"><th className="p-3 border-r text-left">Insumo / Descripción</th><th className="p-3 border-r text-center">Fase</th><th className="p-3 border-r text-center">Cantidad</th><th className="p-3 border-r text-right">Costo Unit.</th><th className="p-3 text-right">Costo Total</th></tr></thead>
@@ -4712,7 +4761,7 @@ export default function App() {
                                       </div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Imp.</label><input type="text" value={phaseForm.operadorImp} onChange={e=>setPhaseForm({...phaseForm, operadorImp: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cant. Colores</label><input type="number" value={phaseForm.cantColores} onChange={e=>setPhaseForm({...phaseForm, cantColores: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>
+                                      {req.tipoProducto !== 'TERMOENCOGIBLE' && <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>}
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Relación Imp.</label><input type="number" step="0.01" value={phaseForm.relacionImp} onChange={e=>setPhaseForm({...phaseForm, relacionImp: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
                                     </div>
                                   )}
@@ -4724,7 +4773,7 @@ export default function App() {
                                         <input type="number" step="0.01" value={phaseForm.kgRecibidosSel} onChange={e=>{const kr=e.target.value;const pd=parseNum(phaseForm.producedKg);const m=pd>0?Math.max(0,parseNum(kr)-pd).toFixed(2):phaseForm.mermaKg;setPhaseForm({...phaseForm,kgRecibidosSel:kr,mermaKg:m});}} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none bg-white text-green-700 text-center" />
                                       </div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Sell.</label><input type="text" value={phaseForm.operadorSel} onChange={e=>setPhaseForm({...phaseForm, operadorSel: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none bg-green-50 text-green-700 text-center" placeholder="0.00" /></div>
+                                      {req.tipoProducto !== 'TERMOENCOGIBLE' && <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none bg-green-50 text-green-700 text-center" placeholder="0.00" /></div>}
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tipo Sello</label><select value={phaseForm.tipoSello} onChange={e=>setPhaseForm({...phaseForm, tipoSello: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white"><option>Sello FC</option><option>Sello SC</option><option>Lateral</option><option>Doble Sello</option></select></div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Temp. Cabezal A</label><input type="number" value={phaseForm.tempCabezalA} onChange={e=>setPhaseForm({...phaseForm, tempCabezalA: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
                                     </div>
@@ -4738,26 +4787,68 @@ export default function App() {
 
                                   {/* ── BOTONES DE FASE ── */}
                                   <div className="space-y-3 pt-2 border-t border-orange-200">
-                                    {/* Lotes existentes de esta fase */}
-                                    {(prod[activePhaseTab]?.batches||[]).length > 0 && (
-                                      <div className="bg-gray-50 rounded-xl border border-gray-200 p-3">
-                                        <div className="text-[9px] font-black text-gray-600 uppercase mb-2">Lotes registrados en esta fase ({(prod[activePhaseTab]?.batches||[]).length})</div>
-                                        {(prod[activePhaseTab]?.batches||[]).map((b,i)=>(
-                                          <div key={i} className="flex justify-between items-center bg-white p-2 rounded-lg border border-gray-100 mb-1 text-[9px]">
-                                            <span className="font-black text-gray-700">Lote {i+1} — {b.date}</span>
-                                            <span className="font-bold text-green-600">{formatNum(b.producedKg)} KG prod.</span>
-                                            <span className="font-bold text-red-500">{formatNum(b.mermaKg)} KG merma{b.mermaPorc > 0 ? ` (${b.mermaPorc}%)` : ''}</span>
-                                            {b.techParams?.millares > 0 && <span className="font-bold text-blue-600">{formatNum(b.techParams.millares)} Mill.</span>}
+                                    {/* Progress bar Solicitado / Producido / Pendiente */}
+                                    {(() => {
+                                      const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
+                                      const solicitado = esTermo ? parseNum(req.requestedKg) : parseNum(req.cantidad);
+                                      const realBatches = (prod[activePhaseTab]?.batches||[]).filter(b => b.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b.producedKg) > 0);
+                                      const producido = esTermo
+                                        ? realBatches.reduce((s,b)=>s+parseNum(b.producedKg),0)
+                                        : realBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+                                      const pendiente = Math.max(0, solicitado - producido);
+                                      const pct = solicitado > 0 ? Math.min(100, (producido/solicitado)*100) : 0;
+                                      const unidad = esTermo ? 'KG' : 'Millares';
+                                      if (solicitado === 0) return null;
+                                      return (
+                                        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+                                          <div className="flex justify-between text-[9px] font-black uppercase mb-2">
+                                            <span className="text-blue-700">{unidad} — Progreso de producción</span>
+                                            <span className="text-blue-600">{pct.toFixed(0)}%</span>
                                           </div>
-                                        ))}
-                                        {prod[activePhaseTab]?.isClosed && (
-                                          <div className="text-[9px] font-black text-green-700 bg-green-50 border border-green-200 rounded-lg p-2 mt-1 text-center">✓ FASE CERRADA — puede reabrirla sin afectar otras fases</div>
-                                        )}
-                                        {prod[activePhaseTab]?.skipped && (
-                                          <div className="text-[9px] font-black text-gray-500 bg-gray-100 border border-gray-200 rounded-lg p-2 mt-1 text-center">FASE OMITIDA</div>
-                                        )}
-                                      </div>
-                                    )}
+                                          <div className="w-full bg-blue-200 rounded-full h-2 mb-2">
+                                            <div className="bg-blue-600 h-2 rounded-full transition-all" style={{width:`${pct}%`}}></div>
+                                          </div>
+                                          <div className="grid grid-cols-3 gap-2 text-center">
+                                            <div><span className="text-[8px] font-black text-gray-500 uppercase block">Solicitado</span><span className="font-black text-blue-700 text-xs">{formatNum(solicitado)} {unidad}</span></div>
+                                            <div><span className="text-[8px] font-black text-gray-500 uppercase block">Producido</span><span className="font-black text-green-600 text-xs">{formatNum(producido)} {unidad}</span></div>
+                                            <div><span className="text-[8px] font-black text-gray-500 uppercase block">Pendiente</span><span className={`font-black text-xs ${pendiente>0?'text-orange-600':'text-green-600'}`}>{formatNum(pendiente)} {unidad}</span></div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
+
+                                    {/* Lotes existentes de esta fase (sin fantasmas) */}
+                                    {(() => {
+                                      const realBatches = (prod[activePhaseTab]?.batches||[]).filter(b => b.operator !== 'ALMACÉN (DESPACHO)' && (parseNum(b.producedKg) > 0 || (b.insumos||[]).length > 0));
+                                      const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
+                                      if (realBatches.length === 0 && !prod[activePhaseTab]?.isClosed && !prod[activePhaseTab]?.skipped) return null;
+                                      return (
+                                        <div className="bg-gray-50 rounded-xl border border-gray-200 p-3">
+                                          <div className="text-[9px] font-black text-gray-600 uppercase mb-2">Lotes registrados en esta fase ({realBatches.length})</div>
+                                          {realBatches.map((b, i)=>{
+                                            const batchIdx = (prod[activePhaseTab]?.batches||[]).findIndex(x=>x.id===b.id);
+                                            return (
+                                              <div key={b.id||i} className="flex justify-between items-center bg-white p-2 rounded-lg border border-gray-100 mb-1 text-[9px] gap-2">
+                                                <span className="font-black text-gray-700 shrink-0">Lote {i+1} — {b.date}</span>
+                                                <span className="font-bold text-green-600">{formatNum(b.producedKg)} KG prod.</span>
+                                                <span className="font-bold text-red-500">{formatNum(b.mermaKg)} KG merma{b.mermaPorc > 0 ? ` (${b.mermaPorc}%)` : ''}</span>
+                                                {!esTermo && b.techParams?.millares > 0 && <span className="font-bold text-blue-600">{formatNum(b.techParams.millares)} Mill.</span>}
+                                                <div className="flex gap-1 shrink-0">
+                                                  <button onClick={()=>requireAdminPassword(()=>handleEditBatch(req.id, activePhaseTab, b.id),'Editar lote de producción')} className="p-1 bg-orange-50 text-orange-500 rounded hover:bg-orange-500 hover:text-white transition-all" title="Editar lote"><Edit size={10}/></button>
+                                                  <button onClick={()=>requireAdminPassword(()=>handleDeleteBatch(req.id, activePhaseTab, b.id),'Eliminar lote de producción')} className="p-1 bg-red-50 text-red-400 rounded hover:bg-red-500 hover:text-white transition-all" title="Eliminar lote"><Trash2 size={10}/></button>
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                          {prod[activePhaseTab]?.isClosed && (
+                                            <div className="text-[9px] font-black text-green-700 bg-green-50 border border-green-200 rounded-lg p-2 mt-1 text-center">✓ FASE CERRADA — puede reabrirla sin afectar otras fases</div>
+                                          )}
+                                          {prod[activePhaseTab]?.skipped && (
+                                            <div className="text-[9px] font-black text-gray-500 bg-gray-100 border border-gray-200 rounded-lg p-2 mt-1 text-center">FASE OMITIDA</div>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
 
                                     <div className="flex flex-wrap gap-2 justify-between items-center">
                                       {/* OMITIR */}
