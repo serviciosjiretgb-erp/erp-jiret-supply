@@ -252,6 +252,13 @@ export default function App() {
   // Estados para Órdenes de Compra
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [showPOModal, setShowPOModal] = useState(false);
+  // Estados Fórmulas / Recetas
+  const [formulas, setFormulas] = useState([]);
+  const [showFormulaPanel, setShowFormulaPanel] = useState(false);
+  const [editingFormulaId, setEditingFormulaId] = useState(null);
+  const [formulaForm, setFormulaForm] = useState({ categoria: '', tipoProducto: 'BOLSAS', ingredientes: [] });
+  const [formulaIngId, setFormulaIngId] = useState('');
+  const [formulaIngPct, setFormulaIngPct] = useState('');
   const [selectedPOItems, setSelectedPOItems] = useState([]);
   const [poProvider, setPoProvider] = useState('');
   const [poNotes, setPoNotes] = useState('');
@@ -432,13 +439,14 @@ export default function App() {
     const unsubPOs = onSnapshot(getColRef('purchaseOrders'), (s) => setPurchaseOrders(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubWIP = onSnapshot(getColRef('wipInventory'), (s) => setWipInventory(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubFinished = onSnapshot(getColRef('finishedGoodsInventory'), (s) => setFinishedGoodsInventory(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    const unsubFormulas = onSnapshot(getColRef('formulas'), (s) => setFormulas(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(a.categoria||'').localeCompare(b.categoria||''))));
     
     const unsubPDC = onSnapshot(getColRef('planDeCuentas'), (s) => setPlanDeCuentas(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
     const unsubAST = onSnapshot(getColRef('asientosContables'), (s) => setAsientosContables(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     
     return () => { 
       unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
-      unsubPOs(); unsubWIP(); unsubFinished(); unsubPDC(); unsubAST();
+      unsubPOs(); unsubWIP(); unsubFinished(); unsubFormulas(); unsubPDC(); unsubAST();
     };
   }, [fbUser]);
 
@@ -3806,9 +3814,10 @@ export default function App() {
             </div>
           </div>
 
-          {/* Sección 3 (producción) / 4 (costos): Ventas y Facturación */}
+          {/* Sección 3 (producción) / 4 (costos): Ventas y Facturación — solo costos */}
+          {costsMode && (
           <div className="mb-6">
-            <div className="bg-green-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">{costsMode ? '4' : '3'}. Ventas y Facturación de la OP</div>
+            <div className="bg-green-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">4. Ventas y Facturación de la OP</div>
             <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
               <table className="w-full text-xs">
                 <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600"><th className="p-3 border-r text-left">Factura N°</th><th className="p-3 border-r text-center">Fecha</th><th className="p-3 border-r text-right">Base (Ingreso Real)</th><th className="p-3 border-r text-right">IVA (16%)</th><th className="p-3 text-right">Total Cobrado</th></tr></thead>
@@ -3823,6 +3832,7 @@ export default function App() {
               </table>
             </div>
           </div>
+          )}
 
           {/* Sección 3.1 (producción) / 4.1 (costos): Entregas Parciales */}
           {(req.entregasParciales||[]).length > 0 && (
@@ -3858,7 +3868,8 @@ export default function App() {
             </div>
           )}
 
-          {/* Indicadores Financieros */}
+          {/* Indicadores Financieros y Firmas — solo costsMode */}
+          {costsMode && (<>
           <div className="grid grid-cols-3 gap-0 border-2 border-gray-300 rounded-xl overflow-hidden mb-6">
             <div className="col-span-1 p-5 bg-gray-50 border-r border-gray-300">
               <div className="text-[9px] font-black uppercase text-gray-500 mb-1">Cruce de Información Financiera</div>
@@ -3874,12 +3885,11 @@ export default function App() {
               <div className={`text-2xl font-black ${margenNeto>=0?'text-green-400':'text-red-400'}`}>{margenNeto.toFixed(2)}%</div>
             </div>
           </div>
-
-          {/* Firmas */}
           <div className="grid grid-cols-2 gap-16 mt-12 text-center text-[10px] font-black uppercase border-t-2 border-gray-300 pt-6">
             <div><div className="border-t-2 border-black mx-auto pt-2 w-3/4">Departamento de Costos</div></div>
             <div><div className="border-t-2 border-black mx-auto pt-2 w-3/4">Revisado y Aprobado (Gerencia)</div></div>
           </div>
+          </>)}
         </div>
       </div>
     );
@@ -4270,6 +4280,228 @@ export default function App() {
     );
   };
 
+  // ============================================================================
+  // MÓDULO FÓRMULAS / RECETAS DE PRODUCCIÓN
+  // ============================================================================
+  const handleSaveFormula = async (e) => {
+    e.preventDefault();
+    if (!formulaForm.categoria.trim()) return setDialog({title:'Aviso', text:'Ingrese el nombre de la categoría.', type:'alert'});
+    if ((formulaForm.ingredientes||[]).length === 0) return setDialog({title:'Aviso', text:'Agregue al menos un material a la fórmula.', type:'alert'});
+    const totalPct = (formulaForm.ingredientes||[]).reduce((s,i)=>s+parseNum(i.pct),0);
+    if (Math.abs(totalPct - 100) > 0.1) return setDialog({title:'Aviso', text:`Los porcentajes suman ${totalPct.toFixed(1)}%. Deben sumar 100%.`, type:'alert'});
+    const id = editingFormulaId || `FORM-${formulaForm.categoria.toUpperCase().replace(/\s+/g,'-')}-${Date.now()}`;
+    try {
+      await setDoc(getDocRef('formulas', id), { ...formulaForm, id, categoria: formulaForm.categoria.toUpperCase(), timestamp: Date.now(), user: appUser?.name });
+      setFormulaForm({ categoria: '', tipoProducto: 'BOLSAS', ingredientes: [] });
+      setEditingFormulaId(null); setShowFormulaPanel(false);
+      setDialog({title:'✅ Fórmula guardada', text:'La receta fue registrada exitosamente.', type:'alert'});
+    } catch(err) { setDialog({title:'Error', text:err.message, type:'alert'}); }
+  };
+
+  const handleDeleteFormula = (id) => {
+    setDialog({title:'Eliminar Fórmula', text:'¿Desea eliminar esta receta de producción?', type:'confirm',
+      onConfirm: async () => { await deleteDoc(getDocRef('formulas', id)); }
+    });
+  };
+
+  // Aplica la fórmula a una OP: genera lista de insumos pre-cargada para la requisición
+  const applyFormulaToPhase = (formula, requestedKg) => {
+    if (!formula || !formula.ingredientes) return [];
+    return formula.ingredientes.map(ing => {
+      const invItem = (inventory||[]).find(i=>i.id===ing.id);
+      const qty = (parseNum(ing.pct)/100) * parseNum(requestedKg);
+      return { id: ing.id, qty: parseFloat(qty.toFixed(2)), desc: invItem?.desc || ing.id, pct: ing.pct };
+    }).filter(i => i.qty > 0);
+  };
+
+  const renderFormulasModule = () => {
+    const totalPctActual = (formulaForm.ingredientes||[]).reduce((s,i)=>s+parseNum(i.pct),0);
+    const pctRestante = Math.max(0, 100 - totalPctActual);
+    // Agrupar fórmulas por tipoProducto
+    const grouped = {};
+    (formulas||[]).forEach(f => { const t=f.tipoProducto||'BOLSAS'; if(!grouped[t])grouped[t]=[]; grouped[t].push(f); });
+
+    return (
+      <div className="space-y-6 animate-in fade-in">
+        {/* Header */}
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-purple-50 to-indigo-50 flex justify-between items-center">
+            <div>
+              <h2 className="text-xl font-black text-black uppercase flex items-center gap-3">
+                <Beaker className="text-purple-600" size={24}/> Fórmulas / Recetas de Producción
+              </h2>
+              <p className="text-[10px] font-bold text-purple-600 mt-1 uppercase">Defina la composición de materias primas por categoría de producto</p>
+            </div>
+            <button onClick={()=>{setShowFormulaPanel(!showFormulaPanel);setFormulaForm({categoria:'',tipoProducto:'BOLSAS',ingredientes:[]});setEditingFormulaId(null);}}
+              className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md flex items-center gap-2 transition-all ${showFormulaPanel?'bg-gray-200 text-gray-700':'bg-purple-600 text-white hover:bg-purple-700'}`}>
+              {showFormulaPanel ? <><X size={16}/> CANCELAR</> : <><Plus size={16}/> NUEVA FÓRMULA</>}
+            </button>
+          </div>
+
+          {/* Formulario nueva/editar fórmula */}
+          {showFormulaPanel && (
+            <div className="p-8 bg-purple-50/40 border-b border-purple-100">
+              <form onSubmit={handleSaveFormula} className="bg-white rounded-3xl border border-purple-100 shadow-sm p-8 space-y-6">
+                <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3">{editingFormulaId ? 'Editar Fórmula' : 'Nueva Fórmula'}</h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría / Tipo de Producto *</label>
+                    <input type="text" required value={formulaForm.categoria}
+                      onChange={e=>setFormulaForm({...formulaForm, categoria: e.target.value.toUpperCase()})}
+                      className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-sm uppercase outline-none focus:border-purple-500"
+                      placeholder="EJ: PAÑAL, EMBUTIDO, BOLSAS DE POLLO..." />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tipo de Producto</label>
+                    <select value={formulaForm.tipoProducto} onChange={e=>setFormulaForm({...formulaForm,tipoProducto:e.target.value})}
+                      className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-purple-500 bg-white">
+                      <option value="BOLSAS">BOLSAS / EMPAQUES</option>
+                      <option value="TERMOENCOGIBLE">TERMOENCOGIBLE / TUBULAR</option>
+                      <option value="OTRO">OTRO</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Ingredientes */}
+                <div>
+                  <div className="flex justify-between items-center mb-3">
+                    <label className="text-[10px] font-black text-gray-500 uppercase">Materias Primas de la Fórmula</label>
+                    <span className={`text-[10px] font-black px-3 py-1 rounded-lg ${Math.abs(totalPctActual-100)<0.1?'bg-green-100 text-green-700':'totalPctActual>100?\'bg-red-100 text-red-700\':\'bg-yellow-100 text-yellow-700\''}`}>
+                      Total: {totalPctActual.toFixed(1)}% {Math.abs(totalPctActual-100)<0.1?'✓':`(falta ${pctRestante.toFixed(1)}%)`}
+                    </span>
+                  </div>
+
+                  {/* Selector de ingrediente */}
+                  <div className="flex gap-2 mb-4">
+                    <select value={formulaIngId} onChange={e=>setFormulaIngId(e.target.value)}
+                      className="flex-1 border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-purple-500 bg-white">
+                      <option value="">Seleccione materia prima...</option>
+                      {(inventory||[]).filter(i=>!formulaForm.ingredientes.find(fi=>fi.id===i.id)).map(i=>(
+                        <option key={i.id} value={i.id}>{i.id} — {i.desc} ({i.category})</option>
+                      ))}
+                    </select>
+                    <input type="number" step="0.1" min="0.1" max="100" value={formulaIngPct}
+                      onChange={e=>setFormulaIngPct(e.target.value)}
+                      className="w-28 border-2 border-gray-200 rounded-xl p-3 text-sm font-black text-center outline-none focus:border-purple-500"
+                      placeholder="%" />
+                    <button type="button" onClick={()=>{
+                      if(!formulaIngId||!formulaIngPct) return;
+                      const invItem=(inventory||[]).find(i=>i.id===formulaIngId);
+                      const nuevoTotal=totalPctActual+parseNum(formulaIngPct);
+                      if(nuevoTotal>100.1) return setDialog({title:'Aviso',text:`Supera 100%. Máximo disponible: ${pctRestante.toFixed(1)}%`,type:'alert'});
+                      setFormulaForm({...formulaForm, ingredientes:[...(formulaForm.ingredientes||[]),{id:formulaIngId,pct:parseNum(formulaIngPct),desc:invItem?.desc||formulaIngId,category:invItem?.category||''}]});
+                      setFormulaIngId('');setFormulaIngPct('');
+                    }} className="bg-purple-600 text-white px-4 py-3 rounded-xl font-black hover:bg-purple-700 flex items-center"><Plus size={16}/></button>
+                  </div>
+
+                  {/* Lista ingredientes */}
+                  {(formulaForm.ingredientes||[]).length > 0 ? (
+                    <div className="space-y-2">
+                      {(formulaForm.ingredientes||[]).map((ing,i)=>(
+                        <div key={i} className="flex items-center gap-3 bg-purple-50 border border-purple-200 rounded-xl p-3">
+                          <div className="flex-1">
+                            <span className="font-black text-purple-700 text-xs">{ing.id}</span>
+                            <span className="text-[10px] text-gray-500 ml-2">{ing.desc}</span>
+                            {ing.category && <span className="text-[9px] font-bold text-gray-400 ml-2">({ing.category})</span>}
+                          </div>
+                          {/* Editar porcentaje inline */}
+                          <input type="number" step="0.1" value={ing.pct}
+                            onChange={e=>{const newIngs=[...formulaForm.ingredientes];newIngs[i]={...newIngs[i],pct:parseNum(e.target.value)};setFormulaForm({...formulaForm,ingredientes:newIngs});}}
+                            className="w-20 border border-purple-300 rounded-lg p-1.5 text-sm font-black text-center bg-white outline-none focus:border-purple-500 text-purple-700" />
+                          <span className="text-sm font-black text-purple-600">%</span>
+                          {/* Barra visual */}
+                          <div className="w-20 bg-gray-200 rounded-full h-2">
+                            <div className="bg-purple-500 h-2 rounded-full" style={{width:`${Math.min(100,ing.pct)}%`}}></div>
+                          </div>
+                          <button type="button" onClick={()=>setFormulaForm({...formulaForm,ingredientes:formulaForm.ingredientes.filter((_,j)=>j!==i)})}
+                            className="text-red-400 hover:text-red-600 p-1"><X size={14}/></button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-6 text-gray-400 text-xs font-bold border-2 border-dashed border-gray-200 rounded-xl">
+                      Seleccione una materia prima y su % para agregarla
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                  <button type="button" onClick={()=>{setShowFormulaPanel(false);setEditingFormulaId(null);setFormulaForm({categoria:'',tipoProducto:'BOLSAS',ingredientes:[]});}}
+                    className="bg-gray-200 text-gray-700 px-8 py-3 rounded-2xl font-black text-xs uppercase hover:bg-gray-300">Cancelar</button>
+                  <button type="submit" className="bg-purple-600 text-white px-10 py-3 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-purple-700 flex items-center gap-2">
+                    <CheckCircle2 size={14}/> GUARDAR FÓRMULA
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Tabla de fórmulas */}
+          <div className="p-6">
+            {Object.keys(grouped).length === 0 ? (
+              <div className="text-center py-16 text-gray-400">
+                <Beaker size={48} className="mx-auto mb-4 opacity-30"/>
+                <p className="font-black text-xs uppercase">No hay fórmulas registradas</p>
+                <p className="text-xs mt-2">Haga clic en "Nueva Fórmula" para definir una receta por categoría</p>
+              </div>
+            ) : Object.entries(grouped).map(([tipo, fList]) => (
+              <div key={tipo} className="mb-8">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase ${tipo==='BOLSAS'?'bg-blue-100 text-blue-700':tipo==='TERMOENCOGIBLE'?'bg-green-100 text-green-700':'bg-gray-100 text-gray-700'}`}>{tipo}</span>
+                  <div className="flex-1 h-px bg-gray-200"></div>
+                  <span className="text-[9px] font-bold text-gray-400">{fList.length} fórmula{fList.length!==1?'s':''}</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {fList.map(formula => {
+                    const totalPct = (formula.ingredientes||[]).reduce((s,i)=>s+parseNum(i.pct),0);
+                    return (
+                      <div key={formula.id} className="bg-white border-2 border-gray-200 rounded-2xl overflow-hidden hover:border-purple-300 transition-all shadow-sm">
+                        <div className="bg-gray-800 text-white px-4 py-3 flex justify-between items-center">
+                          <span className="font-black text-sm uppercase">{formula.categoria}</span>
+                          <div className="flex gap-2">
+                            <button onClick={()=>{setEditingFormulaId(formula.id);setFormulaForm({categoria:formula.categoria,tipoProducto:formula.tipoProducto||'BOLSAS',ingredientes:formula.ingredientes||[]});setShowFormulaPanel(true);window.scrollTo({top:0,behavior:'smooth'});}}
+                              className="p-1.5 bg-white/20 rounded-lg hover:bg-white/40 transition-all text-white"><Edit size={12}/></button>
+                            <button onClick={()=>requireAdminPassword(()=>handleDeleteFormula(formula.id),'Eliminar fórmula')}
+                              className="p-1.5 bg-red-500/30 rounded-lg hover:bg-red-500 transition-all text-white"><Trash2 size={12}/></button>
+                          </div>
+                        </div>
+                        <div className="p-4">
+                          <table className="w-full text-xs">
+                            <thead><tr className="border-b border-gray-100"><th className="pb-2 text-left text-[9px] font-black text-gray-400 uppercase">Material</th><th className="pb-2 text-right text-[9px] font-black text-gray-400 uppercase">%</th><th className="pb-2 pl-3 text-[9px] font-black text-gray-400 uppercase">Visual</th></tr></thead>
+                            <tbody>
+                              {(formula.ingredientes||[]).map((ing,i)=>(
+                                <tr key={i} className="border-b border-gray-50 last:border-0">
+                                  <td className="py-2 font-black text-purple-700">{ing.id}<span className="text-[9px] text-gray-400 font-normal ml-1">{ing.desc||''}</span></td>
+                                  <td className="py-2 text-right font-black text-gray-800">{ing.pct}%</td>
+                                  <td className="py-2 pl-3">
+                                    <div className="w-24 bg-gray-100 rounded-full h-2">
+                                      <div className="bg-purple-500 h-2 rounded-full transition-all" style={{width:`${ing.pct}%`}}></div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot><tr className="border-t-2 border-gray-200">
+                              <td className="pt-2 text-[9px] font-black uppercase text-gray-500">Total:</td>
+                              <td className={`pt-2 text-right font-black ${Math.abs(totalPct-100)<0.1?'text-green-600':'text-red-600'}`}>{totalPct.toFixed(1)}%</td>
+                              <td></td>
+                            </tr></tfoot>
+                          </table>
+                          <p className="text-[9px] text-gray-400 font-bold mt-2">Última actualización: {formula.user || 'Sistema'}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderProduccionModule = () => {
     // ── VER ORDEN DE TRABAJO ─────────────────────────────────────────
     if (showOrdenTrabajo) {
@@ -4284,6 +4516,10 @@ export default function App() {
     }
 
     // ── PROYECCIÓN MP ────────────────────────────────────────────────
+    if (prodView === 'formulas') {
+      return renderFormulasModule();
+    }
+
     if (prodView === 'proyeccion') {
       const projection = generateProjectionData();
       return (
@@ -4670,6 +4906,59 @@ export default function App() {
                                     <h4 className="font-black text-blue-800 uppercase text-sm flex items-center gap-2"><ClipboardList size={16}/> Solicitud de Insumos a Almacén</h4>
                                     <button onClick={()=>setProdSubMode('fase')} className="text-xs font-black text-gray-500 hover:text-orange-500 underline">Ir directamente a Registro de Fase →</button>
                                   </div>
+
+                                  {/* Banner: Fórmula disponible para esta OP */}
+                                  {(() => {
+                                    const matchFormula = (formulas||[]).find(f=>
+                                      f.categoria && req.categoria &&
+                                      f.categoria.toUpperCase() === (req.categoria||'').toUpperCase() &&
+                                      (f.tipoProducto === req.tipoProducto || !f.tipoProducto)
+                                    );
+                                    if (!matchFormula) {
+                                      // Mostrar fórmulas disponibles para seleccionar
+                                      return formulas.length > 0 ? (
+                                        <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 mb-4">
+                                          <p className="text-[9px] font-black text-purple-700 uppercase mb-2">📋 Aplicar Fórmula / Receta:</p>
+                                          <div className="flex flex-wrap gap-2">
+                                            {(formulas||[]).map(f=>(
+                                              <button key={f.id} type="button"
+                                                onClick={()=>{
+                                                  const kgBase = parseNum(req.requestedKg)||1;
+                                                  const items = applyFormulaToPhase(f, kgBase);
+                                                  setPhaseForm({...phaseForm, insumos: items.map(i=>({id:i.id,qty:i.qty}))});
+                                                  setDialog({title:`✅ Fórmula aplicada: ${f.categoria}`,text:`Se pre-cargaron ${items.length} materiales según la receta (${formatNum(kgBase)} KG base). Ajuste cantidades si es necesario.`,type:'alert'});
+                                                }}
+                                                className="px-3 py-1.5 bg-purple-600 text-white rounded-lg text-[9px] font-black hover:bg-purple-700 flex items-center gap-1">
+                                                <Beaker size={10}/> {f.categoria}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ) : null;
+                                    }
+                                    return (
+                                      <div className="bg-purple-50 border-2 border-purple-300 rounded-xl p-3 mb-4">
+                                        <div className="flex justify-between items-center">
+                                          <div>
+                                            <p className="text-[9px] font-black text-purple-700 uppercase">🧪 Fórmula detectada: <span className="text-purple-900">{matchFormula.categoria}</span></p>
+                                            <p className="text-[9px] text-purple-600 font-bold mt-0.5">
+                                              {(matchFormula.ingredientes||[]).map(i=>`${i.id} (${i.pct}%)`).join(' · ')}
+                                            </p>
+                                          </div>
+                                          <button type="button"
+                                            onClick={()=>{
+                                              const kgBase = parseNum(req.requestedKg)||1;
+                                              const items = applyFormulaToPhase(matchFormula, kgBase);
+                                              setPhaseForm({...phaseForm, insumos: items.map(i=>({id:i.id,qty:i.qty}))});
+                                              setDialog({title:`✅ Fórmula aplicada`,text:`${items.length} materiales pre-cargados para ${formatNum(kgBase)} KG. Puede agregar materiales adicionales.`,type:'alert'});
+                                            }}
+                                            className="bg-purple-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase hover:bg-purple-700 flex items-center gap-1 shadow-md">
+                                            <Beaker size={12}/> APLICAR RECETA
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
                                   <div className="grid grid-cols-3 gap-3 mb-4">
                                     <div>
                                       <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">Fase para la Solicitud</label>
@@ -6910,8 +7199,9 @@ export default function App() {
                  {[ 
                    {id:'proyeccion', icon:<TrendingUp size={16}/>, label:'Proyección MP'},
                    {id:'ordenes_compra', icon:<ShoppingCart size={16}/>, label:'Órdenes Compra'},
+                   {id:'formulas', icon:<Beaker size={16}/>, label:'Fórmulas / Recetas'},
                    {id:'activos', icon:<PlayCircle size={16}/>, label:'Producción Activa'}, 
-                   {id:'reportes', icon:<FileText size={16}/>, label:'Historial / Finiquitos'}
+                   {id:'reportes', icon:<FileText size={16}/>, label:'Historial / Reportes'}
                  ].map(t => (
                     <button key={t.id} onClick={()=>{setProdView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${prodView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
