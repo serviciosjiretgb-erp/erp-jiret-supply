@@ -3613,32 +3613,53 @@ export default function App() {
   const renderFiniquitoOP = (req, costsMode = false) => {
     if (!req) return null;
     const prod = req.production || {};
-    // Filtrar lotes fantasma (creados por almacén con producedKg=0 y sin insumos del operador)
+    // Filtrar lotes fantasma
     const filterRealBatches = (batches) => (batches||[]).filter(b =>
       b.operator !== 'ALMACÉN (DESPACHO)' && (parseNum(b.producedKg) > 0 || (b.insumos||[]).length > 0)
     );
-    const allBatches = [
-      ...filterRealBatches(prod.extrusion?.batches).map(b => ({ ...b, fase: 'EXTRUSIÓN' })),
-      ...filterRealBatches(prod.impresion?.batches).map(b => ({ ...b, fase: 'IMPRESIÓN' })),
-      ...filterRealBatches(prod.sellado?.batches).map(b => ({ ...b, fase: 'SELLADO' })),
-    ];
-    const totalInsumosKg = allBatches.reduce((s,b)=>s+parseNum(b.totalInsumosKg||b.kgRecibidos||0),0);
-    const totalMermaKg   = allBatches.reduce((s,b)=>s+parseNum(b.mermaKg),0);
-    const totalProdKg    = allBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
-    const totalCostoMP   = allBatches.reduce((s,b)=>s+parseNum(b.cost),0);
-    const pctMerma = totalInsumosKg > 0 ? (totalMermaKg / totalInsumosKg * 100) : 0;
-    const totalMillares  = filterRealBatches(prod.sellado?.batches).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-      || filterRealBatches(prod.impresion?.batches).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-      || filterRealBatches(prod.extrusion?.batches).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+
+    const extBatches = filterRealBatches(prod.extrusion?.batches).map(b=>({...b,fase:'EXTRUSIÓN'}));
+    const impBatches = filterRealBatches(prod.impresion?.batches).map(b=>({...b,fase:'IMPRESIÓN'}));
+    const selBatches = filterRealBatches(prod.sellado?.batches).map(b=>({...b,fase:'SELLADO'}));
+    const allBatches = [...extBatches, ...impBatches, ...selBatches];
+
+    // ── LÓGICA CORRECTA DE CADENA DE FASES ──────────────────────────────
+    // MP Inyectada = solo insumos reales de almacén usados en EXTRUSIÓN (materia prima bruta)
+    // Si no hay insumos en extrusión, usar kgRecibidos de la primera fase activa
+    const mpInyectadaKg = extBatches.reduce((s,b)=>{
+      const insumosUsados = (b.insumos||[]).reduce((ss,ing)=>ss+parseNum(ing.qty),0);
+      return s + (insumosUsados > 0 ? insumosUsados : parseNum(b.kgRecibidos||b.totalInsumosKg||0));
+    },0) || impBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0)
+         || selBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0);
+
+    // KG producidos finales = último lote de la última fase activa
+    const lastActiveBatches = selBatches.length>0 ? selBatches : impBatches.length>0 ? impBatches : extBatches;
+    const kgProducidosFinales = lastActiveBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
+
+    // Merma REAL = MP inyectada - KG finales producidos (pérdida total de la cadena)
+    const totalMermaKg = Math.max(0, mpInyectadaKg - kgProducidosFinales);
+    const pctMerma = mpInyectadaKg > 0 ? (totalMermaKg / mpInyectadaKg * 100) : 0;
+
+    // Costo total = suma de insumos realmente consumidos en todas las fases
+    const totalCostoMP = allBatches.reduce((s,b)=>s+parseNum(b.cost),0);
+
+    // Millares = última fase con millares registrados
+    const totalMillares = selBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+      || impBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+      || extBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+
     const costoPorMillar = totalMillares > 0 ? totalCostoMP / totalMillares : 0;
     const relatedInvoices = invoices.filter(i => i.opAsignada === req.id);
     const totalIngresos  = relatedInvoices.reduce((s,i)=>s+parseNum(i.total),0);
     const ganancia = totalIngresos - totalCostoMP;
     const margenNeto = totalIngresos > 0 ? (ganancia / totalIngresos * 100) : 0;
-    const costoNetoPorKg = totalProdKg > 0 ? totalCostoMP / totalProdKg : 0;
-    const costoPromMezcla = totalInsumosKg > 0 ? totalCostoMP / totalInsumosKg : 0;
+    const costoNetoPorKg = kgProducidosFinales > 0 ? totalCostoMP / kgProducidosFinales : 0;
+    const costoPromMezcla = mpInyectadaKg > 0 ? totalCostoMP / mpInyectadaKg : 0;
+    // Alias para compatibilidad
+    const totalInsumosKg = mpInyectadaKg;
+    const totalProdKg = kgProducidosFinales;
 
-    // Agrupar insumos
+    // Agrupar insumos: solo los reales del inventario (los insumos registrados en cada lote)
     const insumoMap = {};
     allBatches.forEach(b => {
       (b.insumos || []).forEach(ing => {
@@ -3795,20 +3816,31 @@ export default function App() {
                   {req.tipoProducto !== 'TERMOENCOGIBLE' && <th className="p-3 text-center">Millares</th>}
                 </tr></thead>
                 <tbody className="divide-y divide-gray-100">
-                  {allBatches.map((b,i)=>(
+                  {allBatches.map((b,i)=>{
+                    // Para EXTRUSIÓN: mostrar KG reales usados (insumos); para otras: KG recibidos de la fase anterior
+                    const insumosUsados = (b.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                    const kgEntrada = b.fase==='EXTRUSIÓN' && insumosUsados>0 ? insumosUsados : parseNum(b.kgRecibidos||b.totalInsumosKg||0);
+                    return (
                     <tr key={i} className="hover:bg-gray-50">
                       <td className="p-3 border-r font-black">{b.fase}<span className="text-[9px] font-bold text-gray-400 ml-2">Lote {i+1}</span></td>
                       <td className="p-3 border-r text-center font-bold">{b.date}</td>
-                      <td className="p-3 border-r text-center font-black text-blue-600">{formatNum(b.kgRecibidos||b.totalInsumosKg||0)} kg</td>
+                      <td className="p-3 border-r text-center font-black text-blue-600">{formatNum(kgEntrada)} kg{b.fase!=='EXTRUSIÓN'&&<span className="text-[8px] text-gray-400 ml-1">(de fase ant.)</span>}</td>
                       <td className="p-3 border-r text-center font-black text-green-600">{formatNum(b.producedKg)} kg</td>
                       <td className="p-3 border-r text-center font-black text-red-500">{formatNum(b.mermaKg)} kg{b.mermaPorc > 0 ? ` (${b.mermaPorc}%)` : ''}</td>
                       {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center font-black">{parseNum(b.techParams?.millares||0)>0?formatNum(parseNum(b.techParams.millares))+' Mill.':'—'}</td>}
                     </tr>
-                  ))}
+                    );
+                  })}
                   {allBatches.length===0&&<tr><td colSpan="6" className="p-4 text-center text-gray-400 font-bold">Sin lotes registrados</td></tr>}
                 </tbody>
                 <tfoot className="bg-gray-100 border-t-2 border-gray-300 font-black">
-                  <tr><td colSpan="2" className="p-3 text-right uppercase text-[10px]">TOTALES:</td><td className="p-3 text-center text-blue-700">{formatNum(totalInsumosKg)} kg</td><td className="p-3 text-center text-green-700">{formatNum(totalProdKg)} kg</td><td className="p-3 text-center text-red-600">{formatNum(totalMermaKg)} kg ({pctMerma.toFixed(1)}%)</td>{req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center">{totalMillares>0?formatNum(totalMillares)+' Mill.':'—'}</td>}</tr>
+                  <tr>
+                    <td colSpan="2" className="p-3 text-right uppercase text-[10px]">RESUMEN:</td>
+                    <td className="p-3 text-center text-blue-700" title="MP bruta inyectada (solo fase inicial)">{formatNum(mpInyectadaKg)} kg</td>
+                    <td className="p-3 text-center text-green-700" title="KG finales producidos (última fase)">{formatNum(kgProducidosFinales)} kg</td>
+                    <td className="p-3 text-center text-red-600">{formatNum(totalMermaKg)} kg ({pctMerma.toFixed(1)}%)</td>
+                    {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center">{totalMillares>0?formatNum(totalMillares)+' Mill.':'—'}</td>}
+                  </tr>
                 </tfoot>
               </table>
             </div>
@@ -4080,16 +4112,16 @@ export default function App() {
       onConfirm: async () => {
         try {
           const prod = req.production || {};
-          // Calcular KG y millares producidos totales
-          const allBatches = [
-            ...(prod.extrusion?.batches || []),
-            ...(prod.impresion?.batches || []),
-            ...(prod.sellado?.batches || []),
-          ];
-          const totalKgProd = allBatches.reduce((s, b) => s + parseNum(b.producedKg), 0);
-          const totalMillares = (prod.sellado?.batches || []).reduce((s, b) => s + parseNum(b.techParams?.millares || 0), 0)
-            || (prod.impresion?.batches || []).reduce((s, b) => s + parseNum(b.techParams?.millares || 0), 0)
-            || (prod.extrusion?.batches || []).reduce((s, b) => s + parseNum(b.techParams?.millares || 0), 0);
+          const filterReal = (b) => b.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b.producedKg) > 0;
+          const selBatch = (prod.sellado?.batches||[]).filter(filterReal);
+          const impBatch = (prod.impresion?.batches||[]).filter(filterReal);
+          const extBatch = (prod.extrusion?.batches||[]).filter(filterReal);
+          // KG finales = última fase activa (cadena: ext→imp→sel)
+          const lastBatches = selBatch.length>0 ? selBatch : impBatch.length>0 ? impBatch : extBatch;
+          const totalKgProd = lastBatches.reduce((s, b) => s + parseNum(b.producedKg), 0);
+          const totalMillares = selBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+            || impBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+            || extBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
 
           // Marcar todas las fases abiertas como cerradas
           const updatedProd = { ...prod };
@@ -4841,8 +4873,12 @@ export default function App() {
                             {/* Resumen entregas parciales */}
                             {(req.entregasParciales||[]).length > 0 && (() => {
                               const prod = req.production || {};
-                              const allB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])];
-                              const totalProd = allB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+                              const fr = b => b.operator!=='ALMACÉN (DESPACHO)' && parseNum(b.producedKg)>0;
+                              const sB=(prod.sellado?.batches||[]).filter(fr);
+                              const iB=(prod.impresion?.batches||[]).filter(fr);
+                              const eB=(prod.extrusion?.batches||[]).filter(fr);
+                              const lastB=sB.length>0?sB:iB.length>0?iB:eB;
+                              const totalProd = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
                               const totalEntregado = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0);
                               const pendiente = Math.max(0, totalProd - totalEntregado);
                               return (
@@ -5051,7 +5087,14 @@ export default function App() {
                                       setPhaseForm(newForm);
                                     }} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${activePhaseTab===key ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{label}{prod[key]?.isClosed ? ' ✓' : prod[key]?.skipped ? ' ⊘' : ''}</button>
                                   ))}
-                                  <button onClick={()=>setProdSubMode('requisicion')} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1 ml-auto"><ClipboardList size={12}/> SOLICITAR A ALMACÉN</button>
+                                  <div className="flex gap-2 ml-auto">
+                                    <button onClick={()=>setProdSubMode('requisicion')} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1"><ClipboardList size={12}/> SOLICITAR A ALMACÉN</button>
+                                    <button onClick={()=>{
+                                      // Solicitud adicional: abre panel requisicion sin limpiar el form actual
+                                      setProdSubMode('requisicion');
+                                      setPhaseForm({...phaseForm, insumos:[]});
+                                    }} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 flex items-center gap-1"><Plus size={12}/> ADICIONAL ALMACÉN</button>
+                                  </div>
                                 </div>
 
                                 {/* Formulario de fase */}
@@ -5293,9 +5336,13 @@ export default function App() {
                     <tbody className="divide-y divide-gray-100">
                       {completedReqs.map(req => {
                         const prod = req.production || {};
-                        const allB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])];
-                        const totalKg = allB.reduce((s,b)=>s+parseNum(b.producedKg),0);
-                        const totalMill = (prod.sellado?.batches||[]).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+                        const fr = b => b.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b.producedKg)>0;
+                        const sB=(prod.sellado?.batches||[]).filter(fr);
+                        const iB=(prod.impresion?.batches||[]).filter(fr);
+                        const eB=(prod.extrusion?.batches||[]).filter(fr);
+                        const lastB = sB.length>0?sB:iB.length>0?iB:eB;
+                        const totalKg = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+                        const totalMill = sB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||iB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||eB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
                         return (
                           <tr key={req.id} className="hover:bg-gray-50">
                             <td className="py-3 px-4 border-r font-black text-orange-600">#{String(req.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400">{req.fecha}</span></td>
