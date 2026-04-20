@@ -7199,15 +7199,6 @@ export default function App() {
                   <input type="file" accept=".json" className="hidden" onChange={e => { if(e.target.files[0]) handleImportBackupJSON(e.target.files[0]); e.target.value=''; }} />
                 </label>
               </div>
-                </button>
-                <button
-                  onClick={() => requireAdminPassword(handleBackupAppJsx, 'Instrucciones respaldo App.jsx')}
-                  className="px-4 bg-blue-600 text-white py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 transition-all flex items-center justify-center gap-2 shadow-md"
-                  title="Instrucciones para respaldar App.jsx"
-                >
-                  <FileText size={14}/> APP.JSX
-                </button>
-              </div>
             </div>
 
             {/* RESET */}
