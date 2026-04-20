@@ -193,7 +193,15 @@ export default function App() {
   const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
 
   // Formularios de Configuración
-  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: { ventas: false, produccion: false, inventario: false, costos: false, configuracion: false } };
+  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: {
+    ventas: false,       ventas_ops: false,    ventas_facturacion: false, ventas_directorio: false,
+    produccion: false,   produccion_proyeccion: false, produccion_ordenes: false, produccion_activa: false, produccion_historial: false,
+    formulas: false,
+    inventario: false,   inventario_solicitudes: false, inventario_catalogo: false, inventario_movimientos: false, inventario_kardex: false,
+    simulador: false,
+    costos: false,       costos_operativos: false, costos_reportes: false,
+    configuracion: false
+  } };
   const [newUserForm, setNewUserForm] = useState(initialUserForm);
   const [editingUserId, setEditingUserId] = useState(null);
 
@@ -422,8 +430,8 @@ export default function App() {
     const unsubUsers = onSnapshot(getColRef('users'), (s) => {
       const loadedUsers = s.docs.map(d => ({ id: d.id, ...d.data() })); setSystemUsers(loadedUsers);
       if (s.empty) {
-         setDoc(getDocRef('users', 'admin'), { username: 'admin', password: '1234', name: 'Administrador General', role: 'Master', permissions: { ventas: true, produccion: true, inventario: true, costos: true, configuracion: true } });
-         setDoc(getDocRef('users', 'planta'), { username: 'planta', password: '1234', name: 'Supervisor de Planta', role: 'Planta', permissions: { ventas: false, produccion: true, inventario: false, costos: false, configuracion: false } });
+         setDoc(getDocRef('users', 'admin'), { username: 'admin', password: '1234', name: 'Administrador General', role: 'Master', permissions: { ventas: true, ventas_ops: true, ventas_facturacion: true, ventas_directorio: true, produccion: true, produccion_proyeccion: true, produccion_ordenes: true, produccion_activa: true, produccion_historial: true, formulas: true, inventario: true, inventario_solicitudes: true, inventario_catalogo: true, inventario_movimientos: true, inventario_kardex: true, simulador: true, costos: true, costos_operativos: true, costos_reportes: true, configuracion: true } });
+         setDoc(getDocRef('users', 'planta'), { username: 'planta', password: '1234', name: 'Supervisor de Planta', role: 'Planta', permissions: { ventas: false, ventas_ops: false, ventas_facturacion: false, ventas_directorio: false, produccion: true, produccion_proyeccion: true, produccion_ordenes: false, produccion_activa: true, produccion_historial: true, formulas: true, inventario: true, inventario_solicitudes: true, inventario_catalogo: false, inventario_movimientos: false, inventario_kardex: false, simulador: false, costos: false, costos_operativos: false, costos_reportes: false, configuracion: false } });
       }
     });
     const unsubSettings = onSnapshot(getDocRef('settings', 'general'), (d) => { if(d.exists()) setSettings(d.data()); });
@@ -596,7 +604,13 @@ export default function App() {
     const userId = newUserForm.username.toLowerCase().trim();
     try { await setDoc(getDocRef('users', userId), { ...newUserForm, username: userId }); setNewUserForm(initialUserForm); setEditingUserId(null); setDialog({title: 'Éxito', text: 'Usuario registrado.', type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
-  const startEditUser = (u) => { setEditingUserId(u.username); setNewUserForm(u); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const startEditUser = (u) => {
+    const defaultPerms = initialUserForm.permissions;
+    const mergedPerms = { ...defaultPerms, ...(u.permissions || {}) };
+    setEditingUserId(u.username);
+    setNewUserForm({ ...u, permissions: mergedPerms });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
   const handleDeleteUser = (id) => { if(id === 'admin') return setDialog({title:'Acción Denegada', text:'No puedes eliminar al administrador.', type:'alert'}); setDialog({ title: 'Eliminar Usuario', text: `¿Desea eliminar el acceso a ${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('users', id))}); };
 
   // ============================================================================
@@ -1333,15 +1347,15 @@ export default function App() {
   );
 
   const renderHome = () => {
-    const hasPerm = (module) => appUser?.permissions ? appUser.permissions[module] : appUser?.role === 'Master';
+    const hasPerm = (module) => { if (!appUser) return false; if (appUser.role === 'Master') return true; const p = appUser.permissions || {}; return !!p[module]; };
     const moduleCards = [
       hasPerm('ventas') && { tab:'ventas', view:()=>setVentasView('facturacion'), icon:<Users size={36}/>, title:'Ventas y Facturación', desc:'Directorio, OP y Facturación', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
       hasPerm('produccion') && { tab:'produccion', view:()=>setProdView('proyeccion'), icon:<Factory size={36}/>, title:'Producción Planta', desc:'Control de Fases y Reportes', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
-      hasPerm('produccion') && { tab:'formulas', icon:<Beaker size={36}/>, title:'Fórmulas / Recetas', desc:'Recetas por categoría y fases', color:'border-purple-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-purple-500' },
+      hasPerm('formulas') && { tab:'formulas', icon:<Beaker size={36}/>, title:'Fórmulas / Recetas', desc:'Recetas por categoría y fases', color:'border-purple-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-purple-500' },
       hasPerm('inventario') && { tab:'inventario', view:()=>setInvView('requisiciones'), icon:<Package size={36}/>, title:'Control Inventario', desc:'Solicitudes de Planta, Catálogo, Movimientos y Kardex', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
-      hasPerm('produccion') && { tab:'simulador', icon:<Calculator size={36}/>, title:'Simulador OP', desc:'Calculadora Inversa de Producción y Mermas', color:'border-orange-400', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-orange-500' },
-      hasPerm('costos') && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
-      hasPerm('costos') && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos, Estado de Resultado y Libro Diario', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
+      hasPerm('simulador') && { tab:'simulador', icon:<Calculator size={36}/>, title:'Simulador OP', desc:'Calculadora Inversa de Producción y Mermas', color:'border-orange-400', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-orange-500' },
+      hasPerm('costos_operativos') && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
+      hasPerm('costos_reportes') && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos, Estado de Resultado y Libro Diario', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
       hasPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={36}/>, title:'Configuración', desc:'Usuarios, Permisos y Respaldo', color:'border-gray-400', bg:'bg-white', textColor:'text-gray-800', descColor:'text-gray-400', iconColor:'text-gray-500' },
     ].filter(Boolean);
 
@@ -6971,14 +6985,69 @@ export default function App() {
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Rol / Cargo</label><input type="text" value={newUserForm.role} onChange={e=>setNewUserForm({...newUserForm, role: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
               </div>
               <div className="mt-4">
-                 <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2">Permisos de Módulos</label>
-                 <div className="flex flex-wrap gap-4">
-                    {['ventas', 'produccion', 'inventario', 'costos', 'configuracion'].map(perm => (
-                       <label key={perm} className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border border-gray-200 cursor-pointer hover:bg-gray-50">
-                          <input type="checkbox" checked={newUserForm.permissions[perm]} onChange={e=>setNewUserForm({...newUserForm, permissions: {...newUserForm.permissions, [perm]: e.target.checked}})} className="w-4 h-4 text-orange-600 focus:ring-orange-500 border-gray-300 rounded" />
-                          <span className="text-xs font-black uppercase text-gray-700">{perm}</span>
+                 <label className="text-[10px] font-bold text-gray-500 uppercase block mb-3">Permisos de Módulos y Sub-módulos</label>
+                 <div className="space-y-3">
+                   {[
+                     { key:'ventas', label:'Ventas y Facturación', icon:'👥', subs:[
+                       {key:'ventas_ops', label:'OPs / Requisiciones'},
+                       {key:'ventas_facturacion', label:'Facturación'},
+                       {key:'ventas_directorio', label:'Directorio de Clientes'},
+                     ]},
+                     { key:'produccion', label:'Producción Planta', icon:'🏭', subs:[
+                       {key:'produccion_proyeccion', label:'Proyección MP'},
+                       {key:'produccion_ordenes', label:'Órdenes de Compra'},
+                       {key:'produccion_activa', label:'Producción Activa'},
+                       {key:'produccion_historial', label:'Historial / Reportes'},
+                     ]},
+                     { key:'formulas', label:'Fórmulas / Recetas', icon:'🧪', subs:[] },
+                     { key:'inventario', label:'Control Inventario', icon:'📦', subs:[
+                       {key:'inventario_solicitudes', label:'Solicitudes de Planta'},
+                       {key:'inventario_catalogo', label:'Catálogo'},
+                       {key:'inventario_movimientos', label:'Entradas / Salidas'},
+                       {key:'inventario_kardex', label:'Kardex y Reportes'},
+                     ]},
+                     { key:'simulador', label:'Simulador OP', icon:'🧮', subs:[] },
+                     { key:'costos', label:'Costos / Reportes Financieros', icon:'💰', subs:[
+                       {key:'costos_operativos', label:'Costos Operativos'},
+                       {key:'costos_reportes', label:'Reportes Financieros / Estado de Resultado'},
+                     ]},
+                     { key:'configuracion', label:'Configuración', icon:'⚙️', subs:[] },
+                   ].map(mod => (
+                     <div key={mod.key} className="border-2 border-gray-200 rounded-xl overflow-hidden">
+                       {/* Módulo principal */}
+                       <label className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-all ${newUserForm.permissions[mod.key] ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 hover:bg-gray-100'}`}>
+                         <input type="checkbox"
+                           checked={!!newUserForm.permissions[mod.key]}
+                           onChange={e=>{
+                             const checked = e.target.checked;
+                             const newPerms = {...newUserForm.permissions, [mod.key]: checked};
+                             // Si se quita el módulo, quitar todos sus sub-permisos
+                             if (!checked) mod.subs.forEach(s=>{ newPerms[s.key]=false; });
+                             setNewUserForm({...newUserForm, permissions: newPerms});
+                           }}
+                           className="w-4 h-4 text-orange-600 focus:ring-orange-500 border-gray-300 rounded" />
+                         <span className="text-sm">{mod.icon}</span>
+                         <span className="text-xs font-black uppercase text-gray-800">{mod.label}</span>
+                         {newUserForm.permissions[mod.key] && mod.subs.length > 0 && (
+                           <span className="ml-auto text-[9px] font-bold text-orange-600">▼ Configurar sub-módulos</span>
+                         )}
                        </label>
-                    ))}
+                       {/* Sub-módulos (solo si el módulo está activo y tiene subs) */}
+                       {newUserForm.permissions[mod.key] && mod.subs.length > 0 && (
+                         <div className="border-t border-gray-200 px-4 py-3 bg-white grid grid-cols-2 gap-2">
+                           {mod.subs.map(sub => (
+                             <label key={sub.key} className="flex items-center gap-2 cursor-pointer hover:bg-orange-50 px-3 py-2 rounded-lg border border-gray-100 transition-all">
+                               <input type="checkbox"
+                                 checked={!!newUserForm.permissions[sub.key]}
+                                 onChange={e=>setNewUserForm({...newUserForm, permissions:{...newUserForm.permissions,[sub.key]:e.target.checked}})}
+                                 className="w-3.5 h-3.5 text-orange-500 border-gray-300 rounded" />
+                               <span className="text-[10px] font-bold text-gray-600 uppercase">{sub.label}</span>
+                             </label>
+                           ))}
+                         </div>
+                       )}
+                     </div>
+                   ))}
                  </div>
               </div>
               <div className="flex justify-end pt-4"><button type="submit" className="bg-black text-white px-8 py-3 rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all flex items-center gap-2"><UserPlus size={16}/> GUARDAR USUARIO</button></div>
@@ -7000,8 +7069,13 @@ export default function App() {
                       <td className="py-3 px-4 font-black">{u.username}<br/><span className="text-[10px] text-gray-500 font-bold">{u.name}</span></td>
                       <td className="py-3 px-4 font-bold text-xs uppercase">{u.role}</td>
                       <td className="py-3 px-4">
-                        <div className="flex gap-1 flex-wrap max-w-[200px]">
-                          {Object.entries(u.permissions||{}).filter(([_,v])=>v).map(([k])=><span key={k} className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded text-[8px] font-black uppercase">{k}</span>)}
+                        <div className="flex gap-1 flex-wrap max-w-[250px]">
+                          {['ventas','produccion','formulas','inventario','simulador','costos','configuracion'].filter(k=>u.permissions?.[k]).map(k=>(
+                            <span key={k} className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded text-[8px] font-black uppercase">{k}</span>
+                          ))}
+                          {Object.keys(u.permissions||{}).filter(k=>k.includes('_')&&u.permissions[k]).length > 0 && (
+                            <span className="text-[8px] text-gray-400 font-bold">+{Object.keys(u.permissions||{}).filter(k=>k.includes('_')&&u.permissions[k]).length} sub</span>
+                          )}
                         </div>
                       </td>
                       <td className="py-3 px-4 text-center">
@@ -7367,7 +7441,7 @@ export default function App() {
     );
   }
 
-  const hasPerm = (module) => appUser?.permissions ? appUser.permissions[module] : appUser?.role === 'Master';
+  const hasPerm = (module) => { if (!appUser) return false; if (appUser.role === 'Master') return true; const p = appUser.permissions || {}; return !!p[module]; };
 
   return (
     <ErrorBoundary>
@@ -7383,9 +7457,9 @@ export default function App() {
                     <button onClick={() => {clearAllReports(); setActiveTab('home');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'home' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Home size={14}/> Inicio</button>
                     {hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
                     {hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
-                    {hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
+                    {hasPerm('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
                     {hasPerm('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario</button>}
-                    {hasPerm('costos') && <button onClick={() => {clearAllReports(); setActiveTab('costos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'costos' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
+                    {(hasPerm('costos_operativos')||hasPerm('costos_reportes')) && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
                  </div>
               </div>
               <div className="flex items-center gap-4">
@@ -7418,18 +7492,18 @@ export default function App() {
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
               <div className="max-w-7xl mx-auto flex gap-6 px-6 overflow-x-auto">
                  {[ 
-                   {id:'requisiciones', icon:<ClipboardList size={16}/>, label:'Solicitudes Planta'},
-                   {id:'catalogo', icon:<Box size={16}/>, label:'Catálogo'}, 
-                   {id:'wip', icon:<Beaker size={16}/>, label:'WIP (Proceso)'}, 
-                   {id:'finished', icon:<Package size={16}/>, label:'Terminados'}, 
-                   {id:'cargo', icon:<ArrowDownToLine size={16}/>, label:'Entradas'}, 
-                   {id:'descargo', icon:<ArrowUpFromLine size={16}/>, label:'Salidas'}, 
-                   {id:'ajuste', icon:<ShieldCheck size={16}/>, label:'Ajuste Único'}, 
-                   {id:'toma_fisica', icon:<ClipboardEdit size={16}/>, label:'Toma Física'}, 
-                   {id:'kardex', icon:<History size={16}/>, label:'Kardex'}, 
-                   {id:'reportes_mod', icon:<FileText size={16}/>, label:'Reportes'}, 
-                   {id:'reporte177', icon:<FileCheck size={16}/>, label:'Art. 177 ISLR'}, 
-                 ].map(t => (
+                   {id:'requisiciones', icon:<ClipboardList size={16}/>, label:'Solicitudes Planta', perm:'inventario_solicitudes'},
+                   {id:'catalogo', icon:<Box size={16}/>, label:'Catálogo', perm:'inventario_catalogo'}, 
+                   {id:'wip', icon:<Beaker size={16}/>, label:'WIP (Proceso)', perm:'inventario_catalogo'}, 
+                   {id:'finished', icon:<Package size={16}/>, label:'Terminados', perm:'inventario_catalogo'}, 
+                   {id:'cargo', icon:<ArrowDownToLine size={16}/>, label:'Entradas', perm:'inventario_movimientos'}, 
+                   {id:'descargo', icon:<ArrowUpFromLine size={16}/>, label:'Salidas', perm:'inventario_movimientos'}, 
+                   {id:'ajuste', icon:<ShieldCheck size={16}/>, label:'Ajuste Único', perm:'inventario_movimientos'}, 
+                   {id:'toma_fisica', icon:<ClipboardEdit size={16}/>, label:'Toma Física', perm:'inventario_movimientos'}, 
+                   {id:'kardex', icon:<History size={16}/>, label:'Kardex', perm:'inventario_kardex'}, 
+                   {id:'reportes_mod', icon:<FileText size={16}/>, label:'Reportes', perm:'inventario_kardex'}, 
+                   {id:'reporte177', icon:<FileCheck size={16}/>, label:'Art. 177 ISLR', perm:'inventario_kardex'}, 
+                 ].filter(t => hasPerm('inventario') && (hasPerm(t.perm) || appUser?.role==='Master')).map(t => (
                     <button key={t.id} onClick={()=>{setInvView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
               </div>
@@ -7440,11 +7514,11 @@ export default function App() {
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
               <div className="max-w-7xl mx-auto flex gap-6 px-6 overflow-x-auto">
                  {[ 
-                   {id:'proyeccion', icon:<TrendingUp size={16}/>, label:'Proyección MP'},
-                   {id:'ordenes_compra', icon:<ShoppingCart size={16}/>, label:'Órdenes Compra'},
-                   {id:'activos', icon:<PlayCircle size={16}/>, label:'Producción Activa'}, 
-                   {id:'reportes', icon:<FileText size={16}/>, label:'Historial / Reportes'}
-                 ].map(t => (
+                   {id:'proyeccion', icon:<TrendingUp size={16}/>, label:'Proyección MP', perm:'produccion_proyeccion'},
+                   {id:'ordenes_compra', icon:<ShoppingCart size={16}/>, label:'Órdenes Compra', perm:'produccion_ordenes'},
+                   {id:'activos', icon:<PlayCircle size={16}/>, label:'Producción Activa', perm:'produccion_activa'}, 
+                   {id:'reportes', icon:<FileText size={16}/>, label:'Historial / Reportes', perm:'produccion_historial'}
+                 ].filter(t => hasPerm('produccion') && (hasPerm(t.perm) || appUser?.role==='Master')).map(t => (
                     <button key={t.id} onClick={()=>{setProdView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${prodView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
               </div>
