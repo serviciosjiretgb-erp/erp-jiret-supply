@@ -1883,7 +1883,7 @@ export default function App() {
                  <button onClick={() => {
                    // Guardar parcial: solo confirma sin procesar ajustes
                    setDialog({title:'Conteo Guardado', text:'Los conteos fisicos han sido guardados temporalmente. Cuando estes listo, usa PROCESAR AJUSTES para aplicarlos al inventario.', type:'alert'});
-                 }} className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-blue-700 transition-colors flex items-center gap-2"><Save size={16}/> GUARDAR PARCIAL</button>
+                 }} className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-blue-700 transition-colors flex items-center gap-2"><Save size={16}/> GUARDAR LOTE</button>
                  <button onClick={() => requireAdminPassword(handleProcessTomaFisica, 'Procesar Ajuste de Toma Fisica')} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 transition-colors flex items-center gap-2"><CheckCircle2 size={16}/> PROCESAR AJUSTES</button>
                </div>
             </div>
@@ -4407,8 +4407,9 @@ export default function App() {
 
     // ── Total ya CONSUMIDO en lotes ANTERIORES (todos las fases de esta OP) ──
     const consumidoAnteriores = {};
+    const reqProdAll = req.production || {};
     ['extrusion','impresion','sellado'].forEach(ph => {
-      (prod[ph]?.batches || []).forEach(b => {
+      (reqProdAll[ph]?.batches || []).forEach(b => {
         (b.insumos || []).forEach(ing => {
           if (!consumidoAnteriores[ing.id]) consumidoAnteriores[ing.id] = 0;
           consumidoAnteriores[ing.id] += parseNum(ing.qty);
@@ -5633,17 +5634,18 @@ export default function App() {
                                     <button key={key} onClick={() => {
                                       setActivePhaseTab(key);
                                       let newForm = {...initialPhaseForm, date: getTodayDate()};
+                                      const reqProd = req.production || {};
                                       if (key === 'impresion') {
-                                        const ekg = (prod.extrusion?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg),0);
+                                        const ekg = (reqProd.extrusion?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg),0);
                                         newForm.kgRecibidosImp = ekg > 0 ? ekg.toFixed(2) : '';
                                       }
                                       if (key === 'sellado') {
-                                        const impB = prod.impresion?.batches||[];
-                                        const ikg = impB.length>0 ? impB.reduce((s,b)=>s+parseNum(b.producedKg),0) : (prod.extrusion?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg),0);
+                                        const impB = reqProd.impresion?.batches||[];
+                                        const ikg = impB.length>0 ? impB.reduce((s,b)=>s+parseNum(b.producedKg),0) : (reqProd.extrusion?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg),0);
                                         newForm.kgRecibidosSel = ikg > 0 ? ikg.toFixed(2) : '';
                                       }
                                       setPhaseForm(newForm);
-                                    }} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${activePhaseTab===key ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{label}{prod[key]?.isClosed ? ' ✓' : prod[key]?.skipped ? ' ⊘' : ''}</button>
+                                    }} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${activePhaseTab===key ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{label}{(req.production||{})[key]?.isClosed ? ' ✓' : (req.production||{})[key]?.skipped ? ' ⊘' : ''}</button>
                                   ))}
                                   <div className="flex gap-2 ml-auto">
                                     <button onClick={()=>setProdSubMode('requisicion')} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1"><ClipboardList size={12}/> SOLICITAR A ALMACÉN</button>
@@ -5836,31 +5838,46 @@ export default function App() {
 
                                   {/* ── BOTONES DE FASE ── */}
                                   <div className="space-y-3 pt-2 border-t border-orange-200">
-                                    {/* Progress bar Solicitado / Producido / Pendiente */}
+                                    {/* Progress bar Solicitado / Producido / Pendiente — cadena completa */}
                                     {(() => {
                                       const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
                                       const solicitado = esTermo ? parseNum(req.requestedKg) : parseNum(req.cantidad);
-                                      const realBatches = (prod[activePhaseTab]?.batches||[]).filter(b => b.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b.producedKg) > 0);
-                                      const producido = esTermo
-                                        ? realBatches.reduce((s,b)=>s+parseNum(b.producedKg),0)
-                                        : realBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+                                      // Cadena: usa la ÚLTIMA fase activa para KG/Millares producidos
+                                      const rp = req.production || {};
+                                      const fr = b => b.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b.producedKg) > 0;
+                                      const selB = (rp.sellado?.batches||[]).filter(fr);
+                                      const impB = (rp.impresion?.batches||[]).filter(fr);
+                                      const extB = (rp.extrusion?.batches||[]).filter(fr);
+                                      const lastB = selB.length>0?selB:impB.length>0?impB:extB;
+                                      const producidoKg = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+                                      const producidoMill = selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+                                        || impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+                                        || extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+                                      const producido = esTermo ? producidoKg : producidoMill;
+                                      const mpInyectada = extB.reduce((s,b)=>{
+                                        const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);
+                                        return s+(ins>0?ins:parseNum(b.kgRecibidos||b.totalInsumosKg||0));
+                                      },0)||impB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0)||selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0);
+                                      const mermaTotal = Math.max(0, mpInyectada - producidoKg);
+                                      const pctMerma = mpInyectada > 0 ? (mermaTotal/mpInyectada*100) : 0;
                                       const pendiente = Math.max(0, solicitado - producido);
                                       const pct = solicitado > 0 ? Math.min(100, (producido/solicitado)*100) : 0;
                                       const unidad = esTermo ? 'KG' : 'Millares';
-                                      if (solicitado === 0) return null;
+                                      if (solicitado === 0 && mpInyectada === 0) return null;
                                       return (
                                         <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
                                           <div className="flex justify-between text-[9px] font-black uppercase mb-2">
-                                            <span className="text-blue-700">{unidad} — Progreso de producción</span>
-                                            <span className="text-blue-600">{pct.toFixed(0)}%</span>
+                                            <span className="text-blue-700">Progreso OP — cadena de producción</span>
+                                            <span className="text-blue-600">{pct.toFixed(0)}% completado</span>
                                           </div>
                                           <div className="w-full bg-blue-200 rounded-full h-2 mb-2">
                                             <div className="bg-blue-600 h-2 rounded-full transition-all" style={{width:`${pct}%`}}></div>
                                           </div>
-                                          <div className="grid grid-cols-3 gap-2 text-center">
+                                          <div className="grid grid-cols-4 gap-2 text-center">
                                             <div><span className="text-[8px] font-black text-gray-500 uppercase block">Solicitado</span><span className="font-black text-blue-700 text-xs">{formatNum(solicitado)} {unidad}</span></div>
                                             <div><span className="text-[8px] font-black text-gray-500 uppercase block">Producido</span><span className="font-black text-green-600 text-xs">{formatNum(producido)} {unidad}</span></div>
                                             <div><span className="text-[8px] font-black text-gray-500 uppercase block">Pendiente</span><span className={`font-black text-xs ${pendiente>0?'text-orange-600':'text-green-600'}`}>{formatNum(pendiente)} {unidad}</span></div>
+                                            {mpInyectada > 0 && <div><span className="text-[8px] font-black text-gray-500 uppercase block">Merma</span><span className="font-black text-red-500 text-xs">{formatNum(mermaTotal)} KG ({pctMerma.toFixed(1)}%)</span></div>}
                                           </div>
                                         </div>
                                       );
@@ -5936,10 +5953,10 @@ export default function App() {
                                           </button>
                                         )}
 
-                                        {/* GUARDAR PARCIAL */}
+                                        {/* GUARDAR LOTE */}
                                         {!prod[activePhaseTab]?.isClosed && (
                                           <button onClick={() => handleSavePhaseDirectly(req, false)} className="bg-orange-500 text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-orange-600 flex items-center gap-1 shadow-md transition-all">
-                                            <Save size={13}/> GUARDAR PARCIAL
+                                            <Save size={13}/> GUARDAR LOTE
                                           </button>
                                         )}
 
