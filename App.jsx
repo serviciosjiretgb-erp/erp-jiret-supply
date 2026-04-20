@@ -3706,31 +3706,36 @@ export default function App() {
       if (prodKg > 0) {
         const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
         const millEntrada = esTermo ? 0 : parseNum(techParams.millares || 0);
-        const fgId = `FG-${Date.now()}`;
-        await setDoc(getDocRef('finishedGoodsInventory', fgId), {
-          id: fgId, opId: req.id, reqId: req.id,
-          cliente: req.client || 'N/A',
-          tipoProducto: req.tipoProducto || 'BOLSAS',
-          categoria: req.categoria || '',
-          producto: req.desc || 'Producto',
-          ancho: req.ancho || 0, largo: req.largo || 0, micras: req.micras || 0,
-          color: req.color || 'NATURAL', tratamiento: req.tratamiento || 'LISO',
-          kgProducidos: prodKg,
-          millares: millEntrada,
-          costoUnitario: phaseCost > 0 && prodKg > 0 ? phaseCost / prodKg : 0,
-          fechaFinalizacion: phaseForm.date || getTodayDate(),
-          ubicacion: 'ALMACEN GENERAL',
-          status: 'LISTO PARA ENTREGA',
-          esEntregaParcial: true,
-          fase: activePhaseTab,
-          observaciones: `PRODUCCIÓN PARCIAL — Fase: ${activePhaseTab.toUpperCase()}`,
-          timestamp: Date.now()
-        });
-        // Registrar en OP las entregas parciales
+        const batchId = newBatch.id; // usar el mismo ID del lote
+        const fgId = `FG-${batchId}`;
+        // Evitar duplicados: verificar si ya existe un parcial con este batchId
         const prevParciales = req.entregasParciales || [];
-        await updateDoc(getDocRef('requirements', req.id), {
-          entregasParciales: [...prevParciales, { fgId, kg: prodKg, millares: millEntrada, fecha: phaseForm.date || getTodayDate(), fase: activePhaseTab }]
-        });
+        const yaExiste = prevParciales.some(p => p.batchId === batchId || p.fgId === fgId);
+        if (!yaExiste) {
+          await setDoc(getDocRef('finishedGoodsInventory', fgId), {
+            id: fgId, opId: req.id, reqId: req.id,
+            cliente: req.client || 'N/A',
+            tipoProducto: req.tipoProducto || 'BOLSAS',
+            categoria: req.categoria || '',
+            producto: req.desc || 'Producto',
+            ancho: req.ancho || 0, largo: req.largo || 0, micras: req.micras || 0,
+            color: req.color || 'NATURAL', tratamiento: req.tratamiento || 'LISO',
+            kgProducidos: prodKg,
+            millares: millEntrada,
+            costoUnitario: phaseCost > 0 && prodKg > 0 ? phaseCost / prodKg : 0,
+            fechaFinalizacion: phaseForm.date || getTodayDate(),
+            ubicacion: 'ALMACEN GENERAL',
+            status: 'LISTO PARA ENTREGA',
+            esEntregaParcial: true,
+            fase: activePhaseTab,
+            batchId,
+            observaciones: `PRODUCCIÓN PARCIAL — Fase: ${activePhaseTab.toUpperCase()}`,
+            timestamp: Date.now()
+          });
+          await updateDoc(getDocRef('requirements', req.id), {
+            entregasParciales: [...prevParciales, { fgId, batchId, kg: prodKg, millares: millEntrada, fecha: phaseForm.date || getTodayDate(), fase: activePhaseTab }]
+          });
+        }
       }
 
       setPhaseForm({ ...initialPhaseForm, date: getTodayDate() });
@@ -3993,9 +3998,16 @@ export default function App() {
                     <td className="p-3 text-center text-blue-700" title="MP bruta inyectada (solo fase inicial)">{formatNum(mpInyectadaKg)} kg</td>
                     <td className="p-3 text-center text-green-700" title="KG finales producidos (última fase)">{formatNum(kgProducidosFinales)} kg</td>
                     <td className="p-3 text-center text-red-600">{formatNum(totalMermaKg)} kg ({pctMerma.toFixed(1)}%)</td>
-                    <td className="p-3 text-center text-blue-700 font-bold">{formatNum(allBatches.reduce((s,b)=>s+parseNum(b.mermaDetalle?.troquelTransp||0),0))} kg</td>
-                    <td className="p-3 text-center text-orange-700 font-bold">{formatNum(allBatches.reduce((s,b)=>s+parseNum(b.mermaDetalle?.troquelPigm||0),0))} kg</td>
-                    <td className="p-3 text-center text-amber-700 font-bold">{formatNum(allBatches.reduce((s,b)=>s+parseNum(b.mermaDetalle?.torta||0),0))} kg</td>
+                    {(() => {
+                      const totT=allBatches.reduce((s,b)=>s+parseNum(b.mermaDetalle?.troquelTransp||0),0);
+                      const totP=allBatches.reduce((s,b)=>s+parseNum(b.mermaDetalle?.troquelPigm||0),0);
+                      const totTt=allBatches.reduce((s,b)=>s+parseNum(b.mermaDetalle?.torta||0),0);
+                      return (<>
+                        <td className="p-3 text-center text-blue-700 font-bold">{totT>0?formatNum(totT)+' kg':'—'}</td>
+                        <td className="p-3 text-center text-orange-700 font-bold">{totP>0?formatNum(totP)+' kg':'—'}</td>
+                        <td className="p-3 text-center text-amber-700 font-bold">{totTt>0?formatNum(totTt)+' kg':'—'}</td>
+                      </>);
+                    })()}
                     {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center">{totalMillares>0?formatNum(totalMillares)+' Mill.':'—'}</td>}
                   </tr>
                 </tfoot>
@@ -4292,12 +4304,15 @@ export default function App() {
             fechaCierre: getTodayDate(),
           });
 
-          // Mover a Terminados
-          await handleFinishProduction(req.id, {
-            producedKg: totalKgProd,
-            millaresProd: totalMillares,
-            observations: 'Cierre OP manual'
-          });
+          // Mover a Terminados — solo si NO hay ya entregas parciales registradas
+          const yaHayParciales = (req.entregasParciales || []).length > 0;
+          if (!yaHayParciales) {
+            await handleFinishProduction(req.id, {
+              producedKg: totalKgProd,
+              millaresProd: totalMillares,
+              observations: 'Cierre OP manual'
+            });
+          }
 
           // ── Asiento contable: WIP → Productos Terminados ──
           // Calcular costo total de los WIP asociados a esta OP
