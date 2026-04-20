@@ -5551,8 +5551,6 @@ export default function App() {
       { id: 'super_finiquito', icon: <FileCheck size={26}/>, label: 'Finiquito por OP', desc: 'Por orden individual', color: 'purple' },
       { id: 'estado_financiero', icon: <TrendingUp size={26}/>, label: 'Estado Financiero', desc: 'Estado de resultado integral', color: 'gray' },
       { id: 'variaciones', icon: <TrendingDown size={26}/>, label: 'Variaciones', desc: 'Mes actual vs anterior', color: 'red' },
-      { id: 'estado_resultado', icon: <TrendingUp size={26}/>, label: 'Estado de Resultado', desc: 'Resultado integral por período', color: 'indigo' },
-      { id: 'libro_diario', icon: <ArrowRightLeft size={26}/>, label: 'Libro Diario', desc: 'Asientos contables automáticos', color: 'teal' },
     ];
 
     return (
@@ -5574,6 +5572,17 @@ export default function App() {
                     <div className="text-[9px] text-gray-400 mt-0.5 leading-tight">{card.desc}</div>
                   </button>
                 ))}
+              </div>
+              {/* Estado de Resultado y Libro Diario — abre como módulo separado */}
+              <div className="flex gap-3 mt-3">
+                <button onClick={() => setActiveTab('estado_resultado')}
+                  className="px-5 py-2.5 rounded-xl border-2 border-indigo-200 bg-indigo-50 text-indigo-700 font-black text-[10px] uppercase hover:bg-indigo-100 flex items-center gap-2 transition-all">
+                  <TrendingUp size={14}/> Estado de Resultado
+                </button>
+                <button onClick={() => setActiveTab('libro_diario')}
+                  className="px-5 py-2.5 rounded-xl border-2 border-teal-200 bg-teal-50 text-teal-700 font-black text-[10px] uppercase hover:bg-teal-100 flex items-center gap-2 transition-all">
+                  <ArrowRightLeft size={14}/> Libro Diario
+                </button>
               </div>
             </div>
 
@@ -6121,12 +6130,6 @@ export default function App() {
             {!showReportType && (
               <div className="text-center py-12 text-gray-400"><BarChart3 size={48} className="mx-auto mb-4 opacity-20"/><p className="font-black text-sm uppercase">Seleccione un tipo de reporte para comenzar</p></div>
             )}
-
-            {/* Estado de Resultado — renderizado inline */}
-            {showReportType === 'estado_resultado' && renderEstadoResultadoModule()}
-
-            {/* Libro Diario — renderizado inline */}
-            {showReportType === 'libro_diario' && renderLibroDiarioModule()}
           </div>
         </div>
       </div>
@@ -6207,11 +6210,14 @@ export default function App() {
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:rounded-none print:border-0 print:shadow-none">
           <div className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-gray-900 to-gray-700 print:hidden">
             <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-2xl font-black text-white uppercase flex items-center gap-3">
-                  <ArrowRightLeft className="text-orange-400" size={28}/> Libro Diario — Asientos Contables
-                </h2>
-                <p className="text-xs font-bold text-gray-400 mt-1 uppercase">Registro automático de movimientos contables</p>
+              <div className="flex items-center gap-4">
+                <button onClick={() => setActiveTab('costos')} className="bg-white/20 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-white/30 flex items-center gap-1">← Reportes</button>
+                <div>
+                  <h2 className="text-2xl font-black text-white uppercase flex items-center gap-3">
+                    <ArrowRightLeft className="text-orange-400" size={28}/> Libro Diario — Asientos Contables
+                  </h2>
+                  <p className="text-xs font-bold text-gray-400 mt-1 uppercase">Registro automático de movimientos contables</p>
+                </div>
               </div>
               <button onClick={() => window.print()} className="bg-orange-500 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-orange-600 shadow-lg">
                 <Printer size={16}/> Imprimir
