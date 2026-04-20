@@ -223,6 +223,9 @@ export default function App() {
   const [selectedPhaseReqId, setSelectedPhaseReqId] = useState(null);
   const [activePhaseTab, setActivePhaseTab] = useState('extrusion');
   const [phaseForm, setPhaseForm] = useState(initialPhaseForm);
+  // Segmentación de lotes de producción por OP
+  const [activeLoteIndex, setActiveLoteIndex] = useState(0); // índice del lote activo dentro de la OP
+  const [showLotePanel, setShowLotePanel] = useState(false);
   const [phaseIngId, setPhaseIngId] = useState('');
   const [phaseIngQty, setPhaseIngQty] = useState('');
 
@@ -3604,6 +3607,43 @@ export default function App() {
   };
 
   // ── FUNCIÓN DIRECTA DE GUARDADO DE FASE ──────────────────────────────────
+  // ── HELPERS DE LOTES DE PRODUCCIÓN ────────────────────────────────────────
+  // Obtiene los lotes de producción de una OP (compatible con estructura anterior)
+  const getLotes = (req) => {
+    const prod = req.production || {};
+    // Si ya tiene lotes, retornarlos
+    if (Array.isArray(prod.lotes) && prod.lotes.length > 0) return prod.lotes;
+    // Compatibilidad hacia atrás: convertir estructura plana a lote único
+    if (prod.extrusion || prod.impresion || prod.sellado) {
+      return [{ id: 'L-001', nombre: 'Lote 1', extrusion: prod.extrusion || {batches:[]}, impresion: prod.impresion || {batches:[]}, sellado: prod.sellado || {batches:[]}, cerrado: false }];
+    }
+    return [];
+  };
+
+  const getLoteActivo = (req) => {
+    const lotes = getLotes(req);
+    return lotes[activeLoteIndex] || lotes[lotes.length - 1] || { id: 'L-001', nombre: 'Lote 1', extrusion:{batches:[]}, impresion:{batches:[]}, sellado:{batches:[]}, cerrado: false };
+  };
+
+  const handleCrearNuevoLote = async (req) => {
+    const lotes = getLotes(req);
+    const n = lotes.length + 1;
+    const nuevoLote = { id: `L-${String(n).padStart(3,'0')}`, nombre: `Lote ${n}`, extrusion:{batches:[], isClosed:false}, impresion:{batches:[], isClosed:false}, sellado:{batches:[], isClosed:false}, cerrado: false, fechaCreacion: getTodayDate(), creadoPor: appUser?.name };
+    const nuevosLotes = [...lotes, nuevoLote];
+    await updateDoc(getDocRef('requirements', req.id), { 'production.lotes': nuevosLotes });
+    setActiveLoteIndex(nuevosLotes.length - 1);
+    setPhaseForm({...initialPhaseForm, date: getTodayDate()});
+    setActivePhaseTab('extrusion');
+    setDialog({title:`✅ Lote ${n} creado`, text:`Se creó el Lote ${n} de producción. Registre las fases para este lote.`, type:'alert'});
+  };
+
+  const handleCerrarLote = async (req) => {
+    const lotes = getLotes(req);
+    const updated = lotes.map((l, i) => i === activeLoteIndex ? {...l, cerrado: true, fechaCierre: getTodayDate()} : l);
+    await updateDoc(getDocRef('requirements', req.id), { 'production.lotes': updated });
+    setDialog({title:'Lote Cerrado', text:`El Lote ${activeLoteIndex+1} fue cerrado. Cree un nuevo lote para continuar produciendo.`, type:'alert'});
+  };
+
   const handleSavePhaseDirectly = async (req, isClose) => {
     if (!req) return;
     const prodKg = parseNum(phaseForm?.producedKg);
@@ -3621,7 +3661,11 @@ export default function App() {
       return setDialog({ title: 'Aviso', text: 'Ingrese KG producidos y/o insumos consumidos antes de guardar.', type: 'alert' });
     }
     try {
-      let currentPhase = { ...(req.production?.[activePhaseTab] || { batches: [], isClosed: false }) };
+      // Usar estructura de lotes
+      const lotes = getLotes(req);
+      const loteIdx = Math.min(activeLoteIndex, lotes.length - 1);
+      const loteActual = { ...(lotes[loteIdx] || { id: 'L-001', nombre: 'Lote 1', extrusion:{batches:[]}, impresion:{batches:[]}, sellado:{batches:[]}, cerrado:false }) };
+      let currentPhase = { ...(loteActual[activePhaseTab] || { batches: [], isClosed: false }) };
       const fbBatch = writeBatch(db);
       let phaseCost = 0;
 
@@ -3634,8 +3678,8 @@ export default function App() {
           fbBatch.set(getDocRef('inventoryMovements', movId), {
             id: movId, date: phaseForm.date || getTodayDate(), itemId: item.id, itemName: item.desc,
             type: 'SALIDA', qty: parseNum(ing.qty), cost: item.cost, totalValue: parseNum(ing.qty) * item.cost,
-            reference: req.id, opAsignada: req.id,
-            notes: `PRODUCCIÓN ${activePhaseTab.toUpperCase()}`,
+            reference: req.id, opAsignada: req.id, loteId: loteActual.id,
+            notes: `PRODUCCIÓN ${activePhaseTab.toUpperCase()} — ${loteActual.nombre}`,
             timestamp: Date.now(), user: appUser?.name || 'Planta'
           });
         }
@@ -3707,11 +3751,13 @@ export default function App() {
 
       if (!currentPhase.batches) currentPhase.batches = [];
       currentPhase.batches.push(newBatch);
-      // isClose cierra SOLO esta fase — la OP sigue EN PROCESO hasta "Cierre OP"
       if (isClose) currentPhase.isClosed = true;
 
-      const newProd = { ...(req.production || {}), [activePhaseTab]: currentPhase };
-      // El status de la OP NUNCA cambia aquí — solo cambia en handleCloseOP
+      // Actualizar el lote activo con la fase modificada
+      const updatedLote = { ...loteActual, [activePhaseTab]: currentPhase };
+      const updatedLotes = lotes.map((l, i) => i === loteIdx ? updatedLote : l);
+      // También mantener compatibilidad hacia atrás con estructura plana
+      const newProd = { ...(req.production || {}), lotes: updatedLotes, [activePhaseTab]: currentPhase, status: 'EN PROCESO' };
       fbBatch.update(getDocRef('requirements', req.id), { production: newProd, status: 'EN PROCESO' });
       await fbBatch.commit();
 
@@ -4369,9 +4415,11 @@ export default function App() {
   // ── HELPER: Panel de insumos filtrado por requisiciones aprobadas ──────────
   const renderInsumosPhasePanel = (req, phase) => {
     if (!req || !phase) return null;
+    const prod = req.production || {};
+
+    // ── Total despachado por almacén para esta OP (TODAS las requisiciones aprobadas) ──
     const approved = (invRequisitions || []).filter(r =>
-      r.opId === req.id && r.phase === phase &&
-      (r.status === 'APROBADA' || r.status === 'APROBADO')
+      r.opId === req.id && (r.status === 'APROBADA' || r.status === 'APROBADO')
     );
     const approvedItems = approved.flatMap(r => r.items || []);
     const groupedApproved = {};
@@ -4381,12 +4429,32 @@ export default function App() {
         groupedApproved[it.id] += parseNum(it.qty);
       }
     });
+
+    // ── Total ya CONSUMIDO en lotes ANTERIORES (todos las fases de esta OP) ──
+    const consumidoAnteriores = {};
+    ['extrusion','impresion','sellado'].forEach(ph => {
+      (prod[ph]?.batches || []).forEach(b => {
+        (b.insumos || []).forEach(ing => {
+          if (!consumidoAnteriores[ing.id]) consumidoAnteriores[ing.id] = 0;
+          consumidoAnteriores[ing.id] += parseNum(ing.qty);
+        });
+      });
+    });
+
+    // ── Disponible = despachado - consumido anteriores - lo que ya está en phaseForm actual ──
+    const getDisponible = (id) => {
+      const desp = parseNum(groupedApproved[id] || 0);
+      const consAnt = parseNum(consumidoAnteriores[id] || 0);
+      const consActual = (phaseForm.insumos || []).filter(ing => ing.id === id).reduce((s,ing)=>s+parseNum(ing.qty),0);
+      return Math.max(0, desp - consAnt - consActual);
+    };
+
     const approvedIds = Object.keys(groupedApproved);
 
     if (approvedIds.length === 0) {
       return (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
-          <p className="text-[10px] font-black text-yellow-700 uppercase">Sin requisicion aprobada para esta fase</p>
+          <p className="text-[10px] font-black text-yellow-700 uppercase">Sin requisicion aprobada para esta OP</p>
           <p className="text-[9px] font-bold text-yellow-600 mt-1">Solicite insumos a almacen antes de registrar consumo</p>
         </div>
       );
@@ -4394,65 +4462,89 @@ export default function App() {
 
     // Calcular KG totales despachados y usados para merma automática
     const totalDespachado = approvedIds.reduce((s, id) => s + parseNum(groupedApproved[id]), 0);
-    const totalUsado = (phaseForm.insumos || []).reduce((s, ing) => s + parseNum(ing.qty), 0);
-    const sobrante = Math.max(0, totalDespachado - totalUsado);
+    const totalConsumidoAntes = approvedIds.reduce((s, id) => s + parseNum(consumidoAnteriores[id]||0), 0);
+    const totalUsadoActual = (phaseForm.insumos || []).reduce((s, ing) => s + parseNum(ing.qty), 0);
+    const totalDisponible = Math.max(0, totalDespachado - totalConsumidoAntes - totalUsadoActual);
     const prodKg = parseNum(phaseForm.producedKg);
-    const mermaAuto = totalUsado > 0 ? Math.max(0, totalUsado - prodKg) : 0;
-    const mermaPorc = totalUsado > 0 ? ((mermaAuto / totalUsado) * 100).toFixed(1) : '0.0';
+    const mermaAuto = totalUsadoActual > 0 ? Math.max(0, totalUsadoActual - prodKg) : 0;
+    const mermaPorc = totalUsadoActual > 0 ? ((mermaAuto / totalUsadoActual) * 100).toFixed(1) : '0.0';
 
     return (
       <div>
-        {/* Banner KG despachados por almacén */}
+        {/* ── PROGRESO GLOBAL DE LA OP ── */}
+        <div className="bg-gray-800 text-white rounded-xl p-3 mb-3">
+          <p className="text-[9px] font-black uppercase mb-2 text-orange-400">📊 Progreso de Consumo — OP {req.id}</p>
+          <div className="grid grid-cols-4 gap-2 text-center">
+            <div><div className="text-[8px] text-gray-400">Total Despachado</div><div className="font-black text-blue-300">{formatNum(totalDespachado)} KG</div></div>
+            <div><div className="text-[8px] text-gray-400">Ya Consumido</div><div className="font-black text-orange-300">{formatNum(totalConsumidoAntes)} KG</div></div>
+            <div><div className="text-[8px] text-gray-400">Este Lote</div><div className="font-black text-yellow-300">{formatNum(totalUsadoActual)} KG</div></div>
+            <div><div className="text-[8px] text-gray-400">Disponible</div><div className={`font-black ${totalDisponible<=0?'text-red-400':'text-green-300'}`}>{formatNum(totalDisponible)} KG</div></div>
+          </div>
+          {totalDespachado > 0 && (
+            <div className="mt-2">
+              <div className="w-full bg-gray-700 rounded-full h-1.5">
+                <div className="bg-orange-400 h-1.5 rounded-full" style={{width:`${Math.min(100,((totalConsumidoAntes+totalUsadoActual)/totalDespachado)*100)}%`}}></div>
+              </div>
+              <div className="text-[8px] text-gray-400 text-right mt-0.5">{(((totalConsumidoAntes+totalUsadoActual)/totalDespachado)*100).toFixed(1)}% consumido</div>
+            </div>
+          )}
+        </div>
+
+        {/* Banner por material */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
-          <p className="text-[9px] font-black text-blue-700 uppercase mb-2">📦 Insumos Despachados por Almacén:</p>
+          <p className="text-[9px] font-black text-blue-700 uppercase mb-2">📦 Materiales — Despacho vs Consumo acumulado:</p>
           {approvedIds.map(id => {
             const invItem = (inventory || []).find(i => i && i.id === id);
-            const usado = (phaseForm.insumos || []).filter(ing => ing.id === id).reduce((s, ing) => s + parseNum(ing.qty), 0);
-            const sobrItem = Math.max(0, parseNum(groupedApproved[id]) - usado);
+            const desp = parseNum(groupedApproved[id]);
+            const consAnt = parseNum(consumidoAnteriores[id]||0);
+            const consActual = (phaseForm.insumos||[]).filter(ing=>ing.id===id).reduce((s,ing)=>s+parseNum(ing.qty),0);
+            const disp = Math.max(0, desp - consAnt - consActual);
+            const pctUsado = desp > 0 ? ((consAnt+consActual)/desp*100) : 0;
             return (
-              <div key={id} className="flex justify-between items-center text-[9px] font-bold text-blue-600 mb-1 bg-white rounded px-2 py-1 border border-blue-100">
-                <span className="font-black">{invItem ? invItem.desc : id}</span>
-                <div className="flex gap-3 text-right">
-                  <span className="text-blue-700 font-black">Desp: {formatNum(groupedApproved[id])} {invItem?.unit || 'KG'}</span>
-                  {usado > 0 && <span className="text-green-600 font-black">Usado: {formatNum(usado)}</span>}
-                  {sobrItem > 0 && <span className="text-orange-500 font-black">Sobrante: {formatNum(sobrItem)}</span>}
+              <div key={id} className="mb-2 bg-white rounded px-2 py-1.5 border border-blue-100">
+                <div className="flex justify-between items-center text-[9px] font-bold text-blue-600 mb-1">
+                  <span className="font-black text-gray-800">{invItem ? invItem.desc : id}</span>
+                  <div className="flex gap-2 text-right text-[8px]">
+                    <span className="text-blue-700">Desp: {formatNum(desp)}</span>
+                    {consAnt>0&&<span className="text-orange-600">Ant: {formatNum(consAnt)}</span>}
+                    {consActual>0&&<span className="text-yellow-600">Este: {formatNum(consActual)}</span>}
+                    <span className={disp<=0?'text-red-600 font-black':'text-green-600 font-black'}>Disp: {formatNum(disp)} {disp<=0?'⚠':''}</span>
+                  </div>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-1">
+                  <div className={`h-1 rounded-full ${pctUsado>90?'bg-red-500':pctUsado>70?'bg-orange-400':'bg-green-500'}`} style={{width:`${Math.min(100,pctUsado)}%`}}></div>
                 </div>
               </div>
             );
           })}
         </div>
 
-        {/* Selector de insumo usado (solo del despachado) */}
-        <p className="text-[9px] font-black text-gray-600 uppercase mb-1">Registrar KG Usados Realmente:</p>
-        {/* Mostrar KG restantes por insumo */}
+        {/* Selector de insumo */}
+        <p className="text-[9px] font-black text-gray-600 uppercase mb-1">Registrar KG Usados en Este Lote:</p>
         {phaseIngId && (() => {
-          const maxDesp = parseNum(groupedApproved[phaseIngId] || 0);
-          const yaUsado = (phaseForm.insumos || []).filter(ing => ing.id === phaseIngId).reduce((s, ing) => s + parseNum(ing.qty), 0);
-          const restante = Math.max(0, maxDesp - yaUsado);
-          const invItem = (inventory || []).find(i => i?.id === phaseIngId);
+          const disponible = getDisponible(phaseIngId);
+          const consAnt = parseNum(consumidoAnteriores[phaseIngId]||0);
+          const maxDesp = parseNum(groupedApproved[phaseIngId]||0);
           return (
-            <div className="mb-2 bg-blue-50 border border-blue-200 rounded-xl p-2 flex gap-4 text-[9px] font-bold">
-              <span>Despachado: <span className="font-black text-blue-700">{formatNum(maxDesp)} KG</span></span>
-              <span>Ya usado: <span className="font-black text-orange-600">{formatNum(yaUsado)} KG</span></span>
-              <span className={restante <= 0 ? 'text-red-600 font-black' : 'text-green-700 font-black'}>
-                Disponible: {formatNum(restante)} KG {restante <= 0 ? '⚠ AGOTADO' : '✓'}
+            <div className="mb-2 bg-orange-50 border border-orange-200 rounded-xl p-2 flex gap-3 text-[9px] font-bold flex-wrap">
+              <span>Total: <span className="font-black text-blue-700">{formatNum(maxDesp)} KG</span></span>
+              {consAnt>0&&<span>Lotes ant.: <span className="font-black text-orange-600">-{formatNum(consAnt)} KG</span></span>}
+              <span className={disponible<=0?'text-red-600 font-black':'text-green-700 font-black'}>
+                Para este lote: <span className="font-black">{formatNum(disponible)} KG</span> {disponible<=0?'⚠ AGOTADO':'✓'}
               </span>
-              {maxDesp > 0 && <input type="range" min="0" max={restante} step="0.01" value={parseNum(phaseIngQty)||0} onChange={e=>setPhaseIngQty(e.target.value)} className="flex-1" />}
             </div>
           );
         })()}
         <div className="flex gap-2 mb-3">
           <select value={phaseIngId} onChange={e => setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
-            <option value="">Seleccione insumo despachado...</option>
+            <option value="">Seleccione material...</option>
             {approvedIds.map(id => {
               const invItem = (inventory || []).find(i => i && i.id === id);
               if (!invItem) return null;
-              const maxDesp = parseNum(groupedApproved[id] || 0);
-              const yaUsado = (phaseForm.insumos || []).filter(ing => ing.id === id).reduce((s, ing) => s + parseNum(ing.qty), 0);
-              const restante = Math.max(0, maxDesp - yaUsado);
+              const disp = getDisponible(id);
               return (
-                <option key={id} value={id}>
-                  {id} - {invItem.desc} | Desp: {formatNum(maxDesp)} | Restante: {formatNum(restante)} KG
+                <option key={id} value={id} disabled={disp <= 0}>
+                  {id} - {invItem.desc} | Disponible: {formatNum(disp)} KG {disp<=0?'(AGOTADO)':''}
                 </option>
               );
             })}
@@ -4467,10 +4559,16 @@ export default function App() {
             onClick={() => {
               if (!phaseIngId || !phaseIngQty) return;
               const maxDesp = parseNum(groupedApproved[phaseIngId] || 0);
+              const consAnteriores = approvedIds.includes(phaseIngId)
+                ? (['extrusion','impresion','sellado'].reduce((s,ph)=>{
+                    return s + (prod[ph]?.batches||[]).reduce((ss,b)=>ss+(b.insumos||[]).filter(i=>i.id===phaseIngId).reduce((sss,i)=>sss+parseNum(i.qty),0),0);
+                  },0))
+                : 0;
               const yaUsado = (phaseForm.insumos || []).filter(ing => ing.id === phaseIngId).reduce((s, ing) => s + parseNum(ing.qty), 0);
+              const disponible = Math.max(0, maxDesp - consAnteriores - yaUsado);
               const kgIngresado = parseFloat(phaseIngQty);
-              if (yaUsado + kgIngresado > maxDesp + 0.001) {
-                return setDialog({ title: 'Aviso', text: `No puede usar más de ${formatNum(maxDesp)} KG (despachado por almacén). Ya registró ${formatNum(yaUsado)} KG.`, type: 'alert' });
+              if (kgIngresado > disponible + 0.001) {
+                return setDialog({ title: 'Aviso', text: `Disponible para este lote: ${formatNum(disponible)} KG.\nDespachado total: ${formatNum(maxDesp)} KG.\nYa consumido en lotes anteriores: ${formatNum(consAnteriores)} KG.`, type: 'alert' });
               }
               const newIns = [...(phaseForm.insumos || []), { id: phaseIngId, qty: kgIngresado }];
               const nuevoTotalUsado = newIns.reduce((s, ing) => s + parseNum(ing.qty), 0);
@@ -5067,6 +5165,133 @@ export default function App() {
     }
 
     // ── PRODUCCIÓN ACTIVA ─────────────────────────────────────────────
+    if (prodView === 'en_proceso') {
+      const activeOPs = (requirements||[]).filter(r=>r.status==='EN PROCESO');
+      return (
+        <div className="space-y-6 animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-8 py-5 border-b border-gray-200 bg-gradient-to-r from-orange-50 to-yellow-50 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><Gauge className="text-orange-500" size={24}/> Reporte de Producción en Proceso</h2>
+                <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase">{activeOPs.length} OPs activas — Progreso acumulado por lotes</p>
+              </div>
+            </div>
+            <div className="p-6 space-y-6">
+              {activeOPs.length === 0 ? (
+                <div className="text-center py-12 text-gray-400"><Gauge size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">No hay OPs en proceso</p></div>
+              ) : activeOPs.map(req => {
+                const prod = req.production || {};
+                const allBatches = [
+                  ...(prod.extrusion?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)').map(b=>({...b,fase:'EXTRUSIÓN'})),
+                  ...(prod.impresion?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)').map(b=>({...b,fase:'IMPRESIÓN'})),
+                  ...(prod.sellado?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)').map(b=>({...b,fase:'SELLADO'})),
+                ];
+                // Cadena: MP entrada = extrusión; KG salida = última fase
+                const extB=allBatches.filter(b=>b.fase==='EXTRUSIÓN');
+                const impB=allBatches.filter(b=>b.fase==='IMPRESIÓN');
+                const selB=allBatches.filter(b=>b.fase==='SELLADO');
+                const mpTotal = extB.reduce((s,b)=>{const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);return s+(ins>0?ins:parseNum(b.kgRecibidos||0));},0)||impB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0)||selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0);
+                const lastB=selB.length>0?selB:impB.length>0?impB:extB;
+                const kgProd=lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+                const mermaTotal=Math.max(0,mpTotal-kgProd);
+                const pctMerma=mpTotal>0?((mermaTotal/mpTotal)*100).toFixed(1):0;
+                const millTotal=selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+                const pctAvance=req.tipoProducto==='TERMOENCOGIBLE'?(parseNum(req.requestedKg)>0?(kgProd/parseNum(req.requestedKg)*100):0):(parseNum(req.cantidad)>0?(millTotal/parseNum(req.cantidad)*100):0);
+                // Materiales consumidos acumulados
+                const matsConsumidos={};
+                allBatches.forEach(b=>(b.insumos||[]).forEach(ing=>{matsConsumidos[ing.id]=(matsConsumidos[ing.id]||0)+parseNum(ing.qty);}));
+                // Materiales despachados
+                const matsDespachados={};
+                (invRequisitions||[]).filter(r=>r.opId===req.id&&(r.status==='APROBADO'||r.status==='APROBADA')).flatMap(r=>r.items||[]).forEach(it=>{if(it?.id)matsDespachados[it.id]=(matsDespachados[it.id]||0)+parseNum(it.qty);});
+                return (
+                  <div key={req.id} className="border-2 border-orange-200 rounded-2xl overflow-hidden">
+                    {/* Header OP */}
+                    <div className="bg-gray-800 text-white px-5 py-3 flex justify-between items-center">
+                      <div>
+                        <span className="font-black text-orange-400">OP #{String(req.id).replace('OP-','').padStart(5,'0')}</span>
+                        <span className="font-bold text-white ml-3 uppercase">{req.client}</span>
+                        <span className="text-gray-400 ml-3 text-[10px]">{req.desc}</span>
+                      </div>
+                      <div className="flex gap-4 text-right text-[10px]">
+                        <div><div className="text-gray-400">Solicitado</div><div className="font-black text-white">{req.tipoProducto==='TERMOENCOGIBLE'?formatNum(req.requestedKg)+' KG':formatNum(req.cantidad)+' Mill.'}</div></div>
+                        <div><div className="text-gray-400">Producido</div><div className="font-black text-green-400">{req.tipoProducto==='TERMOENCOGIBLE'?formatNum(kgProd)+' KG':formatNum(millTotal)+' Mill.'}</div></div>
+                        <div><div className="text-gray-400">Avance</div><div className={`font-black text-lg ${pctAvance>=100?'text-green-400':pctAvance>50?'text-yellow-400':'text-orange-400'}`}>{parseFloat(pctAvance).toFixed(1)}%</div></div>
+                      </div>
+                    </div>
+                    {/* Progress bar */}
+                    <div className="px-5 py-2 bg-gray-700">
+                      <div className="w-full bg-gray-600 rounded-full h-2">
+                        <div className="bg-orange-500 h-2 rounded-full transition-all" style={{width:`${Math.min(100,pctAvance)}%`}}></div>
+                      </div>
+                    </div>
+                    {/* KPIs */}
+                    <div className="grid grid-cols-4 gap-0 border-b border-gray-200 bg-gray-50">
+                      {[['MP Inyectada',formatNum(mpTotal)+' KG','text-blue-700'],['KG Producidos',formatNum(kgProd)+' KG','text-green-700'],['Merma Total',formatNum(mermaTotal)+' KG ('+pctMerma+'%)','text-red-600'],[req.tipoProducto==='TERMOENCOGIBLE'?'KG Producidos':'Millares Prod.',req.tipoProducto==='TERMOENCOGIBLE'?formatNum(kgProd)+' KG':formatNum(millTotal)+' Mill.','text-blue-600']].map(([l,v,c],i)=>(
+                        <div key={i} className={`p-4 text-center ${i<3?'border-r border-gray-200':''}`}>
+                          <div className="text-[8px] font-black text-gray-500 uppercase">{l}</div>
+                          <div className={`text-lg font-black ${c}`}>{v}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Lotes */}
+                    {allBatches.length > 0 && (
+                      <div className="p-4">
+                        <p className="text-[9px] font-black uppercase text-gray-500 mb-2">Lotes registrados ({allBatches.length})</p>
+                        <table className="w-full text-xs border-collapse">
+                          <thead><tr className="bg-gray-100 text-[9px] font-black uppercase text-gray-500"><th className="p-2 border text-left">Fase</th><th className="p-2 border text-center">Fecha</th><th className="p-2 border text-center">KG Entrada</th><th className="p-2 border text-center">KG Salida</th><th className="p-2 border text-center">Merma</th><th className="p-2 border text-left">Materiales Usados</th><th className="p-2 border text-left">Obs.</th></tr></thead>
+                          <tbody>
+                            {allBatches.map((b,i)=>{
+                              const insKg=(b.insumos||[]).reduce((s,i)=>s+parseNum(i.qty),0);
+                              const entKg=b.fase==='EXTRUSIÓN'&&insKg>0?insKg:parseNum(b.kgRecibidos||b.totalInsumosKg||0);
+                              const pctM=entKg>0?((parseNum(b.mermaKg)/entKg)*100).toFixed(1):b.mermaPorc||0;
+                              return (<tr key={i} className="hover:bg-gray-50">
+                                <td className="p-2 border font-black">{b.fase}<span className="text-[8px] text-gray-400 ml-1">L{i+1}</span></td>
+                                <td className="p-2 border text-center text-gray-600">{b.date}</td>
+                                <td className="p-2 border text-center text-blue-700 font-bold">{formatNum(entKg)} KG</td>
+                                <td className="p-2 border text-center text-green-700 font-bold">{formatNum(b.producedKg)} KG{b.techParams?.millares>0?<span className="text-[9px] text-blue-500 block">{formatNum(b.techParams.millares)} Mill.</span>:null}</td>
+                                <td className="p-2 border text-center text-red-600 font-bold">{formatNum(b.mermaKg)} KG<span className="text-[9px] block">({pctM}%)</span></td>
+                                <td className="p-2 border text-[9px]">{(b.insumos||[]).map(ing=>{const inv=(inventory||[]).find(iv=>iv.id===ing.id);return <div key={ing.id} className="text-orange-700 font-bold">{inv?.desc||ing.id}: {formatNum(ing.qty)} KG</div>;}){(b.insumos||[]).length===0&&<span className="text-gray-400">—</span>}</td>
+                                <td className="p-2 border text-[9px] text-indigo-600">{b.observaciones||'—'}</td>
+                              </tr>);
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {/* Materiales: despachado vs consumido */}
+                    {Object.keys(matsDespachados).length > 0 && (
+                      <div className="p-4 pt-0">
+                        <p className="text-[9px] font-black uppercase text-gray-500 mb-2">Balance de Materiales — Despachado vs Consumido:</p>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                          {Object.entries(matsDespachados).map(([id,desp])=>{
+                            const inv=(inventory||[]).find(iv=>iv.id===id);
+                            const cons=parseNum(matsConsumidos[id]||0);
+                            const pct=desp>0?(cons/desp*100):0;
+                            const rest=Math.max(0,desp-cons);
+                            return (<div key={id} className="bg-white border border-gray-200 rounded-xl p-3">
+                              <div className="font-black text-[10px] text-gray-800 mb-1">{inv?.desc||id}</div>
+                              <div className="flex justify-between text-[9px] mb-1">
+                                <span className="text-blue-600">Desp: {formatNum(desp)} KG</span>
+                                <span className="text-orange-600">Cons: {formatNum(cons)} KG</span>
+                              </div>
+                              <div className="w-full bg-gray-200 rounded-full h-1.5 mb-1">
+                                <div className={`h-1.5 rounded-full ${pct>90?'bg-red-500':pct>60?'bg-orange-400':'bg-green-500'}`} style={{width:`${Math.min(100,pct)}%`}}></div>
+                              </div>
+                              <div className={`text-[9px] font-black text-right ${rest<=0?'text-red-600':'text-green-600'}`}>Rest: {formatNum(rest)} KG</div>
+                            </div>);
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (prodView === 'activos') {
       const activeReqs = requirements.filter(r => r.status === 'EN PROCESO' || r.status === 'PENDIENTE' || !r.status);
       return (
@@ -5125,10 +5350,40 @@ export default function App() {
                             })()}
                           </div>
                           <div className="flex gap-2 flex-wrap justify-end">
+                            {/* SELECTOR DE LOTE */}
+                            {(() => {
+                              const lotes = getLotes(req);
+                              if (lotes.length === 0) return null;
+                              return (
+                                <div className="flex items-center gap-2 bg-gray-100 rounded-xl px-3 py-1.5">
+                                  <span className="text-[9px] font-black text-gray-500 uppercase">Lote:</span>
+                                  <select value={activeLoteIndex} onChange={e=>setActiveLoteIndex(parseInt(e.target.value))}
+                                    className="bg-transparent text-[10px] font-black text-black outline-none">
+                                    {lotes.map((l,i)=>(
+                                      <option key={l.id} value={i}>{l.nombre} {l.cerrado?'✓':''}</option>
+                                    ))}
+                                  </select>
+                                  <button onClick={()=>handleCrearNuevoLote(req)}
+                                    className="bg-green-500 text-white px-2 py-0.5 rounded-lg text-[9px] font-black hover:bg-green-600 flex items-center gap-1">
+                                    <Plus size={10}/> NUEVO LOTE
+                                  </button>
+                                </div>
+                              );
+                            })()}
                             <button onClick={()=>setShowOrdenTrabajo(req.id)} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-gray-800 text-white hover:bg-black flex items-center gap-1 transition-all"><FileText size={13}/> ORDEN DE TRABAJO</button>
                             <button onClick={() => {
                               if (isOpen) { setSelectedPhaseReqId(null); setProdSubMode('fase'); }
-                              else { setSelectedPhaseReqId(req.id); setProdSubMode('requisicion'); setActivePhaseTab('extrusion'); setPhaseForm({...initialPhaseForm, date: getTodayDate()}); }
+                              else {
+                                // Inicializar lotes si no existen
+                                const lotes = getLotes(req);
+                                if (lotes.length === 0) {
+                                  handleCrearNuevoLote(req).then(() => {
+                                    setSelectedPhaseReqId(req.id); setProdSubMode('requisicion'); setActivePhaseTab('extrusion'); setPhaseForm({...initialPhaseForm, date: getTodayDate()});
+                                  });
+                                } else {
+                                  setSelectedPhaseReqId(req.id); setProdSubMode('requisicion'); setActivePhaseTab('extrusion'); setPhaseForm({...initialPhaseForm, date: getTodayDate()});
+                                }
+                              }
                             }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${isOpen ? 'bg-gray-200 text-gray-700' : 'bg-orange-500 text-white hover:bg-orange-600 shadow-md'}`}>{isOpen ? <X size={14}/> : <Plus size={14}/>}{isOpen ? 'CERRAR' : 'REGISTRAR FASE'}</button>
                             {/* BOTÓN ENTREGA PARCIAL */}
                             <button
@@ -5659,6 +5914,146 @@ export default function App() {
     }
 
     // ── HISTORIAL / FINIQUITOS ────────────────────────────────────────
+    if (prodView === 'en_proceso') {
+      const activeReqs = requirements.filter(r => r.status === 'EN PROCESO' || r.status === 'PENDIENTE');
+      return (
+        <div className="space-y-6 animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-8 py-6 border-b border-gray-200 bg-orange-50">
+              <h2 className="text-xl font-black text-orange-800 uppercase flex items-center gap-3"><BarChart3 className="text-orange-600" size={24}/> Reporte de Producción en Proceso</h2>
+              <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase">Acumulado por lotes — materiales usados vs solicitados</p>
+            </div>
+            <div className="p-6 space-y-8">
+              {activeReqs.length === 0 ? (
+                <div className="text-center py-12 text-gray-400"><BarChart3 size={40} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">No hay OPs activas</p></div>
+              ) : activeReqs.map(req => {
+                const lotes = getLotes(req);
+                const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
+                // Acumular todos los batches de todos los lotes
+                const allLoteBatches = (fase) => lotes.flatMap(l => (l[fase]?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)' && parseNum(b.producedKg)>0).map(b=>({...b,loteNombre:l.nombre,loteId:l.id})));
+                const extAll = allLoteBatches('extrusion');
+                const impAll = allLoteBatches('impresion');
+                const selAll = allLoteBatches('sellado');
+                const lastPhBatches = selAll.length>0?selAll:impAll.length>0?impAll:extAll;
+                const totalKgProd = lastPhBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
+                const totalMill = lastPhBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+                const totalMerma = [...extAll,...impAll,...selAll].reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
+                const mpTotal = extAll.reduce((s,b)=>{const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0); return s+(ins>0?ins:parseNum(b.kgRecibidos||0));},0);
+                // Materiales despachados vs usados
+                const reqApproved = (invRequisitions||[]).filter(r=>r.opId===req.id&&(r.status==='APROBADA'||r.status==='APROBADO'));
+                const despachado = {};
+                reqApproved.forEach(r=>(r.items||[]).forEach(it=>{ despachado[it.id]=(despachado[it.id]||0)+parseNum(it.qty); }));
+                const usadoReal = {};
+                [...extAll,...impAll,...selAll].forEach(b=>(b.insumos||[]).forEach(i=>{ usadoReal[i.id]=(usadoReal[i.id]||0)+parseNum(i.qty); }));
+                const solicitadoTotal = Object.values(despachado).reduce((s,v)=>s+v,0);
+                const usadoTotal = Object.values(usadoReal).reduce((s,v)=>s+v,0);
+                const restanteTotal = Math.max(0, solicitadoTotal - usadoTotal);
+                return (
+                  <div key={req.id} className="border-2 border-orange-200 rounded-2xl overflow-hidden">
+                    <div className="bg-orange-600 text-white px-5 py-3 flex justify-between items-center">
+                      <div>
+                        <span className="font-black text-lg">OP #{String(req.id).replace('OP-','').padStart(5,'0')}</span>
+                        <span className="ml-3 font-bold text-orange-100">{req.client}</span>
+                        <span className="ml-3 text-[10px] text-orange-200">{req.desc}</span>
+                      </div>
+                      <div className="flex gap-4 text-right text-xs">
+                        <div><span className="text-orange-200 block text-[9px]">Solicitado</span><span className="font-black">{formatNum(req.requestedKg)} KG</span></div>
+                        <div><span className="text-orange-200 block text-[9px]">Producido</span><span className="font-black text-green-300">{esTermo?formatNum(totalKgProd)+' KG':formatNum(totalMill)+' Mill.'}</span></div>
+                        <div><span className="text-orange-200 block text-[9px]">Merma</span><span className="font-black text-red-300">{formatNum(totalMerma)} KG</span></div>
+                        <div><span className="text-orange-200 block text-[9px]">{lotes.length} Lotes</span><span className="font-black">{lotes.filter(l=>l.cerrado).length} cerrados</span></div>
+                      </div>
+                    </div>
+                    {/* Material balance */}
+                    {Object.keys(despachado).length > 0 && (
+                      <div className="bg-blue-50 border-b border-blue-200 p-4">
+                        <h4 className="text-[9px] font-black text-blue-700 uppercase mb-2">📦 Balance de Materiales — Despachado vs Usado</h4>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead><tr className="text-[9px] font-black uppercase text-blue-600"><th className="text-left p-1">Material</th><th className="text-right p-1">Despachado</th><th className="text-right p-1">Usado Real</th><th className="text-right p-1">Restante</th><th className="text-right p-1">% Uso</th></tr></thead>
+                            <tbody>
+                              {Object.entries(despachado).map(([id, desp])=>{
+                                const inv = (inventory||[]).find(i=>i.id===id);
+                                const usado = usadoReal[id]||0;
+                                const rest = Math.max(0, desp-usado);
+                                const pct = desp>0?(usado/desp*100).toFixed(1):0;
+                                return (
+                                  <tr key={id} className="border-t border-blue-100">
+                                    <td className="p-1 font-bold text-blue-800">{id} <span className="text-gray-500 font-normal">{inv?.desc||''}</span></td>
+                                    <td className="p-1 text-right font-black">{formatNum(desp)} KG</td>
+                                    <td className="p-1 text-right font-black text-orange-700">{formatNum(usado)} KG</td>
+                                    <td className={`p-1 text-right font-black ${rest<=0?'text-red-600':'text-green-700'}`}>{formatNum(rest)} KG</td>
+                                    <td className="p-1 text-right">
+                                      <div className="flex items-center gap-1 justify-end">
+                                        <div className="w-16 bg-gray-200 rounded-full h-1.5"><div className={`h-1.5 rounded-full ${parseNum(pct)>90?'bg-red-500':parseNum(pct)>60?'bg-yellow-500':'bg-green-500'}`} style={{width:`${Math.min(100,pct)}%`}}></div></div>
+                                        <span className="font-black text-[9px]">{pct}%</span>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                    {/* Lotes */}
+                    <div className="p-4 space-y-3">
+                      {lotes.map((lote,li)=>{
+                        const lExt=(lote.extrusion?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)'&&parseNum(b.producedKg)>0);
+                        const lImp=(lote.impresion?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)'&&parseNum(b.producedKg)>0);
+                        const lSel=(lote.sellado?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)'&&parseNum(b.producedKg)>0);
+                        const lLast=lSel.length>0?lSel:lImp.length>0?lImp:lExt;
+                        const lKgProd=lLast.reduce((s,b)=>s+parseNum(b.producedKg),0);
+                        const lMill=lLast.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+                        const lMerma=[...lExt,...lImp,...lSel].reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
+                        const lMP=lExt.reduce((s,b)=>{const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);return s+(ins>0?ins:parseNum(b.kgRecibidos||0));},0);
+                        const totalFaseBatches=[...lExt,...lImp,...lSel].length;
+                        return (
+                          <div key={lote.id} className={`rounded-xl border-2 ${lote.cerrado?'border-green-300 bg-green-50':'border-orange-200 bg-orange-50'}`}>
+                            <div className="flex justify-between items-center px-4 py-2">
+                              <div className="flex items-center gap-3">
+                                <span className={`font-black text-sm ${lote.cerrado?'text-green-700':'text-orange-700'}`}>{lote.nombre} {lote.cerrado?'✓ CERRADO':'⏳ EN PROCESO'}</span>
+                                <span className="text-[9px] text-gray-500">{lote.fechaCreacion}</span>
+                              </div>
+                              <div className="flex gap-4 text-xs">
+                                <span className="font-bold text-green-700">{esTermo?formatNum(lKgProd)+' KG':formatNum(lMill)+' Mill.'}</span>
+                                <span className="font-bold text-red-600">Merma: {formatNum(lMerma)} KG</span>
+                                <span className="text-gray-500">{totalFaseBatches} registros</span>
+                              </div>
+                            </div>
+                            {totalFaseBatches > 0 && (
+                              <div className="px-4 pb-3">
+                                <table className="w-full text-xs">
+                                  <thead><tr className="text-[8px] font-black uppercase text-gray-500"><th className="text-left pb-1">Fase</th><th className="text-center pb-1">Fecha</th><th className="text-center pb-1">KG Prod.</th><th className="text-center pb-1">Merma</th><th className="text-center pb-1">Millares</th><th className="text-left pb-1">Obs.</th></tr></thead>
+                                  <tbody>
+                                    {[...lExt.map(b=>({...b,fase:'EXTRUSIÓN'})),...lImp.map(b=>({...b,fase:'IMPRESIÓN'})),...lSel.map(b=>({...b,fase:'SELLADO'}))].map((b,bi)=>(
+                                      <tr key={bi} className="border-t border-gray-100">
+                                        <td className="py-1 font-bold">{b.fase}</td>
+                                        <td className="py-1 text-center text-gray-500">{b.date}</td>
+                                        <td className="py-1 text-center font-black text-green-700">{formatNum(b.producedKg)}</td>
+                                        <td className="py-1 text-center text-red-600">{formatNum(b.mermaKg)} ({b.mermaPorc}%)</td>
+                                        <td className="py-1 text-center text-blue-600">{parseNum(b.techParams?.millares||0)>0?formatNum(b.techParams.millares):'—'}</td>
+                                        <td className="py-1 text-[9px] text-indigo-600">{b.observaciones||''}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {lotes.length === 0 && <div className="text-center py-4 text-gray-400 text-xs">Sin lotes creados. Haga clic en "REGISTRAR FASE" para iniciar.</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (prodView === 'reportes') {
       const completedReqs = requirements.filter(r => r.status === 'COMPLETADO');
       return (
@@ -7766,6 +8161,7 @@ export default function App() {
                    {id:'proyeccion', icon:<TrendingUp size={16}/>, label:'Proyección MP', perm:'produccion_proyeccion'},
                    {id:'ordenes_compra', icon:<ShoppingCart size={16}/>, label:'Órdenes Compra', perm:'produccion_ordenes'},
                    {id:'activos', icon:<PlayCircle size={16}/>, label:'Producción Activa', perm:'produccion_activa'}, 
+                   {id:'en_proceso', icon:<Gauge size={16}/>, label:'Reporte en Proceso', perm:'produccion_activa'},
                    {id:'reportes', icon:<FileText size={16}/>, label:'Historial / Reportes', perm:'produccion_historial'}
                  ].filter(t => hasPerm('produccion') && (hasPerm(t.perm) || appUser?.role==='Master')).map(t => (
                     <button key={t.id} onClick={()=>{setProdView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${prodView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
