@@ -6817,35 +6817,33 @@ export default function App() {
   ];
 
   const handleResetSystem = () => {
-    requireAdminPassword(async () => {
-      setDialog({
-        title: '⚠️ ÚLTIMO AVISO',
-        text: 'Se borrarán TODOS los datos operativos (inventario, movimientos, facturas, OPs, costos, asientos, etc.). Los usuarios y configuración se conservan. Esta acción es IRREVERSIBLE. ¿Confirmar?',
-        type: 'confirm',
-        onConfirm: async () => {
-          try {
-            let totalDeleted = 0;
-            for (const colName of RESET_COLLECTIONS) {
-              // Firestore no permite borrar colecciones de golpe — borramos doc a doc en batch
-              const snap = await new Promise((res) => {
-                const unsub = onSnapshot(collection(db, colName), (s) => { unsub(); res(s); });
-              });
-              const docs = snap.docs;
-              // Firestore batch max 500 ops
-              for (let i = 0; i < docs.length; i += 400) {
-                const b = writeBatch(db);
-                docs.slice(i, i + 400).forEach(d => b.delete(d.ref));
-                await b.commit();
-              }
-              totalDeleted += docs.length;
+    setDialog({
+      title: '⚠️ ÚLTIMO AVISO',
+      text: 'Se borrarán TODOS los datos operativos (inventario, movimientos, facturas, OPs, costos, asientos, etc.). Los usuarios y configuración se conservan. Esta acción es IRREVERSIBLE. ¿Confirmar?',
+      type: 'confirm',
+      onConfirm: async () => {
+        try {
+          let totalDeleted = 0;
+          for (const colName of RESET_COLLECTIONS) {
+            // Firestore no permite borrar colecciones de golpe — borramos doc a doc en batch
+            const snap = await new Promise((res) => {
+              const unsub = onSnapshot(collection(db, colName), (s) => { unsub(); res(s); });
+            });
+            const docs = snap.docs;
+            // Firestore batch max 500 ops
+            for (let i = 0; i < docs.length; i += 400) {
+              const b = writeBatch(db);
+              docs.slice(i, i + 400).forEach(d => b.delete(d.ref));
+              await b.commit();
             }
-            setDialog({ title: '✅ Sistema Reiniciado', text: `Se eliminaron ${totalDeleted} registros. El sistema está completamente limpio y listo para comenzar desde cero. Importe su inventario desde Configuración.`, type: 'alert' });
-          } catch (err) {
-            setDialog({ title: 'Error en Reset', text: err.message, type: 'alert' });
+            totalDeleted += docs.length;
           }
+          setDialog({ title: '✅ Sistema Reiniciado', text: `Se eliminaron ${totalDeleted} registros. El sistema está completamente limpio y listo para comenzar desde cero. Importe su inventario desde Configuración.`, type: 'alert' });
+        } catch (err) {
+          setDialog({ title: 'Error en Reset', text: err.message, type: 'alert' });
         }
-      });
-    }, 'RESETEAR SISTEMA COMPLETO');
+      }
+    });
   };
 
   // ============================================================================
