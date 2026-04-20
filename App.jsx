@@ -839,12 +839,22 @@ export default function App() {
     if (field === 'client') { const c = (clients || []).find(cl => cl.name === (value||'').toUpperCase()); if (c && c.vendedor) f.vendedor = c.vendedor.toUpperCase(); }
     if (field === 'tipoProducto' && value === 'TERMOENCOGIBLE') f.presentacion = 'KILOS';
     const w = parseNum(f.ancho), l = parseNum(f.largo), m = parseNum(f.micras), fu = parseNum(f.fuelles), c = parseNum(f.cantidad), tipo = f.tipoProducto;
+    const MERMA_PCT = 0.05; // 5% merma automática
     if (w > 0 && m > 0) {
       const micFmt = m < 1 && m > 0 ? Math.round(m * 1000) : m;
-      if (tipo === 'BOLSAS' && l > 0) { const pEst = (w + fu) * l * m; f.pesoMillar = pEst.toFixed(2); f.desc = fu > 0 ? `(${w}+${fu/2}+${fu/2})X${l}X${micFmt}MIC | ${f.color || ''}` : `${w}X${l}X${micFmt}MIC | ${f.color || ''}`; f.requestedKg = f.presentacion === 'KILOS' ? c.toFixed(2) : (pEst * c).toFixed(2); } 
-      else if (tipo === 'TERMOENCOGIBLE') { f.pesoMillar = 'N/A'; f.desc = `TERMOENCOGIBLE ${w}CM X ${micFmt}MIC | ${f.color || ''}`; f.requestedKg = c > 0 ? c.toFixed(2) : '0.00'; } 
+      if (tipo === 'BOLSAS' && l > 0) {
+        const pEst = (w + fu) * l * m; // gramos por millar
+        f.pesoMillar = pEst.toFixed(2);
+        f.desc = fu > 0 ? `(${w}+${fu/2}+${fu/2})X${l}X${micFmt}MIC | ${f.color || ''}` : `${w}X${l}X${micFmt}MIC | ${f.color || ''}`;
+        // KG netos = pesoMillar(g) * cantidad(millares) / 1000
+        const kgNetos = f.presentacion === 'KILOS' ? c : (pEst * c) / 1000;
+        // KG a producir = KG netos / (1 - 5%) para cubrir merma
+        const kgConMerma = kgNetos > 0 ? (kgNetos / (1 - MERMA_PCT)) : 0;
+        f.requestedKg = kgConMerma.toFixed(2);
+      }
+      else if (tipo === 'TERMOENCOGIBLE') { f.pesoMillar = 'N/A'; f.desc = `TERMOENCOGIBLE ${w}CM X ${micFmt}MIC | ${f.color || ''}`; const kgNetos = c > 0 ? c : 0; f.requestedKg = kgNetos > 0 ? (kgNetos / (1 - MERMA_PCT)).toFixed(2) : '0.00'; }
       else { f.pesoMillar = '0.00'; f.requestedKg = '0.00'; }
-    } else { f.pesoMillar = tipo === 'TERMOENCOGIBLE' ? 'N/A' : '0.00'; f.requestedKg = f.presentacion === 'KILOS' && c > 0 ? c.toFixed(2) : '0.00'; }
+    } else { f.pesoMillar = tipo === 'TERMOENCOGIBLE' ? 'N/A' : '0.00'; f.requestedKg = f.presentacion === 'KILOS' && c > 0 ? (c / (1 - MERMA_PCT)).toFixed(2) : '0.00'; }
     setNewReqForm(f);
   };
 
@@ -1294,60 +1304,37 @@ export default function App() {
 
   const renderHome = () => {
     const hasPerm = (module) => appUser?.permissions ? appUser.permissions[module] : appUser?.role === 'Master';
-    
+    const moduleCards = [
+      hasPerm('ventas') && { tab:'ventas', view:()=>setVentasView('facturacion'), icon:<Users size={36}/>, title:'Ventas y Facturación', desc:'Directorio, OP y Facturación', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
+      hasPerm('produccion') && { tab:'produccion', view:()=>setProdView('proyeccion'), icon:<Factory size={36}/>, title:'Producción Planta', desc:'Control de Fases y Reportes', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
+      hasPerm('produccion') && { tab:'formulas', icon:<Beaker size={36}/>, title:'Fórmulas / Recetas', desc:'Recetas por categoría y fases', color:'border-purple-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-purple-500' },
+      hasPerm('inventario') && { tab:'inventario', view:()=>setInvView('catalogo'), icon:<Package size={36}/>, title:'Control Inventario', desc:'Art. 177 LISLR, Movimientos y Kardex', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
+      hasPerm('produccion') && { tab:'simulador', icon:<Calculator size={36}/>, title:'Simulador OP', desc:'Calculadora Inversa de Producción y Mermas', color:'border-orange-400', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-orange-500' },
+      hasPerm('costos') && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
+      hasPerm('costos') && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
+      hasPerm('costos') && { tab:'estado_resultado', icon:<TrendingUp size={36}/>, title:'Estado de Resultado', desc:'Estado Integral por período', color:'border-indigo-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-indigo-600' },
+      hasPerm('costos') && { tab:'libro_diario', icon:<ArrowRightLeft size={36}/>, title:'Libro Diario', desc:'Asientos contables automáticos', color:'border-teal-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-teal-600' },
+      hasPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={36}/>, title:'Configuración', desc:'Usuarios, Permisos y Respaldo', color:'border-gray-400', bg:'bg-white', textColor:'text-gray-800', descColor:'text-gray-400', iconColor:'text-gray-500' },
+    ].filter(Boolean);
+
     return (
       <div className="w-full max-w-6xl mx-auto py-8 animate-in fade-in">
         <div className="text-center mb-10">
           <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
           <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
-          {hasPerm('ventas') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Users size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Ventas y Facturación</h3><p className="text-xs text-gray-400 mt-2">Directorio, OP y Facturación.</p></button>
-          )}
-          {hasPerm('produccion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('proyeccion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
-          )}
-          {hasPerm('produccion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('formulas'); }} className="group bg-black border-l-4 border-purple-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Beaker size={40} className="text-purple-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Fórmulas / Recetas</h3><p className="text-xs text-gray-400 mt-2">Recetas por categoría y fases.</p></button>
-          )}
-          {hasPerm('inventario') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p></button>
-          )}
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
-          {hasPerm('produccion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('simulador'); }} className="group bg-white border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-orange-50 transition-all shadow-md">
-               <Calculator size={40} className="text-orange-500 mb-4" />
-               <h3 className="text-xl font-black text-gray-800 uppercase">Simulador OP</h3>
-               <p className="text-xs text-gray-500 mt-2">Calculadora Inversa de Producción y Mermas.</p>
-             </button>
-          )}
-          {hasPerm('costos') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('costos_operativos'); }} className="group bg-white border-l-4 border-green-500 rounded-3xl p-10 text-left hover:bg-green-50 transition-all shadow-md">
-               <DollarSign size={40} className="text-green-600 mb-4" />
-               <h3 className="text-xl font-black text-gray-800 uppercase">Costos Operativos</h3>
-               <p className="text-xs text-gray-500 mt-2">Registro de gastos y resumen visual por categoría.</p>
-             </button>
-          )}
-          {hasPerm('costos') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('costos'); }} className="group bg-white border-l-4 border-blue-500 rounded-3xl p-10 text-left hover:bg-blue-50 transition-all shadow-md">
-               <BarChart3 size={40} className="text-blue-600 mb-4" />
-               <h3 className="text-xl font-black text-gray-800 uppercase">Reportes Financieros</h3>
-               <p className="text-xs text-gray-500 mt-2">Dashboard de Rentabilidad, Ingresos vs Costos.</p>
-             </button>
-          )}
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 mt-8">
-          {hasPerm('configuracion') && (
-             <button onClick={() => { clearAllReports(); setActiveTab('configuracion'); }} className="group bg-white border-l-4 border-gray-300 rounded-3xl p-10 text-left hover:bg-gray-50 transition-all shadow-md">
-               <Settings2 size={40} className="text-gray-400 mb-4" />
-               <h3 className="text-xl font-black text-gray-800 uppercase">Configuración</h3>
-               <p className="text-xs text-gray-400 mt-2">Usuarios y Permisos.</p>
-             </button>
-          )}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 px-4">
+          {moduleCards.map((card, i) => (
+            <button key={i}
+              onClick={() => { clearAllReports(); setActiveTab(card.tab); if(card.view) card.view(); }}
+              className={`${card.bg} border-l-4 ${card.color} rounded-2xl p-6 text-left hover:opacity-90 hover:scale-[1.02] transition-all shadow-md flex flex-col gap-3`}>
+              <div className={card.iconColor}>{card.icon}</div>
+              <div>
+                <h3 className={`text-sm font-black ${card.textColor} uppercase leading-tight`}>{card.title}</h3>
+                <p className={`text-[10px] ${card.descColor} mt-1 leading-snug`}>{card.desc}</p>
+              </div>
+            </button>
+          ))}
         </div>
       </div>
     );
@@ -4575,10 +4562,6 @@ export default function App() {
     }
 
     // ── PROYECCIÓN MP ────────────────────────────────────────────────
-    if (prodView === 'formulas') {
-      return renderFormulasModule();
-    }
-
     if (prodView === 'proyeccion') {
       const projection = generateProjectionData();
       return (
@@ -5135,8 +5118,8 @@ export default function App() {
                                 <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-5 space-y-4">
                                   {(() => {
                                     const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
-                                    const pesoMillar = parseNum(req.pesoMillar) || 0; // gramos por millar
-                                    const pesoMillarKg = pesoMillar / 1000; // kg por millar
+                                    const pesoMillar = parseNum(req.pesoMillar) || 0; // gramos por millar (1000 bolsas)
+                                    const kgPorMillar = pesoMillar / 1000; // KG por millar
                                     return (
                                   <div className="grid grid-cols-3 gap-4">
                                     <div>
@@ -5162,19 +5145,21 @@ export default function App() {
                                         <input type="number" step="0.01" value={phaseForm.millaresProd}
                                           onChange={e => {
                                             const mill = e.target.value;
-                                            // Auto-calcular KG desde Millares
-                                            const kgAutoCalc = pesoMillarKg > 0 ? (parseNum(mill) * pesoMillarKg).toFixed(2) : phaseForm.producedKg;
+                                            const millNum = parseNum(mill);
+                                            // KG totales = Millares × (pesoMillar en gramos / 1000)
+                                            const kgCalculado = kgPorMillar > 0 ? (millNum * kgPorMillar).toFixed(2) : phaseForm.producedKg;
                                             const insumosTotal = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
                                             const kgBase = insumosTotal > 0 ? insumosTotal : activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp) : activePhaseTab === 'sellado' ? parseNum(phaseForm.kgRecibidosSel) : 0;
-                                            const kgFinal = kgAutoCalc !== phaseForm.producedKg ? kgAutoCalc : phaseForm.producedKg;
+                                            const kgFinal = kgPorMillar > 0 ? kgCalculado : phaseForm.producedKg;
                                             const autoMerma = kgBase > 0 && parseNum(kgFinal) >= 0 ? Math.max(0, kgBase - parseNum(kgFinal)).toFixed(2) : phaseForm.mermaKg;
                                             setPhaseForm({...phaseForm, millaresProd: mill, producedKg: kgFinal, mermaKg: autoMerma});
                                           }}
                                           className="w-full border-2 border-orange-400 rounded-xl p-2 text-sm font-black outline-none focus:border-orange-600 text-center bg-orange-50" placeholder="0.00" />
-                                        {pesoMillarKg > 0 && parseNum(phaseForm.millaresProd) > 0 && (
-                                          <span className="text-[9px] font-bold text-orange-600 block mt-1 text-center">
-                                            ≈ {formatNum(parseNum(phaseForm.millaresProd)*pesoMillarKg)} KG
-                                          </span>
+                                        {kgPorMillar > 0 && parseNum(phaseForm.millaresProd) > 0 && (
+                                          <div className="text-[9px] font-bold text-orange-600 mt-1 text-center space-y-0.5">
+                                            <div>Peso/Millar: {formatNum(pesoMillar)} g → {formatNum(kgPorMillar)} KG/Mill.</div>
+                                            <div className="font-black">KG Totales: {formatNum(parseNum(phaseForm.millaresProd)*kgPorMillar)} KG</div>
+                                          </div>
                                         )}
                                       </div>
                                     )}
@@ -6673,7 +6658,44 @@ export default function App() {
     }
   };
 
-  const handleBackupAppJsx = () => {
+  const handleImportBackupJSON = async (file) => {
+    if (!file) return;
+    requireAdminPassword(async () => {
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        if (!data._meta) return setDialog({title:'Formato Inválido', text:'El archivo no es un respaldo válido del sistema GYB ERP.', type:'alert'});
+        setDialog({
+          title: '⚠ Confirmar Importación',
+          text: `El respaldo es del ${data._meta.fecha}. Importar REEMPLAZARÁ los datos actuales de todas las colecciones. ¿Continuar?`,
+          type: 'confirm',
+          onConfirm: async () => {
+            try {
+              const collections = [
+                ['inventory', data.inventory], ['inventoryMovements', data.inventoryMovements],
+                ['clientes', data.clientes], ['requirements', data.requirements],
+                ['maquilaInvoices', data.maquilaInvoices], ['inventoryRequisitions', data.inventoryRequisitions],
+                ['operatingCosts', data.operatingCosts], ['purchaseOrders', data.purchaseOrders],
+                ['wipInventory', data.wipInventory], ['finishedGoodsInventory', data.finishedGoodsInventory],
+                ['planDeCuentas', data.planDeCuentas], ['asientosContables', data.asientosContables],
+                ['formulas', data.formulas],
+              ];
+              let total = 0;
+              for (const [col, items] of collections) {
+                if (!Array.isArray(items) || items.length === 0) continue;
+                const batch = writeBatch(db);
+                for (const item of items) {
+                  if (item && item.id) { batch.set(getDocRef(col, item.id), item, {merge:true}); total++; }
+                }
+                await batch.commit();
+              }
+              setDialog({title:'✅ Importación Exitosa', text:`Se importaron ${total} registros desde el respaldo del ${data._meta.fecha}.`, type:'alert'});
+            } catch(err) { setDialog({title:'Error al Importar', text:err.message, type:'alert'}); }
+          }
+        });
+      } catch(err) { setDialog({title:'Error', text:'No se pudo leer el archivo: ' + err.message, type:'alert'}); }
+    }, 'Importar Respaldo de Base de Datos');
+  };
     // Instrucciones para respaldar el App.jsx desde el repositorio/fuente
     setDialog({
       title: 'Respaldar App.jsx',
@@ -7105,18 +7127,23 @@ export default function App() {
                 ))}
               </div>
 
-              {/* Carpeta destino */}
+              {/* Carpeta destino — solo editable con admin */}
               <div>
-                <label className="text-[10px] font-black text-green-700 uppercase block mb-1">📁 Carpeta de Respaldo (nombre referencia)</label>
-                <input
-                  type="text"
-                  id="backupFolderPath"
-                  defaultValue={localStorage.getItem('backupFolder') || 'C:\\Respaldos\\GYB_ERP'}
-                  onChange={e => localStorage.setItem('backupFolder', e.target.value)}
-                  className="w-full border-2 border-green-200 rounded-xl p-2.5 text-xs font-bold bg-white outline-none focus:border-green-500"
-                  placeholder="C:\Respaldos\GYB_ERP"
-                />
-                <p className="text-[9px] text-green-600 font-bold mt-1">⚠ El navegador descargará a tu carpeta de Descargas. Mueve el archivo a la ruta indicada.</p>
+                <label className="text-[10px] font-black text-green-700 uppercase block mb-1">📁 Carpeta de Respaldo <span className="text-orange-600">(🔒 Admin)</span></label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    id="backupFolderPath"
+                    readOnly
+                    defaultValue={localStorage.getItem('backupFolder') || 'C:\\Respaldos\\GYB_ERP'}
+                    className="flex-1 border-2 border-green-200 rounded-xl p-2.5 text-xs font-bold bg-gray-50 outline-none text-gray-600"
+                  />
+                  <button onClick={() => requireAdminPassword(() => {
+                    const newPath = prompt('Nueva ruta de carpeta de respaldo:', localStorage.getItem('backupFolder') || 'C:\\Respaldos\\GYB_ERP');
+                    if (newPath) { localStorage.setItem('backupFolder', newPath); document.getElementById('backupFolderPath').value = newPath; setDialog({title:'✅ Ruta actualizada', text:`Carpeta configurada: ${newPath}`, type:'alert'}); }
+                  }, 'Cambiar Carpeta de Respaldo')} className="bg-orange-500 text-white px-3 py-2 rounded-xl font-black text-[10px] uppercase hover:bg-orange-600 flex items-center gap-1 shrink-0"><Edit size={12}/> CAMBIAR</button>
+                </div>
+                <p className="text-[9px] text-green-600 font-bold mt-1">⚠ El navegador descarga a tu carpeta de Descargas. Mueve el archivo a la ruta configurada.</p>
               </div>
 
               {/* Programación */}
@@ -7161,6 +7188,17 @@ export default function App() {
                   className="flex-1 bg-green-600 text-white py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-all flex items-center justify-center gap-2 shadow-md"
                 >
                   <Download size={14}/> RESPALDAR DATOS
+                </button>
+              </div>
+              {/* Importar respaldo */}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+                <p className="text-[10px] font-black text-blue-700 uppercase mb-2">📥 Importar Respaldo JSON</p>
+                <p className="text-[9px] font-bold text-blue-600 mb-2">Carga un archivo de respaldo previo para restaurar los datos del sistema. Requiere clave admin.</p>
+                <label className="cursor-pointer bg-blue-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-blue-700 flex items-center gap-2 w-full justify-center">
+                  <ArrowDownToLine size={14}/> SELECCIONAR ARCHIVO JSON
+                  <input type="file" accept=".json" className="hidden" onChange={e => { if(e.target.files[0]) handleImportBackupJSON(e.target.files[0]); e.target.value=''; }} />
+                </label>
+              </div>
                 </button>
                 <button
                   onClick={() => requireAdminPassword(handleBackupAppJsx, 'Instrucciones respaldo App.jsx')}
@@ -7318,7 +7356,6 @@ export default function App() {
                  {[ 
                    {id:'proyeccion', icon:<TrendingUp size={16}/>, label:'Proyección MP'},
                    {id:'ordenes_compra', icon:<ShoppingCart size={16}/>, label:'Órdenes Compra'},
-                   {id:'formulas', icon:<Beaker size={16}/>, label:'Fórmulas / Recetas'},
                    {id:'activos', icon:<PlayCircle size={16}/>, label:'Producción Activa'}, 
                    {id:'reportes', icon:<FileText size={16}/>, label:'Historial / Reportes'}
                  ].map(t => (
