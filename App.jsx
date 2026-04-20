@@ -216,7 +216,7 @@ export default function App() {
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
   // Formularios Producción
-  const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '', operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '', zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '', operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '', operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: '' };
+  const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '', mermaTroquelTransp: '', mermaTroquelPigm: '', mermaTorta: '', operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '', zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '', operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '', operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: '' };
   const [showWorkOrder, setShowWorkOrder] = useState(null);
   const [showPhaseReport, setShowPhaseReport] = useState(null);
   const [showFiniquito, setShowFiniquito] = useState(null);
@@ -3639,11 +3639,55 @@ export default function App() {
         date: phaseForm.date || getTodayDate(),
         insumos: phaseForm.insumos || [],
         producedKg: prodKg, mermaKg, mermaPorc: parseFloat(mermaPorc),
+        // Desglose de merma por tipo (solo extrusión y sellado)
+        mermaDetalle: {
+          troquelTransp: parseNum(phaseForm.mermaTroquelTransp) || 0,
+          troquelPigm: parseNum(phaseForm.mermaTroquelPigm) || 0,
+          torta: parseNum(phaseForm.mermaTorta) || 0,
+        },
         kgRecibidos,
         totalInsumosKg,
         cost: phaseCost,
         operator: appUser?.name || 'Operador', techParams
       };
+
+      // ── MERMA → INVENTARIO RECICLADO ─────────────────────────────────────
+      // Si hay desglose de merma, ingresarla como ENTRADA en inventario
+      if (activePhaseTab === 'extrusion' || activePhaseTab === 'sellado') {
+        const mermaTypes = [
+          { key: 'troquelTransp', kg: parseNum(phaseForm.mermaTroquelTransp), desc: 'RECICLADO TRANSPARENTE', invId: 'REC-TRANSP' },
+          { key: 'troquelPigm',  kg: parseNum(phaseForm.mermaTroquelPigm),  desc: 'RECICLADO PIGMENTADO',  invId: 'REC-PIGM' },
+          { key: 'torta',        kg: parseNum(phaseForm.mermaTorta),        desc: 'RECICLADO TORTA',       invId: 'REC-TORTA' },
+        ];
+        for (const mt of mermaTypes) {
+          if (mt.kg <= 0) continue;
+          // Buscar item en inventario por ID o descripción
+          const existing = (inventory || []).find(i => i.id === mt.invId || (i.desc||'').toUpperCase() === mt.desc);
+          const invId = existing?.id || mt.invId;
+          if (existing) {
+            // Sumar al stock existente
+            fbBatch.update(getDocRef('inventory', invId), { stock: (existing.stock || 0) + mt.kg });
+          } else {
+            // Crear el ítem de inventario
+            fbBatch.set(getDocRef('inventory', invId), {
+              id: invId, desc: mt.desc, category: 'Materia Prima', unit: 'kg',
+              stock: mt.kg, cost: 0, minStock: 0, timestamp: Date.now(),
+              notes: 'Generado automáticamente por producción'
+            });
+          }
+          // Movimiento de entrada
+          const movRecId = `REC-${Date.now()}-${mt.invId}`;
+          fbBatch.set(getDocRef('inventoryMovements', movRecId), {
+            id: movRecId, date: phaseForm.date || getTodayDate(),
+            itemId: invId, itemName: mt.desc,
+            type: 'ENTRADA', qty: mt.kg, cost: 0, totalValue: 0,
+            reference: req.id, opAsignada: req.id,
+            notes: `MERMA RECICLADA — ${activePhaseTab.toUpperCase()} | OP ${req.id}`,
+            tipoMerma: mt.key,
+            timestamp: Date.now() + Math.random(), user: appUser?.name || 'Planta'
+          });
+        }
+      }
 
       if (!currentPhase.batches) currentPhase.batches = [];
       currentPhase.batches.push(newBatch);
@@ -3903,6 +3947,9 @@ export default function App() {
                   <th className="p-3 border-r text-center">KG Recibidos</th>
                   <th className="p-3 border-r text-center">KG Producidos</th>
                   <th className="p-3 border-r text-center">Merma KG (%)</th>
+                  <th className="p-3 border-r text-center">Reciclado Transp.</th>
+                  <th className="p-3 border-r text-center">Reciclado Pigm.</th>
+                  <th className="p-3 border-r text-center">Reciclado Torta</th>
                   {req.tipoProducto !== 'TERMOENCOGIBLE' && <th className="p-3 text-center">Millares</th>}
                 </tr></thead>
                 <tbody className="divide-y divide-gray-100">
@@ -3917,6 +3964,9 @@ export default function App() {
                       <td className="p-3 border-r text-center font-black text-blue-600">{formatNum(kgEntrada)} kg{b.fase!=='EXTRUSIÓN'&&<span className="text-[8px] text-gray-400 ml-1">(de fase ant.)</span>}</td>
                       <td className="p-3 border-r text-center font-black text-green-600">{formatNum(b.producedKg)} kg</td>
                       <td className="p-3 border-r text-center font-black text-red-500">{formatNum(b.mermaKg)} kg{b.mermaPorc > 0 ? ` (${b.mermaPorc}%)` : ''}</td>
+                      <td className="p-3 border-r text-center text-blue-700 font-bold text-xs">{parseNum(b.mermaDetalle?.troquelTransp)>0?formatNum(b.mermaDetalle.troquelTransp)+' kg':'—'}</td>
+                      <td className="p-3 border-r text-center text-orange-700 font-bold text-xs">{parseNum(b.mermaDetalle?.troquelPigm)>0?formatNum(b.mermaDetalle.troquelPigm)+' kg':'—'}</td>
+                      <td className="p-3 border-r text-center text-amber-700 font-bold text-xs">{parseNum(b.mermaDetalle?.torta)>0?formatNum(b.mermaDetalle.torta)+' kg':'—'}</td>
                       {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center font-black">{parseNum(b.techParams?.millares||0)>0?formatNum(parseNum(b.techParams.millares))+' Mill.':'—'}</td>}
                     </tr>
                     );
@@ -3929,6 +3979,9 @@ export default function App() {
                     <td className="p-3 text-center text-blue-700" title="MP bruta inyectada (solo fase inicial)">{formatNum(mpInyectadaKg)} kg</td>
                     <td className="p-3 text-center text-green-700" title="KG finales producidos (última fase)">{formatNum(kgProducidosFinales)} kg</td>
                     <td className="p-3 text-center text-red-600">{formatNum(totalMermaKg)} kg ({pctMerma.toFixed(1)}%)</td>
+                    <td className="p-3 text-center text-blue-700 font-bold">{formatNum(allBatches.reduce((s,b)=>s+parseNum(b.mermaDetalle?.troquelTransp||0),0))} kg</td>
+                    <td className="p-3 text-center text-orange-700 font-bold">{formatNum(allBatches.reduce((s,b)=>s+parseNum(b.mermaDetalle?.troquelPigm||0),0))} kg</td>
+                    <td className="p-3 text-center text-amber-700 font-bold">{formatNum(allBatches.reduce((s,b)=>s+parseNum(b.mermaDetalle?.torta||0),0))} kg</td>
                     {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center">{totalMillares>0?formatNum(totalMillares)+' Mill.':'—'}</td>}
                   </tr>
                 </tfoot>
@@ -5283,6 +5336,55 @@ export default function App() {
                                     );
                                   })()}
 
+                                  {/* ── DESGLOSE DE MERMA POR TIPO (solo Extrusión y Sellado) ── */}
+                                  {(activePhaseTab === 'extrusion' || activePhaseTab === 'sellado') && (
+                                    <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-4 space-y-3">
+                                      <div className="flex justify-between items-center">
+                                        <h5 className="text-[9px] font-black text-red-700 uppercase">♻️ Desglose de Merma → Inventario Reciclado</h5>
+                                        {(() => {
+                                          const total = parseNum(phaseForm.mermaTroquelTransp)+parseNum(phaseForm.mermaTroquelPigm)+parseNum(phaseForm.mermaTorta);
+                                          return total > 0 ? <span className="text-[9px] font-black text-red-600">Total desglosado: {formatNum(total)} KG</span> : null;
+                                        })()}
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-3">
+                                        <div className="bg-white rounded-xl border border-gray-200 p-3">
+                                          <label className="text-[8px] font-black text-gray-500 uppercase block mb-1">🔵 Troquel/Grafilado<br/>TRANSPARENTE</label>
+                                          <input type="number" step="0.01" value={phaseForm.mermaTroquelTransp}
+                                            onChange={e=>{
+                                              const v=e.target.value;
+                                              const total=parseNum(v)+parseNum(phaseForm.mermaTroquelPigm)+parseNum(phaseForm.mermaTorta);
+                                              setPhaseForm({...phaseForm, mermaTroquelTransp:v, mermaKg:total.toFixed(2)});
+                                            }}
+                                            className="w-full border border-blue-200 rounded-lg p-2 text-xs font-black text-center outline-none bg-blue-50 text-blue-700" placeholder="0.00" />
+                                          <span className="text-[8px] text-blue-600 font-bold block mt-1">→ RECICLADO TRANSPARENTE</span>
+                                        </div>
+                                        <div className="bg-white rounded-xl border border-gray-200 p-3">
+                                          <label className="text-[8px] font-black text-gray-500 uppercase block mb-1">🟠 Troquel/Grafilado<br/>PIGMENTADO</label>
+                                          <input type="number" step="0.01" value={phaseForm.mermaTroquelPigm}
+                                            onChange={e=>{
+                                              const v=e.target.value;
+                                              const total=parseNum(phaseForm.mermaTroquelTransp)+parseNum(v)+parseNum(phaseForm.mermaTorta);
+                                              setPhaseForm({...phaseForm, mermaTroquelPigm:v, mermaKg:total.toFixed(2)});
+                                            }}
+                                            className="w-full border border-orange-200 rounded-lg p-2 text-xs font-black text-center outline-none bg-orange-50 text-orange-700" placeholder="0.00" />
+                                          <span className="text-[8px] text-orange-600 font-bold block mt-1">→ RECICLADO PIGMENTADO</span>
+                                        </div>
+                                        <div className="bg-white rounded-xl border border-gray-200 p-3">
+                                          <label className="text-[8px] font-black text-gray-500 uppercase block mb-1">🟤 Merma<br/>TORTA</label>
+                                          <input type="number" step="0.01" value={phaseForm.mermaTorta}
+                                            onChange={e=>{
+                                              const v=e.target.value;
+                                              const total=parseNum(phaseForm.mermaTroquelTransp)+parseNum(phaseForm.mermaTroquelPigm)+parseNum(v);
+                                              setPhaseForm({...phaseForm, mermaTorta:v, mermaKg:total.toFixed(2)});
+                                            }}
+                                            className="w-full border border-amber-200 rounded-lg p-2 text-xs font-black text-center outline-none bg-amber-50 text-amber-700" placeholder="0.00" />
+                                          <span className="text-[8px] text-amber-600 font-bold block mt-1">→ RECICLADO TORTA</span>
+                                        </div>
+                                      </div>
+                                      <p className="text-[8px] text-red-500 font-bold">Al guardar la fase, estas cantidades se registran automáticamente en el inventario como material reciclado.</p>
+                                    </div>
+                                  )}
+
                                   {activePhaseTab === 'extrusion' && (
                                     <div className="grid grid-cols-2 gap-3">
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Ext.</label><input type="text" value={phaseForm.operadorExt} onChange={e=>setPhaseForm({...phaseForm, operadorExt: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
@@ -5704,7 +5806,15 @@ export default function App() {
                     // Estimar costo merma: mermaKg * costo promedio de insumos del lote
                     const costoPromLote = kgUsados > 0 && parseNum(b.cost) > 0 ? parseNum(b.cost) / kgUsados : 0;
                     const costoMerma = mermaKg * costoPromLote;
-                    mermaRows.push({ opId: req.id, opNum: String(req.id).replace('OP-','').padStart(5,'0'), client: req.client, phase, date: b.date, mermaKg, kgUsados, pct: parseFloat(pct), costoMerma });
+                    mermaRows.push({
+                      opId: req.id, opNum: String(req.id).replace('OP-','').padStart(5,'0'),
+                      client: req.client, phase, date: b.date, mermaKg, kgUsados,
+                      pct: parseFloat(pct), costoMerma,
+                      // Desglose de reciclado
+                      troquelTransp: parseNum(b.mermaDetalle?.troquelTransp||0),
+                      troquelPigm:   parseNum(b.mermaDetalle?.troquelPigm||0),
+                      torta:         parseNum(b.mermaDetalle?.torta||0),
+                    });
                   });
                 });
               });
@@ -5712,11 +5822,14 @@ export default function App() {
               // Agrupar por OP
               const byOP = {};
               mermaRows.forEach(r => {
-                if (!byOP[r.opId]) byOP[r.opId] = { opId: r.opId, opNum: r.opNum, client: r.client, rows: [], totalMermaKg: 0, totalKgUsados: 0, totalCosto: 0 };
+                if (!byOP[r.opId]) byOP[r.opId] = { opId: r.opId, opNum: r.opNum, client: r.client, rows: [], totalMermaKg: 0, totalKgUsados: 0, totalCosto: 0, totalTransp: 0, totalPigm: 0, totalTorta: 0 };
                 byOP[r.opId].rows.push(r);
                 byOP[r.opId].totalMermaKg += r.mermaKg;
                 byOP[r.opId].totalKgUsados += r.kgUsados;
                 byOP[r.opId].totalCosto += r.costoMerma;
+                byOP[r.opId].totalTransp += r.troquelTransp;
+                byOP[r.opId].totalPigm += r.troquelPigm;
+                byOP[r.opId].totalTorta += r.torta;
               });
               const opGroups = Object.values(byOP).sort((a,b) => a.opNum.localeCompare(b.opNum));
 
@@ -5788,6 +5901,9 @@ export default function App() {
                               <div className="flex gap-6 text-right">
                                 <div><span className="text-[9px] text-gray-400 block">Total Merma</span><span className="font-black text-orange-400">{formatNum(group.totalMermaKg)} KG</span></div>
                                 <div><span className="text-[9px] text-gray-400 block">% Merma OP</span><span className={`font-black text-lg ${parseFloat(groupPct)>5?'text-red-400':'text-yellow-300'}`}>{groupPct}%</span></div>
+                                {group.totalTransp>0&&<div><span className="text-[9px] text-blue-300 block">Rec. Transp.</span><span className="font-black text-blue-300">{formatNum(group.totalTransp)} KG</span></div>}
+                                {group.totalPigm>0&&<div><span className="text-[9px] text-orange-300 block">Rec. Pigm.</span><span className="font-black text-orange-300">{formatNum(group.totalPigm)} KG</span></div>}
+                                {group.totalTorta>0&&<div><span className="text-[9px] text-amber-300 block">Rec. Torta</span><span className="font-black text-amber-300">{formatNum(group.totalTorta)} KG</span></div>}
                                 <div><span className="text-[9px] text-gray-400 block">Costo Merma</span><span className="font-black text-red-400">${formatNum(group.totalCosto)}</span></div>
                               </div>
                             </div>
@@ -5800,6 +5916,9 @@ export default function App() {
                                   <th className="py-2 px-4 border-r text-center">KG Usados</th>
                                   <th className="py-2 px-4 border-r text-center">Merma KG</th>
                                   <th className="py-2 px-4 border-r text-center">% Merma</th>
+                                  <th className="py-2 px-4 border-r text-center">♻ Transp.</th>
+                                  <th className="py-2 px-4 border-r text-center">♻ Pigm.</th>
+                                  <th className="py-2 px-4 border-r text-center">♻ Torta</th>
                                   <th className="py-2 px-4 text-right">Costo Merma ($)</th>
                                 </tr>
                               </thead>
@@ -5815,6 +5934,9 @@ export default function App() {
                                         {r.pct}%
                                       </span>
                                     </td>
+                                    <td className="py-2 px-4 border-r text-center font-bold text-blue-600">{r.troquelTransp>0?formatNum(r.troquelTransp)+' KG':'—'}</td>
+                                    <td className="py-2 px-4 border-r text-center font-bold text-orange-600">{r.troquelPigm>0?formatNum(r.troquelPigm)+' KG':'—'}</td>
+                                    <td className="py-2 px-4 border-r text-center font-bold text-amber-600">{r.torta>0?formatNum(r.torta)+' KG':'—'}</td>
                                     <td className="py-2 px-4 text-right font-black text-red-500">${formatNum(r.costoMerma)}</td>
                                   </tr>
                                 ))}
@@ -5825,6 +5947,9 @@ export default function App() {
                                   <td className="py-2 px-4 text-center text-blue-700">{formatNum(group.totalKgUsados)} KG</td>
                                   <td className="py-2 px-4 text-center text-red-700">{formatNum(group.totalMermaKg)} KG</td>
                                   <td className="py-2 px-4 text-center text-orange-700">{groupPct}%</td>
+                                  <td className="py-2 px-4 text-center text-blue-700">{group.totalTransp>0?formatNum(group.totalTransp)+' KG':'—'}</td>
+                                  <td className="py-2 px-4 text-center text-orange-700">{group.totalPigm>0?formatNum(group.totalPigm)+' KG':'—'}</td>
+                                  <td className="py-2 px-4 text-center text-amber-700">{group.totalTorta>0?formatNum(group.totalTorta)+' KG':'—'}</td>
                                   <td className="py-2 px-4 text-right text-red-700">${formatNum(group.totalCosto)}</td>
                                 </tr>
                               </tfoot>
@@ -5834,12 +5959,15 @@ export default function App() {
                       })}
 
                       {/* Gran Total */}
-                      <div className="bg-black text-white rounded-2xl p-4 flex justify-between items-center">
+                      <div className="bg-black text-white rounded-2xl p-4 flex justify-between items-center flex-wrap gap-3">
                         <span className="font-black uppercase text-sm">Gran Total — {filteredGroups.length} OP{filteredGroups.length!==1?'s':''}</span>
-                        <div className="flex gap-8 text-right">
+                        <div className="flex gap-6 text-right flex-wrap">
                           <div><span className="text-[9px] text-gray-400 block">KG Usados</span><span className="font-black">{formatNum(filteredGroups.reduce((s,g)=>s+g.totalKgUsados,0))} KG</span></div>
                           <div><span className="text-[9px] text-gray-400 block">Total Merma</span><span className="font-black text-orange-400">{formatNum(filteredGroups.reduce((s,g)=>s+g.totalMermaKg,0))} KG</span></div>
                           <div><span className="text-[9px] text-gray-400 block">% Global</span><span className="font-black text-yellow-400 text-lg">{grandPct}%</span></div>
+                          {filteredGroups.reduce((s,g)=>s+g.totalTransp,0)>0&&<div><span className="text-[9px] text-blue-300 block">♻ Transp.</span><span className="font-black text-blue-300">{formatNum(filteredGroups.reduce((s,g)=>s+g.totalTransp,0))} KG</span></div>}
+                          {filteredGroups.reduce((s,g)=>s+g.totalPigm,0)>0&&<div><span className="text-[9px] text-orange-300 block">♻ Pigm.</span><span className="font-black text-orange-300">{formatNum(filteredGroups.reduce((s,g)=>s+g.totalPigm,0))} KG</span></div>}
+                          {filteredGroups.reduce((s,g)=>s+g.totalTorta,0)>0&&<div><span className="text-[9px] text-amber-300 block">♻ Torta</span><span className="font-black text-amber-300">{formatNum(filteredGroups.reduce((s,g)=>s+g.totalTorta,0))} KG</span></div>}
                           <div><span className="text-[9px] text-gray-400 block">Costo Total</span><span className="font-black text-red-400">${formatNum(filteredGroups.reduce((s,g)=>s+g.totalCosto,0))}</span></div>
                         </div>
                       </div>
