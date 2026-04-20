@@ -3686,30 +3686,26 @@ export default function App() {
     const selBatches = filterRealBatches(prod.sellado?.batches).map(b=>({...b,fase:'SELLADO'}));
     const allBatches = [...extBatches, ...impBatches, ...selBatches];
 
-    // ── LÓGICA CORRECTA DE CADENA DE FASES ──────────────────────────────
-    // MP Inyectada = solo insumos reales de almacén usados en EXTRUSIÓN (materia prima bruta)
-    // Si no hay insumos en extrusión, usar kgRecibidos de la primera fase activa
+    // ── CÁLCULO CORRECTO: cada fase aporta su producción final ──────────────
+    // MP Inyectada = solo insumos reales de EXTRUSIÓN (materia prima bruta inyectada)
     const mpInyectadaKg = extBatches.reduce((s,b)=>{
       const insumosUsados = (b.insumos||[]).reduce((ss,ing)=>ss+parseNum(ing.qty),0);
       return s + (insumosUsados > 0 ? insumosUsados : parseNum(b.kgRecibidos||b.totalInsumosKg||0));
     },0) || impBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0)
          || selBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0);
 
-    // KG producidos finales = último lote de la última fase activa
-    const lastActiveBatches = selBatches.length>0 ? selBatches : impBatches.length>0 ? impBatches : extBatches;
-    const kgProducidosFinales = lastActiveBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
+    // KG producidos = SUMA de todas las fases (cada fase produce KG de producto terminado)
+    const kgProducidosFinales = allBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
 
-    // Merma REAL = MP inyectada - KG finales producidos (pérdida total de la cadena)
-    const totalMermaKg = Math.max(0, mpInyectadaKg - kgProducidosFinales);
+    // Merma = suma de mermas individuales por fase (la merma real de cada etapa)
+    const totalMermaKg = allBatches.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
     const pctMerma = mpInyectadaKg > 0 ? (totalMermaKg / mpInyectadaKg * 100) : 0;
 
     // Costo total = suma de insumos realmente consumidos en todas las fases
     const totalCostoMP = allBatches.reduce((s,b)=>s+parseNum(b.cost),0);
 
-    // Millares = última fase con millares registrados
-    const totalMillares = selBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-      || impBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-      || extBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+    // Millares = SUMA de todas las fases (producción total de millares)
+    const totalMillares = allBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
 
     const costoPorMillar = totalMillares > 0 ? totalCostoMP / totalMillares : 0;
     const relatedInvoices = invoices.filter(i => i.opAsignada === req.id);
@@ -4174,15 +4170,14 @@ export default function App() {
         try {
           const prod = req.production || {};
           const filterReal = (b) => b.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b.producedKg) > 0;
-          const selBatch = (prod.sellado?.batches||[]).filter(filterReal);
-          const impBatch = (prod.impresion?.batches||[]).filter(filterReal);
-          const extBatch = (prod.extrusion?.batches||[]).filter(filterReal);
-          // KG finales = última fase activa (cadena: ext→imp→sel)
-          const lastBatches = selBatch.length>0 ? selBatch : impBatch.length>0 ? impBatch : extBatch;
-          const totalKgProd = lastBatches.reduce((s, b) => s + parseNum(b.producedKg), 0);
-          const totalMillares = selBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-            || impBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-            || extBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+          const allRealBatches = [
+            ...(prod.extrusion?.batches||[]).filter(filterReal),
+            ...(prod.impresion?.batches||[]).filter(filterReal),
+            ...(prod.sellado?.batches||[]).filter(filterReal),
+          ];
+          // KG y Millares = SUMA de todas las fases (cada una produce producto final)
+          const totalKgProd = allRealBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
+          const totalMillares = allRealBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
 
           // Marcar todas las fases abiertas como cerradas
           const updatedProd = { ...prod };
@@ -4955,11 +4950,8 @@ export default function App() {
                             {(req.entregasParciales||[]).length > 0 && (() => {
                               const prod = req.production || {};
                               const fr = b => b.operator!=='ALMACÉN (DESPACHO)' && parseNum(b.producedKg)>0;
-                              const sB=(prod.sellado?.batches||[]).filter(fr);
-                              const iB=(prod.impresion?.batches||[]).filter(fr);
-                              const eB=(prod.extrusion?.batches||[]).filter(fr);
-                              const lastB=sB.length>0?sB:iB.length>0?iB:eB;
-                              const totalProd = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+                              const allRB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])].filter(fr);
+                              const totalProd = allRB.reduce((s,b)=>s+parseNum(b.producedKg),0);
                               const totalEntregado = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0);
                               const pendiente = Math.max(0, totalProd - totalEntregado);
                               return (
@@ -5459,12 +5451,9 @@ export default function App() {
                       {completedReqs.map(req => {
                         const prod = req.production || {};
                         const fr = b => b.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b.producedKg)>0;
-                        const sB=(prod.sellado?.batches||[]).filter(fr);
-                        const iB=(prod.impresion?.batches||[]).filter(fr);
-                        const eB=(prod.extrusion?.batches||[]).filter(fr);
-                        const lastB = sB.length>0?sB:iB.length>0?iB:eB;
-                        const totalKg = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
-                        const totalMill = sB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||iB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||eB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+                        const allRB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])].filter(fr);
+                        const totalKg = allRB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+                        const totalMill = allRB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
                         return (
                           <tr key={req.id} className="hover:bg-gray-50">
                             <td className="py-3 px-4 border-r font-black text-orange-600">#{String(req.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400">{req.fecha}</span></td>
