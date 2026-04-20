@@ -5728,15 +5728,17 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Filtro por OP */}
-                  <div className="flex flex-wrap gap-2 items-center no-pdf">
-                    <span className="text-[10px] font-black text-gray-500 uppercase">Filtrar por OP:</span>
-                    {opOptions.map(op => (
-                      <button key={op} onClick={() => setMermaOpFilter(op)}
-                        className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all border-2 ${mermaOpFilter === op ? 'bg-orange-500 text-white border-orange-500 shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-orange-300 hover:text-orange-600'}`}>
-                        {op === 'TODAS' ? `Todas las OPs (${opGroups.length})` : op}
-                      </button>
-                    ))}
+                  {/* Filtro por OP — dropdown */}
+                  <div className="flex items-center gap-3 no-pdf">
+                    <span className="text-[10px] font-black text-gray-500 uppercase whitespace-nowrap">Filtrar por OP:</span>
+                    <select value={mermaOpFilter} onChange={e=>setMermaOpFilter(e.target.value)}
+                      className="bg-white border-2 border-gray-200 rounded-xl px-4 py-2 text-[10px] font-black text-black outline-none focus:border-orange-500 min-w-[280px]">
+                      {opOptions.map(op=>(
+                        <option key={op} value={op}>
+                          {op === 'TODAS' ? `Todas las OPs (${opGroups.length})` : op}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   {/* Tabla agrupada por OP */}
