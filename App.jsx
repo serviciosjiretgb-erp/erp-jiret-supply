@@ -3010,7 +3010,16 @@ export default function App() {
              {showNewReqPanel && (
                 <div className="p-8 bg-gray-50/50 border-b">
                   <form onSubmit={handleCreateRequirement} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
-                    <div className="flex justify-between items-center border-b pb-3 mb-6"><h3 className="text-sm font-black uppercase text-black">{editingReqId ? 'EDITAR ORDEN' : 'NUEVA ORDEN'}</h3><span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl font-black text-[10px]">CORRELATIVO: {editingReqId ? String(editingReqId).replace('OP-','').padStart(5,'0') : generateReqId().replace('OP-','').padStart(5,'0')}</span></div>
+                    <div className="flex justify-between items-center border-b pb-3 mb-6">
+                      <h3 className="text-sm font-black uppercase text-black">{editingReqId ? 'EDITAR ORDEN' : 'NUEVA ORDEN'}</h3>
+                      <div className="flex items-center gap-4">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">📅 Fecha de la Requisición</label>
+                          <input type="date" value={newReqForm.fecha} onChange={e=>setNewReqForm({...newReqForm, fecha: e.target.value})} className="border-2 border-orange-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-orange-50 text-orange-900" />
+                        </div>
+                        <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl font-black text-[10px]">CORRELATIVO: {editingReqId ? String(editingReqId).replace('OP-','').padStart(5,'0') : generateReqId().replace('OP-','').padStart(5,'0')}</span>
+                      </div>
+                    </div>
 
                     {/* Fila 1: Cliente */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -5212,8 +5221,9 @@ export default function App() {
                                     return (
                                   <div className="grid grid-cols-3 gap-4">
                                     <div>
-                                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Fecha</label>
-                                      <input type="date" value={phaseForm.date} onChange={e=>setPhaseForm({...phaseForm, date: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-white" />
+                                      <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">📅 Fecha de Salida — {activePhaseTab === 'extrusion' ? 'Extrusión' : activePhaseTab === 'impresion' ? 'Impresión' : 'Sellado'}</label>
+                                      <input type="date" value={phaseForm.date} onChange={e=>setPhaseForm({...phaseForm, date: e.target.value})} className="w-full border-2 border-blue-300 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500 bg-blue-50 text-blue-900" />
+                                      <span className="text-[8px] text-blue-500 font-bold">Fecha en que sale el producto de esta fase</span>
                                     </div>
                                     {esTermo ? (
                                       <div>
