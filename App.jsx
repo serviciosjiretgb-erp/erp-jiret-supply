@@ -3966,9 +3966,9 @@ export default function App() {
                   <th className="p-3 border-r text-center">KG Recibidos</th>
                   <th className="p-3 border-r text-center">KG Producidos</th>
                   <th className="p-3 border-r text-center">Merma KG (%)</th>
-                  <th className="p-3 border-r text-center">Reciclado Transp.</th>
-                  <th className="p-3 border-r text-center">Reciclado Pigm.</th>
-                  <th className="p-3 border-r text-center">Reciclado Torta</th>
+                  <th className="p-3 border-r text-center">♻ Transp. (KG / %)</th>
+                  <th className="p-3 border-r text-center">♻ Pigm. (KG / %)</th>
+                  <th className="p-3 border-r text-center">♻ Torta (KG / %)</th>
                   {req.tipoProducto !== 'TERMOENCOGIBLE' && <th className="p-3 text-center">Millares</th>}
                 </tr></thead>
                 <tbody className="divide-y divide-gray-100">
@@ -3983,9 +3983,18 @@ export default function App() {
                       <td className="p-3 border-r text-center font-black text-blue-600">{formatNum(kgEntrada)} kg{b.fase!=='EXTRUSIÓN'&&<span className="text-[8px] text-gray-400 ml-1">(de fase ant.)</span>}</td>
                       <td className="p-3 border-r text-center font-black text-green-600">{formatNum(b.producedKg)} kg</td>
                       <td className="p-3 border-r text-center font-black text-red-500">{formatNum(b.mermaKg)} kg{b.mermaPorc > 0 ? ` (${b.mermaPorc}%)` : ''}</td>
-                      <td className="p-3 border-r text-center text-blue-700 font-bold text-xs">{parseNum(b.mermaDetalle?.troquelTransp)>0?formatNum(b.mermaDetalle.troquelTransp)+' kg':'—'}</td>
-                      <td className="p-3 border-r text-center text-orange-700 font-bold text-xs">{parseNum(b.mermaDetalle?.troquelPigm)>0?formatNum(b.mermaDetalle.troquelPigm)+' kg':'—'}</td>
-                      <td className="p-3 border-r text-center text-amber-700 font-bold text-xs">{parseNum(b.mermaDetalle?.torta)>0?formatNum(b.mermaDetalle.torta)+' kg':'—'}</td>
+                      {(() => {
+                        const base = kgEntrada > 0 ? kgEntrada : parseNum(b.mermaKg) + parseNum(b.producedKg);
+                        const trKg = parseNum(b.mermaDetalle?.troquelTransp||0);
+                        const pgKg = parseNum(b.mermaDetalle?.troquelPigm||0);
+                        const toKg = parseNum(b.mermaDetalle?.torta||0);
+                        const pct = (kg) => base > 0 && kg > 0 ? ` (${((kg/base)*100).toFixed(1)}%)` : '';
+                        return (<>
+                          <td className="p-3 border-r text-center text-blue-700 font-bold text-xs">{trKg>0?<>{formatNum(trKg)} kg<span className="text-blue-400 font-bold">{pct(trKg)}</span></>:'—'}</td>
+                          <td className="p-3 border-r text-center text-orange-700 font-bold text-xs">{pgKg>0?<>{formatNum(pgKg)} kg<span className="text-orange-400 font-bold">{pct(pgKg)}</span></>:'—'}</td>
+                          <td className="p-3 border-r text-center text-amber-700 font-bold text-xs">{toKg>0?<>{formatNum(toKg)} kg<span className="text-amber-400 font-bold">{pct(toKg)}</span></>:'—'}</td>
+                        </>);
+                      })()}
                       {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center font-black">{parseNum(b.techParams?.millares||0)>0?formatNum(parseNum(b.techParams.millares))+' Mill.':'—'}</td>}
                     </tr>
                     );
@@ -4002,10 +4011,12 @@ export default function App() {
                       const totT=allBatches.reduce((s,b)=>s+parseNum(b.mermaDetalle?.troquelTransp||0),0);
                       const totP=allBatches.reduce((s,b)=>s+parseNum(b.mermaDetalle?.troquelPigm||0),0);
                       const totTt=allBatches.reduce((s,b)=>s+parseNum(b.mermaDetalle?.torta||0),0);
+                      const base = mpInyectadaKg > 0 ? mpInyectadaKg : 1;
+                      const pct = (kg) => kg > 0 ? ` (${((kg/base)*100).toFixed(1)}%)` : '';
                       return (<>
-                        <td className="p-3 text-center text-blue-700 font-bold">{totT>0?formatNum(totT)+' kg':'—'}</td>
-                        <td className="p-3 text-center text-orange-700 font-bold">{totP>0?formatNum(totP)+' kg':'—'}</td>
-                        <td className="p-3 text-center text-amber-700 font-bold">{totTt>0?formatNum(totTt)+' kg':'—'}</td>
+                        <td className="p-3 text-center text-blue-700 font-bold">{totT>0?<>{formatNum(totT)} kg<span className="text-blue-400 text-[9px]">{pct(totT)}</span></>:'—'}</td>
+                        <td className="p-3 text-center text-orange-700 font-bold">{totP>0?<>{formatNum(totP)} kg<span className="text-orange-400 text-[9px]">{pct(totP)}</span></>:'—'}</td>
+                        <td className="p-3 text-center text-amber-700 font-bold">{totTt>0?<>{formatNum(totTt)} kg<span className="text-amber-400 text-[9px]">{pct(totTt)}</span></>:'—'}</td>
                       </>);
                     })()}
                     {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center">{totalMillares>0?formatNum(totalMillares)+' Mill.':'—'}</td>}
@@ -5320,17 +5331,40 @@ export default function App() {
                                           }}
                                           className="w-full border-2 border-orange-300 rounded-xl p-2 text-sm font-black outline-none focus:border-orange-500 text-center bg-white" placeholder="0.00" />
                                       </div>
-                                    ) : (
+                                    ) : activePhaseTab === 'extrusion' ? (
+                                      // EXTRUSIÓN: se ingresan KG procesados. Peso teórico y millares teóricos son automáticos.
                                       <div>
-                                        <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Millares Producidos ★</label>
+                                        <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG Procesados (Extrusión)</label>
+                                        <input type="number" step="0.01" value={phaseForm.producedKg}
+                                          onChange={e => {
+                                            const kg = e.target.value;
+                                            const kgNum = parseNum(kg);
+                                            const insumosTotal = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                            const kgBase = insumosTotal > 0 ? insumosTotal : 0;
+                                            const autoMerma = kgBase > 0 && kgNum >= 0 ? Math.max(0, kgBase - kgNum).toFixed(2) : phaseForm.mermaKg;
+                                            // Calcular millares teóricos automáticamente
+                                            const millaresTeor = kgPorMillar > 0 ? (kgNum / kgPorMillar).toFixed(2) : '';
+                                            setPhaseForm({...phaseForm, producedKg: kg, mermaKg: autoMerma, millaresProd: millaresTeor});
+                                          }}
+                                          className="w-full border-2 border-gray-300 rounded-xl p-2 text-sm font-black outline-none focus:border-gray-500 text-center bg-white" placeholder="0.00" />
+                                        {kgPorMillar > 0 && parseNum(phaseForm.producedKg) > 0 && (
+                                          <div className="text-[9px] font-bold text-gray-500 mt-1 text-center space-y-0.5">
+                                            <div>Peso teórico/millar: <span className="font-black text-orange-600">{formatNum(kgPorMillar)} KG/Mill.</span></div>
+                                            <div>Millares teóricos: <span className="font-black text-orange-600">{formatNum(parseNum(phaseForm.producedKg)/kgPorMillar)} Mill.</span></div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      // IMPRESIÓN / SELLADO: se ingresan Millares reales producidos
+                                      <div>
+                                        <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Millares Producidos ★ (Reales)</label>
                                         <input type="number" step="0.01" value={phaseForm.millaresProd}
                                           onChange={e => {
                                             const mill = e.target.value;
                                             const millNum = parseNum(mill);
-                                            // KG totales = Millares × (pesoMillar en gramos / 1000)
                                             const kgCalculado = kgPorMillar > 0 ? (millNum * kgPorMillar).toFixed(2) : phaseForm.producedKg;
                                             const insumosTotal = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
-                                            const kgBase = insumosTotal > 0 ? insumosTotal : activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp) : activePhaseTab === 'sellado' ? parseNum(phaseForm.kgRecibidosSel) : 0;
+                                            const kgBase = insumosTotal > 0 ? insumosTotal : activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp) : parseNum(phaseForm.kgRecibidosSel);
                                             const kgFinal = kgPorMillar > 0 ? kgCalculado : phaseForm.producedKg;
                                             const autoMerma = kgBase > 0 && parseNum(kgFinal) >= 0 ? Math.max(0, kgBase - parseNum(kgFinal)).toFixed(2) : phaseForm.mermaKg;
                                             setPhaseForm({...phaseForm, millaresProd: mill, producedKg: kgFinal, mermaKg: autoMerma});
@@ -5339,7 +5373,7 @@ export default function App() {
                                         {kgPorMillar > 0 && parseNum(phaseForm.millaresProd) > 0 && (
                                           <div className="text-[9px] font-bold text-orange-600 mt-1 text-center space-y-0.5">
                                             <div>KG/Millar: {formatNum(kgPorMillar)} KG/Mill.</div>
-                                            <div className="font-black">KG Totales producidos: {formatNum(parseNum(phaseForm.millaresProd)*kgPorMillar)} KG</div>
+                                            <div className="font-black">KG Totales: {formatNum(parseNum(phaseForm.millaresProd)*kgPorMillar)} KG</div>
                                           </div>
                                         )}
                                       </div>
@@ -5969,9 +6003,9 @@ export default function App() {
                                         {r.pct}%
                                       </span>
                                     </td>
-                                    <td className="py-2 px-4 border-r text-center font-bold text-blue-600">{r.troquelTransp>0?formatNum(r.troquelTransp)+' KG':'—'}</td>
-                                    <td className="py-2 px-4 border-r text-center font-bold text-orange-600">{r.troquelPigm>0?formatNum(r.troquelPigm)+' KG':'—'}</td>
-                                    <td className="py-2 px-4 border-r text-center font-bold text-amber-600">{r.torta>0?formatNum(r.torta)+' KG':'—'}</td>
+                                    <td className="py-2 px-4 border-r text-center font-bold text-blue-600">{r.troquelTransp>0?`${formatNum(r.troquelTransp)} KG (${r.kgUsados>0?((r.troquelTransp/r.kgUsados)*100).toFixed(1):0}%)`:'—'}</td>
+                                    <td className="py-2 px-4 border-r text-center font-bold text-orange-600">{r.troquelPigm>0?`${formatNum(r.troquelPigm)} KG (${r.kgUsados>0?((r.troquelPigm/r.kgUsados)*100).toFixed(1):0}%)`:'—'}</td>
+                                    <td className="py-2 px-4 border-r text-center font-bold text-amber-600">{r.torta>0?`${formatNum(r.torta)} KG (${r.kgUsados>0?((r.torta/r.kgUsados)*100).toFixed(1):0}%)`:'—'}</td>
                                     <td className="py-2 px-4 text-right font-black text-red-500">${formatNum(r.costoMerma)}</td>
                                   </tr>
                                 ))}
@@ -5982,9 +6016,9 @@ export default function App() {
                                   <td className="py-2 px-4 text-center text-blue-700">{formatNum(group.totalKgUsados)} KG</td>
                                   <td className="py-2 px-4 text-center text-red-700">{formatNum(group.totalMermaKg)} KG</td>
                                   <td className="py-2 px-4 text-center text-orange-700">{groupPct}%</td>
-                                  <td className="py-2 px-4 text-center text-blue-700">{group.totalTransp>0?formatNum(group.totalTransp)+' KG':'—'}</td>
-                                  <td className="py-2 px-4 text-center text-orange-700">{group.totalPigm>0?formatNum(group.totalPigm)+' KG':'—'}</td>
-                                  <td className="py-2 px-4 text-center text-amber-700">{group.totalTorta>0?formatNum(group.totalTorta)+' KG':'—'}</td>
+                                  <td className="py-2 px-4 text-center text-blue-700">{group.totalTransp>0?`${formatNum(group.totalTransp)} KG (${group.totalKgUsados>0?((group.totalTransp/group.totalKgUsados)*100).toFixed(1):0}%)`:'—'}</td>
+                                  <td className="py-2 px-4 text-center text-orange-700">{group.totalPigm>0?`${formatNum(group.totalPigm)} KG (${group.totalKgUsados>0?((group.totalPigm/group.totalKgUsados)*100).toFixed(1):0}%)`:'—'}</td>
+                                  <td className="py-2 px-4 text-center text-amber-700">{group.totalTorta>0?`${formatNum(group.totalTorta)} KG (${group.totalKgUsados>0?((group.totalTorta/group.totalKgUsados)*100).toFixed(1):0}%)`:'—'}</td>
                                   <td className="py-2 px-4 text-right text-red-700">${formatNum(group.totalCosto)}</td>
                                 </tr>
                               </tfoot>
