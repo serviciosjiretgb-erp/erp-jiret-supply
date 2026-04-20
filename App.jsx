@@ -4571,7 +4571,8 @@ export default function App() {
               const maxDesp = parseNum(groupedApproved[phaseIngId] || 0);
               const consAnteriores = approvedIds.includes(phaseIngId)
                 ? (['extrusion','impresion','sellado'].reduce((s,ph)=>{
-                    return s + (prod[ph]?.batches||[]).reduce((ss,b)=>ss+(b.insumos||[]).filter(i=>i.id===phaseIngId).reduce((sss,i)=>sss+parseNum(i.qty),0),0);
+                    const phProd = req.production || {};
+                    return s + (phProd[ph]?.batches||[]).reduce((ss,b)=>ss+(b.insumos||[]).filter(i=>i.id===phaseIngId).reduce((sss,i)=>sss+parseNum(i.qty),0),0);
                   },0))
                 : 0;
               const yaUsado = (phaseForm.insumos || []).filter(ing => ing.id === phaseIngId).reduce((s, ing) => s + parseNum(ing.qty), 0);
@@ -4582,7 +4583,8 @@ export default function App() {
               }
               const newIns = [...(phaseForm.insumos || []), { id: phaseIngId, qty: kgIngresado }];
               const nuevoTotalUsado = newIns.reduce((s, ing) => s + parseNum(ing.qty), 0);
-              const nuevaMerma = prodKg > 0 ? Math.max(0, nuevoTotalUsado - prodKg) : 0;
+              const prodKgLocal = parseNum(phaseForm.producedKg);
+              const nuevaMerma = prodKgLocal > 0 ? Math.max(0, nuevoTotalUsado - prodKgLocal) : 0;
               setPhaseForm({ ...phaseForm, insumos: newIns, mermaKg: nuevaMerma > 0 ? nuevaMerma.toFixed(2) : phaseForm.mermaKg });
               setPhaseIngId(''); setPhaseIngQty('');
             }}
