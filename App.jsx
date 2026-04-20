@@ -843,12 +843,12 @@ export default function App() {
     if (w > 0 && m > 0) {
       const micFmt = m < 1 && m > 0 ? Math.round(m * 1000) : m;
       if (tipo === 'BOLSAS' && l > 0) {
-        const pEst = (w + fu) * l * m; // gramos por millar
+        const pEst = (w + fu) * l * m; // KG por millar (resultado directo de la fórmula)
         f.pesoMillar = pEst.toFixed(2);
         f.desc = fu > 0 ? `(${w}+${fu/2}+${fu/2})X${l}X${micFmt}MIC | ${f.color || ''}` : `${w}X${l}X${micFmt}MIC | ${f.color || ''}`;
-        // KG netos = pesoMillar(g) * cantidad(millares) / 1000
-        const kgNetos = f.presentacion === 'KILOS' ? c : (pEst * c) / 1000;
-        // KG a producir = KG netos / (1 - 5%) para cubrir merma
+        // KG netos = pesoMillar(KG/millar) × cantidad(millares)
+        const kgNetos = f.presentacion === 'KILOS' ? c : pEst * c;
+        // KG a producir incluye 5% de merma
         const kgConMerma = kgNetos > 0 ? (kgNetos / (1 - MERMA_PCT)) : 0;
         f.requestedKg = kgConMerma.toFixed(2);
       }
@@ -5118,8 +5118,8 @@ export default function App() {
                                 <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-5 space-y-4">
                                   {(() => {
                                     const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
-                                    const pesoMillar = parseNum(req.pesoMillar) || 0; // gramos por millar (1000 bolsas)
-                                    const kgPorMillar = pesoMillar / 1000; // KG por millar
+                                    const pesoMillar = parseNum(req.pesoMillar) || 0; // KG por millar (resultado de (ancho+fuelle)*largo*micras)
+                                    const kgPorMillar = pesoMillar; // ya es KG/millar directamente
                                     return (
                                   <div className="grid grid-cols-3 gap-4">
                                     <div>
@@ -5157,8 +5157,8 @@ export default function App() {
                                           className="w-full border-2 border-orange-400 rounded-xl p-2 text-sm font-black outline-none focus:border-orange-600 text-center bg-orange-50" placeholder="0.00" />
                                         {kgPorMillar > 0 && parseNum(phaseForm.millaresProd) > 0 && (
                                           <div className="text-[9px] font-bold text-orange-600 mt-1 text-center space-y-0.5">
-                                            <div>Peso/Millar: {formatNum(pesoMillar)} g → {formatNum(kgPorMillar)} KG/Mill.</div>
-                                            <div className="font-black">KG Totales: {formatNum(parseNum(phaseForm.millaresProd)*kgPorMillar)} KG</div>
+                                            <div>KG/Millar: {formatNum(kgPorMillar)} KG/Mill.</div>
+                                            <div className="font-black">KG Totales producidos: {formatNum(parseNum(phaseForm.millaresProd)*kgPorMillar)} KG</div>
                                           </div>
                                         )}
                                       </div>
@@ -5188,9 +5188,6 @@ export default function App() {
                                     <div className="grid grid-cols-2 gap-3">
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Ext.</label><input type="text" value={phaseForm.operadorExt} onChange={e=>setPhaseForm({...phaseForm, operadorExt: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Motor Ext.</label><input type="number" step="0.1" value={phaseForm.motorExt} onChange={e=>setPhaseForm({...phaseForm, motorExt: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
-                                      {req.tipoProducto !== 'TERMOENCOGIBLE' && (
-                                        <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>
-                                      )}
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tratado</label><select value={phaseForm.tratado} onChange={e=>setPhaseForm({...phaseForm, tratado: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white"><option value="">Sin tratado</option><option value="1 CARA">1 CARA</option><option value="2 CARAS">2 CARAS</option></select></div>
                                     </div>
                                   )}
@@ -5203,7 +5200,6 @@ export default function App() {
                                       </div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Imp.</label><input type="text" value={phaseForm.operadorImp} onChange={e=>setPhaseForm({...phaseForm, operadorImp: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cant. Colores</label><input type="number" value={phaseForm.cantColores} onChange={e=>setPhaseForm({...phaseForm, cantColores: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
-                                      {req.tipoProducto !== 'TERMOENCOGIBLE' && <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-black outline-none bg-white text-center" placeholder="0.00" /></div>}
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Relación Imp.</label><input type="number" step="0.01" value={phaseForm.relacionImp} onChange={e=>setPhaseForm({...phaseForm, relacionImp: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
                                     </div>
                                   )}
@@ -5215,7 +5211,6 @@ export default function App() {
                                         <input type="number" step="0.01" value={phaseForm.kgRecibidosSel} onChange={e=>{const kr=e.target.value;const pd=parseNum(phaseForm.producedKg);const m=pd>0?Math.max(0,parseNum(kr)-pd).toFixed(2):phaseForm.mermaKg;setPhaseForm({...phaseForm,kgRecibidosSel:kr,mermaKg:m});}} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none bg-white text-green-700 text-center" />
                                       </div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Sell.</label><input type="text" value={phaseForm.operadorSel} onChange={e=>setPhaseForm({...phaseForm, operadorSel: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
-                                      {req.tipoProducto !== 'TERMOENCOGIBLE' && <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares Producidos</label><input type="number" step="0.01" value={phaseForm.millaresProd} onChange={e=>setPhaseForm({...phaseForm, millaresProd: e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none bg-green-50 text-green-700 text-center" placeholder="0.00" /></div>}
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tipo Sello</label><select value={phaseForm.tipoSello} onChange={e=>setPhaseForm({...phaseForm, tipoSello: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white"><option>Sello FC</option><option>Sello SC</option><option>Lateral</option><option>Doble Sello</option></select></div>
                                       <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Temp. Cabezal A</label><input type="number" value={phaseForm.tempCabezalA} onChange={e=>setPhaseForm({...phaseForm, tempCabezalA: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
                                     </div>
