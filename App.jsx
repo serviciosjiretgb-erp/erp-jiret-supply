@@ -216,7 +216,7 @@ export default function App() {
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
   // Formularios Producción
-  const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '', mermaTroquelTransp: '', mermaTroquelPigm: '', mermaTorta: '', operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '', zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '', operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '', operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: '' };
+  const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '', mermaTroquelTransp: '', mermaTroquelPigm: '', mermaTorta: '', observaciones: '', operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '', zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '', operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '', operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: '' };
   const [showWorkOrder, setShowWorkOrder] = useState(null);
   const [showPhaseReport, setShowPhaseReport] = useState(null);
   const [showFiniquito, setShowFiniquito] = useState(null);
@@ -1633,6 +1633,14 @@ export default function App() {
                         <td className={`py-3 px-4 text-center font-black text-lg print:border-black ${isEntrada ? 'text-green-600' : 'text-red-600'}`}>
                           {isEntrada ? '+' : '-'}{formatNum(item.kg)}
                         </td>
+                        <td className="py-3 px-4 text-center no-pdf">
+                          {isEntrada && (
+                            <button onClick={() => requireAdminPassword(async () => {
+                              await deleteDoc(getDocRef('wipInventory', item.id));
+                              setDialog({title:'Eliminado', text:'Ítem WIP eliminado.', type:'alert'});
+                            }, 'Eliminar ítem WIP')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={13}/></button>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}
@@ -1806,11 +1814,15 @@ export default function App() {
                         <td className="py-3 px-3 text-center no-pdf">
                           <div className="flex flex-col gap-1">
                             {item.status === 'LISTO PARA ENTREGA' && (
-                              <button onClick={() => { clearAllReports(); setActiveTab('ventas'); setVentasView('facturacion'); setShowNewInvoicePanel(true); setTimeout(() => handleInvoiceFormChange('fgId', item.id), 100); }} className="px-2 py-1 bg-orange-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-orange-600 flex items-center gap-1 justify-center"><Receipt size={10}/> FACTURAR</button>
+                              <button onClick={() => updateDoc(getDocRef('finishedGoodsInventory', item.id), {status:'ENTREGADO'})} className="px-2 py-1 bg-blue-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-blue-600 flex items-center gap-1 justify-center"><ArrowUpFromLine size={10}/> ENTREGAR</button>
                             )}
-                            {item.status === 'LISTO PARA ENTREGA' && (
-                              <button onClick={() => updateDoc(getDocRef('finishedGoodsInventory', item.id), {status:'ENTREGADO'})} className="px-2 py-1 bg-blue-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-blue-600">ENTREGAR</button>
+                            {item.status === 'ENTREGADO' && (
+                              <button onClick={() => updateDoc(getDocRef('finishedGoodsInventory', item.id), {status:'LISTO PARA ENTREGA'})} className="px-2 py-1 bg-gray-400 text-white rounded-lg text-[9px] font-black uppercase hover:bg-gray-600">REVERTIR</button>
                             )}
+                            <button onClick={() => requireAdminPassword(async () => {
+                              await deleteDoc(getDocRef('finishedGoodsInventory', item.id));
+                              setDialog({title:'Eliminado', text:'Registro eliminado del inventario.', type:'alert'});
+                            }, 'Eliminar registro de Terminados')} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[9px] font-black uppercase hover:bg-red-500 hover:text-white flex items-center gap-1 justify-center"><Trash2 size={10}/> ELIMINAR</button>
                           </div>
                         </td>
                       </tr>
@@ -3648,7 +3660,8 @@ export default function App() {
         kgRecibidos,
         totalInsumosKg,
         cost: phaseCost,
-        operator: appUser?.name || 'Operador', techParams
+        operator: appUser?.name || 'Operador', techParams,
+        observaciones: phaseForm.observaciones || ''
       };
 
       // ── MERMA → INVENTARIO RECICLADO ─────────────────────────────────────
@@ -3702,16 +3715,16 @@ export default function App() {
       fbBatch.update(getDocRef('requirements', req.id), { production: newProd, status: 'EN PROCESO' });
       await fbBatch.commit();
 
-      // Si hay KG producidos, moverlos automáticamente a Productos Terminados
+      // Los productos producidos en fase van a FinishedGoods como WIP interno (sin afectar entregasParciales)
+      // Las Entregas Parciales SOLO se crean manualmente desde el botón "ENTREGA PARCIAL"
       if (prodKg > 0) {
         const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
         const millEntrada = esTermo ? 0 : parseNum(techParams.millares || 0);
-        const batchId = newBatch.id; // usar el mismo ID del lote
+        const batchId = newBatch.id;
         const fgId = `FG-${batchId}`;
-        // Evitar duplicados: verificar si ya existe un parcial con este batchId
-        const prevParciales = req.entregasParciales || [];
-        const yaExiste = prevParciales.some(p => p.batchId === batchId || p.fgId === fgId);
-        if (!yaExiste) {
+        // Solo crear en finishedGoods si no existe ya (evitar duplicados al reabrir)
+        const fgExists = (finishedGoodsInventory||[]).some(fg => fg.id === fgId || fg.batchId === batchId);
+        if (!fgExists) {
           await setDoc(getDocRef('finishedGoodsInventory', fgId), {
             id: fgId, opId: req.id, reqId: req.id,
             cliente: req.client || 'N/A',
@@ -3725,17 +3738,15 @@ export default function App() {
             costoUnitario: phaseCost > 0 && prodKg > 0 ? phaseCost / prodKg : 0,
             fechaFinalizacion: phaseForm.date || getTodayDate(),
             ubicacion: 'ALMACEN GENERAL',
-            status: 'LISTO PARA ENTREGA',
-            esEntregaParcial: true,
+            status: 'EN PROCESO',
+            esEntregaParcial: false,
             fase: activePhaseTab,
             batchId,
-            observaciones: `PRODUCCIÓN PARCIAL — Fase: ${activePhaseTab.toUpperCase()}`,
+            observaciones: phaseForm.observaciones || '',
             timestamp: Date.now()
           });
-          await updateDoc(getDocRef('requirements', req.id), {
-            entregasParciales: [...prevParciales, { fgId, batchId, kg: prodKg, millares: millEntrada, fecha: phaseForm.date || getTodayDate(), fase: activePhaseTab }]
-          });
         }
+        // NO modificar entregasParciales aquí — solo el botón manual lo hace
       }
 
       setPhaseForm({ ...initialPhaseForm, date: getTodayDate() });
@@ -3978,7 +3989,9 @@ export default function App() {
                     const kgEntrada = b.fase==='EXTRUSIÓN' && insumosUsados>0 ? insumosUsados : parseNum(b.kgRecibidos||b.totalInsumosKg||0);
                     return (
                     <tr key={i} className="hover:bg-gray-50">
-                      <td className="p-3 border-r font-black">{b.fase}<span className="text-[9px] font-bold text-gray-400 ml-2">Lote {i+1}</span></td>
+                      <td className="p-3 border-r font-black">{b.fase}<span className="text-[9px] font-bold text-gray-400 ml-2">Lote {i+1}</span>
+                        {b.observaciones && <div className="text-[9px] font-bold text-indigo-600 mt-0.5">📝 {b.observaciones}</div>}
+                      </td>
                       <td className="p-3 border-r text-center font-bold">{b.date}</td>
                       <td className="p-3 border-r text-center font-black text-blue-600">{formatNum(kgEntrada)} kg{b.fase!=='EXTRUSIÓN'&&<span className="text-[8px] text-gray-400 ml-1">(de fase ant.)</span>}</td>
                       <td className="p-3 border-r text-center font-black text-green-600">{formatNum(b.producedKg)} kg</td>
@@ -4411,15 +4424,35 @@ export default function App() {
 
         {/* Selector de insumo usado (solo del despachado) */}
         <p className="text-[9px] font-black text-gray-600 uppercase mb-1">Registrar KG Usados Realmente:</p>
+        {/* Mostrar KG restantes por insumo */}
+        {phaseIngId && (() => {
+          const maxDesp = parseNum(groupedApproved[phaseIngId] || 0);
+          const yaUsado = (phaseForm.insumos || []).filter(ing => ing.id === phaseIngId).reduce((s, ing) => s + parseNum(ing.qty), 0);
+          const restante = Math.max(0, maxDesp - yaUsado);
+          const invItem = (inventory || []).find(i => i?.id === phaseIngId);
+          return (
+            <div className="mb-2 bg-blue-50 border border-blue-200 rounded-xl p-2 flex gap-4 text-[9px] font-bold">
+              <span>Despachado: <span className="font-black text-blue-700">{formatNum(maxDesp)} KG</span></span>
+              <span>Ya usado: <span className="font-black text-orange-600">{formatNum(yaUsado)} KG</span></span>
+              <span className={restante <= 0 ? 'text-red-600 font-black' : 'text-green-700 font-black'}>
+                Disponible: {formatNum(restante)} KG {restante <= 0 ? '⚠ AGOTADO' : '✓'}
+              </span>
+              {maxDesp > 0 && <input type="range" min="0" max={restante} step="0.01" value={parseNum(phaseIngQty)||0} onChange={e=>setPhaseIngQty(e.target.value)} className="flex-1" />}
+            </div>
+          );
+        })()}
         <div className="flex gap-2 mb-3">
           <select value={phaseIngId} onChange={e => setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
             <option value="">Seleccione insumo despachado...</option>
             {approvedIds.map(id => {
               const invItem = (inventory || []).find(i => i && i.id === id);
               if (!invItem) return null;
+              const maxDesp = parseNum(groupedApproved[id] || 0);
+              const yaUsado = (phaseForm.insumos || []).filter(ing => ing.id === id).reduce((s, ing) => s + parseNum(ing.qty), 0);
+              const restante = Math.max(0, maxDesp - yaUsado);
               return (
                 <option key={id} value={id}>
-                  {id} - {invItem.desc} (Desp: {formatNum(groupedApproved[id])} {invItem.unit || 'KG'})
+                  {id} - {invItem.desc} | Desp: {formatNum(maxDesp)} | Restante: {formatNum(restante)} KG
                 </option>
               );
             })}
@@ -5573,6 +5606,14 @@ export default function App() {
                                       </button>
 
                                       <div className="flex gap-2 flex-wrap">
+                                        {/* OBSERVACIONES DE FASE */}
+                                        <div className="w-full">
+                                          <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">📝 Observaciones de la Fase</label>
+                                          <textarea value={phaseForm.observaciones} onChange={e=>setPhaseForm({...phaseForm, observaciones: e.target.value})}
+                                            className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white resize-none" rows={2}
+                                            placeholder="Ej: turno noche, ajuste de temperatura, incidencia en producción..." />
+                                        </div>
+
                                         {/* REAPERTURA — independiente por fase */}
                                         {prod[activePhaseTab]?.isClosed && (
                                           <button onClick={() => handleReopenPhase(req.id, activePhaseTab)} className="bg-yellow-400 text-yellow-900 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-yellow-500 flex items-center gap-1 shadow-sm transition-all">
