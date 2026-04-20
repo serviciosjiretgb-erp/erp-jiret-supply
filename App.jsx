@@ -4582,19 +4582,19 @@ export default function App() {
         )}
 
         {/* Indicadores merma automática */}
-        {totalUsado > 0 && (
+        {totalUsadoActual > 0 && (
           <div className="grid grid-cols-3 gap-2 mt-2">
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 text-center">
               <span className="text-[8px] font-black text-blue-600 uppercase block">KG Usados</span>
-              <span className="text-sm font-black text-blue-700">{formatNum(totalUsado)}</span>
+              <span className="text-sm font-black text-blue-700">{formatNum(totalUsadoActual)}</span>
             </div>
             <div className="bg-red-50 border border-red-200 rounded-lg p-2 text-center">
               <span className="text-[8px] font-black text-red-600 uppercase block">Merma Auto</span>
               <span className="text-sm font-black text-red-700">{formatNum(mermaAuto)} KG ({mermaPorc}%)</span>
             </div>
             <div className="bg-orange-50 border border-orange-200 rounded-lg p-2 text-center">
-              <span className="text-[8px] font-black text-orange-600 uppercase block">Sobrante WIP</span>
-              <span className="text-sm font-black text-orange-700">{formatNum(sobrante)} KG</span>
+              <span className="text-[8px] font-black text-orange-600 uppercase block">Disponible WIP</span>
+              <span className="text-sm font-black text-orange-700">{formatNum(totalDisponible)} KG</span>
             </div>
           </div>
         )}
