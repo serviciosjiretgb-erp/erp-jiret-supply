@@ -256,7 +256,7 @@ export default function App() {
   const [formulas, setFormulas] = useState([]);
   const [showFormulaPanel, setShowFormulaPanel] = useState(false);
   const [editingFormulaId, setEditingFormulaId] = useState(null);
-  const [formulaForm, setFormulaForm] = useState({ categoria: '', tipoProducto: 'BOLSAS', ingredientes: [] });
+  const [formulaForm, setFormulaForm] = useState({ categoria: '', tipoProducto: 'BOLSAS', fases: { extrusion: true, impresion: false, sellado: false }, ingredientes: [] });
   const [formulaIngId, setFormulaIngId] = useState('');
   const [formulaIngPct, setFormulaIngPct] = useState('');
   const [selectedPOItems, setSelectedPOItems] = useState([]);
@@ -1307,6 +1307,9 @@ export default function App() {
           )}
           {hasPerm('produccion') && (
              <button onClick={() => { clearAllReports(); setActiveTab('produccion'); setProdView('proyeccion'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Factory size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Producción Planta</h3><p className="text-xs text-gray-400 mt-2">Control de Fases y Reportes.</p></button>
+          )}
+          {hasPerm('produccion') && (
+             <button onClick={() => { clearAllReports(); setActiveTab('formulas'); }} className="group bg-black border-l-4 border-purple-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Beaker size={40} className="text-purple-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Fórmulas / Recetas</h3><p className="text-xs text-gray-400 mt-2">Recetas por categoría y fases.</p></button>
           )}
           {hasPerm('inventario') && (
              <button onClick={() => { clearAllReports(); setActiveTab('inventario'); setInvView('catalogo'); }} className="group bg-black border-l-4 border-orange-500 rounded-3xl p-10 text-left hover:bg-gray-900 transition-all shadow-xl"><Package size={40} className="text-orange-500 mb-4" /><h3 className="text-xl font-black text-white uppercase">Control Inventario</h3><p className="text-xs text-gray-400 mt-2">Art. 177 LISLR, Movimientos y Kardex.</p></button>
@@ -4319,12 +4322,14 @@ export default function App() {
     e.preventDefault();
     if (!formulaForm.categoria.trim()) return setDialog({title:'Aviso', text:'Ingrese el nombre de la categoría.', type:'alert'});
     if ((formulaForm.ingredientes||[]).length === 0) return setDialog({title:'Aviso', text:'Agregue al menos un material a la fórmula.', type:'alert'});
+    const activeFases = formulaForm.fases || { extrusion: true, impresion: false, sellado: false };
+    if (!activeFases.extrusion && !activeFases.impresion && !activeFases.sellado) return setDialog({title:'Aviso', text:'Seleccione al menos una fase de producción.', type:'alert'});
     const totalPct = (formulaForm.ingredientes||[]).reduce((s,i)=>s+parseNum(i.pct),0);
     if (Math.abs(totalPct - 100) > 0.1) return setDialog({title:'Aviso', text:`Los porcentajes suman ${totalPct.toFixed(1)}%. Deben sumar 100%.`, type:'alert'});
     const id = editingFormulaId || `FORM-${formulaForm.categoria.toUpperCase().replace(/\s+/g,'-')}-${Date.now()}`;
     try {
-      await setDoc(getDocRef('formulas', id), { ...formulaForm, id, categoria: formulaForm.categoria.toUpperCase(), timestamp: Date.now(), user: appUser?.name });
-      setFormulaForm({ categoria: '', tipoProducto: 'BOLSAS', ingredientes: [] });
+      await setDoc(getDocRef('formulas', id), { ...formulaForm, id, categoria: formulaForm.categoria.toUpperCase(), fases: activeFases, timestamp: Date.now(), user: appUser?.name });
+      setFormulaForm({ categoria: '', tipoProducto: 'BOLSAS', fases: { extrusion: true, impresion: false, sellado: false }, ingredientes: [] });
       setEditingFormulaId(null); setShowFormulaPanel(false);
       setDialog({title:'✅ Fórmula guardada', text:'La receta fue registrada exitosamente.', type:'alert'});
     } catch(err) { setDialog({title:'Error', text:err.message, type:'alert'}); }
@@ -4393,6 +4398,21 @@ export default function App() {
                       <option value="OTRO">OTRO</option>
                     </select>
                   </div>
+                </div>
+
+                {/* Fases activas */}
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Fases del Proceso</label>
+                  <div className="flex gap-3 flex-wrap">
+                    {[['extrusion','🔵 Extrusión'],['impresion','🟣 Impresión'],['sellado','🟢 Sellado / Corte']].map(([key,label])=>(
+                      <button key={key} type="button"
+                        onClick={()=>setFormulaForm({...formulaForm, fases:{...(formulaForm.fases||{}), [key]:!(formulaForm.fases?.[key])}})}
+                        className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase border-2 transition-all flex items-center gap-2 ${(formulaForm.fases?.[key]) ? 'bg-purple-600 text-white border-purple-600 shadow-md' : 'bg-white text-gray-500 border-gray-200 hover:border-purple-300'}`}>
+                        {(formulaForm.fases?.[key]) ? '✓' : '○'} {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[9px] text-gray-400 font-bold mt-1">Seleccione las fases requeridas para producir esta categoría</p>
                 </div>
 
                 {/* Ingredientes */}
@@ -4521,6 +4541,13 @@ export default function App() {
                             </tr></tfoot>
                           </table>
                           <p className="text-[9px] text-gray-400 font-bold mt-2">Última actualización: {formula.user || 'Sistema'}</p>
+                          <div className="flex gap-1 mt-2 flex-wrap">
+                            {[['extrusion','🔵 Extrusión','bg-blue-100 text-blue-700'],['impresion','🟣 Impresión','bg-purple-100 text-purple-700'],['sellado','🟢 Sellado','bg-green-100 text-green-700']].map(([key,label,cls])=>
+                              (formula.fases?.[key] || (!formula.fases && key==='extrusion')) ? (
+                                <span key={key} className={`px-2 py-0.5 rounded-lg text-[8px] font-black uppercase ${cls}`}>{label}</span>
+                              ) : null
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -5069,9 +5096,18 @@ export default function App() {
                             {/* MODO REGISTRO DE FASE */}
                             {prodSubMode === 'fase' && (
                               <div className="p-5">
-                                {/* Tabs de fase - clickables */}
-                                <div className="flex gap-2 mb-4 flex-wrap">
-                                  {[['extrusion','Extrusión'],['impresion','Impresión'],['sellado','Sellado']].map(([key, label]) => (
+                                {/* Determinar fases activas según fórmula de la categoría */}
+                                {(() => {
+                                  const matchFormula = (formulas||[]).find(f =>
+                                    f.categoria && req.categoria &&
+                                    f.categoria.toUpperCase() === (req.categoria||'').toUpperCase()
+                                  );
+                                  const fasesActivas = matchFormula?.fases || { extrusion: true, impresion: true, sellado: true };
+                                  const fasesConfig = [['extrusion','Extrusión'],['impresion','Impresión'],['sellado','Sellado']].filter(([k]) => fasesActivas[k]);
+                                  // Tabs de fase - solo las definidas en la fórmula
+                                  return (
+                                  <div className="flex gap-2 mb-4 flex-wrap">
+                                  {fasesConfig.map(([key, label]) => (
                                     <button key={key} onClick={() => {
                                       setActivePhaseTab(key);
                                       let newForm = {...initialPhaseForm, date: getTodayDate()};
@@ -5089,49 +5125,79 @@ export default function App() {
                                   ))}
                                   <div className="flex gap-2 ml-auto">
                                     <button onClick={()=>setProdSubMode('requisicion')} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1"><ClipboardList size={12}/> SOLICITAR A ALMACÉN</button>
-                                    <button onClick={()=>{
-                                      // Solicitud adicional: abre panel requisicion sin limpiar el form actual
-                                      setProdSubMode('requisicion');
-                                      setPhaseForm({...phaseForm, insumos:[]});
-                                    }} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 flex items-center gap-1"><Plus size={12}/> ADICIONAL ALMACÉN</button>
+                                    <button onClick={()=>{setProdSubMode('requisicion');setPhaseForm({...phaseForm, insumos:[]});}} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 flex items-center gap-1"><Plus size={12}/> ADICIONAL ALMACÉN</button>
                                   </div>
-                                </div>
+                                  </div>
+                                  );
+                                })()}
 
                                 {/* Formulario de fase */}
                                 <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-5 space-y-4">
+                                  {(() => {
+                                    const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
+                                    const pesoMillar = parseNum(req.pesoMillar) || 0; // gramos por millar
+                                    const pesoMillarKg = pesoMillar / 1000; // kg por millar
+                                    return (
                                   <div className="grid grid-cols-3 gap-4">
                                     <div>
                                       <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Fecha</label>
                                       <input type="date" value={phaseForm.date} onChange={e=>setPhaseForm({...phaseForm, date: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-white" />
                                     </div>
-                                    <div>
-                                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG Producidos</label>
-                                      <input type="number" step="0.01" value={phaseForm.producedKg}
-                                        onChange={e => {
-                                          const kg = e.target.value;
-                                          // Merma basada en insumos usados (prioritario) o KG recibidos
-                                          const insumosTotal = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
-                                          const kgBase = insumosTotal > 0 ? insumosTotal
-                                                       : activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp)
-                                                       : activePhaseTab === 'sellado'   ? parseNum(phaseForm.kgRecibidosSel)
-                                                       : 0;
-                                          const autoMerma = kgBase > 0 && parseNum(kg) >= 0 ? Math.max(0, kgBase - parseNum(kg)).toFixed(2) : phaseForm.mermaKg;
-                                          setPhaseForm({...phaseForm, producedKg: kg, mermaKg: autoMerma});
-                                        }}
-                                        className="w-full border-2 border-orange-300 rounded-xl p-2 text-sm font-black outline-none focus:border-orange-500 text-center bg-white" placeholder="0.00" />
-                                    </div>
-                                    <div>
-                                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Merma KG <span className="text-orange-500">(Auto)</span></label>
-                                      <div className="relative">
-                                        <input type="number" step="0.01" value={phaseForm.mermaKg} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} className="w-full border-2 border-red-200 rounded-xl p-2 text-sm font-black outline-none focus:border-red-400 text-center bg-red-50 text-red-600" placeholder="0.00" />
-                                        {parseNum(phaseForm.mermaKg) > 0 && (() => {
-                                          const base = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0) || parseNum(phaseForm.kgRecibidosImp) || parseNum(phaseForm.kgRecibidosSel);
-                                          const pct = base > 0 ? ((parseNum(phaseForm.mermaKg)/base)*100).toFixed(1) : null;
-                                          return pct ? <span className="absolute -top-5 right-0 text-[9px] font-black text-red-500">{pct}%</span> : null;
-                                        })()}
+                                    {esTermo ? (
+                                      <div>
+                                        <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG Producidos</label>
+                                        <input type="number" step="0.01" value={phaseForm.producedKg}
+                                          onChange={e => {
+                                            const kg = e.target.value;
+                                            const insumosTotal = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                            const kgBase = insumosTotal > 0 ? insumosTotal : activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp) : activePhaseTab === 'sellado' ? parseNum(phaseForm.kgRecibidosSel) : 0;
+                                            const autoMerma = kgBase > 0 && parseNum(kg) >= 0 ? Math.max(0, kgBase - parseNum(kg)).toFixed(2) : phaseForm.mermaKg;
+                                            setPhaseForm({...phaseForm, producedKg: kg, mermaKg: autoMerma});
+                                          }}
+                                          className="w-full border-2 border-orange-300 rounded-xl p-2 text-sm font-black outline-none focus:border-orange-500 text-center bg-white" placeholder="0.00" />
                                       </div>
+                                    ) : (
+                                      <div>
+                                        <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Millares Producidos ★</label>
+                                        <input type="number" step="0.01" value={phaseForm.millaresProd}
+                                          onChange={e => {
+                                            const mill = e.target.value;
+                                            // Auto-calcular KG desde Millares
+                                            const kgAutoCalc = pesoMillarKg > 0 ? (parseNum(mill) * pesoMillarKg).toFixed(2) : phaseForm.producedKg;
+                                            const insumosTotal = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                            const kgBase = insumosTotal > 0 ? insumosTotal : activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp) : activePhaseTab === 'sellado' ? parseNum(phaseForm.kgRecibidosSel) : 0;
+                                            const kgFinal = kgAutoCalc !== phaseForm.producedKg ? kgAutoCalc : phaseForm.producedKg;
+                                            const autoMerma = kgBase > 0 && parseNum(kgFinal) >= 0 ? Math.max(0, kgBase - parseNum(kgFinal)).toFixed(2) : phaseForm.mermaKg;
+                                            setPhaseForm({...phaseForm, millaresProd: mill, producedKg: kgFinal, mermaKg: autoMerma});
+                                          }}
+                                          className="w-full border-2 border-orange-400 rounded-xl p-2 text-sm font-black outline-none focus:border-orange-600 text-center bg-orange-50" placeholder="0.00" />
+                                        {pesoMillarKg > 0 && parseNum(phaseForm.millaresProd) > 0 && (
+                                          <span className="text-[9px] font-bold text-orange-600 block mt-1 text-center">
+                                            ≈ {formatNum(parseNum(phaseForm.millaresProd)*pesoMillarKg)} KG
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                    <div>
+                                      {(() => {
+                                        const base = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0) || parseNum(phaseForm.kgRecibidosImp) || parseNum(phaseForm.kgRecibidosSel);
+                                        const mermaVal = parseNum(phaseForm.mermaKg);
+                                        const pct = base > 0 ? (mermaVal/base)*100 : 0;
+                                        const semaforoColor = pct <= 5 ? 'border-green-400 bg-green-50 text-green-700' : pct <= 7 ? 'border-yellow-400 bg-yellow-50 text-yellow-700' : 'border-red-400 bg-red-50 text-red-700';
+                                        return (
+                                          <>
+                                            <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Merma KG <span className="text-orange-500">(Auto)</span></label>
+                                            <div className="relative">
+                                              <input type="number" step="0.01" value={phaseForm.mermaKg} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} className={`w-full border-2 rounded-xl p-2 text-sm font-black outline-none text-center ${semaforoColor}`} placeholder="0.00" />
+                                              {pct > 0 && <span className={`absolute -top-5 right-0 text-[9px] font-black ${pct<=5?'text-green-600':pct<=7?'text-yellow-600':'text-red-600'}`}>{pct.toFixed(1)}% {pct<=5?'🟢':pct<=7?'🟡':'🔴'}</span>}
+                                            </div>
+                                          </>
+                                        );
+                                      })()}
                                     </div>
                                   </div>
+                                    );
+                                  })()}
 
                                   {activePhaseTab === 'extrusion' && (
                                     <div className="grid grid-cols-2 gap-3">
@@ -5222,7 +5288,12 @@ export default function App() {
                                               <div key={b.id||i} className="flex justify-between items-center bg-white p-2 rounded-lg border border-gray-100 mb-1 text-[9px] gap-2">
                                                 <span className="font-black text-gray-700 shrink-0">Lote {i+1} — {b.date}</span>
                                                 <span className="font-bold text-green-600">{formatNum(b.producedKg)} KG prod.</span>
-                                                <span className="font-bold text-red-500">{formatNum(b.mermaKg)} KG merma{b.mermaPorc > 0 ? ` (${b.mermaPorc}%)` : ''}</span>
+                                                {(() => {
+                                                  const pct = parseNum(b.mermaPorc||0);
+                                                  const col = pct<=5?'text-green-600':pct<=7?'text-yellow-600':'text-red-600';
+                                                  const ico = pct<=5?'🟢':pct<=7?'🟡':'🔴';
+                                                  return <span className={`font-bold ${col}`}>{formatNum(b.mermaKg)} KG merma{pct>0?` (${pct}% ${ico})`:''}</span>;
+                                                })()}
                                                 {!esTermo && b.techParams?.millares > 0 && <span className="font-bold text-blue-600">{formatNum(b.techParams.millares)} Mill.</span>}
                                                 <div className="flex gap-1 shrink-0">
                                                   <button onClick={()=>requireAdminPassword(()=>handleEditBatch(req.id, activePhaseTab, b.id),'Editar lote de producción')} className="p-1 bg-orange-50 text-orange-500 rounded hover:bg-orange-500 hover:text-white transition-all" title="Editar lote"><Edit size={10}/></button>
@@ -7187,6 +7258,7 @@ export default function App() {
                     <button onClick={() => {clearAllReports(); setActiveTab('home');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'home' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Home size={14}/> Inicio</button>
                     {hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
                     {hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
+                    {hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
                     {hasPerm('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario</button>}
                     {hasPerm('costos') && <button onClick={() => {clearAllReports(); setActiveTab('estado_resultado');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'estado_resultado' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Est. Resultado</button>}
                     {hasPerm('costos') && <button onClick={() => {clearAllReports(); setActiveTab('libro_diario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'libro_diario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ArrowRightLeft size={14}/> Libro Diario</button>}
@@ -7259,6 +7331,7 @@ export default function App() {
         <main className="flex-1 p-4 md:p-8 max-w-[1400px] mx-auto w-full print:p-0 print:m-0 print:max-w-none print:w-full bg-transparent print:bg-white">
            {activeTab === 'home' && renderHome()}
            {activeTab === 'ventas' && renderVentasModule()}
+           {activeTab === 'formulas' && renderFormulasModule()}
            {activeTab === 'produccion' && renderProduccionModule()}
            {activeTab === 'inventario' && renderInventoryModule()}
            {activeTab === 'simulador' && renderSimuladorModule()}
