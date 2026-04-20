@@ -267,7 +267,7 @@ export default function App() {
   const [formulas, setFormulas] = useState([]);
   const [showFormulaPanel, setShowFormulaPanel] = useState(false);
   const [editingFormulaId, setEditingFormulaId] = useState(null);
-  const [formulaForm, setFormulaForm] = useState({ categoria: '', tipoProducto: 'BOLSAS', fases: { extrusion: true, impresion: false, sellado: false }, ingredientes: [] });
+  const [formulaForm, setFormulaForm] = useState({ categoria: '', tipoProducto: 'BOLSAS', fases: { extrusion: true, impresion: false, sellado: false }, ancho: '', fuelles: '', largo: '', micras: '', ingredientes: [] });
   const [formulaIngId, setFormulaIngId] = useState('');
   const [formulaIngPct, setFormulaIngPct] = useState('');
   const [selectedPOItems, setSelectedPOItems] = useState([]);
@@ -633,8 +633,7 @@ export default function App() {
     if (e && e.preventDefault) e.preventDefault(); 
     const item = (inventory || []).find(i => i?.id === newMovementForm.itemId); if (!item) return;
     const qty = parseNum(newMovementForm.qty); const isAddition = newMovementForm.type === 'ENTRADA' || newMovementForm.type === 'AJUSTE (POSITIVO)';
-    if (!isAddition && (item?.stock || 0) < qty) return setDialog({title: 'Stock Insuficiente', text: `Inventario actual (${item.stock}) no cubre salida de ${qty}.`, type: 'alert'});
-    
+    // Stock puede quedar negativo — se permite despacho
     let updatedCost = item?.cost || 0;
     const movCost = newMovementForm.cost ? parseNum(newMovementForm.cost) : updatedCost; 
     
@@ -888,6 +887,18 @@ export default function App() {
     let f = { ...newReqForm, [field]: typeof value === 'string' ? value.toUpperCase() : value };
     if (field === 'client') { const c = (clients || []).find(cl => cl.name === (value||'').toUpperCase()); if (c && c.vendedor) f.vendedor = c.vendedor.toUpperCase(); }
     if (field === 'tipoProducto' && value === 'TERMOENCOGIBLE') f.presentacion = 'KILOS';
+    // Auto-fill dimensions from formula when category changes
+    if (field === 'categoria' && value && value !== '__OTRA__') {
+      const matchFormula = (formulas||[]).find(fm => fm.categoria && fm.categoria.toUpperCase() === value.toUpperCase());
+      if (matchFormula) {
+        if (matchFormula.ancho) f.ancho = String(matchFormula.ancho);
+        if (matchFormula.fuelles) f.fuelles = String(matchFormula.fuelles);
+        if (matchFormula.largo) f.largo = String(matchFormula.largo);
+        if (matchFormula.micras) f.micras = String(matchFormula.micras);
+        if (matchFormula.tipoProducto) f.tipoProducto = matchFormula.tipoProducto === 'TERMOENCOGIBLE' ? 'TERMOENCOGIBLE' : 'BOLSAS';
+        if (matchFormula.tipoProducto === 'TERMOENCOGIBLE') f.presentacion = 'KILOS';
+      }
+    }
     const w = parseNum(f.ancho), l = parseNum(f.largo), m = parseNum(f.micras), fu = parseNum(f.fuelles), c = parseNum(f.cantidad), tipo = f.tipoProducto;
     const MERMA_PCT = 0.05; // 5% merma automática
     if (w > 0 && m > 0) {
@@ -945,8 +956,7 @@ export default function App() {
         for (let ing of validItems) {
            const item = (inventory || []).find(i => i.id === ing.id);
            if (!item) throw new Error(`Ítem ${ing.id} no encontrado en catálogo.`);
-           if ((item.stock || 0) < ing.qty) throw new Error(`Stock insuficiente para ${item.desc}.`);
-
+           // Se permite despacho aunque el stock quede negativo (el inventario se refleja en negativo)
            phaseCost += (item.cost * ing.qty); totalInsumosKg += parseFloat(ing.qty);
            batch.update(getDocRef('inventory', item.id), { stock: (item.stock || 0) - ing.qty });
            const movId = Date.now().toString() + Math.floor(Math.random()*1000);
@@ -4709,6 +4719,22 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Dimensiones estándar de la categoría */}
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">📐 Dimensiones Estándar (para auto-llenar OPs)</label>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {[['ancho','Ancho (cm)'],['fuelles','Fuelle (cm)'],['largo','Largo (cm)'],['micras','Micras']].map(([key,label])=>(
+                      <div key={key}>
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">{label}</label>
+                        <input type="number" step="0.001" value={formulaForm[key]||''}
+                          onChange={e=>setFormulaForm({...formulaForm,[key]:e.target.value})}
+                          className="w-full border border-purple-200 rounded-xl p-2 text-sm font-black text-center outline-none bg-purple-50 text-purple-700 focus:border-purple-500" placeholder="0" />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[9px] text-purple-500 font-bold mt-1">Al seleccionar esta categoría en una nueva OP, se auto-completarán las dimensiones.</p>
+                </div>
+
                 {/* Fases activas */}
                 <div>
                   <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Fases del Proceso</label>
@@ -5250,7 +5276,7 @@ export default function App() {
                                 <td className="p-2 border text-center text-blue-700 font-bold">{formatNum(entKg)} KG</td>
                                 <td className="p-2 border text-center text-green-700 font-bold">{formatNum(b.producedKg)} KG{b.techParams?.millares>0?<span className="text-[9px] text-blue-500 block">{formatNum(b.techParams.millares)} Mill.</span>:null}</td>
                                 <td className="p-2 border text-center text-red-600 font-bold">{formatNum(b.mermaKg)} KG<span className="text-[9px] block">({pctM}%)</span></td>
-                                <td className="p-2 border text-[9px]">{(b.insumos||[]).map(ing=>{const inv=(inventory||[]).find(iv=>iv.id===ing.id);return <div key={ing.id} className="text-orange-700 font-bold">{inv?.desc||ing.id}: {formatNum(ing.qty)} KG</div>;}){(b.insumos||[]).length===0&&<span className="text-gray-400">—</span>}</td>
+                                <td className="p-2 border text-[9px]">{(b.insumos||[]).length>0?(b.insumos||[]).map(ing=>{const inv=(inventory||[]).find(iv=>iv.id===ing.id);return <div key={ing.id} className="text-orange-700 font-bold">{inv?.desc||ing.id}: {formatNum(ing.qty)} KG</div>;}):(<span className="text-gray-400">—</span>)}</td>
                                 <td className="p-2 border text-[9px] text-indigo-600">{b.observaciones||'—'}</td>
                               </tr>);
                             })}
