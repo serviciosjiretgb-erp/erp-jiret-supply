@@ -385,7 +385,10 @@ export default function App() {
   };
 
   const handleAdminValidation = () => {
-    if (adminPassword === ADMIN_PASSWORD) {
+    // Busca la clave real del usuario admin en la base de datos (o cualquier usuario Master)
+    const adminUser = (systemUsers || []).find(u => u.role === 'Master' || u.username === 'admin');
+    const validPassword = adminUser?.password || ADMIN_PASSWORD;
+    if (adminPassword === validPassword) {
       setShowAdminModal(false);
       if (adminAction) {
         adminAction();
@@ -396,7 +399,7 @@ export default function App() {
     } else {
       setDialog({ 
         title: 'Error de Autenticación', 
-        text: 'La clave admin es incorrecta. Acceso denegado.', 
+        text: `La clave admin es incorrecta. Use la misma clave del usuario administrador del sistema.`, 
         type: 'alert' 
       });
       setAdminPassword('');
@@ -7632,7 +7635,7 @@ export default function App() {
                   autoFocus
                 />
                 <p className="text-xs text-gray-400 text-center mt-2 font-bold">
-                  Presione Enter o click en Validar
+                  Use la misma clave del usuario administrador del sistema
                 </p>
               </div>
               
