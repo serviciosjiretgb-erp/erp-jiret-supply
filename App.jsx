@@ -265,6 +265,8 @@ export default function App() {
   const [showPOModal, setShowPOModal] = useState(false);
   // Estados Fórmulas / Recetas
   const [formulas, setFormulas] = useState([]);
+  const [formulaFilter, setFormulaFilter] = useState('TODOS');
+  const [formulaSearch, setFormulaSearch] = useState('');
   const [showFormulaPanel, setShowFormulaPanel] = useState(false);
   const [editingFormulaId, setEditingFormulaId] = useState(null);
   const [formulaForm, setFormulaForm] = useState({ categoria: '', tipoProducto: 'BOLSAS', fases: { extrusion: true, impresion: false, sellado: false }, ancho: '', fuelles: '', largo: '', micras: '', ingredientes: [] });
@@ -3671,11 +3673,9 @@ export default function App() {
       return setDialog({ title: 'Aviso', text: 'Ingrese KG producidos y/o insumos consumidos antes de guardar.', type: 'alert' });
     }
     try {
-      // Usar estructura de lotes
-      const lotes = getLotes(req);
-      const loteIdx = Math.min(activeLoteIndex, lotes.length - 1);
-      const loteActual = { ...(lotes[loteIdx] || { id: 'L-001', nombre: 'Lote 1', extrusion:{batches:[]}, impresion:{batches:[]}, sellado:{batches:[]}, cerrado:false }) };
-      let currentPhase = { ...(loteActual[activePhaseTab] || { batches: [], isClosed: false }) };
+      // Usar estructura plana prod.extrusion/impresion/sellado (compatible con todos los reportes)
+      const prodActual = req.production || {};
+      let currentPhase = { ...(prodActual[activePhaseTab] || { batches: [], isClosed: false }) };
       const fbBatch = writeBatch(db);
       let phaseCost = 0;
 
@@ -3688,8 +3688,8 @@ export default function App() {
           fbBatch.set(getDocRef('inventoryMovements', movId), {
             id: movId, date: phaseForm.date || getTodayDate(), itemId: item.id, itemName: item.desc,
             type: 'SALIDA', qty: parseNum(ing.qty), cost: item.cost, totalValue: parseNum(ing.qty) * item.cost,
-            reference: req.id, opAsignada: req.id, loteId: loteActual.id,
-            notes: `PRODUCCIÓN ${activePhaseTab.toUpperCase()} — ${loteActual.nombre}`,
+            reference: req.id, opAsignada: req.id,
+            notes: `PRODUCCIÓN ${activePhaseTab.toUpperCase()}`,
             timestamp: Date.now(), user: appUser?.name || 'Planta'
           });
         }
@@ -3763,11 +3763,8 @@ export default function App() {
       currentPhase.batches.push(newBatch);
       if (isClose) currentPhase.isClosed = true;
 
-      // Actualizar el lote activo con la fase modificada
-      const updatedLote = { ...loteActual, [activePhaseTab]: currentPhase };
-      const updatedLotes = lotes.map((l, i) => i === loteIdx ? updatedLote : l);
-      // También mantener compatibilidad hacia atrás con estructura plana
-      const newProd = { ...(req.production || {}), lotes: updatedLotes, [activePhaseTab]: currentPhase, status: 'EN PROCESO' };
+      // Guardar en estructura plana (compatible con todos los reportes)
+      const newProd = { ...(req.production || {}), [activePhaseTab]: currentPhase };
       fbBatch.update(getDocRef('requirements', req.id), { production: newProd, status: 'EN PROCESO' });
       await fbBatch.commit();
 
@@ -4051,7 +4048,7 @@ export default function App() {
                       <td className="p-3 border-r text-center font-bold">{b.date}</td>
                       <td className="p-3 border-r text-center font-black text-blue-600">{formatNum(kgEntrada)} kg{b.fase!=='EXTRUSIÓN'&&<span className="text-[8px] text-gray-400 ml-1">(de fase ant.)</span>}</td>
                       <td className="p-3 border-r text-center font-black text-green-600">{formatNum(b.producedKg)} kg</td>
-                      <td className="p-3 border-r text-center font-black text-red-500">{formatNum(b.mermaKg)} kg{b.mermaPorc > 0 ? ` (${b.mermaPorc}%)` : ''}</td>
+                      <td className="p-3 border-r text-center font-black text-red-500">{formatNum(b.mermaKg)} kg{kgEntrada > 0 ? ` (${((parseNum(b.mermaKg)/kgEntrada)*100).toFixed(1)}%)` : b.mermaPorc > 0 ? ` (${b.mermaPorc}%)` : ''}</td>
                       {(() => {
                         const base = kgEntrada > 0 ? kgEntrada : parseNum(b.mermaKg) + parseNum(b.producedKg);
                         const trKg = parseNum(b.mermaDetalle?.troquelTransp||0);
@@ -4115,39 +4112,7 @@ export default function App() {
           </div>
           )}
 
-          {/* Sección 3.1 (producción) / 4.1 (costos): Entregas Parciales */}
-          {(req.entregasParciales||[]).length > 0 && (
-            <div className="mb-6">
-              <div className="bg-blue-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">{costsMode ? '4.1' : '3.1'} Entregas Parciales Registradas</div>
-              <div className="border-2 border-blue-200 rounded-b-lg overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-blue-50"><tr className="uppercase font-black text-[9px] text-blue-700">
-                    <th className="p-3 border-r text-center">#</th>
-                    <th className="p-3 border-r text-center">Fecha</th>
-                    <th className="p-3 border-r text-center">KG Entregados</th>
-                    {req.tipoProducto !== 'TERMOENCOGIBLE' && <th className="p-3 text-center">Millares</th>}
-                  </tr></thead>
-                  <tbody className="divide-y divide-blue-100">
-                    {(req.entregasParciales||[]).map((ep,i)=>(
-                      <tr key={i} className="hover:bg-blue-50">
-                        <td className="p-3 border-r text-center font-black text-blue-600">Parcial {i+1}</td>
-                        <td className="p-3 border-r text-center font-bold">{ep.fecha}</td>
-                        <td className="p-3 border-r text-center font-black text-green-600">{formatNum(ep.kg)} KG</td>
-                        {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center font-bold">{ep.millares > 0 ? formatNum(ep.millares)+' Mill.' : '—'}</td>}
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="bg-blue-100 border-t-2 border-blue-300 font-black">
-                    <tr>
-                      <td colSpan={req.tipoProducto !== 'TERMOENCOGIBLE' ? 2 : 2} className="p-3 text-right uppercase text-[10px]">Total Entregado:</td>
-                      <td className="p-3 text-center text-green-700">{formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0))} KG</td>
-                      {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center">{formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0))} Mill.</td>}
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-          )}
+          {/* Sección 3.1 / 4.1 Entregas Parciales: eliminada del reporte */}
 
           {/* Indicadores Financieros y Firmas — solo costsMode */}
           {costsMode && (<>
@@ -4675,9 +4640,14 @@ export default function App() {
   const renderFormulasModule = () => {
     const totalPctActual = (formulaForm.ingredientes||[]).reduce((s,i)=>s+parseNum(i.pct),0);
     const pctRestante = Math.max(0, 100 - totalPctActual);
-    // Agrupar fórmulas por tipoProducto
+    // Filtrar y agrupar fórmulas
+    const formulasFiltradas = (formulas||[]).filter(f => {
+      const tipoOk = formulaFilter === 'TODOS' || (f.tipoProducto||'BOLSAS') === formulaFilter;
+      const searchOk = !formulaSearch || (f.categoria||'').toUpperCase().includes(formulaSearch);
+      return tipoOk && searchOk;
+    });
     const grouped = {};
-    (formulas||[]).forEach(f => { const t=f.tipoProducto||'BOLSAS'; if(!grouped[t])grouped[t]=[]; grouped[t].push(f); });
+    formulasFiltradas.forEach(f => { const t=f.tipoProducto||'BOLSAS'; if(!grouped[t])grouped[t]=[]; grouped[t].push(f); });
 
     return (
       <div className="space-y-6 animate-in fade-in">
@@ -4826,8 +4796,25 @@ export default function App() {
             </div>
           )}
 
-          {/* Tabla de fórmulas */}
+          {/* Tabla de fórmulas — visualización mejorada */}
           <div className="p-6">
+            {/* Filtro por categoría */}
+            {(formulas||[]).length > 0 && (
+              <div className="mb-5 flex gap-3 flex-wrap items-center">
+                <span className="text-[10px] font-black text-gray-500 uppercase">Filtrar:</span>
+                {['TODOS', ...[...new Set((formulas||[]).map(f=>f.tipoProducto||'BOLSAS'))]].map(tipo => (
+                  <button key={tipo} onClick={()=>setFormulaFilter(tipo)} 
+                    className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase border-2 transition-all ${formulaFilter===tipo?'bg-purple-600 text-white border-purple-600':'bg-white text-gray-600 border-gray-200 hover:border-purple-300'}`}>
+                    {tipo}
+                  </button>
+                ))}
+                <div className="ml-auto">
+                  <input type="text" value={formulaSearch} onChange={e=>setFormulaSearch(e.target.value.toUpperCase())}
+                    placeholder="Buscar categoría..." 
+                    className="border-2 border-gray-200 rounded-xl px-4 py-1.5 text-[10px] font-bold outline-none focus:border-purple-500 w-48" />
+                </div>
+              </div>
+            )}
             {Object.keys(grouped).length === 0 ? (
               <div className="text-center py-16 text-gray-400">
                 <Beaker size={48} className="mx-auto mb-4 opacity-30"/>
@@ -4836,59 +4823,104 @@ export default function App() {
               </div>
             ) : Object.entries(grouped).map(([tipo, fList]) => (
               <div key={tipo} className="mb-8">
-                <div className="flex items-center gap-2 mb-3">
-                  <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase ${tipo==='BOLSAS'?'bg-blue-100 text-blue-700':tipo==='TERMOENCOGIBLE'?'bg-green-100 text-green-700':'bg-gray-100 text-gray-700'}`}>{tipo}</span>
+                <div className="flex items-center gap-2 mb-4">
+                  <span className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase ${tipo==='BOLSAS'?'bg-blue-100 text-blue-700':tipo==='TERMOENCOGIBLE'?'bg-green-100 text-green-700':'bg-gray-100 text-gray-700'}`}>{tipo}</span>
                   <div className="flex-1 h-px bg-gray-200"></div>
                   <span className="text-[9px] font-bold text-gray-400">{fList.length} fórmula{fList.length!==1?'s':''}</span>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {fList.map(formula => {
-                    const totalPct = (formula.ingredientes||[]).reduce((s,i)=>s+parseNum(i.pct),0);
-                    return (
-                      <div key={formula.id} className="bg-white border-2 border-gray-200 rounded-2xl overflow-hidden hover:border-purple-300 transition-all shadow-sm">
-                        <div className="bg-gray-800 text-white px-4 py-3 flex justify-between items-center">
-                          <span className="font-black text-sm uppercase">{formula.categoria}</span>
-                          <div className="flex gap-2">
-                            <button onClick={()=>{setEditingFormulaId(formula.id);setFormulaForm({categoria:formula.categoria,tipoProducto:formula.tipoProducto||'BOLSAS',ingredientes:formula.ingredientes||[]});setShowFormulaPanel(true);window.scrollTo({top:0,behavior:'smooth'});}}
-                              className="p-1.5 bg-white/20 rounded-lg hover:bg-white/40 transition-all text-white"><Edit size={12}/></button>
-                            <button onClick={()=>requireAdminPassword(()=>handleDeleteFormula(formula.id),'Eliminar fórmula')}
-                              className="p-1.5 bg-red-500/30 rounded-lg hover:bg-red-500 transition-all text-white"><Trash2 size={12}/></button>
-                          </div>
-                        </div>
-                        <div className="p-4">
-                          <table className="w-full text-xs">
-                            <thead><tr className="border-b border-gray-100"><th className="pb-2 text-left text-[9px] font-black text-gray-400 uppercase">Material</th><th className="pb-2 text-right text-[9px] font-black text-gray-400 uppercase">%</th><th className="pb-2 pl-3 text-[9px] font-black text-gray-400 uppercase">Visual</th></tr></thead>
-                            <tbody>
-                              {(formula.ingredientes||[]).map((ing,i)=>(
-                                <tr key={i} className="border-b border-gray-50 last:border-0">
-                                  <td className="py-2 font-black text-purple-700">{ing.id}<span className="text-[9px] text-gray-400 font-normal ml-1">{ing.desc||''}</span></td>
-                                  <td className="py-2 text-right font-black text-gray-800">{ing.pct}%</td>
-                                  <td className="py-2 pl-3">
-                                    <div className="w-24 bg-gray-100 rounded-full h-2">
-                                      <div className="bg-purple-500 h-2 rounded-full transition-all" style={{width:`${ing.pct}%`}}></div>
+                {/* Vista de tabla tipo reporte */}
+                <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-gray-800 text-white uppercase font-black text-[9px]">
+                        <th className="p-3 text-left border-r border-gray-700">Categoría</th>
+                        <th className="p-3 text-center border-r border-gray-700">Dimensiones Estándar</th>
+                        <th className="p-3 text-center border-r border-gray-700">Fases</th>
+                        <th className="p-3 text-left border-r border-gray-700">Composición de Materias Primas</th>
+                        <th className="p-3 text-center border-r border-gray-700">Balance</th>
+                        <th className="p-3 text-center">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {fList.map((formula, fi) => {
+                        const totalPct = (formula.ingredientes||[]).reduce((s,i)=>s+parseNum(i.pct),0);
+                        const balanceOk = Math.abs(totalPct-100) < 0.1;
+                        const hasDims = formula.ancho || formula.largo || formula.micras;
+                        const pesoMill = hasDims ? ((parseNum(formula.ancho)+parseNum(formula.fuelles||0))*parseNum(formula.largo)*parseNum(formula.micras)) : 0;
+                        return (
+                          <tr key={formula.id} className={`hover:bg-purple-50/30 transition-all ${fi%2===0?'bg-white':'bg-gray-50/50'}`}>
+                            {/* Categoría */}
+                            <td className="p-4 border-r border-gray-100">
+                              <div className="font-black text-purple-700 text-sm uppercase">{formula.categoria}</div>
+                              <div className="text-[9px] text-gray-400 font-bold mt-0.5">
+                                {formula.tipoProducto || 'BOLSAS'}
+                              </div>
+                            </td>
+                            {/* Dimensiones */}
+                            <td className="p-4 border-r border-gray-100 text-center">
+                              {hasDims ? (
+                                <div className="space-y-0.5">
+                                  <div className="flex gap-2 justify-center flex-wrap text-[9px] font-bold">
+                                    {formula.ancho && <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg">A: {formula.ancho} cm</span>}
+                                    {formula.fuelles && parseNum(formula.fuelles)>0 && <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg">F: {formula.fuelles} cm</span>}
+                                    {formula.largo && <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-lg">L: {formula.largo} cm</span>}
+                                    {formula.micras && <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded-lg">M: {formula.micras}</span>}
+                                  </div>
+                                  {pesoMill > 0 && (
+                                    <div className="text-[8px] text-orange-600 font-black mt-1">
+                                      ⚖ {formatNum(pesoMill)} KG/Mill.
                                     </div>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                            <tfoot><tr className="border-t-2 border-gray-200">
-                              <td className="pt-2 text-[9px] font-black uppercase text-gray-500">Total:</td>
-                              <td className={`pt-2 text-right font-black ${Math.abs(totalPct-100)<0.1?'text-green-600':'text-red-600'}`}>{totalPct.toFixed(1)}%</td>
-                              <td></td>
-                            </tr></tfoot>
-                          </table>
-                          <p className="text-[9px] text-gray-400 font-bold mt-2">Última actualización: {formula.user || 'Sistema'}</p>
-                          <div className="flex gap-1 mt-2 flex-wrap">
-                            {[['extrusion','🔵 Extrusión','bg-blue-100 text-blue-700'],['impresion','🟣 Impresión','bg-purple-100 text-purple-700'],['sellado','🟢 Sellado','bg-green-100 text-green-700']].map(([key,label,cls])=>
-                              (formula.fases?.[key] || (!formula.fases && key==='extrusion')) ? (
-                                <span key={key} className={`px-2 py-0.5 rounded-lg text-[8px] font-black uppercase ${cls}`}>{label}</span>
-                              ) : null
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-[9px] text-gray-300 font-bold">Sin dimensiones</span>
+                              )}
+                            </td>
+                            {/* Fases */}
+                            <td className="p-4 border-r border-gray-100 text-center">
+                              <div className="flex flex-col gap-1 items-center">
+                                {[['extrusion','Ext.','bg-blue-100 text-blue-700'],['impresion','Imp.','bg-purple-100 text-purple-700'],['sellado','Sel.','bg-green-100 text-green-700']].map(([key,label,cls])=>
+                                  (formula.fases?.[key] || (!formula.fases && key==='extrusion')) ? (
+                                    <span key={key} className={`px-2 py-0.5 rounded text-[8px] font-black ${cls}`}>{label}</span>
+                                  ) : null
+                                )}
+                              </div>
+                            </td>
+                            {/* Composición */}
+                            <td className="p-4 border-r border-gray-100">
+                              <div className="space-y-1.5">
+                                {(formula.ingredientes||[]).map((ing,i)=>(
+                                  <div key={i} className="flex items-center gap-2">
+                                    <span className="font-black text-gray-700 w-20 text-[9px]">{ing.id}</span>
+                                    <span className="text-[9px] text-gray-500 flex-1">{ing.desc||''}</span>
+                                    <span className="font-black text-purple-700 text-[10px] w-10 text-right">{ing.pct}%</span>
+                                    <div className="w-20 bg-gray-100 rounded-full h-1.5">
+                                      <div className="bg-purple-500 h-1.5 rounded-full" style={{width:`${ing.pct}%`}}></div>
+                                    </div>
+                                  </div>
+                                ))}
+                                {(formula.ingredientes||[]).length===0 && <span className="text-[9px] text-gray-300">Sin ingredientes</span>}
+                              </div>
+                            </td>
+                            {/* Balance */}
+                            <td className="p-4 border-r border-gray-100 text-center">
+                              <div className={`text-sm font-black ${balanceOk?'text-green-600':'text-red-600'}`}>{totalPct.toFixed(1)}%</div>
+                              <div className={`text-[8px] font-bold ${balanceOk?'text-green-500':'text-red-500'}`}>{balanceOk?'✓ OK':'✗ Revisar'}</div>
+                            </td>
+                            {/* Acciones */}
+                            <td className="p-4 text-center">
+                              <div className="flex gap-1.5 justify-center">
+                                <button onClick={()=>{setEditingFormulaId(formula.id);setFormulaForm({categoria:formula.categoria,tipoProducto:formula.tipoProducto||'BOLSAS',ancho:formula.ancho||'',fuelles:formula.fuelles||'',largo:formula.largo||'',micras:formula.micras||'',fases:formula.fases||{extrusion:true},ingredientes:formula.ingredientes||[]});setShowFormulaPanel(true);window.scrollTo({top:0,behavior:'smooth'});}}
+                                  className="p-2 bg-purple-50 text-purple-600 rounded-xl hover:bg-purple-500 hover:text-white transition-all" title="Editar"><Edit size={13}/></button>
+                                <button onClick={()=>requireAdminPassword(()=>handleDeleteFormula(formula.id),'Eliminar fórmula')}
+                                  className="p-2 bg-red-50 text-red-400 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={13}/></button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             ))}
