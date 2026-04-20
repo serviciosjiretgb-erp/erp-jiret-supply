@@ -6696,6 +6696,8 @@ export default function App() {
       } catch(err) { setDialog({title:'Error', text:'No se pudo leer el archivo: ' + err.message, type:'alert'}); }
     }, 'Importar Respaldo de Base de Datos');
   };
+
+  const handleBackupAppJsx = () => {
     // Instrucciones para respaldar el App.jsx desde el repositorio/fuente
     setDialog({
       title: 'Respaldar App.jsx',
