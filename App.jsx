@@ -1338,7 +1338,7 @@ export default function App() {
       hasPerm('ventas') && { tab:'ventas', view:()=>setVentasView('facturacion'), icon:<Users size={36}/>, title:'Ventas y Facturación', desc:'Directorio, OP y Facturación', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
       hasPerm('produccion') && { tab:'produccion', view:()=>setProdView('proyeccion'), icon:<Factory size={36}/>, title:'Producción Planta', desc:'Control de Fases y Reportes', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
       hasPerm('produccion') && { tab:'formulas', icon:<Beaker size={36}/>, title:'Fórmulas / Recetas', desc:'Recetas por categoría y fases', color:'border-purple-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-purple-500' },
-      hasPerm('inventario') && { tab:'inventario', view:()=>setInvView('catalogo'), icon:<Package size={36}/>, title:'Control Inventario', desc:'Art. 177 LISLR, Movimientos y Kardex', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
+      hasPerm('inventario') && { tab:'inventario', view:()=>setInvView('requisiciones'), icon:<Package size={36}/>, title:'Control Inventario', desc:'Solicitudes de Planta, Catálogo, Movimientos y Kardex', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
       hasPerm('produccion') && { tab:'simulador', icon:<Calculator size={36}/>, title:'Simulador OP', desc:'Calculadora Inversa de Producción y Mermas', color:'border-orange-400', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-orange-500' },
       hasPerm('costos') && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
       hasPerm('costos') && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos, Estado de Resultado y Libro Diario', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
@@ -3686,26 +3686,31 @@ export default function App() {
     const selBatches = filterRealBatches(prod.sellado?.batches).map(b=>({...b,fase:'SELLADO'}));
     const allBatches = [...extBatches, ...impBatches, ...selBatches];
 
-    // ── CÁLCULO CORRECTO: cada fase aporta su producción final ──────────────
-    // MP Inyectada = solo insumos reales de EXTRUSIÓN (materia prima bruta inyectada)
+    // ── LÓGICA DE CADENA DE PRODUCCIÓN ──────────────────────────────────────
+    // Es un proceso continuo: Extrusión → Impresión → Sellado
+    // MP Inyectada = solo insumos reales de EXTRUSIÓN (materia prima bruta inyectada al inicio)
     const mpInyectadaKg = extBatches.reduce((s,b)=>{
       const insumosUsados = (b.insumos||[]).reduce((ss,ing)=>ss+parseNum(ing.qty),0);
       return s + (insumosUsados > 0 ? insumosUsados : parseNum(b.kgRecibidos||b.totalInsumosKg||0));
     },0) || impBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0)
          || selBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0);
 
-    // KG producidos = SUMA de todas las fases (cada fase produce KG de producto terminado)
-    const kgProducidosFinales = allBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
+    // KG producidos finales = ÚLTIMA fase activa (la que produce el producto final)
+    // Sellado > Impresión > Extrusión (prioridad de última fase)
+    const lastActiveBatches = selBatches.length>0 ? selBatches : impBatches.length>0 ? impBatches : extBatches;
+    const kgProducidosFinales = lastActiveBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
 
-    // Merma = suma de mermas individuales por fase (la merma real de cada etapa)
-    const totalMermaKg = allBatches.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
+    // Merma REAL de la cadena = MP entrada - KG salida final
+    const totalMermaKg = Math.max(0, mpInyectadaKg - kgProducidosFinales);
     const pctMerma = mpInyectadaKg > 0 ? (totalMermaKg / mpInyectadaKg * 100) : 0;
 
-    // Costo total = suma de insumos realmente consumidos en todas las fases
+    // Costo total = suma de insumos consumidos en TODAS las fases
     const totalCostoMP = allBatches.reduce((s,b)=>s+parseNum(b.cost),0);
 
-    // Millares = SUMA de todas las fases (producción total de millares)
-    const totalMillares = allBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+    // Millares = ÚLTIMA fase activa (el producto terminado final)
+    const totalMillares = selBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+      || impBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+      || extBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
 
     const costoPorMillar = totalMillares > 0 ? totalCostoMP / totalMillares : 0;
     const relatedInvoices = invoices.filter(i => i.opAsignada === req.id);
@@ -4170,14 +4175,15 @@ export default function App() {
         try {
           const prod = req.production || {};
           const filterReal = (b) => b.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b.producedKg) > 0;
-          const allRealBatches = [
-            ...(prod.extrusion?.batches||[]).filter(filterReal),
-            ...(prod.impresion?.batches||[]).filter(filterReal),
-            ...(prod.sellado?.batches||[]).filter(filterReal),
-          ];
-          // KG y Millares = SUMA de todas las fases (cada una produce producto final)
-          const totalKgProd = allRealBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
-          const totalMillares = allRealBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+          const selBatch = (prod.sellado?.batches||[]).filter(filterReal);
+          const impBatch = (prod.impresion?.batches||[]).filter(filterReal);
+          const extBatch = (prod.extrusion?.batches||[]).filter(filterReal);
+          // KG finales = ÚLTIMA fase activa (cadena: ext→imp→sel)
+          const lastBatches = selBatch.length>0 ? selBatch : impBatch.length>0 ? impBatch : extBatch;
+          const totalKgProd = lastBatches.reduce((s, b) => s + parseNum(b.producedKg), 0);
+          const totalMillares = selBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+            || impBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+            || extBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
 
           // Marcar todas las fases abiertas como cerradas
           const updatedProd = { ...prod };
@@ -4950,8 +4956,11 @@ export default function App() {
                             {(req.entregasParciales||[]).length > 0 && (() => {
                               const prod = req.production || {};
                               const fr = b => b.operator!=='ALMACÉN (DESPACHO)' && parseNum(b.producedKg)>0;
-                              const allRB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])].filter(fr);
-                              const totalProd = allRB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+                              const sB=(prod.sellado?.batches||[]).filter(fr);
+                              const iB=(prod.impresion?.batches||[]).filter(fr);
+                              const eB=(prod.extrusion?.batches||[]).filter(fr);
+                              const lastB = sB.length>0?sB:iB.length>0?iB:eB;
+                              const totalProd = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
                               const totalEntregado = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0);
                               const pendiente = Math.max(0, totalProd - totalEntregado);
                               return (
@@ -5451,9 +5460,12 @@ export default function App() {
                       {completedReqs.map(req => {
                         const prod = req.production || {};
                         const fr = b => b.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b.producedKg)>0;
-                        const allRB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])].filter(fr);
-                        const totalKg = allRB.reduce((s,b)=>s+parseNum(b.producedKg),0);
-                        const totalMill = allRB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+                        const sB=(prod.sellado?.batches||[]).filter(fr);
+                        const iB=(prod.impresion?.batches||[]).filter(fr);
+                        const eB=(prod.extrusion?.batches||[]).filter(fr);
+                        const lastB = sB.length>0?sB:iB.length>0?iB:eB;
+                        const totalKg = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+                        const totalMill = sB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||iB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||eB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
                         return (
                           <tr key={req.id} className="hover:bg-gray-50">
                             <td className="py-3 px-4 border-r font-black text-orange-600">#{String(req.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400">{req.fecha}</span></td>
@@ -7404,6 +7416,7 @@ export default function App() {
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
               <div className="max-w-7xl mx-auto flex gap-6 px-6 overflow-x-auto">
                  {[ 
+                   {id:'requisiciones', icon:<ClipboardList size={16}/>, label:'Solicitudes Planta'},
                    {id:'catalogo', icon:<Box size={16}/>, label:'Catálogo'}, 
                    {id:'wip', icon:<Beaker size={16}/>, label:'WIP (Proceso)'}, 
                    {id:'finished', icon:<Package size={16}/>, label:'Terminados'}, 
@@ -7414,7 +7427,6 @@ export default function App() {
                    {id:'kardex', icon:<History size={16}/>, label:'Kardex'}, 
                    {id:'reportes_mod', icon:<FileText size={16}/>, label:'Reportes'}, 
                    {id:'reporte177', icon:<FileCheck size={16}/>, label:'Art. 177 ISLR'}, 
-                   {id:'requisiciones', icon:<ClipboardList size={16}/>, label:'Solicitudes Planta'} 
                  ].map(t => (
                     <button key={t.id} onClick={()=>{setInvView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
