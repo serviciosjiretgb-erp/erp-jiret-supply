@@ -450,6 +450,31 @@ export default function App() {
     };
   }, [fbUser]);
 
+  // ── AUTO RESPALDO PROGRAMADO ────────────────────────────────────────────────
+  useEffect(() => {
+    if (backupFreq === 'manual') return;
+    const checkAndBackup = () => {
+      if (!appUser) return;
+      const now = new Date();
+      const nowHHMM = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+      const today = getTodayDate();
+      const lastRun = localStorage.getItem('backupLastRun') || '';
+      const lastRunDate = lastRun;
+      const diffDays = lastRunDate ? Math.floor((new Date(today) - new Date(lastRunDate)) / 86400000) : 999;
+      let shouldRun = false;
+      if (backupFreq === 'diario' && diffDays >= 1 && nowHHMM === backupTime) shouldRun = true;
+      if (backupFreq === 'semanal' && diffDays >= 7 && nowHHMM === backupTime) shouldRun = true;
+      if (backupFreq === 'mensual' && diffDays >= 30 && nowHHMM === backupTime) shouldRun = true;
+      if (shouldRun) {
+        handleBackupData();
+        setDialog({ title: '💾 Respaldo Automático', text: `Respaldo automático ejecutado a las ${backupTime}. Frecuencia: ${backupFreq}.`, type: 'alert' });
+      }
+    };
+    // Verificar cada minuto
+    const interval = setInterval(checkAndBackup, 60000);
+    return () => clearInterval(interval);
+  }, [backupFreq, backupTime, appUser]);
+
   // ============================================================================
   // ASIENTOS CONTABLES AUTOMÁTICOS
   // Cuentas:
@@ -1311,9 +1336,7 @@ export default function App() {
       hasPerm('inventario') && { tab:'inventario', view:()=>setInvView('catalogo'), icon:<Package size={36}/>, title:'Control Inventario', desc:'Art. 177 LISLR, Movimientos y Kardex', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
       hasPerm('produccion') && { tab:'simulador', icon:<Calculator size={36}/>, title:'Simulador OP', desc:'Calculadora Inversa de Producción y Mermas', color:'border-orange-400', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-orange-500' },
       hasPerm('costos') && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
-      hasPerm('costos') && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
-      hasPerm('costos') && { tab:'estado_resultado', icon:<TrendingUp size={36}/>, title:'Estado de Resultado', desc:'Estado Integral por período', color:'border-indigo-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-indigo-600' },
-      hasPerm('costos') && { tab:'libro_diario', icon:<ArrowRightLeft size={36}/>, title:'Libro Diario', desc:'Asientos contables automáticos', color:'border-teal-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-teal-600' },
+      hasPerm('costos') && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos, Estado de Resultado y Libro Diario', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
       hasPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={36}/>, title:'Configuración', desc:'Usuarios, Permisos y Respaldo', color:'border-gray-400', bg:'bg-white', textColor:'text-gray-800', descColor:'text-gray-400', iconColor:'text-gray-500' },
     ].filter(Boolean);
 
@@ -2966,36 +2989,63 @@ export default function App() {
                 <div className="p-8 bg-gray-50/50 border-b">
                   <form onSubmit={handleCreateRequirement} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
                     <div className="flex justify-between items-center border-b pb-3 mb-6"><h3 className="text-sm font-black uppercase text-black">{editingReqId ? 'EDITAR ORDEN' : 'NUEVA ORDEN'}</h3><span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl font-black text-[10px]">CORRELATIVO: {editingReqId ? String(editingReqId).replace('OP-','').padStart(5,'0') : generateReqId().replace('OP-','').padStart(5,'0')}</span></div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                      <div className="space-y-4">
-                        <div>
-                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Cliente del Directorio</label>
-                          <select required value={newReqForm.client} onChange={e=>handleReqFormChange('client', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500">
-                            <option value="">Seleccione...</option>{(clients || []).map(c=><option key={c?.rif} value={c?.name}>{c?.name}</option>)}
-                          </select>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Ancho (cm)</label><input type="number" step="0.1" value={newReqForm.ancho} onChange={e=>handleReqFormChange('ancho', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black" /></div>
-                          <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Fuelle Total (cm)</label><input type="number" step="0.1" value={newReqForm.fuelles} onChange={e=>handleReqFormChange('fuelles', e.target.value)} disabled={newReqForm.tipoProducto === 'TERMOENCOGIBLE'} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black disabled:bg-gray-100 disabled:opacity-50" /></div>
-                        </div>
+
+                    {/* Fila 1: Cliente */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Cliente del Directorio</label>
+                        <select required value={newReqForm.client} onChange={e=>handleReqFormChange('client', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500">
+                          <option value="">Seleccione...</option>{(clients || []).map(c=><option key={c?.rif} value={c?.name}>{c?.name}</option>)}
+                        </select>
                       </div>
-                      <div className="space-y-4">
-                        <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Largo (cm)</label><input type="number" step="0.1" value={newReqForm.largo} onChange={e=>handleReqFormChange('largo', e.target.value)} disabled={newReqForm.tipoProducto === 'TERMOENCOGIBLE'} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black disabled:bg-gray-100 disabled:opacity-50" /></div>
-                        <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Micras / Espesor</label><input type="number" step="0.001" value={newReqForm.micras} onChange={e=>handleReqFormChange('micras', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black" /></div>
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Categoría</label>
+                        {(() => {
+                          const catOptions = [...new Set((formulas||[]).map(f=>f.categoria).filter(Boolean))].sort();
+                          return catOptions.length > 0 ? (
+                            <select value={newReqForm.categoria} onChange={e=>handleReqFormChange('categoria', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500">
+                              <option value="">Seleccione categoría...</option>
+                              {catOptions.map(cat=><option key={cat} value={cat}>{cat}</option>)}
+                              <option value="__OTRA__">+ Otra (ingresar manualmente)</option>
+                            </select>
+                          ) : (
+                            <input type="text" value={newReqForm.categoria} onChange={e=>handleReqFormChange('categoria', e.target.value)} placeholder="EJ: PAÑAL, GALLETAS, ETC" className="w-full border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500 uppercase" />
+                          );
+                        })()}
+                        {newReqForm.categoria === '__OTRA__' && (
+                          <input type="text" autoFocus placeholder="Escriba la categoría nueva..." onChange={e=>handleReqFormChange('categoria', e.target.value.toUpperCase())} className="w-full border-2 border-orange-300 rounded-2xl p-3 font-black text-xs text-black outline-none focus:border-orange-500 uppercase mt-2" />
+                        )}
                       </div>
                     </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-6">
+
+                    {/* Fila 2: Dimensiones en una sola fila */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Ancho (cm)</label>
+                        <input type="number" step="0.1" value={newReqForm.ancho} onChange={e=>handleReqFormChange('ancho', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Fuelle Total (cm)</label>
+                        <input type="number" step="0.1" value={newReqForm.fuelles} onChange={e=>handleReqFormChange('fuelles', e.target.value)} disabled={newReqForm.tipoProducto === 'TERMOENCOGIBLE'} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black disabled:bg-gray-100 disabled:opacity-50" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Largo (cm)</label>
+                        <input type="number" step="0.1" value={newReqForm.largo} onChange={e=>handleReqFormChange('largo', e.target.value)} disabled={newReqForm.tipoProducto === 'TERMOENCOGIBLE'} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black disabled:bg-gray-100 disabled:opacity-50" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Micras / Espesor</label>
+                        <input type="number" step="0.001" value={newReqForm.micras} onChange={e=>handleReqFormChange('micras', e.target.value)} className="w-full border-2 border-gray-200 rounded-2xl p-5 font-black text-lg text-center text-black" />
+                      </div>
+                    </div>
+
+                    {/* Fila 3: Tipo, Cantidad, Presentación + info pesoMillar */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                        <div>
                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Tipo de Producto</label>
                          <select value={newReqForm.tipoProducto} onChange={e=>handleReqFormChange('tipoProducto', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500">
                            <option value="BOLSAS">BOLSAS / EMPAQUES</option>
                            <option value="TERMOENCOGIBLE">TERMOENCOGIBLE</option>
                          </select>
-                       </div>
-                       <div>
-                         <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Categoría</label>
-                         <input type="text" value={newReqForm.categoria} onChange={e=>handleReqFormChange('categoria', e.target.value)} placeholder="EJ: PAÑAL, GALLETAS, ETC" className="w-full border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500 uppercase" />
                        </div>
                        <div>
                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Cantidad Solicitada</label>
@@ -3008,9 +3058,27 @@ export default function App() {
                            <option value="KILOS">KILOGRAMOS</option>
                          </select>
                        </div>
+                       <div>
+                         <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">KG / Millar</label>
+                         <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-4 text-center">
+                           <span className="font-black text-orange-700 text-lg">{newReqForm.pesoMillar && newReqForm.pesoMillar !== '0.00' && newReqForm.pesoMillar !== 'N/A' ? formatNum(newReqForm.pesoMillar) : '—'}</span>
+                           <span className="text-[9px] font-bold text-orange-500 block">KG por millar</span>
+                         </div>
+                       </div>
                     </div>
 
-                    <div className="flex justify-between items-center bg-orange-50 p-6 rounded-3xl border-2 border-orange-200 mt-6 shadow-inner"><div><span className="text-[10px] font-black text-orange-800 uppercase tracking-tighter">TOTAL CARGA ESTIMADA</span><span className="text-4xl font-black text-orange-600 block">{newReqForm.requestedKg} KG</span></div><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR Y PASAR A PLANTA</button></div>
+                    <div className="flex justify-between items-center bg-orange-50 p-6 rounded-3xl border-2 border-orange-200 mt-6 shadow-inner">
+                      <div>
+                        <span className="text-[10px] font-black text-orange-800 uppercase tracking-tighter">TOTAL CARGA A PRODUCIR (incluye 5% merma)</span>
+                        <span className="text-4xl font-black text-orange-600 block">{newReqForm.requestedKg} KG</span>
+                        {newReqForm.tipoProducto === 'BOLSAS' && parseNum(newReqForm.cantidad) > 0 && parseNum(newReqForm.pesoMillar) > 0 && (
+                          <div className="text-[10px] font-bold text-orange-700 mt-1 space-y-0.5">
+                            <div>KG netos: {formatNum(parseNum(newReqForm.cantidad)*parseNum(newReqForm.pesoMillar))} KG | +5% merma → {newReqForm.requestedKg} KG</div>
+                          </div>
+                        )}
+                      </div>
+                      <button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR Y PASAR A PLANTA</button>
+                    </div>
                   </form>
                 </div>
              )}
@@ -4053,6 +4121,7 @@ export default function App() {
   const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
   const [backupFreq, setBackupFreq] = useState(() => localStorage.getItem('backupFreq') || 'manual');
   const [backupLastRun, setBackupLastRun] = useState(() => localStorage.getItem('backupLastRun') || '');
+  const [backupTime, setBackupTime] = useState(() => localStorage.getItem('backupTime') || '08:00');
 
   const handlePartialDelivery = async () => {
     if (!showPartialModal) return;
@@ -5482,6 +5551,8 @@ export default function App() {
       { id: 'super_finiquito', icon: <FileCheck size={26}/>, label: 'Finiquito por OP', desc: 'Por orden individual', color: 'purple' },
       { id: 'estado_financiero', icon: <TrendingUp size={26}/>, label: 'Estado Financiero', desc: 'Estado de resultado integral', color: 'gray' },
       { id: 'variaciones', icon: <TrendingDown size={26}/>, label: 'Variaciones', desc: 'Mes actual vs anterior', color: 'red' },
+      { id: 'estado_resultado', icon: <TrendingUp size={26}/>, label: 'Estado de Resultado', desc: 'Resultado integral por período', color: 'indigo' },
+      { id: 'libro_diario', icon: <ArrowRightLeft size={26}/>, label: 'Libro Diario', desc: 'Asientos contables automáticos', color: 'teal' },
     ];
 
     return (
@@ -6050,6 +6121,12 @@ export default function App() {
             {!showReportType && (
               <div className="text-center py-12 text-gray-400"><BarChart3 size={48} className="mx-auto mb-4 opacity-20"/><p className="font-black text-sm uppercase">Seleccione un tipo de reporte para comenzar</p></div>
             )}
+
+            {/* Estado de Resultado — renderizado inline */}
+            {showReportType === 'estado_resultado' && renderEstadoResultadoModule()}
+
+            {/* Libro Diario — renderizado inline */}
+            {showReportType === 'libro_diario' && renderLibroDiarioModule()}
           </div>
         </div>
       </div>
@@ -7146,7 +7223,7 @@ export default function App() {
               {/* Programación */}
               <div>
                 <label className="text-[10px] font-black text-green-700 uppercase block mb-2">⏰ Frecuencia de Recordatorio</label>
-                <div className="flex gap-2 flex-wrap">
+                <div className="flex gap-2 flex-wrap mb-3">
                   {[['manual','Manual'],['diario','Diario'],['semanal','Semanal'],['mensual','Mensual']].map(([val,label])=>(
                     <button key={val} onClick={()=>{setBackupFreq(val);localStorage.setItem('backupFreq',val);}}
                       className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase border-2 transition-all ${backupFreq===val?'bg-green-600 text-white border-green-600':'bg-white text-green-700 border-green-300 hover:border-green-500'}`}>
@@ -7154,6 +7231,17 @@ export default function App() {
                     </button>
                   ))}
                 </div>
+                {backupFreq !== 'manual' && (
+                  <div className="bg-green-100 border border-green-300 rounded-xl p-3">
+                    <label className="text-[9px] font-black text-green-700 uppercase block mb-1">🕐 Hora de ejecución automática</label>
+                    <div className="flex items-center gap-2">
+                      <input type="time" value={backupTime}
+                        onChange={e=>{setBackupTime(e.target.value);localStorage.setItem('backupTime',e.target.value);}}
+                        className="border-2 border-green-300 rounded-lg px-3 py-1.5 text-sm font-black text-green-800 outline-none bg-white focus:border-green-500" />
+                      <span className="text-[9px] font-bold text-green-600">El sistema ejecutará el respaldo automáticamente a esta hora cada {backupFreq === 'diario' ? 'día' : backupFreq === 'semanal' ? 'semana' : 'mes'} mientras el sistema esté abierto.</span>
+                    </div>
+                  </div>
+                )}
                 {backupLastRun && <p className="text-[9px] font-bold text-green-600 mt-2">✓ Último respaldo: <span className="font-black">{backupLastRun}</span></p>}
                 {backupFreq !== 'manual' && (() => {
                   const hoy = getTodayDate();
@@ -7168,11 +7256,11 @@ export default function App() {
                   }
                   return needsBackup ? (
                     <div className="bg-yellow-100 border border-yellow-300 rounded-lg p-2 mt-2 text-[9px] font-black text-yellow-700 uppercase">
-                      ⚠ Respaldo {backupFreq} pendiente — haga clic en "Respaldar" ahora
+                      ⚠ Respaldo {backupFreq} pendiente — haga clic en "Respaldar" ahora o espere las {backupTime}
                     </div>
                   ) : (
                     <div className="bg-green-100 border border-green-200 rounded-lg p-2 mt-2 text-[9px] font-black text-green-700 uppercase">
-                      ✓ Respaldo al día según frecuencia {backupFreq}
+                      ✓ Respaldo al día · próximo a las {backupTime}
                     </div>
                   );
                 })()}
@@ -7286,8 +7374,7 @@ export default function App() {
                     {hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
                     {hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
                     {hasPerm('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario</button>}
-                    {hasPerm('costos') && <button onClick={() => {clearAllReports(); setActiveTab('estado_resultado');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'estado_resultado' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Est. Resultado</button>}
-                    {hasPerm('costos') && <button onClick={() => {clearAllReports(); setActiveTab('libro_diario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'libro_diario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ArrowRightLeft size={14}/> Libro Diario</button>}
+                    {hasPerm('costos') && <button onClick={() => {clearAllReports(); setActiveTab('costos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'costos' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
                  </div>
               </div>
               <div className="flex items-center gap-4">
