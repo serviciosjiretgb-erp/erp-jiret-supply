@@ -3652,39 +3652,42 @@ export default function App() {
       };
 
       // ── MERMA → INVENTARIO RECICLADO ─────────────────────────────────────
-      // Si hay desglose de merma, ingresarla como ENTRADA en inventario
       if (activePhaseTab === 'extrusion' || activePhaseTab === 'sellado') {
+        const faseLabel = activePhaseTab === 'extrusion' ? 'EXTRUSIÓN' : 'SELLADO';
         const mermaTypes = [
-          { key: 'troquelTransp', kg: parseNum(phaseForm.mermaTroquelTransp), desc: 'RECICLADO TRANSPARENTE', invId: 'REC-TRANSP' },
-          { key: 'troquelPigm',  kg: parseNum(phaseForm.mermaTroquelPigm),  desc: 'RECICLADO PIGMENTADO',  invId: 'REC-PIGM' },
-          { key: 'torta',        kg: parseNum(phaseForm.mermaTorta),        desc: 'RECICLADO TORTA',       invId: 'REC-TORTA' },
+          { key: 'troquelTransp', kg: parseNum(phaseForm.mermaTroquelTransp), desc: 'RECICLADO TRANSPARENTE', invId: 'MP-000' },
+          { key: 'troquelPigm',  kg: parseNum(phaseForm.mermaTroquelPigm),  desc: 'RECICLADO PIGMENTADO',  invId: 'MP-001' },
+          { key: 'torta',        kg: parseNum(phaseForm.mermaTorta),        desc: 'RECICLADO TORTA',       invId: 'MP-002' },
         ];
         for (const mt of mermaTypes) {
           if (mt.kg <= 0) continue;
-          // Buscar item en inventario por ID o descripción
-          const existing = (inventory || []).find(i => i.id === mt.invId || (i.desc||'').toUpperCase() === mt.desc);
-          const invId = existing?.id || mt.invId;
+          const existing = (inventory || []).find(i => i.id === mt.invId);
           if (existing) {
-            // Sumar al stock existente
-            fbBatch.update(getDocRef('inventory', invId), { stock: (existing.stock || 0) + mt.kg });
+            fbBatch.update(getDocRef('inventory', mt.invId), { stock: (existing.stock || 0) + mt.kg });
           } else {
-            // Crear el ítem de inventario
-            fbBatch.set(getDocRef('inventory', invId), {
-              id: invId, desc: mt.desc, category: 'Materia Prima', unit: 'kg',
+            fbBatch.set(getDocRef('inventory', mt.invId), {
+              id: mt.invId, desc: mt.desc, category: 'Materia Prima', unit: 'kg',
               stock: mt.kg, cost: 0, minStock: 0, timestamp: Date.now(),
-              notes: 'Generado automáticamente por producción'
+              notes: 'Material reciclado de producción'
             });
           }
-          // Movimiento de entrada
-          const movRecId = `REC-${Date.now()}-${mt.invId}`;
+          const movRecId = `REC-${mt.invId}-${Date.now()}-${Math.floor(Math.random()*9999)}`;
           fbBatch.set(getDocRef('inventoryMovements', movRecId), {
-            id: movRecId, date: phaseForm.date || getTodayDate(),
-            itemId: invId, itemName: mt.desc,
-            type: 'ENTRADA', qty: mt.kg, cost: 0, totalValue: 0,
-            reference: req.id, opAsignada: req.id,
-            notes: `MERMA RECICLADA — ${activePhaseTab.toUpperCase()} | OP ${req.id}`,
+            id: movRecId,
+            date: phaseForm.date || getTodayDate(),
+            itemId: mt.invId,
+            itemName: mt.desc,
+            type: 'ENTRADA',
+            qty: mt.kg,
+            cost: 0,
+            totalValue: 0,
+            reference: req.id,
+            opAsignada: req.id,
+            fase: faseLabel,
             tipoMerma: mt.key,
-            timestamp: Date.now() + Math.random(), user: appUser?.name || 'Planta'
+            notes: `♻ RECICLADO — ${faseLabel} | OP ${req.id} | ${phaseForm.date || getTodayDate()} | Op: ${appUser?.name || 'Planta'}`,
+            timestamp: Date.now(),
+            user: appUser?.name || 'Planta'
           });
         }
       }
@@ -3813,7 +3816,18 @@ export default function App() {
         {/* Controles no-pdf */}
         <div className="flex justify-between p-6 border-b border-gray-200 no-pdf">
           <button onClick={() => setShowFiniquitoOP(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200 flex items-center gap-2">← Volver</button>
-          <button onClick={() => handleExportPDF(`${costsMode?'Finiquito':'Reporte_Produccion'}_OP_${req.id}`, true)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
+          <div className="flex gap-2">
+            {req.status === 'COMPLETADO' && (
+              <button onClick={() => requireAdminPassword(async () => {
+                await updateDoc(getDocRef('requirements', req.id), { status: 'EN PROCESO', fechaReapertura: getTodayDate(), reabiertoPor: appUser?.name });
+                setShowFiniquitoOP(null);
+                setDialog({ title: '✅ OP Reabierta', text: `La OP fue reabierta. Puede modificar y registrar fases nuevamente desde Producción Activa.`, type: 'alert' });
+              }, 'Reabrir OP Completada')} className="bg-blue-600 text-white px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-blue-700 flex items-center gap-2 shadow-md">
+                <Edit size={14}/> REABRIR OP
+              </button>
+            )}
+            <button onClick={() => handleExportPDF(`${costsMode?'Finiquito':'Reporte_Produccion'}_OP_${req.id}`, true)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
+          </div>
         </div>
         <div className="p-8">
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
@@ -5604,7 +5618,13 @@ export default function App() {
                             <td className="py-3 px-4 border-r text-center font-black text-green-600">{formatNum(totalKg)}</td>
                             <td className="py-3 px-4 border-r text-center font-bold">{req.tipoProducto === 'TERMOENCOGIBLE' ? <span className="text-[9px] text-gray-400">— KG</span> : (totalMill > 0 ? formatNum(totalMill) : '—')}</td>
                             <td className="py-3 px-4 text-center">
-                              <button onClick={() => setShowFiniquitoOP(req.id)} className="px-4 py-2 bg-orange-500 text-white rounded-xl text-[9px] font-black uppercase hover:bg-orange-600 transition-all flex items-center gap-1 mx-auto"><FileText size={12}/> VER REPORTE</button>
+                              <div className="flex gap-2 justify-center">
+                                <button onClick={() => setShowFiniquitoOP(req.id)} className="px-4 py-2 bg-orange-500 text-white rounded-xl text-[9px] font-black uppercase hover:bg-orange-600 transition-all flex items-center gap-1"><FileText size={12}/> VER REPORTE</button>
+                                <button onClick={() => requireAdminPassword(async () => {
+                                  await updateDoc(getDocRef('requirements', req.id), { status: 'EN PROCESO', fechaReapertura: getTodayDate(), reabiertoPor: appUser?.name });
+                                  setDialog({ title: '✅ OP Reabierta', text: `La OP #${String(req.id).replace('OP-','').padStart(5,'0')} fue reabierta. Puede modificar y registrar fases nuevamente.`, type: 'alert' });
+                                }, 'Reabrir OP Completada')} className="px-4 py-2 bg-blue-600 text-white rounded-xl text-[9px] font-black uppercase hover:bg-blue-700 transition-all flex items-center gap-1"><Edit size={12}/> REABRIR</button>
+                              </div>
                             </td>
                           </tr>
                         );
