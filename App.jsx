@@ -451,6 +451,11 @@ export default function App() {
   }, [fbUser]);
 
   // ── AUTO RESPALDO PROGRAMADO ────────────────────────────────────────────────
+  // Estados de respaldo declarados aquí para que el useEffect los pueda usar sin TDZ
+  const [backupFreq, setBackupFreq] = useState(() => localStorage.getItem('backupFreq') || 'manual');
+  const [backupLastRun, setBackupLastRun] = useState(() => localStorage.getItem('backupLastRun') || '');
+  const [backupTime, setBackupTime] = useState(() => localStorage.getItem('backupTime') || '08:00');
+
   useEffect(() => {
     if (backupFreq === 'manual') return;
     const checkAndBackup = () => {
@@ -4119,9 +4124,6 @@ export default function App() {
   const [partialMillares, setPartialMillares] = useState('');
   const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
   const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
-  const [backupFreq, setBackupFreq] = useState(() => localStorage.getItem('backupFreq') || 'manual');
-  const [backupLastRun, setBackupLastRun] = useState(() => localStorage.getItem('backupLastRun') || '');
-  const [backupTime, setBackupTime] = useState(() => localStorage.getItem('backupTime') || '08:00');
 
   const handlePartialDelivery = async () => {
     if (!showPartialModal) return;
