@@ -1243,7 +1243,7 @@ export default function App() {
   const generateProjectionData = () => {
     const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
     const recentMovs = invMovements.filter(m => m.type === 'SALIDA' && m.timestamp >= thirtyDaysAgo);
-    const pendingReqs = invRequisitions.filter(r => r.status === 'PENDIENTE');
+    const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'PENDIENTE');
 
     return inventory.filter(i => i.category === 'Materia Prima').map(mp => {
        const consumedIn30Days = recentMovs.filter(m => m.itemId === mp.id).reduce((sum, m) => sum + parseNum(m.qty), 0);
@@ -3870,7 +3870,7 @@ export default function App() {
     allBatches.forEach(b => {
       (b.insumos || []).forEach(ing => {
         if (!insumoMap[ing.id]) {
-          const invItem = inventory.find(i => i.id === ing.id);
+          const invItem = (inventory||[]).find(i => i.id === ing.id);
           insumoMap[ing.id] = { id: ing.id, desc: invItem?.desc || ing.id, qty: 0, cost: invItem?.cost || 0, fase: b.fase };
         }
         insumoMap[ing.id].qty += parseNum(ing.qty);
@@ -5001,10 +5001,10 @@ export default function App() {
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-5 border-b border-gray-200 bg-blue-50 flex justify-between items-center">
               <h2 className="text-base font-black text-blue-800 uppercase flex items-center gap-2"><FileText size={18} className="text-blue-600"/> Requisiciones de Materiales Pendientes</h2>
-              <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-xl font-black text-xs">{invRequisitions.filter(r=>r.status==='PENDIENTE').length} PENDIENTES</span>
+              <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-xl font-black text-xs">{(invRequisitions||[]).filter(r=>r.status==='PENDIENTE').length} PENDIENTES</span>
             </div>
             <div className="p-5">
-              {invRequisitions.filter(r=>r.status==='PENDIENTE').length === 0 ? (
+              {(invRequisitions||[]).filter(r=>r.status==='PENDIENTE').length === 0 ? (
                 <div className="text-center py-8 text-gray-400 font-bold text-xs uppercase">No hay requisiciones pendientes</div>
               ) : (
                 <table className="w-full text-xs text-left">
@@ -5014,7 +5014,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {invRequisitions.filter(r=>r.status==='PENDIENTE').map(req => (
+                    {(invRequisitions||[]).filter(r=>r.status==='PENDIENTE').map(req => (
                       <tr key={req.id} className="hover:bg-gray-50">
                         <td className="py-2 px-4 border-r font-black text-orange-600 text-[10px]">{String(req.id).substring(0,12)}</td>
                         <td className="py-2 px-4 border-r font-bold">{req.date}</td>
@@ -5037,7 +5037,7 @@ export default function App() {
                 <p className="text-xs font-bold text-gray-500 mb-4">OP: <span className="text-orange-600">{reqToApprove.opId}</span></p>
                 <div className="bg-gray-50 rounded-xl p-4 mb-6 space-y-2">
                   {(reqToApprove.items||[]).map((it,i)=>{
-                    const invItem = inventory.find(inv=>inv.id===it.id);
+                    const invItem = (inventory||[]).find(inv=>inv.id===it.id);
                     const ok = invItem && invItem.stock >= parseNum(it.qty);
                     return <div key={i} className={`text-xs font-bold flex justify-between ${ok?'text-green-700':'text-red-600'}`}><span>{it.id} - {invItem?.desc||it.id}</span><span>{formatNum(it.qty)} kg {ok?'✓':'⚠ Sin stock'}</span></div>;
                   })}
@@ -5048,7 +5048,7 @@ export default function App() {
                     try {
                       const fbBatch = writeBatch(db);
                       for (let item of (reqToApprove.items||[])) {
-                        const invItem = inventory.find(i=>i.id===item.id);
+                        const invItem = (inventory||[]).find(i=>i.id===item.id);
                         if (invItem) {
                           fbBatch.update(getDocRef('inventory', invItem.id), { stock: (invItem.stock||0) - parseNum(item.qty) });
                           const movId = `REQ-${Date.now()}-${item.id}`;
@@ -5136,7 +5136,7 @@ export default function App() {
 
             const addItemToPO = () => {
               if (!poAddId || !poAddQty) return;
-              const invItem = inventory.find(i => i.id === poAddId);
+              const invItem = (inventory||[]).find(i => i.id === poAddId);
               if (!invItem) return;
               const alreadyIdx = selectedPOItems.findIndex(x => x.productCode === poAddId);
               if (alreadyIdx >= 0) {
@@ -5171,7 +5171,7 @@ export default function App() {
                     <div className="grid grid-cols-12 gap-2 items-end">
                       <div className="col-span-5">
                         <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Producto</label>
-                        <select value={poAddId} onChange={e => { setPoAddId(e.target.value); const inv=inventory.find(i=>i.id===e.target.value); if(inv) setPoAddCost(inv.cost?String(inv.cost):''); }} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-orange-500 bg-white">
+                        <select value={poAddId} onChange={e => { setPoAddId(e.target.value); const inv=(inventory||[]).find(i=>i.id===e.target.value); if(inv) setPoAddCost(inv.cost?String(inv.cost):''); }} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-orange-500 bg-white">
                           <option value="">Seleccione...</option>
                           {(inventory||[]).map(i => { const pp=projMap[i.id]; return <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit}){pp?.isCritical?' ⚠':''}</option>; })}
                         </select>
@@ -5354,7 +5354,7 @@ export default function App() {
     }
 
     if (prodView === 'activos') {
-      const activeReqs = requirements.filter(r => r.status === 'EN PROCESO' || r.status === 'PENDIENTE' || !r.status);
+      const activeReqs = (requirements||[]).filter(r => r.status === 'EN PROCESO' || r.status === 'PENDIENTE' || !r.status);
       return (
         <div className="space-y-6 animate-in fade-in">
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
@@ -5502,7 +5502,7 @@ export default function App() {
                                     );
                                     if (!matchFormula) {
                                       // Mostrar fórmulas disponibles para seleccionar
-                                      return formulas.length > 0 ? (
+                                      return (formulas||[]).length > 0 ? (
                                         <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 mb-4">
                                           <p className="text-[9px] font-black text-purple-700 uppercase mb-2">📋 Aplicar Fórmula / Receta:</p>
                                           <div className="flex flex-wrap gap-2">
@@ -5572,7 +5572,7 @@ export default function App() {
                                       <button onClick={()=>{ if(!phaseIngId||!phaseIngQty) return; setPhaseForm({...phaseForm, insumos:[...(phaseForm.insumos||[]),{id:phaseIngId,qty:parseFloat(phaseIngQty)}]}); setPhaseIngId(''); setPhaseIngQty(''); }} className="bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-blue-600 flex items-center"><Plus size={14}/></button>
                                     </div>
                                     {(phaseForm.insumos||[]).map((ins,i)=>{
-                                      const invItem = inventory.find(iv=>iv.id===ins.id);
+                                      const invItem = (inventory||[]).find(iv=>iv.id===ins.id);
                                       return (
                                         <div key={i} className="flex justify-between items-center bg-blue-50 p-2 rounded-lg border border-blue-100 mb-1">
                                           <div><span className="text-xs font-black text-blue-700">{ins.id}</span><span className="text-[9px] text-gray-500 ml-2">{invItem?.desc||''}</span></div>
@@ -5600,10 +5600,10 @@ export default function App() {
                                   </div>
 
                                   {/* Solicitudes previas para esta OP */}
-                                  {invRequisitions.filter(r=>r.opId===req.id).length > 0 && (
+                                  {(invRequisitions||[]).filter(r=>r.opId===req.id).length > 0 && (
                                     <div className="mt-4 pt-4 border-t border-blue-200">
                                       <h5 className="text-[9px] font-black text-blue-700 uppercase mb-2">Solicitudes de esta OP</h5>
-                                      {invRequisitions.filter(r=>r.opId===req.id).map(r=>(
+                                      {(invRequisitions||[]).filter(r=>r.opId===req.id).map(r=>(
                                         <div key={r.id} className="flex justify-between items-center bg-white p-2 rounded-lg border border-blue-100 mb-1 text-xs">
                                           <span className="font-black uppercase text-blue-600">{r.phase}</span>
                                           <span className="font-bold">{r.date}</span>
@@ -5992,7 +5992,7 @@ export default function App() {
 
     // ── HISTORIAL / FINIQUITOS ────────────────────────────────────────
     if (prodView === 'en_proceso') {
-      const activeReqs = requirements.filter(r => r.status === 'EN PROCESO' || r.status === 'PENDIENTE');
+      const activeReqs = (requirements||[]).filter(r => r.status === 'EN PROCESO' || r.status === 'PENDIENTE');
       return (
         <div className="space-y-6 animate-in fade-in">
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
@@ -6132,7 +6132,7 @@ export default function App() {
     }
 
     if (prodView === 'reportes') {
-      const completedReqs = requirements.filter(r => r.status === 'COMPLETADO');
+      const completedReqs = (requirements||[]).filter(r => r.status === 'COMPLETADO');
       return (
         <div className="space-y-6 animate-in fade-in">
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
@@ -6242,10 +6242,10 @@ export default function App() {
     const selCostosOP = getCostosOPByMonth(selMonth);
     const selUtilidad = selIngresos - selCostosMP - selCostosOP;
     const selInvoices = invoices.filter(i => (i.fecha||'').startsWith(selMonth));
-    const selCompletedOPs = requirements.filter(r => r.status === 'COMPLETADO');
+    const selCompletedOPs = (requirements||[]).filter(r => r.status === 'COMPLETADO');
 
     // Mermas del mes
-    const selMermaKg = requirements.filter(r => (r.fecha||'').startsWith(selMonth)).reduce((s, req) => {
+    const selMermaKg = (requirements||[]).filter(r => (r.fecha||'').startsWith(selMonth)).reduce((s, req) => {
       const prod = req.production || {};
       return s + [...(prod.extrusion?.batches||[]), ...(prod.impresion?.batches||[]), ...(prod.sellado?.batches||[])].reduce((sb, b) => sb + parseNum(b.mermaKg||0), 0);
     }, 0);
@@ -6374,7 +6374,7 @@ export default function App() {
             {showReportType === 'mermas' && (() => {
               // Construir datos de merma agrupados por OP
               const mermaRows = [];
-              requirements.filter(r => {
+              (requirements||[]).filter(r => {
                 const fechaOk = (r.fecha||'').startsWith(selMonth) ||
                   Object.values(r.production||{}).some(ph => (ph.batches||[]).some(b => (b.date||'').startsWith(selMonth)));
                 return fechaOk;
