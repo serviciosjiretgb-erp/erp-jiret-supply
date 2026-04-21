@@ -3982,15 +3982,15 @@ export default function App() {
             </div>
           )}
 
-          {/* Sección 2 (producción) / 3 (costos): Detalle por Fase */}
+          {/* Sección 2 (producción) / 3 (costos): Detalle por Fase agrupado por Lote */}
           <div className="mb-6">
             <div className="bg-gray-800 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">{costsMode ? '3' : '2'}. Detalle de Producción por Fase</div>
             <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
               <table className="w-full text-xs">
                 <thead className="bg-gray-800 text-white">
                   <tr className="uppercase font-black text-[9px]">
+                    <th className="p-3 border-r border-gray-700 text-left">Lote</th>
                     <th className="p-3 border-r border-gray-700 text-left">Fase</th>
-                    <th className="p-3 border-r border-gray-700 text-center">Lote</th>
                     <th className="p-3 border-r border-gray-700 text-center">Fecha</th>
                     <th className="p-3 border-r border-gray-700 text-center">KG Recibidos</th>
                     <th className="p-3 border-r border-gray-700 text-center">KG Producidos</th>
@@ -3998,30 +3998,50 @@ export default function App() {
                     {req.tipoProducto !== 'TERMOENCOGIBLE' && <th className="p-3 text-center">Millares</th>}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {allBatches.map((b, i) => {
-                    const insumosUsados = (b.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
-                    const kgEntrada = b.fase==='EXTRUSIÓN' && insumosUsados>0 ? insumosUsados : parseNum(b.kgRecibidos||b.totalInsumosKg||0);
-                    const pctM = kgEntrada > 0 ? ((parseNum(b.mermaKg)/kgEntrada)*100).toFixed(1) : '0.0';
-                    return (
-                      <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                        <td className="p-3 border-r font-black text-[10px]">
-                          <span className={`px-2 py-0.5 rounded font-black uppercase ${b.fase==='EXTRUSIÓN'?'bg-blue-100 text-blue-700':b.fase==='IMPRESIÓN'?'bg-purple-100 text-purple-700':'bg-green-100 text-green-700'}`}>{b.fase}</span>
-                          {b.observaciones && <div className="text-[8px] text-indigo-600 font-bold mt-0.5">📝 {b.observaciones}</div>}
-                        </td>
-                        <td className="p-3 border-r text-center font-black text-gray-700">{i+1}</td>
-                        <td className="p-3 border-r text-center font-bold text-gray-600">{b.date}</td>
-                        <td className="p-3 border-r text-center font-black text-blue-700">{formatNum(kgEntrada)} kg</td>
-                        <td className="p-3 border-r text-center font-black text-green-700">{formatNum(b.producedKg)} kg</td>
-                        <td className="p-3 border-r text-center font-black text-red-600">{formatNum(b.mermaKg)} kg <span className="text-[9px]">({pctM}%)</span></td>
-                        {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center font-black text-blue-600">{parseNum(b.techParams?.millares||0)>0?formatNum(parseNum(b.techParams.millares))+' Mill.':'—'}</td>}
-                      </tr>
-                    );
-                  })}
-                  {allBatches.length===0 && <tr><td colSpan="7" className="p-6 text-center text-gray-400 font-bold">Sin lotes registrados</td></tr>}
+                <tbody>
+                  {(() => {
+                    // Agrupar por lote: lote 1 = extBatches[0] + impBatches[0] + selBatches[0]
+                    const maxLotes = Math.max(extBatches.length, impBatches.length, selBatches.length, 1);
+                    const rows = [];
+                    for (let li = 0; li < maxLotes; li++) {
+                      const fasesDelLote = [
+                        { label: 'EXTRUSIÓN', b: extBatches[li], colorCls: 'bg-blue-100 text-blue-700' },
+                        { label: 'IMPRESIÓN', b: impBatches[li], colorCls: 'bg-purple-100 text-purple-700' },
+                        { label: 'SELLADO',   b: selBatches[li], colorCls: 'bg-green-100 text-green-700' },
+                      ].filter(f => f.b);
+                      if (fasesDelLote.length === 0) continue;
+                      fasesDelLote.forEach((f, fi) => {
+                        const { label, b, colorCls } = f;
+                        const insumosUsados = (b.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                        const kgEntrada = label==='EXTRUSIÓN' && insumosUsados>0 ? insumosUsados : parseNum(b.kgRecibidos||b.totalInsumosKg||0);
+                        const pctM = kgEntrada > 0 ? ((parseNum(b.mermaKg)/kgEntrada)*100).toFixed(1) : '0.0';
+                        rows.push(
+                          <tr key={`${li}-${fi}`} className={`${fi===0?'border-t-2 border-orange-200':''} ${li%2===0?'bg-white':'bg-gray-50'}`}>
+                            {/* Lote # solo en la primera fila del lote */}
+                            {fi === 0 ? (
+                              <td className="p-3 border-r text-center font-black text-orange-600 text-sm align-middle" rowSpan={fasesDelLote.length}>
+                                {li+1}
+                              </td>
+                            ) : null}
+                            <td className="p-3 border-r font-black">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${colorCls}`}>{label}</span>
+                              {b.observaciones && <div className="text-[8px] text-indigo-600 font-bold mt-0.5">📝 {b.observaciones}</div>}
+                            </td>
+                            <td className="p-3 border-r text-center font-bold text-gray-600">{b.date}</td>
+                            <td className="p-3 border-r text-center font-black text-blue-700">{formatNum(kgEntrada)} kg</td>
+                            <td className="p-3 border-r text-center font-black text-green-700">{formatNum(b.producedKg)} kg</td>
+                            <td className="p-3 border-r text-center font-black text-red-600">{formatNum(b.mermaKg)} kg <span className="text-[9px]">({pctM}%)</span></td>
+                            {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center font-black text-blue-600">{parseNum(b.techParams?.millares||0)>0?formatNum(parseNum(b.techParams.millares))+' Mill.':'—'}</td>}
+                          </tr>
+                        );
+                      });
+                    }
+                    if (rows.length === 0) return <tr><td colSpan="7" className="p-6 text-center text-gray-400 font-bold">Sin lotes registrados</td></tr>;
+                    return rows;
+                  })()}
                 </tbody>
                 <tfoot>
-                  <tr className="bg-orange-500 text-white font-black text-[10px] uppercase">
+                  <tr className="bg-orange-500 text-white font-black text-[10px] uppercase border-t-2 border-orange-600">
                     <td colSpan="3" className="p-3 text-right tracking-widest">TOTAL:</td>
                     <td className="p-3 text-center">{formatNum(mpInyectadaKg)} kg</td>
                     <td className="p-3 text-center">{formatNum(kgProducidosFinales)} kg</td>
