@@ -3828,7 +3828,32 @@ export default function App() {
     const totalInsumosKg = mpInyectadaKg;
     const totalProdKg = kgProducidosFinales;
 
-    // Agrupar insumos: solo los reales del inventario (los insumos registrados en cada lote)
+    // Agrupar insumos POR LOTE: cada lote muestra sus propios insumos
+    // Los lotes se corresponden por índice: extBatches[0] + selBatches[0] = Lote 1
+    const maxLotesInsumos = Math.max(extBatches.length, impBatches.length, selBatches.length, 1);
+    const insumosporLote = []; // [{lote, fase, id, desc, qty, cost}]
+    for (let li = 0; li < maxLotesInsumos; li++) {
+      [
+        { batches: extBatches, fase: 'EXTRUSIÓN' },
+        { batches: impBatches, fase: 'IMPRESIÓN' },
+        { batches: selBatches, fase: 'SELLADO' },
+      ].forEach(({ batches, fase }) => {
+        const b = batches[li];
+        if (!b) return;
+        (b.insumos || []).forEach(ing => {
+          const invItem = (inventory||[]).find(i => i.id === ing.id);
+          insumosporLote.push({
+            lote: li + 1,
+            fase,
+            id: ing.id,
+            desc: invItem?.desc || ing.id,
+            qty: parseNum(ing.qty),
+            cost: invItem?.cost || 0,
+          });
+        });
+      });
+    }
+    // También mantener el total acumulado para el finiquito
     const insumoMap = {};
     allBatches.forEach(b => {
       (b.insumos || []).forEach(ing => {
@@ -3917,13 +3942,14 @@ export default function App() {
             })()}
           </div>
 
-          {/* Sección 1: Desglose de Producción (MP) */}
+          {/* Sección 1: Desglose de Producción (MP) — por lote */}
           <div className="mb-6">
             <div className="bg-orange-500 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">1. Desglose de Producción (MP)</div>
             <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
               <table className="w-full text-xs">
                 <thead className="bg-gray-100">
                   <tr className="uppercase font-black text-[9px] text-gray-600">
+                    <th className="p-3 border-r text-center">Lote</th>
                     <th className="p-3 border-r text-left">Insumo / Descripción</th>
                     <th className="p-3 border-r text-center">Fase</th>
                     <th className={`p-3 ${costsMode ? 'border-r' : ''} text-center`}>Cantidad (KG)</th>
@@ -3932,20 +3958,35 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {insumosList.map((ins,i)=>(
-                    <tr key={i} className="hover:bg-gray-50">
-                      <td className="p-3 border-r font-black text-orange-600 uppercase">{ins.desc}</td>
-                      <td className="p-3 border-r text-center font-bold">{ins.fase}</td>
-                      <td className={`p-3 ${costsMode ? 'border-r' : ''} text-center font-black`}>{formatNum(ins.qty)} kg</td>
-                      {costsMode && <td className="p-3 border-r text-right font-bold">${formatNum(ins.cost)}</td>}
-                      {costsMode && <td className="p-3 text-right font-black">${formatNum(ins.qty*ins.cost)}</td>}
-                    </tr>
-                  ))}
-                  {insumosList.length===0&&<tr><td colSpan={costsMode?5:3} className="p-4 text-center text-gray-400 font-bold">Sin insumos</td></tr>}
+                  {insumosporLote.length > 0 ? (() => {
+                    // Render grouped by lote with header row between lotes
+                    let currentLote = null;
+                    return insumosporLote.map((ins, i) => {
+                      const showLoteHeader = ins.lote !== currentLote;
+                      currentLote = ins.lote;
+                      return [
+                        showLoteHeader && (
+                          <tr key={`lote-${ins.lote}`} className="bg-orange-50 border-t-2 border-orange-200">
+                            <td colSpan={costsMode ? 6 : 4} className="p-2 px-3 font-black text-[10px] text-orange-700 uppercase">
+                              ▸ Lote {ins.lote}
+                            </td>
+                          </tr>
+                        ),
+                        <tr key={i} className="hover:bg-gray-50">
+                          <td className="p-3 border-r text-center font-bold text-gray-400 text-[9px]">{ins.lote}</td>
+                          <td className="p-3 border-r font-black text-orange-600 uppercase">{ins.desc}</td>
+                          <td className="p-3 border-r text-center font-bold text-gray-600">{ins.fase}</td>
+                          <td className={`p-3 ${costsMode ? 'border-r' : ''} text-center font-black`}>{formatNum(ins.qty)} kg</td>
+                          {costsMode && <td className="p-3 border-r text-right font-bold">${formatNum(ins.cost)}</td>}
+                          {costsMode && <td className="p-3 text-right font-black">${formatNum(ins.qty*ins.cost)}</td>}
+                        </tr>
+                      ];
+                    });
+                  })() : <tr><td colSpan={costsMode?6:4} className="p-4 text-center text-gray-400 font-bold">Sin insumos registrados</td></tr>}
                 </tbody>
                 <tfoot className="bg-gray-100 border-t-2 border-gray-300">
                   <tr className="font-black">
-                    <td colSpan={costsMode?4:2} className="p-3 text-right uppercase text-[10px]">
+                    <td colSpan={costsMode?5:3} className="p-3 text-right uppercase text-[10px]">
                       {costsMode ? 'Costo Total MP:' : 'Total MP Inyectada:'}
                     </td>
                     <td className={`p-3 ${costsMode ? 'text-right' : 'text-center'} text-orange-600 ${costsMode ? 'text-lg' : 'text-sm'}`}>
