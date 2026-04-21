@@ -133,6 +133,7 @@ export default function App() {
   const [ventasView, setVentasView] = useState('facturacion'); 
   const [prodView, setProdView] = useState('proyeccion');
   const [invView, setInvView] = useState('catalogo');
+  const [fgSearch, setFgSearch] = useState('');
   const [invReportType, setInvReportType] = useState('entradas');
 
   const [inventory, setInventory] = useState([]);
@@ -1674,14 +1675,96 @@ export default function App() {
     }
 
     if (invView === 'finished') {
-      // Calcular totales para el Excel: cada item es una ENTRADA desde produccion
-      // Las SALIDAS son items con status ENTREGADO
+      const bolsas = finishedGoodsInventory.filter(i => i.tipoProducto !== 'TERMOENCOGIBLE');
+      const termos = finishedGoodsInventory.filter(i => i.tipoProducto === 'TERMOENCOGIBLE');
+      const filterItems = (list) => list.filter(i =>
+        !fgSearch ||
+        (i.opId||'').toUpperCase().includes(fgSearch.toUpperCase()) ||
+        (i.cliente||'').toUpperCase().includes(fgSearch.toUpperCase()) ||
+        (i.producto||'').toUpperCase().includes(fgSearch.toUpperCase()) ||
+        (i.categoria||'').toUpperCase().includes(fgSearch.toUpperCase())
+      );
+
       const totalEntradaKg = finishedGoodsInventory.reduce((s, i) => s + parseNum(i.kgProducidos), 0);
-      const totalEntradaMill = finishedGoodsInventory.filter(i => i.tipoProducto !== 'TERMOENCOGIBLE').reduce((s, i) => s + parseNum(i.millares), 0);
+      const totalEntradaMill = bolsas.reduce((s, i) => s + parseNum(i.millares), 0);
       const totalSalidaKg = finishedGoodsInventory.filter(i => i.status === 'ENTREGADO').reduce((s, i) => s + parseNum(i.kgProducidos), 0);
-      const totalSalidaMill = finishedGoodsInventory.filter(i => i.status === 'ENTREGADO' && i.tipoProducto !== 'TERMOENCOGIBLE').reduce((s, i) => s + parseNum(i.millares), 0);
+      const totalSalidaMill = bolsas.filter(i => i.status === 'ENTREGADO').reduce((s, i) => s + parseNum(i.millares), 0);
       const stockKg = totalEntradaKg - totalSalidaKg;
       const stockMill = totalEntradaMill - totalSalidaMill;
+
+      const renderFGTable = (items, tipo) => {
+        const esTermo = tipo === 'TERMOENCOGIBLE';
+        const unit = esTermo ? 'KG' : 'Millares';
+        const colorH = esTermo ? 'bg-green-700' : 'bg-blue-700';
+        if (items.length === 0) return <div className="text-center py-6 text-gray-400 text-xs font-bold uppercase">Sin registros</div>;
+        return (
+          <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none mb-2">
+            <table className="w-full text-left text-xs">
+              <thead className={`${colorH} text-white border-b-2`}>
+                <tr className="uppercase font-black text-[9px] tracking-widest">
+                  <th className="py-3 px-3 border-r border-white/20">OP / Cliente</th>
+                  <th className="py-3 px-3 border-r border-white/20">Producto / Specs</th>
+                  <th className="py-3 px-3 border-r border-white/20 text-center">{unit}</th>
+                  <th className="py-3 px-3 border-r border-white/20 text-center">Entrada</th>
+                  <th className="py-3 px-3 border-r border-white/20 text-center">Salida</th>
+                  <th className="py-3 px-3 border-r border-white/20 text-center">Stock</th>
+                  <th className="py-3 px-3 border-r border-white/20 text-center">Fecha</th>
+                  <th className="py-3 px-3 border-r border-white/20 text-center">Estado</th>
+                  <th className="py-3 px-3 text-center no-pdf">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-black print:divide-black">
+                {items.map(item => {
+                  const cantPrincipal = esTermo ? parseNum(item.kgProducidos) : parseNum(item.millares);
+                  const entVal = cantPrincipal;
+                  const salVal = item.status === 'ENTREGADO' ? cantPrincipal : 0;
+                  const stockVal = entVal - salVal;
+                  return (
+                    <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="py-3 px-3 border-r print:border-black">
+                        <div className="font-black text-green-600 text-xs">{item.opId}</div>
+                        <div className="font-bold uppercase text-[10px]">{item.cliente}</div>
+                      </td>
+                      <td className="py-3 px-3 border-r print:border-black">
+                        <div className="font-bold uppercase text-[10px]">{item.producto}</div>
+                        <div className="text-[9px] text-gray-500 mt-0.5">
+                          <div>{item.ancho}cm×{item.largo}cm | {item.micras}mic | {item.color}</div>
+                          {item.categoria && <div className="text-orange-600 font-bold">{item.categoria}</div>}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 border-r print:border-black text-center">
+                        <div className={`font-black text-lg ${esTermo ? 'text-green-600' : 'text-blue-600'}`}>{formatNum(cantPrincipal)}</div>
+                        {!esTermo && <div className="text-[9px] text-gray-400">{formatNum(item.kgProducidos)} KG</div>}
+                      </td>
+                      <td className="py-3 px-3 border-r print:border-black text-center font-black text-green-600">{formatNum(entVal)}</td>
+                      <td className="py-3 px-3 border-r print:border-black text-center font-black text-red-500">{formatNum(salVal)}</td>
+                      <td className="py-3 px-3 border-r print:border-black text-center font-black text-blue-600">{formatNum(stockVal)}</td>
+                      <td className="py-3 px-3 border-r print:border-black text-center font-bold text-[10px]">{item.fechaFinalizacion}</td>
+                      <td className="py-3 px-3 border-r print:border-black text-center">
+                        <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase ${item.status === 'LISTO PARA ENTREGA' ? 'bg-green-100 text-green-700' : item.status === 'ENTREGADO' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}`}>{item.status}</span>
+                      </td>
+                      <td className="py-3 px-3 text-center no-pdf">
+                        <div className="flex flex-col gap-1">
+                          {item.status === 'LISTO PARA ENTREGA' && (
+                            <button onClick={() => updateDoc(getDocRef('finishedGoodsInventory', item.id), {status:'ENTREGADO'})} className="px-2 py-1 bg-blue-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-blue-600 flex items-center gap-1 justify-center"><ArrowUpFromLine size={10}/> ENTREGAR</button>
+                          )}
+                          {item.status === 'ENTREGADO' && (
+                            <button onClick={() => updateDoc(getDocRef('finishedGoodsInventory', item.id), {status:'LISTO PARA ENTREGA'})} className="px-2 py-1 bg-gray-400 text-white rounded-lg text-[9px] font-black uppercase hover:bg-gray-600">REVERTIR</button>
+                          )}
+                          <button onClick={() => requireAdminPassword(async () => {
+                            await deleteDoc(getDocRef('finishedGoodsInventory', item.id));
+                            setDialog({title:'Eliminado', text:'Registro eliminado.', type:'alert'});
+                          }, 'Eliminar registro de Terminados')} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[9px] font-black uppercase hover:bg-red-500 hover:text-white flex items-center gap-1 justify-center"><Trash2 size={10}/> ELIMINAR</button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      };
 
       return (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
@@ -1694,173 +1777,50 @@ export default function App() {
                 Bolsas en Millares — Termoencogible en KG
               </p>
             </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  // Excel con entradas, salidas y stock actual
-                  const headers = ['OP ID','Cliente','Tipo','Producto','KG Entrada','Millares Entrada','KG Salida','Millares Salida','KG Stock Actual','Millares Stock','Fecha','Estado'];
-                  const data = finishedGoodsInventory.map(item => {
-                    const esTermo = item.tipoProducto === 'TERMOENCOGIBLE';
-                    const entKg = parseNum(item.kgProducidos);
-                    const entMill = esTermo ? 0 : parseNum(item.millares);
-                    const salKg = item.status === 'ENTREGADO' ? entKg : 0;
-                    const salMill = item.status === 'ENTREGADO' ? entMill : 0;
-                    return [
-                      item.opId, item.cliente,
-                      item.tipoProducto || 'BOLSAS',
-                      item.producto,
-                      formatNum(entKg), esTermo ? '—' : formatNum(entMill),
-                      formatNum(salKg), esTermo ? '—' : formatNum(salMill),
-                      item.status === 'ENTREGADO' ? '0.00' : formatNum(entKg),
-                      esTermo ? '—' : (item.status === 'ENTREGADO' ? '0' : formatNum(entMill)),
-                      item.fechaFinalizacion, item.status
-                    ];
-                  });
-                  // Fila totales
-                  data.push([
-                    'TOTALES','','','',
-                    formatNum(totalEntradaKg), formatNum(totalEntradaMill),
-                    formatNum(totalSalidaKg), formatNum(totalSalidaMill),
-                    formatNum(stockKg), formatNum(stockMill),
-                    '','',
-                  ]);
-                  handleExportExcel(data, 'Inventario_Productos_Terminados', headers);
-                }}
-                className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"
-              >
-                <Download size={16}/> EXPORTAR EXCEL
-              </button>
-              <button
-                onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)}
-                className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"
-              >
-                <Printer size={16}/> IMPRIMIR
-              </button>
+            <div className="flex gap-3 items-center">
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 text-gray-400" size={14}/>
+                <input type="text" placeholder="Buscar OP, cliente, producto..." value={fgSearch} onChange={e=>setFgSearch(e.target.value)} className="pl-9 pr-4 py-2 border-2 border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:border-green-500 w-56" />
+              </div>
+              <button onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
             </div>
           </div>
 
           <div className="p-8 print:p-0 bg-white" id="pdf-content">
-            <div className="hidden pdf-header mb-6">
-              <ReportHeader />
-              <h1 className="text-xl font-black text-black uppercase border-b-4 border-green-500 pb-2">INVENTARIO DE PRODUCTOS TERMINADOS</h1>
-              <p className="text-xs font-bold text-gray-500 uppercase mt-1">AL: {getTodayDate()} — Bolsas en Millares / Termoencogible en KG</p>
+            <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black text-black uppercase border-b-4 border-green-500 pb-2">INVENTARIO DE PRODUCTOS TERMINADOS</h1></div>
+
+            {/* KPIs */}
+            <div className="grid grid-cols-4 gap-4 mb-6">
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-blue-700 uppercase mb-1">📦 Bolsas — Millares</div><div className="font-black text-blue-600">{formatNum(totalEntradaMill - totalSalidaMill)} Mill. stock</div><div className="text-[9px] text-gray-500">{formatNum(totalEntradaMill)} ent. / {formatNum(totalSalidaMill)} sal.</div></div>
+              <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-green-700 uppercase mb-1">🟢 Termoencogible — KG</div><div className="font-black text-green-600">{formatNum(termos.filter(i=>i.status!=='ENTREGADO').reduce((s,i)=>s+parseNum(i.kgProducidos),0))} KG stock</div><div className="text-[9px] text-gray-500">{formatNum(termos.reduce((s,i)=>s+parseNum(i.kgProducidos),0))} ent.</div></div>
+              <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-orange-700 uppercase mb-1">Total KG stock</div><div className="font-black text-orange-600 text-lg">{formatNum(stockKg)} KG</div></div>
+              <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-gray-700 uppercase mb-1">Registros</div><div className="font-black text-gray-800">{bolsas.length} bolsas</div><div className="text-[9px] text-gray-500">{termos.length} termoenc.</div></div>
             </div>
 
-            {/* Resumen de Entradas / Salidas / Stock */}
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
-                <div className="text-[10px] font-black text-green-700 uppercase mb-1">Total Entradas (Produccion)</div>
-                <div className="font-black text-green-600 text-sm">{formatNum(totalEntradaKg)} KG</div>
-                <div className="font-black text-blue-600 text-sm">{formatNum(totalEntradaMill)} Millares</div>
+            {/* BOLSAS */}
+            {bolsas.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-sm font-black uppercase text-blue-700 mb-3 flex items-center gap-2"><span className="bg-blue-100 px-3 py-1 rounded-lg">📦 BOLSAS / EMPAQUES — en Millares</span></h3>
+                {renderFGTable(filterItems(bolsas), 'BOLSAS')}
               </div>
-              <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-center">
-                <div className="text-[10px] font-black text-red-700 uppercase mb-1">Total Salidas (Entregado)</div>
-                <div className="font-black text-red-600 text-sm">{formatNum(totalSalidaKg)} KG</div>
-                <div className="font-black text-orange-600 text-sm">{formatNum(totalSalidaMill)} Millares</div>
-              </div>
-              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
-                <div className="text-[10px] font-black text-blue-700 uppercase mb-1">Stock Actual (Disponible)</div>
-                <div className="font-black text-blue-600 text-sm">{formatNum(stockKg)} KG</div>
-                <div className="font-black text-purple-600 text-sm">{formatNum(stockMill)} Millares</div>
-              </div>
-            </div>
+            )}
 
-            <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
-                  <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                    <th className="py-3 px-3 border-r print:border-black">OP / Cliente</th>
-                    <th className="py-3 px-3 border-r print:border-black">Producto / Specs</th>
-                    <th className="py-3 px-3 border-r print:border-black text-center">Cantidad Principal</th>
-                    <th className="py-3 px-3 border-r print:border-black text-center">KG</th>
-                    <th className="py-3 px-3 border-r print:border-black text-center">Entrada</th>
-                    <th className="py-3 px-3 border-r print:border-black text-center">Salida</th>
-                    <th className="py-3 px-3 border-r print:border-black text-center">Stock</th>
-                    <th className="py-3 px-3 border-r print:border-black text-center">Fecha</th>
-                    <th className="py-3 px-3 border-r print:border-black text-center">Estado</th>
-                    <th className="py-3 px-3 text-center no-pdf">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 text-black print:divide-black">
-                  {finishedGoodsInventory.map(item => {
-                    const esTermo = item.tipoProducto === 'TERMOENCOGIBLE';
-                    const cantPrincipal = esTermo ? parseNum(item.kgProducidos) : parseNum(item.millares);
-                    const umPrincipal = esTermo ? 'KG' : 'Millares';
-                    const entVal = cantPrincipal;
-                    const salVal = item.status === 'ENTREGADO' ? cantPrincipal : 0;
-                    const stockVal = entVal - salVal;
-                    return (
-                      <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="py-3 px-3 border-r print:border-black">
-                          <div className="font-black text-green-600 text-xs">{item.opId}</div>
-                          <div className="font-bold uppercase text-[10px]">{item.cliente}</div>
-                        </td>
-                        <td className="py-3 px-3 border-r print:border-black">
-                          <div className="font-bold uppercase text-[10px]">{item.producto}</div>
-                          <div className="text-[9px] text-gray-500 mt-0.5 space-y-0.5">
-                            <div>{item.ancho}cm×{item.largo}cm | {item.micras}mic | {item.color}</div>
-                            {item.categoria && <div className="text-orange-600 font-bold">{item.categoria}</div>}
-                            {item.observaciones && <div>{item.observaciones}</div>}
-                          </div>
-                        </td>
-                        <td className="py-3 px-3 border-r print:border-black text-center">
-                          <div className={`font-black text-lg ${esTermo ? 'text-green-600' : 'text-blue-600'}`}>
-                            {formatNum(cantPrincipal)}
-                          </div>
-                          <div className="text-[9px] font-black text-gray-500 uppercase">{umPrincipal}</div>
-                          {!esTermo && <div className="text-[9px] text-gray-400">{formatNum(item.kgProducidos)} KG</div>}
-                        </td>
-                        <td className="py-3 px-3 border-r print:border-black text-center font-bold text-gray-600">{formatNum(item.kgProducidos)}</td>
-                        <td className="py-3 px-3 border-r print:border-black text-center font-black text-green-600">{formatNum(entVal)}</td>
-                        <td className="py-3 px-3 border-r print:border-black text-center font-black text-red-500">{formatNum(salVal)}</td>
-                        <td className="py-3 px-3 border-r print:border-black text-center font-black text-blue-600">{formatNum(stockVal)}</td>
-                        <td className="py-3 px-3 border-r print:border-black text-center font-bold text-[10px]">{item.fechaFinalizacion}</td>
-                        <td className="py-3 px-3 border-r print:border-black text-center">
-                          <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase ${
-                            item.status === 'LISTO PARA ENTREGA' ? 'bg-green-100 text-green-700' :
-                            item.status === 'ENTREGADO' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
-                          }`}>{item.status}</span>
-                        </td>
-                        <td className="py-3 px-3 text-center no-pdf">
-                          <div className="flex flex-col gap-1">
-                            {item.status === 'LISTO PARA ENTREGA' && (
-                              <button onClick={() => updateDoc(getDocRef('finishedGoodsInventory', item.id), {status:'ENTREGADO'})} className="px-2 py-1 bg-blue-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-blue-600 flex items-center gap-1 justify-center"><ArrowUpFromLine size={10}/> ENTREGAR</button>
-                            )}
-                            {item.status === 'ENTREGADO' && (
-                              <button onClick={() => updateDoc(getDocRef('finishedGoodsInventory', item.id), {status:'LISTO PARA ENTREGA'})} className="px-2 py-1 bg-gray-400 text-white rounded-lg text-[9px] font-black uppercase hover:bg-gray-600">REVERTIR</button>
-                            )}
-                            <button onClick={() => requireAdminPassword(async () => {
-                              await deleteDoc(getDocRef('finishedGoodsInventory', item.id));
-                              setDialog({title:'Eliminado', text:'Registro eliminado del inventario.', type:'alert'});
-                            }, 'Eliminar registro de Terminados')} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[9px] font-black uppercase hover:bg-red-500 hover:text-white flex items-center gap-1 justify-center"><Trash2 size={10}/> ELIMINAR</button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {finishedGoodsInventory.length === 0 && (
-                    <tr><td colSpan="10" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">No hay productos terminados registrados</td></tr>
-                  )}
-                </tbody>
-                <tfoot className="bg-gray-100 border-t-2 border-gray-300 print:border-black font-black text-[10px]">
-                  <tr>
-                    <td colSpan="2" className="py-3 px-3 text-right uppercase border-r print:border-black">TOTALES:</td>
-                    <td className="py-3 px-3 text-center border-r print:border-black">
-                      <div className="text-blue-700">{formatNum(totalEntradaMill)} Mill.</div>
-                      <div className="text-green-700 text-[9px]">Bolsas</div>
-                    </td>
-                    <td className="py-3 px-3 text-center text-green-700 border-r print:border-black">{formatNum(totalEntradaKg)} KG</td>
-                    <td className="py-3 px-3 text-center text-green-600 border-r print:border-black">{formatNum(totalEntradaKg)}</td>
-                    <td className="py-3 px-3 text-center text-red-600 border-r print:border-black">{formatNum(totalSalidaKg)}</td>
-                    <td className="py-3 px-3 text-center text-blue-700 border-r print:border-black">{formatNum(stockKg)}</td>
-                    <td colSpan="3"></td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+            {/* TERMOENCOGIBLE */}
+            {termos.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-sm font-black uppercase text-green-700 mb-3 flex items-center gap-2"><span className="bg-green-100 px-3 py-1 rounded-lg">🟢 TERMOENCOGIBLE / TUBULAR — en KG</span></h3>
+                {renderFGTable(filterItems(termos), 'TERMOENCOGIBLE')}
+              </div>
+            )}
+
+            {finishedGoodsInventory.length === 0 && (
+              <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>
+            )}
           </div>
         </div>
       );
+    }
+
     }
 
     if (invView === 'toma_fisica') {
@@ -6380,10 +6340,11 @@ export default function App() {
                 const prod = req.production || {};
                 ['extrusion','impresion','sellado'].forEach(phase => {
                   (prod[phase]?.batches||[]).filter(b => parseNum(b.mermaKg) > 0 && (b.date||'').startsWith(selMonth)).forEach((b, i) => {
-                    const kgUsados = parseNum(b.totalInsumosKg || b.kgRecibidos || 0);
+                    const insumosKg = (b.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                    const kgUsados = insumosKg > 0 ? insumosKg : parseNum(b.totalInsumosKg || b.kgRecibidos || 0);
                     const mermaKg = parseNum(b.mermaKg);
-                    const pct = kgUsados > 0 ? ((mermaKg / kgUsados) * 100).toFixed(1) : b.mermaPorc > 0 ? b.mermaPorc : 0;
-                    // Estimar costo merma: mermaKg * costo promedio de insumos del lote
+                    // % REAL: mermaKg / kgUsados × 100 (no valor almacenado)
+                    const pct = kgUsados > 0 ? ((mermaKg / kgUsados) * 100).toFixed(1) : 0;
                     const costoPromLote = kgUsados > 0 && parseNum(b.cost) > 0 ? parseNum(b.cost) / kgUsados : 0;
                     const costoMerma = mermaKg * costoPromLote;
                     mermaRows.push({
@@ -6559,7 +6520,15 @@ export default function App() {
 
             {showReportType === 'super_finiquito' && (
               <div className="space-y-6">
-                <h3 className="text-lg font-black uppercase">Súper Finiquito por OP — Seleccione una orden</h3>
+                <div className="flex justify-between items-center flex-wrap gap-3">
+                  <h3 className="text-lg font-black uppercase">Súper Finiquito por OP — Seleccione una orden</h3>
+                  {!showFiniquitoOP && (
+                    <div className="relative">
+                      <Search className="absolute left-3 top-2.5 text-gray-400" size={14}/>
+                      <input type="text" id="finiquito-search" placeholder="Buscar OP, cliente, producto..." className="pl-9 pr-4 py-2 border-2 border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:border-orange-500 w-64" onChange={e=>{const v=e.target.value.toUpperCase();document.querySelectorAll('[data-finiquito-row]').forEach(row=>{row.style.display=(!v||row.dataset.search.includes(v))?'':'none';});}} />
+                    </div>
+                  )}
+                </div>
                 {showFiniquitoOP ? (
                   renderFiniquitoOP(requirements.find(r=>r.id===showFiniquitoOP), true)
                 ) : (
@@ -6567,11 +6536,12 @@ export default function App() {
                     <table className="w-full text-xs text-left">
                       <thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px]"><th className="py-3 px-4 border-r">OP / Fecha</th><th className="py-3 px-4 border-r">Cliente</th><th className="py-3 px-4 border-r">Producto</th><th className="py-3 px-4 border-r text-right">Millares</th><th className="py-3 px-4 border-r text-right">Costo MP</th><th className="py-3 px-4 border-r text-right">Ingresos</th><th className="py-3 px-4 border-r text-right">Utilidad</th><th className="py-3 px-4 text-center">Finiquito</th></tr></thead>
                       <tbody className="divide-y divide-gray-100">
-                        {selCompletedOPs.length === 0 ? <tr><td colSpan="8" className="p-8 text-center text-gray-400 font-bold uppercase">No hay órdenes completadas</td></tr> :
-                          selCompletedOPs.map(req => {
+                        {(requirements||[]).filter(r=>r.status==='COMPLETADO').length === 0 ? <tr><td colSpan="8" className="p-8 text-center text-gray-400 font-bold uppercase">No hay órdenes completadas</td></tr> :
+                          (requirements||[]).filter(r=>r.status==='COMPLETADO').map(req => {
                             const fin = getOPFinancials(req);
+                            const searchStr = `${req.id} ${req.client} ${req.desc} ${req.fecha}`.toUpperCase();
                             return (
-                              <tr key={req.id} className="hover:bg-gray-50">
+                              <tr key={req.id} data-finiquito-row="1" data-search={searchStr} className="hover:bg-gray-50">
                                 <td className="py-3 px-4 border-r font-black text-purple-600">#{String(req.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400">{req.fecha}</span></td>
                                 <td className="py-3 px-4 border-r font-bold uppercase">{req.client}</td>
                                 <td className="py-3 px-4 border-r font-bold">{req.desc}</td>
