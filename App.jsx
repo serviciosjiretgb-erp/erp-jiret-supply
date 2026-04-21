@@ -4238,6 +4238,7 @@ export default function App() {
   const [partialMillares, setPartialMillares] = useState('');
   const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
   const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
+  const [enProcesoOpFilter, setEnProcesoOpFilter] = useState('TODAS');
 
   const handlePartialDelivery = async () => {
     if (!showPartialModal) return;
@@ -5182,132 +5183,6 @@ export default function App() {
     }
 
     // ── PRODUCCIÓN ACTIVA ─────────────────────────────────────────────
-    if (prodView === 'en_proceso') {
-      const activeOPs = (requirements||[]).filter(r=>r.status==='EN PROCESO');
-      return (
-        <div className="space-y-6 animate-in fade-in">
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-8 py-5 border-b border-gray-200 bg-gradient-to-r from-orange-50 to-yellow-50 flex justify-between items-center">
-              <div>
-                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><Gauge className="text-orange-500" size={24}/> Reporte de Producción en Proceso</h2>
-                <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase">{activeOPs.length} OPs activas — Progreso acumulado por lotes</p>
-              </div>
-            </div>
-            <div className="p-6 space-y-6">
-              {activeOPs.length === 0 ? (
-                <div className="text-center py-12 text-gray-400"><Gauge size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">No hay OPs en proceso</p></div>
-              ) : activeOPs.map(req => {
-                const prod = req.production || {};
-                const allBatches = [
-                  ...(prod.extrusion?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)').map(b=>({...b,fase:'EXTRUSIÓN'})),
-                  ...(prod.impresion?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)').map(b=>({...b,fase:'IMPRESIÓN'})),
-                  ...(prod.sellado?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)').map(b=>({...b,fase:'SELLADO'})),
-                ];
-                // Cadena: MP entrada = extrusión; KG salida = última fase
-                const extB=allBatches.filter(b=>b.fase==='EXTRUSIÓN');
-                const impB=allBatches.filter(b=>b.fase==='IMPRESIÓN');
-                const selB=allBatches.filter(b=>b.fase==='SELLADO');
-                const mpTotal = extB.reduce((s,b)=>{const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);return s+(ins>0?ins:parseNum(b.kgRecibidos||0));},0)||impB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0)||selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0);
-                const lastB=selB.length>0?selB:impB.length>0?impB:extB;
-                const kgProd=lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
-                const mermaTotal=Math.max(0,mpTotal-kgProd);
-                const pctMerma=mpTotal>0?((mermaTotal/mpTotal)*100).toFixed(1):0;
-                const millTotal=selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
-                const pctAvance=req.tipoProducto==='TERMOENCOGIBLE'?(parseNum(req.requestedKg)>0?(kgProd/parseNum(req.requestedKg)*100):0):(parseNum(req.cantidad)>0?(millTotal/parseNum(req.cantidad)*100):0);
-                // Materiales consumidos acumulados
-                const matsConsumidos={};
-                allBatches.forEach(b=>(b.insumos||[]).forEach(ing=>{matsConsumidos[ing.id]=(matsConsumidos[ing.id]||0)+parseNum(ing.qty);}));
-                // Materiales despachados
-                const matsDespachados={};
-                (invRequisitions||[]).filter(r=>r.opId===req.id&&(r.status==='APROBADO'||r.status==='APROBADA')).flatMap(r=>r.items||[]).forEach(it=>{if(it?.id)matsDespachados[it.id]=(matsDespachados[it.id]||0)+parseNum(it.qty);});
-                return (
-                  <div key={req.id} className="border-2 border-orange-200 rounded-2xl overflow-hidden">
-                    {/* Header OP */}
-                    <div className="bg-gray-800 text-white px-5 py-3 flex justify-between items-center">
-                      <div>
-                        <span className="font-black text-orange-400">OP #{String(req.id).replace('OP-','').padStart(5,'0')}</span>
-                        <span className="font-bold text-white ml-3 uppercase">{req.client}</span>
-                        <span className="text-gray-400 ml-3 text-[10px]">{req.desc}</span>
-                      </div>
-                      <div className="flex gap-4 text-right text-[10px]">
-                        <div><div className="text-gray-400">Solicitado</div><div className="font-black text-white">{req.tipoProducto==='TERMOENCOGIBLE'?formatNum(req.requestedKg)+' KG':formatNum(req.cantidad)+' Mill.'}</div></div>
-                        <div><div className="text-gray-400">Producido</div><div className="font-black text-green-400">{req.tipoProducto==='TERMOENCOGIBLE'?formatNum(kgProd)+' KG':formatNum(millTotal)+' Mill.'}</div></div>
-                        <div><div className="text-gray-400">Avance</div><div className={`font-black text-lg ${pctAvance>=100?'text-green-400':pctAvance>50?'text-yellow-400':'text-orange-400'}`}>{parseFloat(pctAvance).toFixed(1)}%</div></div>
-                      </div>
-                    </div>
-                    {/* Progress bar */}
-                    <div className="px-5 py-2 bg-gray-700">
-                      <div className="w-full bg-gray-600 rounded-full h-2">
-                        <div className="bg-orange-500 h-2 rounded-full transition-all" style={{width:`${Math.min(100,pctAvance)}%`}}></div>
-                      </div>
-                    </div>
-                    {/* KPIs */}
-                    <div className="grid grid-cols-4 gap-0 border-b border-gray-200 bg-gray-50">
-                      {[['MP Inyectada',formatNum(mpTotal)+' KG','text-blue-700'],['KG Producidos',formatNum(kgProd)+' KG','text-green-700'],['Merma Total',formatNum(mermaTotal)+' KG ('+pctMerma+'%)','text-red-600'],[req.tipoProducto==='TERMOENCOGIBLE'?'KG Producidos':'Millares Prod.',req.tipoProducto==='TERMOENCOGIBLE'?formatNum(kgProd)+' KG':formatNum(millTotal)+' Mill.','text-blue-600']].map(([l,v,c],i)=>(
-                        <div key={i} className={`p-4 text-center ${i<3?'border-r border-gray-200':''}`}>
-                          <div className="text-[8px] font-black text-gray-500 uppercase">{l}</div>
-                          <div className={`text-lg font-black ${c}`}>{v}</div>
-                        </div>
-                      ))}
-                    </div>
-                    {/* Lotes */}
-                    {allBatches.length > 0 && (
-                      <div className="p-4">
-                        <p className="text-[9px] font-black uppercase text-gray-500 mb-2">Lotes registrados ({allBatches.length})</p>
-                        <table className="w-full text-xs border-collapse">
-                          <thead><tr className="bg-gray-100 text-[9px] font-black uppercase text-gray-500"><th className="p-2 border text-left">Fase</th><th className="p-2 border text-center">Fecha</th><th className="p-2 border text-center">KG Entrada</th><th className="p-2 border text-center">KG Salida</th><th className="p-2 border text-center">Merma</th><th className="p-2 border text-left">Materiales Usados</th><th className="p-2 border text-left">Obs.</th></tr></thead>
-                          <tbody>
-                            {allBatches.map((b,i)=>{
-                              const insKg=(b.insumos||[]).reduce((s,i)=>s+parseNum(i.qty),0);
-                              const entKg=b.fase==='EXTRUSIÓN'&&insKg>0?insKg:parseNum(b.kgRecibidos||b.totalInsumosKg||0);
-                              const pctM=entKg>0?((parseNum(b.mermaKg)/entKg)*100).toFixed(1):b.mermaPorc||0;
-                              return (<tr key={i} className="hover:bg-gray-50">
-                                <td className="p-2 border font-black">{b.fase}<span className="text-[8px] text-gray-400 ml-1">L{i+1}</span></td>
-                                <td className="p-2 border text-center text-gray-600">{b.date}</td>
-                                <td className="p-2 border text-center text-blue-700 font-bold">{formatNum(entKg)} KG</td>
-                                <td className="p-2 border text-center text-green-700 font-bold">{formatNum(b.producedKg)} KG{b.techParams?.millares>0?<span className="text-[9px] text-blue-500 block">{formatNum(b.techParams.millares)} Mill.</span>:null}</td>
-                                <td className="p-2 border text-center text-red-600 font-bold">{formatNum(b.mermaKg)} KG<span className="text-[9px] block">({pctM}%)</span></td>
-                                <td className="p-2 border text-[9px]">{(b.insumos||[]).length>0?(b.insumos||[]).map(ing=>{const inv=(inventory||[]).find(iv=>iv.id===ing.id);return <div key={ing.id} className="text-orange-700 font-bold">{inv?.desc||ing.id}: {formatNum(ing.qty)} KG</div>;}):(<span className="text-gray-400">—</span>)}</td>
-                                <td className="p-2 border text-[9px] text-indigo-600">{b.observaciones||'—'}</td>
-                              </tr>);
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                    {/* Materiales: despachado vs consumido */}
-                    {Object.keys(matsDespachados).length > 0 && (
-                      <div className="p-4 pt-0">
-                        <p className="text-[9px] font-black uppercase text-gray-500 mb-2">Balance de Materiales — Despachado vs Consumido:</p>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                          {Object.entries(matsDespachados).map(([id,desp])=>{
-                            const inv=(inventory||[]).find(iv=>iv.id===id);
-                            const cons=parseNum(matsConsumidos[id]||0);
-                            const pct=desp>0?(cons/desp*100):0;
-                            const rest=Math.max(0,desp-cons);
-                            return (<div key={id} className="bg-white border border-gray-200 rounded-xl p-3">
-                              <div className="font-black text-[10px] text-gray-800 mb-1">{inv?.desc||id}</div>
-                              <div className="flex justify-between text-[9px] mb-1">
-                                <span className="text-blue-600">Desp: {formatNum(desp)} KG</span>
-                                <span className="text-orange-600">Cons: {formatNum(cons)} KG</span>
-                              </div>
-                              <div className="w-full bg-gray-200 rounded-full h-1.5 mb-1">
-                                <div className={`h-1.5 rounded-full ${pct>90?'bg-red-500':pct>60?'bg-orange-400':'bg-green-500'}`} style={{width:`${Math.min(100,pct)}%`}}></div>
-                              </div>
-                              <div className={`text-[9px] font-black text-right ${rest<=0?'text-red-600':'text-green-600'}`}>Rest: {formatNum(rest)} KG</div>
-                            </div>);
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      );
-    }
 
     if (prodView === 'activos') {
       const activeReqs = (requirements||[]).filter(r => r.status === 'EN PROCESO' || r.status === 'PENDIENTE' || !r.status);
@@ -5948,135 +5823,234 @@ export default function App() {
 
     // ── HISTORIAL / FINIQUITOS ────────────────────────────────────────
     if (prodView === 'en_proceso') {
-      const activeReqs = (requirements||[]).filter(r => r.status === 'EN PROCESO' || r.status === 'PENDIENTE');
+      const activeOPs = (requirements||[]).filter(r=>r.status==='EN PROCESO');
+      const filteredOPs = enProcesoOpFilter === 'TODAS' ? activeOPs : activeOPs.filter(r=>r.id===enProcesoOpFilter);
       return (
         <div className="space-y-6 animate-in fade-in">
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-8 py-6 border-b border-gray-200 bg-orange-50">
-              <h2 className="text-xl font-black text-orange-800 uppercase flex items-center gap-3"><BarChart3 className="text-orange-600" size={24}/> Reporte de Producción en Proceso</h2>
-              <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase">Acumulado por lotes — materiales usados vs solicitados</p>
+            {/* Header */}
+            <div className="px-8 py-6 border-b border-gray-200 bg-orange-50 flex justify-between items-center no-pdf">
+              <div>
+                <h2 className="text-xl font-black text-orange-800 uppercase flex items-center gap-3">
+                  <Gauge className="text-orange-600" size={24}/> Reporte de Producción en Proceso
+                </h2>
+                <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase">{activeOPs.length} OP{activeOPs.length!==1?'s':''} activa{activeOPs.length!==1?'s':''} — Detalle acumulado por lotes</p>
+              </div>
+              <div className="flex gap-3 items-center">
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Filtrar OP:</label>
+                  <select value={enProcesoOpFilter} onChange={e=>setEnProcesoOpFilter(e.target.value)}
+                    className="border-2 border-orange-200 rounded-xl p-2 text-[10px] font-black outline-none focus:border-orange-500 bg-white min-w-[200px]">
+                    <option value="TODAS">Todas las OPs ({activeOPs.length})</option>
+                    {activeOPs.map(r=>(
+                      <option key={r.id} value={r.id}>#{String(r.id).replace('OP-','').padStart(5,'0')} — {r.client}</option>
+                    ))}
+                  </select>
+                </div>
+                <button onClick={()=>handleExportPDF('Produccion_En_Proceso', true)} className="bg-black text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-gray-800 flex items-center gap-2">
+                  <Printer size={14}/> Imprimir
+                </button>
+              </div>
             </div>
-            <div className="p-6 space-y-8">
-              {activeReqs.length === 0 ? (
-                <div className="text-center py-12 text-gray-400"><BarChart3 size={40} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">No hay OPs activas</p></div>
-              ) : activeReqs.map(req => {
-                const lotes = getLotes(req);
-                const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
-                // Acumular todos los batches de todos los lotes
-                const allLoteBatches = (fase) => lotes.flatMap(l => (l[fase]?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)' && parseNum(b.producedKg)>0).map(b=>({...b,loteNombre:l.nombre,loteId:l.id})));
-                const extAll = allLoteBatches('extrusion');
-                const impAll = allLoteBatches('impresion');
-                const selAll = allLoteBatches('sellado');
-                const lastPhBatches = selAll.length>0?selAll:impAll.length>0?impAll:extAll;
-                const totalKgProd = lastPhBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
-                const totalMill = lastPhBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
-                const totalMerma = [...extAll,...impAll,...selAll].reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
-                const mpTotal = extAll.reduce((s,b)=>{const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0); return s+(ins>0?ins:parseNum(b.kgRecibidos||0));},0);
-                // Materiales despachados vs usados
-                const reqApproved = (invRequisitions||[]).filter(r=>r.opId===req.id&&(r.status==='APROBADA'||r.status==='APROBADO'));
-                const despachado = {};
-                reqApproved.forEach(r=>(r.items||[]).forEach(it=>{ despachado[it.id]=(despachado[it.id]||0)+parseNum(it.qty); }));
-                const usadoReal = {};
-                [...extAll,...impAll,...selAll].forEach(b=>(b.insumos||[]).forEach(i=>{ usadoReal[i.id]=(usadoReal[i.id]||0)+parseNum(i.qty); }));
-                const solicitadoTotal = Object.values(despachado).reduce((s,v)=>s+v,0);
-                const usadoTotal = Object.values(usadoReal).reduce((s,v)=>s+v,0);
-                const restanteTotal = Math.max(0, solicitadoTotal - usadoTotal);
+
+            <div className="p-6 space-y-8" id="pdf-content">
+              {/* PDF Header */}
+              <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-orange-500 pb-2">REPORTE DE PRODUCCIÓN EN PROCESO</h1></div>
+
+              {filteredOPs.length === 0 ? (
+                <div className="text-center py-12 text-gray-400"><Gauge size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">No hay OPs en proceso</p></div>
+              ) : filteredOPs.map(req => {
+                const prod = req.production || {};
+                const filterReal = b=>b.operator!=='ALMACÉN (DESPACHO)' && (parseNum(b.producedKg)>0||(b.insumos||[]).length>0);
+                const extB=(prod.extrusion?.batches||[]).filter(filterReal);
+                const impB=(prod.impresion?.batches||[]).filter(filterReal);
+                const selB=(prod.sellado?.batches||[]).filter(filterReal);
+                const allBatches=[...extB.map(b=>({...b,fase:'EXTRUSIÓN'})),...impB.map(b=>({...b,fase:'IMPRESIÓN'})),...selB.map(b=>({...b,fase:'SELLADO'}))];
+                const lastB=selB.length>0?selB:impB.length>0?impB:extB;
+                const mpInjectada=extB.reduce((s,b)=>{const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);return s+(ins>0?ins:parseNum(b.kgRecibidos||b.totalInsumosKg||0));},0)||impB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0)||selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0);
+                const kgProd=lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+                const millProd=selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+                const mermaTotal=Math.max(0,mpInjectada-kgProd);
+                const pctMerma=mpInjectada>0?((mermaTotal/mpInjectada)*100).toFixed(1):'0.0';
+                const esTermo=req.tipoProducto==='TERMOENCOGIBLE';
+                const solicitado=esTermo?parseNum(req.requestedKg):parseNum(req.cantidad);
+                const producido=esTermo?kgProd:millProd;
+                const pctAvance=solicitado>0?Math.min(100,(producido/solicitado)*100):0;
+                // Materiales consumidos
+                const matsConsumidos={};
+                allBatches.forEach(b=>(b.insumos||[]).forEach(ing=>{matsConsumidos[ing.id]=(matsConsumidos[ing.id]||0)+parseNum(ing.qty);}));
+                // Materiales despachados
+                const matsDespachados={};
+                (invRequisitions||[]).filter(r=>r.opId===req.id&&(r.status==='APROBADO'||r.status==='APROBADA')).flatMap(r=>r.items||[]).forEach(it=>{if(it?.id)matsDespachados[it.id]=(matsDespachados[it.id]||0)+parseNum(it.qty);});
+                // Costos
+                const costoMP=allBatches.reduce((s,b)=>s+parseNum(b.cost||0),0);
+                const costoXkg=kgProd>0?costoMP/kgProd:0;
+                const costoXmill=millProd>0?costoMP/millProd:0;
                 return (
-                  <div key={req.id} className="border-2 border-orange-200 rounded-2xl overflow-hidden">
-                    <div className="bg-orange-600 text-white px-5 py-3 flex justify-between items-center">
-                      <div>
-                        <span className="font-black text-lg">OP #{String(req.id).replace('OP-','').padStart(5,'0')}</span>
-                        <span className="ml-3 font-bold text-orange-100">{req.client}</span>
-                        <span className="ml-3 text-[10px] text-orange-200">{req.desc}</span>
+                  <div key={req.id} className="border-2 border-orange-200 rounded-2xl overflow-hidden mb-6">
+                    {/* Header OP estilo finiquito */}
+                    <div className="bg-gray-800 text-white px-6 py-4">
+                      <div className="flex justify-between items-start flex-wrap gap-3">
+                        <div>
+                          <div className="flex items-center gap-3">
+                            <span className="font-black text-orange-400 text-lg">OP #{String(req.id).replace('OP-','').padStart(5,'0')}</span>
+                            <span className="bg-orange-500 text-white px-2 py-0.5 rounded text-[9px] font-black uppercase">EN PROCESO</span>
+                          </div>
+                          <div className="font-bold text-white uppercase mt-1">{req.client}</div>
+                          <div className="text-[10px] text-gray-300 mt-0.5">{req.desc} | {req.ancho}cm×{req.largo}cm | {req.micras}mic | {req.color}</div>
+                        </div>
+                        <div className="text-right text-[10px]">
+                          <div className="text-gray-400">Fecha: <span className="text-white font-bold">{req.fecha}</span></div>
+                          <div className="text-gray-400 mt-0.5">Solicitado: <span className="text-orange-300 font-black">{formatNum(solicitado)} {esTermo?'KG':'Millares'}</span></div>
+                          <div className="text-gray-400 mt-0.5">Avance: <span className={`font-black text-lg ${pctAvance>=100?'text-green-400':pctAvance>50?'text-yellow-400':'text-orange-400'}`}>{pctAvance.toFixed(1)}%</span></div>
+                        </div>
                       </div>
-                      <div className="flex gap-4 text-right text-xs">
-                        <div><span className="text-orange-200 block text-[9px]">Solicitado</span><span className="font-black">{formatNum(req.requestedKg)} KG</span></div>
-                        <div><span className="text-orange-200 block text-[9px]">Producido</span><span className="font-black text-green-300">{esTermo?formatNum(totalKgProd)+' KG':formatNum(totalMill)+' Mill.'}</span></div>
-                        <div><span className="text-orange-200 block text-[9px]">Merma</span><span className="font-black text-red-300">{formatNum(totalMerma)} KG</span></div>
-                        <div><span className="text-orange-200 block text-[9px]">{lotes.length} Lotes</span><span className="font-black">{lotes.filter(l=>l.cerrado).length} cerrados</span></div>
+                      <div className="mt-3">
+                        <div className="w-full bg-gray-600 rounded-full h-2">
+                          <div className="bg-orange-500 h-2 rounded-full transition-all" style={{width:`${pctAvance}%`}}></div>
+                        </div>
                       </div>
                     </div>
-                    {/* Material balance */}
-                    {Object.keys(despachado).length > 0 && (
-                      <div className="bg-blue-50 border-b border-blue-200 p-4">
-                        <h4 className="text-[9px] font-black text-blue-700 uppercase mb-2">📦 Balance de Materiales — Despachado vs Usado</h4>
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-xs">
-                            <thead><tr className="text-[9px] font-black uppercase text-blue-600"><th className="text-left p-1">Material</th><th className="text-right p-1">Despachado</th><th className="text-right p-1">Usado Real</th><th className="text-right p-1">Restante</th><th className="text-right p-1">% Uso</th></tr></thead>
+
+                    {/* KPIs */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-0 border-b border-gray-200 bg-gray-50">
+                      {[['MP Inyectada',formatNum(mpInjectada)+' KG','text-blue-700'],['KG Producidos',formatNum(kgProd)+' KG','text-green-700'],['Merma Total',formatNum(mermaTotal)+' KG ('+pctMerma+'%)','text-red-600'],[esTermo?'KG Final':'Millares Prod.',(esTermo?formatNum(kgProd)+' KG':formatNum(millProd)+' Mill.'),'text-blue-600']].map(([l,v,c],i)=>(
+                        <div key={i} className={`p-4 text-center ${i<3?'border-r border-gray-200':''}`}>
+                          <div className="text-[9px] font-black text-gray-500 uppercase">{l}</div>
+                          <div className={`text-lg font-black ${c}`}>{v}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="p-6 space-y-5">
+                      {/* 1. Desglose de MP consumida */}
+                      {allBatches.some(b=>(b.insumos||[]).length>0) && (
+                        <div>
+                          <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">1. Insumos Consumidos (MP)</h4>
+                          <table className="w-full text-xs border-collapse">
+                            <thead><tr className="bg-gray-100 text-[9px] font-black uppercase">
+                              <th className="p-2 border text-left">Insumo</th>
+                              <th className="p-2 border text-left">Fase</th>
+                              <th className="p-2 border text-center">KG Usados</th>
+                              <th className="p-2 border text-center">Costo Unit.</th>
+                              <th className="p-2 border text-center">Costo Total</th>
+                            </tr></thead>
                             <tbody>
-                              {Object.entries(despachado).map(([id, desp])=>{
-                                const inv = (inventory||[]).find(i=>i.id===id);
-                                const usado = usadoReal[id]||0;
-                                const rest = Math.max(0, desp-usado);
-                                const pct = desp>0?(usado/desp*100).toFixed(1):0;
+                              {Object.entries(matsConsumidos).map(([id,qty])=>{
+                                const inv=(inventory||[]).find(i=>i.id===id);
+                                const fases=allBatches.filter(b=>(b.insumos||[]).some(i=>i.id===id)).map(b=>b.fase);
+                                const fasesUnicas=[...new Set(fases)].join(', ');
+                                const cu=inv?.cost||0;
+                                return (<tr key={id} className="hover:bg-gray-50">
+                                  <td className="p-2 border font-black text-purple-700">{id}<span className="text-[9px] text-gray-400 font-normal ml-1">{inv?.desc||''}</span></td>
+                                  <td className="p-2 border text-gray-600 text-[9px]">{fasesUnicas}</td>
+                                  <td className="p-2 border text-center font-black text-blue-700">{formatNum(qty)} kg</td>
+                                  <td className="p-2 border text-center font-bold">${formatNum(cu)}</td>
+                                  <td className="p-2 border text-center font-black text-orange-700">${formatNum(qty*cu)}</td>
+                                </tr>);
+                              })}
+                            </tbody>
+                            <tfoot><tr className="bg-gray-100 font-black text-[10px]">
+                              <td colSpan="2" className="p-2 border text-right uppercase">Costo Total MP:</td>
+                              <td className="p-2 border text-center text-blue-700">{formatNum(mpInjectada)} kg</td>
+                              <td className="p-2 border"></td>
+                              <td className="p-2 border text-center text-orange-700">${formatNum(costoMP)}</td>
+                            </tr></tfoot>
+                          </table>
+                        </div>
+                      )}
+
+                      {/* 2. Indicadores de costo */}
+                      {costoMP > 0 && (
+                        <div>
+                          <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">2. Indicadores de Costo</h4>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            {[
+                              ['Costo Total MP','$'+formatNum(costoMP),'text-orange-700'],
+                              ['Costo / KG','$'+formatNum(costoXkg)+' / KG','text-blue-700'],
+                              ...(!esTermo?[['Costo / Millar','$'+formatNum(costoXmill)+' / Mill.','text-purple-700']]:[['KG Prod. Final',formatNum(kgProd)+' KG','text-green-700']]),
+                              ['% Merma',pctMerma+'%',parseFloat(pctMerma)>7?'text-red-600':parseFloat(pctMerma)>5?'text-yellow-600':'text-green-600'],
+                            ].map(([l,v,c],i)=>(
+                              <div key={i} className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center">
+                                <div className="text-[8px] font-black text-gray-500 uppercase">{l}</div>
+                                <div className={`font-black text-sm mt-0.5 ${c}`}>{v}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 3. Detalle de fases */}
+                      {allBatches.length > 0 && (
+                        <div>
+                          <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">3. Detalle por Fase / Lote</h4>
+                          <table className="w-full text-xs border-collapse">
+                            <thead><tr className="bg-gray-800 text-white text-[9px] font-black uppercase">
+                              <th className="p-2 border border-gray-700 text-left">Fase / Lote</th>
+                              <th className="p-2 border border-gray-700 text-center">Fecha</th>
+                              <th className="p-2 border border-gray-700 text-center">KG Entrada</th>
+                              <th className="p-2 border border-gray-700 text-center">KG Salida</th>
+                              <th className="p-2 border border-gray-700 text-center">Merma (KG / %)</th>
+                              {!esTermo&&<th className="p-2 border border-gray-700 text-center">Millares</th>}
+                              <th className="p-2 border border-gray-700 text-left">Observaciones</th>
+                            </tr></thead>
+                            <tbody>
+                              {allBatches.map((b,i)=>{
+                                const insKg=(b.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                const entKg=b.fase==='EXTRUSIÓN'&&insKg>0?insKg:parseNum(b.kgRecibidos||b.totalInsumosKg||0);
+                                const mermaReal=entKg>0?((parseNum(b.mermaKg)/entKg)*100).toFixed(1):b.mermaPorc||0;
                                 return (
-                                  <tr key={id} className="border-t border-blue-100">
-                                    <td className="p-1 font-bold text-blue-800">{id} <span className="text-gray-500 font-normal">{inv?.desc||''}</span></td>
-                                    <td className="p-1 text-right font-black">{formatNum(desp)} KG</td>
-                                    <td className="p-1 text-right font-black text-orange-700">{formatNum(usado)} KG</td>
-                                    <td className={`p-1 text-right font-black ${rest<=0?'text-red-600':'text-green-700'}`}>{formatNum(rest)} KG</td>
-                                    <td className="p-1 text-right">
-                                      <div className="flex items-center gap-1 justify-end">
-                                        <div className="w-16 bg-gray-200 rounded-full h-1.5"><div className={`h-1.5 rounded-full ${parseNum(pct)>90?'bg-red-500':parseNum(pct)>60?'bg-yellow-500':'bg-green-500'}`} style={{width:`${Math.min(100,pct)}%`}}></div></div>
-                                        <span className="font-black text-[9px]">{pct}%</span>
-                                      </div>
-                                    </td>
+                                  <tr key={i} className="hover:bg-gray-50">
+                                    <td className="p-2 border font-black">{b.fase}<span className="text-[8px] text-gray-400 ml-1">L{i+1}</span></td>
+                                    <td className="p-2 border text-center text-gray-600">{b.date}</td>
+                                    <td className="p-2 border text-center text-blue-700 font-bold">{formatNum(entKg)} KG</td>
+                                    <td className="p-2 border text-center text-green-700 font-bold">{formatNum(b.producedKg)} KG</td>
+                                    <td className="p-2 border text-center text-red-600 font-bold">{formatNum(b.mermaKg)} KG<span className="text-[9px] ml-1">({mermaReal}%)</span></td>
+                                    {!esTermo&&<td className="p-2 border text-center font-bold">{parseNum(b.techParams?.millares||0)>0?formatNum(b.techParams.millares)+' Mill.':'—'}</td>}
+                                    <td className="p-2 border text-[9px] text-indigo-600">{b.observaciones||'—'}</td>
                                   </tr>
                                 );
                               })}
                             </tbody>
+                            <tfoot><tr className="bg-orange-50 font-black text-[10px]">
+                              <td colSpan="2" className="p-2 border text-right uppercase">Resumen:</td>
+                              <td className="p-2 border text-center text-blue-700">{formatNum(mpInjectada)} KG</td>
+                              <td className="p-2 border text-center text-green-700">{formatNum(kgProd)} KG</td>
+                              <td className="p-2 border text-center text-red-600">{formatNum(mermaTotal)} KG ({pctMerma}%)</td>
+                              {!esTermo&&<td className="p-2 border text-center text-blue-600">{millProd>0?formatNum(millProd)+' Mill.':'—'}</td>}
+                              <td className="p-2 border"></td>
+                            </tr></tfoot>
                           </table>
                         </div>
-                      </div>
-                    )}
-                    {/* Lotes */}
-                    <div className="p-4 space-y-3">
-                      {lotes.map((lote,li)=>{
-                        const lExt=(lote.extrusion?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)'&&parseNum(b.producedKg)>0);
-                        const lImp=(lote.impresion?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)'&&parseNum(b.producedKg)>0);
-                        const lSel=(lote.sellado?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)'&&parseNum(b.producedKg)>0);
-                        const lLast=lSel.length>0?lSel:lImp.length>0?lImp:lExt;
-                        const lKgProd=lLast.reduce((s,b)=>s+parseNum(b.producedKg),0);
-                        const lMill=lLast.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
-                        const lMerma=[...lExt,...lImp,...lSel].reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
-                        const lMP=lExt.reduce((s,b)=>{const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);return s+(ins>0?ins:parseNum(b.kgRecibidos||0));},0);
-                        const totalFaseBatches=[...lExt,...lImp,...lSel].length;
-                        return (
-                          <div key={lote.id} className={`rounded-xl border-2 ${lote.cerrado?'border-green-300 bg-green-50':'border-orange-200 bg-orange-50'}`}>
-                            <div className="flex justify-between items-center px-4 py-2">
-                              <div className="flex items-center gap-3">
-                                <span className={`font-black text-sm ${lote.cerrado?'text-green-700':'text-orange-700'}`}>{lote.nombre} {lote.cerrado?'✓ CERRADO':'⏳ EN PROCESO'}</span>
-                                <span className="text-[9px] text-gray-500">{lote.fechaCreacion}</span>
-                              </div>
-                              <div className="flex gap-4 text-xs">
-                                <span className="font-bold text-green-700">{esTermo?formatNum(lKgProd)+' KG':formatNum(lMill)+' Mill.'}</span>
-                                <span className="font-bold text-red-600">Merma: {formatNum(lMerma)} KG</span>
-                                <span className="text-gray-500">{totalFaseBatches} registros</span>
-                              </div>
-                            </div>
-                            {totalFaseBatches > 0 && (
-                              <div className="px-4 pb-3">
-                                <table className="w-full text-xs">
-                                  <thead><tr className="text-[8px] font-black uppercase text-gray-500"><th className="text-left pb-1">Fase</th><th className="text-center pb-1">Fecha</th><th className="text-center pb-1">KG Prod.</th><th className="text-center pb-1">Merma</th><th className="text-center pb-1">Millares</th><th className="text-left pb-1">Obs.</th></tr></thead>
-                                  <tbody>
-                                    {[...lExt.map(b=>({...b,fase:'EXTRUSIÓN'})),...lImp.map(b=>({...b,fase:'IMPRESIÓN'})),...lSel.map(b=>({...b,fase:'SELLADO'}))].map((b,bi)=>(
-                                      <tr key={bi} className="border-t border-gray-100">
-                                        <td className="py-1 font-bold">{b.fase}</td>
-                                        <td className="py-1 text-center text-gray-500">{b.date}</td>
-                                        <td className="py-1 text-center font-black text-green-700">{formatNum(b.producedKg)}</td>
-                                        <td className="py-1 text-center text-red-600">{formatNum(b.mermaKg)} ({b.mermaPorc}%)</td>
-                                        <td className="py-1 text-center text-blue-600">{parseNum(b.techParams?.millares||0)>0?formatNum(b.techParams.millares):'—'}</td>
-                                        <td className="py-1 text-[9px] text-indigo-600">{b.observaciones||''}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
+                      )}
+
+                      {/* 4. Balance de materiales */}
+                      {Object.keys(matsDespachados).length > 0 && (
+                        <div>
+                          <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">4. Balance de Materiales — Despachado vs Consumido</h4>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                            {Object.entries(matsDespachados).map(([id,desp])=>{
+                              const inv=(inventory||[]).find(i=>i.id===id);
+                              const cons=parseNum(matsConsumidos[id]||0);
+                              const pct=desp>0?(cons/desp*100):0;
+                              const rest=Math.max(0,desp-cons);
+                              return (
+                                <div key={id} className="bg-white border border-gray-200 rounded-xl p-3">
+                                  <div className="font-black text-[10px] text-gray-800 mb-1">{inv?.desc||id}</div>
+                                  <div className="flex justify-between text-[9px] mb-1">
+                                    <span className="text-blue-600">Desp: {formatNum(desp)} KG</span>
+                                    <span className="text-orange-600">Cons: {formatNum(cons)} KG</span>
+                                  </div>
+                                  <div className="w-full bg-gray-200 rounded-full h-1.5 mb-1">
+                                    <div className={`h-1.5 rounded-full ${pct>90?'bg-red-500':pct>60?'bg-orange-400':'bg-green-500'}`} style={{width:`${Math.min(100,pct)}%`}}></div>
+                                  </div>
+                                  <div className={`text-[9px] font-black text-right ${rest<=0?'text-red-600':'text-green-600'}`}>Rest: {formatNum(rest)} KG</div>
+                                </div>
+                              );
+                            })}
                           </div>
-                        );
-                      })}
-                      {lotes.length === 0 && <div className="text-center py-4 text-gray-400 text-xs">Sin lotes creados. Haga clic en "REGISTRAR FASE" para iniciar.</div>}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -6232,7 +6206,7 @@ export default function App() {
           </div>
 
           <div className="p-8 space-y-6">
-            <div>
+            <div className="no-pdf">
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                 {REPORT_CARDS.map(card => (
                   <button key={card.id} onClick={() => { setShowReportType(card.id); setShowFiniquitoOP(null); }}
@@ -6257,7 +6231,7 @@ export default function App() {
             </div>
 
             {['general','ingresos_vs_costos','mermas','super_finiquito'].includes(showReportType) && (
-              <div className="flex gap-4 items-center">
+              <div className="flex gap-4 items-center no-pdf">
                 <div>
                   <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes de Analisis</label>
                   <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500" />
