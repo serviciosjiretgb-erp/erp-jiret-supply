@@ -1821,8 +1821,6 @@ export default function App() {
       );
     }
 
-    }
-
     if (invView === 'toma_fisica') {
        return (
          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
