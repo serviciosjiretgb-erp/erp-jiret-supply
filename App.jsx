@@ -3791,22 +3791,22 @@ export default function App() {
     const selBatches = filterRealBatches(prod.sellado?.batches).map(b=>({...b,fase:'SELLADO'}));
     const allBatches = [...extBatches, ...impBatches, ...selBatches];
 
-    // ── LÓGICA DE CADENA DE PRODUCCIÓN ──────────────────────────────────────
-    // Es un proceso continuo: Extrusión → Impresión → Sellado
-    // MP Inyectada = solo insumos reales de EXTRUSIÓN (materia prima bruta inyectada al inicio)
+    // ── LÓGICA CORRECTA: SUMA DE MERMAS INDIVIDUALES POR LOTE ─────────────
+    // La merma total = SUMA de mermas de cada lote en TODAS las fases
+    // KG Producidos finales = suma de la ÚLTIMA fase activa (sellado → imp → ext)
+    // MP Inyectada = insumos reales de extrusión
     const mpInyectadaKg = extBatches.reduce((s,b)=>{
       const insumosUsados = (b.insumos||[]).reduce((ss,ing)=>ss+parseNum(ing.qty),0);
       return s + (insumosUsados > 0 ? insumosUsados : parseNum(b.kgRecibidos||b.totalInsumosKg||0));
     },0) || impBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0)
          || selBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0);
 
-    // KG producidos finales = ÚLTIMA fase activa (la que produce el producto final)
-    // Sellado > Impresión > Extrusión (prioridad de última fase)
+    // KG producidos finales = suma de la ÚLTIMA fase activa
     const lastActiveBatches = selBatches.length>0 ? selBatches : impBatches.length>0 ? impBatches : extBatches;
     const kgProducidosFinales = lastActiveBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
 
-    // Merma REAL de la cadena = MP entrada - KG salida final
-    const totalMermaKg = Math.max(0, mpInyectadaKg - kgProducidosFinales);
+    // Merma REAL = SUMA de mermas individuales de todos los lotes de todas las fases
+    const totalMermaKg = allBatches.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
     const pctMerma = mpInyectadaKg > 0 ? (totalMermaKg / mpInyectadaKg * 100) : 0;
 
     // Costo total = suma de insumos consumidos en TODAS las fases
@@ -5689,7 +5689,8 @@ export default function App() {
                                         const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);
                                         return s+(ins>0?ins:parseNum(b.kgRecibidos||b.totalInsumosKg||0));
                                       },0)||impB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0)||selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0);
-                                      const mermaTotal = Math.max(0, mpInyectada - producidoKg);
+                                      const allB = [...extB.map(b=>({...b})),...impB.map(b=>({...b})),...selB.map(b=>({...b}))];
+                                      const mermaTotal = allB.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
                                       const pctMerma = mpInyectada > 0 ? (mermaTotal/mpInyectada*100) : 0;
                                       const pendiente = Math.max(0, solicitado - producido);
                                       const pct = solicitado > 0 ? Math.min(100, (producido/solicitado)*100) : 0;
@@ -5870,7 +5871,7 @@ export default function App() {
                 const mpInjectada=extB.reduce((s,b)=>{const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);return s+(ins>0?ins:parseNum(b.kgRecibidos||b.totalInsumosKg||0));},0)||impB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0)||selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0);
                 const kgProd=lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
                 const millProd=selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
-                const mermaTotal=Math.max(0,mpInjectada-kgProd);
+                const mermaTotal=allBatches.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
                 const pctMerma=mpInjectada>0?((mermaTotal/mpInjectada)*100).toFixed(1):'0.0';
                 const esTermo=req.tipoProducto==='TERMOENCOGIBLE';
                 const solicitado=esTermo?parseNum(req.requestedKg):parseNum(req.cantidad);
