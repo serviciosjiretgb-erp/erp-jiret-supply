@@ -840,39 +840,28 @@ export default function App() {
     setNewInvoiceForm(f);
   };
   
+  const [editingInvoiceId, setEditingInvoiceId] = useState(null);
+
   const handleCreateInvoice = async (e) => {
     e.preventDefault(); if(!newInvoiceForm.clientRif || !newInvoiceForm.montoBase) return setDialog({title: 'Aviso', text: 'Selecciona un cliente e ingresa el monto base.', type: 'alert'});
-    const id = newInvoiceForm.documento || generateInvoiceId();
+    const id = editingInvoiceId || newInvoiceForm.documento || generateInvoiceId();
     try { 
-      await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: Date.now(), user: appUser?.name }); 
+      await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: editingInvoiceId ? (newInvoiceForm.timestamp || Date.now()) : Date.now(), user: appUser?.name }); 
 
-      // ── Asientos contables al facturar ──
-      const montoBase = parseNum(newInvoiceForm.montoBase);
-      // 1) Costo de Producción → DÉBITO 5.1.01.01.001 / CRÉDITO 1.1.03.01.008
-      if (newInvoiceForm.fgId) {
-        const fg = (finishedGoodsInventory || []).find(f => f.id === newInvoiceForm.fgId);
-        const costoFG = fg ? (parseNum(fg.costoUnitario) * parseNum(fg.kgProducidos || fg.millares || 1)) : 0;
-        const montoAsientoCosto = costoFG > 0 ? costoFG : montoBase;
-        await registrarAsientoContable(null, {
-          debito: '5.1.01.01.001',
-          credito: '1.1.03.01.008',
-          monto: montoAsientoCosto,
-          descripcion: `COSTO PRODUCCIÓN — FACTURA ${id} — ${newInvoiceForm.productoMaquilado || ''}`,
-          referencia: id,
-          fecha: newInvoiceForm.fecha,
-        });
+      if (!editingInvoiceId) {
+        // ── Asientos contables al facturar (solo en creación) ──
+        const montoBase = parseNum(newInvoiceForm.montoBase);
+        if (newInvoiceForm.fgId) {
+          const fg = (finishedGoodsInventory || []).find(f => f.id === newInvoiceForm.fgId);
+          const costoFG = fg ? (parseNum(fg.costoUnitario) * parseNum(fg.kgProducidos || fg.millares || 1)) : 0;
+          const montoAsientoCosto = costoFG > 0 ? costoFG : montoBase;
+          await registrarAsientoContable(null, { debito: '5.1.01.01.001', credito: '1.1.03.01.008', monto: montoAsientoCosto, descripcion: `COSTO PRODUCCIÓN — FACTURA ${id} — ${newInvoiceForm.productoMaquilado || ''}`, referencia: id, fecha: newInvoiceForm.fecha });
+        }
+        await registrarAsientoContable(null, { debito: 'CXC/CLIENTE', credito: '4.1.01.01.000', monto: parseNum(newInvoiceForm.montoBase), descripcion: `INGRESO MAQUILA — FACTURA ${id} — ${newInvoiceForm.clientName || ''}`, referencia: id, fecha: newInvoiceForm.fecha });
       }
-      // 2) Ingreso → DÉBITO (cuentas por cobrar/cliente) / CRÉDITO 4.1.01.01.000
-      await registrarAsientoContable(null, {
-        debito: 'CXC/CLIENTE',
-        credito: '4.1.01.01.000',
-        monto: montoBase,
-        descripcion: `INGRESO MAQUILA — FACTURA ${id} — ${newInvoiceForm.clientName || ''}`,
-        referencia: id,
-        fecha: newInvoiceForm.fecha,
-      });
 
-      setShowNewInvoicePanel(false); setNewInvoiceForm(initialInvoiceForm); setDialog({title: 'Éxito', text: 'Factura Registrada.', type: 'alert'}); 
+      setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm);
+      setDialog({title: '✅ Éxito', text: editingInvoiceId ? 'Factura actualizada.' : 'Factura Registrada.', type: 'alert'}); 
     } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
   const handleDeleteInvoice = (id) => {
@@ -882,6 +871,12 @@ export default function App() {
       type: 'confirm', 
       onConfirm: async () => await deleteDoc(getDocRef('maquilaInvoices', id))
     });
+  };
+  const startEditInvoice = (inv) => {
+    setEditingInvoiceId(inv.id);
+    setNewInvoiceForm({ fecha: inv.fecha || getTodayDate(), clientRif: inv.clientRif || '', clientName: inv.clientName || '', documento: inv.documento || '', productoMaquilado: inv.productoMaquilado || '', vendedor: inv.vendedor || '', montoBase: String(inv.montoBase || ''), iva: String(inv.iva || ''), total: String(inv.total || ''), aplicaIva: inv.aplicaIva || 'SI', opAsignada: inv.opAsignada || '', opData: inv.opData || null, fgId: inv.fgId || '', timestamp: inv.timestamp });
+    setShowNewInvoicePanel(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   
   const generateReqId = () => `OP-${((requirements || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(5, '0')}`;
@@ -2948,10 +2943,14 @@ export default function App() {
                 <div className="p-8 bg-gray-50/50 border-b">
                   <form onSubmit={handleCreateInvoice} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
                     <div className="flex justify-between items-center border-b border-gray-100 pb-4 mb-6">
-                      <h3 className="text-sm font-black uppercase text-black tracking-widest">Registrar Factura de Venta</h3>
+                      <h3 className="text-sm font-black uppercase text-black tracking-widest">{editingInvoiceId ? `Editando Factura: ${editingInvoiceId}` : 'Registrar Factura de Venta'}</h3>
                       <div className="flex items-center gap-4">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">📅 Fecha de Factura</label>
+                          <input type="date" value={newInvoiceForm.fecha} onChange={e=>setNewInvoiceForm({...newInvoiceForm, fecha: e.target.value})} className="border-2 border-orange-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-orange-50" />
+                        </div>
                         <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest shadow-sm">FACTURA NRO: {newInvoiceForm.documento || generateInvoiceId()}</span>
-                        <button type="button" onClick={()=>setShowNewInvoicePanel(false)} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
+                        <button type="button" onClick={()=>{setShowNewInvoicePanel(false);setEditingInvoiceId(null);setNewInvoiceForm(initialInvoiceForm);}} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
                       </div>
                     </div>
                     
@@ -3027,7 +3026,7 @@ export default function App() {
              <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR FACTURA O CLIENTE..." value={invoiceSearchTerm} onChange={e=>setInvoiceSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">OP N°</th><th className="py-4 px-4 text-black">Cliente / Producto</th><th className="py-4 px-4 text-right text-black w-32">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{(invoices || []).map(inv=>{
                if(!String(inv?.documento || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()) && !String(inv?.clientName || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase())) return null;
                return (
-               <tr key={inv?.id} className="hover:bg-gray-50"><td className="py-5 px-4 font-black text-sm">{inv?.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{getSafeDate(inv?.timestamp)}</span></td><td className="py-5 px-4 font-black text-xs text-orange-600">{inv?.opAsignada || '---'}</td><td className="py-5 px-4 font-bold text-gray-700 uppercase">{inv?.clientName}<br/><span className="text-[9px] font-black text-orange-500 block max-w-xs truncate" title={inv?.productoMaquilado}>{inv?.productoMaquilado || 'S/D'}</span></td><td className="py-5 px-4 text-right font-black text-green-600 text-lg w-32">${formatNum(inv?.total)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>handleDeleteInvoice(inv?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
+               <tr key={inv?.id} className="hover:bg-gray-50"><td className="py-5 px-4 font-black text-sm">{inv?.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{inv?.fecha || getSafeDate(inv?.timestamp)}</span></td><td className="py-5 px-4 font-black text-xs text-orange-600">{inv?.opAsignada || '---'}</td><td className="py-5 px-4 font-bold text-gray-700 uppercase">{inv?.clientName}<br/><span className="text-[9px] font-black text-orange-500 block max-w-xs truncate" title={inv?.productoMaquilado}>{inv?.productoMaquilado || 'S/D'}</span></td><td className="py-5 px-4 text-right font-black text-green-600 text-lg w-32">${formatNum(inv?.total)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>startEditInvoice(inv)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteInvoice(inv?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
              )})}</tbody></table></div></div>
           </div>
         )}
@@ -3768,36 +3767,42 @@ export default function App() {
       fbBatch.update(getDocRef('requirements', req.id), { production: newProd, status: 'EN PROCESO' });
       await fbBatch.commit();
 
-      // Los productos producidos en fase van a FinishedGoods como WIP interno (sin afectar entregasParciales)
-      // Las Entregas Parciales SOLO se crean manualmente desde el botón "ENTREGA PARCIAL"
+      // Solo crear entrada en Terminados si esta es la ÚLTIMA fase activa de la OP
+      // (la que produce el producto final de la cadena)
       if (prodKg > 0) {
-        const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
-        const millEntrada = esTermo ? 0 : parseNum(techParams.millares || 0);
-        const batchId = newBatch.id;
-        const fgId = `FG-${batchId}`;
-        // Solo crear en finishedGoods si no existe ya (evitar duplicados al reabrir)
-        const fgExists = (finishedGoodsInventory||[]).some(fg => fg.id === fgId || fg.batchId === batchId);
-        if (!fgExists) {
-          await setDoc(getDocRef('finishedGoodsInventory', fgId), {
-            id: fgId, opId: req.id, reqId: req.id,
-            cliente: req.client || 'N/A',
-            tipoProducto: req.tipoProducto || 'BOLSAS',
-            categoria: req.categoria || '',
-            producto: req.desc || 'Producto',
-            ancho: req.ancho || 0, largo: req.largo || 0, micras: req.micras || 0,
-            color: req.color || 'NATURAL', tratamiento: req.tratamiento || 'LISO',
-            kgProducidos: prodKg,
-            millares: millEntrada,
-            costoUnitario: phaseCost > 0 && prodKg > 0 ? phaseCost / prodKg : 0,
-            fechaFinalizacion: phaseForm.date || getTodayDate(),
-            ubicacion: 'ALMACEN GENERAL',
-            status: 'EN PROCESO',
-            esEntregaParcial: false,
-            fase: activePhaseTab,
-            batchId,
-            observaciones: phaseForm.observaciones || '',
-            timestamp: Date.now()
-          });
+        const matchFormula = (formulas||[]).find(f => f.categoria && req.categoria && f.categoria.toUpperCase() === (req.categoria||'').toUpperCase());
+        const fasesActivas = matchFormula?.fases || { extrusion: true, impresion: false, sellado: false };
+        // Determinar cuál es la última fase definida
+        const ultimaFase = fasesActivas.sellado ? 'sellado' : fasesActivas.impresion ? 'impresion' : 'extrusion';
+        const esUltimaFase = activePhaseTab === ultimaFase;
+
+        if (esUltimaFase) {
+          const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
+          const millEntrada = esTermo ? 0 : parseNum(techParams.millares || 0);
+          const batchId = newBatch.id;
+          const fgId = `FG-${batchId}`;
+          const fgExists = (finishedGoodsInventory||[]).some(fg => fg.id === fgId || fg.batchId === batchId);
+          if (!fgExists) {
+            await setDoc(getDocRef('finishedGoodsInventory', fgId), {
+              id: fgId, opId: req.id, reqId: req.id,
+              cliente: req.client || 'N/A',
+              tipoProducto: req.tipoProducto || 'BOLSAS',
+              categoria: req.categoria || '',
+              producto: req.desc || 'Producto',
+              ancho: req.ancho || 0, largo: req.largo || 0, micras: req.micras || 0,
+              color: req.color || 'NATURAL', tratamiento: req.tratamiento || 'LISO',
+              kgProducidos: prodKg,
+              millares: millEntrada,
+              costoUnitario: phaseCost > 0 && prodKg > 0 ? phaseCost / prodKg : 0,
+              fechaFinalizacion: phaseForm.date || getTodayDate(),
+              ubicacion: 'ALMACEN GENERAL',
+              status: 'LISTO PARA ENTREGA',
+              fase: activePhaseTab,
+              batchId,
+              observaciones: phaseForm.observaciones || '',
+              timestamp: Date.now()
+            });
+          }
         }
         // NO modificar entregasParciales aquí — solo el botón manual lo hace
       }
@@ -4349,15 +4354,8 @@ export default function App() {
             fechaCierre: getTodayDate(),
           });
 
-          // Mover a Terminados — solo si NO hay ya entregas parciales registradas
-          const yaHayParciales = (req.entregasParciales || []).length > 0;
-          if (!yaHayParciales) {
-            await handleFinishProduction(req.id, {
-              producedKg: totalKgProd,
-              millaresProd: totalMillares,
-              observations: 'Cierre OP manual'
-            });
-          }
+          // No se crea entrada en Terminados — ya fue registrada por lote en handleSavePhaseDirectly
+          // El reporte de producción (renderFiniquitoOP) lee directamente de req.production
 
           // ── Asiento contable: WIP → Productos Terminados ──
           // Calcular costo total de los WIP asociados a esta OP
@@ -8166,6 +8164,16 @@ export default function App() {
 
   return (
     <ErrorBoundary>
+      <style>{`
+        @media print {
+          .no-pdf { display: none !important; }
+          .print\\:hidden { display: none !important; }
+          nav { display: none !important; }
+          .sticky { position: static !important; }
+          body { background: white !important; }
+          * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        }
+      `}</style>
       <div className="min-h-screen bg-gray-100 flex flex-col font-sans">
         <nav className="bg-black text-white px-6 py-4 shadow-xl print:hidden sticky top-0 z-40 border-b-4 border-orange-500">
            <div className="flex justify-between items-center max-w-7xl mx-auto">
