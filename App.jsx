@@ -4036,7 +4036,10 @@ export default function App() {
                     <th className="p-3 border-r border-gray-700 text-center">KG Recibidos</th>
                     <th className="p-3 border-r border-gray-700 text-center">KG Producidos</th>
                     <th className="p-3 border-r border-gray-700 text-center">Merma KG (%)</th>
-                    {req.tipoProducto !== 'TERMOENCOGIBLE' && <th className="p-3 text-center">Millares</th>}
+                    {req.tipoProducto !== 'TERMOENCOGIBLE' && <th className="p-3 border-r border-gray-700 text-center">Millares</th>}
+                    {costsMode && <th className="p-3 border-r border-gray-700 text-center">Costo MP Lote</th>}
+                    {costsMode && <th className="p-3 border-r border-gray-700 text-center">$ / KG</th>}
+                    {costsMode && req.tipoProducto !== 'TERMOENCOGIBLE' && <th className="p-3 text-center">$ / Millar</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -4051,14 +4054,24 @@ export default function App() {
                         { label: 'SELLADO',   b: selBatches[li], colorCls: 'bg-green-100 text-green-700' },
                       ].filter(f => f.b);
                       if (fasesDelLote.length === 0) continue;
+
+                      // Calcular costos del lote completo (suma de todas las fases del lote)
+                      const costoLote = fasesDelLote.reduce((s,f)=>s+parseNum(f.b.cost||0),0);
+                      // KG producidos finales del lote = última fase activa del lote
+                      const lastFase = fasesDelLote[fasesDelLote.length-1];
+                      const kgProdLote = parseNum(lastFase.b.producedKg);
+                      const millLote = parseNum(lastFase.b.techParams?.millares||0);
+                      const costoXkgLote = kgProdLote > 0 ? costoLote / kgProdLote : 0;
+                      const costoXmillLote = millLote > 0 ? costoLote / millLote : 0;
+
                       fasesDelLote.forEach((f, fi) => {
                         const { label, b, colorCls } = f;
                         const insumosUsados = (b.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
                         const kgEntrada = label==='EXTRUSIÓN' && insumosUsados>0 ? insumosUsados : parseNum(b.kgRecibidos||b.totalInsumosKg||0);
                         const pctM = kgEntrada > 0 ? ((parseNum(b.mermaKg)/kgEntrada)*100).toFixed(1) : '0.0';
+                        const millBatch = parseNum(b.techParams?.millares||0);
                         rows.push(
                           <tr key={`${li}-${fi}`} className={`${fi===0?'border-t-2 border-orange-200':''} ${li%2===0?'bg-white':'bg-gray-50'}`}>
-                            {/* Lote # solo en la primera fila del lote */}
                             {fi === 0 ? (
                               <td className="p-3 border-r text-center font-black text-orange-600 text-sm align-middle" rowSpan={fasesDelLote.length}>
                                 {li+1}
@@ -4072,12 +4085,30 @@ export default function App() {
                             <td className="p-3 border-r text-center font-black text-blue-700">{formatNum(kgEntrada)} kg</td>
                             <td className="p-3 border-r text-center font-black text-green-700">{formatNum(b.producedKg)} kg</td>
                             <td className="p-3 border-r text-center font-black text-red-600">{formatNum(b.mermaKg)} kg <span className="text-[9px]">({pctM}%)</span></td>
-                            {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center font-black text-blue-600">{parseNum(b.techParams?.millares||0)>0?formatNum(parseNum(b.techParams.millares))+' Mill.':'—'}</td>}
+                            {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 border-r text-center font-black text-blue-600">{millBatch>0?formatNum(millBatch)+' Mill.':'—'}</td>}
+                            {/* Columnas de costo — solo en la primera fila (extrusión), rowSpan para abarcar todas las fases del lote */}
+                            {costsMode && fi===0 && (
+                              <td className="p-3 border-r text-center font-black text-orange-700 align-middle" rowSpan={fasesDelLote.length}>
+                                ${formatNum(costoLote)}
+                              </td>
+                            )}
+                            {costsMode && fi===0 && (
+                              <td className="p-3 border-r text-center align-middle" rowSpan={fasesDelLote.length}>
+                                <div className="font-black text-gray-800">${formatNum(costoXkgLote)}</div>
+                                <div className="text-[8px] text-gray-400">/ KG</div>
+                              </td>
+                            )}
+                            {costsMode && req.tipoProducto !== 'TERMOENCOGIBLE' && fi===0 && (
+                              <td className="p-3 text-center align-middle" rowSpan={fasesDelLote.length}>
+                                <div className="font-black text-green-700">{millLote>0?'$'+formatNum(costoXmillLote):'—'}</div>
+                                {millLote>0&&<div className="text-[8px] text-gray-400">/ Millar</div>}
+                              </td>
+                            )}
                           </tr>
                         );
                       });
                     }
-                    if (rows.length === 0) return <tr><td colSpan="7" className="p-6 text-center text-gray-400 font-bold">Sin lotes registrados</td></tr>;
+                    if (rows.length === 0) return <tr><td colSpan="10" className="p-6 text-center text-gray-400 font-bold">Sin lotes registrados</td></tr>;
                     return rows;
                   })()}
                 </tbody>
@@ -4088,6 +4119,9 @@ export default function App() {
                     <td className="p-3 text-center">{formatNum(kgProducidosFinales)} kg</td>
                     <td className="p-3 text-center">{formatNum(totalMermaKg)} kg <span className="text-[9px]">({pctMerma.toFixed(1)}%)</span></td>
                     {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center">{totalMillares>0?formatNum(totalMillares)+' Mill.':'—'}</td>}
+                    {costsMode && <td className="p-3 text-center">${formatNum(totalCostoMP)}</td>}
+                    {costsMode && <td className="p-3 text-center">${formatNum(costoNetoPorKg)}<span className="text-[8px] block font-bold">/ KG</span></td>}
+                    {costsMode && req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center">{totalMillares>0?'$'+formatNum(costoPorMillar):'—'}<span className="text-[8px] block font-bold">/ Millar</span></td>}
                   </tr>
                 </tfoot>
               </table>
