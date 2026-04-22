@@ -869,13 +869,15 @@ export default function App() {
           const cantRestante = Math.max(0, cantDisponible - cantFacturada);
           if (cantFacturada > 0) {
             if (cantRestante <= 0.001) {
-              await updateDoc(getDocRef('finishedGoodsInventory', fg.id), { status: 'ENTREGADO' });
+              await updateDoc(getDocRef('finishedGoodsInventory', fg.id), { status: 'ENTREGADO', millares: 0, kgProducidos: 0 });
             } else {
-              const fraccion = cantFacturada / Math.max(0.0001, cantDisponible);
-              const newKg = parseNum(fg.kgProducidos) * (1 - fraccion);
+              // Para bolsas: KG restante proporcional a millares restantes
+              const kgOrigen = parseNum(fg.kgProducidosOrigen || fg.kgProducidos);
+              const millOrigen = parseNum(fg.millaresOrigen || fg.millares || 1);
+              const newKg = esTermo ? cantRestante : (kgOrigen * cantRestante / Math.max(0.0001, millOrigen));
               await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
                 millares: esTermo ? 0 : cantRestante,
-                kgProducidos: esTermo ? cantRestante : Math.max(0, newKg),
+                kgProducidos: Math.max(0, newKg),
                 observaciones: `${fg.observaciones || ''} | Parcial: ${formatNum(cantFacturada)} facturado FAC ${id}`.trim()
               });
             }
@@ -1789,12 +1791,6 @@ export default function App() {
                       </td>
                       <td className="py-3 px-3 text-center no-pdf">
                         <div className="flex flex-col gap-1">
-                          {item.status === 'LISTO PARA ENTREGA' && (
-                            <button onClick={() => updateDoc(getDocRef('finishedGoodsInventory', item.id), {status:'ENTREGADO'})} className="px-2 py-1 bg-blue-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-blue-600 flex items-center gap-1 justify-center"><ArrowUpFromLine size={10}/> ENTREGAR</button>
-                          )}
-                          {item.status === 'ENTREGADO' && (
-                            <button onClick={() => updateDoc(getDocRef('finishedGoodsInventory', item.id), {status:'LISTO PARA ENTREGA'})} className="px-2 py-1 bg-gray-400 text-white rounded-lg text-[9px] font-black uppercase hover:bg-gray-600">REVERTIR</button>
-                          )}
                           <button onClick={() => requireAdminPassword(async () => {
                             await deleteDoc(getDocRef('finishedGoodsInventory', item.id));
                             setDialog({title:'Eliminado', text:'Registro eliminado.', type:'alert'});
@@ -2058,8 +2054,25 @@ export default function App() {
     }
 
     const searchInvUpper = (invSearchTerm || '').toUpperCase();
-    const allCatalogCats = ['TODAS', ...Array.from(new Set((inventory||[]).map(i=>i?.category||'Otros')))].sort((a,b)=>a==='TODAS'?-1:a.localeCompare(b));
-    const filteredInventory = (inventory || []).filter(i => {
+    const allCatalogCats = ['TODAS', 'Productos Terminados', ...Array.from(new Set((inventory||[]).map(i=>i?.category||'Otros')))].sort((a,b)=>a==='TODAS'?-1:a==='Productos Terminados'?-0.5:a.localeCompare(b));
+    // Combine raw inventory + finished goods into catalog
+    const fgAsCatalog = (finishedGoodsInventory || [])
+      .filter(fg => fg.status !== 'ENTREGADO')
+      .map(fg => {
+        const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+        const stockVal = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+        return {
+          id: fg.id,
+          desc: `${fg.producto || fg.id} | ${fg.cliente} | OP ${fg.opId}`,
+          category: 'Productos Terminados',
+          unit: esTermo ? 'KG' : 'Millares',
+          stock: stockVal,
+          cost: parseNum(fg.costoUnitario || 0),
+          _isFG: true, _fg: fg
+        };
+      });
+    const allCatalogItems = [...(inventory || []), ...fgAsCatalog];
+    const filteredInventory = allCatalogItems.filter(i => {
       const matchSearch = (i?.id || '').toUpperCase().includes(searchInvUpper) || (i?.desc || '').toUpperCase().includes(searchInvUpper);
       const matchCat = catalogCatFilter === 'TODAS' || (i?.category||'Otros') === catalogCatFilter;
       return matchSearch && matchCat;
@@ -2283,7 +2296,7 @@ export default function App() {
                    {allCatalogCats.map(cat => (
                      <button key={cat} onClick={()=>setCatalogCatFilter(cat)}
                        className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all border-2 ${catalogCatFilter===cat ? 'bg-orange-500 text-white border-orange-500 shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-orange-300 hover:text-orange-600'}`}>
-                       {cat === 'TODAS' ? `Todas (${(inventory||[]).length})` : `${cat} (${(inventory||[]).filter(i=>(i?.category||'Otros')===cat).length})`}
+                       {cat === 'TODAS' ? `Todas (${allCatalogItems.length})` : `${cat} (${allCatalogItems.filter(i=>(i?.category||'Otros')===cat).length})`}
                      </button>
                    ))}
                  </div>
