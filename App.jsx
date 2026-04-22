@@ -134,6 +134,7 @@ export default function App() {
   const [prodView, setProdView] = useState('proyeccion');
   const [invView, setInvView] = useState('catalogo');
   const [fgSearch, setFgSearch] = useState('');
+  const [selectedOpId, setSelectedOpId] = useState('');
   const [invReportType, setInvReportType] = useState('entradas');
 
   const [inventory, setInventory] = useState([]);
@@ -4236,7 +4237,7 @@ export default function App() {
                     <th className="p-3 border-r border-gray-700 text-center">KG Recibidos</th>
                     <th className="p-3 border-r border-gray-700 text-center">KG Producidos</th>
                     <th className="p-3 border-r border-gray-700 text-center">Merma KG (%)</th>
-                    {req.tipoProducto !== 'TERMOENCOGIBLE' && <th className="p-3 border-r border-gray-700 text-center">Millares</th>}
+                    <th className="p-3 border-r border-gray-700 text-center">{req.tipoProducto === 'TERMOENCOGIBLE' ? 'KG Prod.' : 'Millares'}</th>
                     {costsMode && <th className="p-3 border-r border-gray-700 text-center">Costo MP Lote</th>}
                     {costsMode && <th className="p-3 border-r border-gray-700 text-center">$ / KG</th>}
                     {costsMode && req.tipoProducto !== 'TERMOENCOGIBLE' && <th className="p-3 text-center">$ / Millar</th>}
@@ -4270,6 +4271,13 @@ export default function App() {
                         const kgEntrada = label==='EXTRUSIÓN' && insumosUsados>0 ? insumosUsados : parseNum(b.kgRecibidos||b.totalInsumosKg||0);
                         const pctM = kgEntrada > 0 ? ((parseNum(b.mermaKg)/kgEntrada)*100).toFixed(1) : '0.0';
                         const millBatch = parseNum(b.techParams?.millares||0);
+                        // Millares: solo en Impresión/Sellado para bolsas. Para Termo: KG producidos en todas las fases.
+                        const esTermoOP = req.tipoProducto === 'TERMOENCOGIBLE';
+                        const millCell = esTermoOP
+                          ? <span className="text-green-700 font-black">{formatNum(b.producedKg)} kg</span>
+                          : (label === 'EXTRUSIÓN'
+                              ? <span className="text-gray-300 font-bold">—</span>
+                              : (millBatch > 0 ? <span className="text-blue-600 font-black">{formatNum(millBatch)} Mill.</span> : <span className="text-gray-300">—</span>));
                         rows.push(
                           <tr key={`${li}-${fi}`} className={`${fi===0?'border-t-2 border-orange-200':''} ${li%2===0?'bg-white':'bg-gray-50'}`}>
                             {fi === 0 ? (
@@ -4285,7 +4293,7 @@ export default function App() {
                             <td className="p-3 border-r text-center font-black text-blue-700">{formatNum(kgEntrada)} kg</td>
                             <td className="p-3 border-r text-center font-black text-green-700">{formatNum(b.producedKg)} kg</td>
                             <td className="p-3 border-r text-center font-black text-red-600">{formatNum(b.mermaKg)} kg <span className="text-[9px]">({pctM}%)</span></td>
-                            {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 border-r text-center font-black text-blue-600">{millBatch>0?formatNum(millBatch)+' Mill.':'—'}</td>}
+                            <td className="p-3 border-r text-center">{millCell}</td>
                             {/* Columnas de costo — solo en la primera fila (extrusión), rowSpan para abarcar todas las fases del lote */}
                             {costsMode && fi===0 && (
                               <td className="p-3 border-r text-center font-black text-orange-700 align-middle" rowSpan={fasesDelLote.length}>
@@ -4318,7 +4326,7 @@ export default function App() {
                     <td className="p-3 text-center">{formatNum(mpInyectadaKg)} kg</td>
                     <td className="p-3 text-center">{formatNum(kgProducidosFinales)} kg</td>
                     <td className="p-3 text-center">{formatNum(totalMermaKg)} kg <span className="text-[9px]">({pctMerma.toFixed(1)}%)</span></td>
-                    {req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center">{totalMillares>0?formatNum(totalMillares)+' Mill.':'—'}</td>}
+                    <td className="p-3 text-center">{req.tipoProducto === 'TERMOENCOGIBLE' ? formatNum(kgProducidosFinales)+' kg' : (totalMillares>0?formatNum(totalMillares)+' Mill.':'—')}</td>
                     {costsMode && <td className="p-3 text-center">${formatNum(totalCostoMP)}</td>}
                     {costsMode && <td className="p-3 text-center">${formatNum(costoNetoPorKg)}<span className="text-[8px] block font-bold">/ KG</span></td>}
                     {costsMode && req.tipoProducto !== 'TERMOENCOGIBLE' && <td className="p-3 text-center">{totalMillares>0?'$'+formatNum(costoPorMillar):'—'}<span className="text-[8px] block font-bold">/ Millar</span></td>}
@@ -8395,6 +8403,101 @@ export default function App() {
             </div>
 
           </div>
+        </div>
+
+        {/* ── GESTIÓN DE ÓRDENES DE PRODUCCIÓN ── */}
+        <div className="bg-white p-8 rounded-3xl shadow-sm border border-red-100">
+          <h2 className="text-xl font-black uppercase text-black mb-2 flex items-center gap-3 border-b border-red-100 pb-4">
+            <Trash2 className="text-red-500"/> Gestión / Eliminación de Órdenes de Producción
+          </h2>
+          <p className="text-xs text-gray-500 font-bold mb-6">Selecciona una OP para eliminarla completa o parcialmente. Requiere clave de administrador.</p>
+          {(() => {
+            const allOPs = (requirements||[]).sort((a,b)=>String(b.id).localeCompare(String(a.id)));
+            const selectedOP = allOPs.find(r=>r.id===selectedOpId);
+            return (
+              <div className="space-y-4">
+                {/* Selector de OP */}
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-2">Seleccionar Orden de Producción</label>
+                  <select value={selectedOpId} onChange={e=>setSelectedOpId(e.target.value)}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs outline-none focus:border-red-400 bg-white">
+                    <option value="">— Seleccione una OP —</option>
+                    {allOPs.map(r=>(
+                      <option key={r.id} value={r.id}>
+                        #{String(r.id).replace('OP-','').padStart(5,'0')} | {r.client} | {r.desc} | {r.status}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedOP && (
+                  <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-5 space-y-4">
+                    {/* Info OP */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                      <div><span className="text-[9px] text-gray-500 font-black uppercase block">OP</span><span className="font-black text-red-600">#{String(selectedOP.id).replace('OP-','').padStart(5,'0')}</span></div>
+                      <div><span className="text-[9px] text-gray-500 font-black uppercase block">Cliente</span><span className="font-black">{selectedOP.client}</span></div>
+                      <div><span className="text-[9px] text-gray-500 font-black uppercase block">Producto</span><span className="font-black">{selectedOP.desc}</span></div>
+                      <div><span className="text-[9px] text-gray-500 font-black uppercase block">Estado</span>
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${selectedOP.status==='COMPLETADO'?'bg-blue-100 text-blue-700':selectedOP.status==='EN PROCESO'?'bg-orange-100 text-orange-700':'bg-gray-100 text-gray-700'}`}>{selectedOP.status}</span>
+                      </div>
+                    </div>
+
+                    {/* Opciones de eliminación */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {/* Eliminar fases de producción */}
+                      <button onClick={() => requireAdminPassword(async () => {
+                        await updateDoc(getDocRef('requirements', selectedOP.id), { production: {}, status: 'PENDIENTE', fechaReapertura: getTodayDate() });
+                        // Eliminar FG entries de esta OP
+                        const fgToDelete = (finishedGoodsInventory||[]).filter(fg=>fg.opId===selectedOP.id);
+                        for (const fg of fgToDelete) await deleteDoc(getDocRef('finishedGoodsInventory', fg.id));
+                        setSelectedOpId('');
+                        setDialog({title:'✅ Listo', text:'Producción eliminada. La OP volvió a PENDIENTE.', type:'alert'});
+                      }, 'Eliminar Producción de OP')}
+                        className="bg-yellow-500 text-white p-4 rounded-xl font-black text-xs uppercase hover:bg-yellow-600 flex flex-col items-center gap-2 text-center transition-all">
+                        <RefreshCw size={20}/>
+                        <span>Borrar Solo Producción</span>
+                        <span className="text-[9px] font-bold opacity-80">Mantiene la OP, borra lotes y FG</span>
+                      </button>
+
+                      {/* Eliminar requisiciones de inventario */}
+                      <button onClick={() => requireAdminPassword(async () => {
+                        const reqsToDelete = (invRequisitions||[]).filter(r=>r.opId===selectedOP.id);
+                        for (const r of reqsToDelete) await deleteDoc(getDocRef('invRequisitions', r.id));
+                        setDialog({title:'✅ Listo', text:`${reqsToDelete.length} requisicion(es) de inventario eliminadas.`, type:'alert'});
+                      }, 'Eliminar Requisiciones de OP')}
+                        className="bg-orange-500 text-white p-4 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex flex-col items-center gap-2 text-center transition-all">
+                        <Package size={20}/>
+                        <span>Borrar Requisiciones</span>
+                        <span className="text-[9px] font-bold opacity-80">Elimina solicitudes a almacén</span>
+                      </button>
+
+                      {/* Eliminar OP completa */}
+                      <button onClick={() => requireAdminPassword(async () => {
+                        // 1. Eliminar la OP
+                        await deleteDoc(getDocRef('requirements', selectedOP.id));
+                        // 2. Eliminar FG
+                        for (const fg of (finishedGoodsInventory||[]).filter(fg=>fg.opId===selectedOP.id))
+                          await deleteDoc(getDocRef('finishedGoodsInventory', fg.id));
+                        // 3. Eliminar requisiciones
+                        for (const r of (invRequisitions||[]).filter(r=>r.opId===selectedOP.id))
+                          await deleteDoc(getDocRef('invRequisitions', r.id));
+                        // 4. Eliminar facturas asociadas
+                        for (const inv of (invoices||[]).filter(i=>i.opAsignada===selectedOP.id))
+                          await deleteDoc(getDocRef('maquilaInvoices', inv.id));
+                        setSelectedOpId('');
+                        setDialog({title:'✅ Eliminada', text:`OP #${String(selectedOP.id).replace('OP-','').padStart(5,'0')} eliminada completamente.`, type:'alert'});
+                      }, 'ELIMINAR OP COMPLETA — ACCIÓN IRREVERSIBLE')}
+                        className="bg-red-600 text-white p-4 rounded-xl font-black text-xs uppercase hover:bg-red-700 flex flex-col items-center gap-2 text-center transition-all">
+                        <Trash2 size={20}/>
+                        <span>Eliminar OP Completa</span>
+                        <span className="text-[9px] font-bold opacity-80">Borra OP + producción + FG + facturas</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
       </div>
