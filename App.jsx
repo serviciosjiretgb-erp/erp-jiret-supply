@@ -6281,45 +6281,72 @@ export default function App() {
                       )}
 
                       {/* 3. Detalle de fases */}
-                      {allBatches.length > 0 && (
+                      {(extB.length > 0 || impB.length > 0 || selB.length > 0) && (
                         <div>
                           <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">3. Detalle por Fase / Lote</h4>
                           <table className="w-full text-xs border-collapse">
                             <thead><tr className="bg-gray-800 text-white text-[9px] font-black uppercase">
-                              <th className="p-2 border border-gray-700 text-left">Fase / Lote</th>
+                              <th className="p-2 border border-gray-700 text-center">Lote</th>
+                              <th className="p-2 border border-gray-700 text-left">Fase</th>
                               <th className="p-2 border border-gray-700 text-center">Fecha</th>
-                              <th className="p-2 border border-gray-700 text-center">KG Entrada</th>
-                              <th className="p-2 border border-gray-700 text-center">KG Salida</th>
-                              <th className="p-2 border border-gray-700 text-center">Merma (KG / %)</th>
-                              {!esTermo&&<th className="p-2 border border-gray-700 text-center">Millares</th>}
-                              <th className="p-2 border border-gray-700 text-left">Observaciones</th>
+                              <th className="p-2 border border-gray-700 text-center">KG Recibidos</th>
+                              <th className="p-2 border border-gray-700 text-center">KG Producidos</th>
+                              <th className="p-2 border border-gray-700 text-center">Merma KG (%)</th>
+                              {/* Millares: solo para impresion/sellado en bolsas, o para extrusión en termo */}
+                              {(esTermo || impB.length > 0 || selB.length > 0) && <th className="p-2 border border-gray-700 text-center">{esTermo ? 'KG Prod.' : 'Millares'}</th>}
                             </tr></thead>
                             <tbody>
-                              {allBatches.map((b,i)=>{
-                                const insKg=(b.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
-                                const entKg=b.fase==='EXTRUSIÓN'&&insKg>0?insKg:parseNum(b.kgRecibidos||b.totalInsumosKg||0);
-                                const mermaReal=entKg>0?((parseNum(b.mermaKg)/entKg)*100).toFixed(1):b.mermaPorc||0;
-                                return (
-                                  <tr key={i} className="hover:bg-gray-50">
-                                    <td className="p-2 border font-black">{b.fase}<span className="text-[8px] text-gray-400 ml-1">L{i+1}</span></td>
-                                    <td className="p-2 border text-center text-gray-600">{b.date}</td>
-                                    <td className="p-2 border text-center text-blue-700 font-bold">{formatNum(entKg)} KG</td>
-                                    <td className="p-2 border text-center text-green-700 font-bold">{formatNum(b.producedKg)} KG</td>
-                                    <td className="p-2 border text-center text-red-600 font-bold">{formatNum(b.mermaKg)} KG<span className="text-[9px] ml-1">({mermaReal}%)</span></td>
-                                    {!esTermo&&<td className="p-2 border text-center font-bold">{parseNum(b.techParams?.millares||0)>0?formatNum(b.techParams.millares)+' Mill.':'—'}</td>}
-                                    <td className="p-2 border text-[9px] text-indigo-600">{b.observaciones||'—'}</td>
-                                  </tr>
-                                );
-                              })}
+                              {(() => {
+                                const maxLotes = Math.max(extB.length, impB.length, selB.length, 1);
+                                const rows = [];
+                                for (let li = 0; li < maxLotes; li++) {
+                                  const fasesLote = [
+                                    { label: 'EXTRUSIÓN', b: extB[li], colorCls: 'bg-blue-100 text-blue-700' },
+                                    { label: 'IMPRESIÓN', b: impB[li], colorCls: 'bg-purple-100 text-purple-700' },
+                                    { label: 'SELLADO',   b: selB[li], colorCls: 'bg-green-100 text-green-700' },
+                                  ].filter(f => f.b);
+                                  if (!fasesLote.length) continue;
+                                  fasesLote.forEach((f, fi) => {
+                                    const { label, b, colorCls } = f;
+                                    const insKg = (b.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                    const entKg = label==='EXTRUSIÓN' && insKg>0 ? insKg : parseNum(b.kgRecibidos||b.totalInsumosKg||0);
+                                    const pctM = entKg>0 ? ((parseNum(b.mermaKg)/entKg)*100).toFixed(1) : '0.0';
+                                    const millBatch = parseNum(b.techParams?.millares||0);
+                                    // Millares solo en fases que no son extrusión (bolsas) o siempre (termo)
+                                    const showMillCol = esTermo || impB.length > 0 || selB.length > 0;
+                                    const millVal = esTermo
+                                      ? (label==='EXTRUSIÓN' ? formatNum(parseNum(b.producedKg))+' KG' : '—')
+                                      : (label==='EXTRUSIÓN' ? '—' : (millBatch>0 ? formatNum(millBatch)+' Mill.' : '—'));
+                                    rows.push(
+                                      <tr key={`${li}-${fi}`} className={`${fi===0?'border-t-2 border-orange-100':''} ${li%2===0?'bg-white':'bg-gray-50'}`}>
+                                        {fi===0 && (
+                                          <td className="p-2 border text-center font-black text-orange-600 align-middle" rowSpan={fasesLote.length}>{li+1}</td>
+                                        )}
+                                        <td className="p-2 border font-black">
+                                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${colorCls}`}>{label}</span>
+                                          {b.observaciones && <div className="text-[8px] text-indigo-600 mt-0.5">📝 {b.observaciones}</div>}
+                                        </td>
+                                        <td className="p-2 border text-center text-gray-600 font-bold">{b.date}</td>
+                                        <td className="p-2 border text-center text-blue-700 font-bold">{formatNum(entKg)} kg</td>
+                                        <td className="p-2 border text-center text-green-700 font-bold">{formatNum(b.producedKg)} kg</td>
+                                        <td className="p-2 border text-center text-red-600 font-bold">{formatNum(b.mermaKg)} kg <span className="text-[9px]">({pctM}%)</span></td>
+                                        {showMillCol && <td className="p-2 border text-center font-bold text-blue-600">{millVal}</td>}
+                                      </tr>
+                                    );
+                                  });
+                                }
+                                return rows;
+                              })()}
                             </tbody>
-                            <tfoot><tr className="bg-orange-50 font-black text-[10px]">
-                              <td colSpan="2" className="p-2 border text-right uppercase">Resumen:</td>
-                              <td className="p-2 border text-center text-blue-700">{formatNum(mpInjectada)} KG</td>
-                              <td className="p-2 border text-center text-green-700">{formatNum(kgProd)} KG</td>
-                              <td className="p-2 border text-center text-red-600">{formatNum(mermaTotal)} KG ({pctMerma}%)</td>
-                              {!esTermo&&<td className="p-2 border text-center text-blue-600">{millProd>0?formatNum(millProd)+' Mill.':'—'}</td>}
-                              <td className="p-2 border"></td>
-                            </tr></tfoot>
+                            <tfoot>
+                              <tr className="bg-orange-500 text-white font-black text-[10px] uppercase">
+                                <td colSpan="3" className="p-2 text-right">TOTAL:</td>
+                                <td className="p-2 text-center">{formatNum(mpInjectada)} kg</td>
+                                <td className="p-2 text-center">{formatNum(kgProd)} kg</td>
+                                <td className="p-2 text-center">{formatNum(mermaTotal)} kg ({pctMerma}%)</td>
+                                {(esTermo || impB.length > 0 || selB.length > 0) && <td className="p-2 text-center">{esTermo ? formatNum(kgProd)+' KG' : (millProd>0?formatNum(millProd)+' Mill.':'—')}</td>}
+                              </tr>
+                            </tfoot>
                           </table>
                         </div>
                       )}
