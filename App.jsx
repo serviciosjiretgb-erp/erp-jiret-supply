@@ -213,11 +213,11 @@ export default function App() {
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
-  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '' };
+  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
   // Formularios Producción
-  const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '', mermaTroquelTransp: '', mermaTroquelPigm: '', mermaTorta: '', observaciones: '', operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '', zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '', operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '', operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: '' };
+  const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '', mermaTroquelTransp: '', mermaTroquelPigm: '', mermaTorta: '', observaciones: '', pesoMillarReal: '', operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '', zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '', operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '', operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: '' };
   const [showWorkOrder, setShowWorkOrder] = useState(null);
   const [showPhaseReport, setShowPhaseReport] = useState(null);
   const [showFiniquito, setShowFiniquito] = useState(null);
@@ -278,6 +278,8 @@ export default function App() {
   const [poNotes, setPoNotes] = useState('');
   const [viewingPO, setViewingPO] = useState(null);
   const [showFiniquitoOP, setShowFiniquitoOP] = useState(null);
+  const [finiquitoMode, setFiniquitoMode] = useState('full'); // 'full' | 'resumen'
+  const [expandedOPs, setExpandedOPs] = useState({}); // {opId: true/false}
   const [showOrdenTrabajo, setShowOrdenTrabajo] = useState(null);
   const [prodSubMode, setProdSubMode] = useState('fase');
   // Estado para agregar items a PO manualmente
@@ -844,21 +846,42 @@ export default function App() {
   const [editingInvoiceId, setEditingInvoiceId] = useState(null);
 
   const handleCreateInvoice = async (e) => {
-    e.preventDefault(); if(!newInvoiceForm.clientRif || !newInvoiceForm.montoBase) return setDialog({title: 'Aviso', text: 'Selecciona un cliente e ingresa el monto base.', type: 'alert'});
+    e.preventDefault(); 
+    if(!newInvoiceForm.clientRif || !newInvoiceForm.montoBase) return setDialog({title: 'Aviso', text: 'Selecciona un cliente e ingresa el monto base.', type: 'alert'});
     const id = editingInvoiceId || newInvoiceForm.documento || generateInvoiceId();
     try { 
       await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: editingInvoiceId ? (newInvoiceForm.timestamp || Date.now()) : Date.now(), user: appUser?.name }); 
 
       if (!editingInvoiceId) {
-        // ── Asientos contables al facturar (solo en creación) ──
         const montoBase = parseNum(newInvoiceForm.montoBase);
+        // ── Actualizar inventario de terminados con cantidad parcial ──
         if (newInvoiceForm.fgId) {
           const fg = (finishedGoodsInventory || []).find(f => f.id === newInvoiceForm.fgId);
-          const costoFG = fg ? (parseNum(fg.costoUnitario) * parseNum(fg.kgProducidos || fg.millares || 1)) : 0;
-          const montoAsientoCosto = costoFG > 0 ? costoFG : montoBase;
-          await registrarAsientoContable(null, { debito: '5.1.01.01.001', credito: '1.1.03.01.008', monto: montoAsientoCosto, descripcion: `COSTO PRODUCCIÓN — FACTURA ${id} — ${newInvoiceForm.productoMaquilado || ''}`, referencia: id, fecha: newInvoiceForm.fecha });
+          if (fg) {
+            const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+            const cantFacturada = parseNum(newInvoiceForm.fgCantidad || 0);
+            const cantDisponible = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+            const cantRestante = Math.max(0, cantDisponible - cantFacturada);
+            // Si queda stock → actualizar cantidad; si no → marcar ENTREGADO
+            if (cantFacturada > 0) {
+              if (cantRestante <= 0.001) {
+                await updateDoc(getDocRef('finishedGoodsInventory', fg.id), { status: 'ENTREGADO' });
+              } else {
+                // Dejar el restante en inventario
+                const newKg = esTermo ? cantRestante : parseNum(fg.kgProducidos) * (cantRestante / cantDisponible);
+                await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
+                  millares: esTermo ? 0 : cantRestante,
+                  kgProducidos: esTermo ? cantRestante : newKg,
+                  observaciones: `${fg.observaciones || ''} | Parcial: ${formatNum(cantFacturada)} facturado (FAC ${id})`
+                });
+              }
+            }
+            // Asiento costo
+            const costoFG = parseNum(fg.costoUnitario) * (esTermo ? cantFacturada : (cantFacturada * (parseNum(fg.kgProducidos) / Math.max(1, parseNum(fg.millares)))));
+            if (costoFG > 0) await registrarAsientoContable(null, { debito: '5.1.01.01.001', credito: '1.1.03.01.008', monto: costoFG, descripcion: `COSTO PRODUCCIÓN — FAC ${id}`, referencia: id, fecha: newInvoiceForm.fecha });
+          }
         }
-        await registrarAsientoContable(null, { debito: 'CXC/CLIENTE', credito: '4.1.01.01.000', monto: parseNum(newInvoiceForm.montoBase), descripcion: `INGRESO MAQUILA — FACTURA ${id} — ${newInvoiceForm.clientName || ''}`, referencia: id, fecha: newInvoiceForm.fecha });
+        await registrarAsientoContable(null, { debito: 'CXC/CLIENTE', credito: '4.1.01.01.000', monto: montoBase, descripcion: `INGRESO MAQUILA — FACTURA ${id} — ${newInvoiceForm.clientName || ''}`, referencia: id, fecha: newInvoiceForm.fecha });
       }
 
       setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm);
@@ -2917,12 +2940,36 @@ export default function App() {
                       {finishedGoodsInventory.filter(fg=>fg.status==='LISTO PARA ENTREGA').length > 0 && (
                         <div className="md:col-span-4 bg-green-50 border-2 border-green-200 rounded-2xl p-4">
                           <label className="text-[10px] font-black text-green-700 uppercase block mb-2 tracking-widest">📦 Desde Inventario de Terminados (Listo para Entrega)</label>
-                          <select value={newInvoiceForm.fgId} onChange={e=>handleInvoiceFormChange('fgId', e.target.value)} className="w-full bg-white border-2 border-green-300 rounded-xl p-3 font-black text-xs outline-none focus:border-green-500 text-black">
+                          <select value={newInvoiceForm.fgId} onChange={e=>handleInvoiceFormChange('fgId', e.target.value)} className="w-full bg-white border-2 border-green-300 rounded-xl p-3 font-black text-xs outline-none focus:border-green-500 text-black mb-2">
                             <option value="">— Seleccione producto terminado —</option>
                             {finishedGoodsInventory.filter(fg=>fg.status==='LISTO PARA ENTREGA').map(fg=>(
-                              <option key={fg.id} value={fg.id}>{fg.cliente} | {fg.producto} | {fg.millares>0?`${formatNum(fg.millares)} Millares`:`${formatNum(fg.kgProducidos)} KG`} | OP: {fg.opId}</option>
+                              <option key={fg.id} value={fg.id}>{fg.cliente} | {fg.producto} | {fg.tipoProducto==='TERMOENCOGIBLE'?`${formatNum(fg.kgProducidos)} KG`:`${formatNum(fg.millares)} Millares (${formatNum(fg.kgProducidos)} KG)`} | OP: {fg.opId}</option>
                             ))}
                           </select>
+                          {newInvoiceForm.fgId && (() => {
+                            const fg = finishedGoodsInventory.find(f=>f.id===newInvoiceForm.fgId);
+                            if (!fg) return null;
+                            const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
+                            const maxCant = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+                            const unidad = esTermo ? 'KG' : 'Millares';
+                            return (
+                              <div className="flex gap-3 items-end mt-1">
+                                <div className="flex-1">
+                                  <label className="text-[9px] font-black text-green-700 uppercase block mb-1">Cantidad a Facturar ({unidad}) — Disponible: {formatNum(maxCant)}</label>
+                                  <input type="number" step="0.01" max={maxCant} value={newInvoiceForm.fgCantidad}
+                                    onChange={e=>setNewInvoiceForm({...newInvoiceForm, fgCantidad: e.target.value})}
+                                    className="w-full border-2 border-green-400 rounded-xl p-2 font-black text-sm outline-none focus:border-green-600 text-center bg-white"
+                                    placeholder={`Máx: ${formatNum(maxCant)} ${unidad}`} />
+                                </div>
+                                {parseNum(newInvoiceForm.fgCantidad) > 0 && (
+                                  <div className={`p-2 rounded-xl text-center text-[9px] font-black ${parseNum(newInvoiceForm.fgCantidad) >= maxCant ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                    Restante: {formatNum(Math.max(0, maxCant - parseNum(newInvoiceForm.fgCantidad)))} {unidad}
+                                    {parseNum(newInvoiceForm.fgCantidad) >= maxCant && <div>⚠ Entrega total</div>}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
 
@@ -3654,8 +3701,8 @@ export default function App() {
 
       let techParams = {};
       if (activePhaseTab === 'extrusion') techParams = { operador: phaseForm.operadorExt, motor: phaseForm.motorExt, tratado: phaseForm.tratado, millares: phaseForm.millaresProd, kgRecibidos: kgRecibidos };
-      if (activePhaseTab === 'impresion') techParams = { operador: phaseForm.operadorImp, kgRecibidos: phaseForm.kgRecibidosImp, cantColores: phaseForm.cantColores, relacion: phaseForm.relacionImp, millares: phaseForm.millaresProd };
-      if (activePhaseTab === 'sellado')   techParams = { operador: phaseForm.operadorSel, tipoSello: phaseForm.tipoSello, millares: phaseForm.millaresProd, kgRecibidos: phaseForm.kgRecibidosSel };
+      if (activePhaseTab === 'impresion') techParams = { operador: phaseForm.operadorImp, kgRecibidos: phaseForm.kgRecibidosImp, cantColores: phaseForm.cantColores, relacion: phaseForm.relacionImp, millares: phaseForm.millaresProd, pesoMillarReal: phaseForm.pesoMillarReal || '' };
+      if (activePhaseTab === 'sellado')   techParams = { operador: phaseForm.operadorSel, tipoSello: phaseForm.tipoSello, millares: phaseForm.millaresProd, kgRecibidos: phaseForm.kgRecibidosSel, pesoMillarReal: phaseForm.pesoMillarReal || '' };
 
       const newBatch = {
         id: Date.now().toString(), timestamp: Date.now(),
@@ -3778,6 +3825,152 @@ export default function App() {
     }
   };
 
+  // ─── FINIQUITO RESUMIDO ────────────────────────────────────────────────────
+  const renderFiniquitoResumen = (req) => {
+    if (!req) return null;
+    const prod = req.production || {};
+    const filterR = b => b.operator !== 'ALMACÉN (DESPACHO)' && (parseNum(b.producedKg)>0||(b.insumos||[]).length>0);
+    const extB = (prod.extrusion?.batches||[]).filter(filterR);
+    const impB = (prod.impresion?.batches||[]).filter(filterR);
+    const selB = (prod.sellado?.batches||[]).filter(filterR);
+    const allB = [...extB,...impB,...selB];
+    const lastB = selB.length>0?selB:impB.length>0?impB:extB;
+    const mpKg = extB.reduce((s,b)=>{ const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0); return s+(ins>0?ins:parseNum(b.kgRecibidos||0)); },0) || selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0);
+    const kgFinal = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+    const millFinal = selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+    const mermaTotal = allB.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
+    const pctMerma = mpKg>0?(mermaTotal/mpKg*100).toFixed(1):'0.0';
+    const costoMP = allB.reduce((s,b)=>s+parseNum(b.cost||0),0);
+    const costoXkg = kgFinal>0?costoMP/kgFinal:0;
+    const costoXmill = millFinal>0?costoMP/millFinal:0;
+    const relInv = (invoices||[]).filter(i=>i.opAsignada===req.id);
+    const ingresos = relInv.reduce((s,i)=>s+parseNum(i.total),0);
+    const utilidad = ingresos - costoMP;
+    const margen = ingresos>0?(utilidad/ingresos*100).toFixed(1):'0.0';
+    const esTermo = req.tipoProducto==='TERMOENCOGIBLE';
+    const fechaI = allB[0]?.date||req.fecha;
+    const fechaC = allB[allB.length-1]?.date||getTodayDate();
+    const dias = (() => { try { return Math.max(1,Math.round((new Date(fechaC)-new Date(fechaI))/(864e5))+1); } catch { return '—'; }})();
+    return (
+      <div id="pdf-content" className="bg-white text-black">
+        <div className="flex justify-between p-4 border-b no-pdf gap-2 flex-wrap">
+          <button onClick={()=>setShowFiniquitoOP(null)} className="bg-gray-100 px-4 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">← Volver</button>
+          <div className="flex gap-2">
+            <button onClick={()=>setFiniquitoMode('full')} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-xs uppercase hover:bg-blue-700 flex items-center gap-1"><FileText size={13}/> Ver Completo</button>
+            <button onClick={()=>handleExportPDF(`Finiquito_Resumen_${req.id}`,true)} className="bg-black text-white px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-800 flex items-center gap-1"><Printer size={13}/> Imprimir</button>
+          </div>
+        </div>
+        <div className="p-6 max-w-3xl mx-auto">
+          <div className="hidden pdf-header mb-4"><ReportHeader /></div>
+          {/* Encabezado */}
+          <div className="text-center mb-4 pb-3 border-b-4 border-orange-500">
+            <h1 className="text-xl font-black uppercase tracking-widest">Finiquito Financiero — Resumen</h1>
+          </div>
+          {/* Info OP en dos columnas */}
+          <div className="grid grid-cols-2 gap-2 text-xs mb-4 bg-gray-50 rounded-xl p-4 border border-gray-200">
+            <div><span className="text-[9px] text-gray-500 uppercase font-black block">Cliente</span><span className="font-black uppercase">{req.client}</span></div>
+            <div><span className="text-[9px] text-gray-500 uppercase font-black block">OP N°</span><span className="font-black text-orange-600 text-lg">#{String(req.id).replace('OP-','').padStart(5,'0')}</span></div>
+            <div><span className="text-[9px] text-gray-500 uppercase font-black block">Producto</span><span className="font-black uppercase">{req.desc}</span></div>
+            <div><span className="text-[9px] text-gray-500 uppercase font-black block">Tipo / Categoría</span><span className="font-black uppercase">{req.tipoProducto} / {req.categoria||'—'}</span></div>
+            <div><span className="text-[9px] text-gray-500 uppercase font-black block">Período</span><span className="font-black">{fechaI} → {fechaC} <span className="text-orange-600">({dias} días)</span></span></div>
+            <div><span className="text-[9px] text-gray-500 uppercase font-black block">Vendedor</span><span className="font-black uppercase">{req.vendedor||'—'}</span></div>
+          </div>
+          {/* KPIs principales */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            {[
+              ['MP Inyectada',formatNum(mpKg)+' KG','bg-blue-50 border-blue-200 text-blue-700'],
+              [esTermo?'KG Producidos':'Millares',esTermo?formatNum(kgFinal)+' KG':formatNum(millFinal)+' Mill.','bg-green-50 border-green-200 text-green-700'],
+              ['Merma Total',formatNum(mermaTotal)+' KG ('+pctMerma+'%)','bg-red-50 border-red-200 text-red-700'],
+              ['Días Producción',String(dias),'bg-orange-50 border-orange-200 text-orange-700'],
+            ].map(([l,v,cls],i)=>(
+              <div key={i} className={`border rounded-xl p-3 text-center ${cls}`}>
+                <div className="text-[9px] font-black uppercase mb-1">{l}</div>
+                <div className="text-lg font-black">{v}</div>
+              </div>
+            ))}
+          </div>
+          {/* Tabla resumen de insumos */}
+          <div className="mb-4">
+            <div className="bg-orange-500 text-white px-3 py-1.5 text-[10px] font-black uppercase rounded-t-lg">Materias Primas Consumidas</div>
+            <table className="w-full text-xs border-2 border-gray-200 rounded-b-lg overflow-hidden">
+              <thead className="bg-gray-100"><tr className="font-black text-[9px] uppercase text-gray-600">
+                <th className="p-2 border-r text-left">Insumo</th>
+                <th className="p-2 border-r text-center">KG Usados</th>
+                {costoMP>0&&<th className="p-2 border-r text-right">Costo Unit.</th>}
+                {costoMP>0&&<th className="p-2 text-right">Costo Total</th>}
+              </tr></thead>
+              <tbody className="divide-y divide-gray-100">
+                {Object.entries(allB.reduce((m,b)=>{(b.insumos||[]).forEach(ing=>{const inv=(inventory||[]).find(i=>i.id===ing.id);if(!m[ing.id])m[ing.id]={desc:inv?.desc||ing.id,qty:0,cost:inv?.cost||0};m[ing.id].qty+=parseNum(ing.qty);});return m;},{} )).map(([id,ins],i)=>(
+                  <tr key={i} className="hover:bg-gray-50">
+                    <td className="p-2 border-r font-black text-orange-600 uppercase">{ins.desc}</td>
+                    <td className="p-2 border-r text-center font-black">{formatNum(ins.qty)} kg</td>
+                    {costoMP>0&&<td className="p-2 border-r text-right font-bold">${formatNum(ins.cost)}</td>}
+                    {costoMP>0&&<td className="p-2 text-right font-black">${formatNum(ins.qty*ins.cost)}</td>}
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-gray-100 font-black text-[10px]">
+                <tr>
+                  <td colSpan={costoMP>0?3:1} className="p-2 text-right uppercase">{costoMP>0?'Costo Total MP:':'Total MP:'}</td>
+                  <td className="p-2 text-right text-orange-600 text-sm">{costoMP>0?'$'+formatNum(costoMP):formatNum(mpKg)+' KG'}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          {/* Costos e ingresos */}
+          {costoMP>0&&(
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            {[
+              ['Costo/KG','$'+formatNum(costoXkg)+' / KG','text-gray-800'],
+              ...(esTermo?[]:[ ['Costo/Millar','$'+formatNum(costoXmill)+' / Mill.','text-gray-800'] ]),
+              ['Total Ingresos','$'+formatNum(ingresos),'text-green-700'],
+              ['Utilidad Neta','$'+formatNum(utilidad),utilidad>=0?'text-blue-700':'text-red-700'],
+              ['Margen Neto',margen+'%',parseFloat(margen)>=30?'text-green-700':parseFloat(margen)>=10?'text-yellow-700':'text-red-700'],
+            ].map(([l,v,c],i)=>(
+              <div key={i} className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+                <div className="text-[9px] font-black text-gray-500 uppercase mb-1">{l}</div>
+                <div className={`text-lg font-black ${c}`}>{v}</div>
+              </div>
+            ))}
+          </div>
+          )}
+          {/* Facturas si las hay */}
+          {relInv.length>0&&(
+          <div>
+            <div className="bg-green-600 text-white px-3 py-1.5 text-[10px] font-black uppercase rounded-t-lg">Facturación</div>
+            <table className="w-full text-xs border-2 border-gray-200 rounded-b-lg overflow-hidden">
+              <thead className="bg-gray-100"><tr className="font-black text-[9px] uppercase text-gray-600">
+                <th className="p-2 border-r text-left">Factura</th>
+                <th className="p-2 border-r text-center">Fecha</th>
+                <th className="p-2 border-r text-right">Base</th>
+                <th className="p-2 text-right">Total</th>
+              </tr></thead>
+              <tbody className="divide-y divide-gray-100">
+                {relInv.map(inv=>(
+                  <tr key={inv.id} className="hover:bg-gray-50">
+                    <td className="p-2 border-r font-black text-orange-600">{inv.documento}</td>
+                    <td className="p-2 border-r text-center font-bold">{inv.fecha}</td>
+                    <td className="p-2 border-r text-right font-bold">${formatNum(inv.montoBase)}</td>
+                    <td className="p-2 text-right font-black text-green-600">${formatNum(inv.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-gray-100 font-black text-[10px]">
+                <tr><td colSpan="3" className="p-2 text-right">Total:</td><td className="p-2 text-right text-green-700">${formatNum(ingresos)}</td></tr>
+              </tfoot>
+            </table>
+          </div>
+          )}
+          {/* Firma */}
+          <div className="mt-6 pt-4 border-t-2 border-gray-200 flex justify-between text-[9px] font-black uppercase text-gray-500">
+            <span>Elaborado por: ___________________________</span>
+            <span>Revisado y Aprobado (Gerencia): ___________________________</span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderFiniquitoOP = (req, costsMode = false) => {
     if (!req) return null;
     const prod = req.production || {};
@@ -3867,6 +4060,12 @@ export default function App() {
     const insumosList = Object.values(insumoMap);
     const fechaInicio = allBatches[0]?.date || req.fecha;
     const fechaCierre = allBatches[allBatches.length-1]?.date || getTodayDate();
+    const diasTranscurridos = (() => {
+      try {
+        const d1 = new Date(fechaInicio), d2 = new Date(fechaCierre);
+        return Math.max(1, Math.round((d2-d1)/(1000*60*60*24))+1);
+      } catch { return '—'; }
+    })();
 
     return (
       <div id="pdf-content" className="bg-white text-black">
@@ -3907,6 +4106,7 @@ export default function App() {
               <div><span className="font-black uppercase text-gray-500 text-[9px] block">Número de Orden:</span><span className="font-black text-3xl text-orange-600">#{String(req.id).replace('OP-','').padStart(5,'0')}</span></div>
               <div><span className="font-black uppercase text-gray-500 text-[9px] block">Fecha Inicio:</span><span className="font-black">{fechaInicio}</span></div>
               <div><span className="font-black uppercase text-gray-500 text-[9px] block">Fecha Cierre:</span><span className="font-black">{fechaCierre}</span></div>
+              <div><span className="font-black uppercase text-gray-500 text-[9px] block">Días en Producción:</span><span className="font-black text-orange-600">{diasTranscurridos} día{diasTranscurridos!==1?'s':''}</span></div>
               <div><span className="font-black uppercase text-gray-500 text-[9px] block">Vendedor:</span><span className="font-black uppercase">{req.vendedor || '—'}</span></div>
             </div>
           </div>
@@ -5616,20 +5816,43 @@ export default function App() {
                                           onChange={e => {
                                             const mill = e.target.value;
                                             const millNum = parseNum(mill);
-                                            const kgCalculado = kgPorMillar > 0 ? (millNum * kgPorMillar).toFixed(2) : phaseForm.producedKg;
+                                            // Usar peso/millar REAL si fue ingresado, sino el teórico de la OP
+                                            const pesoRealIngresado = parseNum(phaseForm.pesoMillarReal);
+                                            const pesoUsado = pesoRealIngresado > 0 ? pesoRealIngresado : kgPorMillar;
+                                            const kgCalculado = pesoUsado > 0 ? (millNum * pesoUsado).toFixed(2) : phaseForm.producedKg;
                                             const insumosTotal = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
                                             const kgBase = insumosTotal > 0 ? insumosTotal : activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp) : parseNum(phaseForm.kgRecibidosSel);
-                                            const kgFinal = kgPorMillar > 0 ? kgCalculado : phaseForm.producedKg;
+                                            const kgFinal = pesoUsado > 0 ? kgCalculado : phaseForm.producedKg;
                                             const autoMerma = kgBase > 0 && parseNum(kgFinal) >= 0 ? Math.max(0, kgBase - parseNum(kgFinal)).toFixed(2) : phaseForm.mermaKg;
                                             setPhaseForm({...phaseForm, millaresProd: mill, producedKg: kgFinal, mermaKg: autoMerma});
                                           }}
                                           className="w-full border-2 border-orange-400 rounded-xl p-2 text-sm font-black outline-none focus:border-orange-600 text-center bg-orange-50" placeholder="0.00" />
-                                        {kgPorMillar > 0 && parseNum(phaseForm.millaresProd) > 0 && (
-                                          <div className="text-[9px] font-bold text-orange-600 mt-1 text-center space-y-0.5">
-                                            <div>KG/Millar: {formatNum(kgPorMillar)} KG/Mill.</div>
-                                            <div className="font-black">KG Totales: {formatNum(parseNum(phaseForm.millaresProd)*kgPorMillar)} KG</div>
-                                          </div>
-                                        )}
+                                        {/* Peso real por millar — editable para corregir diferencias */}
+                                        <div className="mt-2 bg-yellow-50 border border-yellow-200 rounded-lg p-2">
+                                          <label className="text-[8px] font-black text-yellow-700 uppercase block mb-1">⚖ Peso Real / Millar (KG) — corregir si difiere del teórico</label>
+                                          <input type="number" step="0.001" value={phaseForm.pesoMillarReal}
+                                            onChange={e => {
+                                              const pr = e.target.value;
+                                              const prNum = parseNum(pr);
+                                              const millNum = parseNum(phaseForm.millaresProd);
+                                              if (millNum > 0 && prNum > 0) {
+                                                const kgRecalc = (millNum * prNum).toFixed(2);
+                                                const insumosTotal = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                                const kgBase = insumosTotal > 0 ? insumosTotal : activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp) : parseNum(phaseForm.kgRecibidosSel);
+                                                const autoMerma = kgBase > 0 ? Math.max(0, kgBase - parseNum(kgRecalc)).toFixed(2) : phaseForm.mermaKg;
+                                                setPhaseForm({...phaseForm, pesoMillarReal: pr, producedKg: kgRecalc, mermaKg: autoMerma});
+                                              } else {
+                                                setPhaseForm({...phaseForm, pesoMillarReal: pr});
+                                              }
+                                            }}
+                                            className="w-full border border-yellow-300 rounded-lg p-1.5 text-xs font-black outline-none bg-white text-center" placeholder={kgPorMillar > 0 ? `Teórico: ${formatNum(kgPorMillar)}` : 'KG/Millar'} />
+                                          {parseNum(phaseForm.pesoMillarReal) > 0 && (
+                                            <div className="text-[8px] text-yellow-700 font-bold mt-1 text-center">
+                                              KG calculados: {formatNum(parseNum(phaseForm.millaresProd)*parseNum(phaseForm.pesoMillarReal))} KG
+                                              {kgPorMillar > 0 && <span className="text-gray-500 ml-2">(teórico era: {formatNum(parseNum(phaseForm.millaresProd)*kgPorMillar)} KG)</span>}
+                                            </div>
+                                          )}
+                                        </div>
                                       </div>
                                     )}
                                     <div>
@@ -5962,13 +6185,14 @@ export default function App() {
                 const costoXmill=millProd>0?costoMP/millProd:0;
                 return (
                   <div key={req.id} className="border-2 border-orange-200 rounded-2xl overflow-hidden mb-6">
-                    {/* Header OP estilo finiquito */}
-                    <div className="bg-gray-800 text-white px-6 py-4">
+                    {/* Header OP — siempre visible */}
+                    <div className="bg-gray-800 text-white px-6 py-4 cursor-pointer" onClick={()=>setExpandedOPs(prev=>({...prev,[req.id]:!prev[req.id]}))}>
                       <div className="flex justify-between items-start flex-wrap gap-3">
                         <div>
                           <div className="flex items-center gap-3">
                             <span className="font-black text-orange-400 text-lg">OP #{String(req.id).replace('OP-','').padStart(5,'0')}</span>
                             <span className="bg-orange-500 text-white px-2 py-0.5 rounded text-[9px] font-black uppercase">EN PROCESO</span>
+                            <span className="text-gray-400 text-[9px]">{expandedOPs[req.id]?'▲ ocultar detalle':'▼ ver detalle'}</span>
                           </div>
                           <div className="font-bold text-white uppercase mt-1">{req.client}</div>
                           <div className="text-[10px] text-gray-300 mt-0.5">{req.desc} | {req.ancho}cm×{req.largo}cm | {req.micras}mic | {req.color}</div>
@@ -5997,6 +6221,8 @@ export default function App() {
                     </div>
 
                     <div className="p-6 space-y-5">
+                      {/* Detail sections — visible only when expanded */}
+                      {expandedOPs[req.id] && (<>
                       {/* 1. Desglose de MP consumida */}
                       {allBatches.some(b=>(b.insumos||[]).length>0) && (
                         <div>
@@ -6125,6 +6351,7 @@ export default function App() {
                           </div>
                         </div>
                       )}
+                      </>)} {/* end expandedOPs */}
                     </div>
                   </div>
                 );
@@ -6576,7 +6803,9 @@ export default function App() {
                   )}
                 </div>
                 {showFiniquitoOP ? (
-                  renderFiniquitoOP(requirements.find(r=>r.id===showFiniquitoOP), true)
+                  finiquitoMode === 'resumen'
+                    ? renderFiniquitoResumen(requirements.find(r=>r.id===showFiniquitoOP))
+                    : renderFiniquitoOP(requirements.find(r=>r.id===showFiniquitoOP), true)
                 ) : (
                   <div className="overflow-x-auto rounded-xl border border-gray-200">
                     <table className="w-full text-xs text-left">
@@ -6595,7 +6824,12 @@ export default function App() {
                                 <td className="py-3 px-4 border-r text-right font-bold text-orange-600">${formatNum(fin.costoMP)}</td>
                                 <td className="py-3 px-4 border-r text-right font-bold text-green-600">${formatNum(fin.ingresos)}</td>
                                 <td className={`py-3 px-4 border-r text-right font-black text-lg ${fin.utilidad >= 0 ? 'text-blue-600' : 'text-red-600'}`}>${formatNum(fin.utilidad)}</td>
-                                <td className="py-3 px-4 text-center"><button onClick={() => setShowFiniquitoOP(req.id)} className="px-3 py-1 bg-orange-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-orange-600 flex items-center gap-1 mx-auto"><FileText size={10}/> VER</button></td>
+                                <td className="py-3 px-4 text-center">
+                                  <div className="flex gap-1 justify-center">
+                                    <button onClick={() => { setShowFiniquitoOP(req.id); setFiniquitoMode('resumen'); }} className="px-2 py-1 bg-gray-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-gray-700 flex items-center gap-1"><FileText size={10}/> RESUMEN</button>
+                                    <button onClick={() => { setShowFiniquitoOP(req.id); setFiniquitoMode('full'); }} className="px-2 py-1 bg-orange-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-orange-600 flex items-center gap-1"><FileText size={10}/> COMPLETO</button>
+                                  </div>
+                                </td>
                               </tr>
                             );
                           })
