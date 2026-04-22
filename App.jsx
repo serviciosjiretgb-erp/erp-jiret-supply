@@ -136,6 +136,8 @@ export default function App() {
   const [fgSearch, setFgSearch] = useState('');
   const [selectedOpId, setSelectedOpId] = useState('');
   const [fgItems, setFgItems] = useState([]); // [{fgId, cantidad, desc, unidad, maxCant}]
+  const [showCargarProducto, setShowCargarProducto] = useState(false);
+  const [cargarForm, setCargarForm] = useState({ tipo: 'TERMINADOS', tipoProducto: 'BOLSAS', cliente: '', opId: '', producto: '', ancho: '', largo: '', micras: '', color: 'NATURAL', millares: '', kgProducidos: '', fecha: getTodayDate(), observaciones: '', categoria: '', codigo: '', descripcion: '', unidad: 'KG', cantidad: '', costo: '', proveedor: '' });
   const [invReportType, setInvReportType] = useState('entradas');
 
   const [inventory, setInventory] = useState([]);
@@ -1708,12 +1710,14 @@ export default function App() {
         (i.categoria||'').toUpperCase().includes(fgSearch.toUpperCase())
       );
 
-      const totalEntradaKg = finishedGoodsInventory.reduce((s, i) => s + parseNum(i.kgProducidos), 0);
-      const totalEntradaMill = bolsas.reduce((s, i) => s + parseNum(i.millares), 0);
-      const totalSalidaKg = finishedGoodsInventory.filter(i => i.status === 'ENTREGADO').reduce((s, i) => s + parseNum(i.kgProducidos), 0);
-      const totalSalidaMill = bolsas.filter(i => i.status === 'ENTREGADO').reduce((s, i) => s + parseNum(i.millares), 0);
-      const stockKg = totalEntradaKg - totalSalidaKg;
-      const stockMill = totalEntradaMill - totalSalidaMill;
+      // Entrada = cantidad ORIGINAL producida (campo *Origen, fallback al actual para registros previos)
+      // Stock = lo que queda ahora (kgProducidos/millares actuales si no ENTREGADO, 0 si ENTREGADO)
+      const totalEntradaMill = bolsas.reduce((s, i) => s + parseNum(i.millaresOrigen || i.millares), 0);
+      const totalStockMill   = bolsas.reduce((s, i) => s + (i.status === 'ENTREGADO' ? 0 : parseNum(i.millares)), 0);
+      const totalSalidaMill  = Math.max(0, totalEntradaMill - totalStockMill);
+      const totalEntradaKg   = finishedGoodsInventory.reduce((s, i) => s + parseNum(i.kgProducidosOrigen || i.kgProducidos), 0);
+      const totalStockKg     = finishedGoodsInventory.reduce((s, i) => s + (i.status === 'ENTREGADO' ? 0 : parseNum(i.kgProducidos)), 0);
+      const totalSalidaKg    = Math.max(0, totalEntradaKg - totalStockKg);
 
       const renderFGTable = (items, tipo) => {
         const esTermo = tipo === 'TERMOENCOGIBLE';
@@ -1738,10 +1742,17 @@ export default function App() {
               </thead>
               <tbody className="divide-y divide-gray-100 text-black print:divide-black">
                 {items.map(item => {
-                  const cantPrincipal = esTermo ? parseNum(item.kgProducidos) : parseNum(item.millares);
-                  const entVal = cantPrincipal;
-                  const salVal = item.status === 'ENTREGADO' ? cantPrincipal : 0;
-                  const stockVal = entVal - salVal;
+                  const esTermo2 = item.tipoProducto === 'TERMOENCOGIBLE';
+                  // Entrada = cantidad original producida (nunca cambia)
+                  const entradaOrig = esTermo2
+                    ? parseNum(item.kgProducidosOrigen || item.kgProducidos)
+                    : parseNum(item.millaresOrigen || item.millares);
+                  // Stock actual = lo que queda ahora en el registro
+                  const stockActual = item.status === 'ENTREGADO' ? 0
+                    : (esTermo2 ? parseNum(item.kgProducidos) : parseNum(item.millares));
+                  // Salida = lo que ya salió (entrada - stock actual)
+                  const salidaAcum = Math.max(0, entradaOrig - stockActual);
+                  const pctEntregado = entradaOrig > 0 ? ((salidaAcum / entradaOrig) * 100).toFixed(0) : 0;
                   return (
                     <tr key={item.id} className="hover:bg-gray-50 transition-colors">
                       <td className="py-3 px-3 border-r print:border-black">
@@ -1756,12 +1767,22 @@ export default function App() {
                         </div>
                       </td>
                       <td className="py-3 px-3 border-r print:border-black text-center">
-                        <div className={`font-black text-lg ${esTermo ? 'text-green-600' : 'text-blue-600'}`}>{formatNum(cantPrincipal)}</div>
+                        <div className={`font-black text-lg ${esTermo ? 'text-green-600' : 'text-blue-600'}`}>{formatNum(stockActual)}</div>
+                        <div className="text-[9px] text-gray-400 font-bold uppercase">Stock actual</div>
                         {!esTermo && <div className="text-[9px] text-gray-400">{formatNum(item.kgProducidos)} KG</div>}
                       </td>
-                      <td className="py-3 px-3 border-r print:border-black text-center font-black text-green-600">{formatNum(entVal)}</td>
-                      <td className="py-3 px-3 border-r print:border-black text-center font-black text-red-500">{formatNum(salVal)}</td>
-                      <td className="py-3 px-3 border-r print:border-black text-center font-black text-blue-600">{formatNum(stockVal)}</td>
+                      <td className="py-3 px-3 border-r print:border-black text-center font-black text-green-600">
+                        {formatNum(entradaOrig)}
+                        <div className="text-[8px] text-gray-400 font-bold">original</div>
+                      </td>
+                      <td className="py-3 px-3 border-r print:border-black text-center font-black text-red-500">
+                        {formatNum(salidaAcum)}
+                        {salidaAcum > 0 && <div className="text-[8px] text-orange-500 font-black">{pctEntregado}% facturado</div>}
+                      </td>
+                      <td className="py-3 px-3 border-r print:border-black text-center">
+                        <div className={`font-black text-lg ${stockActual <= 0 ? 'text-gray-400' : stockActual < entradaOrig * 0.3 ? 'text-red-600' : 'text-blue-600'}`}>{formatNum(stockActual)}</div>
+                        {entradaOrig > 0 && stockActual > 0 && <div className="w-full bg-gray-200 rounded-full h-1 mt-1"><div className="bg-blue-500 h-1 rounded-full" style={{width:`${Math.min(100,(stockActual/entradaOrig)*100)}%`}}></div></div>}
+                      </td>
                       <td className="py-3 px-3 border-r print:border-black text-center font-bold text-[10px]">{item.fechaFinalizacion}</td>
                       <td className="py-3 px-3 border-r print:border-black text-center">
                         <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase ${item.status === 'LISTO PARA ENTREGA' ? 'bg-green-100 text-green-700' : item.status === 'ENTREGADO' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}`}>{item.status}</span>
@@ -1805,18 +1826,130 @@ export default function App() {
                 <Search className="absolute left-3 top-2.5 text-gray-400" size={14}/>
                 <input type="text" placeholder="Buscar OP, cliente, producto..." value={fgSearch} onChange={e=>setFgSearch(e.target.value)} className="pl-9 pr-4 py-2 border-2 border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:border-green-500 w-56" />
               </div>
+              <button onClick={()=>setShowCargarProducto(!showCargarProducto)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showCargarProducto?'bg-red-500 text-white':'bg-green-600 text-white hover:bg-green-700'}`}><Plus size={14}/> {showCargarProducto?'CANCELAR':'CARGAR PRODUCTO'}</button>
               <button onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
             </div>
           </div>
+
+          {/* ── PANEL CARGAR PRODUCTO MANUAL ── */}
+          {showCargarProducto && (
+            <div className="border-b border-gray-200 p-6 bg-gray-50 no-pdf">
+              <h3 className="text-sm font-black uppercase text-gray-800 mb-4 flex items-center gap-2"><Plus size={16} className="text-green-600"/> Cargar Producto al Inventario</h3>
+              {/* Tipo de inventario */}
+              <div className="mb-4">
+                <label className="text-[9px] font-black text-gray-600 uppercase block mb-2">Destino del Inventario</label>
+                <div className="flex gap-2 flex-wrap">
+                  {[['TERMINADOS','📦 Productos Terminados','bg-green-600'],['MATERIA_PRIMA','🧪 Materia Prima','bg-blue-600'],['CONSUMIBLES','🔧 Consumibles','bg-purple-600'],['MERCANCIA','🏷 Mercancía','bg-orange-600']].map(([val,label,color])=>(
+                    <button key={val} type="button" onClick={()=>setCargarForm({...cargarForm, tipo: val})}
+                      className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${cargarForm.tipo===val?color+' text-white shadow-md':'bg-white border-2 border-gray-200 text-gray-600 hover:border-gray-400'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Formulario según tipo */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-5">
+                {cargarForm.tipo === 'TERMINADOS' ? (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div>
+                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tipo Producto</label>
+                      <select value={cargarForm.tipoProducto} onChange={e=>setCargarForm({...cargarForm,tipoProducto:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500">
+                        <option value="BOLSAS">BOLSAS</option><option value="TERMOENCOGIBLE">TERMOENCOGIBLE</option>
+                      </select>
+                    </div>
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cliente</label><input value={cargarForm.cliente} onChange={e=>setCargarForm({...cargarForm,cliente:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="Nombre cliente"/></div>
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">OP Ref.</label><input value={cargarForm.opId} onChange={e=>setCargarForm({...cargarForm,opId:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="OP-00001"/></div>
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Producto / Descripción</label><input value={cargarForm.producto} onChange={e=>setCargarForm({...cargarForm,producto:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="BOLSA 28X75X12MIC"/></div>
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Ancho (cm)</label><input type="number" value={cargarForm.ancho} onChange={e=>setCargarForm({...cargarForm,ancho:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500"/></div>
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Largo (cm)</label><input type="number" value={cargarForm.largo} onChange={e=>setCargarForm({...cargarForm,largo:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500"/></div>
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Micras</label><input type="number" value={cargarForm.micras} onChange={e=>setCargarForm({...cargarForm,micras:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500"/></div>
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Color</label><input value={cargarForm.color} onChange={e=>setCargarForm({...cargarForm,color:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="NATURAL"/></div>
+                    {cargarForm.tipoProducto !== 'TERMOENCOGIBLE' && <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares</label><input type="number" step="0.01" value={cargarForm.millares} onChange={e=>setCargarForm({...cargarForm,millares:e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none focus:border-green-500 text-center bg-green-50"/></div>}
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG</label><input type="number" step="0.01" value={cargarForm.kgProducidos} onChange={e=>setCargarForm({...cargarForm,kgProducidos:e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none focus:border-green-500 text-center bg-green-50"/></div>
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Fecha</label><input type="date" value={cargarForm.fecha} onChange={e=>setCargarForm({...cargarForm,fecha:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500"/></div>
+                    <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Observaciones</label><input value={cargarForm.observaciones} onChange={e=>setCargarForm({...cargarForm,observaciones:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="Carga manual de inventario..."/></div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Código</label><input value={cargarForm.codigo} onChange={e=>setCargarForm({...cargarForm,codigo:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500" placeholder="COD-001"/></div>
+                    <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Descripción</label><input value={cargarForm.descripcion} onChange={e=>setCargarForm({...cargarForm,descripcion:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500" placeholder="DESCRIPCIÓN DEL PRODUCTO"/></div>
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Unidad</label><select value={cargarForm.unidad} onChange={e=>setCargarForm({...cargarForm,unidad:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500"><option>KG</option><option>UND</option><option>LT</option><option>MT</option><option>GL</option><option>MILLAR</option></select></div>
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cantidad</label><input type="number" step="0.001" value={cargarForm.cantidad} onChange={e=>setCargarForm({...cargarForm,cantidad:e.target.value})} className="w-full border-2 border-blue-200 rounded-xl p-2 text-sm font-black outline-none focus:border-blue-500 text-center bg-blue-50"/></div>
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Costo Unit. ($)</label><input type="number" step="0.01" value={cargarForm.costo} onChange={e=>setCargarForm({...cargarForm,costo:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500 text-center"/></div>
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Proveedor</label><input value={cargarForm.proveedor} onChange={e=>setCargarForm({...cargarForm,proveedor:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500" placeholder="NOMBRE PROVEEDOR"/></div>
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Fecha</label><input type="date" value={cargarForm.fecha} onChange={e=>setCargarForm({...cargarForm,fecha:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500"/></div>
+                    <div className="md:col-span-4"><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Observaciones</label><input value={cargarForm.observaciones} onChange={e=>setCargarForm({...cargarForm,observaciones:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500" placeholder="Carga manual..."/></div>
+                  </div>
+                )}
+                <div className="flex justify-end mt-4">
+                  <button type="button" onClick={async () => {
+                    try {
+                      if (cargarForm.tipo === 'TERMINADOS') {
+                        if (!cargarForm.producto || !cargarForm.cliente) return setDialog({title:'Aviso',text:'Complete producto y cliente.',type:'alert'});
+                        const newId = `FG-MANUAL-${Date.now()}`;
+                        const mill = parseNum(cargarForm.millares||0);
+                        const kg = parseNum(cargarForm.kgProducidos||0);
+                        await setDoc(getDocRef('finishedGoodsInventory', newId), {
+                          id: newId, opId: cargarForm.opId||'MANUAL', reqId: cargarForm.opId||'MANUAL',
+                          cliente: cargarForm.cliente, tipoProducto: cargarForm.tipoProducto,
+                          categoria: cargarForm.categoria||'', producto: cargarForm.producto,
+                          ancho: parseNum(cargarForm.ancho||0), largo: parseNum(cargarForm.largo||0),
+                          micras: parseNum(cargarForm.micras||0), color: cargarForm.color||'NATURAL',
+                          kgProducidos: kg, kgProducidosOrigen: kg,
+                          millares: mill, millaresOrigen: mill,
+                          costoUnitario: 0, fechaFinalizacion: cargarForm.fecha||getTodayDate(),
+                          ubicacion: 'ALMACEN GENERAL', status: 'LISTO PARA ENTREGA',
+                          observaciones: cargarForm.observaciones||'Carga manual', timestamp: Date.now()
+                        });
+                      } else {
+                        // MP, Consumibles, Mercancía → agregar al catálogo de inventario
+                        if (!cargarForm.codigo || !cargarForm.descripcion) return setDialog({title:'Aviso',text:'Complete código y descripción.',type:'alert'});
+                        const existingItem = (inventory||[]).find(i=>i.id===cargarForm.codigo);
+                        if (existingItem) {
+                          // Si existe, sumar al stock
+                          await updateDoc(getDocRef('inventory', cargarForm.codigo), {
+                            stock: parseNum(existingItem.stock||0) + parseNum(cargarForm.cantidad||0),
+                            cost: parseNum(cargarForm.costo||0) || existingItem.cost,
+                          });
+                          // Movimiento kardex
+                          await setDoc(getDocRef('inventoryMovements', `MOV-${Date.now()}`), {
+                            itemId: cargarForm.codigo, desc: existingItem.desc||cargarForm.descripcion,
+                            type: 'ENTRADA', qty: parseNum(cargarForm.cantidad||0),
+                            date: cargarForm.fecha||getTodayDate(), reason: cargarForm.observaciones||'Carga manual',
+                            proveedor: cargarForm.proveedor||'', costo: parseNum(cargarForm.costo||0), timestamp: Date.now()
+                          });
+                        } else {
+                          // Crear nuevo item en inventario
+                          const catMap = {MATERIA_PRIMA:'MATERIA PRIMA',CONSUMIBLES:'CONSUMIBLES',MERCANCIA:'MERCANCÍA'};
+                          await setDoc(getDocRef('inventory', cargarForm.codigo), {
+                            id: cargarForm.codigo, desc: cargarForm.descripcion,
+                            unit: cargarForm.unidad||'KG', stock: parseNum(cargarForm.cantidad||0),
+                            cost: parseNum(cargarForm.costo||0), proveedor: cargarForm.proveedor||'',
+                            categoria: catMap[cargarForm.tipo]||'GENERAL', timestamp: Date.now()
+                          });
+                        }
+                      }
+                      setCargarForm({ tipo: cargarForm.tipo, tipoProducto: 'BOLSAS', cliente: '', opId: '', producto: '', ancho: '', largo: '', micras: '', color: 'NATURAL', millares: '', kgProducidos: '', fecha: getTodayDate(), observaciones: '', categoria: '', codigo: '', descripcion: '', unidad: 'KG', cantidad: '', costo: '', proveedor: '' });
+                      setShowCargarProducto(false);
+                      setDialog({title:'✅ Cargado', text:'Producto registrado en inventario.', type:'alert'});
+                    } catch(err) { setDialog({title:'Error', text:err.message, type:'alert'}); }
+                  }} className="bg-green-600 text-white px-8 py-3 rounded-2xl font-black text-[10px] uppercase shadow-md hover:bg-green-700 flex items-center gap-2">
+                    <Plus size={14}/> CARGAR AL INVENTARIO
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="p-8 print:p-0 bg-white" id="pdf-content">
             <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black text-black uppercase border-b-4 border-green-500 pb-2">INVENTARIO DE PRODUCTOS TERMINADOS</h1></div>
 
             {/* KPIs */}
             <div className="grid grid-cols-4 gap-4 mb-6">
-              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-blue-700 uppercase mb-1">📦 Bolsas — Millares</div><div className="font-black text-blue-600">{formatNum(totalEntradaMill - totalSalidaMill)} Mill. stock</div><div className="text-[9px] text-gray-500">{formatNum(totalEntradaMill)} ent. / {formatNum(totalSalidaMill)} sal.</div></div>
-              <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-green-700 uppercase mb-1">🟢 Termoencogible — KG</div><div className="font-black text-green-600">{formatNum(termos.filter(i=>i.status!=='ENTREGADO').reduce((s,i)=>s+parseNum(i.kgProducidos),0))} KG stock</div><div className="text-[9px] text-gray-500">{formatNum(termos.reduce((s,i)=>s+parseNum(i.kgProducidos),0))} ent.</div></div>
-              <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-orange-700 uppercase mb-1">Total KG stock</div><div className="font-black text-orange-600 text-lg">{formatNum(stockKg)} KG</div></div>
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-blue-700 uppercase mb-1">📦 Bolsas — Millares</div><div className="font-black text-blue-600">{formatNum(totalStockMill)} Mill. stock</div><div className="text-[9px] text-gray-500">{formatNum(totalEntradaMill)} ent. / {formatNum(totalSalidaMill)} sal.</div></div>
+              <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-green-700 uppercase mb-1">🟢 Termoencogible — KG</div><div className="font-black text-green-600">{formatNum(termos.reduce((s,i)=>s+(i.status!=='ENTREGADO'?parseNum(i.kgProducidos):0),0))} KG stock</div><div className="text-[9px] text-gray-500">{formatNum(termos.reduce((s,i)=>s+parseNum(i.kgProducidosOrigen||i.kgProducidos),0))} ent.</div></div>
+              <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-orange-700 uppercase mb-1">Total KG stock</div><div className="font-black text-orange-600 text-lg">{formatNum(totalStockKg)} KG</div></div>
               <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-gray-700 uppercase mb-1">Registros</div><div className="font-black text-gray-800">{bolsas.length} bolsas</div><div className="text-[9px] text-gray-500">{termos.length} termoenc.</div></div>
             </div>
 
@@ -3852,7 +3985,9 @@ export default function App() {
               ancho: req.ancho || 0, largo: req.largo || 0, micras: req.micras || 0,
               color: req.color || 'NATURAL', tratamiento: req.tratamiento || 'LISO',
               kgProducidos: prodKg,
+              kgProducidosOrigen: prodKg,   // original — nunca cambia
               millares: millEntrada,
+              millaresOrigen: millEntrada,  // original — nunca cambia
               costoUnitario: phaseCost > 0 && prodKg > 0 ? phaseCost / prodKg : 0,
               fechaFinalizacion: phaseForm.date || getTodayDate(),
               ubicacion: 'ALMACEN GENERAL',
