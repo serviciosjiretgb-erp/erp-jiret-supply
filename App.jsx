@@ -6907,7 +6907,10 @@ export default function App() {
             )}
 
             {showReportType === 'mermas' && (() => {
-              // Construir datos de merma agrupados por OP
+              // ── Construir datos de merma POR LOTE (no por fase individual) ──
+              // Lote N = extBatches[N-1] + impBatches[N-1] + selBatches[N-1]
+              // KG Usados = extrusión (MP inyectada); KG Producidos = última fase
+              // Merma = SUMA de todas las fases del lote; % = merma / KG usados extrusión
               const mermaRows = [];
               (requirements||[]).filter(r => {
                 const fechaOk = (r.fecha||'').startsWith(selMonth) ||
@@ -6915,35 +6918,76 @@ export default function App() {
                 return fechaOk;
               }).forEach(req => {
                 const prod = req.production || {};
-                ['extrusion','impresion','sellado'].forEach(phase => {
-                  (prod[phase]?.batches||[]).filter(b => parseNum(b.mermaKg) > 0 && (b.date||'').startsWith(selMonth)).forEach((b, i) => {
-                    const insumosKg = (b.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
-                    const kgUsados = insumosKg > 0 ? insumosKg : parseNum(b.totalInsumosKg || b.kgRecibidos || 0);
-                    const mermaKg = parseNum(b.mermaKg);
-                    // % REAL: mermaKg / kgUsados × 100 (no valor almacenado)
-                    const pct = kgUsados > 0 ? ((mermaKg / kgUsados) * 100).toFixed(1) : 0;
-                    const costoPromLote = kgUsados > 0 && parseNum(b.cost) > 0 ? parseNum(b.cost) / kgUsados : 0;
-                    const costoMerma = mermaKg * costoPromLote;
-                    mermaRows.push({
-                      opId: req.id, opNum: String(req.id).replace('OP-','').padStart(5,'0'),
-                      client: req.client, phase, date: b.date, mermaKg, kgUsados,
-                      pct: parseFloat(pct), costoMerma,
-                      // Desglose de reciclado
-                      troquelTransp: parseNum(b.mermaDetalle?.troquelTransp||0),
-                      troquelPigm:   parseNum(b.mermaDetalle?.troquelPigm||0),
-                      torta:         parseNum(b.mermaDetalle?.torta||0),
-                    });
+                const filterReal = b => b.operator !== 'ALMACÉN (DESPACHO)' && (parseNum(b.producedKg) > 0 || (b.insumos||[]).length > 0);
+                const extB = (prod.extrusion?.batches||[]).filter(filterReal);
+                const impB = (prod.impresion?.batches||[]).filter(filterReal);
+                const selB = (prod.sellado?.batches||[]).filter(filterReal);
+                const maxLotes = Math.max(extB.length, impB.length, selB.length);
+
+                for (let li = 0; li < maxLotes; li++) {
+                  const bExt = extB[li];
+                  const bImp = impB[li];
+                  const bSel = selB[li];
+                  const lastB = bSel || bImp || bExt;
+                  if (!lastB) continue;
+
+                  // Filtrar por mes: al menos una fase del lote debe caer en el mes
+                  const loteDate = lastB.date || bExt?.date || '';
+                  const extDate = bExt?.date || loteDate;
+                  if (!extDate.startsWith(selMonth) && !loteDate.startsWith(selMonth)) continue;
+
+                  // KG usados = extrusión (insumos reales)
+                  const insumosExt = bExt ? (bExt.insumos||[]).reduce((s,i)=>s+parseNum(i.qty),0) : 0;
+                  const kgUsados = insumosExt > 0 ? insumosExt : parseNum(bExt?.kgRecibidos || bExt?.totalInsumosKg || 0);
+
+                  // KG producidos = última fase
+                  const kgProducidos = parseNum(lastB.producedKg || 0);
+
+                  // Merma = SUMA de todas las fases del lote
+                  const mermaExt = parseNum(bExt?.mermaKg || 0);
+                  const mermaImp = parseNum(bImp?.mermaKg || 0);
+                  const mermaSel = parseNum(bSel?.mermaKg || 0);
+                  const mermaKg = mermaExt + mermaImp + mermaSel;
+
+                  if (mermaKg <= 0) continue;
+
+                  // % real = merma / KG usados extrusión
+                  const pct = kgUsados > 0 ? ((mermaKg / kgUsados) * 100).toFixed(1) : 0;
+
+                  // Reciclado: suma de todas las fases
+                  const troquelTransp = [bExt, bImp, bSel].reduce((s,b)=>s+parseNum(b?.mermaDetalle?.troquelTransp||0),0);
+                  const troquelPigm   = [bExt, bImp, bSel].reduce((s,b)=>s+parseNum(b?.mermaDetalle?.troquelPigm||0),0);
+                  const torta         = [bExt, bImp, bSel].reduce((s,b)=>s+parseNum(b?.mermaDetalle?.torta||0),0);
+
+                  // Costo merma = mermaKg × costo promedio de insumos de extrusión
+                  const costoLoteExt = parseNum(bExt?.cost || 0);
+                  const costoPromKg = kgUsados > 0 && costoLoteExt > 0 ? costoLoteExt / kgUsados : 0;
+                  const costoMerma = mermaKg * costoPromKg;
+
+                  // Fases presentes en este lote
+                  const fasesLabel = [bExt?'Ext':null, bImp?'Imp':null, bSel?'Sel':null].filter(Boolean).join(' + ');
+                  const fechaDisplay = bExt?.date || loteDate;
+
+                  mermaRows.push({
+                    opId: req.id, opNum: String(req.id).replace('OP-','').padStart(5,'0'),
+                    client: req.client, lote: li + 1, fasesLabel, fechaDisplay,
+                    kgUsados, kgProducidos, mermaKg,
+                    pct: parseFloat(pct), costoMerma,
+                    troquelTransp, troquelPigm, torta,
+                    // detalle por fase para tooltip
+                    mermaExt, mermaImp, mermaSel
                   });
-                });
+                }
               });
 
               // Agrupar por OP
               const byOP = {};
               mermaRows.forEach(r => {
-                if (!byOP[r.opId]) byOP[r.opId] = { opId: r.opId, opNum: r.opNum, client: r.client, rows: [], totalMermaKg: 0, totalKgUsados: 0, totalCosto: 0, totalTransp: 0, totalPigm: 0, totalTorta: 0 };
+                if (!byOP[r.opId]) byOP[r.opId] = { opId: r.opId, opNum: r.opNum, client: r.client, rows: [], totalMermaKg: 0, totalKgUsados: 0, totalKgProd: 0, totalCosto: 0, totalTransp: 0, totalPigm: 0, totalTorta: 0 };
                 byOP[r.opId].rows.push(r);
                 byOP[r.opId].totalMermaKg += r.mermaKg;
                 byOP[r.opId].totalKgUsados += r.kgUsados;
+                byOP[r.opId].totalKgProd += r.kgProducidos;
                 byOP[r.opId].totalCosto += r.costoMerma;
                 byOP[r.opId].totalTransp += r.troquelTransp;
                 byOP[r.opId].totalPigm += r.troquelPigm;
@@ -6951,9 +6995,9 @@ export default function App() {
               });
               const opGroups = Object.values(byOP).sort((a,b) => a.opNum.localeCompare(b.opNum));
 
-              // Totales globales
               const grandMermaKg = mermaRows.reduce((s,r)=>s+r.mermaKg,0);
               const grandKgUsados = mermaRows.reduce((s,r)=>s+r.kgUsados,0);
+              const grandKgProd = mermaRows.reduce((s,r)=>s+r.kgProducidos,0);
               const grandPct = grandKgUsados > 0 ? ((grandMermaKg/grandKgUsados)*100).toFixed(1) : 0;
               const grandCosto = mermaRows.reduce((s,r)=>s+r.costoMerma,0);
 
@@ -7010,7 +7054,7 @@ export default function App() {
                         const groupPct = group.totalKgUsados > 0 ? ((group.totalMermaKg/group.totalKgUsados)*100).toFixed(1) : 0;
                         return (
                           <div key={group.opId} className="rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
-                            {/* Encabezado de OP */}
+                            {/* Encabezado OP */}
                             <div className="bg-gray-800 text-white px-4 py-3 flex justify-between items-center">
                               <div className="flex items-center gap-4">
                                 <span className="font-black text-orange-400 text-sm">OP #{group.opNum}</span>
@@ -7018,7 +7062,7 @@ export default function App() {
                               </div>
                               <div className="flex gap-6 text-right">
                                 <div><span className="text-[9px] text-gray-400 block">Total Merma</span><span className="font-black text-orange-400">{formatNum(group.totalMermaKg)} KG</span></div>
-                                <div><span className="text-[9px] text-gray-400 block">% Merma OP</span><span className={`font-black text-lg ${parseFloat(groupPct)>5?'text-red-400':'text-yellow-300'}`}>{groupPct}%</span></div>
+                                <div><span className="text-[9px] text-gray-400 block">% Merma OP</span><span className={`font-black text-lg ${parseFloat(group.totalKgUsados>0?(group.totalMermaKg/group.totalKgUsados*100):0)>5?'text-red-400':'text-yellow-300'}`}>{group.totalKgUsados>0?((group.totalMermaKg/group.totalKgUsados)*100).toFixed(1):0}%</span></div>
                                 {group.totalTransp>0&&<div><span className="text-[9px] text-blue-300 block">Rec. Transp.</span><span className="font-black text-blue-300">{formatNum(group.totalTransp)} KG</span></div>}
                                 {group.totalPigm>0&&<div><span className="text-[9px] text-orange-300 block">Rec. Pigm.</span><span className="font-black text-orange-300">{formatNum(group.totalPigm)} KG</span></div>}
                                 {group.totalTorta>0&&<div><span className="text-[9px] text-amber-300 block">Rec. Torta</span><span className="font-black text-amber-300">{formatNum(group.totalTorta)} KG</span></div>}
@@ -7029,46 +7073,58 @@ export default function App() {
                             <table className="w-full text-xs">
                               <thead className="bg-gray-50">
                                 <tr className="uppercase font-black text-[9px] text-gray-500 border-b border-gray-200">
-                                  <th className="py-2 px-4 border-r text-left">Fase</th>
-                                  <th className="py-2 px-4 border-r text-center">Fecha</th>
-                                  <th className="py-2 px-4 border-r text-center">KG Usados</th>
-                                  <th className="py-2 px-4 border-r text-center">Merma KG</th>
-                                  <th className="py-2 px-4 border-r text-center">% Merma</th>
-                                  <th className="py-2 px-4 border-r text-center">♻ Transp.</th>
-                                  <th className="py-2 px-4 border-r text-center">♻ Pigm.</th>
-                                  <th className="py-2 px-4 border-r text-center">♻ Torta</th>
-                                  <th className="py-2 px-4 text-right">Costo Merma ($)</th>
+                                  <th className="py-2 px-3 border-r text-center">Lote</th>
+                                  <th className="py-2 px-3 border-r text-center">Fases</th>
+                                  <th className="py-2 px-3 border-r text-center">Fecha</th>
+                                  <th className="py-2 px-3 border-r text-center">KG Usados (Ext)</th>
+                                  <th className="py-2 px-3 border-r text-center">KG Producidos</th>
+                                  <th className="py-2 px-3 border-r text-center">Merma KG (Suma)</th>
+                                  <th className="py-2 px-3 border-r text-center">% Merma</th>
+                                  <th className="py-2 px-3 border-r text-center">♻ Transp.</th>
+                                  <th className="py-2 px-3 border-r text-center">♻ Pigm.</th>
+                                  <th className="py-2 px-3 border-r text-center">♻ Torta</th>
+                                  <th className="py-2 px-3 text-right">Costo Merma ($)</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-gray-100">
                                 {group.rows.map((r, i) => (
                                   <tr key={i} className="hover:bg-gray-50">
-                                    <td className="py-2 px-4 border-r font-bold capitalize text-gray-700">{r.phase}</td>
-                                    <td className="py-2 px-4 border-r text-center font-bold text-gray-500">{r.date}</td>
-                                    <td className="py-2 px-4 border-r text-center font-black text-blue-600">{formatNum(r.kgUsados)} KG</td>
-                                    <td className="py-2 px-4 border-r text-center font-black text-red-600">{formatNum(r.mermaKg)} KG</td>
-                                    <td className="py-2 px-4 border-r text-center">
+                                    <td className="py-2 px-3 border-r text-center font-black text-orange-600">{r.lote}</td>
+                                    <td className="py-2 px-3 border-r text-center text-[9px] font-black text-gray-500">{r.fasesLabel}</td>
+                                    <td className="py-2 px-3 border-r text-center font-bold text-gray-500">{r.fechaDisplay}</td>
+                                    <td className="py-2 px-3 border-r text-center font-black text-blue-600">{formatNum(r.kgUsados)} KG</td>
+                                    <td className="py-2 px-3 border-r text-center font-black text-green-600">{formatNum(r.kgProducidos)} KG</td>
+                                    <td className="py-2 px-3 border-r text-center font-black text-red-600">
+                                      {formatNum(r.mermaKg)} KG
+                                      {(r.mermaExt > 0 || r.mermaImp > 0 || r.mermaSel > 0) && (
+                                        <div className="text-[8px] text-gray-400 mt-0.5">
+                                          {r.mermaExt>0&&`Ext:${formatNum(r.mermaExt)} `}{r.mermaImp>0&&`Imp:${formatNum(r.mermaImp)} `}{r.mermaSel>0&&`Sel:${formatNum(r.mermaSel)}`}
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td className="py-2 px-3 border-r text-center">
                                       <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black ${r.pct > 5 ? 'bg-red-100 text-red-700' : r.pct > 2 ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
                                         {r.pct}%
                                       </span>
                                     </td>
-                                    <td className="py-2 px-4 border-r text-center font-bold text-blue-600">{r.troquelTransp>0?`${formatNum(r.troquelTransp)} KG (${r.kgUsados>0?((r.troquelTransp/r.kgUsados)*100).toFixed(1):0}%)`:'—'}</td>
-                                    <td className="py-2 px-4 border-r text-center font-bold text-orange-600">{r.troquelPigm>0?`${formatNum(r.troquelPigm)} KG (${r.kgUsados>0?((r.troquelPigm/r.kgUsados)*100).toFixed(1):0}%)`:'—'}</td>
-                                    <td className="py-2 px-4 border-r text-center font-bold text-amber-600">{r.torta>0?`${formatNum(r.torta)} KG (${r.kgUsados>0?((r.torta/r.kgUsados)*100).toFixed(1):0}%)`:'—'}</td>
-                                    <td className="py-2 px-4 text-right font-black text-red-500">${formatNum(r.costoMerma)}</td>
+                                    <td className="py-2 px-3 border-r text-center font-bold text-blue-600">{r.troquelTransp>0?`${formatNum(r.troquelTransp)} KG (${r.kgUsados>0?((r.troquelTransp/r.kgUsados)*100).toFixed(1):0}%)`:'—'}</td>
+                                    <td className="py-2 px-3 border-r text-center font-bold text-orange-600">{r.troquelPigm>0?`${formatNum(r.troquelPigm)} KG (${r.kgUsados>0?((r.troquelPigm/r.kgUsados)*100).toFixed(1):0}%)`:'—'}</td>
+                                    <td className="py-2 px-3 border-r text-center font-bold text-amber-600">{r.torta>0?`${formatNum(r.torta)} KG (${r.kgUsados>0?((r.torta/r.kgUsados)*100).toFixed(1):0}%)`:'—'}</td>
+                                    <td className="py-2 px-3 text-right font-black text-red-500">${formatNum(r.costoMerma)}</td>
                                   </tr>
                                 ))}
                               </tbody>
                               <tfoot className="bg-orange-50 border-t-2 border-orange-200">
                                 <tr className="font-black text-[10px]">
-                                  <td colSpan="2" className="py-2 px-4 text-right uppercase text-gray-600">Subtotal OP #{group.opNum}:</td>
-                                  <td className="py-2 px-4 text-center text-blue-700">{formatNum(group.totalKgUsados)} KG</td>
-                                  <td className="py-2 px-4 text-center text-red-700">{formatNum(group.totalMermaKg)} KG</td>
-                                  <td className="py-2 px-4 text-center text-orange-700">{groupPct}%</td>
-                                  <td className="py-2 px-4 text-center text-blue-700">{group.totalTransp>0?`${formatNum(group.totalTransp)} KG (${group.totalKgUsados>0?((group.totalTransp/group.totalKgUsados)*100).toFixed(1):0}%)`:'—'}</td>
-                                  <td className="py-2 px-4 text-center text-orange-700">{group.totalPigm>0?`${formatNum(group.totalPigm)} KG (${group.totalKgUsados>0?((group.totalPigm/group.totalKgUsados)*100).toFixed(1):0}%)`:'—'}</td>
-                                  <td className="py-2 px-4 text-center text-amber-700">{group.totalTorta>0?`${formatNum(group.totalTorta)} KG (${group.totalKgUsados>0?((group.totalTorta/group.totalKgUsados)*100).toFixed(1):0}%)`:'—'}</td>
-                                  <td className="py-2 px-4 text-right text-red-700">${formatNum(group.totalCosto)}</td>
+                                  <td colSpan="3" className="py-2 px-3 text-right uppercase text-gray-600">Subtotal OP #{group.opNum}:</td>
+                                  <td className="py-2 px-3 text-center text-blue-700">{formatNum(group.totalKgUsados)} KG</td>
+                                  <td className="py-2 px-3 text-center text-green-700">{formatNum(group.totalKgProd)} KG</td>
+                                  <td className="py-2 px-3 text-center text-red-700">{formatNum(group.totalMermaKg)} KG</td>
+                                  <td className="py-2 px-3 text-center text-orange-700">{group.totalKgUsados>0?((group.totalMermaKg/group.totalKgUsados)*100).toFixed(1):0}%</td>
+                                  <td className="py-2 px-3 text-center text-blue-700">{group.totalTransp>0?`${formatNum(group.totalTransp)} KG`:'—'}</td>
+                                  <td className="py-2 px-3 text-center text-orange-700">{group.totalPigm>0?`${formatNum(group.totalPigm)} KG`:'—'}</td>
+                                  <td className="py-2 px-3 text-center text-amber-700">{group.totalTorta>0?`${formatNum(group.totalTorta)} KG`:'—'}</td>
+                                  <td className="py-2 px-3 text-right text-red-700">${formatNum(group.totalCosto)}</td>
                                 </tr>
                               </tfoot>
                             </table>
@@ -7080,7 +7136,8 @@ export default function App() {
                       <div className="bg-black text-white rounded-2xl p-4 flex justify-between items-center flex-wrap gap-3">
                         <span className="font-black uppercase text-sm">Gran Total — {filteredGroups.length} OP{filteredGroups.length!==1?'s':''}</span>
                         <div className="flex gap-6 text-right flex-wrap">
-                          <div><span className="text-[9px] text-gray-400 block">KG Usados</span><span className="font-black">{formatNum(filteredGroups.reduce((s,g)=>s+g.totalKgUsados,0))} KG</span></div>
+                          <div><span className="text-[9px] text-gray-400 block">KG Usados (Ext)</span><span className="font-black">{formatNum(filteredGroups.reduce((s,g)=>s+g.totalKgUsados,0))} KG</span></div>
+                          <div><span className="text-[9px] text-gray-400 block">KG Producidos</span><span className="font-black text-green-400">{formatNum(filteredGroups.reduce((s,g)=>s+g.totalKgProd,0))} KG</span></div>
                           <div><span className="text-[9px] text-gray-400 block">Total Merma</span><span className="font-black text-orange-400">{formatNum(filteredGroups.reduce((s,g)=>s+g.totalMermaKg,0))} KG</span></div>
                           <div><span className="text-[9px] text-gray-400 block">% Global</span><span className="font-black text-yellow-400 text-lg">{grandPct}%</span></div>
                           {filteredGroups.reduce((s,g)=>s+g.totalTransp,0)>0&&<div><span className="text-[9px] text-blue-300 block">♻ Transp.</span><span className="font-black text-blue-300">{formatNum(filteredGroups.reduce((s,g)=>s+g.totalTransp,0))} KG</span></div>}
