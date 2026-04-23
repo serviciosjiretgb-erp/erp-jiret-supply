@@ -139,6 +139,7 @@ export default function App() {
   const [showCargarProducto, setShowCargarProducto] = useState(false);
   const [cargarForm, setCargarForm] = useState({ tipo: 'TERMINADOS', tipoProducto: 'BOLSAS', cliente: '', opId: '', producto: '', ancho: '', largo: '', micras: '', color: 'NATURAL', millares: '', kgProducidos: '', fecha: getTodayDate(), observaciones: '', categoria: '', codigo: '', descripcion: '', unidad: 'KG', cantidad: '', costo: '', proveedor: '' });
   const [invReportType, setInvReportType] = useState('entradas');
+  const [invSubFilter, setInvSubFilter] = useState('TODOS');
 
   const [inventory, setInventory] = useState([]);
   const [invMovements, setInvMovements] = useState([]); 
@@ -1516,6 +1517,24 @@ export default function App() {
      if (invReportType === 'entradas') filteredData = invMovements.filter(m => m.type === 'ENTRADA');
      if (invReportType === 'salidas') filteredData = invMovements.filter(m => m.type === 'SALIDA' || m.type === 'AUTOCONSUMO');
      if (invReportType === 'ajustes') filteredData = invMovements.filter(m => m.type.includes('AJUSTE'));
+
+     // Sub-filtro por subtipo (state en componente)
+     const subFilters = {
+       entradas: ['TODOS', 'PRODUCCIÓN', 'MERCANCÍA / COMPRA'],
+       salidas:  ['TODOS', 'VENTAS', 'CONSUMO PRODUCCIÓN'],
+       ajustes:  ['TODOS'],
+     };
+     const activeSubFilters = subFilters[invReportType] || ['TODOS'];
+     if (invSubFilter !== 'TODOS') {
+       if (invSubFilter === 'PRODUCCIÓN')
+         filteredData = filteredData.filter(m => String(m.notes||'').toUpperCase().includes('PRODUCCI') || String(m.notes||'').toUpperCase().includes('PROD'));
+       else if (invSubFilter === 'MERCANCÍA / COMPRA')
+         filteredData = filteredData.filter(m => !String(m.notes||'').toUpperCase().includes('PRODUCCI'));
+       else if (invSubFilter === 'VENTAS')
+         filteredData = filteredData.filter(m => String(m.notes||'').toUpperCase().includes('VENTA') || String(m.reference||'').toUpperCase().startsWith('FAC'));
+       else if (invSubFilter === 'CONSUMO PRODUCCIÓN')
+         filteredData = filteredData.filter(m => String(m.notes||'').toUpperCase().includes('PRODUCCI') || String(m.notes||'').toUpperCase().includes('PROD'));
+     }
      
      return (
        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
@@ -1525,10 +1544,26 @@ export default function App() {
                 <button onClick={() => handleExportPDF('Reporte_Inventario_Filtrado', false)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
              </div>
           </div>
-          <div data-html2canvas-ignore="true" className="p-6 bg-white border-b border-gray-100 flex gap-4 no-pdf">
-             {['entradas', 'salidas', 'ajustes'].map(type => (
-                <button key={type} onClick={()=>setInvReportType(type)} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors ${invReportType === type ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>Reporte de {type}</button>
-             ))}
+          <div data-html2canvas-ignore="true" className="p-6 bg-white border-b border-gray-100 flex flex-wrap gap-3 items-center no-pdf">
+             <div className="flex gap-2">
+               {['entradas', 'salidas', 'ajustes'].map(type => (
+                  <button key={type} onClick={()=>{setInvReportType(type); setInvSubFilter('TODOS');}}
+                    className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors ${invReportType === type ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                    {type === 'entradas' ? '⬆ Entradas' : type === 'salidas' ? '⬇ Salidas' : '⚖ Ajustes'}
+                  </button>
+               ))}
+             </div>
+             {activeSubFilters.length > 1 && (
+               <div className="flex gap-2 border-l border-gray-200 pl-3">
+                 {activeSubFilters.map(sf => (
+                   <button key={sf} onClick={()=>setInvSubFilter(sf)}
+                     className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase transition-colors border-2 ${invSubFilter===sf?'bg-blue-600 text-white border-blue-600':'border-gray-200 text-gray-600 hover:border-blue-300'}`}>
+                     {sf}
+                   </button>
+                 ))}
+               </div>
+             )}
+             <span className="ml-auto text-[10px] text-gray-400 font-bold">{filteredData.length} registro{filteredData.length!==1?'s':''}</span>
           </div>
 
           <div id="pdf-content" className="p-8 print:p-0 bg-white">
@@ -2174,10 +2209,15 @@ export default function App() {
     }
 
     const searchInvUpper = (invSearchTerm || '').toUpperCase();
-    const allCatalogCats = ['TODAS', 'Productos Terminados', ...Array.from(new Set((inventory||[]).map(i=>i?.category||'Otros')))].sort((a,b)=>a==='TODAS'?-1:a==='Productos Terminados'?-0.5:a.localeCompare(b));
-    // Combine raw inventory + finished goods into catalog
+    // ── INVENTARIO GENERAL: combina artículos + productos terminados (sin duplicados) ──
+    const fgSeen = new Set();
     const fgAsCatalog = (finishedGoodsInventory || [])
-      .filter(fg => fg.status !== 'ENTREGADO')
+      .filter(fg => {
+        if (parseNum(fg.kgProducidos) <= 0 && parseNum(fg.millares) <= 0) return false;
+        if (fgSeen.has(fg.id)) return false;
+        fgSeen.add(fg.id);
+        return true;
+      })
       .map(fg => {
         const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
         const stockVal = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
@@ -2223,6 +2263,9 @@ export default function App() {
         };
       });
     const allCatalogItems = [...(inventory || []), ...fgAsCatalog];
+    // Categorías únicas — sin duplicados
+    const allCatalogCats = ['TODAS', ...Array.from(new Set(allCatalogItems.map(i=>i?.category||'Otros')))]
+      .sort((a,b)=>{ if(a==='TODAS')return -1; if(b==='TODAS')return 1; if(a==='Productos Terminados')return -1; if(b==='Productos Terminados')return 1; return a.localeCompare(b); });
     const filteredInventory = allCatalogItems.filter(i => {
       const matchSearch = (i?.id || '').toUpperCase().includes(searchInvUpper) || (i?.desc || '').toUpperCase().includes(searchInvUpper);
       const matchCat = catalogCatFilter === 'TODAS' || (i?.category||'Otros') === catalogCatFilter;
