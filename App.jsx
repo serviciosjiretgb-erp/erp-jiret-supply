@@ -877,42 +877,45 @@ export default function App() {
         }
       }
 
-      // ── Descontar cada item del inventario de terminados ──
+      // ── Descontar cada item del inventario de terminados (FIFO por lote) ──
       for (const item of itemsToProcess) {
-        const fg = (finishedGoodsInventory || []).find(f => f.id === item.fgId);
-        if (!fg) continue;
-        const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
         const cantFacturada = parseNum(item.cantidad);
-        const cantDisponible = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-        const cantRestante = Math.max(0, cantDisponible - cantFacturada);
+        if (cantFacturada <= 0) continue;
+        const esTermo = item.esTermo ?? ((finishedGoodsInventory||[]).find(f=>f.id===item.fgId)?.tipoProducto === 'TERMOENCOGIBLE');
 
-        if (cantFacturada > 0) {
-          if (cantRestante <= 0.001) {
-            await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
-              status: 'ENTREGADO', millares: 0, kgProducidos: 0
-            });
+        // Lotes a descontar: grpLotes (grupo) o lote individual
+        const lotesADescontar = item.grpLotes || (() => {
+          const fg = (finishedGoodsInventory||[]).find(f => f.id === item.fgId);
+          return fg ? [fg] : [];
+        })();
+        if (!lotesADescontar.length) continue;
+
+        let porDescontar = cantFacturada;
+        for (const fg of lotesADescontar) {
+          if (porDescontar <= 0.001) break;
+          const stockLote = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+          if (stockLote <= 0) continue;
+          const cantDeEste = Math.min(porDescontar, stockLote);
+          porDescontar -= cantDeEste;
+          const nuevoStock = Math.max(0, stockLote - cantDeEste);
+          const kgOrigen = parseNum(fg.kgProducidosOrigen || fg.kgProducidos);
+          const millOrigen = parseNum(fg.millaresOrigen || fg.millares || 1);
+          const newKg = esTermo ? nuevoStock : Math.max(0, kgOrigen * nuevoStock / Math.max(0.0001, millOrigen));
+          if (nuevoStock <= 0.001) {
+            await updateDoc(getDocRef('finishedGoodsInventory', fg.id), { status: 'ENTREGADO', millares: 0, kgProducidos: 0 });
           } else {
-            const kgOrigen = parseNum(fg.kgProducidosOrigen || fg.kgProducidos);
-            const millOrigen = parseNum(fg.millaresOrigen || fg.millares || 1);
-            const newKg = esTermo ? cantRestante : Math.max(0, kgOrigen * cantRestante / Math.max(0.0001, millOrigen));
             await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
-              millares: esTermo ? parseNum(fg.millares) : cantRestante,
-              kgProducidos: newKg,
-              observaciones: ((fg.observaciones || '') + ` | ${formatNum(cantFacturada)} facturado FAC ${id}`).trim()
+              millares: esTermo ? parseNum(fg.millares) : nuevoStock, kgProducidos: newKg,
+              observaciones: ((fg.observaciones||'') + ` | ${formatNum(cantDeEste)} FAC ${id}`).trim()
             });
           }
-          // Asiento contable (solo en creación, no en edición para no duplicar)
           if (!editingInvoiceId) {
-            const kgRef = esTermo ? cantFacturada : (cantFacturada * parseNum(fg.kgProducidos) / Math.max(0.0001, parseNum(fg.millares)));
-            const costoFG = parseNum(fg.costoUnitario) * kgRef;
-            if (costoFG > 0) {
-              await registrarAsientoContable(null, {
-                debito: '5.1.01.01.001', credito: '1.1.03.01.008',
-                monto: costoFG,
-                descripcion: `COSTO PROD — FAC ${id} — ${fg.producto || fg.id}`,
-                referencia: id, fecha: newInvoiceForm.fecha
-              });
-            }
+            let cuKg = parseNum(fg.costoUnitario||0);
+            if (!cuKg && parseNum(fg.costoUnitarioMillar)>0 && parseNum(fg.millares)>0)
+              cuKg = parseNum(fg.costoUnitarioMillar)*parseNum(fg.kgProducidos)/Math.max(0.001,parseNum(fg.millares));
+            const kgFact = esTermo ? cantDeEste : (cantDeEste * parseNum(fg.kgProducidos) / Math.max(0.001, parseNum(fg.millares)));
+            const costoFG = cuKg * kgFact;
+            if (costoFG > 0) await registrarAsientoContable(null, { debito:'5.1.01.01.001', credito:'1.1.03.01.008', monto:costoFG, descripcion:`COSTO PROD — FAC ${id} — ${fg.producto||fg.id}`, referencia:id, fecha:newInvoiceForm.fecha });
           }
         }
       }
@@ -3409,59 +3412,92 @@ export default function App() {
                     
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                       {/* Picker desde Terminados */}
-                      {finishedGoodsInventory.filter(fg=>fg.status==='LISTO PARA ENTREGA').length > 0 && (
+                      {finishedGoodsInventory.filter(fg=>(parseNum(fg.kgProducidos)>0||parseNum(fg.millares)>0)).length > 0 && (
                         <div className="md:col-span-4 bg-green-50 border-2 border-green-200 rounded-2xl p-4">
-                          <label className="text-[10px] font-black text-green-700 uppercase block mb-3 tracking-widest">📦 Desde Inventario de Terminados — Agregar Lotes</label>
+                          <label className="text-[10px] font-black text-green-700 uppercase block mb-3 tracking-widest">📦 Desde Inventario de Terminados — Seleccionar Producto</label>
 
-                          {/* Selector de lote + cantidad + botón AGREGAR */}
-                          <div className="flex gap-2 items-end mb-3 flex-wrap">
-                            <div className="flex-1 min-w-[200px]">
-                              <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Lote / Producto</label>
-                              <select value={newInvoiceForm.fgId} onChange={e=>setNewInvoiceForm({...newInvoiceForm, fgId: e.target.value, fgCantidad: ''})}
-                                className="w-full bg-white border-2 border-green-300 rounded-xl p-2.5 font-black text-xs outline-none focus:border-green-500 text-black">
-                                <option value="">— Seleccione lote —</option>
-                                {(finishedGoodsInventory||[]).filter(fg=>fg.status==='LISTO PARA ENTREGA' && !fgItems.some(i=>i.fgId===fg.id)).map(fg=>{
-                                  const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
-                                  const disp = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-                                  return <option key={fg.id} value={fg.id}>{fg.cliente} | {fg.producto} | OP {fg.opId} | {formatNum(disp)} {esTermo?'KG':'Mill.'}</option>;
-                                })}
-                              </select>
-                            </div>
-                            {newInvoiceForm.fgId && (() => {
-                              const fg = (finishedGoodsInventory||[]).find(f=>f.id===newInvoiceForm.fgId);
-                              if (!fg) return null;
-                              const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
-                              const maxCant = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-                              return (
-                                <div className="flex gap-2 items-end">
-                                  <div>
-                                    <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cantidad ({esTermo?'KG':'Millares'})</label>
-                                    <input type="number" step="0.01" max={maxCant} value={newInvoiceForm.fgCantidad}
-                                      onChange={e=>setNewInvoiceForm({...newInvoiceForm, fgCantidad: e.target.value})}
-                                      className="w-32 border-2 border-green-400 rounded-xl p-2 font-black text-sm outline-none focus:border-green-600 text-center bg-white"
-                                      placeholder={formatNum(maxCant)} />
-                                    <div className="text-[8px] text-gray-500 text-center mt-0.5">Disp: {formatNum(maxCant)}</div>
-                                  </div>
-                                  <button type="button"
-                                    onClick={() => {
-                                      const cant = parseNum(newInvoiceForm.fgCantidad);
-                                      if (!cant || cant <= 0) return;
-                                      if (cant > maxCant + 0.001) return setDialog({title:'Aviso', text:`Máximo disponible: ${formatNum(maxCant)} ${esTermo?'KG':'Mill.'}`, type:'alert'});
-                                      setFgItems(prev => [...prev, {
-                                        fgId: fg.id, cantidad: cant,
-                                        desc: `${fg.producto} | OP ${fg.opId}`,
-                                        unidad: esTermo ? 'KG' : 'Mill.',
-                                        maxCant, esTermo
-                                      }]);
-                                      setNewInvoiceForm({...newInvoiceForm, fgId: '', fgCantidad: ''});
-                                    }}
-                                    className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs uppercase hover:bg-green-700 flex items-center gap-1 h-fit">
-                                    <Plus size={14}/> Agregar
-                                  </button>
+                          {/* Selector agrupado por producto (mismo agrupamiento que inventario) */}
+                          {(() => {
+                            // Construir grupos igual que inventario terminados
+                            const invGrps = {};
+                            (finishedGoodsInventory||[])
+                              .filter(fg => parseNum(fg.kgProducidos) > 0 || parseNum(fg.millares) > 0)
+                              .forEach(fg => {
+                                const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+                                const key = `${fg.categoria||fg.producto||''}__${fg.cliente||''}__${fg.tipoProducto}`;
+                                if (!invGrps[key]) invGrps[key] = {key,esTermo,categoria:fg.categoria||fg.producto||'',cliente:fg.cliente||'',tipoProducto:fg.tipoProducto,producto:fg.producto||'',ancho:fg.ancho,largo:fg.largo,micras:fg.micras,totalStock:0,lotes:[]};
+                                const g = invGrps[key];
+                                const stock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+                                g.totalStock += stock; g.lotes.push(fg);
+                              });
+                            const grpList = Object.values(invGrps).filter(g => g.totalStock > 0 && !fgItems.some(i=>i.fgGrpKey===g.key));
+                            const selGrpKey = newInvoiceForm.fgId; // reusing fgId to hold grpKey
+                            const selGrp = invGrps[selGrpKey];
+
+                            return (
+                              <div className="flex gap-2 items-start mb-3 flex-wrap">
+                                <div className="flex-1 min-w-[260px]">
+                                  <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Categoría / Producto</label>
+                                  <select value={selGrpKey||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm, fgId: e.target.value, fgCantidad: ''})}
+                                    className="w-full bg-white border-2 border-green-300 rounded-xl p-2.5 font-black text-xs outline-none focus:border-green-500 text-black">
+                                    <option value="">— Seleccione producto —</option>
+                                    {grpList.map(g => {
+                                      const unit = g.esTermo ? 'KG' : 'Mill.';
+                                      const dims = g.ancho ? `${g.ancho}×${g.largo}cm ${g.micras}mic` : '';
+                                      return (
+                                        <option key={g.key} value={g.key}>
+                                          {g.categoria||g.producto} | {g.cliente}{dims?` | ${dims}`:''} | {formatNum(g.totalStock)} {unit}
+                                        </option>
+                                      );
+                                    })}
+                                  </select>
+                                  {selGrp && (
+                                    <div className="mt-2 bg-white rounded-xl border border-green-200 p-3">
+                                      <div className="font-black text-[11px] text-gray-900 uppercase">{selGrp.categoria||selGrp.producto}</div>
+                                      <div className="text-[9px] text-gray-500 font-bold">{selGrp.cliente}</div>
+                                      {selGrp.ancho && <div className="text-[9px] text-orange-600 font-bold">{selGrp.ancho}×{selGrp.largo}cm | {selGrp.micras}mic</div>}
+                                      <div className="flex gap-3 mt-1">
+                                        <span className="text-[9px] font-black text-green-700">Stock: {formatNum(selGrp.totalStock)} {selGrp.esTermo?'KG':'Millares'}</span>
+                                        <span className="text-[9px] text-gray-400">{selGrp.lotes.length} lote{selGrp.lotes.length!==1?'s':''}</span>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                              );
-                            })()}
-                          </div>
+                                {selGrp && (
+                                  <div className="flex gap-2 items-end">
+                                    <div>
+                                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cantidad ({selGrp.esTermo?'KG':'Millares'})</label>
+                                      <input type="number" step="0.01" max={selGrp.totalStock} value={newInvoiceForm.fgCantidad}
+                                        onChange={e=>setNewInvoiceForm({...newInvoiceForm, fgCantidad: e.target.value})}
+                                        className="w-32 border-2 border-green-400 rounded-xl p-2 font-black text-sm outline-none focus:border-green-600 text-center bg-white"
+                                        placeholder={formatNum(selGrp.totalStock)} />
+                                      <div className="text-[8px] text-gray-500 text-center mt-0.5">Disp: {formatNum(selGrp.totalStock)} {selGrp.esTermo?'KG':'Mill.'}</div>
+                                    </div>
+                                    <button type="button"
+                                      onClick={() => {
+                                        const cant = parseNum(newInvoiceForm.fgCantidad) || selGrp.totalStock;
+                                        if (cant > selGrp.totalStock + 0.001) return setDialog({title:'Aviso', text:`Máximo: ${formatNum(selGrp.totalStock)} ${selGrp.esTermo?'KG':'Mill.'}`, type:'alert'});
+                                        // Registrar el grupo con sus lotes para descuento proporcional
+                                        setFgItems(prev => [...prev, {
+                                          fgGrpKey: selGrp.key,
+                                          fgId: selGrp.lotes[0]?.id || '', // primer lote como referencia
+                                          cantidad: cant,
+                                          desc: `${selGrp.categoria||selGrp.producto} | ${selGrp.cliente}`,
+                                          unidad: selGrp.esTermo ? 'KG' : 'Mill.',
+                                          maxCant: selGrp.totalStock,
+                                          esTermo: selGrp.esTermo,
+                                          grpLotes: selGrp.lotes // para descuento proporcional
+                                        }]);
+                                        setNewInvoiceForm({...newInvoiceForm, fgId: '', fgCantidad: ''});
+                                      }}
+                                      className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs uppercase hover:bg-green-700 flex items-center gap-1 h-fit">
+                                      <Plus size={14}/> Agregar
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
 
                           {/* Carrito de lotes agregados */}
                           {fgItems.length > 0 && (
