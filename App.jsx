@@ -2098,11 +2098,12 @@ export default function App() {
       .map(fg => {
         const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
         const stockVal = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-        // Costo: $/KG para termo, $/Millar para bolsas
+        // Costo unitario: $/KG para termo, $/Millar para bolsas
         const costoUnit = esTermo
-          ? parseNum(fg.costoUnitario || 0)  // costoUnitario ya es $/KG
+          ? parseNum(fg.costoUnitario || 0)
           : (() => {
-              // Calcular $/Millar desde costoUnitario ($/KG) × KG/Millar
+              // Usar costoUnitarioMillar guardado; si no existe, calcularlo
+              if (parseNum(fg.costoUnitarioMillar) > 0) return parseNum(fg.costoUnitarioMillar);
               const kgTotal = parseNum(fg.kgProducidos || 0);
               const millTotal = parseNum(fg.millares || 1);
               const kgPorMillar = millTotal > 0 ? kgTotal / millTotal : 0;
@@ -4036,6 +4037,22 @@ export default function App() {
           const fgId = `FG-${batchId}`;
           const fgExists = (finishedGoodsInventory||[]).some(fg => fg.id === fgId || fg.batchId === batchId);
           if (!fgExists) {
+            // Calcular costo TOTAL de la OP hasta este punto (todas las fases)
+            const prod = req.production || {};
+            const allOpBatches = [
+              ...(prod.extrusion?.batches||[]),
+              ...(prod.impresion?.batches||[]),
+              ...(prod.sellado?.batches||[]),
+              // Incluir también el batch actual que aún no fue guardado
+            ].filter(b => b.operator !== 'ALMACÉN (DESPACHO)');
+            const costoOpAnterior = allOpBatches.reduce((s,b) => s + parseNum(b.cost||0), 0);
+            const costoTotal = costoOpAnterior + phaseCost;
+            // $/KG = costo total / KG producidos de la última fase
+            const costoXKg = prodKg > 0 ? costoTotal / prodKg : 0;
+            // $/Millar = costo total / Millares de la última fase
+            const millBatch = parseNum(techParams.millares || 0);
+            const costoXMillar = millBatch > 0 ? costoTotal / millBatch : 0;
+
             await setDoc(getDocRef('finishedGoodsInventory', fgId), {
               id: fgId, opId: req.id, reqId: req.id,
               cliente: req.client || 'N/A',
@@ -4045,10 +4062,12 @@ export default function App() {
               ancho: req.ancho || 0, largo: req.largo || 0, micras: req.micras || 0,
               color: req.color || 'NATURAL', tratamiento: req.tratamiento || 'LISO',
               kgProducidos: prodKg,
-              kgProducidosOrigen: prodKg,   // original — nunca cambia
+              kgProducidosOrigen: prodKg,
               millares: millEntrada,
-              millaresOrigen: millEntrada,  // original — nunca cambia
-              costoUnitario: phaseCost > 0 && prodKg > 0 ? phaseCost / prodKg : 0,
+              millaresOrigen: millEntrada,
+              costoUnitario: costoXKg,           // $/KG (para Termoencogible y cálculos internos)
+              costoUnitarioMillar: costoXMillar, // $/Millar (para Bolsas en catálogo)
+              costoTotalProduccion: costoTotal,  // costo total OP completo
               fechaFinalizacion: phaseForm.date || getTodayDate(),
               ubicacion: 'ALMACEN GENERAL',
               status: 'LISTO PARA ENTREGA',
@@ -7759,15 +7778,51 @@ export default function App() {
     });
     const totalIngresos = facturasperiodo.reduce((s,i) => s + parseNum(i.montoBase), 0);
 
+    // ── COSTO DE VENTAS REAL: cantidad vendida × costo unitario del producto ──
+    // Solo se reconoce el costo de lo efectivamente facturado, no el total de producción
+    // Esto respeta el principio de "inventario de productos terminados"
+    let totalCostoProd = 0;
+    facturasperiodo.forEach(inv => {
+      // Buscar los FG vinculados a esta factura por OP
+      const opId = inv.opAsignada;
+      if (!opId) return;
+      const fgDeOp = (finishedGoodsInventory || []).filter(fg => fg.opId === opId);
+      fgDeOp.forEach(fg => {
+        const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+        const cuMillar = parseNum(fg.costoUnitarioMillar || 0);
+        const cuKg = parseNum(fg.costoUnitario || 0);
+        // Calcular la porción del costo según lo que se facturó de esta OP
+        const millOrigen = parseNum(fg.millaresOrigen || fg.millares || 0);
+        const kgOrigen = parseNum(fg.kgProducidosOrigen || fg.kgProducidos || 0);
+        const cantDisp = esTermo ? kgOrigen : millOrigen;
+        if (cantDisp <= 0) return;
+        // Proporción: lo que facturamos de la OP / lo que producimos total
+        const proporcion = Math.min(1, parseNum(inv.montoBase) > 0 ? 1 : 0); // fallback
+        // Mejor: usar los movimientos de inventario del FG para calcular lo vendido
+        const vendido = esTermo
+          ? Math.max(0, kgOrigen - parseNum(fg.kgProducidos))
+          : Math.max(0, millOrigen - parseNum(fg.millares));
+        const costoVendido = esTermo ? (vendido * cuKg) : (vendido * cuMillar);
+        totalCostoProd += costoVendido;
+      });
+      // Si no hay FG vinculado (factura sin inventario), usar asientos contables como fallback
+      if (fgDeOp.length === 0) {
+        const movsProdInv = (invMovements || []).filter(m =>
+          m.type === 'SALIDA' && String(m.notes||'').toUpperCase().includes('PRODUCCI') &&
+          m.opAsignada === opId && (m.date||'').startsWith(ym)
+        );
+        totalCostoProd += movsProdInv.reduce((s,m) => s + parseNum(m.totalValue), 0);
+      }
+    });
+
     // Costos operativos del periodo, agrupados por cuenta contable
     const costosPeriodo = (opCosts || []).filter(c => (c.month || (c.date||'').substring(0,7) || '').startsWith(ym));
 
-    // Movimientos de produccion del periodo
+    // Movimientos de produccion del periodo (para referencia / detalle)
     const movsProd = (invMovements || []).filter(m =>
       m.type === 'SALIDA' && String(m.notes||'').toUpperCase().includes('PRODUCCI') &&
       (m.date||'').startsWith(ym)
     );
-    const totalCostoProd = movsProd.reduce((s,m) => s + parseNum(m.totalValue), 0);
 
     // Agrupar costos operativos por cuenta contable
     const costosPorCuenta = {};
