@@ -7353,18 +7353,28 @@ export default function App() {
                       <tr className="bg-gray-800 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>COSTOS</td></tr>
 
                       {/* Costo produccion */}
-                      <tr className="bg-gray-200"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={tasa>1?5:4}>COSTO DE PRODUCCION</td></tr>
-                      {dataA.movsProd.length>0 ? dataA.movsProd.map((m,i)=>(
+                      <tr className="bg-gray-200"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={tasa>1?5:4}>COSTO DE PRODUCCIÓN VENDIDA</td></tr>
+                      <tr className="bg-gray-100 text-gray-600">
+                        <td className="py-1.5 px-4 pl-14 font-black text-[9px] uppercase">OP / Producto</td>
+                        <td className="py-1.5 px-3 text-center font-black text-[9px]">Unid.</td>
+                        <td className="py-1.5 px-3 text-right font-black text-[9px]">Cant.</td>
+                        <td className="py-1.5 px-3 text-right font-black text-[9px]">Total $</td>
+                        {tasa>1&&<td className="py-1.5 px-3 text-right font-black text-[9px]">Bs</td>}
+                      </tr>
+                      {(dataA.cogsRows||[]).length>0 ? (dataA.cogsRows||[]).map((row,i)=>(
                         <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="py-2 px-4 font-bold text-[10px] pl-14">{m.itemName} ({m.reference})</td>
-                          <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
-                          <td className="py-2 px-3 text-right font-black">{formatNum(parseNum(m.totalValue))}</td>
-                          <td className="py-2 px-3 text-center text-[9px]">{pctOf(parseNum(m.totalValue),dataA.totalIngresos)}</td>
-                          {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(parseNum(m.totalValue))}</td>}
+                          <td className="py-2 px-4 pl-14">
+                            <div className="font-black text-[10px] text-orange-600">OP-{row.opNum}</div>
+                            <div className="font-bold text-[10px] uppercase">{row.producto}</div>
+                          </td>
+                          <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">{row.unidad}</td>
+                          <td className="py-2 px-3 text-right font-bold text-blue-700">{formatNum(row.cantVendida)} × ${formatNum(row.costoUnit)}</td>
+                          <td className="py-2 px-3 text-right font-black">{formatNum(row.costoTotal)}</td>
+                          {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(row.costoTotal)}</td>}
                         </tr>
-                      )) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={tasa>1?5:4}>Sin movimientos de produccion</td></tr>}
+                      )) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={tasa>1?5:4}>Sin ventas de producción</td></tr>}
                       <tr className="bg-gray-100 border-b border-gray-300">
-                        <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total COSTO PRODUCCION</td>
+                        <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total COSTO DE VENTAS</td>
                         <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalCostoProd)}</td>
                         <td className="py-2 px-3 text-center text-[9px] font-black">{pctOf(dataA.totalCostoProd,dataA.totalIngresos)}</td>
                         {tasa>1&&<td className="py-2 px-3 text-right font-black">{bs(dataA.totalCostoProd)}</td>}
@@ -7779,11 +7789,10 @@ export default function App() {
     const totalIngresos = facturasperiodo.reduce((s,i) => s + parseNum(i.montoBase), 0);
 
     // ── COSTO DE VENTAS REAL: cantidad vendida × costo unitario del producto ──
-    // Solo se reconoce el costo de lo efectivamente facturado, no el total de producción
-    // Esto respeta el principio de "inventario de productos terminados"
     let totalCostoProd = 0;
+    const cogsRows = []; // [{opId, opNum, producto, cantVendida, unidad, costoUnit, costoTotal, esTermo}]
+
     facturasperiodo.forEach(inv => {
-      // Buscar los FG vinculados a esta factura por OP
       const opId = inv.opAsignada;
       if (!opId) return;
       const fgDeOp = (finishedGoodsInventory || []).filter(fg => fg.opId === opId);
@@ -7791,27 +7800,46 @@ export default function App() {
         const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
         const cuMillar = parseNum(fg.costoUnitarioMillar || 0);
         const cuKg = parseNum(fg.costoUnitario || 0);
-        // Calcular la porción del costo según lo que se facturó de esta OP
         const millOrigen = parseNum(fg.millaresOrigen || fg.millares || 0);
         const kgOrigen = parseNum(fg.kgProducidosOrigen || fg.kgProducidos || 0);
-        const cantDisp = esTermo ? kgOrigen : millOrigen;
-        if (cantDisp <= 0) return;
-        // Proporción: lo que facturamos de la OP / lo que producimos total
-        const proporcion = Math.min(1, parseNum(inv.montoBase) > 0 ? 1 : 0); // fallback
-        // Mejor: usar los movimientos de inventario del FG para calcular lo vendido
-        const vendido = esTermo
+        // Cantidad vendida = original - lo que queda en inventario
+        const cantVendida = esTermo
           ? Math.max(0, kgOrigen - parseNum(fg.kgProducidos))
           : Math.max(0, millOrigen - parseNum(fg.millares));
-        const costoVendido = esTermo ? (vendido * cuKg) : (vendido * cuMillar);
-        totalCostoProd += costoVendido;
+        if (cantVendida <= 0) return;
+        const costoUnit = esTermo ? cuKg : cuMillar;
+        const costoTotal = cantVendida * costoUnit;
+        totalCostoProd += costoTotal;
+        cogsRows.push({
+          opId,
+          opNum: String(opId).replace('OP-','').padStart(5,'0'),
+          producto: fg.producto || fg.id,
+          cliente: fg.cliente || inv.clientName || '',
+          cantVendida,
+          unidad: esTermo ? 'KG' : 'Millares',
+          costoUnit,
+          costoTotal,
+          esTermo,
+          factura: inv.documento
+        });
       });
-      // Si no hay FG vinculado (factura sin inventario), usar asientos contables como fallback
+      // Si no hay FG → usar movimientos de inventario como fallback
       if (fgDeOp.length === 0) {
-        const movsProdInv = (invMovements || []).filter(m =>
+        const movsFallback = (invMovements || []).filter(m =>
           m.type === 'SALIDA' && String(m.notes||'').toUpperCase().includes('PRODUCCI') &&
           m.opAsignada === opId && (m.date||'').startsWith(ym)
         );
-        totalCostoProd += movsProdInv.reduce((s,m) => s + parseNum(m.totalValue), 0);
+        movsFallback.forEach(m => {
+          const val = parseNum(m.totalValue);
+          totalCostoProd += val;
+          cogsRows.push({
+            opId: opId, opNum: String(opId).replace('OP-','').padStart(5,'0'),
+            producto: m.itemName || m.itemId || 'MP', cliente: inv.clientName || '',
+            cantVendida: parseNum(m.qty), unidad: 'KG',
+            costoUnit: parseNum(m.cost), costoTotal: val,
+            esTermo: false, factura: inv.documento
+          });
+        });
       }
     });
 
@@ -7846,7 +7874,7 @@ export default function App() {
     const totalCostos = totalCostoProd + totalCostosOp;
     const resultado = totalIngresos - totalCostos;
 
-    return { facturasperiodo, totalIngresos, costosPorCuenta, costosPeriodo, movsProd, totalCostoProd, totalCostosOp, totalCostos, resultado };
+    return { facturasperiodo, totalIngresos, costosPorCuenta, costosPeriodo, movsProd, totalCostoProd, totalCostosOp, totalCostos, resultado, cogsRows };
   };
 
   // ============================================================================
@@ -7968,20 +7996,31 @@ export default function App() {
                   <tr><td colSpan={colSpan} className="py-2"></td></tr>
                   {/* COSTOS */}
                   <tr className="bg-gray-800 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={colSpan}>COSTOS</td></tr>
-                  <tr className="bg-gray-200"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={colSpan}>COSTO DE PRODUCCION</td></tr>
-                  {dataA.movsProd.length>0 ? dataA.movsProd.map((m,i)=>(
+                  <tr className="bg-gray-200"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={colSpan}>COSTO DE PRODUCCIÓN VENDIDA</td></tr>
+                  {/* Header de la tabla de COGS */}
+                  <tr className="bg-gray-100 text-gray-600">
+                    <td className="py-1.5 px-4 pl-14 font-black text-[9px] uppercase">OP / Producto / Cliente</td>
+                    <td className="py-1.5 px-3 text-center font-black text-[9px]">Unid.</td>
+                    <td className="py-1.5 px-3 text-right font-black text-[9px]">Cant. Vendida</td>
+                    <td className="py-1.5 px-3 text-right font-black text-[9px]">Costo Unit.</td>
+                    {tasa>1&&<td className="py-1.5 px-3 text-right font-black text-[9px]">Total $</td>}
+                  </tr>
+                  {(dataA.cogsRows||[]).length>0 ? (dataA.cogsRows||[]).map((row,i)=>(
                     <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-2 px-4 font-bold text-[10px] pl-14">{m.itemName} ({m.reference})</td>
-                      <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
-                      <td className="py-2 px-3 text-right font-black">{formatNum(parseNum(m.totalValue))}</td>
-                      <td className="py-2 px-3 text-center text-[9px]">{pctOf(parseNum(m.totalValue),dataA.totalIngresos)}</td>
-                      {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(parseNum(m.totalValue))}</td>}
+                      <td className="py-2 px-4 pl-14">
+                        <div className="font-black text-[10px] text-orange-600">OP-{row.opNum} — {row.factura}</div>
+                        <div className="font-bold text-[10px] text-gray-800 uppercase">{row.producto}</div>
+                        {row.cliente && <div className="text-[9px] text-gray-400">{row.cliente}</div>}
+                      </td>
+                      <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">{row.unidad}</td>
+                      <td className="py-2 px-3 text-right font-black text-blue-700">{formatNum(row.cantVendida)}</td>
+                      <td className="py-2 px-3 text-right font-bold text-gray-700">${formatNum(row.costoUnit)}/{row.unidad==='KG'?'KG':'Mill.'}</td>
+                      {tasa>1&&<td className="py-2 px-3 text-right font-black">{formatNum(row.costoTotal)}</td>}
                     </tr>
-                  )) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={colSpan}>Sin movimientos de produccion</td></tr>}
+                  )) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={colSpan}>Sin ventas de producción en este periodo</td></tr>}
                   <tr className="bg-gray-100 border-b border-gray-300">
-                    <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total COSTO PRODUCCION</td>
+                    <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={tasa>1?4:3}>Total COSTO DE VENTAS</td>
                     <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalCostoProd)}</td>
-                    <td className="py-2 px-3 text-center text-[9px] font-black">{pctOf(dataA.totalCostoProd,dataA.totalIngresos)}</td>
                     {tasa>1&&<td className="py-2 px-3 text-right font-black">{bs(dataA.totalCostoProd)}</td>}
                   </tr>
                   {/* COSTOS OPERATIVOS FLAT */}
