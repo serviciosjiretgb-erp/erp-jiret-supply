@@ -2003,6 +2003,30 @@ export default function App() {
               <div className="bg-white rounded-2xl border border-gray-200 p-5">
                 {cargarForm.tipo === 'TERMINADOS' ? (
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {/* Categoría — auto-llena dimensiones desde fórmulas */}
+                    <div className="md:col-span-2">
+                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Categoría (desde fórmulas)</label>
+                      <select value={cargarForm.categoria} onChange={e=>{
+                        const cat = e.target.value;
+                        const formula = (formulas||[]).find(f=>(f.categoria||'').toUpperCase()===cat.toUpperCase());
+                        const esTermo = formula?.tipoProducto === 'TERMOENCOGIBLE' || cat.toUpperCase().includes('TERMO');
+                        const pesoMillar = formula ? (()=>{
+                          const w=parseNum(formula.ancho),l=parseNum(formula.largo),m=parseNum(formula.micras),fu=parseNum(formula.fuelles||0);
+                          const perim=(w+2*fu)*2;const areaM2=perim*l/10000;
+                          return (areaM2*m*0.92).toFixed(3);
+                        })() : '';
+                        setCargarForm({...cargarForm, categoria:cat,
+                          ancho: formula?.ancho||'', largo: formula?.largo||'', micras: formula?.micras||'',
+                          tipoProducto: esTermo?'TERMOENCOGIBLE':'BOLSAS',
+                          pesoMillar: pesoMillar,
+                          producto: formula ? `${formula.categoria} ${formula.ancho||''}×${formula.largo||''}×${formula.micras||''}MIC` : cargarForm.producto
+                        });
+                      }} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500 bg-white">
+                        <option value="">— Seleccione categoría —</option>
+                        {(formulas||[]).map(f=><option key={f.id||f.categoria} value={f.categoria||''}>{f.categoria}</option>)}
+                        <option value="OTRO">OTRO (manual)</option>
+                      </select>
+                    </div>
                     <div>
                       <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tipo Producto</label>
                       <select value={cargarForm.tipoProducto} onChange={e=>setCargarForm({...cargarForm,tipoProducto:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500">
@@ -2011,13 +2035,27 @@ export default function App() {
                     </div>
                     <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cliente</label><input value={cargarForm.cliente} onChange={e=>setCargarForm({...cargarForm,cliente:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="Nombre cliente"/></div>
                     <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">OP Ref.</label><input value={cargarForm.opId} onChange={e=>setCargarForm({...cargarForm,opId:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="OP-00001"/></div>
-                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Producto / Descripción</label><input value={cargarForm.producto} onChange={e=>setCargarForm({...cargarForm,producto:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="BOLSA 28X75X12MIC"/></div>
+                    <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Producto / Descripción</label><input value={cargarForm.producto} onChange={e=>setCargarForm({...cargarForm,producto:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="EJ: EMBUTIDO 1 - KIRI"/></div>
                     <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Ancho (cm)</label><input type="number" value={cargarForm.ancho} onChange={e=>setCargarForm({...cargarForm,ancho:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500"/></div>
                     <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Largo (cm)</label><input type="number" value={cargarForm.largo} onChange={e=>setCargarForm({...cargarForm,largo:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500"/></div>
                     <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Micras</label><input type="number" value={cargarForm.micras} onChange={e=>setCargarForm({...cargarForm,micras:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500"/></div>
                     <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Color</label><input value={cargarForm.color} onChange={e=>setCargarForm({...cargarForm,color:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="NATURAL"/></div>
-                    {cargarForm.tipoProducto !== 'TERMOENCOGIBLE' && <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares</label><input type="number" step="0.01" value={cargarForm.millares} onChange={e=>setCargarForm({...cargarForm,millares:e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none focus:border-green-500 text-center bg-green-50"/></div>}
-                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG</label><input type="number" step="0.01" value={cargarForm.kgProducidos} onChange={e=>setCargarForm({...cargarForm,kgProducidos:e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none focus:border-green-500 text-center bg-green-50"/></div>
+                    {cargarForm.tipoProducto !== 'TERMOENCOGIBLE' && <>
+                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares</label><input type="number" step="0.01" value={cargarForm.millares} onChange={e=>setCargarForm({...cargarForm,millares:e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none focus:border-green-500 text-center bg-green-50"/></div>
+                      <div>
+                        <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">⚖ Peso / Millar (KG)</label>
+                        <input type="number" step="0.001" value={cargarForm.pesoMillar||''} onChange={e=>{
+                          const pm=parseNum(e.target.value); const mill=parseNum(cargarForm.millares||0);
+                          setCargarForm({...cargarForm, pesoMillar:e.target.value, kgProducidos: pm>0&&mill>0?(mill*pm).toFixed(2):cargarForm.kgProducidos});
+                        }} className="w-full border-2 border-yellow-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-yellow-400 text-center bg-yellow-50" placeholder="KG/Millar"/>
+                        {parseNum(cargarForm.pesoMillar)>0&&parseNum(cargarForm.millares)>0&&<div className="text-[8px] text-yellow-700 text-center mt-0.5">→ {formatNum(parseNum(cargarForm.millares)*parseNum(cargarForm.pesoMillar))} KG totales</div>}
+                      </div>
+                    </>}
+                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG {cargarForm.tipoProducto==='TERMOENCOGIBLE'?'(Principal)':'(Calculado)'}</label><input type="number" step="0.01" value={cargarForm.kgProducidos} onChange={e=>setCargarForm({...cargarForm,kgProducidos:e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none focus:border-green-500 text-center bg-green-50"/></div>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">💲 Costo Unit. ({cargarForm.tipoProducto==='TERMOENCOGIBLE'?'$/KG':'$/Millar'})</label>
+                      <input type="number" step="0.01" value={cargarForm.costoUnit||''} onChange={e=>setCargarForm({...cargarForm,costoUnit:e.target.value})} className="w-full border-2 border-orange-200 rounded-xl p-2 text-sm font-black outline-none focus:border-orange-400 text-center bg-orange-50" placeholder="0.00"/>
+                    </div>
                     <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Fecha</label><input type="date" value={cargarForm.fecha} onChange={e=>setCargarForm({...cargarForm,fecha:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500"/></div>
                     <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Observaciones</label><input value={cargarForm.observaciones} onChange={e=>setCargarForm({...cargarForm,observaciones:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="Carga manual de inventario..."/></div>
                   </div>
@@ -2041,6 +2079,9 @@ export default function App() {
                         const newId = `FG-MANUAL-${Date.now()}`;
                         const mill = parseNum(cargarForm.millares||0);
                         const kg = parseNum(cargarForm.kgProducidos||0);
+                        const cu = parseNum(cargarForm.costoUnit||0);
+                        const cuMillar = cargarForm.tipoProducto==='TERMOENCOGIBLE' ? 0 : cu;
+                        const cuKg = cargarForm.tipoProducto==='TERMOENCOGIBLE' ? cu : (mill>0?cu*kg/mill:0);
                         await setDoc(getDocRef('finishedGoodsInventory', newId), {
                           id: newId, opId: cargarForm.opId||'MANUAL', reqId: cargarForm.opId||'MANUAL',
                           cliente: cargarForm.cliente, tipoProducto: cargarForm.tipoProducto,
@@ -2049,7 +2090,10 @@ export default function App() {
                           micras: parseNum(cargarForm.micras||0), color: cargarForm.color||'NATURAL',
                           kgProducidos: kg, kgProducidosOrigen: kg,
                           millares: mill, millaresOrigen: mill,
-                          costoUnitario: 0, fechaFinalizacion: cargarForm.fecha||getTodayDate(),
+                          costoUnitario: cuKg,
+                          costoUnitarioMillar: cuMillar,
+                          costoTotalProduccion: cargarForm.tipoProducto==='TERMOENCOGIBLE' ? cu*kg : cu*mill,
+                          fechaFinalizacion: cargarForm.fecha||getTodayDate(),
                           ubicacion: 'ALMACEN GENERAL', status: 'LISTO PARA ENTREGA',
                           observaciones: cargarForm.observaciones||'Carga manual', timestamp: Date.now()
                         });
@@ -2209,59 +2253,46 @@ export default function App() {
     }
 
     const searchInvUpper = (invSearchTerm || '').toUpperCase();
-    // ── INVENTARIO GENERAL: combina artículos + productos terminados (sin duplicados) ──
-    const fgSeen = new Set();
-    const fgAsCatalog = (finishedGoodsInventory || [])
-      .filter(fg => {
-        if (parseNum(fg.kgProducidos) <= 0 && parseNum(fg.millares) <= 0) return false;
-        if (fgSeen.has(fg.id)) return false;
-        fgSeen.add(fg.id);
-        return true;
-      })
-      .map(fg => {
-        const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-        const stockVal = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-
-        // Calcular costo desde datos de producción si no está guardado
-        const calcCostoFromOP = () => {
-          const req = (requirements||[]).find(r => r.id === fg.opId);
-          if (!req) return 0;
-          const prod = req.production || {};
-          const allB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])]
-            .filter(b => b.operator !== 'ALMACÉN (DESPACHO)');
-          const costoTotal = allB.reduce((s,b)=>s+parseNum(b.cost||0),0);
-          const lastB = prod.sellado?.batches?.filter(b=>b.operator!=='ALMACÉN (DESPACHO)') ||
-                        prod.impresion?.batches?.filter(b=>b.operator!=='ALMACÉN (DESPACHO)') ||
-                        prod.extrusion?.batches?.filter(b=>b.operator!=='ALMACÉN (DESPACHO)') || [];
-          const kgTot = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
-          const millTot = [...(prod.sellado?.batches||[]),...(prod.impresion?.batches||[]),...(prod.extrusion?.batches||[])]
-            .reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
-          if (esTermo) return kgTot > 0 ? costoTotal / kgTot : 0;
-          return millTot > 0 ? costoTotal / millTot : 0;
-        };
-
-        // $/KG para termo, $/Millar para bolsas
-        const costoUnit = esTermo
-          ? (parseNum(fg.costoUnitario) > 0 ? parseNum(fg.costoUnitario) : calcCostoFromOP())
-          : (() => {
-              if (parseNum(fg.costoUnitarioMillar) > 0) return parseNum(fg.costoUnitarioMillar);
-              // Calcular desde costoUnitario ($/KG) × KG/Millar si existe
-              if (parseNum(fg.costoUnitario) > 0 && parseNum(fg.kgProducidos) > 0 && parseNum(fg.millares) > 0) {
-                return parseNum(fg.costoUnitario) * parseNum(fg.kgProducidos) / parseNum(fg.millares);
-              }
-              return calcCostoFromOP();
-            })();
-
-        return {
-          id: fg.id,
-          desc: `${fg.producto || fg.id} | ${fg.cliente} | OP ${fg.opId}`,
-          category: 'Productos Terminados',
-          unit: esTermo ? 'KG' : 'Millares',
-          stock: stockVal,
-          cost: costoUnit,
-          _isFG: true, _fg: fg
-        };
-      });
+    // ── INVENTARIO GENERAL: FG agrupados por categoría/producto con costo promedio ponderado ──
+    const calcFGCosto = (fg) => {
+      const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+      if (esTermo && parseNum(fg.costoUnitario) > 0) return parseNum(fg.costoUnitario);
+      if (!esTermo && parseNum(fg.costoUnitarioMillar) > 0) return parseNum(fg.costoUnitarioMillar);
+      if (!esTermo && parseNum(fg.costoUnitario) > 0 && parseNum(fg.kgProducidos) > 0 && parseNum(fg.millares) > 0)
+        return parseNum(fg.costoUnitario) * parseNum(fg.kgProducidos) / parseNum(fg.millares);
+      const req = (requirements||[]).find(r => r.id === fg.opId);
+      if (!req) return 0;
+      const prod = req.production || {};
+      const allB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])]
+        .filter(b => b.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b.producedKg) > 0);
+      const costoTotal = allB.reduce((s,b)=>s+parseNum(b.cost||0),0);
+      const kgTot = allB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+      const millTot = allB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+      if (esTermo) return kgTot > 0 ? costoTotal / kgTot : 0;
+      return millTot > 0 ? costoTotal / millTot : 0;
+    };
+    const fgGroups = {};
+    (finishedGoodsInventory||[]).filter(fg=>parseNum(fg.kgProducidos)>0||parseNum(fg.millares)>0).forEach(fg => {
+      const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+      const key = `${fg.categoria||fg.producto||''}__${fg.cliente||''}__${fg.tipoProducto}`;
+      if (!fgGroups[key]) fgGroups[key] = {key,esTermo,categoria:fg.categoria||fg.producto||'',cliente:fg.cliente||'',tipoProducto:fg.tipoProducto,producto:fg.producto||'',ancho:fg.ancho,largo:fg.largo,micras:fg.micras,totalStock:0,totalKg:0,pesoTot:0,lotes:0};
+      const g = fgGroups[key];
+      const stock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+      const cu = calcFGCosto(fg);
+      g.totalStock += stock; g.totalKg += parseNum(fg.kgProducidos); g.pesoTot += stock*cu; g.lotes++;
+    });
+    const fgAsCatalog = Object.values(fgGroups).map(g => {
+      const cu = g.totalStock > 0 ? g.pesoTot / g.totalStock : 0;
+      return {
+        id: `FG-GROUP-${g.key}`,
+        desc: `${g.categoria||g.producto} | ${g.cliente}${g.ancho?` | ${g.ancho}×${g.largo}cm ${g.micras}mic`:''}`.toUpperCase(),
+        category: 'Productos Terminados',
+        unit: g.esTermo ? 'KG' : 'Millares',
+        stock: g.totalStock,
+        cost: cu,
+        _isFGGroup: true, _lotes: g.lotes, _totalKg: g.totalKg
+      };
+    });
     const allCatalogItems = [...(inventory || []), ...fgAsCatalog];
     // Categorías únicas — sin duplicados
     const allCatalogCats = ['TODAS', ...Array.from(new Set(allCatalogItems.map(i=>i?.category||'Otros')))]
