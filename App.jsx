@@ -2178,9 +2178,7 @@ export default function App() {
                     <table className="w-full text-left text-xs">
                       <thead className={`${colorH} text-white`}>
                         <tr className="uppercase font-black text-[9px] tracking-widest">
-                          <th className="py-3 px-4 border-r border-white/20">Categoría / Producto</th>
-                          <th className="py-3 px-4 border-r border-white/20">Cliente</th>
-                          <th className="py-3 px-4 border-r border-white/20 text-center">Dimensiones</th>
+                          <th className="py-3 px-4 border-r border-white/20">Categoría / Producto — Cliente — Dimensiones</th>
                           <th className="py-3 px-4 border-r border-white/20 text-center">Lotes / OPs</th>
                           <th className="py-3 px-4 border-r border-white/20 text-center">Costo Unit.</th>
                           <th className="py-3 px-4 text-center">{unit} en Stock</th>
@@ -2197,9 +2195,6 @@ export default function App() {
                                   <div className="font-black text-[11px] text-gray-900 uppercase">{g.categoria||g.producto}</div>
                                   <div className="text-[9px] text-orange-600 font-bold">{g.cliente}</div>
                                   {g.ancho && <div className="text-[9px] text-gray-500 font-bold">{g.ancho}×{g.largo}CM {g.micras?(parseNum(g.micras)/1000).toFixed(3)+'MIC':''}</div>}
-                                <td className="py-3 px-4 border-r font-bold uppercase text-[10px]">{g.cliente}</td>
-                                <td className="py-3 px-4 border-r text-center text-[10px] font-bold text-gray-600">
-                                  {g.ancho||'—'}cm×{g.largo||'—'}cm | {g.micras||'—'}mic
                                 </td>
                                 <td className="py-3 px-4 border-r text-center">
                                   <span className="bg-orange-100 text-orange-700 font-black text-[9px] px-2 py-0.5 rounded-full">{g.lotes.length} lote{g.lotes.length!==1?'s':''}</span>
@@ -2219,7 +2214,7 @@ export default function App() {
                       </tbody>
                       <tfoot className={`${esTermo?'bg-green-50 text-green-800':'bg-blue-50 text-blue-800'} border-t-2`}>
                         <tr className="font-black text-[10px] uppercase">
-                          <td colSpan="5" className="py-2 px-4 text-right">Total {esTermo?'Termoencogible':'Bolsas'}:</td>
+                          <td colSpan="3" className="py-2 px-4 text-right">Total {esTermo?'Termoencogible':'Bolsas'}:</td>
                           <td className="py-2 px-4 text-center text-lg">{formatNum(grps.reduce((s,g)=>s+g.totalStock,0))} {unit}</td>
                         </tr>
                       </tfoot>
