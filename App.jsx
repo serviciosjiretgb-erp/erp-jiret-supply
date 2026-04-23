@@ -856,56 +856,51 @@ export default function App() {
     try { 
       await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: editingInvoiceId ? (newInvoiceForm.timestamp || Date.now()) : Date.now(), user: appUser?.name }); 
 
-      if (!editingInvoiceId) {
-        const montoBase = parseNum(newInvoiceForm.montoBase);
+      // ── Construir lista de items a descontar del inventario ──
+      // Se ejecuta SIEMPRE (creación Y edición) para garantizar el descuento
+      let itemsToProcess = [...fgItems];
 
-        // ── Construir lista de items a procesar ──
-        // Prioridad: carrito (fgItems) > selección pendiente en formulario
-        let itemsToProcess = [...fgItems];
-
-        // Si hay una selección en el formulario que no fue agregada al carrito, procesarla también
-        if (newInvoiceForm.fgId) {
-          const fgPendiente = (finishedGoodsInventory || []).find(f => f.id === newInvoiceForm.fgId);
-          if (fgPendiente && !itemsToProcess.some(i => i.fgId === newInvoiceForm.fgId)) {
-            const esTermo = fgPendiente.tipoProducto === 'TERMOENCOGIBLE';
-            const maxDisp = esTermo ? parseNum(fgPendiente.kgProducidos) : parseNum(fgPendiente.millares);
-            // Usar la cantidad ingresada, si no hay cantidad usar el total disponible
-            const cantPendiente = parseNum(newInvoiceForm.fgCantidad) > 0
-              ? Math.min(parseNum(newInvoiceForm.fgCantidad), maxDisp)
-              : maxDisp;
-            if (cantPendiente > 0) {
-              itemsToProcess.push({ fgId: newInvoiceForm.fgId, cantidad: cantPendiente });
-            }
+      // Auto-incluir selección pendiente en formulario (si no se presionó AGREGAR)
+      if (newInvoiceForm.fgId) {
+        const fgPendiente = (finishedGoodsInventory || []).find(f => f.id === newInvoiceForm.fgId);
+        if (fgPendiente && !itemsToProcess.some(i => i.fgId === newInvoiceForm.fgId)) {
+          const esTermo = fgPendiente.tipoProducto === 'TERMOENCOGIBLE';
+          const maxDisp = esTermo ? parseNum(fgPendiente.kgProducidos) : parseNum(fgPendiente.millares);
+          const cantPendiente = parseNum(newInvoiceForm.fgCantidad) > 0
+            ? Math.min(parseNum(newInvoiceForm.fgCantidad), maxDisp)
+            : maxDisp;
+          if (cantPendiente > 0) {
+            itemsToProcess.push({ fgId: newInvoiceForm.fgId, cantidad: cantPendiente });
           }
         }
+      }
 
-        // ── Descontar cada item del inventario de terminados ──
-        for (const item of itemsToProcess) {
-          const fg = (finishedGoodsInventory || []).find(f => f.id === item.fgId);
-          if (!fg) continue;
-          const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-          const cantFacturada = parseNum(item.cantidad);
-          const cantDisponible = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-          const cantRestante = Math.max(0, cantDisponible - cantFacturada);
+      // ── Descontar cada item del inventario de terminados ──
+      for (const item of itemsToProcess) {
+        const fg = (finishedGoodsInventory || []).find(f => f.id === item.fgId);
+        if (!fg) continue;
+        const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+        const cantFacturada = parseNum(item.cantidad);
+        const cantDisponible = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+        const cantRestante = Math.max(0, cantDisponible - cantFacturada);
 
-          if (cantFacturada > 0) {
-            if (cantRestante <= 0.001) {
-              // Stock agotado → marcar ENTREGADO con ceros
-              await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
-                status: 'ENTREGADO', millares: 0, kgProducidos: 0
-              });
-            } else {
-              // Stock parcial → actualizar cantidades restantes
-              const kgOrigen = parseNum(fg.kgProducidosOrigen || fg.kgProducidos);
-              const millOrigen = parseNum(fg.millaresOrigen || fg.millares || 1);
-              const newKg = esTermo ? cantRestante : Math.max(0, kgOrigen * cantRestante / Math.max(0.0001, millOrigen));
-              await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
-                millares: esTermo ? parseNum(fg.millares) : cantRestante,
-                kgProducidos: newKg,
-                observaciones: ((fg.observaciones || '') + ` | ${formatNum(cantFacturada)} facturado FAC ${id}`).trim()
-              });
-            }
-            // Asiento contable de costo
+        if (cantFacturada > 0) {
+          if (cantRestante <= 0.001) {
+            await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
+              status: 'ENTREGADO', millares: 0, kgProducidos: 0
+            });
+          } else {
+            const kgOrigen = parseNum(fg.kgProducidosOrigen || fg.kgProducidos);
+            const millOrigen = parseNum(fg.millaresOrigen || fg.millares || 1);
+            const newKg = esTermo ? cantRestante : Math.max(0, kgOrigen * cantRestante / Math.max(0.0001, millOrigen));
+            await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
+              millares: esTermo ? parseNum(fg.millares) : cantRestante,
+              kgProducidos: newKg,
+              observaciones: ((fg.observaciones || '') + ` | ${formatNum(cantFacturada)} facturado FAC ${id}`).trim()
+            });
+          }
+          // Asiento contable (solo en creación, no en edición para no duplicar)
+          if (!editingInvoiceId) {
             const kgRef = esTermo ? cantFacturada : (cantFacturada * parseNum(fg.kgProducidos) / Math.max(0.0001, parseNum(fg.millares)));
             const costoFG = parseNum(fg.costoUnitario) * kgRef;
             if (costoFG > 0) {
@@ -918,17 +913,20 @@ export default function App() {
             }
           }
         }
+      }
 
+      // Asiento de ingreso (solo en creación)
+      if (!editingInvoiceId) {
         await registrarAsientoContable(null, {
           debito: 'CXC/CLIENTE', credito: '4.1.01.01.000',
-          monto: montoBase,
+          monto: parseNum(newInvoiceForm.montoBase),
           descripcion: `INGRESO MAQUILA — FACTURA ${id} — ${newInvoiceForm.clientName || ''}`,
           referencia: id, fecha: newInvoiceForm.fecha
         });
       }
 
       setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm); setFgItems([]);
-      setDialog({title: '✅ Éxito', text: editingInvoiceId ? 'Factura actualizada.' : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
+      setDialog({title: '✅ Éxito', text: editingInvoiceId ? `Factura ${id} actualizada y stock descontado.` : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
     } catch(err) { setDialog({title: 'Error al guardar factura', text: err.message, type: 'alert'}); }
   };
   const handleDeleteInvoice = (id) => {
@@ -2100,13 +2098,23 @@ export default function App() {
       .map(fg => {
         const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
         const stockVal = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+        // Costo: $/KG para termo, $/Millar para bolsas
+        const costoUnit = esTermo
+          ? parseNum(fg.costoUnitario || 0)  // costoUnitario ya es $/KG
+          : (() => {
+              // Calcular $/Millar desde costoUnitario ($/KG) × KG/Millar
+              const kgTotal = parseNum(fg.kgProducidos || 0);
+              const millTotal = parseNum(fg.millares || 1);
+              const kgPorMillar = millTotal > 0 ? kgTotal / millTotal : 0;
+              return parseNum(fg.costoUnitario || 0) * kgPorMillar;
+            })();
         return {
           id: fg.id,
           desc: `${fg.producto || fg.id} | ${fg.cliente} | OP ${fg.opId}`,
           category: 'Productos Terminados',
           unit: esTermo ? 'KG' : 'Millares',
           stock: stockVal,
-          cost: parseNum(fg.costoUnitario || 0),
+          cost: costoUnit,
           _isFG: true, _fg: fg
         };
       });
