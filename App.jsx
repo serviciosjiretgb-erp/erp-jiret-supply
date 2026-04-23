@@ -183,10 +183,11 @@ export default function App() {
   const [showInvImport, setShowInvImport] = useState(false);
   const [invImportPreview, setInvImportPreview] = useState([]);
   const [invImportLoading, setInvImportLoading] = useState(false);
-  const [erView, setErView] = useState('estado'); // 'estado' | 'variaciones'
+  const [erView, setErView] = useState('estado');
   const [erMes, setErMes] = useState(new Date().getMonth() + 1);
   const [erAno, setErAno] = useState(new Date().getFullYear());
   const [erTasa, setErTasa] = useState('');
+  const [erExpanded, setErExpanded] = useState({ ingresos: false, costo_ventas: false, costos_op: false });
   const prevMonth = () => { const d = new Date(); d.setMonth(d.getMonth()-1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
   const [varMesA, setVarMesA] = useState(new Date().toISOString().substring(0,7));
   const [varMesB, setVarMesB] = useState(prevMonth());
@@ -6793,8 +6794,6 @@ export default function App() {
     const pctOf = (val, base) => base !== 0 ? ((val/base)*100).toFixed(2)+'%' : '0.00%';
 
     const REPORT_CARDS = [
-      { id: 'general', icon: <FileText size={26}/>, label: 'Reporte General', desc: 'Resumen completo del periodo', color: 'blue' },
-      { id: 'ingresos_vs_costos', icon: <BarChart3 size={26}/>, label: 'Ingresos vs Costos', desc: 'Comparativo 12 meses', color: 'green' },
       { id: 'mermas', icon: <AlertTriangle size={26}/>, label: 'Mermas', desc: 'Perdidas y desperdicios', color: 'orange' },
       { id: 'resumen_mensual', icon: <ClipboardList size={26}/>, label: 'Resumen Mensual', desc: 'Todas las OPs del mes', color: 'teal' },
       { id: 'super_finiquito', icon: <FileCheck size={26}/>, label: 'Finiquito por OP', desc: 'Por orden individual', color: 'purple' },
@@ -6822,15 +6821,11 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              {/* Estado de Resultado y Libro Diario — abre como módulo separado */}
+              {/* Estado de Resultado — abre como módulo separado */}
               <div className="flex gap-3 mt-3">
                 <button onClick={() => setActiveTab('estado_resultado')}
                   className="px-5 py-2.5 rounded-xl border-2 border-indigo-200 bg-indigo-50 text-indigo-700 font-black text-[10px] uppercase hover:bg-indigo-100 flex items-center gap-2 transition-all">
                   <TrendingUp size={14}/> Estado de Resultado
-                </button>
-                <button onClick={() => setActiveTab('libro_diario')}
-                  className="px-5 py-2.5 rounded-xl border-2 border-teal-200 bg-teal-50 text-teal-700 font-black text-[10px] uppercase hover:bg-teal-100 flex items-center gap-2 transition-all">
-                  <ArrowRightLeft size={14}/> Libro Diario
                 </button>
               </div>
             </div>
@@ -7382,21 +7377,31 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {/* ── INGRESOS ── */}
+                      {/* ── INGRESOS ── colapsable */}
                       <tr className="bg-orange-500 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>INGRESOS</td></tr>
-                      <tr className="bg-orange-50"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-orange-800" colSpan={tasa>1?5:4}>VENTAS BRUTAS</td></tr>
-                      {dataA.facturasperiodo.length>0 ? (
-                        <tr className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="py-2 px-4 font-bold text-[10px] pl-14">
-                            <span className="text-orange-600 font-black mr-2">4.1.01.01.000</span>
-                            INGRESOS POR MAQUILA
+                      <tr className="bg-orange-50 cursor-pointer hover:bg-orange-100 select-none" onClick={()=>setErExpanded(p=>({...p,ingresos:!p.ingresos}))}>
+                        <td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-orange-800" colSpan={tasa>1?4:3}>
+                          <span className="mr-2">{erExpanded.ingresos?'▼':'▶'}</span>
+                          <span className="text-orange-600 font-black mr-2">4.1.01.01.000</span>
+                          INGRESOS POR MAQUILA
+                          <span className="ml-3 text-[9px] text-orange-400">{erExpanded.ingresos?'contraer':'expandir facturas'}</span>
+                        </td>
+                        <td className="py-1.5 px-3 text-right font-black text-orange-700">{formatNum(dataA.totalIngresos)}</td>
+                        {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-orange-600">{bs(dataA.totalIngresos)}</td>}
+                      </tr>
+                      {erExpanded.ingresos && (dataA.facturasperiodo.length>0 ? dataA.facturasperiodo.map((inv,i)=>(
+                        <tr key={i} className="border-b border-orange-50 hover:bg-orange-50/40">
+                          <td className="py-1.5 px-4 pl-20 text-[10px] font-bold text-gray-700">
+                            <span className="text-orange-500 font-black mr-2">{inv.documento}</span>
+                            {inv.clientName} — <span className="italic text-gray-500">{inv.productoMaquilado||inv.opAsignada||'—'}</span>
+                            <span className="text-[9px] text-gray-400 ml-2">{inv.fecha}</span>
                           </td>
-                          <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
-                          <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalIngresos)}</td>
-                          <td className="py-2 px-3 text-center text-[9px]">100.00%</td>
-                          {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(dataA.totalIngresos)}</td>}
+                          <td className="py-1.5 px-3 text-center text-[9px] text-gray-400">USD</td>
+                          <td className="py-1.5 px-3 text-right font-black text-orange-600">{formatNum(inv.montoBase)}</td>
+                          <td className="py-1.5 px-3 text-center text-[9px]">{pctOf(parseNum(inv.montoBase),dataA.totalIngresos)}</td>
+                          {tasa>1&&<td className="py-1.5 px-3 text-right text-[9px]">{bs(parseNum(inv.montoBase))}</td>}
                         </tr>
-                      ) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={tasa>1?5:4}>Sin ingresos en este periodo</td></tr>}
+                      )) : <tr><td colSpan={tasa>1?5:4} className="py-1.5 px-4 pl-20 text-[10px] text-gray-400 italic">Sin ingresos en este periodo</td></tr>)}
                       <tr className="bg-orange-100">
                         <td className="py-2.5 px-4 text-[10px] uppercase pl-8 text-orange-800 font-black" colSpan={2}>Total INGRESOS</td>
                         <td className="py-2.5 px-3 text-right font-black text-orange-700">{formatNum(dataA.totalIngresos)}</td>
@@ -7409,27 +7414,41 @@ export default function App() {
                       {/* ── COSTOS ── */}
                       <tr className="bg-gray-800 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>COSTOS</td></tr>
 
-                      {/* Costo produccion */}
-                      <tr className="bg-gray-200"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={tasa>1?5:4}>COSTO DE PRODUCCIÓN VENDIDA</td></tr>
-                      <tr className="bg-gray-100 text-gray-600">
-                        <td className="py-1.5 px-4 pl-14 font-black text-[9px] uppercase">OP / Producto</td>
-                        <td className="py-1.5 px-3 text-center font-black text-[9px]">Unid.</td>
-                        <td className="py-1.5 px-3 text-right font-black text-[9px]">Cant.</td>
-                        <td className="py-1.5 px-3 text-right font-black text-[9px]">Total $</td>
-                        {tasa>1&&<td className="py-1.5 px-3 text-right font-black text-[9px]">Bs</td>}
+                      {/* Costo produccion — colapsable */}
+                      <tr className="bg-gray-200 cursor-pointer hover:bg-gray-300 select-none"
+                        onClick={()=>setErExpanded(p=>({...p,costo_ventas:!p.costo_ventas}))}>
+                        <td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={tasa>1?4:3}>
+                          <span className="mr-2">{erExpanded.costo_ventas?'▼':'▶'}</span>
+                          COSTO DE PRODUCCIÓN VENDIDA
+                          <span className="ml-3 text-[9px] text-gray-400">{erExpanded.costo_ventas?'contraer':'expandir detalle'}</span>
+                        </td>
+                        <td className="py-1.5 px-3 text-right font-black">${formatNum(dataA.totalCostoProd)}</td>
+                        {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-gray-600">{bs(dataA.totalCostoProd)}</td>}
                       </tr>
-                      {(dataA.cogsRows||[]).length>0 ? (dataA.cogsRows||[]).map((row,i)=>(
-                        <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="py-2 px-4 pl-14">
-                            <div className="font-black text-[10px] text-orange-600">OP-{row.opNum}</div>
-                            <div className="font-bold text-[10px] uppercase">{row.producto}</div>
-                          </td>
-                          <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">{row.unidad}</td>
-                          <td className="py-2 px-3 text-right font-bold text-blue-700">{formatNum(row.cantVendida)} × ${formatNum(row.costoUnit)}</td>
-                          <td className="py-2 px-3 text-right font-black">{formatNum(row.costoTotal)}</td>
-                          {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(row.costoTotal)}</td>}
+                      {erExpanded.costo_ventas && (dataA.cogsRows||[]).length>0 && <>
+                        <tr className="bg-gray-100 text-gray-600 text-[9px] font-black uppercase">
+                          <td className="py-1 px-4 pl-14">OP / Producto / Cliente</td>
+                          <td className="py-1 px-3 text-center">Unid.</td>
+                          <td className="py-1 px-3 text-right">Cant. × Costo Unit.</td>
+                          <td className="py-1 px-3 text-right">Total $</td>
+                          {tasa>1&&<td className="py-1 px-3 text-right">Bs</td>}
                         </tr>
-                      )) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={tasa>1?5:4}>Sin ventas de producción</td></tr>}
+                        {(dataA.cogsRows||[]).map((row,i)=>(
+                          <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                            <td className="py-1.5 px-4 pl-14">
+                              <div className="font-black text-[10px] text-orange-600">OP-{row.opNum}{row.factura&&` · ${row.factura}`}</div>
+                              <div className="font-bold text-[10px] uppercase">{row.producto}</div>
+                              {row.cliente&&<div className="text-[9px] text-gray-400">{row.cliente}</div>}
+                            </td>
+                            <td className="py-1.5 px-3 text-center text-[9px] text-gray-500 font-bold">{row.unidad}</td>
+                            <td className="py-1.5 px-3 text-right font-bold text-blue-700 text-[10px]">{formatNum(row.cantVendida)} × ${formatNum(row.costoUnit)}</td>
+                            <td className="py-1.5 px-3 text-right font-black">{formatNum(row.costoTotal)}</td>
+                            {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-gray-600">{bs(row.costoTotal)}</td>}
+                          </tr>
+                        ))}
+                      </>}
+                      {erExpanded.costo_ventas && (dataA.cogsRows||[]).length===0 &&
+                        <tr><td colSpan={tasa>1?5:4} className="py-1.5 px-4 pl-14 text-[10px] text-gray-400 italic">Sin ventas de producción</td></tr>}
                       <tr className="bg-gray-100 border-b border-gray-300">
                         <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total COSTO DE VENTAS</td>
                         <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalCostoProd)}</td>
@@ -7437,11 +7456,20 @@ export default function App() {
                         {tasa>1&&<td className="py-2 px-3 text-right font-black">{bs(dataA.totalCostoProd)}</td>}
                       </tr>
 
-                      {/* Costos Operativos — FLAT, sin subtotales por subgrupo */}
+                      {/* Costos Operativos — colapsable */}
                       {Object.values(dataA.costosPorCuenta).length > 0 && (
                         <>
-                          <tr className="bg-gray-200"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={tasa>1?5:4}>OTROS COSTOS OPERATIVOS</td></tr>
-                          {Object.values(dataA.costosPorCuenta).map((c,i)=>(
+                          <tr className="bg-gray-200 cursor-pointer hover:bg-gray-300 select-none"
+                            onClick={()=>setErExpanded(p=>({...p,costos_op:!p.costos_op}))}>
+                            <td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={tasa>1?4:3}>
+                              <span className="mr-2">{erExpanded.costos_op?'▼':'▶'}</span>
+                              OTROS COSTOS OPERATIVOS
+                              <span className="ml-3 text-[9px] text-gray-400">{erExpanded.costos_op?'contraer':'expandir detalle'}</span>
+                            </td>
+                            <td className="py-1.5 px-3 text-right font-black">${formatNum(dataA.totalCostosOp)}</td>
+                            {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-gray-600">{bs(dataA.totalCostosOp)}</td>}
+                          </tr>
+                          {erExpanded.costos_op && Object.values(dataA.costosPorCuenta).map((c,i)=>(
                             <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
                               <td className="py-2 px-4 font-bold text-[10px] pl-14">
                                 {c.codigo&&<span className="text-orange-600 font-black mr-2">{c.codigo}</span>}
@@ -8493,6 +8521,15 @@ export default function App() {
   const renderConfiguracionModule = () => {
     return (
       <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
+        {/* Accesos Directos Contables */}
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-200">
+          <h2 className="text-xl font-black uppercase text-black mb-4 flex items-center gap-3 border-b pb-3"><ArrowRightLeft className="text-teal-500"/> Contabilidad</h2>
+          <button onClick={() => setActiveTab('libro_diario')}
+            className="px-6 py-3 rounded-2xl border-2 border-teal-200 bg-teal-50 text-teal-700 font-black text-[10px] uppercase hover:bg-teal-100 flex items-center gap-2 transition-all shadow-sm">
+            <ArrowRightLeft size={16}/> Libro Diario — Asientos Contables
+          </button>
+        </div>
+
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
            <h2 className="text-xl font-black uppercase text-black mb-6 flex items-center gap-3 border-b pb-4"><Settings2 className="text-gray-400"/> Configuración del Sistema</h2>
            <div className="space-y-6">
