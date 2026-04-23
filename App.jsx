@@ -858,8 +858,28 @@ export default function App() {
 
       if (!editingInvoiceId) {
         const montoBase = parseNum(newInvoiceForm.montoBase);
-        // ── Procesar todos los lotes del carrito ──
-        const itemsToProcess = fgItems.length > 0 ? fgItems : (newInvoiceForm.fgId && parseNum(newInvoiceForm.fgCantidad) > 0 ? [{ fgId: newInvoiceForm.fgId, cantidad: parseNum(newInvoiceForm.fgCantidad) }] : []);
+
+        // ── Construir lista de items a procesar ──
+        // Prioridad: carrito (fgItems) > selección pendiente en formulario
+        let itemsToProcess = [...fgItems];
+
+        // Si hay una selección en el formulario que no fue agregada al carrito, procesarla también
+        if (newInvoiceForm.fgId) {
+          const fgPendiente = (finishedGoodsInventory || []).find(f => f.id === newInvoiceForm.fgId);
+          if (fgPendiente && !itemsToProcess.some(i => i.fgId === newInvoiceForm.fgId)) {
+            const esTermo = fgPendiente.tipoProducto === 'TERMOENCOGIBLE';
+            const maxDisp = esTermo ? parseNum(fgPendiente.kgProducidos) : parseNum(fgPendiente.millares);
+            // Usar la cantidad ingresada, si no hay cantidad usar el total disponible
+            const cantPendiente = parseNum(newInvoiceForm.fgCantidad) > 0
+              ? Math.min(parseNum(newInvoiceForm.fgCantidad), maxDisp)
+              : maxDisp;
+            if (cantPendiente > 0) {
+              itemsToProcess.push({ fgId: newInvoiceForm.fgId, cantidad: cantPendiente });
+            }
+          }
+        }
+
+        // ── Descontar cada item del inventario de terminados ──
         for (const item of itemsToProcess) {
           const fg = (finishedGoodsInventory || []).find(f => f.id === item.fgId);
           if (!fg) continue;
@@ -867,30 +887,49 @@ export default function App() {
           const cantFacturada = parseNum(item.cantidad);
           const cantDisponible = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
           const cantRestante = Math.max(0, cantDisponible - cantFacturada);
+
           if (cantFacturada > 0) {
             if (cantRestante <= 0.001) {
-              await updateDoc(getDocRef('finishedGoodsInventory', fg.id), { status: 'ENTREGADO', millares: 0, kgProducidos: 0 });
+              // Stock agotado → marcar ENTREGADO con ceros
+              await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
+                status: 'ENTREGADO', millares: 0, kgProducidos: 0
+              });
             } else {
-              // Para bolsas: KG restante proporcional a millares restantes
+              // Stock parcial → actualizar cantidades restantes
               const kgOrigen = parseNum(fg.kgProducidosOrigen || fg.kgProducidos);
               const millOrigen = parseNum(fg.millaresOrigen || fg.millares || 1);
-              const newKg = esTermo ? cantRestante : (kgOrigen * cantRestante / Math.max(0.0001, millOrigen));
+              const newKg = esTermo ? cantRestante : Math.max(0, kgOrigen * cantRestante / Math.max(0.0001, millOrigen));
               await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
-                millares: esTermo ? 0 : cantRestante,
-                kgProducidos: Math.max(0, newKg),
-                observaciones: `${fg.observaciones || ''} | Parcial: ${formatNum(cantFacturada)} facturado FAC ${id}`.trim()
+                millares: esTermo ? parseNum(fg.millares) : cantRestante,
+                kgProducidos: newKg,
+                observaciones: ((fg.observaciones || '') + ` | ${formatNum(cantFacturada)} facturado FAC ${id}`).trim()
               });
             }
-            const costoFG = parseNum(fg.costoUnitario) * (esTermo ? cantFacturada : (cantFacturada * parseNum(fg.kgProducidos) / Math.max(1, parseNum(fg.millares))));
-            if (costoFG > 0) await registrarAsientoContable(null, { debito: '5.1.01.01.001', credito: '1.1.03.01.008', monto: costoFG, descripcion: `COSTO PROD — FAC ${id} — Lote ${fg.id}`, referencia: id, fecha: newInvoiceForm.fecha });
+            // Asiento contable de costo
+            const kgRef = esTermo ? cantFacturada : (cantFacturada * parseNum(fg.kgProducidos) / Math.max(0.0001, parseNum(fg.millares)));
+            const costoFG = parseNum(fg.costoUnitario) * kgRef;
+            if (costoFG > 0) {
+              await registrarAsientoContable(null, {
+                debito: '5.1.01.01.001', credito: '1.1.03.01.008',
+                monto: costoFG,
+                descripcion: `COSTO PROD — FAC ${id} — ${fg.producto || fg.id}`,
+                referencia: id, fecha: newInvoiceForm.fecha
+              });
+            }
           }
         }
-        await registrarAsientoContable(null, { debito: 'CXC/CLIENTE', credito: '4.1.01.01.000', monto: montoBase, descripcion: `INGRESO MAQUILA — FACTURA ${id} — ${newInvoiceForm.clientName || ''}`, referencia: id, fecha: newInvoiceForm.fecha });
+
+        await registrarAsientoContable(null, {
+          debito: 'CXC/CLIENTE', credito: '4.1.01.01.000',
+          monto: montoBase,
+          descripcion: `INGRESO MAQUILA — FACTURA ${id} — ${newInvoiceForm.clientName || ''}`,
+          referencia: id, fecha: newInvoiceForm.fecha
+        });
       }
 
       setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm); setFgItems([]);
-      setDialog({title: '✅ Éxito', text: editingInvoiceId ? 'Factura actualizada.' : 'Factura Registrada.', type: 'alert'}); 
-    } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
+      setDialog({title: '✅ Éxito', text: editingInvoiceId ? 'Factura actualizada.' : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
+    } catch(err) { setDialog({title: 'Error al guardar factura', text: err.message, type: 'alert'}); }
   };
   const handleDeleteInvoice = (id) => {
     setDialog({ 
@@ -6730,6 +6769,7 @@ export default function App() {
       { id: 'general', icon: <FileText size={26}/>, label: 'Reporte General', desc: 'Resumen completo del periodo', color: 'blue' },
       { id: 'ingresos_vs_costos', icon: <BarChart3 size={26}/>, label: 'Ingresos vs Costos', desc: 'Comparativo 12 meses', color: 'green' },
       { id: 'mermas', icon: <AlertTriangle size={26}/>, label: 'Mermas', desc: 'Perdidas y desperdicios', color: 'orange' },
+      { id: 'resumen_mensual', icon: <ClipboardList size={26}/>, label: 'Resumen Mensual', desc: 'Todas las OPs del mes', color: 'teal' },
       { id: 'super_finiquito', icon: <FileCheck size={26}/>, label: 'Finiquito por OP', desc: 'Por orden individual', color: 'purple' },
       { id: 'estado_financiero', icon: <TrendingUp size={26}/>, label: 'Estado Financiero', desc: 'Estado de resultado integral', color: 'gray' },
       { id: 'variaciones', icon: <TrendingDown size={26}/>, label: 'Variaciones', desc: 'Mes actual vs anterior', color: 'red' },
@@ -6768,7 +6808,7 @@ export default function App() {
               </div>
             </div>
 
-            {['general','ingresos_vs_costos','mermas','super_finiquito'].includes(showReportType) && (
+            {['general','ingresos_vs_costos','mermas','super_finiquito','resumen_mensual'].includes(showReportType) && (
               <div className="flex gap-4 items-center no-pdf">
                 <div>
                   <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes de Analisis</label>
@@ -7022,6 +7062,132 @@ export default function App() {
                           <div><span className="text-[9px] text-gray-400 block">Costo Total</span><span className="font-black text-red-400">${formatNum(filteredGroups.reduce((s,g)=>s+g.totalCosto,0))}</span></div>
                         </div>
                       </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ── RESUMEN MENSUAL DE PRODUCCIÓN ── */}
+            {showReportType === 'resumen_mensual' && (() => {
+              const selMonth = selectedMonth; // e.g. "2026-03"
+              const [selY, selM] = selMonth.split('-').map(Number);
+              const monthName = new Date(selY, selM-1, 1).toLocaleString('es-ES', {month:'long', year:'numeric'});
+
+              // OPs completadas cuya fecha de cierre (último lote) cae en el mes seleccionado
+              const opsDelMes = (requirements||[]).filter(r => {
+                if (r.status !== 'COMPLETADO') return false;
+                const prod = r.production || {};
+                const allB = [
+                  ...(prod.extrusion?.batches||[]),
+                  ...(prod.impresion?.batches||[]),
+                  ...(prod.sellado?.batches||[]),
+                ].filter(b => b.operator !== 'ALMACÉN (DESPACHO)');
+                const lastDate = allB.map(b=>b.date||'').filter(Boolean).sort().pop() || r.fecha || '';
+                return lastDate.startsWith(selMonth);
+              });
+
+              // Totales acumulados
+              let totMpKg=0, totProdKg=0, totMermaKg=0, totMillares=0, totCostoMP=0, totIngresos=0;
+              const rowData = opsDelMes.map(req => {
+                const prod = req.production || {};
+                const fr = b => b.operator !== 'ALMACÉN (DESPACHO)' && (parseNum(b.producedKg)>0||(b.insumos||[]).length>0);
+                const extB=(prod.extrusion?.batches||[]).filter(fr);
+                const impB=(prod.impresion?.batches||[]).filter(fr);
+                const selB=(prod.sellado?.batches||[]).filter(fr);
+                const allB=[...extB,...impB,...selB];
+                const lastB=selB.length>0?selB:impB.length>0?impB:extB;
+                const mpKg=extB.reduce((s,b)=>{const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);return s+(ins>0?ins:parseNum(b.kgRecibidos||0));},0)||selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0);
+                const kgProd=lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+                const merma=allB.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
+                const mill=selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+                const costoMP=allB.reduce((s,b)=>s+parseNum(b.cost||0),0);
+                const ingresos=(invoices||[]).filter(i=>i.opAsignada===req.id).reduce((s,i)=>s+parseNum(i.total),0);
+                const pctMerma=mpKg>0?((merma/mpKg)*100).toFixed(1):'0.0';
+                const esTermo=req.tipoProducto==='TERMOENCOGIBLE';
+                totMpKg+=mpKg; totProdKg+=kgProd; totMermaKg+=merma; totMillares+=mill; totCostoMP+=costoMP; totIngresos+=ingresos;
+                return {req, mpKg, kgProd, merma, mill, costoMP, ingresos, pctMerma, esTermo};
+              });
+              const totUtilidad = totIngresos - totCostoMP;
+              const totPctMerma = totMpKg > 0 ? ((totMermaKg/totMpKg)*100).toFixed(1) : '0.0';
+
+              return (
+                <div id="pdf-content" className="space-y-4">
+                  <div className="flex justify-between items-center no-pdf">
+                    <h3 className="text-lg font-black uppercase">Resumen Mensual de Producción — {monthName}</h3>
+                    <button onClick={()=>handleExportPDF(`Resumen_Mensual_${selMonth}`,true)} className="bg-black text-white px-5 py-2 rounded-xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir</button>
+                  </div>
+                  <div className="hidden pdf-header mb-4"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-teal-500 pb-2">RESUMEN MENSUAL DE PRODUCCIÓN — {monthName.toUpperCase()}</h1></div>
+
+                  {/* KPIs del mes */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {[
+                      ['OPs Completadas', String(opsDelMes.length), 'bg-teal-50 border-teal-200 text-teal-700'],
+                      ['MP Procesada', formatNum(totMpKg)+' KG', 'bg-blue-50 border-blue-200 text-blue-700'],
+                      ['KG Producidos', formatNum(totProdKg)+' KG', 'bg-green-50 border-green-200 text-green-700'],
+                      ['Millares Totales', formatNum(totMillares)+' Mill.', 'bg-indigo-50 border-indigo-200 text-indigo-700'],
+                      ['Merma Total', formatNum(totMermaKg)+' KG ('+totPctMerma+'%)', 'bg-red-50 border-red-200 text-red-700'],
+                      ['Costo MP Total', '$'+formatNum(totCostoMP), 'bg-orange-50 border-orange-200 text-orange-700'],
+                      ['Ingresos Total', '$'+formatNum(totIngresos), 'bg-emerald-50 border-emerald-200 text-emerald-700'],
+                      ['Utilidad Neta', '$'+formatNum(totUtilidad), totUtilidad>=0?'bg-blue-50 border-blue-200 text-blue-700':'bg-red-50 border-red-200 text-red-700'],
+                    ].map(([l,v,cls],i)=>(
+                      <div key={i} className={`border rounded-xl p-3 text-center ${cls}`}>
+                        <div className="text-[9px] font-black uppercase mb-1">{l}</div>
+                        <div className="text-lg font-black">{v}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Tabla detalle por OP */}
+                  {opsDelMes.length === 0 ? (
+                    <div className="text-center py-12 text-gray-400 font-bold uppercase text-xs">No hay OPs completadas en {monthName}</div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-gray-200">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-800 text-white">
+                          <tr className="font-black text-[9px] uppercase">
+                            <th className="p-3 border-r border-gray-700 text-left">OP</th>
+                            <th className="p-3 border-r border-gray-700 text-left">Cliente</th>
+                            <th className="p-3 border-r border-gray-700 text-left">Producto</th>
+                            <th className="p-3 border-r border-gray-700 text-center">MP (KG)</th>
+                            <th className="p-3 border-r border-gray-700 text-center">Prod. Final</th>
+                            <th className="p-3 border-r border-gray-700 text-center">Merma (%)</th>
+                            <th className="p-3 border-r border-gray-700 text-center">Costo MP</th>
+                            <th className="p-3 border-r border-gray-700 text-center">Ingresos</th>
+                            <th className="p-3 text-center">Utilidad</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {rowData.map(({req,mpKg,kgProd,merma,mill,costoMP,ingresos,pctMerma,esTermo},idx)=>{
+                            const utilidad=ingresos-costoMP;
+                            const prodFinal=esTermo?formatNum(kgProd)+' KG':formatNum(mill)+' Mill.';
+                            return (
+                              <tr key={req.id} className={idx%2===0?'bg-white':'bg-gray-50'}>
+                                <td className="p-3 border-r font-black text-orange-600">#{String(req.id).replace('OP-','').padStart(5,'0')}</td>
+                                <td className="p-3 border-r font-bold uppercase text-[10px]">{req.client}</td>
+                                <td className="p-3 border-r font-bold text-[10px]">{req.desc}<div className="text-[8px] text-gray-400">{req.ancho}×{req.largo}cm {req.micras}mic</div></td>
+                                <td className="p-3 border-r text-center font-black text-blue-700">{formatNum(mpKg)}</td>
+                                <td className="p-3 border-r text-center font-black text-green-700">{prodFinal}</td>
+                                <td className="p-3 border-r text-center font-black text-red-600">{formatNum(merma)} kg<div className="text-[8px]">({pctMerma}%)</div></td>
+                                <td className="p-3 border-r text-center font-bold text-orange-600">${formatNum(costoMP)}</td>
+                                <td className="p-3 border-r text-center font-bold text-green-600">${formatNum(ingresos)}</td>
+                                <td className={`p-3 text-center font-black ${utilidad>=0?'text-blue-600':'text-red-600'}`}>${formatNum(utilidad)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-orange-500 text-white font-black text-[10px] uppercase">
+                            <td colSpan="3" className="p-3 text-right">TOTALES ({opsDelMes.length} OPs):</td>
+                            <td className="p-3 text-center">{formatNum(totMpKg)} kg</td>
+                            <td className="p-3 text-center">{formatNum(totMillares)>0?formatNum(totMillares)+' Mill.':formatNum(totProdKg)+' kg'}</td>
+                            <td className="p-3 text-center">{formatNum(totMermaKg)} kg ({totPctMerma}%)</td>
+                            <td className="p-3 text-center">${formatNum(totCostoMP)}</td>
+                            <td className="p-3 text-center">${formatNum(totIngresos)}</td>
+                            <td className="p-3 text-center">${formatNum(totUtilidad)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
                     </div>
                   )}
                 </div>
