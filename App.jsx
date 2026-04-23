@@ -932,10 +932,40 @@ export default function App() {
   };
   const handleDeleteInvoice = (id) => {
     setDialog({ 
-      title: 'Eliminar', 
-      text: `¿Eliminar factura?`, 
+      title: 'Eliminar Factura', 
+      text: `¿Eliminar factura? Se restaurará el inventario de productos terminados asociados.`, 
       type: 'confirm', 
-      onConfirm: async () => await deleteDoc(getDocRef('maquilaInvoices', id))
+      onConfirm: async () => {
+        try {
+          // Encontrar la factura a eliminar
+          const inv = (invoices||[]).find(i => i.id === id);
+          if (inv?.opAsignada) {
+            // Restaurar stock de FG vinculados a esta OP
+            const fgDeOp = (finishedGoodsInventory||[]).filter(fg => fg.opId === inv.opAsignada);
+            for (const fg of fgDeOp) {
+              const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+              const kgOrigen = parseNum(fg.kgProducidosOrigen || 0);
+              const millOrigen = parseNum(fg.millaresOrigen || 0);
+              // Solo restaurar si tiene valores origen y el stock actual es menor
+              if (kgOrigen > parseNum(fg.kgProducidos) || (fg.status === 'ENTREGADO' && kgOrigen > 0)) {
+                await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
+                  status: 'LISTO PARA ENTREGA',
+                  kgProducidos: kgOrigen > 0 ? kgOrigen : fg.kgProducidos,
+                  millares: millOrigen > 0 ? millOrigen : fg.millares,
+                  observaciones: ((fg.observaciones||'') + ` | Restaurado al eliminar FAC ${id}`).trim()
+                });
+              } else if (fg.status === 'ENTREGADO') {
+                // FG antiguo sin Origen → solo revertir status
+                await updateDoc(getDocRef('finishedGoodsInventory', fg.id), { status: 'LISTO PARA ENTREGA' });
+              }
+            }
+          }
+          await deleteDoc(getDocRef('maquilaInvoices', id));
+          setDialog({title:'✅ Eliminada', text:'Factura eliminada y stock restaurado.', type:'alert'});
+        } catch(err) {
+          setDialog({title:'Error', text:err.message, type:'alert'});
+        }
+      }
     });
   };
   const startEditInvoice = (inv) => {
@@ -2099,17 +2129,37 @@ export default function App() {
       .map(fg => {
         const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
         const stockVal = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-        // Costo unitario: $/KG para termo, $/Millar para bolsas
+
+        // Calcular costo desde datos de producción si no está guardado
+        const calcCostoFromOP = () => {
+          const req = (requirements||[]).find(r => r.id === fg.opId);
+          if (!req) return 0;
+          const prod = req.production || {};
+          const allB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])]
+            .filter(b => b.operator !== 'ALMACÉN (DESPACHO)');
+          const costoTotal = allB.reduce((s,b)=>s+parseNum(b.cost||0),0);
+          const lastB = prod.sellado?.batches?.filter(b=>b.operator!=='ALMACÉN (DESPACHO)') ||
+                        prod.impresion?.batches?.filter(b=>b.operator!=='ALMACÉN (DESPACHO)') ||
+                        prod.extrusion?.batches?.filter(b=>b.operator!=='ALMACÉN (DESPACHO)') || [];
+          const kgTot = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+          const millTot = [...(prod.sellado?.batches||[]),...(prod.impresion?.batches||[]),...(prod.extrusion?.batches||[])]
+            .reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+          if (esTermo) return kgTot > 0 ? costoTotal / kgTot : 0;
+          return millTot > 0 ? costoTotal / millTot : 0;
+        };
+
+        // $/KG para termo, $/Millar para bolsas
         const costoUnit = esTermo
-          ? parseNum(fg.costoUnitario || 0)
+          ? (parseNum(fg.costoUnitario) > 0 ? parseNum(fg.costoUnitario) : calcCostoFromOP())
           : (() => {
-              // Usar costoUnitarioMillar guardado; si no existe, calcularlo
               if (parseNum(fg.costoUnitarioMillar) > 0) return parseNum(fg.costoUnitarioMillar);
-              const kgTotal = parseNum(fg.kgProducidos || 0);
-              const millTotal = parseNum(fg.millares || 1);
-              const kgPorMillar = millTotal > 0 ? kgTotal / millTotal : 0;
-              return parseNum(fg.costoUnitario || 0) * kgPorMillar;
+              // Calcular desde costoUnitario ($/KG) × KG/Millar si existe
+              if (parseNum(fg.costoUnitario) > 0 && parseNum(fg.kgProducidos) > 0 && parseNum(fg.millares) > 0) {
+                return parseNum(fg.costoUnitario) * parseNum(fg.kgProducidos) / parseNum(fg.millares);
+              }
+              return calcCostoFromOP();
             })();
+
         return {
           id: fg.id,
           desc: `${fg.producto || fg.id} | ${fg.cliente} | OP ${fg.opId}`,
@@ -6821,13 +6871,7 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              {/* Estado de Resultado — abre como módulo separado */}
-              <div className="flex gap-3 mt-3">
-                <button onClick={() => setActiveTab('estado_resultado')}
-                  className="px-5 py-2.5 rounded-xl border-2 border-indigo-200 bg-indigo-50 text-indigo-700 font-black text-[10px] uppercase hover:bg-indigo-100 flex items-center gap-2 transition-all">
-                  <TrendingUp size={14}/> Estado de Resultado
-                </button>
-              </div>
+              {/* Acceso a Estado de Resultado está en el menú lateral */}
             </div>
 
             {['general','ingresos_vs_costos','mermas','super_finiquito','resumen_mensual'].includes(showReportType) && (
@@ -7883,18 +7927,44 @@ export default function App() {
       const fgDeOp = (finishedGoodsInventory || []).filter(fg => fg.opId === opId);
       fgDeOp.forEach(fg => {
         const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-        const cuMillar = parseNum(fg.costoUnitarioMillar || 0);
-        const cuKg = parseNum(fg.costoUnitario || 0);
         const millOrigen = parseNum(fg.millaresOrigen || fg.millares || 0);
         const kgOrigen = parseNum(fg.kgProducidosOrigen || fg.kgProducidos || 0);
-        // Cantidad vendida = original - lo que queda en inventario
-        const cantVendida = esTermo
+
+        // Calcular costo unitario real desde OP si no está guardado
+        const getCostoUnit = () => {
+          if (esTermo && parseNum(fg.costoUnitario) > 0) return parseNum(fg.costoUnitario);
+          if (!esTermo && parseNum(fg.costoUnitarioMillar) > 0) return parseNum(fg.costoUnitarioMillar);
+          // Recalcular desde batches de la OP
+          const req = (requirements||[]).find(r => r.id === opId);
+          if (!req) return 0;
+          const prod = req.production || {};
+          const allB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])]
+            .filter(b => b.operator !== 'ALMACÉN (DESPACHO)');
+          const costoTotal = allB.reduce((s,b)=>s+parseNum(b.cost||0),0);
+          const lastB = (prod.sellado?.batches||prod.impresion?.batches||prod.extrusion?.batches||[])
+            .filter(b=>b.operator!=='ALMACÉN (DESPACHO)');
+          const kgProd = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+          const millProd = allB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+          if (esTermo) return kgProd > 0 ? costoTotal / kgProd : 0;
+          return millProd > 0 ? costoTotal / millProd : 0;
+        };
+        const costoUnit = getCostoUnit();
+
+        // Cantidad vendida = original - stock actual
+        // Para FG antiguos sin millaresOrigen, estimar desde las facturas
+        let cantVendida = esTermo
           ? Math.max(0, kgOrigen - parseNum(fg.kgProducidos))
           : Math.max(0, millOrigen - parseNum(fg.millares));
-        if (cantVendida <= 0) return;
-        const costoUnit = esTermo ? cuKg : cuMillar;
-        const costoTotal = cantVendida * costoUnit;
-        totalCostoProd += costoTotal;
+
+        // Si cantVendida es 0 y el FG está ENTREGADO → asumir que todo fue vendido
+        if (cantVendida <= 0 && fg.status === 'ENTREGADO') {
+          cantVendida = esTermo ? kgOrigen : millOrigen;
+        }
+
+        if (cantVendida <= 0 || costoUnit <= 0) return;
+
+        const costoTotal2 = cantVendida * costoUnit;
+        totalCostoProd += costoTotal2;
         cogsRows.push({
           opId,
           opNum: String(opId).replace('OP-','').padStart(5,'0'),
@@ -7903,7 +7973,7 @@ export default function App() {
           cantVendida,
           unidad: esTermo ? 'KG' : 'Millares',
           costoUnit,
-          costoTotal,
+          costoTotal: costoTotal2,
           esTermo,
           factura: inv.documento
         });
