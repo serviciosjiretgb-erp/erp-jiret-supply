@@ -937,31 +937,51 @@ export default function App() {
       type: 'confirm', 
       onConfirm: async () => {
         try {
-          // Encontrar la factura a eliminar
           const inv = (invoices||[]).find(i => i.id === id);
           if (inv?.opAsignada) {
-            // Restaurar stock de FG vinculados a esta OP
             const fgDeOp = (finishedGoodsInventory||[]).filter(fg => fg.opId === inv.opAsignada);
             for (const fg of fgDeOp) {
               const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-              const kgOrigen = parseNum(fg.kgProducidosOrigen || 0);
-              const millOrigen = parseNum(fg.millaresOrigen || 0);
-              // Solo restaurar si tiene valores origen y el stock actual es menor
-              if (kgOrigen > parseNum(fg.kgProducidos) || (fg.status === 'ENTREGADO' && kgOrigen > 0)) {
-                await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
-                  status: 'LISTO PARA ENTREGA',
-                  kgProducidos: kgOrigen > 0 ? kgOrigen : fg.kgProducidos,
-                  millares: millOrigen > 0 ? millOrigen : fg.millares,
-                  observaciones: ((fg.observaciones||'') + ` | Restaurado al eliminar FAC ${id}`).trim()
-                });
-              } else if (fg.status === 'ENTREGADO') {
-                // FG antiguo sin Origen → solo revertir status
-                await updateDoc(getDocRef('finishedGoodsInventory', fg.id), { status: 'LISTO PARA ENTREGA' });
+
+              // Obtener cantidades originales — usar Origen si existen y > 0,
+              // si no, recalcular desde los batches de la OP
+              let kgOrigen = parseNum(fg.kgProducidosOrigen || 0);
+              let millOrigen = parseNum(fg.millaresOrigen || 0);
+
+              if (kgOrigen <= 0 || (!esTermo && millOrigen <= 0)) {
+                // Recalcular desde los lotes de producción del batchId
+                const req = (requirements||[]).find(r => r.id === fg.opId);
+                if (req) {
+                  const prod = req.production || {};
+                  const batchId = fg.batchId;
+                  // Encontrar el batch específico
+                  const findBatch = (batches) => (batches||[]).find(b => b.id === batchId || String(b.id) === String(batchId));
+                  const bExt = findBatch(prod.extrusion?.batches);
+                  const bSel = findBatch(prod.sellado?.batches);
+                  const bImp = findBatch(prod.impresion?.batches);
+                  const lastB = bSel || bImp || bExt;
+                  if (lastB) {
+                    kgOrigen = parseNum(lastB.producedKg || 0);
+                    millOrigen = parseNum(lastB.techParams?.millares || 0);
+                  }
+                }
               }
+
+              // Si seguimos sin tener valores, usar los actuales del FG + lo vendido
+              // (estimado desde las observaciones o simplemente restaurar status)
+              const kgRestaurar = kgOrigen > 0 ? kgOrigen : parseNum(fg.kgProducidos);
+              const millRestaurar = millOrigen > 0 ? millOrigen : parseNum(fg.millares);
+
+              await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
+                status: 'LISTO PARA ENTREGA',
+                kgProducidos: kgRestaurar,
+                millares: esTermo ? 0 : millRestaurar,
+                observaciones: ((fg.observaciones||'').replace(/ \| .*facturado FAC.*$/,'') + ` | Restaurado FAC ${id} eliminada`).trim()
+              });
             }
           }
           await deleteDoc(getDocRef('maquilaInvoices', id));
-          setDialog({title:'✅ Eliminada', text:'Factura eliminada y stock restaurado.', type:'alert'});
+          setDialog({title:'✅ Eliminada', text:'Factura eliminada y stock restaurado en Inventario de Terminados.', type:'alert'});
         } catch(err) {
           setDialog({title:'Error', text:err.message, type:'alert'});
         }
@@ -1527,7 +1547,8 @@ export default function App() {
                      <th className="py-3 px-4 border-r print:border-black">Ítem / Código</th>
                      <th className="py-3 px-4 text-center border-r print:border-black">Cant.</th>
                      <th className="py-3 px-4 text-right border-r print:border-black">Costo U.</th>
-                     <th className="py-3 px-4 text-right print:border-black">Valor Total</th>
+                     <th className="py-3 px-4 text-right border-r print:border-black">Valor Total</th>
+                     <th className="py-3 px-4 text-center no-pdf">Eliminar</th>
                    </tr>
                  </thead>
                  <tbody className="divide-y divide-gray-100 text-black print:divide-black">
@@ -1540,11 +1561,42 @@ export default function App() {
                          <td className="py-3 px-4 font-bold border-r print:border-black">{m.itemId}<br/><span className="text-[9px] font-black print:text-black">{m.itemName}</span></td>
                          <td className={`py-3 px-4 text-center font-black text-sm border-r print:border-black ${isPos ? 'text-green-600' : 'text-red-600'} print:text-black`}>{isPos ? '+' : '-'}{formatNum(m.qty)}</td>
                          <td className="py-3 px-4 text-right font-bold text-gray-600 border-r print:border-black print:text-black">${formatNum(m.cost)}</td>
-                         <td className="py-3 px-4 text-right font-black print:border-black print:text-black">${formatNum(m.totalValue)}</td>
+                         <td className="py-3 px-4 text-right font-black border-r print:border-black print:text-black">${formatNum(m.totalValue)}</td>
+                         <td className="py-3 px-4 text-center no-pdf">
+                           <button onClick={() => requireAdminPassword(async () => {
+                             try {
+                               // 1. Revertir el efecto en inventario general (catalogo)
+                               const invItem = (inventory||[]).find(i => i.id === m.itemId);
+                               if (invItem) {
+                                 const newStock = isPos
+                                   ? parseNum(invItem.stock) - parseNum(m.qty) // ENTRADA → restar
+                                   : parseNum(invItem.stock) + parseNum(m.qty); // SALIDA → sumar de vuelta
+                                 await updateDoc(getDocRef('inventory', m.itemId), { stock: Math.max(0, newStock) });
+                               }
+                               // 2. Si es SALIDA de producción → restaurar FG asociado
+                               if (!isPos && m.opAsignada) {
+                                 const fgDeOp = (finishedGoodsInventory||[]).filter(fg => fg.opId === m.opAsignada && fg.status === 'ENTREGADO');
+                                 for (const fg of fgDeOp) {
+                                   await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
+                                     status: 'LISTO PARA ENTREGA',
+                                     kgProducidos: parseNum(fg.kgProducidosOrigen || fg.kgProducidos),
+                                     millares: parseNum(fg.millaresOrigen || fg.millares),
+                                   });
+                                 }
+                               }
+                               // 3. Eliminar el movimiento
+                               await deleteDoc(getDocRef('inventoryMovements', m.id));
+                               setDialog({title:'✅ Eliminado', text:'Movimiento eliminado y stock restaurado.', type:'alert'});
+                             } catch(err) { setDialog({title:'Error', text:err.message, type:'alert'}); }
+                           }, 'Eliminar movimiento de inventario')}
+                             className="p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all" title="Eliminar movimiento">
+                             <Trash2 size={13}/>
+                           </button>
+                         </td>
                        </tr>
                       );
                    })}
-                   {filteredData.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin movimientos registrados</td></tr>}
+                   {filteredData.length === 0 && <tr><td colSpan="7" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin movimientos registrados</td></tr>}
                  </tbody>
                </table>
              </div>
@@ -2283,7 +2335,7 @@ export default function App() {
         {invView === 'catalogo' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Lista de Productos (Catálogo)</h2>
+               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Inventario General</h2>
                <div className="flex gap-3 flex-wrap justify-end">
                  <button onClick={() => {clearAllReports(); setInvView('toma_fisica'); setPhysicalCounts({});}} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 transition-colors flex items-center gap-2">
                    <ClipboardEdit size={16}/> TOMA FÍSICA / AJUSTE
@@ -2296,7 +2348,7 @@ export default function App() {
                    const catLabel = catalogCatFilter === 'TODAS' ? 'TODAS LAS CATEGORÍAS' : catalogCatFilter.toUpperCase();
                    let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>body{font-family:Arial;font-size:11px;}h2,h3,p{text-align:center;margin:4px 0;}table{border-collapse:collapse;width:100%;margin-top:14px;}th,td{border:1px solid #000;padding:6px 8px;}th{background:#1a1a1a;color:#fff;text-align:center;font-weight:bold;}tr.catHeader td{background:#ea580c;color:#fff;font-weight:bold;}.subtot td{background:#f3f4f6;font-weight:bold;}.grandtot td{background:#000;color:#fff;font-weight:bold;font-size:12px;}</style></head><body>`;
                    html += `<h2>${empresa}</h2><h3>RIF: ${rif}</h3><p>${dir}</p>`;
-                   html += `<h3>CATÁLOGO DE INVENTARIO — ${catLabel}</h3><p>Fecha: ${getTodayDate()}</p>`;
+                   html += `<h3>INVENTARIO GENERAL — ${catLabel}</h3><p>Fecha: ${getTodayDate()}</p>`;
                    html += `<table><thead><tr><th>Código</th><th>Descripción</th><th>Categoría</th><th>U.M.</th><th>Costo Unit. ($)</th><th>Stock Actual</th><th>Valor Total ($)</th></tr></thead><tbody>`;
                    const grouped = {};
                    filteredInventory.forEach(i => { const c = i?.category||'Otros'; if(!grouped[c]) grouped[c]=[]; grouped[c].push(i); });
@@ -2374,7 +2426,7 @@ export default function App() {
                    </div>
                    <div className="flex-1 text-right flex gap-2 justify-end">
                       {editingInvId && <button type="button" onClick={() => {setEditingInvId(null); setNewInvItemForm(initialInvItemForm);}} className="bg-gray-200 text-gray-700 px-6 py-4 rounded-2xl font-black text-[10px] uppercase hover:bg-gray-300 transition-all">CANCELAR</button>}
-                      <button type="submit" className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all">GUARDAR EN CATÁLOGO</button>
+                      <button type="submit" className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all">GUARDAR EN INVENTARIO</button>
                    </div>
                  </div>
                </form>
@@ -8640,7 +8692,7 @@ export default function App() {
                      { key:'formulas', label:'Fórmulas / Recetas', icon:'🧪', subs:[] },
                      { key:'inventario', label:'Control Inventario', icon:'📦', subs:[
                        {key:'inventario_solicitudes', label:'Solicitudes de Planta'},
-                       {key:'inventario_catalogo', label:'Catálogo'},
+                       {key:'inventario_catalogo', label:'Inv. General'},
                        {key:'inventario_movimientos', label:'Entradas / Salidas'},
                        {key:'inventario_kardex', label:'Kardex y Reportes'},
                      ]},
@@ -9236,7 +9288,7 @@ export default function App() {
               <div className="max-w-7xl mx-auto flex gap-6 px-6 overflow-x-auto">
                  {[ 
                    {id:'requisiciones', icon:<ClipboardList size={16}/>, label:'Solicitudes Planta', perm:'inventario_solicitudes'},
-                   {id:'catalogo', icon:<Box size={16}/>, label:'Catálogo', perm:'inventario_catalogo'}, 
+                   {id:'catalogo', icon:<Box size={16}/>, label:'Inv. General', perm:'inventario_catalogo'}, 
                    {id:'wip', icon:<Beaker size={16}/>, label:'WIP (Proceso)', perm:'inventario_catalogo'}, 
                    {id:'finished', icon:<Package size={16}/>, label:'Terminados', perm:'inventario_catalogo'}, 
                    {id:'cargo', icon:<ArrowDownToLine size={16}/>, label:'Entradas', perm:'inventario_movimientos'}, 
