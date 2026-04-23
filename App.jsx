@@ -2195,8 +2195,8 @@ export default function App() {
                               <tr key={g.key} className={`hover:bg-gray-50 ${idx%2===0?'bg-white':'bg-gray-50/50'}`}>
                                 <td className="py-3 px-4 border-r">
                                   <div className="font-black text-[11px] text-gray-900 uppercase">{g.categoria||g.producto}</div>
-                                  {g.color && <div className="text-[9px] text-gray-400 font-bold">{g.color}</div>}
-                                </td>
+                                  <div className="text-[9px] text-orange-600 font-bold">{g.cliente}</div>
+                                  {g.ancho && <div className="text-[9px] text-gray-500 font-bold">{g.ancho}×{g.largo}CM {g.micras?(parseNum(g.micras)/1000).toFixed(3)+'MIC':''}</div>}
                                 <td className="py-3 px-4 border-r font-bold uppercase text-[10px]">{g.cliente}</td>
                                 <td className="py-3 px-4 border-r text-center text-[10px] font-bold text-gray-600">
                                   {g.ancho||'—'}cm×{g.largo||'—'}cm | {g.micras||'—'}mic
@@ -2274,83 +2274,121 @@ export default function App() {
     }
 
     if (invView === 'toma_fisica') {
-       return (
-         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
-            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-orange-50 flex justify-between items-center no-pdf">
-               <div>
-                  <h2 className="text-xl font-black text-orange-800 uppercase flex items-center gap-3 tracking-tighter">
-                    <ClipboardEdit className="text-orange-600" size={24}/> Toma Física de Inventario
-                  </h2>
-                  <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase tracking-widest">Ajuste Masivo Directo al Sistema</p>
-               </div>
-               <div className="flex gap-2">
-                 <button onClick={exportTomaFisicaExcel} className="bg-white border-2 border-gray-200 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-2"><Download size={16}/> PLANILLA EXCEL</button>
-                 <button onClick={() => {
-                   // Guardar parcial: solo confirma sin procesar ajustes
-                   setDialog({title:'Conteo Guardado', text:'Los conteos fisicos han sido guardados temporalmente. Cuando estes listo, usa PROCESAR AJUSTES para aplicarlos al inventario.', type:'alert'});
-                 }} className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-blue-700 transition-colors flex items-center gap-2"><Save size={16}/> GUARDAR LOTE</button>
-                 <button onClick={() => requireAdminPassword(handleProcessTomaFisica, 'Procesar Ajuste de Toma Fisica')} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 transition-colors flex items-center gap-2"><CheckCircle2 size={16}/> PROCESAR AJUSTES</button>
-               </div>
-            </div>
-            
-            <div className="p-8">
-               <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl mb-6 flex items-start gap-4">
-                  <AlertTriangle size={24} className="text-blue-600 mt-1 flex-shrink-0" />
-                  <div>
-                     <h3 className="text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1">Instrucciones de Toma Física</h3>
-                     <p className="text-xs font-bold text-blue-600">Ingresa el conteo físico real de los ítems en la columna "Conteo Físico". El sistema calculará la diferencia y generará automáticamente los movimientos de "AJUSTE" correspondientes (Positivos o Negativos) al procesar.</p>
-                  </div>
-               </div>
+      // Build FG groups for toma fisica (same logic as catalog)
+      const tfFGGroups = {};
+      (finishedGoodsInventory||[]).filter(fg=>parseNum(fg.kgProducidos)>0||parseNum(fg.millares)>0).forEach(fg => {
+        const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+        const key = `FG__${fg.categoria||fg.producto||''}__${fg.cliente||''}__${fg.tipoProducto}`;
+        if (!tfFGGroups[key]) tfFGGroups[key] = {key,esTermo,categoria:fg.categoria||fg.producto||'',cliente:fg.cliente||'',tipoProducto:fg.tipoProducto,producto:fg.producto||'',ancho:fg.ancho,largo:fg.largo,micras:fg.micras,totalStock:0,lotes:[]};
+        const g = tfFGGroups[key];
+        g.totalStock += esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+        g.lotes.push(fg);
+      });
+      const tfFGList = Object.values(tfFGGroups);
 
-               <div className="overflow-x-auto rounded-xl border border-gray-200">
-                  <table className="w-full text-left whitespace-nowrap text-sm">
-                     <thead className="bg-gray-100 border-b-2 border-gray-200">
-                        <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
-                           <th className="py-3 px-4 border-r">Ítem / Código</th>
-                           <th className="py-3 px-4 border-r text-center">Unidad</th>
-                           <th className="py-3 px-4 border-r text-center">Stock Sistema</th>
-                           <th className="py-3 px-4 border-r text-center bg-orange-100 text-orange-800 w-48">Conteo Físico Real</th>
-                           <th className="py-3 px-4 text-center">Diferencia Estimada</th>
-                        </tr>
-                     </thead>
-                     <tbody className="divide-y divide-gray-100 text-black">
-                        {(inventory || []).map(item => {
-                           const physicalStr = physicalCounts[item.id];
-                           const physicalNum = physicalStr !== undefined && physicalStr !== '' ? parseNum(physicalStr) : null;
-                           const diff = physicalNum !== null ? physicalNum - item.stock : null;
+      // WIP items (inventory in production)
+      const wipItems = [];
+      (requirements||[]).filter(r=>r.status!=='COMPLETADO').forEach(req => {
+        const prod = req.production || {};
+        ['extrusion','impresion','sellado'].forEach(phase => {
+          const b = (prod[phase]?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)');
+          if (b.length > 0) {
+            const kgEn = b.reduce((s,x)=>s+parseNum(x.producedKg),0);
+            if (kgEn > 0) wipItems.push({
+              id: `WIP-${req.id}-${phase}`,
+              desc: `${req.desc} — ${phase.toUpperCase()}`,
+              cliente: req.client, opId: req.id, phase, kgEn,
+              unit: 'KG', isWip: true
+            });
+          }
+        });
+      });
 
-                           return (
-                              <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                                 <td className="py-3 px-4 border-r font-black text-xs uppercase">{item.desc}<br/><span className="text-[10px] text-gray-500 font-bold">{item.id}</span></td>
-                                 <td className="py-3 px-4 border-r text-center font-bold text-gray-500">{item.unit || 'KG'}</td>
-                                 <td className="py-3 px-4 border-r text-center font-black text-blue-600 text-lg">{formatNum(item.stock)}</td>
-                                 <td className="py-2 px-4 border-r text-center bg-orange-50/30">
-                                    <input 
-                                       type="number" 
-                                       step="0.01"
-                                       value={physicalCounts[item.id] ?? ''} 
-                                       onChange={e => setPhysicalCounts({...physicalCounts, [item.id]: e.target.value})}
-                                       className="w-full border-2 border-orange-200 rounded-lg p-2 text-center font-black text-lg outline-none focus:border-orange-500 focus:bg-white bg-gray-50 transition-all text-black"
-                                       placeholder="-"
-                                    />
-                                 </td>
-                                 <td className="py-3 px-4 text-center font-black text-lg">
-                                    {diff !== null ? (
-                                       <span className={diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-600' : 'text-gray-400'}>
-                                          {diff > 0 ? '+' : ''}{formatNum(diff)}
-                                       </span>
-                                    ) : <span className="text-gray-300">-</span>}
-                                 </td>
-                              </tr>
-                           );
-                        })}
-                        {inventory.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">El catálogo está vacío.</td></tr>}
-                     </tbody>
-                  </table>
-               </div>
+      const renderTFSection = (title, color, items, isTerminados, isFG) => (
+        <div className="mb-6">
+          <div className={`${color} text-white px-4 py-2 rounded-t-xl font-black text-[10px] uppercase tracking-widest`}>{title}</div>
+          <div className="border border-gray-200 rounded-b-xl overflow-hidden">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr className="uppercase font-black text-[9px] tracking-widest text-gray-500">
+                  <th className="py-2 px-4 border-r">Descripción / Código</th>
+                  <th className="py-2 px-4 border-r text-center">Unidad</th>
+                  <th className="py-2 px-4 border-r text-center">Stock Sistema</th>
+                  <th className="py-2 px-4 border-r text-center bg-orange-50 w-44">Conteo Físico</th>
+                  <th className="py-2 px-4 text-center">Diferencia</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {items.map(item => {
+                  const pfId = item.id;
+                  const sysStock = isFG ? item.totalStock : (item.isWip ? item.kgEn : parseNum(item.stock));
+                  const physVal = physicalCounts[pfId];
+                  const physNum = physVal !== undefined && physVal !== '' ? parseNum(physVal) : null;
+                  const diff = physNum !== null ? physNum - sysStock : null;
+                  const desc = isFG
+                    ? `${item.categoria||item.producto} | ${item.cliente} | ${item.ancho||''}×${item.largo||''}cm ${item.micras||''}mic`.toUpperCase()
+                    : item.isWip
+                      ? `${item.desc} | ${item.cliente} | OP ${item.opId}`
+                      : item.desc;
+                  return (
+                    <tr key={pfId} className="hover:bg-gray-50">
+                      <td className="py-2 px-4 border-r">
+                        <div className="font-black text-[10px] text-gray-900 uppercase">{desc}</div>
+                        <div className="text-[9px] text-gray-400 font-bold">{pfId}</div>
+                      </td>
+                      <td className="py-2 px-4 border-r text-center font-bold text-gray-500">{item.unit||'KG'}</td>
+                      <td className="py-2 px-4 border-r text-center font-black text-blue-600">{formatNum(sysStock)}</td>
+                      <td className="py-2 px-4 border-r bg-orange-50/30">
+                        <input type="number" step="0.01" value={physicalCounts[pfId]??''} onChange={e=>setPhysicalCounts({...physicalCounts,[pfId]:e.target.value})}
+                          className="w-full border-2 border-orange-200 rounded-lg p-1.5 text-center font-black outline-none focus:border-orange-500 bg-white text-sm text-black" placeholder="-"/>
+                      </td>
+                      <td className="py-2 px-4 text-center font-black text-base">
+                        {diff !== null
+                          ? <span className={diff>0?'text-green-600':diff<0?'text-red-600':'text-gray-400'}>{diff>0?'+':''}{formatNum(diff)}</span>
+                          : <span className="text-gray-300">—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {items.length === 0 && <tr><td colSpan="5" className="py-4 text-center text-xs text-gray-400 font-bold uppercase">Sin registros</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+
+      return (
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
+          <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-orange-50 flex justify-between items-center no-pdf">
+            <div>
+              <h2 className="text-xl font-black text-orange-800 uppercase flex items-center gap-3 tracking-tighter">
+                <ClipboardEdit className="text-orange-600" size={24}/> Toma Física de Inventario
+              </h2>
+              <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase tracking-widest">Todos los inventarios — Ajuste Masivo Directo al Sistema</p>
             </div>
-         </div>
-       );
+            <div className="flex gap-2">
+              <button onClick={exportTomaFisicaExcel} className="bg-white border-2 border-gray-200 text-gray-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 flex items-center gap-2"><Download size={16}/> EXCEL</button>
+              <button onClick={() => requireAdminPassword(handleProcessTomaFisica, 'Procesar Ajuste de Toma Fisica')} className="bg-orange-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 flex items-center gap-2"><CheckCircle2 size={16}/> PROCESAR AJUSTES</button>
+            </div>
+          </div>
+
+          <div className="p-6">
+            <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl mb-6 text-xs font-bold text-blue-700 flex items-start gap-3">
+              <AlertTriangle size={20} className="text-blue-600 flex-shrink-0 mt-0.5"/>
+              Ingresa el conteo físico real. El sistema calculará la diferencia y generará ajustes automáticos en el Kardex al procesar.
+            </div>
+
+            {/* 1. Inventario General (MP, Consumibles, etc.) */}
+            {renderTFSection('📦 Inventario General (Materia Prima / Consumibles)', 'bg-gray-700', inventory, false, false)}
+
+            {/* 2. Productos en Proceso (WIP) */}
+            {renderTFSection('⚙ En Proceso (WIP)', 'bg-blue-600', wipItems, false, false)}
+
+            {/* 3. Productos Terminados */}
+            {renderTFSection('✅ Productos Terminados', 'bg-green-700', tfFGList.map(g=>({...g, id:`FG-TF-${g.key}`, unit:g.esTermo?'KG':'Millares'})), false, true)}
+          </div>
+        </div>
+      );
     }
 
     const searchInvUpper = (invSearchTerm || '').toUpperCase();
@@ -2384,12 +2422,15 @@ export default function App() {
     });
     const fgAsCatalog = Object.values(fgGroups).map(g => {
       const cu = g.totalStock > 0 ? g.pesoTot / g.totalStock : 0;
-      // ID corto legible: CAT-ANXLARGxMIC (ej: EMBUTIDO1KIRI-28x75x12)
       const catSlug = (g.categoria||g.producto||'SIN').replace(/[\s_\-\/\|]/g,'').substring(0,14).toUpperCase();
       const idCorto = `FG-${catSlug}-${g.ancho||0}x${g.largo||0}x${g.micras||0}`;
+      // Descripción: EMBUTIDO 1 - KIRI | INVERSIONES AVICOLAS, C.A | 28×75CM 0.012MIC
+      const micDec = g.micras ? `${(parseNum(g.micras)/1000).toFixed(3)}MIC` : '';
+      const dimPart = g.ancho ? `${g.ancho}×${g.largo}CM ${micDec}` : micDec;
+      const descFmt = `${g.categoria||g.producto} | ${g.cliente}${dimPart?' | '+dimPart:''}`.toUpperCase();
       return {
         id: idCorto,
-        desc: `${g.categoria||g.producto} | ${g.cliente}${g.ancho?` | ${g.ancho}×${g.largo}cm ${g.micras}mic`:''}`.toUpperCase(),
+        desc: descFmt,
         category: 'Productos Terminados',
         unit: g.esTermo ? 'KG' : 'Millares',
         stock: g.totalStock,
