@@ -2140,33 +2140,131 @@ export default function App() {
           <div className="p-8 print:p-0 bg-white" id="pdf-content">
             <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black text-black uppercase border-b-4 border-green-500 pb-2">INVENTARIO DE PRODUCTOS TERMINADOS</h1></div>
 
-            {/* KPIs */}
-            <div className="grid grid-cols-4 gap-4 mb-6">
-              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-blue-700 uppercase mb-1">📦 Bolsas — Millares</div><div className="font-black text-blue-600">{formatNum(totalStockMill)} Mill. stock</div><div className="text-[9px] text-gray-500">{formatNum(totalEntradaMill)} ent. / {formatNum(totalSalidaMill)} sal.</div></div>
-              <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-green-700 uppercase mb-1">🟢 Termoencogible — KG</div><div className="font-black text-green-600">{formatNum(termos.reduce((s,i)=>s+(i.status!=='ENTREGADO'?parseNum(i.kgProducidos):0),0))} KG stock</div><div className="text-[9px] text-gray-500">{formatNum(termos.reduce((s,i)=>s+parseNum(i.kgProducidosOrigen||i.kgProducidos),0))} ent.</div></div>
-              <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-orange-700 uppercase mb-1">Total KG stock</div><div className="font-black text-orange-600 text-lg">{formatNum(totalStockKg)} KG</div></div>
-              <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-center"><div className="text-[9px] font-black text-gray-700 uppercase mb-1">Registros</div><div className="font-black text-gray-800">{bolsas.length} bolsas</div><div className="text-[9px] text-gray-500">{termos.length} termoenc.</div></div>
-            </div>
+            {/* ── Vista agrupada igual al catálogo ── */}
+            {(() => {
+              // Reutilizar la misma lógica de agrupación que el catálogo
+              const fgGrps = {};
+              (finishedGoodsInventory||[])
+                .filter(fg => parseNum(fg.kgProducidos) > 0 || parseNum(fg.millares) > 0)
+                .forEach(fg => {
+                  const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+                  const key = `${fg.categoria||fg.producto||''}__${fg.cliente||''}__${fg.tipoProducto}`;
+                  if (!fgGrps[key]) fgGrps[key] = {key,esTermo,categoria:fg.categoria||fg.producto||'',cliente:fg.cliente||'',tipoProducto:fg.tipoProducto,producto:fg.producto||'',ancho:fg.ancho,largo:fg.largo,micras:fg.micras,color:fg.color||'NATURAL',totalStock:0,totalKg:0,pesoTot:0,lotes:[],opIds:new Set()};
+                  const g = fgGrps[key];
+                  const stock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+                  // Costo unitario del lote
+                  let cu = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+                  if (!cu && parseNum(fg.costoUnitario)>0 && !esTermo && parseNum(fg.millares)>0)
+                    cu = parseNum(fg.costoUnitario)*parseNum(fg.kgProducidos)/parseNum(fg.millares);
+                  g.totalStock += stock; g.totalKg += parseNum(fg.kgProducidos);
+                  g.pesoTot += stock * cu; g.lotes.push(fg); g.opIds.add(fg.opId);
+                });
 
-            {/* BOLSAS */}
-            {bolsas.length > 0 && (
-              <div className="mb-6">
-                <h3 className="text-sm font-black uppercase text-blue-700 mb-3 flex items-center gap-2"><span className="bg-blue-100 px-3 py-1 rounded-lg">📦 BOLSAS / EMPAQUES — en Millares</span></h3>
-                {renderFGTable(filterItems(bolsas), 'BOLSAS')}
-              </div>
-            )}
+              const groups = Object.values(fgGrps);
+              const bolsasGrp = groups.filter(g => !g.esTermo);
+              const termosGrp = groups.filter(g => g.esTermo);
+              const totalMillares = bolsasGrp.reduce((s,g)=>s+g.totalStock, 0);
+              const totalKgTermo = termosGrp.reduce((s,g)=>s+g.totalStock, 0);
 
-            {/* TERMOENCOGIBLE */}
-            {termos.length > 0 && (
-              <div className="mb-6">
-                <h3 className="text-sm font-black uppercase text-green-700 mb-3 flex items-center gap-2"><span className="bg-green-100 px-3 py-1 rounded-lg">🟢 TERMOENCOGIBLE / TUBULAR — en KG</span></h3>
-                {renderFGTable(filterItems(termos), 'TERMOENCOGIBLE')}
-              </div>
-            )}
+              const renderGrpTable = (grps, esTermo) => {
+                const unit = esTermo ? 'KG' : 'Millares';
+                const colorH = esTermo ? 'bg-green-700' : 'bg-blue-700';
+                if (!grps.length) return <div className="text-center py-6 text-gray-400 text-xs font-bold uppercase">Sin registros</div>;
+                return (
+                  <div className="overflow-x-auto rounded-xl border border-gray-200 mb-2">
+                    <table className="w-full text-left text-xs">
+                      <thead className={`${colorH} text-white`}>
+                        <tr className="uppercase font-black text-[9px] tracking-widest">
+                          <th className="py-3 px-4 border-r border-white/20">Categoría / Producto</th>
+                          <th className="py-3 px-4 border-r border-white/20">Cliente</th>
+                          <th className="py-3 px-4 border-r border-white/20 text-center">Dimensiones</th>
+                          <th className="py-3 px-4 border-r border-white/20 text-center">Lotes / OPs</th>
+                          <th className="py-3 px-4 border-r border-white/20 text-center">Costo Unit.</th>
+                          <th className="py-3 px-4 text-center">{unit} en Stock</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {grps
+                          .filter(g => !fgSearch || (g.categoria+g.cliente+g.producto).toUpperCase().includes(fgSearch.toUpperCase()))
+                          .map((g, idx) => {
+                            const cu = g.totalStock > 0 ? g.pesoTot / g.totalStock : 0;
+                            return (
+                              <tr key={g.key} className={`hover:bg-gray-50 ${idx%2===0?'bg-white':'bg-gray-50/50'}`}>
+                                <td className="py-3 px-4 border-r">
+                                  <div className="font-black text-[11px] text-gray-900 uppercase">{g.categoria||g.producto}</div>
+                                  {g.color && <div className="text-[9px] text-gray-400 font-bold">{g.color}</div>}
+                                </td>
+                                <td className="py-3 px-4 border-r font-bold uppercase text-[10px]">{g.cliente}</td>
+                                <td className="py-3 px-4 border-r text-center text-[10px] font-bold text-gray-600">
+                                  {g.ancho||'—'}cm×{g.largo||'—'}cm | {g.micras||'—'}mic
+                                </td>
+                                <td className="py-3 px-4 border-r text-center">
+                                  <span className="bg-orange-100 text-orange-700 font-black text-[9px] px-2 py-0.5 rounded-full">{g.lotes.length} lote{g.lotes.length!==1?'s':''}</span>
+                                  <div className="text-[8px] text-gray-400 mt-0.5">{Array.from(g.opIds).join(', ')}</div>
+                                </td>
+                                <td className="py-3 px-4 border-r text-center font-black text-orange-600">
+                                  ${formatNum(cu)}<span className="text-[8px] font-bold text-gray-400">/{unit==='KG'?'KG':'Mill.'}</span>
+                                </td>
+                                <td className="py-3 px-4 text-center">
+                                  <div className={`font-black text-xl ${esTermo?'text-green-600':'text-blue-600'}`}>{formatNum(g.totalStock)}</div>
+                                  <div className="text-[9px] font-bold text-gray-400 uppercase">{unit}</div>
+                                  {!esTermo && g.totalKg > 0 && <div className="text-[9px] text-gray-400">{formatNum(g.totalKg)} KG</div>}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                      <tfoot className={`${esTermo?'bg-green-50 text-green-800':'bg-blue-50 text-blue-800'} border-t-2`}>
+                        <tr className="font-black text-[10px] uppercase">
+                          <td colSpan="5" className="py-2 px-4 text-right">Total {esTermo?'Termoencogible':'Bolsas'}:</td>
+                          <td className="py-2 px-4 text-center text-lg">{formatNum(grps.reduce((s,g)=>s+g.totalStock,0))} {unit}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                );
+              };
 
-            {finishedGoodsInventory.length === 0 && (
-              <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>
-            )}
+              return (
+                <>
+                  {/* KPIs */}
+                  <div className="grid grid-cols-4 gap-4 mb-6">
+                    <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
+                      <div className="text-[9px] font-black text-blue-700 uppercase mb-1">📦 Bolsas</div>
+                      <div className="font-black text-blue-600 text-lg">{formatNum(totalMillares)} Mill.</div>
+                      <div className="text-[9px] text-gray-500">{bolsasGrp.length} producto{bolsasGrp.length!==1?'s':''}</div>
+                    </div>
+                    <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+                      <div className="text-[9px] font-black text-green-700 uppercase mb-1">🟢 Termoencogible</div>
+                      <div className="font-black text-green-600 text-lg">{formatNum(totalKgTermo)} KG</div>
+                      <div className="text-[9px] text-gray-500">{termosGrp.length} producto{termosGrp.length!==1?'s':''}</div>
+                    </div>
+                    <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 text-center">
+                      <div className="text-[9px] font-black text-orange-700 uppercase mb-1">Valor Bolsas</div>
+                      <div className="font-black text-orange-600">${formatNum(bolsasGrp.reduce((s,g)=>s+g.totalStock*(g.totalStock>0?g.pesoTot/g.totalStock:0),0))}</div>
+                    </div>
+                    <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-center">
+                      <div className="text-[9px] font-black text-gray-700 uppercase mb-1">Valor Termo</div>
+                      <div className="font-black text-gray-800">${formatNum(termosGrp.reduce((s,g)=>s+g.totalStock*(g.totalStock>0?g.pesoTot/g.totalStock:0),0))}</div>
+                    </div>
+                  </div>
+
+                  {bolsasGrp.length > 0 && (
+                    <div className="mb-6">
+                      <h3 className="text-sm font-black uppercase text-blue-700 mb-3 flex items-center gap-2"><span className="bg-blue-100 px-3 py-1 rounded-lg">📦 BOLSAS / EMPAQUES — en Millares</span></h3>
+                      {renderGrpTable(bolsasGrp, false)}
+                    </div>
+                  )}
+                  {termosGrp.length > 0 && (
+                    <div className="mb-6">
+                      <h3 className="text-sm font-black uppercase text-green-700 mb-3 flex items-center gap-2"><span className="bg-green-100 px-3 py-1 rounded-lg">🟢 TERMOENCOGIBLE — en KG</span></h3>
+                      {renderGrpTable(termosGrp, true)}
+                    </div>
+                  )}
+                  {groups.length === 0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>}
+                </>
+              );
+            })()}
           </div>
         </div>
       );
@@ -2283,8 +2381,11 @@ export default function App() {
     });
     const fgAsCatalog = Object.values(fgGroups).map(g => {
       const cu = g.totalStock > 0 ? g.pesoTot / g.totalStock : 0;
+      // ID corto legible: CAT-ANXLARGxMIC (ej: EMBUTIDO1KIRI-28x75x12)
+      const catSlug = (g.categoria||g.producto||'SIN').replace(/[\s_\-\/\|]/g,'').substring(0,14).toUpperCase();
+      const idCorto = `FG-${catSlug}-${g.ancho||0}x${g.largo||0}x${g.micras||0}`;
       return {
-        id: `FG-GROUP-${g.key}`,
+        id: idCorto,
         desc: `${g.categoria||g.producto} | ${g.cliente}${g.ancho?` | ${g.ancho}×${g.largo}cm ${g.micras}mic`:''}`.toUpperCase(),
         category: 'Productos Terminados',
         unit: g.esTermo ? 'KG' : 'Millares',
