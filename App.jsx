@@ -137,6 +137,8 @@ export default function App() {
   const [selectedOpId, setSelectedOpId] = useState('');
   const [fgItems, setFgItems] = useState([]); // [{fgId, cantidad, desc, unidad, maxCant}]
   const [showCargarProducto, setShowCargarProducto] = useState(false);
+  const [showMovForm, setShowMovForm] = useState(false);
+  const [movForm, setMovForm] = useState({itemId:'', qty:'', unitCost:'', docRef:'', type:'ENTRADA', notes:'', date: getTodayDate()});
   const [cargarForm, setCargarForm] = useState({ tipo: 'TERMINADOS', tipoProducto: 'BOLSAS', cliente: '', opId: '', producto: '', ancho: '', largo: '', micras: '', color: 'NATURAL', millares: '', kgProducidos: '', fecha: getTodayDate(), observaciones: '', categoria: '', codigo: '', descripcion: '', unidad: 'KG', cantidad: '', costo: '', proveedor: '' });
   const [invReportType, setInvReportType] = useState('entradas');
   const [invSubFilter, setInvSubFilter] = useState('TODOS');
@@ -1702,9 +1704,6 @@ export default function App() {
         : [{val:'AUTOCONSUMO', label:'AUTOCONSUMO (USO INTERNO)'}, {val:'SALIDA', label:'SALIDA A PRODUCCIÓN'}, {val:'AVERIA', label:'AVERÍA / DAÑO'}, {val:'MUESTRA', label:'MUESTRA'}, {val:'DEVOLUCION', label:'DEVOLUCIÓN A PROVEEDOR'}, {val:'PERDIDA', label:'PÉRDIDA / MERMA'}];
       const tipoVals = tipos.map(t=>t.val);
       const movs = (invMovements||[]).filter(m => tipoVals.includes(m.type)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-      const [showMovForm, setShowMovForm] = React.useState(false);
-      const [movForm, setMovForm] = React.useState({itemId:'', qty:'', unitCost:'', docRef:'', type: isEntradas?'ENTRADA':'AUTOCONSUMO', notes:'', date: getTodayDate()});
-
       const selectedInvItem = (inventory||[]).find(i=>i.id===movForm.itemId);
 
       const handleSaveMov = async () => {
@@ -2005,11 +2004,11 @@ export default function App() {
             </div>
             <div className="flex gap-3">
               <button onClick={()=>requireAdminPassword(async()=>{
-                const all = wipInventory || [];
-                for(const w of all){ try{ await deleteDoc(getDocRef('wipInventory', w.id)); }catch(e){} }
-                setDialog({title:'✅',text:'WIP vaciado.',type:'alert'});
-              },'Limpiar todo el WIP')} className="bg-red-50 text-red-500 border border-red-200 px-4 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-red-500 hover:text-white">
-                Limpiar WIP
+                const toDelete = (wipInventory||[]).filter(w => w.opId !== 'OP-00005');
+                for(const w of toDelete){ try{ await deleteDoc(getDocRef('wipInventory',w.id)); }catch(e){} }
+                setDialog({title:'✅',text:`WIP limpiado. Solo queda OP-00005 (${wipInventory.filter(w=>w.opId==='OP-00005').length} entradas).`,type:'alert'});
+              },'Eliminar WIP — solo conserva OP-00005')} className="bg-red-50 text-red-500 border border-red-200 px-4 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-red-500 hover:text-white">
+                Limpiar (Conservar OP-00005)
               </button>
               <button
                 onClick={() => {
@@ -2267,13 +2266,18 @@ export default function App() {
                 <input type="text" placeholder="Buscar OP, cliente, producto..." value={fgSearch} onChange={e=>setFgSearch(e.target.value)} className="pl-9 pr-4 py-2 border-2 border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:border-green-500 w-56" />
               </div>
               <button onClick={()=>requireAdminPassword(async()=>{
-                // Delete only stale/incorrect FG items (those with 0 stock or marked)
-                const toDelete = (finishedGoodsInventory||[]).filter(fg => parseNum(fg.millares||0)===0 && parseNum(fg.kgProducidos||0)===0);
-                if(toDelete.length===0) return setDialog({title:'Info',text:'No hay artículos con stock 0 para limpiar.',type:'alert'});
+                // Delete FG items that have $0 cost (costUnitario=0) or are the erroneous NATURAL items
+                const toDelete = (finishedGoodsInventory||[]).filter(fg => {
+                  const cost = parseNum(fg.costoUnitario||0) + parseNum(fg.costoUnitarioMillar||0);
+                  const desc = (fg.producto||fg.id||'').toUpperCase();
+                  // Delete items with 0 cost OR those with NATURAL tag that are errors
+                  return cost === 0 || desc.includes('NATURAL') || (parseNum(fg.millares||0)===0 && parseNum(fg.kgProducidos||0)===0);
+                });
+                if(toDelete.length===0) return setDialog({title:'Info',text:'No hay artículos erróneos para eliminar.',type:'alert'});
                 for(const fg of toDelete){ try{ await deleteDoc(getDocRef('finishedGoodsInventory', fg.id)); }catch(e){} }
-                setDialog({title:'✅',text:`${toDelete.length} artículos con stock 0 eliminados.`,type:'alert'});
-              },'Limpiar artículos FG con stock 0')} className="bg-red-50 text-red-500 border border-red-200 px-3 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-red-500 hover:text-white">
-                Limpiar Stock 0
+                setDialog({title:'✅',text:`${toDelete.length} artículos erróneos eliminados (costo $0 o stock 0 o NATURAL).`,type:'alert'});
+              },'Eliminar artículos FG erróneos')} className="bg-red-50 text-red-500 border border-red-200 px-3 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-red-500 hover:text-white">
+                Limpiar Erróneos
               </button>
               <button onClick={()=>setShowCargarProducto(!showCargarProducto)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showCargarProducto?'bg-red-500 text-white':'bg-green-600 text-white hover:bg-green-700'}`}><Plus size={14}/> {showCargarProducto?'CANCELAR':'CARGAR PRODUCTO'}</button>
               <button onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
@@ -7000,16 +7004,23 @@ export default function App() {
                                     <div>
                                       {(() => {
                                         const base = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0) || parseNum(phaseForm.kgRecibidosImp) || parseNum(phaseForm.kgRecibidosSel);
-                                        const mermaVal = parseNum(phaseForm.mermaKg);
-                                        const pct = base > 0 ? (mermaVal/base)*100 : 0;
+                                        const mermaAuto = parseNum(phaseForm.mermaKg);
+                                        const mermaDesglose = parseNum(phaseForm.mermaTroquelTransp)+parseNum(phaseForm.mermaTroquelPigm)+parseNum(phaseForm.mermaTorta);
+                                        const pct = base > 0 ? (mermaAuto/base)*100 : 0;
+                                        const diff = mermaDesglose > 0 ? mermaAuto - mermaDesglose : 0;
                                         const semaforoColor = pct <= 5 ? 'border-green-400 bg-green-50 text-green-700' : pct <= 7 ? 'border-yellow-400 bg-yellow-50 text-yellow-700' : 'border-red-400 bg-red-50 text-red-700';
                                         return (
                                           <>
-                                            <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Merma KG <span className="text-orange-500">(Auto)</span></label>
+                                            <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Merma KG <span className="text-orange-500">(Auto)</span> 🔒</label>
                                             <div className="relative">
-                                              <input type="number" step="0.01" value={phaseForm.mermaKg} onChange={e=>setPhaseForm({...phaseForm, mermaKg: e.target.value})} className={`w-full border-2 rounded-xl p-2 text-sm font-black outline-none text-center ${semaforoColor}`} placeholder="0.00" />
+                                              <input type="number" step="0.01" value={phaseForm.mermaKg} readOnly className={`w-full border-2 rounded-xl p-2 text-sm font-black outline-none text-center cursor-not-allowed opacity-90 ${semaforoColor}`} placeholder="0.00" />
                                               {pct > 0 && <span className={`absolute -top-5 right-0 text-[9px] font-black ${pct<=5?'text-green-600':pct<=7?'text-yellow-600':'text-red-600'}`}>{pct.toFixed(1)}% {pct<=5?'🟢':pct<=7?'🟡':'🔴'}</span>}
                                             </div>
+                                            {mermaDesglose > 0 && (
+                                              <div className={`mt-1 text-[8px] font-black rounded-lg px-2 py-1 ${Math.abs(diff)<0.01?'bg-green-100 text-green-700':diff>0?'bg-orange-100 text-orange-700':'bg-blue-100 text-blue-700'}`}>
+                                                {Math.abs(diff)<0.01 ? '✅ Desglose cuadra exacto' : diff>0 ? `⚠ Diferencia: ${formatNum(diff)} KG sin desglosar` : `ℹ Desglose supera auto en ${formatNum(Math.abs(diff))} KG`}
+                                              </div>
+                                            )}
                                           </>
                                         );
                                       })()}
@@ -7669,9 +7680,31 @@ export default function App() {
     return (
       <div className="space-y-6 animate-in fade-in">
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
-            <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3"><BarChart3 className="text-blue-600" size={32}/> Reportes Financieros / Rentabilidad</h2>
-            <p className="text-xs font-bold text-gray-500 uppercase mt-2">Dashboard de Ingresos, Costos y Utilidad</p>
+          {/* Membrete / Letterhead */}
+          <div className="px-8 py-6 border-b border-gray-200">
+            <div className="flex items-start justify-between mb-5 pb-5 border-b-2 border-orange-500">
+              <div className="flex flex-col items-start">
+                <span className="text-xl font-light tracking-widest text-gray-600">Supply</span>
+                <div className="flex items-center -mt-1">
+                  <span className="text-black font-black text-[36px] leading-none">G</span>
+                  <div className="bg-orange-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-base font-black mx-1">&amp;</div>
+                  <span className="text-black font-black text-[36px] leading-none">B</span>
+                </div>
+              </div>
+              <div className="text-right">
+                <h1 className="text-base font-black text-black uppercase">{settings.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.'}</h1>
+                <p className="text-[11px] font-bold text-gray-600">RIF: {settings.empresaRif || 'J-412309374'}</p>
+                {settings.empresaDireccion && <p className="text-[10px] text-gray-500 uppercase max-w-xs text-right">{settings.empresaDireccion}</p>}
+                {settings.empresaTelefono && <p className="text-[10px] text-gray-500">Tel: {settings.empresaTelefono}</p>}
+              </div>
+            </div>
+            <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3"><BarChart3 className="text-blue-600" size={28}/> Reportes Financieros / Rentabilidad</h2>
+            <p className="text-xs font-bold text-gray-500 uppercase mt-1">Dashboard de Ingresos, Costos y Utilidad</p>
+            <div className="mt-3 flex flex-wrap gap-2 text-[9px]">
+              {REPORT_CARDS.map(card=>(
+                <span key={card.id} className="font-black text-gray-500 uppercase border border-gray-200 px-2 py-1 rounded-lg">▸ {card.label}</span>
+              ))}
+            </div>
           </div>
 
           <div className="p-8 space-y-6">
@@ -10178,7 +10211,7 @@ export default function App() {
                       {id:'reportes_mod', icon:<FileText size={14}/>, label:'Reportes', perm:'inventario_kardex'},
                       {id:'reporte177', icon:<FileCheck size={14}/>, label:'Art.177', perm:'inventario_kardex'},
                     ].filter(t=>hasPerm('inventario')&&(hasPerm(t.perm)||appUser?.role==='Master')).map(t=>(
-                      <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
+                      <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();setShowMovForm(false);if(t.id==='entradas')setMovForm(f=>({...f,type:'ENTRADA'}));if(t.id==='salidas')setMovForm(f=>({...f,type:'AUTOCONSUMO'}));}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
                   </div>
                 </div>
