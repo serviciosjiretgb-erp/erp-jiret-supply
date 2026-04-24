@@ -1694,6 +1694,9 @@ export default function App() {
     }
 
     if (invView === 'reportes_mod') return renderInventoryReports();
+    if (invView === 'entradas') { setInvReportType('entradas'); return renderInventoryReports(); }
+    if (invView === 'salidas') { setInvReportType('salidas'); return renderInventoryReports(); }
+    if (invView === 'kardex') { return renderInventoryReports(); }
 
     // ── ÓRDENES DE COMPRA (desde Inventario) ──
     if (invView === 'inv_ordenes_compra') {
@@ -6220,25 +6223,43 @@ export default function App() {
           ) : (
             <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
               <div className="px-8 py-6 border-b border-gray-200 bg-blue-50 flex justify-between items-center">
-                <div><h2 className="text-xl font-black text-blue-800 uppercase flex items-center gap-3"><ShoppingCart className="text-blue-600" size={24}/> Órdenes de Compra</h2></div>
-                <button onClick={handleGeneratePurchaseOrder} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 flex items-center gap-2"><Plus size={16}/> NUEVA ORDEN</button>
+                <div><h2 className="text-xl font-black text-blue-800 uppercase flex items-center gap-3"><ShoppingCart className="text-blue-600" size={24}/> Requisiciones de Compra</h2></div>
+                <button onClick={handleGeneratePurchaseOrder} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 flex items-center gap-2"><Plus size={16}/> NUEVA</button>
               </div>
               <div className="p-6">
                 {purchaseOrders.length === 0 ? (
-                  <div className="text-center py-16 text-gray-400"><ShoppingCart size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">No hay órdenes de compra registradas</p></div>
+                  <div className="text-center py-16 text-gray-400"><ShoppingCart size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">No hay requisiciones registradas</p></div>
                 ) : (
                   <div className="overflow-x-auto rounded-xl border border-gray-200">
                     <table className="w-full text-xs text-left">
-                      <thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px] tracking-widest text-gray-600"><th className="py-3 px-4 border-r">ID / Fecha</th><th className="py-3 px-4 border-r">Proveedor</th><th className="py-3 px-4 border-r text-center">Ítems</th><th className="py-3 px-4 border-r text-right">Subtotal</th><th className="py-3 px-4 border-r text-center">Estado</th><th className="py-3 px-4 text-center">Ver</th></tr></thead>
+                      <thead className="bg-gray-800 text-white"><tr className="uppercase font-black text-[9px] tracking-widest"><th className="py-3 px-4 border-r border-gray-700">ID / Fecha</th><th className="py-3 px-4 border-r border-gray-700">Depto.</th><th className="py-3 px-4 border-r border-gray-700 text-center">Ítems</th><th className="py-3 px-4 border-r border-gray-700 text-right">Subtotal</th><th className="py-3 px-4 border-r border-gray-700 text-center">Estado</th><th className="py-3 px-4 text-center">Acciones</th></tr></thead>
                       <tbody className="divide-y divide-gray-100">
                         {purchaseOrders.map(po => (
                           <tr key={po.id} className="hover:bg-gray-50">
                             <td className="py-3 px-4 border-r font-black text-blue-600">{po.id}<br/><span className="text-[9px] text-gray-400">{po.date}</span></td>
-                            <td className="py-3 px-4 border-r font-bold uppercase">{po.provider}</td>
+                            <td className="py-3 px-4 border-r font-bold uppercase text-[10px]">{po.department||po.provider}</td>
                             <td className="py-3 px-4 border-r text-center font-bold">{(po.items||[]).length}</td>
                             <td className="py-3 px-4 border-r text-right font-black text-green-600">${formatNum(po.subtotal)}</td>
                             <td className="py-3 px-4 border-r text-center"><span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase ${po.status==='RECIBIDA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>{po.status}</span></td>
-                            <td className="py-3 px-4 text-center"><button onClick={()=>setViewingPO(po)} className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-800 hover:text-white transition-all"><Eye size={14}/></button></td>
+                            <td className="py-3 px-4 text-center">
+                              <div className="flex gap-1.5 justify-center">
+                                <button onClick={()=>setViewingPO(po)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Ver"><Eye size={13}/></button>
+                                <button onClick={()=>{
+                                  setSelectedPOItems(po.items||[]);
+                                  setPoProvider(po.department||po.provider||'');
+                                  setPoNotes(po.notes||'');
+                                  setPoAddId(''); setPoAddQty(''); setPoAddCost('');
+                                  setShowPOModal(true);
+                                  // Store editing ID
+                                  setViewingPO({...po, _editing: true});
+                                }} className="p-1.5 bg-orange-50 text-orange-500 rounded-lg hover:bg-orange-500 hover:text-white" title="Modificar"><Edit size={13}/></button>
+                                <button onClick={async()=>{
+                                  if(window.confirm(`¿Eliminar ${po.id}?`)){
+                                    await deleteDoc(getDocRef('purchaseOrders',po.id));
+                                  }
+                                }} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white" title="Eliminar"><Trash2 size={13}/></button>
+                              </div>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -6284,7 +6305,7 @@ export default function App() {
                   {/* Auto-ref display */}
                   <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 mb-4 flex items-center justify-between">
                     <span className="text-[9px] font-black text-orange-700 uppercase">Referencia Automática</span>
-                    <span className="font-black text-orange-600">OC-{((purchaseOrders||[]).reduce((m,p)=>{const mt=String(p.id||'').match(/^OC-(\d+)$/);return Math.max(m,mt?parseInt(mt[1]):0);},0)+1).toString().padStart(5,'0')}</span>
+                    <span className="font-black text-orange-600">RQ-{((purchaseOrders||[]).reduce((m,p)=>{const mt=String(p.id||'').match(/^RQ-(\d+)$/);return Math.max(m,mt?parseInt(mt[1]):0);},0)+1).toString().padStart(5,'0')}</span>
                   </div>
                   <div className="grid grid-cols-2 gap-4 mb-6">
                     <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Departamento de Procura</label><input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="DEPARTAMENTO DE ALMACÉN" /></div>
@@ -6335,9 +6356,61 @@ export default function App() {
                   ) : (
                     <div className="bg-gray-50 rounded-2xl p-8 text-center text-gray-400 mb-6"><ShoppingCart size={32} className="mx-auto mb-2 opacity-30"/><p className="text-xs font-bold uppercase">Agregue productos a la orden</p></div>
                   )}
+                  {/* ── Sección Email ── */}
+                  <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 mb-4">
+                    <h4 className="text-[10px] font-black uppercase text-blue-800 mb-3 flex items-center gap-2"><Mail size={13}/> Notificación por Correo (al guardar)</h4>
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Para (Principal)</label>
+                        <input type="email" value={settings.emailProcura||''} readOnly className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold bg-gray-50 text-gray-600 outline-none" placeholder="emailProcura@empresa.com (configura en Ajustes)"/>
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Enviar también a:</label>
+                        <select className="w-full border-2 border-blue-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500 bg-white" id="poEmailCopia">
+                          <option value="">— Ninguno adicional —</option>
+                          {(settings.emailContactos||[]).map((c,i)=><option key={i} value={c.email}>{c.nombre} ({c.email})</option>)}
+                          {settings.emailCopia && <option value={settings.emailCopia}>CC Predeterminado: {settings.emailCopia}</option>}
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Prioridad</label>
+                      <select id="poPrioridad" className="w-36 border-2 border-blue-200 rounded-xl p-2 text-xs font-bold outline-none bg-white">
+                        <option value="Alta">Alta</option>
+                        <option value="Media" selected>Media</option>
+                        <option value="Baja">Baja</option>
+                      </select>
+                    </div>
+                  </div>
                   <div className="flex gap-3 justify-end">
                     <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');setPoAddId('');setPoAddQty('');setPoAddCost('');}} className="bg-gray-200 text-gray-700 px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-300">Cancelar</button>
-                    <button onClick={handleSavePurchaseOrder} disabled={selectedPOItems.length===0} className="bg-black text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"><CheckCircle2 size={16}/> GUARDAR ORDEN</button>
+                    <button onClick={handleSavePurchaseOrder} disabled={selectedPOItems.length===0} className="border-2 border-black text-black px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-100 flex items-center gap-2 disabled:opacity-40"><CheckCircle2 size={14}/> Guardar</button>
+                    <button onClick={async()=>{
+                      if(selectedPOItems.length===0) return;
+                      // 1. Guardar la OC
+                      await handleSavePurchaseOrder();
+                      // 2. Construir el número de referencia
+                      const rqNum = ((purchaseOrders||[]).reduce((m,p)=>{const mt=String(p.id||'').match(/^RQ-(\d+)$/);return Math.max(m,mt?parseInt(mt[1]):0);},0)).toString().padStart(5,'0');
+                      const rqRef = `RQ-${rqNum}`;
+                      const prioridad = document.getElementById('poPrioridad')?.value || 'Media';
+                      const emailCopia = document.getElementById('poEmailCopia')?.value || settings.emailCopia || '';
+                      const fechaHoy = poNotes.startsWith('FECHA:') ? poNotes.split('|')[0].replace('FECHA:','').trim() : getTodayDate();
+                      // 3. Cuerpo del correo
+                      const itemsTexto = selectedPOItems.map(i=>`  • ${i.productCode} — ${i.productName}: ${formatNum(i.suggestedQty)} ${(inventory||[]).find(x=>x.id===i.productCode)?.unit||'KG'}`).join('\n');
+                      const emailBody = `Estimados,\n\nSe adjunta a este correo la Requisición de Almacén #${rqRef}, generada automáticamente por el sistema para su gestión de compra.\n\nResumen de la solicitud:\n\n* Fecha de emisión: ${fechaHoy}\n* Prioridad: ${prioridad}\n* Solicitado por: ${appUser?.name||'Almacén'}\n* Departamento: ${poProvider||'DEPARTAMENTO DE ALMACÉN'}\n\nMateriales solicitados:\n${itemsTexto}\n\nPor favor, encontrarán el detalle técnico, cantidades y especificaciones de los materiales en el archivo PDF adjunto.\n\nQuedamos atentos a la confirmación de recepción y al seguimiento de la orden de compra correspondiente.\n\nSaludos cordiales,\nDepartamento de Almacén\nServicios Jiret G&B, C.A.`;
+                      const subject = `Requisición de Almacén #${rqRef} — ${prioridad === 'Alta' ? '🔴 URGENTE' : prioridad === 'Media' ? '🟡' : '🟢'} G&B Supply`;
+                      const emailTo = settings.emailProcura || '';
+                      // 4. Imprimir PDF primero
+                      setDialog({
+                        title: '📧 Enviar Correo + PDF',
+                        text: `Se abrirá el cliente de correo con el email prellenado. Antes de enviar, adjunte el PDF de la requisición (use el botón Imprimir en la vista de la OC para generar el PDF).`,
+                        type: 'confirm',
+                        onConfirm: () => {
+                          const mailtoUrl = `mailto:${emailTo}${emailCopia?'?cc='+encodeURIComponent(emailCopia)+'&':'?'}subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody)}`;
+                          window.open(mailtoUrl, '_blank');
+                        }
+                      });
+                    }} disabled={selectedPOItems.length===0} className="bg-blue-600 text-white px-6 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-blue-700 flex items-center gap-2 disabled:opacity-40"><Mail size={14}/> Guardar y Enviar Email</button>
                   </div>
                 </div>
               </div>
@@ -9169,25 +9242,46 @@ export default function App() {
         <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-200">
           <h2 className="text-xl font-black uppercase text-black mb-4 flex items-center gap-3 border-b pb-3"><Mail className="text-blue-500"/> Configuración de Correos — Notificaciones</h2>
           <p className="text-xs font-bold text-gray-500 mb-4">Configure los correos a los que se enviarán notificaciones de requisiciones y órdenes de compra.</p>
-          {/* Email config - uses settings state directly, saved on blur */}
           <div className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Correo Depto. Procura (principal)</label>
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">📧 Correo Principal — Procura</label>
                 <input type="email" defaultValue={settings.emailProcura||''}
                   onBlur={async e=>{ await setDoc(getDocRef('settings','general'),{emailProcura:e.target.value.trim()},{merge:true}); }}
                   className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-blue-400"
                   placeholder="procura@empresa.com"/>
               </div>
               <div>
-                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Copia (CC) — otros destinatarios</label>
-                <input type="text" defaultValue={settings.emailCopia||''}
-                  onBlur={async e=>{ await setDoc(getDocRef('settings','general'),{emailCopia:e.target.value.trim()},{merge:true}); }}
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">📧 Correo Almacén</label>
+                <input type="email" defaultValue={settings.emailAlmacen||''}
+                  onBlur={async e=>{ await setDoc(getDocRef('settings','general'),{emailAlmacen:e.target.value.trim()},{merge:true}); }}
                   className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-blue-400"
-                  placeholder="gerencia@empresa.com, compras@empresa.com"/>
+                  placeholder="almacen@empresa.com"/>
               </div>
             </div>
-            <p className="text-[9px] text-gray-400 font-bold">Los campos se guardan automáticamente al salir del campo (blur).</p>
+            <div>
+              <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Lista de Contactos adicionales (aparecen en el dropdown al enviar OC)</label>
+              {(settings.emailContactos||[]).map((c,i) => (
+                <div key={i} className="flex gap-2 items-center bg-gray-50 rounded-xl p-2 mb-1">
+                  <span className="flex-1 text-xs font-bold">{c.nombre}</span>
+                  <span className="flex-1 text-xs text-gray-500">{c.email}</span>
+                  <button onClick={async()=>{const nl=(settings.emailContactos||[]).filter((_,j)=>j!==i);await setDoc(getDocRef('settings','general'),{emailContactos:nl},{merge:true});}} className="p-1 text-red-400 hover:text-red-600"><X size={13}/></button>
+                </div>
+              ))}
+              <div className="flex gap-2 mt-2">
+                <input type="text" id="cfgContactoNombre" className="flex-1 border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-400" placeholder="Nombre (ej: Gerencia)"/>
+                <input type="email" id="cfgContactoEmail" className="flex-1 border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-400" placeholder="email@empresa.com"/>
+                <button onClick={async()=>{
+                  const n=document.getElementById('cfgContactoNombre')?.value?.trim();
+                  const e=document.getElementById('cfgContactoEmail')?.value?.trim();
+                  if(!n||!e)return;
+                  const nl=[...(settings.emailContactos||[]),{nombre:n,email:e}];
+                  await setDoc(getDocRef('settings','general'),{emailContactos:nl},{merge:true});
+                  document.getElementById('cfgContactoNombre').value='';
+                  document.getElementById('cfgContactoEmail').value='';
+                }} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase hover:bg-blue-700 flex items-center gap-1 whitespace-nowrap"><Plus size={13}/> Agregar</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -9834,10 +9928,10 @@ export default function App() {
                    {id:'finished', icon:<Package size={16}/>, label:'Terminados', perm:'inventario_catalogo'},
                    {id:'entradas', icon:<ArrowDownToLine size={16}/>, label:'Entradas', perm:'inventario_movimientos'},
                    {id:'salidas', icon:<ArrowUpFromLine size={16}/>, label:'Salidas', perm:'inventario_movimientos'},
-                   {id:'ajuste', icon:<ShieldCheck size={16}/>, label:'Ajuste Único', perm:'inventario_movimientos'},
                    {id:'toma_fisica', icon:<ClipboardEdit size={16}/>, label:'Toma Física', perm:'inventario_movimientos'},
                    {id:'kardex', icon:<History size={16}/>, label:'Kardex', perm:'inventario_kardex'},
                    {id:'reportes_mod', icon:<FileText size={16}/>, label:'Reportes', perm:'inventario_kardex'},
+                   {id:'reporte177', icon:<FileCheck size={16}/>, label:'Art. 177', perm:'inventario_kardex'},
                  ].filter(t => hasPerm('inventario') && (hasPerm(t.perm) || appUser?.role==='Master')).map(t => (
                     <button key={t.id} onClick={()=>{setInvView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
