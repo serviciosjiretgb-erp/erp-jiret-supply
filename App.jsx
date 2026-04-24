@@ -1694,10 +1694,152 @@ export default function App() {
       );
     }
 
-    if (invView === 'entradas' || invView === 'salidas' || invView === 'kardex' || invView === 'reportes_mod') {
-      // Set the report type based on invView
-      const derivedType = invView === 'entradas' ? 'entradas' : invView === 'salidas' ? 'salidas' : invReportType;
-      return renderInventoryReports(derivedType);
+    if (invView === 'entradas' || invView === 'salidas') {
+      const isEntradas = invView === 'entradas';
+      const tipos = isEntradas
+        ? ['ENTRADA', 'ENTRADA_DEVOLUCION', 'ENTRADA_INICIAL']
+        : ['SALIDA', 'AUTOCONSUMO', 'AVERIA', 'MUESTRA', 'DEVOLUCION', 'PERDIDA'];
+      const movs = (invMovements||[]).filter(m => tipos.includes(m.type)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+      const [showMovForm, setShowMovForm] = React.useState(false);
+      const [movForm, setMovForm] = React.useState({itemId:'', qty:'', type: isEntradas?'ENTRADA':'SALIDA', notes:'', date: getTodayDate()});
+
+      const handleSaveMov = async () => {
+        if(!movForm.itemId || !parseNum(movForm.qty)) return setDialog({title:'Aviso',text:'Complete los campos requeridos.',type:'alert'});
+        const inv = (inventory||[]).find(i=>i.id===movForm.itemId);
+        if(!inv) return;
+        const qty = parseNum(movForm.qty);
+        const newStock = isEntradas ? (inv.stock||0) + qty : Math.max(0,(inv.stock||0) - qty);
+        const mov = {itemId:movForm.itemId, itemDesc:inv.desc, type:movForm.type, qty, previousStock:inv.stock||0, newStock, notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin', timestamp:Date.now()};
+        try {
+          await addDoc(getColRef('inventoryMovements'), mov);
+          await updateDoc(getDocRef('inventory', movForm.itemId), {stock: newStock});
+          setMovForm({itemId:'',qty:'',type:isEntradas?'ENTRADA':'SALIDA',notes:'',date:getTodayDate()});
+          setShowMovForm(false);
+          setDialog({title:'✅',text:`Movimiento registrado. Nuevo stock: ${formatNum(newStock)} ${inv.unit}`,type:'alert'});
+        } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+      };
+
+      return (
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
+          <div className={`px-8 py-5 border-b ${isEntradas?'bg-green-50':'bg-red-50'} flex justify-between items-center`}>
+            <div>
+              <h2 className={`text-xl font-black uppercase flex items-center gap-3 ${isEntradas?'text-green-900':'text-red-900'}`}>
+                {isEntradas ? <ArrowDownToLine className="text-green-600" size={22}/> : <ArrowUpFromLine className="text-red-500" size={22}/>}
+                {isEntradas ? 'Registro de Entradas' : 'Registro de Salidas'}
+              </h2>
+              <p className={`text-[10px] font-bold mt-0.5 ${isEntradas?'text-green-700':'text-red-600'}`}>
+                {isEntradas ? 'Recepciones de mercancía, devoluciones y cargas iniciales' : 'Autoconsumo, averías, muestras, devoluciones y pérdidas'}
+              </p>
+            </div>
+            <button onClick={()=>setShowMovForm(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 transition-all ${showMovForm?'bg-gray-200 text-gray-700':'bg-black text-white hover:bg-gray-800'}`}>
+              {showMovForm ? <><X size={13}/> Cancelar</> : <><Plus size={13}/> Nuevo Registro</>}
+            </button>
+          </div>
+
+          {/* Formulario de registro */}
+          {showMovForm && (
+            <div className={`p-6 border-b ${isEntradas?'bg-green-50/50':'bg-red-50/50'}`}>
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 space-y-4 shadow-sm">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="md:col-span-2">
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Artículo / Material *</label>
+                    <select value={movForm.itemId} onChange={e=>setMovForm({...movForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 bg-white">
+                      <option value="">— Seleccione —</option>
+                      {(inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad *</label>
+                    <input type="number" step="0.01" min="0.01" value={movForm.qty} onChange={e=>setMovForm({...movForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="0.00"/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                    <input type="date" value={movForm.date} onChange={e=>setMovForm({...movForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400"/>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tipo de Movimiento</label>
+                    <select value={movForm.type} onChange={e=>setMovForm({...movForm,type:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 bg-white">
+                      {tipos.map(t=><option key={t} value={t}>{t.replace(/_/g,' ')}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Observaciones</label>
+                    <input type="text" value={movForm.notes} onChange={e=>setMovForm({...movForm,notes:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400" placeholder="Referencia, proveedor, motivo..."/>
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <button onClick={handleSaveMov} className={`px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg flex items-center gap-2 ${isEntradas?'bg-green-600 hover:bg-green-700':'bg-red-600 hover:bg-red-700'} text-white`}>
+                    <CheckCircle2 size={14}/> Guardar Movimiento
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Historial */}
+          <div className="p-4">
+            {movs.length === 0 ? (
+              <div className="py-12 text-center text-gray-400 font-bold text-xs uppercase">No hay registros de {isEntradas?'entradas':'salidas'} aún</div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
+                <table className="w-full text-xs">
+                  <thead className={`text-white ${isEntradas?'bg-green-700':'bg-red-700'}`}>
+                    <tr className="uppercase font-black text-[9px] tracking-widest">
+                      <th className="py-3 px-3 border-r border-white/20 text-left">Fecha</th>
+                      <th className="py-3 px-3 border-r border-white/20 text-left">Artículo</th>
+                      <th className="py-3 px-3 border-r border-white/20 text-center">Tipo</th>
+                      <th className="py-3 px-3 border-r border-white/20 text-center">Cantidad</th>
+                      <th className="py-3 px-3 border-r border-white/20 text-center">Stock Ant.</th>
+                      <th className="py-3 px-3 border-r border-white/20 text-center">Stock Nuevo</th>
+                      <th className="py-3 px-3 border-r border-white/20 text-left">Observaciones</th>
+                      <th className="py-3 px-3 text-center">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {movs.map(m => (
+                      <tr key={m.id||m.timestamp} className="hover:bg-gray-50">
+                        <td className="py-2.5 px-3 border-r font-bold text-gray-600">{m.date}</td>
+                        <td className="py-2.5 px-3 border-r">
+                          <span className="font-black text-orange-600 text-[10px] block">{m.itemId}</span>
+                          <span className="text-[9px] text-gray-400">{m.itemDesc||''}</span>
+                        </td>
+                        <td className="py-2.5 px-3 border-r text-center">
+                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${isEntradas?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>{m.type?.replace(/_/g,' ')}</span>
+                        </td>
+                        <td className="py-2.5 px-3 border-r text-center font-black text-sm">{formatNum(m.qty)}</td>
+                        <td className="py-2.5 px-3 border-r text-center text-gray-400 font-bold">{formatNum(m.previousStock)}</td>
+                        <td className="py-2.5 px-3 border-r text-center font-black text-blue-600">{formatNum(m.newStock)}</td>
+                        <td className="py-2.5 px-3 border-r text-[9px] text-gray-500">{m.notes||'—'} <span className="text-gray-300">| {m.user}</span></td>
+                        <td className="py-2.5 px-3 text-center">
+                          <button onClick={()=>requireAdminPassword(async()=>{
+                            // Revert stock
+                            const inv=(inventory||[]).find(i=>i.id===m.itemId);
+                            if(inv) await updateDoc(getDocRef('inventory',m.itemId),{stock:m.previousStock});
+                            await deleteDoc(getDocRef('inventoryMovements',m.id));
+                          },'Eliminar movimiento y revertir stock')} className="p-1 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-50 border-t-2 border-gray-200">
+                    <tr>
+                      <td colSpan="3" className="py-2.5 px-3 font-black text-[10px] uppercase text-gray-500">Total de Registros: {movs.length}</td>
+                      <td className="py-2.5 px-3 text-center font-black text-sm">{formatNum(movs.reduce((s,m)=>s+parseNum(m.qty),0))}</td>
+                      <td colSpan="4"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (invView === 'kardex' || invView === 'reportes_mod') {
+      return renderInventoryReports(invView === 'kardex' ? 'entradas' : invReportType);
     }
 
     // ── ÓRDENES DE COMPRA (desde Inventario) ──
@@ -2461,11 +2603,15 @@ export default function App() {
                 <h2 className="text-lg font-black text-blue-900 uppercase flex items-center gap-3">
                   <ShoppingCart className="text-blue-600" size={20}/> Órdenes de Compra a Procura
                 </h2>
-                <p className="text-[10px] font-bold text-blue-700 mt-0.5">OC emitidas desde Almacén hacia Departamento de Procura</p>
+                <p className="text-[10px] font-bold text-blue-700 mt-0.5">Todas las requisiciones procesadas (de planta y autónomas) hacia Procura</p>
               </div>
-              <button onClick={()=>{ setPoProvider('DEPARTAMENTO DE ALMACÉN'); setPoNotes(`FECHA: ${getTodayDate()} | `); setSelectedPOItems([]); setShowPOModal(true); }}
-                className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 flex items-center gap-2">
-                <Plus size={14}/> Nueva OC Autónoma
+              <button onClick={()=>{
+                setPoProvider('DEPARTAMENTO DE ALMACÉN');
+                setPoNotes(`FECHA: ${getTodayDate()} | `);
+                setSelectedPOItems([]);
+                setShowPOModal(true);
+              }} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 flex items-center gap-2">
+                <Plus size={14}/> Nueva Requisición para Procura
               </button>
             </div>
 
@@ -2487,25 +2633,44 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {(purchaseOrders||[]).map(po => (
-                        <tr key={po.id} className="hover:bg-gray-50">
-                          <td className="py-3 px-4 border-r font-black text-orange-600">{po.id}</td>
-                          <td className="py-3 px-4 border-r text-center font-bold text-gray-500">{po.date}</td>
-                          <td className="py-3 px-4 border-r font-bold uppercase text-[10px]">{po.department||po.provider||'—'}</td>
-                          <td className="py-3 px-4 border-r text-center font-black">{(po.items||[]).length}</td>
-                          <td className="py-3 px-4 border-r text-center">
-                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${po.status==='RECIBIDA'?'bg-green-100 text-green-700':po.status==='CANCELADA'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'}`}>{po.status}</span>
-                          </td>
-                          <td className="py-3 px-4 border-r text-[9px] text-gray-400">{po.notes?.replace(/^FECHA:[^|]+\| /,'') || '—'}</td>
-                          <td className="py-3 px-4 text-center">
-                            <div className="flex gap-1.5 justify-center">
-                              <button onClick={()=>setViewingPO(po)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white"><Eye size={12}/></button>
-                              {po.status === 'PENDIENTE' && <button onClick={()=>requireAdminPassword(async()=>{await updateDoc(getDocRef('purchaseOrders',po.id),{status:'RECIBIDA'});setDialog({title:'✅',text:'OC recibida.',type:'alert'});},'Recibir OC')} className="bg-green-50 text-green-600 px-2 py-1 rounded-lg text-[8px] font-black uppercase hover:bg-green-600 hover:text-white">RECIBIR</button>}
-                              <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('purchaseOrders',po.id));},'Eliminar OC')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                      {(purchaseOrders||[]).map(po => {
+                        const isODP = String(po.id||'').startsWith('OD-P-');
+                        return (
+                          <tr key={po.id} className="hover:bg-gray-50">
+                            <td className="py-3 px-4 border-r font-black text-orange-600">{po.id}</td>
+                            <td className="py-3 px-4 border-r text-center font-bold text-gray-500">{po.date}</td>
+                            <td className="py-3 px-4 border-r font-bold uppercase text-[10px]">{po.department||po.provider||'—'}</td>
+                            <td className="py-3 px-4 border-r text-center font-black">{(po.items||[]).length}</td>
+                            <td className="py-3 px-4 border-r text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${isODP?'bg-blue-100 text-blue-700':po.status==='RECIBIDA'?'bg-green-100 text-green-700':po.status==='CANCELADA'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'}`}>
+                                {isODP ? 'OD-P EMITIDA' : po.status}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 border-r text-[9px] text-gray-400">{po.notes?.replace(/^FECHA:[^|]+\| /,'') || '—'}</td>
+                            <td className="py-3 px-4 text-center">
+                              <div className="flex gap-1.5 justify-center items-center">
+                                <button onClick={()=>setViewingPO(po)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Ver"><Eye size={12}/></button>
+                                {!isODP && po.status === 'PENDIENTE' && (
+                                  <button onClick={async()=>{
+                                    // Generate OD-P number
+                                    const nextODP = ((purchaseOrders||[]).reduce((m,p)=>{const mt=String(p.id||'').match(/^OD-P-(\d+)$/);return Math.max(m,mt?parseInt(mt[1]):0);},0)+1).toString().padStart(5,'0');
+                                    const odp = {...po, id:`OD-P-${nextODP}`, status:'OD-P EMITIDA', originalReqId: po.id, timestamp: Date.now()};
+                                    try {
+                                      await setDoc(getDocRef('purchaseOrders',`OD-P-${nextODP}`), odp);
+                                      await updateDoc(getDocRef('purchaseOrders',po.id),{status:'PROCESADA', odpId:`OD-P-${nextODP}`});
+                                      setDialog({title:'✅ OD-P Generada',text:`Orden de Compra OD-P-${nextODP} emitida a Procura.`,type:'alert'});
+                                    } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                                  }} className="bg-orange-500 text-white px-2 py-1 rounded-lg text-[8px] font-black uppercase hover:bg-orange-600 whitespace-nowrap">
+                                    Transformar en OD-P
+                                  </button>
+                                )}
+                                {po.status === 'PENDIENTE' && <button onClick={()=>requireAdminPassword(async()=>{await updateDoc(getDocRef('purchaseOrders',po.id),{status:'RECIBIDA'});setDialog({title:'✅',text:'OC recibida.',type:'alert'});},'Recibir OC')} className="bg-green-50 text-green-600 px-2 py-1 rounded-lg text-[8px] font-black uppercase hover:bg-green-600 hover:text-white">RECIBIR</button>}
+                                <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('purchaseOrders',po.id));},'Eliminar OC')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -6304,7 +6469,6 @@ export default function App() {
                     <h3 className="text-lg font-black uppercase">Nueva Requisición para Almacén</h3>
                     <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');setPoAddId('');setPoAddQty('');setPoAddCost('');}} className="p-2 text-gray-400 hover:text-red-500"><X size={20}/></button>
                   </div>
-                  {/* Auto-ref display */}
                   <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 mb-4 flex items-center justify-between">
                     <span className="text-[9px] font-black text-orange-700 uppercase">Referencia Automática</span>
                     <span className="font-black text-orange-600">RQ-{((purchaseOrders||[]).reduce((m,p)=>{const mt=String(p.id||'').match(/^RQ-(\d+)$/);return Math.max(m,mt?parseInt(mt[1]):0);},0)+1).toString().padStart(5,'0')}</span>
@@ -6358,61 +6522,9 @@ export default function App() {
                   ) : (
                     <div className="bg-gray-50 rounded-2xl p-8 text-center text-gray-400 mb-6"><ShoppingCart size={32} className="mx-auto mb-2 opacity-30"/><p className="text-xs font-bold uppercase">Agregue productos a la orden</p></div>
                   )}
-                  {/* ── Sección Email ── */}
-                  <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-3 mb-3">
-                    <h4 className="text-[10px] font-black uppercase text-blue-800 mb-2 flex items-center gap-2"><Mail size={13}/> Notificación por Correo (al guardar)</h4>
-                    <div className="grid grid-cols-2 gap-3 mb-3">
-                      <div>
-                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Para (Principal)</label>
-                        <input type="email" value={settings.emailProcura||''} readOnly className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold bg-gray-50 text-gray-600 outline-none" placeholder="emailProcura@empresa.com (configura en Ajustes)"/>
-                      </div>
-                      <div>
-                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Enviar también a:</label>
-                        <select className="w-full border-2 border-blue-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500 bg-white" id="poEmailCopia">
-                          <option value="">— Ninguno adicional —</option>
-                          {(settings.emailContactos||[]).map((c,i)=><option key={i} value={c.email}>{c.nombre} ({c.email})</option>)}
-                          {settings.emailCopia && <option value={settings.emailCopia}>CC Predeterminado: {settings.emailCopia}</option>}
-                        </select>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Prioridad</label>
-                      <select id="poPrioridad" className="w-36 border-2 border-blue-200 rounded-xl p-2 text-xs font-bold outline-none bg-white">
-                        <option value="Alta">Alta</option>
-                        <option value="Media" selected>Media</option>
-                        <option value="Baja">Baja</option>
-                      </select>
-                    </div>
-                  </div>
                   <div className="flex gap-3 justify-end">
                     <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');setPoAddId('');setPoAddQty('');setPoAddCost('');}} className="bg-gray-200 text-gray-700 px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-300">Cancelar</button>
-                    <button onClick={handleSavePurchaseOrder} disabled={selectedPOItems.length===0} className="border-2 border-black text-black px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-100 flex items-center gap-2 disabled:opacity-40"><CheckCircle2 size={14}/> Guardar</button>
-                    <button onClick={async()=>{
-                      if(selectedPOItems.length===0) return;
-                      // 1. Guardar la OC
-                      await handleSavePurchaseOrder();
-                      // 2. Construir el número de referencia
-                      const rqNum = ((purchaseOrders||[]).reduce((m,p)=>{const mt=String(p.id||'').match(/^RQ-(\d+)$/);return Math.max(m,mt?parseInt(mt[1]):0);},0)).toString().padStart(5,'0');
-                      const rqRef = `RQ-${rqNum}`;
-                      const prioridad = document.getElementById('poPrioridad')?.value || 'Media';
-                      const emailCopia = document.getElementById('poEmailCopia')?.value || settings.emailCopia || '';
-                      const fechaHoy = poNotes.startsWith('FECHA:') ? poNotes.split('|')[0].replace('FECHA:','').trim() : getTodayDate();
-                      // 3. Cuerpo del correo
-                      const itemsTexto = selectedPOItems.map(i=>`  • ${i.productCode} — ${i.productName}: ${formatNum(i.suggestedQty)} ${(inventory||[]).find(x=>x.id===i.productCode)?.unit||'KG'}`).join('\n');
-                      const emailBody = `Estimados,\n\nSe adjunta a este correo la Requisición de Almacén #${rqRef}, generada automáticamente por el sistema para su gestión de compra.\n\nResumen de la solicitud:\n\n* Fecha de emisión: ${fechaHoy}\n* Prioridad: ${prioridad}\n* Solicitado por: ${appUser?.name||'Almacén'}\n* Departamento: ${poProvider||'DEPARTAMENTO DE ALMACÉN'}\n\nMateriales solicitados:\n${itemsTexto}\n\nPor favor, encontrarán el detalle técnico, cantidades y especificaciones de los materiales en el archivo PDF adjunto.\n\nQuedamos atentos a la confirmación de recepción y al seguimiento de la orden de compra correspondiente.\n\nSaludos cordiales,\nDepartamento de Almacén\nServicios Jiret G&B, C.A.`;
-                      const subject = `Requisición de Almacén #${rqRef} — ${prioridad === 'Alta' ? '🔴 URGENTE' : prioridad === 'Media' ? '🟡' : '🟢'} G&B Supply`;
-                      const emailTo = settings.emailProcura || '';
-                      // 4. Imprimir PDF primero
-                      setDialog({
-                        title: '📧 Enviar Correo + PDF',
-                        text: `Se abrirá el cliente de correo con el email prellenado. Antes de enviar, adjunte el PDF de la requisición (use el botón Imprimir en la vista de la OC para generar el PDF).`,
-                        type: 'confirm',
-                        onConfirm: () => {
-                          const mailtoUrl = `mailto:${emailTo}${emailCopia?'?cc='+encodeURIComponent(emailCopia)+'&':'?'}subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody)}`;
-                          window.open(mailtoUrl, '_blank');
-                        }
-                      });
-                    }} disabled={selectedPOItems.length===0} className="bg-blue-600 text-white px-6 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-blue-700 flex items-center gap-2 disabled:opacity-40"><Mail size={14}/> Guardar y Enviar Email</button>
+                    <button onClick={handleSavePurchaseOrder} disabled={selectedPOItems.length===0} className="bg-black text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2 disabled:opacity-40"><CheckCircle2 size={14}/> Guardar Requisición</button>
                   </div>
                 </div>
               </div>
@@ -9928,22 +10040,48 @@ export default function App() {
 
         {activeTab === 'inventario' && (
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
-              <div className="max-w-7xl mx-auto flex gap-6 px-6 overflow-x-auto">
-                 {[ 
-                   {id:'requisiciones', icon:<ClipboardList size={16}/>, label:'Solicitudes Planta', perm:'inventario_solicitudes'},
-                   {id:'almacen', icon:<Warehouse size={16}/>, label:'Almacén / OC', perm:'inventario_solicitudes'},
-                   {id:'catalogo', icon:<Box size={16}/>, label:'Inv. General', perm:'inventario_catalogo'},
-                   {id:'wip', icon:<Beaker size={16}/>, label:'WIP (Proceso)', perm:'inventario_catalogo'},
-                   {id:'finished', icon:<Package size={16}/>, label:'Terminados', perm:'inventario_catalogo'},
-                   {id:'entradas', icon:<ArrowDownToLine size={16}/>, label:'Entradas', perm:'inventario_movimientos'},
-                   {id:'salidas', icon:<ArrowUpFromLine size={16}/>, label:'Salidas', perm:'inventario_movimientos'},
-                   {id:'toma_fisica', icon:<ClipboardEdit size={16}/>, label:'Toma Física', perm:'inventario_movimientos'},
-                   {id:'kardex', icon:<History size={16}/>, label:'Kardex', perm:'inventario_kardex'},
-                   {id:'reportes_mod', icon:<FileText size={16}/>, label:'Reportes', perm:'inventario_kardex'},
-                   {id:'reporte177', icon:<FileCheck size={16}/>, label:'Art. 177', perm:'inventario_kardex'},
-                 ].filter(t => hasPerm('inventario') && (hasPerm(t.perm) || appUser?.role==='Master')).map(t => (
-                    <button key={t.id} onClick={()=>{setInvView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
-                 ))}
+              <div className="max-w-7xl mx-auto flex items-stretch overflow-x-auto">
+                {/* GROUP 1: SOLICITUDES */}
+                <div className="flex flex-col border-r border-gray-200">
+                  <div className="text-[8px] font-black text-orange-500 uppercase tracking-widest px-4 pt-2 pb-0.5">Solicitudes</div>
+                  <div className="flex gap-0">
+                    {[
+                      {id:'requisiciones', icon:<ClipboardList size={14}/>, label:'Planta', perm:'inventario_solicitudes'},
+                      {id:'almacen', icon:<Warehouse size={14}/>, label:'Almacén/OC', perm:'inventario_solicitudes'},
+                    ].filter(t=>hasPerm('inventario')&&(hasPerm(t.perm)||appUser?.role==='Master')).map(t=>(
+                      <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
+                    ))}
+                  </div>
+                </div>
+                {/* GROUP 2: INVENTARIOS */}
+                <div className="flex flex-col border-r border-gray-200">
+                  <div className="text-[8px] font-black text-blue-500 uppercase tracking-widest px-4 pt-2 pb-0.5">Inventarios</div>
+                  <div className="flex gap-0">
+                    {[
+                      {id:'catalogo', icon:<Box size={14}/>, label:'General', perm:'inventario_catalogo'},
+                      {id:'wip', icon:<Beaker size={14}/>, label:'WIP', perm:'inventario_catalogo'},
+                      {id:'finished', icon:<Package size={14}/>, label:'Terminados', perm:'inventario_catalogo'},
+                    ].filter(t=>hasPerm('inventario')&&(hasPerm(t.perm)||appUser?.role==='Master')).map(t=>(
+                      <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
+                    ))}
+                  </div>
+                </div>
+                {/* GROUP 3: OPERACIONES */}
+                <div className="flex flex-col">
+                  <div className="text-[8px] font-black text-green-600 uppercase tracking-widest px-4 pt-2 pb-0.5">Operaciones de Inventario</div>
+                  <div className="flex gap-0">
+                    {[
+                      {id:'entradas', icon:<ArrowDownToLine size={14}/>, label:'Entradas', perm:'inventario_movimientos'},
+                      {id:'salidas', icon:<ArrowUpFromLine size={14}/>, label:'Salidas', perm:'inventario_movimientos'},
+                      {id:'toma_fisica', icon:<ClipboardEdit size={14}/>, label:'Toma Física', perm:'inventario_movimientos'},
+                      {id:'kardex', icon:<History size={14}/>, label:'Kardex', perm:'inventario_kardex'},
+                      {id:'reportes_mod', icon:<FileText size={14}/>, label:'Reportes', perm:'inventario_kardex'},
+                      {id:'reporte177', icon:<FileCheck size={14}/>, label:'Art.177', perm:'inventario_kardex'},
+                    ].filter(t=>hasPerm('inventario')&&(hasPerm(t.perm)||appUser?.role==='Master')).map(t=>(
+                      <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
+                    ))}
+                  </div>
+                </div>
               </div>
            </div>
         )}
