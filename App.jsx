@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, Factory, TrendingUp, TrendingDown, AlertTriangle, 
   ClipboardList, PlayCircle, History, FileText, Settings2, Trash2, 
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
-  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw
+  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail
 } from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
@@ -215,6 +215,7 @@ export default function App() {
   // Formularios de Ventas
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
+  const [showAddClientForm, setShowAddClientForm] = useState(false);
   const [editingClientId, setEditingClientId] = useState(null);
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
@@ -244,6 +245,7 @@ export default function App() {
   const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '' };
   const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
   const [editingInvId, setEditingInvId] = useState(null);
+  const [showInvItemForm, setShowInvItemForm] = useState(false); // collapsible form
   const initialMovementForm = { date: getTodayDate(), itemId: '', type: 'ENTRADA', qty: '', cost: '', reference: '', notes: '', opAsignada: '' };
   const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
@@ -638,7 +640,7 @@ export default function App() {
     const itemData = { ...newInvItemForm, id: newInvItemForm.id.toUpperCase(), desc: newInvItemForm.desc.toUpperCase(), cost: parseNum(newInvItemForm.cost), stock: parseNum(newInvItemForm.stock), timestamp: Date.now() };
     try { await setDoc(getDocRef('inventory', itemData.id), itemData, { merge: true }); setNewInvItemForm(initialInvItemForm); setEditingInvId(null); setDialog({ title: 'Éxito', text: 'Artículo guardado.', type: 'alert' }); } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
-  const startEditInvItem = (item) => { setEditingInvId(item.id); setNewInvItemForm({ id: item.id, desc: item.desc, category: item.category || 'Materia Prima', cost: item.cost || '', stock: item.stock || '', unit: item.unit || 'kg' }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const startEditInvItem = (item) => { setEditingInvId(item.id); setNewInvItemForm({ id: item.id, desc: item.desc, category: item.category || 'Materia Prima', cost: item.cost || '', stock: item.stock || '', unit: item.unit || 'kg' }); setShowInvItemForm(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
   const handleSaveMovement = async (e) => {
     if (e && e.preventDefault) e.preventDefault(); 
@@ -1381,55 +1383,54 @@ export default function App() {
   };
 
   const handleGeneratePurchaseOrder = () => {
-    // Always open the PO modal — user selects products and quantities manually
-    // Pre-populate with all inventory items so user can choose
-    setSelectedPOItems([]);  // start empty — user adds from the modal
-    setPoProvider('');
-    setPoNotes('');
+    // Pre-populate from approved/pending requisitions if any
+    const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'APROBADO' || r.status === 'PENDIENTE');
+    const preItems = [];
+    pendingReqs.forEach(req => {
+      (req.items||[]).forEach(item => {
+        const inv = (inventory||[]).find(i => i.id === item.id || i.id === item.code);
+        preItems.push({
+          productCode: item.id || item.code || '',
+          productName: item.name || item.desc || '',
+          currentStock: inv ? inv.stock : 0,
+          suggestedQty: parseNum(item.qty || item.requested || 0),
+          unitCost: inv ? inv.cost : 0
+        });
+      });
+    });
+    setSelectedPOItems(preItems.length > 0 ? preItems : []);
+    setPoProvider('DEPARTAMENTO DE PROCURA');
+    setPoNotes(`FECHA: ${getTodayDate()} | `);
     setShowPOModal(true);
   };
 
   const handleSavePurchaseOrder = async () => {
-    if (!poProvider.trim()) {
-      setDialog({title: 'Aviso', text: 'Debe ingresar un proveedor', type: 'alert'});
-      return;
-    }
-
     if (selectedPOItems.length === 0) {
-      setDialog({title: 'Aviso', text: 'Debe seleccionar al menos un producto', type: 'alert'});
+      setDialog({title: 'Aviso', text: 'Debe agregar al menos un producto a la orden', type: 'alert'});
       return;
     }
-
     const nextPONum = ((purchaseOrders || []).reduce((m, p) => {
-      // Solo contar IDs con patrón OC-NNNNN (5 dígitos), ignorar IDs de timestamp
       const match = String(p.id || '').match(/^OC-(\d{1,6})$/);
       const n = match ? parseInt(match[1], 10) : 0;
       return Math.max(m, n);
     }, 0) + 1).toString().padStart(5, '0');
+    const fechaOC = poNotes.startsWith('FECHA:') ? poNotes.split('|')[0].replace('FECHA:','').trim() : getTodayDate();
     const po = {
       id: `OC-${nextPONum}`,
-      date: getTodayDate(),
-      provider: poProvider.toUpperCase(),
+      date: fechaOC,
+      provider: poProvider || 'DEPARTAMENTO DE PROCURA',
+      department: poProvider || 'DEPARTAMENTO DE PROCURA',
       items: selectedPOItems,
-      subtotal: selectedPOItems.reduce((sum, item) => sum + (item.suggestedQty * item.unitCost), 0),
+      subtotal: selectedPOItems.reduce((sum, item) => sum + (item.suggestedQty * (item.unitCost||0)), 0),
       status: 'PENDIENTE',
       user: appUser?.name || 'Admin',
       notes: poNotes,
       timestamp: Date.now()
     };
-
     try {
       await setDoc(getDocRef('purchaseOrders', po.id), po);
-      
-      // CAMBIO 15: Cerrar modal y mostrar la orden recién creada en la vista
-      setShowPOModal(false);
-      setPoProvider('');
-      setPoNotes('');
-      setSelectedPOItems([]);
-      
-      setViewingPO(po);
-      setProdView('ordenes_compra');
-      
+      setShowPOModal(false); setPoProvider(''); setPoNotes(''); setSelectedPOItems([]);
+      setViewingPO(po); setProdView('ordenes_compra');
     } catch (error) {
       setDialog({title: 'Error', text: `Error al generar orden: ${error.message}`, type: 'alert'});
     }
@@ -1675,6 +1676,89 @@ export default function App() {
     }
 
     if (invView === 'reportes_mod') return renderInventoryReports();
+
+    // ── ÓRDENES DE COMPRA (desde Inventario) ──
+    if (invView === 'inv_ordenes_compra') {
+      return (
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
+          <div className="px-8 py-6 border-b bg-white flex justify-between items-center">
+            <h2 className="text-xl font-black uppercase flex items-center gap-3"><ShoppingCart className="text-orange-500" size={24}/> Órdenes de Compra</h2>
+            <button onClick={()=>{setPoProvider('DEPARTAMENTO DE PROCURA'); setPoNotes(`FECHA: ${getTodayDate()} | `); setSelectedPOItems([]); setShowPOModal(true);}}
+              className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 flex items-center gap-2">
+              <Plus size={16}/> Nueva Orden
+            </button>
+          </div>
+          <div className="p-6">
+            {(purchaseOrders||[]).length === 0 ? (
+              <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay órdenes de compra registradas</div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-800 text-white">
+                    <tr className="uppercase font-black text-[9px] tracking-widest">
+                      <th className="py-3 px-4 border-r border-gray-700 text-left">Referencia</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-center">Fecha</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-left">Depto. Procura</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-center">Items</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-center">Estado</th>
+                      <th className="py-3 px-4 text-center">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {(purchaseOrders||[]).map(po => (
+                      <tr key={po.id} className="hover:bg-gray-50">
+                        <td className="py-3 px-4 border-r font-black text-orange-600">{po.id}</td>
+                        <td className="py-3 px-4 border-r text-center font-bold text-gray-600">{po.date}</td>
+                        <td className="py-3 px-4 border-r font-bold uppercase">{po.department||po.provider||'—'}</td>
+                        <td className="py-3 px-4 border-r text-center font-black">{(po.items||[]).length}</td>
+                        <td className="py-3 px-4 border-r text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${po.status==='COMPLETADA'?'bg-green-100 text-green-700':po.status==='APROBADA'?'bg-blue-100 text-blue-700':'bg-yellow-100 text-yellow-700'}`}>{po.status}</span>
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <div className="flex gap-2 justify-center">
+                            <button onClick={()=>{setViewingPO(po); setProdView('ordenes_compra'); setActiveTab('produccion');}} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-all text-[9px] font-black uppercase px-3">Ver</button>
+                            <button onClick={()=>handleDeletePO(po.id)} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={13}/></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          {showPOModal && (() => { const proj=[]; const projMap={}; return (
+            <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-3xl p-8 max-w-2xl w-full shadow-2xl border-t-8 border-orange-500 max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center mb-4"><h3 className="text-lg font-black uppercase">Nueva Orden de Compra</h3><button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);}} className="p-2 text-gray-400 hover:text-red-500"><X size={20}/></button></div>
+                <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 mb-4 flex justify-between"><span className="text-[9px] font-black text-orange-700 uppercase">Referencia</span><span className="font-black text-orange-600">OC-{((purchaseOrders||[]).reduce((m,p)=>{const mt=String(p.id||'').match(/^OC-(\d+)$/);return Math.max(m,mt?parseInt(mt[1]):0);},0)+1).toString().padStart(5,'0')}</span></div>
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Depto. Procura</label><input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-500 uppercase" placeholder="DEPARTAMENTO DE PROCURA"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label><input type="date" defaultValue={getTodayDate()} onChange={e=>setPoNotes(`FECHA: ${e.target.value} | `)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                </div>
+                <div className="flex gap-2 mb-4">
+                  <select value={poAddId} onChange={e=>setPoAddId(e.target.value)} className="flex-1 border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-500 bg-white">
+                    <option value="">— Seleccione producto —</option>
+                    {(inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)})</option>)}
+                  </select>
+                  <input type="number" step="0.01" value={poAddQty} onChange={e=>setPoAddQty(e.target.value)} className="w-28 border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="Cant."/>
+                  <button onClick={()=>{if(!poAddId||!parseNum(poAddQty))return;const inv=(inventory||[]).find(i=>i.id===poAddId);if(inv){setSelectedPOItems(p=>[...p,{productCode:inv.id,productName:inv.desc,currentStock:inv.stock,suggestedQty:parseNum(poAddQty),unitCost:inv.cost||0}]); setPoAddId('');setPoAddQty('');}}} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center gap-1"><Plus size={14}/></button>
+                </div>
+                {selectedPOItems.length > 0 && (
+                  <div className="rounded-xl border border-gray-200 overflow-hidden mb-4">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px]"><th className="p-2 border-r text-left">Producto</th><th className="p-2 border-r text-center">Stock</th><th className="p-2 text-center">Cant. Solicitada</th><th className="p-2 w-8"></th></tr></thead>
+                      <tbody>{selectedPOItems.map((it,i)=><tr key={i} className="border-t border-gray-100"><td className="p-2 border-r font-black text-orange-600 text-[10px]">{it.productCode}<br/><span className="text-[9px] text-gray-500 font-bold">{it.productName}</span></td><td className="p-2 border-r text-center font-bold">{formatNum(it.currentStock)}</td><td className="p-2 text-center font-black text-blue-600">{formatNum(it.suggestedQty)}</td><td className="p-2 text-center"><button onClick={()=>setSelectedPOItems(p=>p.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={13}/></button></td></tr>)}</tbody>
+                    </table>
+                  </div>
+                )}
+                <div className="flex justify-end gap-2"><button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);}} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button><button onClick={handleSavePurchaseOrder} disabled={selectedPOItems.length===0} className="bg-black text-white px-8 py-2.5 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 disabled:opacity-40"><CheckCircle2 size={14} className="inline mr-1"/> Guardar OC</button></div>
+              </div>
+            </div>
+          );})()}
+        </div>
+      );
+    }
 
     if (invView === 'wip') {
       // Construir movimientos WIP con chequeos defensivos
@@ -2268,6 +2352,101 @@ export default function App() {
       );
     }
 
+    if (invView === 'almacen') {
+      const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'PENDIENTE' || r.status === 'APROBADO');
+      return (
+        <div className="space-y-6 animate-in fade-in">
+          {/* OC Header */}
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-8 py-6 border-b bg-orange-50 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-black text-orange-800 uppercase flex items-center gap-3"><Warehouse className="text-orange-600" size={24}/> Almacén — Órdenes de Compra</h2>
+                <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase">Gestión de requisiciones y órdenes de compra de inventario</p>
+              </div>
+              <button onClick={handleGeneratePurchaseOrder} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 flex items-center gap-2"><Plus size={16}/> NUEVA ORDEN DE COMPRA</button>
+            </div>
+
+            {/* Requisiciones pendientes de planta */}
+            {pendingReqs.length > 0 && (
+              <div className="px-8 py-4 bg-yellow-50 border-b border-yellow-100">
+                <div className="flex items-center gap-3 mb-3">
+                  <AlertTriangle size={16} className="text-yellow-600"/>
+                  <span className="text-[10px] font-black text-yellow-800 uppercase">{pendingReqs.length} Requisición(es) de Planta Pendientes</span>
+                </div>
+                <div className="space-y-2">
+                  {pendingReqs.map(req => (
+                    <div key={req.id} className="bg-white rounded-xl border border-yellow-200 p-3 flex justify-between items-center">
+                      <div>
+                        <div className="font-black text-xs text-gray-800">{req.id} — {req.requester}</div>
+                        <div className="text-[9px] text-gray-500">{req.fecha} | {(req.items||[]).length} materiales | {req.opId||'Sin OP'}</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={()=>{
+                          const preItems = (req.items||[]).map(item => {
+                            const inv = (inventory||[]).find(i => i.id === item.id || i.id === item.code);
+                            return { productCode: item.id||item.code||'', productName: item.name||item.desc||'', currentStock: inv?inv.stock:0, suggestedQty: parseNum(item.qty||item.requested||0), unitCost: inv?inv.cost:0 };
+                          });
+                          setSelectedPOItems(preItems);
+                          setPoProvider('DEPARTAMENTO DE PROCURA');
+                          setPoNotes(`FECHA: ${getTodayDate()} | REQ: ${req.id}`);
+                          setShowPOModal(true);
+                        }} className="bg-black text-white px-3 py-1.5 rounded-xl text-[9px] font-black uppercase hover:bg-gray-800">
+                          <ShoppingCart size={12} className="inline mr-1"/> Crear OC
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Lista de OCs */}
+            <div className="p-6">
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-100 border-b-2 border-gray-200">
+                    <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
+                      <th className="py-3 px-4 border-r text-left">OC Nro.</th>
+                      <th className="py-3 px-4 border-r text-left">Fecha</th>
+                      <th className="py-3 px-4 border-r text-left">Departamento</th>
+                      <th className="py-3 px-4 border-r text-center">Ítems</th>
+                      <th className="py-3 px-4 border-r text-center">Estado</th>
+                      <th className="py-3 px-4 border-r text-center">Notas</th>
+                      <th className="py-3 px-4 text-center">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {(purchaseOrders||[]).map(po => (
+                      <tr key={po.id} className="hover:bg-gray-50">
+                        <td className="py-3 px-4 border-r font-black text-orange-600">{po.id}</td>
+                        <td className="py-3 px-4 border-r font-bold text-gray-600">{po.date}</td>
+                        <td className="py-3 px-4 border-r font-bold uppercase text-xs">{po.department||po.provider}</td>
+                        <td className="py-3 px-4 border-r text-center font-black">{(po.items||[]).length}</td>
+                        <td className="py-3 px-4 border-r text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${po.status==='RECIBIDA'?'bg-green-100 text-green-700':po.status==='CANCELADA'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'}`}>{po.status}</span>
+                        </td>
+                        <td className="py-3 px-4 border-r text-[9px] text-gray-500">{po.notes?.replace(/^FECHA:[^|]+\| /,'') || '—'}</td>
+                        <td className="py-3 px-4 text-center">
+                          <div className="flex gap-1 justify-center">
+                            <button onClick={()=>setViewingPO(po)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white"><Eye size={12}/></button>
+                            {po.status === 'PENDIENTE' && (
+                              <button onClick={()=>requireAdminPassword(async()=>{await updateDoc(getDocRef('purchaseOrders',po.id),{status:'RECIBIDA'});setDialog({title:'✅',text:'OC marcada como RECIBIDA.',type:'alert'});},'Marcar OC como recibida')} className="p-1.5 bg-green-50 text-green-600 rounded-lg hover:bg-green-600 hover:text-white text-[9px] font-black px-2">RECIBIR</button>
+                            )}
+                            <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('purchaseOrders',po.id));},'Eliminar OC')} className="p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {(purchaseOrders||[]).length === 0 && <tr><td colSpan="7" className="py-8 text-center text-gray-400 font-bold uppercase text-xs">No hay órdenes de compra registradas</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (invView === 'toma_fisica') {
       // Build FG groups for toma fisica (same logic as catalog)
       const tfFGGroups = {};
@@ -2595,8 +2774,15 @@ export default function App() {
                  </button>
                </div>
             </div>
-            <div data-html2canvas-ignore="true" className="p-8 bg-gray-50/50 border-b border-gray-200 no-pdf">
-               <form onSubmit={handleSaveInvItem} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+            <div data-html2canvas-ignore="true" className="p-6 bg-gray-50/50 border-b border-gray-200 no-pdf">
+               {/* Toggle button */}
+               <button type="button" onClick={()=>{setShowInvItemForm(v=>!v); if(editingInvId){setEditingInvId(null);setNewInvItemForm(initialInvItemForm);}}}
+                 className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase transition-all shadow-sm ${showInvItemForm||editingInvId?'bg-orange-500 text-white':'bg-white border-2 border-orange-200 text-orange-700 hover:bg-orange-50'}`}>
+                 {showInvItemForm||editingInvId ? <><X size={14}/> Cancelar</> : <><Plus size={14}/> {editingInvId?'Modificar Artículo':'Nuevo Artículo'}</>}
+               </button>
+
+               {(showInvItemForm || editingInvId) && (
+               <form onSubmit={e=>{handleSaveInvItem(e);setShowInvItemForm(false);}} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6 mt-4">
                  <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3 mb-4 tracking-widest">{editingInvId ? 'Modificar Artículo' : 'Nuevo Artículo / Actualizar'}</h3>
                  <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                    <div>
@@ -2639,11 +2825,12 @@ export default function App() {
                       <input type="number" step="0.01" required value={newInvItemForm.stock} onChange={e=>setNewInvItemForm({...newInvItemForm, stock: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-center text-blue-600" />
                    </div>
                    <div className="flex-1 text-right flex gap-2 justify-end">
-                      {editingInvId && <button type="button" onClick={() => {setEditingInvId(null); setNewInvItemForm(initialInvItemForm);}} className="bg-gray-200 text-gray-700 px-6 py-4 rounded-2xl font-black text-[10px] uppercase hover:bg-gray-300 transition-all">CANCELAR</button>}
+                      {editingInvId && <button type="button" onClick={() => {setEditingInvId(null); setNewInvItemForm(initialInvItemForm); setShowInvItemForm(false);}} className="bg-gray-200 text-gray-700 px-6 py-4 rounded-2xl font-black text-[10px] uppercase hover:bg-gray-300 transition-all">CANCELAR</button>}
                       <button type="submit" className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all">GUARDAR EN INVENTARIO</button>
                    </div>
                  </div>
                </form>
+               )}
             </div>
             <div id="pdf-content" className="p-8 print:p-0 bg-white">
                <div className="hidden pdf-header mb-8">
@@ -3388,9 +3575,20 @@ export default function App() {
       <div className="space-y-6 animate-in fade-in">
         {ventasView === 'clientes' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-8 py-6 border-b bg-white flex justify-between items-center"><h2 className="text-xl font-black uppercase flex items-center gap-3"><Users className="text-orange-500" /> DIRECTORIO DE CLIENTES</h2><button onClick={()=>setShowClientReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50">IMPRIMIR REPORTE</button></div>
+            <div className="px-8 py-6 border-b bg-white flex justify-between items-center">
+              <h2 className="text-xl font-black uppercase flex items-center gap-3"><Users className="text-orange-500" /> DIRECTORIO DE CLIENTES</h2>
+              <div className="flex gap-2">
+                <button onClick={()=>{setShowAddClientForm(v=>!v); setEditingClientId(null); setNewClientForm(initialClientForm);}}
+                  className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${showAddClientForm?'bg-gray-200 text-gray-700':'bg-black text-white hover:bg-gray-800'}`}>
+                  {showAddClientForm ? <><X size={13}/> Cancelar</> : <><Plus size={13}/> Agregar Cliente</>}
+                </button>
+                <button onClick={()=>setShowClientReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50">IMPRIMIR</button>
+              </div>
+            </div>
+            {(showAddClientForm || editingClientId) && (
             <div className="p-8 bg-gray-50/50 border-b">
-              <form onSubmit={handleAddClient} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+              <form onSubmit={e=>{handleAddClient(e); setShowAddClientForm(false);}} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+                <h3 className="text-sm font-black uppercase text-black border-b border-gray-100 pb-3">{editingClientId?'Editar Cliente':'Nuevo Cliente'}</h3>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                   <div className="md:col-span-2">
                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Razón Social</label>
@@ -3420,10 +3618,11 @@ export default function App() {
                 </div>
               </form>
             </div>
+            )}
             <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR POR NOMBRE O RIF..." value={clientSearchTerm} onChange={e=>setClientSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4">RIF</th><th className="py-4 px-4 w-1/2">Razón Social</th><th className="py-4 px-4">Contacto</th><th className="py-4 px-4 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(clients || []).map(c => {
                if(!String(c?.name || '').toUpperCase().includes(clientSearchTerm.toUpperCase()) && !String(c?.rif || '').toUpperCase().includes(clientSearchTerm.toUpperCase())) return null;
                return (
-               <tr key={c?.rif}><td className="py-5 px-4 font-black">{c?.rif}</td><td className="py-5 px-4"><span className="font-black uppercase block text-sm">{c?.name}</span><span className="text-[10px] font-bold text-gray-400 block">{c?.direccion}</span></td><td className="py-5 px-4"><span className="font-bold text-gray-700 text-xs">{c?.personaContacto}</span></td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>startEditClient(c)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c?.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
+               <tr key={c?.rif}><td className="py-5 px-4 font-black">{c?.rif}</td><td className="py-5 px-4"><span className="font-black uppercase block text-sm">{c?.name}</span><span className="text-[10px] font-bold text-gray-400 block">{c?.direccion}</span></td><td className="py-5 px-4"><span className="font-bold text-gray-700 text-xs">{c?.personaContacto}</span></td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>{startEditClient(c);setShowAddClientForm(true);}} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c?.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
                );
             })}</tbody></table></div></div>
           </div>
@@ -6018,23 +6217,28 @@ export default function App() {
                     <h3 className="text-lg font-black uppercase">Nueva Orden de Compra</h3>
                     <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');setPoAddId('');setPoAddQty('');setPoAddCost('');}} className="p-2 text-gray-400 hover:text-red-500"><X size={20}/></button>
                   </div>
+                  {/* Auto-ref display */}
+                  <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 mb-4 flex items-center justify-between">
+                    <span className="text-[9px] font-black text-orange-700 uppercase">Referencia Automática</span>
+                    <span className="font-black text-orange-600">OC-{((purchaseOrders||[]).reduce((m,p)=>{const mt=String(p.id||'').match(/^OC-(\d+)$/);return Math.max(m,mt?parseInt(mt[1]):0);},0)+1).toString().padStart(5,'0')}</span>
+                  </div>
                   <div className="grid grid-cols-2 gap-4 mb-6">
-                    <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Proveedor *</label><input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="NOMBRE DEL PROVEEDOR" /></div>
-                    <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Notas / Referencia</label><input type="text" value={poNotes} onChange={e=>setPoNotes(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="OPCIONAL" /></div>
+                    <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Departamento de Procura</label><input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="EJ: PROCURA / COMPRAS" /></div>
+                    <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label><input type="date" value={poNotes.startsWith('FECHA:') ? poNotes.replace('FECHA:','').split('|')[0].trim() : getTodayDate()} onChange={e=>setPoNotes(`FECHA: ${e.target.value} | ${poNotes.includes('|')?poNotes.split('|').slice(1).join('|').trim():''}`)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-orange-500" /></div>
+                    <div className="col-span-2"><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones</label><input type="text" value={poNotes.includes('|')?poNotes.split('|').slice(1).join('|').trim():''} onChange={e=>setPoNotes(prev=>`FECHA: ${prev.startsWith('FECHA:')?prev.split('|')[0].replace('FECHA:','').trim():getTodayDate()} | ${e.target.value.toUpperCase()}`)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="NOTAS OPCIONALES" /></div>
                   </div>
                   <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-4 mb-4">
                     <h4 className="text-[10px] font-black uppercase text-orange-800 mb-3">Agregar Producto / Insumo</h4>
                     <div className="grid grid-cols-12 gap-2 items-end">
-                      <div className="col-span-5">
+                      <div className="col-span-7">
                         <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Producto</label>
-                        <select value={poAddId} onChange={e => { setPoAddId(e.target.value); const inv=(inventory||[]).find(i=>i.id===e.target.value); if(inv) setPoAddCost(inv.cost?String(inv.cost):''); }} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-orange-500 bg-white">
+                        <select value={poAddId} onChange={e => { setPoAddId(e.target.value); }} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-orange-500 bg-white">
                           <option value="">Seleccione...</option>
                           {(inventory||[]).map(i => { const pp=projMap[i.id]; return <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit}){pp?.isCritical?' ⚠':''}</option>; })}
                         </select>
                       </div>
                       <div className="col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label><input type="number" step="0.01" min="0.01" value={poAddQty} onChange={e=>setPoAddQty(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs text-center outline-none focus:border-orange-500" placeholder="0.00" /></div>
-                      <div className="col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Costo U. ($)</label><input type="number" step="0.01" min="0" value={poAddCost} onChange={e=>setPoAddCost(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs text-center outline-none focus:border-orange-500" placeholder="0.00" /></div>
-                      <div className="col-span-3"><button onClick={addItemToPO} className="w-full bg-orange-500 text-white px-3 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center justify-center gap-1"><Plus size={14}/> Agregar</button></div>
+                      <div className="col-span-3"><button onClick={()=>{if(!poAddId||!parseNum(poAddQty))return;const invItem=(inventory||[]).find(i=>i.id===poAddId);if(invItem){setSelectedPOItems(p=>[...p,{productCode:invItem.id,productName:invItem.desc,currentStock:invItem.stock,suggestedQty:parseNum(poAddQty),unitCost:invItem.cost||0}]);}setPoAddId('');setPoAddQty('');}} className="w-full bg-orange-500 text-white px-3 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center justify-center gap-1"><Plus size={14}/> Agregar</button></div>
                     </div>
                     {proj.filter(p=>p.isCritical && !selectedPOItems.find(s=>s.productCode===p.id)).length>0 && (
                       <div className="mt-3 pt-3 border-t border-orange-200">
@@ -6050,20 +6254,18 @@ export default function App() {
                   {selectedPOItems.length>0 ? (
                     <div className="overflow-x-auto rounded-xl border border-gray-200 mb-6">
                       <table className="w-full text-xs">
-                        <thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px]"><th className="p-3 border-r text-left">Producto</th><th className="p-3 border-r text-center">Stock</th><th className="p-3 border-r text-center">Cantidad</th><th className="p-3 border-r text-right">Costo U.</th><th className="p-3 text-right">Subtotal</th><th className="p-3 w-8"></th></tr></thead>
+                        <thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px]"><th className="p-3 border-r text-left">Producto</th><th className="p-3 border-r text-center">Stock Actual</th><th className="p-3 border-r text-center">Cantidad Solicitada</th><th className="p-3 w-8"></th></tr></thead>
                         <tbody>
                           {selectedPOItems.map((item,i)=>(
                             <tr key={i} className="border-b border-gray-100">
                               <td className="p-3 border-r font-black text-orange-600 text-xs">{item.productCode}<br/><span className="text-[9px] text-gray-500 font-bold">{item.productName}</span></td>
                               <td className="p-3 border-r text-center font-bold">{formatNum(item.currentStock)}</td>
-                              <td className="p-3 border-r text-center"><input type="number" value={item.suggestedQty} onChange={e=>setSelectedPOItems(selectedPOItems.map((it,j)=>j===i?{...it,suggestedQty:parseNum(e.target.value)}:it))} className="w-20 border border-gray-200 rounded-lg p-1 text-center font-black text-xs outline-none" /></td>
-                              <td className="p-3 border-r text-right"><input type="number" step="0.01" value={item.unitCost} onChange={e=>setSelectedPOItems(selectedPOItems.map((it,j)=>j===i?{...it,unitCost:parseNum(e.target.value)}:it))} className="w-20 border border-gray-200 rounded-lg p-1 text-center font-black text-xs outline-none" /></td>
-                              <td className="p-3 text-right font-black text-green-600">${formatNum(parseNum(item.suggestedQty)*parseNum(item.unitCost))}</td>
+                              <td className="p-3 border-r text-center"><input type="number" value={item.suggestedQty} onChange={e=>setSelectedPOItems(selectedPOItems.map((it,j)=>j===i?{...it,suggestedQty:parseNum(e.target.value)}:it))} className="w-24 border border-gray-200 rounded-lg p-1 text-center font-black text-xs outline-none" /></td>
                               <td className="p-3 text-center"><button onClick={()=>setSelectedPOItems(selectedPOItems.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
                             </tr>
                           ))}
                         </tbody>
-                        <tfoot className="bg-gray-100 border-t-2 border-gray-300"><tr><td colSpan={4} className="p-3 text-right font-black uppercase text-[10px]">SUBTOTAL:</td><td className="p-3 text-right font-black text-orange-600 text-base">${formatNum(subtotal)}</td><td></td></tr></tfoot>
+                        <tfoot className="bg-gray-50 border-t-2 border-gray-200"><tr><td colSpan={3} className="p-3 text-right font-black uppercase text-[10px] text-gray-600">{selectedPOItems.length} ítem(s) en la orden</td><td></td></tr></tfoot>
                       </table>
                     </div>
                   ) : (
@@ -6071,7 +6273,7 @@ export default function App() {
                   )}
                   <div className="flex gap-3 justify-end">
                     <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');setPoAddId('');setPoAddQty('');setPoAddCost('');}} className="bg-gray-200 text-gray-700 px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-gray-300">Cancelar</button>
-                    <button onClick={handleSavePurchaseOrder} disabled={selectedPOItems.length===0||!poProvider.trim()} className="bg-black text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"><CheckCircle2 size={16}/> GUARDAR ORDEN</button>
+                    <button onClick={handleSavePurchaseOrder} disabled={selectedPOItems.length===0} className="bg-black text-white px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"><CheckCircle2 size={16}/> GUARDAR ORDEN</button>
                   </div>
                 </div>
               </div>
@@ -8899,6 +9101,32 @@ export default function App() {
           </button>
         </div>
 
+        {/* Email / Notificaciones */}
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-200">
+          <h2 className="text-xl font-black uppercase text-black mb-4 flex items-center gap-3 border-b pb-3"><Mail className="text-blue-500"/> Configuración de Correos — Notificaciones</h2>
+          <p className="text-xs font-bold text-gray-500 mb-4">Configure los correos a los que se enviarán notificaciones de requisiciones y órdenes de compra.</p>
+          {/* Email config - uses settings state directly, saved on blur */}
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Correo Depto. Procura (principal)</label>
+                <input type="email" defaultValue={settings.emailProcura||''}
+                  onBlur={async e=>{ await setDoc(getDocRef('settings','general'),{emailProcura:e.target.value.trim()},{merge:true}); }}
+                  className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-blue-400"
+                  placeholder="procura@empresa.com"/>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Copia (CC) — otros destinatarios</label>
+                <input type="text" defaultValue={settings.emailCopia||''}
+                  onBlur={async e=>{ await setDoc(getDocRef('settings','general'),{emailCopia:e.target.value.trim()},{merge:true}); }}
+                  className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-blue-400"
+                  placeholder="gerencia@empresa.com, compras@empresa.com"/>
+              </div>
+            </div>
+            <p className="text-[9px] text-gray-400 font-bold">Los campos se guardan automáticamente al salir del campo (blur).</p>
+          </div>
+        </div>
+
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
            <h2 className="text-xl font-black uppercase text-black mb-6 flex items-center gap-3 border-b pb-4"><Settings2 className="text-gray-400"/> Configuración del Sistema</h2>
            <div className="space-y-6">
@@ -9535,7 +9763,9 @@ export default function App() {
               <div className="max-w-7xl mx-auto flex gap-6 px-6 overflow-x-auto">
                  {[ 
                    {id:'requisiciones', icon:<ClipboardList size={16}/>, label:'Solicitudes Planta', perm:'inventario_solicitudes'},
+                   {id:'almacen', icon:<Warehouse size={16}/>, label:'Almacén / OC', perm:'inventario_solicitudes'},
                    {id:'catalogo', icon:<Box size={16}/>, label:'Inv. General', perm:'inventario_catalogo'}, 
+                   {id:'inv_ordenes_compra', icon:<ShoppingCart size={16}/>, label:'Órdenes Compra', perm:'inventario_catalogo'},
                    {id:'wip', icon:<Beaker size={16}/>, label:'WIP (Proceso)', perm:'inventario_catalogo'}, 
                    {id:'finished', icon:<Package size={16}/>, label:'Terminados', perm:'inventario_catalogo'}, 
                    {id:'cargo', icon:<ArrowDownToLine size={16}/>, label:'Entradas', perm:'inventario_movimientos'}, 
