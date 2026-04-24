@@ -2634,9 +2634,9 @@ export default function App() {
                             setSelectedPOItems(preItems);
                             setPoProvider('DEPARTAMENTO DE ALMACÉN');
                             setPoNotes(`FECHA: ${getTodayDate()} | REQ: ${reqNum} | OP: ${req.opId||''}`);
-                            setShowPOModal(true);
+                            setShowODPModal(true);
                           }} className="bg-black text-white px-4 py-2 rounded-xl font-black text-[9px] uppercase hover:bg-gray-800 flex items-center gap-1.5">
-                            <ShoppingCart size={13}/> Crear OC a Procura
+                            <ShoppingCart size={13}/> Crear OD-P a Procura
                           </button>
                         </div>
                       </div>
@@ -2725,100 +2725,93 @@ export default function App() {
             </div>
           </div>
         </div>
-      );
-    }
 
-    // ── OD-P MODAL (Nueva Requisición para Procura) ──
-    if (showODPModal) {
-      const odpItems = selectedPOItems;
-      const nextODP = ((purchaseOrders||[]).reduce((m,p)=>{const mt=String(p.id||'').match(/^OD-P-(\d+)$/);return Math.max(m,mt?parseInt(mt[1]):0);},0)+1).toString().padStart(5,'0');
-      const odpRef = `OD-P-${nextODP}`;
-      // Only MP and Consumibles
-      const mpItems = (inventory||[]).filter(i => i.category==='Materia Prima' || i.category==='Consumibles' || i.category==='consumibles' || i.category==='materia_prima' || !i.category || i.id?.startsWith('MP-') || i.id?.startsWith('CS-'));
-      const criticalItems = mpItems.filter(i => i.isCritical || (generateProjectionData()||[]).find(p=>p.id===i.id&&p.isCritical));
+        {/* ── OD-P Modal (inside almacen block) ── */}
+        {(() => {
+          if (!showODPModal) return null;
+          const nextODP_n = ((purchaseOrders||[]).reduce((m,p)=>{const mt=String(p.id||'').match(/^OD-P-(\d+)$/);return Math.max(m,mt?parseInt(mt[1]):0);},0)+1).toString().padStart(5,'0');
+          const odpRef2 = `OD-P-${nextODP_n}`;
+          const mpItems2 = (inventory||[]).filter(i => i.category==='Materia Prima'||i.category==='Consumibles'||i.category==='consumibles'||i.category==='materia_prima'||!i.category||i.id?.startsWith('MP-')||i.id?.startsWith('CS-'));
+          const critItems2 = mpItems2.filter(i=>i.isCritical);
 
-      const saveODP = async () => {
-        if(selectedPOItems.length===0) return setDialog({title:'Aviso',text:'Agregue al menos un producto.',type:'alert'});
-        const odp = {
-          id: odpRef,
-          date: poNotes.startsWith('FECHA:')?poNotes.split('|')[0].replace('FECHA:','').trim():getTodayDate(),
-          department: poProvider||'DEPARTAMENTO DE ALMACÉN',
-          provider: poProvider||'DEPARTAMENTO DE ALMACÉN',
-          items: selectedPOItems,
-          subtotal: selectedPOItems.reduce((s,it)=>s+(parseNum(it.suggestedQty)*(it.unitCost||0)),0),
-          status: 'PENDIENTE',
-          user: appUser?.name||'Admin',
-          notes: poNotes,
-          timestamp: Date.now()
-        };
-        try {
-          await setDoc(getDocRef('purchaseOrders', odpRef), odp);
-          setShowODPModal(false); setSelectedPOItems([]); setPoProvider('DEPARTAMENTO DE ALMACÉN'); setPoNotes(`FECHA: ${getTodayDate()} | `); setPoAddId(''); setPoAddQty('');
-          setDialog({title:'✅ OD-P Creada',text:`Orden ${odpRef} registrada en Almacén/OC.`,type:'alert'});
-        } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-      };
+          const saveODP2 = async () => {
+            if(selectedPOItems.length===0) return setDialog({title:'Aviso',text:'Agregue al menos un producto.',type:'alert'});
+            const odp = { id:odpRef2, date:poNotes.startsWith('FECHA:')?poNotes.split('|')[0].replace('FECHA:','').trim():getTodayDate(), department:poProvider||'DEPARTAMENTO DE ALMACÉN', provider:poProvider||'DEPARTAMENTO DE ALMACÉN', items:selectedPOItems, subtotal:selectedPOItems.reduce((s,it)=>s+(parseNum(it.suggestedQty)*(it.unitCost||0)),0), status:'PENDIENTE', user:appUser?.name||'Admin', notes:poNotes, timestamp:Date.now() };
+            try {
+              await setDoc(getDocRef('purchaseOrders', odpRef2), odp);
+              setShowODPModal(false); setSelectedPOItems([]); setPoProvider('DEPARTAMENTO DE ALMACÉN'); setPoNotes(`FECHA: ${getTodayDate()} | `); setPoAddId(''); setPoAddQty('');
+              setDialog({title:'✅ OD-P Creada',text:`Orden ${odpRef2} registrada.`,type:'alert'});
+            } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+          };
 
-      return (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl p-5 max-w-3xl w-full shadow-2xl border-t-8 border-orange-500 max-h-[95vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-black uppercase">Nueva Requisición para Procura</h3>
-              <button onClick={()=>{setShowODPModal(false);setSelectedPOItems([]);}} className="p-2 text-gray-400 hover:text-red-500"><X size={20}/></button>
-            </div>
-            {/* Auto-ref */}
-            <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 mb-4 flex items-center justify-between">
-              <span className="text-[9px] font-black text-orange-700 uppercase">Referencia Automática</span>
-              <span className="font-black text-orange-600">{odpRef}</span>
-            </div>
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Departamento</label><input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-500" placeholder="DEPARTAMENTO DE ALMACÉN"/></div>
-              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label><input type="date" defaultValue={getTodayDate()} onChange={e=>setPoNotes(`FECHA: ${e.target.value} | `)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-500"/></div>
-              <div className="col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Observaciones</label><input type="text" onChange={e=>setPoNotes(prev=>`FECHA: ${prev.startsWith('FECHA:')?prev.split('|')[0].replace('FECHA:','').trim():getTodayDate()} | ${e.target.value.toUpperCase()}`)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-500" placeholder="NOTAS OPCIONALES"/></div>
-            </div>
-            {/* Add product - only MP/Consumibles */}
-            <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-3 mb-3">
-              <h4 className="text-[10px] font-black uppercase text-orange-800 mb-2">Agregar Producto / Insumo</h4>
-              <div className="grid grid-cols-12 gap-2 items-end mb-2">
-                <div className="col-span-8">
-                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Producto (Materia Prima / Consumibles)</label>
-                  <select value={poAddId} onChange={e=>setPoAddId(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-500 bg-white">
-                    <option value="">Seleccione...</option>
-                    {mpItems.map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
-                  </select>
+          return (
+            <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-3xl p-5 max-w-3xl w-full shadow-2xl border-t-8 border-orange-500 max-h-[95vh] overflow-y-auto">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-lg font-black uppercase">Nueva Requisición para Procura</h3>
+                  <button onClick={()=>{setShowODPModal(false);setSelectedPOItems([]);}} className="p-2 text-gray-400 hover:text-red-500"><X size={20}/></button>
                 </div>
-                <div className="col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label><input type="number" step="0.01" min="0.01" value={poAddQty} onChange={e=>setPoAddQty(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0.00"/></div>
-                <div className="col-span-2"><button onClick={()=>{if(!poAddId||!parseNum(poAddQty))return;const inv=mpItems.find(i=>i.id===poAddId);if(inv){setSelectedPOItems(p=>[...p,{productCode:inv.id,productName:inv.desc,currentStock:inv.stock,suggestedQty:parseNum(poAddQty),unitCost:inv.cost||0}]);setPoAddId('');setPoAddQty('');}}} className="w-full bg-orange-500 text-white px-2 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center justify-center gap-1"><Plus size={13}/> Agregar</button></div>
-              </div>
-              {criticalItems.length > 0 && (
-                <div>
-                  <p className="text-[8px] font-black text-orange-700 uppercase mb-1">Items críticos:</p>
-                  <div className="flex flex-wrap gap-1">
-                    {criticalItems.filter(c=>!selectedPOItems.find(s=>s.productCode===c.id)).map(c=>(
-                      <button key={c.id} onClick={()=>setSelectedPOItems(p=>[...p,{productCode:c.id,productName:c.desc,currentStock:c.stock,suggestedQty:500,unitCost:c.cost||0}])} className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[8px] font-black hover:bg-red-200">+ {c.id}</button>
-                    ))}
+                <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 mb-4 flex items-center justify-between">
+                  <span className="text-[9px] font-black text-orange-700 uppercase">Referencia Automática</span>
+                  <span className="font-black text-orange-600">{odpRef2}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Departamento</label><input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-500" placeholder="DEPARTAMENTO DE ALMACÉN"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label><input type="date" defaultValue={getTodayDate()} onChange={e=>setPoNotes(`FECHA: ${e.target.value} | `)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                  <div className="col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Observaciones</label><input type="text" onChange={e=>setPoNotes(prev=>`FECHA: ${prev.startsWith('FECHA:')?prev.split('|')[0].replace('FECHA:','').trim():getTodayDate()} | ${e.target.value.toUpperCase()}`)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-500" placeholder="NOTAS OPCIONALES"/></div>
+                </div>
+                <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-3 mb-3">
+                  <h4 className="text-[10px] font-black uppercase text-orange-800 mb-2">Agregar Producto / Insumo</h4>
+                  <div className="flex gap-2 items-end mb-2">
+                    <div className="flex-1"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Producto (MP / Consumibles)</label>
+                      <select value={poAddId} onChange={e=>setPoAddId(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-500 bg-white">
+                        <option value="">Seleccione...</option>
+                        {mpItems2.map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                      </select>
+                    </div>
+                    <div className="w-28"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label><input type="number" step="0.01" min="0.01" value={poAddQty} onChange={e=>setPoAddQty(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0.00"/></div>
+                    <button onClick={()=>{if(!poAddId||!parseNum(poAddQty))return;const inv=mpItems2.find(i=>i.id===poAddId);if(inv){setSelectedPOItems(p=>[...p,{productCode:inv.id,productName:inv.desc,currentStock:inv.stock,suggestedQty:parseNum(poAddQty),unitCost:inv.cost||0}]);setPoAddId('');setPoAddQty('');}}} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center gap-1 whitespace-nowrap"><Plus size={13}/> Agregar</button>
                   </div>
+                  {critItems2.filter(c=>!selectedPOItems.find(s=>s.productCode===c.id)).length > 0 && (
+                    <div><p className="text-[8px] font-black text-orange-700 uppercase mb-1">Items críticos:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {critItems2.filter(c=>!selectedPOItems.find(s=>s.productCode===c.id)).map(c=>(
+                          <button key={c.id} onClick={()=>setSelectedPOItems(p=>[...p,{productCode:c.id,productName:c.desc,currentStock:c.stock,suggestedQty:500,unitCost:c.cost||0}])} className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[8px] font-black hover:bg-red-200">+ {c.id}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-            {/* Items list */}
-            {selectedPOItems.length > 0 ? (
-              <div className="rounded-xl border border-gray-200 overflow-hidden mb-3">
-                <table className="w-full text-xs">
-                  <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px]"><th className="p-2 border-r text-left">Producto</th><th className="p-2 border-r text-center">Stock</th><th className="p-2 border-r text-center">Cant.</th><th className="p-2 w-6"></th></tr></thead>
-                  <tbody>{selectedPOItems.map((it,i)=><tr key={i} className="border-t border-gray-100"><td className="p-2 border-r font-black text-orange-600 text-[10px]">{it.productCode}<br/><span className="text-[9px] text-gray-500 font-bold">{it.productName}</span></td><td className="p-2 border-r text-center font-bold">{formatNum(it.currentStock)}</td><td className="p-2 border-r text-center"><input type="number" value={it.suggestedQty} onChange={e=>setSelectedPOItems(selectedPOItems.map((x,j)=>j===i?{...x,suggestedQty:parseNum(e.target.value)}:x))} className="w-20 border border-gray-200 rounded-lg p-1 text-center font-black text-xs outline-none"/></td><td className="p-2 text-center"><button onClick={()=>setSelectedPOItems(p=>p.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={12}/></button></td></tr>)}</tbody>
-                </table>
+                {selectedPOItems.length > 0 ? (
+                  <div className="rounded-xl border border-gray-200 overflow-hidden mb-3">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px]"><th className="p-2 border-r text-left">Producto</th><th className="p-2 border-r text-center">Stock</th><th className="p-2 border-r text-center">Cantidad</th><th className="p-2 w-6"></th></tr></thead>
+                      <tbody>{selectedPOItems.map((it,i)=>(
+                        <tr key={i} className="border-t border-gray-100">
+                          <td className="p-2 border-r font-black text-orange-600 text-[10px]">{it.productCode}<br/><span className="text-[9px] text-gray-500">{it.productName}</span></td>
+                          <td className="p-2 border-r text-center font-bold">{formatNum(it.currentStock)}</td>
+                          <td className="p-2 border-r text-center"><input type="number" value={it.suggestedQty} onChange={e=>setSelectedPOItems(selectedPOItems.map((x,j)=>j===i?{...x,suggestedQty:parseNum(e.target.value)}:x))} className="w-20 border border-gray-200 rounded-lg p-1 text-center font-black text-xs outline-none"/></td>
+                          <td className="p-2 text-center"><button onClick={()=>setSelectedPOItems(p=>p.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={12}/></button></td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="bg-gray-50 rounded-2xl p-5 text-center text-gray-400 mb-3"><ShoppingCart size={24} className="mx-auto mb-1 opacity-30"/><p className="text-xs font-bold uppercase">Agregue productos</p></div>
+                )}
+                <div className="flex gap-2 justify-end">
+                  <button onClick={()=>{setShowODPModal(false);setSelectedPOItems([]);}} className="bg-gray-200 text-gray-700 px-5 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-gray-300">Cancelar</button>
+                  <button onClick={saveODP2} disabled={selectedPOItems.length===0} className="bg-black text-white px-7 py-2.5 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2 disabled:opacity-40"><CheckCircle2 size={14}/> Guardar OD-P</button>
+                </div>
               </div>
-            ) : (
-              <div className="bg-gray-50 rounded-2xl p-6 text-center text-gray-400 mb-3"><ShoppingCart size={28} className="mx-auto mb-1 opacity-30"/><p className="text-xs font-bold uppercase">Agregue productos a la orden</p></div>
-            )}
-            <div className="flex gap-2 justify-end">
-              <button onClick={()=>{setShowODPModal(false);setSelectedPOItems([]);}} className="bg-gray-200 text-gray-700 px-5 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-gray-300">Cancelar</button>
-              <button onClick={saveODP} disabled={selectedPOItems.length===0} className="bg-black text-white px-7 py-2.5 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2 disabled:opacity-40"><CheckCircle2 size={14}/> Guardar OD-P</button>
             </div>
-          </div>
-        </div>
+          );
+        })()}
+      </div>
       );
     }
+
+
 
     if (invView === 'toma_fisica') {
       // Build FG groups for toma fisica (same logic as catalog)
