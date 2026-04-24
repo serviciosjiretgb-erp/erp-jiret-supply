@@ -1058,7 +1058,25 @@ export default function App() {
   const handleSendRequisitionToAlmacen = async () => {
     if (!phaseForm.insumos || phaseForm.insumos.length === 0) { return setDialog({title: 'Aviso', text: 'Agregue insumos a la lista antes de solicitar a almacén.', type: 'alert'}); }
     const newReq = { opId: selectedPhaseReqId, phase: activePhaseTab, items: phaseForm.insumos, status: 'PENDIENTE', timestamp: Date.now(), date: getTodayDate(), user: appUser?.name || 'Operador de Planta' };
-    try { await addDoc(getColRef('inventoryRequisitions'), newReq); setPhaseForm({...phaseForm, insumos: []}); setDialog({title: 'Solicitud Enviada', text: 'Requisición enviada al Almacén. Espere su entrega.', type: 'alert'}); } catch(e) { setDialog({title: 'Error', text: e.message, type: 'alert'}); }
+    try {
+      await addDoc(getColRef('inventoryRequisitions'), newReq);
+      setPhaseForm({...phaseForm, insumos: []});
+      // ── Auto-notificación por correo ──
+      const emailTo = settings.emailProcura || '';
+      const emailCC = settings.emailCopia || '';
+      if (emailTo) {
+        const subject = encodeURIComponent(`[ERP G&B] Nueva Requisición de Planta — OP ${selectedPhaseReqId} / Fase: ${activePhaseTab}`);
+        const body = encodeURIComponent(
+          `Nueva requisición de materiales enviada desde producción.\n\n` +
+          `OP: ${selectedPhaseReqId}\nFase: ${activePhaseTab}\nFecha: ${getTodayDate()}\nOperador: ${appUser?.name||'Planta'}\n\n` +
+          `Materiales solicitados:\n${phaseForm.insumos.map(i=>`  - ${i.id}: ${i.qty} KG`).join('\n')}\n\n` +
+          `Por favor, revise el módulo de Almacén / OC para procesar esta requisición.`
+        );
+        const mailtoLink = `mailto:${emailTo}${emailCC?'?cc='+emailCC+'&':'?'}subject=${subject}&body=${body}`;
+        window.open(mailtoLink, '_blank');
+      }
+      setDialog({title: '✅ Solicitud Enviada', text: `Requisición enviada al Almacén.${emailTo?' Se abrió el cliente de correo para notificar a Procura.':''}`, type: 'alert'});
+    } catch(e) { setDialog({title: 'Error', text: e.message, type: 'alert'}); }
   };
 
   const submitApproveRequisition = async (e) => {
@@ -1399,7 +1417,7 @@ export default function App() {
       });
     });
     setSelectedPOItems(preItems.length > 0 ? preItems : []);
-    setPoProvider('DEPARTAMENTO DE PROCURA');
+    setPoProvider('DEPARTAMENTO DE ALMACÉN');
     setPoNotes(`FECHA: ${getTodayDate()} | `);
     setShowPOModal(true);
   };
@@ -1410,16 +1428,16 @@ export default function App() {
       return;
     }
     const nextPONum = ((purchaseOrders || []).reduce((m, p) => {
-      const match = String(p.id || '').match(/^OC-(\d{1,6})$/);
+      const match = String(p.id || '').match(/^RQ-(\d{1,6})$/);
       const n = match ? parseInt(match[1], 10) : 0;
       return Math.max(m, n);
     }, 0) + 1).toString().padStart(5, '0');
     const fechaOC = poNotes.startsWith('FECHA:') ? poNotes.split('|')[0].replace('FECHA:','').trim() : getTodayDate();
     const po = {
-      id: `OC-${nextPONum}`,
+      id: `RQ-${nextPONum}`,
       date: fechaOC,
-      provider: poProvider || 'DEPARTAMENTO DE PROCURA',
-      department: poProvider || 'DEPARTAMENTO DE PROCURA',
+      provider: 'DEPARTAMENTO DE ALMACÉN',
+      department: poProvider || 'DEPARTAMENTO DE ALMACÉN',
       items: selectedPOItems,
       subtotal: selectedPOItems.reduce((sum, item) => sum + (item.suggestedQty * (item.unitCost||0)), 0),
       status: 'PENDIENTE',
@@ -1683,7 +1701,7 @@ export default function App() {
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
           <div className="px-8 py-6 border-b bg-white flex justify-between items-center">
             <h2 className="text-xl font-black uppercase flex items-center gap-3"><ShoppingCart className="text-orange-500" size={24}/> Órdenes de Compra</h2>
-            <button onClick={()=>{setPoProvider('DEPARTAMENTO DE PROCURA'); setPoNotes(`FECHA: ${getTodayDate()} | `); setSelectedPOItems([]); setShowPOModal(true);}}
+            <button onClick={()=>{setPoProvider('DEPARTAMENTO DE ALMACÉN'); setPoNotes(`FECHA: ${getTodayDate()} | `); setSelectedPOItems([]); setShowPOModal(true);}}
               className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 flex items-center gap-2">
               <Plus size={16}/> Nueva Orden
             </button>
@@ -1730,7 +1748,7 @@ export default function App() {
           {showPOModal && (() => { const proj=[]; const projMap={}; return (
             <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
               <div className="bg-white rounded-3xl p-8 max-w-2xl w-full shadow-2xl border-t-8 border-orange-500 max-h-[90vh] overflow-y-auto">
-                <div className="flex justify-between items-center mb-4"><h3 className="text-lg font-black uppercase">Nueva Orden de Compra</h3><button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);}} className="p-2 text-gray-400 hover:text-red-500"><X size={20}/></button></div>
+                <div className="flex justify-between items-center mb-4"><h3 className="text-lg font-black uppercase">Nueva Requisición de Compra</h3><button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);}} className="p-2 text-gray-400 hover:text-red-500"><X size={20}/></button></div>
                 <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 mb-4 flex justify-between"><span className="text-[9px] font-black text-orange-700 uppercase">Referencia</span><span className="font-black text-orange-600">OC-{((purchaseOrders||[]).reduce((m,p)=>{const mt=String(p.id||'').match(/^OC-(\d+)$/);return Math.max(m,mt?parseInt(mt[1]):0);},0)+1).toString().padStart(5,'0')}</span></div>
                 <div className="grid grid-cols-2 gap-4 mb-4">
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Depto. Procura</label><input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-500 uppercase" placeholder="DEPARTAMENTO DE PROCURA"/></div>
@@ -2353,94 +2371,140 @@ export default function App() {
     }
 
     if (invView === 'almacen') {
-      const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'PENDIENTE' || r.status === 'APROBADO');
+      const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'PENDIENTE');
+
       return (
         <div className="space-y-6 animate-in fade-in">
-          {/* OC Header */}
+
+          {/* ── PANEL 1: REQUISICIONES DE PLANTA ── */}
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-8 py-6 border-b bg-orange-50 flex justify-between items-center">
+            <div className="px-8 py-5 border-b bg-yellow-50 flex justify-between items-center">
               <div>
-                <h2 className="text-xl font-black text-orange-800 uppercase flex items-center gap-3"><Warehouse className="text-orange-600" size={24}/> Almacén — Órdenes de Compra</h2>
-                <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase">Gestión de requisiciones y órdenes de compra de inventario</p>
+                <h2 className="text-lg font-black text-yellow-900 uppercase flex items-center gap-3">
+                  <AlertTriangle className="text-yellow-600" size={20}/> Requisiciones de Planta
+                </h2>
+                <p className="text-[10px] font-bold text-yellow-700 mt-0.5">Solicitudes enviadas desde producción — pendientes de procesar</p>
               </div>
-              <button onClick={handleGeneratePurchaseOrder} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 flex items-center gap-2"><Plus size={16}/> NUEVA ORDEN DE COMPRA</button>
+              <span className={`px-4 py-1.5 rounded-full text-[10px] font-black ${pendingReqs.length>0?'bg-yellow-500 text-white':'bg-gray-200 text-gray-600'}`}>
+                {pendingReqs.length} PENDIENTE{pendingReqs.length!==1?'S':''}
+              </span>
             </div>
 
-            {/* Requisiciones pendientes de planta */}
-            {pendingReqs.length > 0 && (
-              <div className="px-8 py-4 bg-yellow-50 border-b border-yellow-100">
-                <div className="flex items-center gap-3 mb-3">
-                  <AlertTriangle size={16} className="text-yellow-600"/>
-                  <span className="text-[10px] font-black text-yellow-800 uppercase">{pendingReqs.length} Requisición(es) de Planta Pendientes</span>
-                </div>
-                <div className="space-y-2">
-                  {pendingReqs.map(req => (
-                    <div key={req.id} className="bg-white rounded-xl border border-yellow-200 p-3 flex justify-between items-center">
-                      <div>
-                        <div className="font-black text-xs text-gray-800">{req.id} — {req.requester}</div>
-                        <div className="text-[9px] text-gray-500">{req.fecha} | {(req.items||[]).length} materiales | {req.opId||'Sin OP'}</div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button onClick={()=>{
-                          const preItems = (req.items||[]).map(item => {
-                            const inv = (inventory||[]).find(i => i.id === item.id || i.id === item.code);
-                            return { productCode: item.id||item.code||'', productName: item.name||item.desc||'', currentStock: inv?inv.stock:0, suggestedQty: parseNum(item.qty||item.requested||0), unitCost: inv?inv.cost:0 };
-                          });
-                          setSelectedPOItems(preItems);
-                          setPoProvider('DEPARTAMENTO DE PROCURA');
-                          setPoNotes(`FECHA: ${getTodayDate()} | REQ: ${req.id}`);
-                          setShowPOModal(true);
-                        }} className="bg-black text-white px-3 py-1.5 rounded-xl text-[9px] font-black uppercase hover:bg-gray-800">
-                          <ShoppingCart size={12} className="inline mr-1"/> Crear OC
-                        </button>
+            {pendingReqs.length === 0 ? (
+              <div className="py-10 text-center text-gray-400 font-bold text-xs uppercase">Sin requisiciones pendientes de planta</div>
+            ) : (
+              <div className="p-4 space-y-3">
+                {pendingReqs.map(req => {
+                  const op = (requirements||[]).find(r=>r.id===req.opId);
+                  const reqNum = String(req.id||'').slice(-8).toUpperCase();
+                  return (
+                    <div key={req.id} className="bg-yellow-50 border-2 border-yellow-200 rounded-2xl p-4">
+                      <div className="flex justify-between items-start gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <span className="font-black text-orange-600 text-sm">REQ-{reqNum}</span>
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-yellow-200 text-yellow-800">PENDIENTE</span>
+                            <span className="text-[9px] text-gray-500">{req.date}</span>
+                          </div>
+                          <div className="text-[10px] font-bold text-gray-700 mb-1">
+                            <span className="text-orange-600 font-black">OP: {req.opId||'—'}</span>
+                            {op && <span className="ml-2 text-gray-500">| {op.client} — {op.desc}</span>}
+                          </div>
+                          <div className="text-[9px] text-gray-500 mb-2">Fase: {req.phase||'—'} | Solicitante: {req.user||'—'}</div>
+                          <div className="flex flex-wrap gap-2">
+                            {(req.items||[]).map((item,i) => {
+                              const inv = (inventory||[]).find(x=>x.id===item.id||x.id===item.code);
+                              return (
+                                <span key={i} className="bg-white border border-yellow-300 px-2 py-1 rounded-lg text-[9px] font-bold">
+                                  {item.id||item.code||'?'} — {formatNum(item.qty||item.requested)} {inv?.unit||'KG'}
+                                  {inv && <span className="text-gray-400 ml-1">(stock: {formatNum(inv.stock)})</span>}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-2 min-w-fit">
+                          <button onClick={()=>setReqToApprove(req)}
+                            className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-[9px] uppercase hover:bg-green-700 flex items-center gap-1.5">
+                            <CheckCircle2 size={13}/> Despachar
+                          </button>
+                          <button onClick={()=>{
+                            const preItems = (req.items||[]).map(item => {
+                              const inv = (inventory||[]).find(i=>i.id===item.id||i.id===item.code);
+                              return { productCode: item.id||item.code||'', productName: inv?.desc||item.name||'', currentStock: inv?inv.stock:0, suggestedQty: parseNum(item.qty||item.requested||0), unitCost: inv?inv.cost:0 };
+                            }).filter(i=>i.productCode);
+                            setSelectedPOItems(preItems);
+                            setPoProvider('DEPARTAMENTO DE ALMACÉN');
+                            setPoNotes(`FECHA: ${getTodayDate()} | REQ: ${reqNum} | OP: ${req.opId||''}`);
+                            setShowPOModal(true);
+                          }} className="bg-black text-white px-4 py-2 rounded-xl font-black text-[9px] uppercase hover:bg-gray-800 flex items-center gap-1.5">
+                            <ShoppingCart size={13}/> Crear OC a Procura
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
             )}
+          </div>
 
-            {/* Lista de OCs */}
-            <div className="p-6">
-              <div className="overflow-x-auto rounded-xl border border-gray-200">
-                <table className="w-full text-xs">
-                  <thead className="bg-gray-100 border-b-2 border-gray-200">
-                    <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
-                      <th className="py-3 px-4 border-r text-left">OC Nro.</th>
-                      <th className="py-3 px-4 border-r text-left">Fecha</th>
-                      <th className="py-3 px-4 border-r text-left">Departamento</th>
-                      <th className="py-3 px-4 border-r text-center">Ítems</th>
-                      <th className="py-3 px-4 border-r text-center">Estado</th>
-                      <th className="py-3 px-4 border-r text-center">Notas</th>
-                      <th className="py-3 px-4 text-center">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {(purchaseOrders||[]).map(po => (
-                      <tr key={po.id} className="hover:bg-gray-50">
-                        <td className="py-3 px-4 border-r font-black text-orange-600">{po.id}</td>
-                        <td className="py-3 px-4 border-r font-bold text-gray-600">{po.date}</td>
-                        <td className="py-3 px-4 border-r font-bold uppercase text-xs">{po.department||po.provider}</td>
-                        <td className="py-3 px-4 border-r text-center font-black">{(po.items||[]).length}</td>
-                        <td className="py-3 px-4 border-r text-center">
-                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${po.status==='RECIBIDA'?'bg-green-100 text-green-700':po.status==='CANCELADA'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'}`}>{po.status}</span>
-                        </td>
-                        <td className="py-3 px-4 border-r text-[9px] text-gray-500">{po.notes?.replace(/^FECHA:[^|]+\| /,'') || '—'}</td>
-                        <td className="py-3 px-4 text-center">
-                          <div className="flex gap-1 justify-center">
-                            <button onClick={()=>setViewingPO(po)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white"><Eye size={12}/></button>
-                            {po.status === 'PENDIENTE' && (
-                              <button onClick={()=>requireAdminPassword(async()=>{await updateDoc(getDocRef('purchaseOrders',po.id),{status:'RECIBIDA'});setDialog({title:'✅',text:'OC marcada como RECIBIDA.',type:'alert'});},'Marcar OC como recibida')} className="p-1.5 bg-green-50 text-green-600 rounded-lg hover:bg-green-600 hover:text-white text-[9px] font-black px-2">RECIBIR</button>
-                            )}
-                            <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('purchaseOrders',po.id));},'Eliminar OC')} className="p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {(purchaseOrders||[]).length === 0 && <tr><td colSpan="7" className="py-8 text-center text-gray-400 font-bold uppercase text-xs">No hay órdenes de compra registradas</td></tr>}
-                  </tbody>
-                </table>
+          {/* ── PANEL 2: ÓRDENES DE COMPRA A PROCURA ── */}
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-8 py-5 border-b bg-blue-50 flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-black text-blue-900 uppercase flex items-center gap-3">
+                  <ShoppingCart className="text-blue-600" size={20}/> Órdenes de Compra a Procura
+                </h2>
+                <p className="text-[10px] font-bold text-blue-700 mt-0.5">OC emitidas desde Almacén hacia Departamento de Procura</p>
               </div>
+              <button onClick={()=>{ setPoProvider('DEPARTAMENTO DE ALMACÉN'); setPoNotes(`FECHA: ${getTodayDate()} | `); setSelectedPOItems([]); setShowPOModal(true); }}
+                className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 flex items-center gap-2">
+                <Plus size={14}/> Nueva OC Autónoma
+              </button>
+            </div>
+
+            <div className="p-4">
+              {(purchaseOrders||[]).length === 0 ? (
+                <div className="py-10 text-center text-gray-400 font-bold text-xs uppercase">No hay órdenes de compra registradas</div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-gray-200">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-800 text-white">
+                      <tr className="uppercase font-black text-[9px] tracking-widest">
+                        <th className="py-3 px-4 border-r border-gray-700 text-left">Nro.</th>
+                        <th className="py-3 px-4 border-r border-gray-700 text-center">Fecha</th>
+                        <th className="py-3 px-4 border-r border-gray-700 text-left">Depto.</th>
+                        <th className="py-3 px-4 border-r border-gray-700 text-center">Ítems</th>
+                        <th className="py-3 px-4 border-r border-gray-700 text-center">Estado</th>
+                        <th className="py-3 px-4 border-r border-gray-700 text-left">Notas</th>
+                        <th className="py-3 px-4 text-center">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {(purchaseOrders||[]).map(po => (
+                        <tr key={po.id} className="hover:bg-gray-50">
+                          <td className="py-3 px-4 border-r font-black text-orange-600">{po.id}</td>
+                          <td className="py-3 px-4 border-r text-center font-bold text-gray-500">{po.date}</td>
+                          <td className="py-3 px-4 border-r font-bold uppercase text-[10px]">{po.department||po.provider||'—'}</td>
+                          <td className="py-3 px-4 border-r text-center font-black">{(po.items||[]).length}</td>
+                          <td className="py-3 px-4 border-r text-center">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${po.status==='RECIBIDA'?'bg-green-100 text-green-700':po.status==='CANCELADA'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'}`}>{po.status}</span>
+                          </td>
+                          <td className="py-3 px-4 border-r text-[9px] text-gray-400">{po.notes?.replace(/^FECHA:[^|]+\| /,'') || '—'}</td>
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex gap-1.5 justify-center">
+                              <button onClick={()=>setViewingPO(po)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white"><Eye size={12}/></button>
+                              {po.status === 'PENDIENTE' && <button onClick={()=>requireAdminPassword(async()=>{await updateDoc(getDocRef('purchaseOrders',po.id),{status:'RECIBIDA'});setDialog({title:'✅',text:'OC recibida.',type:'alert'});},'Recibir OC')} className="bg-green-50 text-green-600 px-2 py-1 rounded-lg text-[8px] font-black uppercase hover:bg-green-600 hover:text-white">RECIBIR</button>}
+                              <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('purchaseOrders',po.id));},'Eliminar OC')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -6010,7 +6074,7 @@ export default function App() {
                 <h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><TrendingUp className="text-orange-500" size={24}/> Proyección de Materia Prima</h2>
                 <p className="text-[10px] font-bold text-orange-700 mt-1 uppercase">Análisis de inventario y días de cobertura estimados</p>
               </div>
-              <button onClick={handleGeneratePurchaseOrder} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-all flex items-center gap-2"><ShoppingCart size={16}/> GENERAR ORDEN DE COMPRA</button>
+              
             </div>
             <div className="p-6">
               {projection.length === 0 ? (
@@ -6140,7 +6204,7 @@ export default function App() {
               </div>
               <div className="p-8">
                 <div className="hidden pdf-header mb-6"><ReportHeader /></div>
-                <div className="text-center my-4"><span className="text-2xl font-black uppercase border-b-4 border-orange-500 pb-2">ORDEN DE COMPRA N° {viewingPO.id}</span></div>
+                <div className="text-center my-4"><span className="text-2xl font-black uppercase border-b-4 border-orange-500 pb-2">REQUISICIÓN DE COMPRA N° {viewingPO.id}</span></div>
                 <div className="grid grid-cols-2 gap-4 mb-6 text-sm font-bold uppercase">
                   <div><p>PROVEEDOR: {viewingPO.provider}</p><p>FECHA: {viewingPO.date}</p></div>
                   <div className="text-right"><p>ESTADO: <span className={viewingPO.status==='RECIBIDA'?'text-green-600':'text-yellow-600'}>{viewingPO.status}</span></p><p>SOLICITADO: {viewingPO.user}</p></div>
@@ -6214,7 +6278,7 @@ export default function App() {
               <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
                 <div className="bg-white rounded-3xl p-8 max-w-3xl w-full shadow-2xl border-t-8 border-orange-500 max-h-[92vh] overflow-y-auto">
                   <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-lg font-black uppercase">Nueva Orden de Compra</h3>
+                    <h3 className="text-lg font-black uppercase">Nueva Requisición de Compra</h3>
                     <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');setPoAddId('');setPoAddQty('');setPoAddCost('');}} className="p-2 text-gray-400 hover:text-red-500"><X size={20}/></button>
                   </div>
                   {/* Auto-ref display */}
@@ -6223,7 +6287,7 @@ export default function App() {
                     <span className="font-black text-orange-600">OC-{((purchaseOrders||[]).reduce((m,p)=>{const mt=String(p.id||'').match(/^OC-(\d+)$/);return Math.max(m,mt?parseInt(mt[1]):0);},0)+1).toString().padStart(5,'0')}</span>
                   </div>
                   <div className="grid grid-cols-2 gap-4 mb-6">
-                    <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Departamento de Procura</label><input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="EJ: PROCURA / COMPRAS" /></div>
+                    <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Departamento de Procura</label><input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="DEPARTAMENTO DE ALMACÉN" /></div>
                     <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label><input type="date" value={poNotes.startsWith('FECHA:') ? poNotes.replace('FECHA:','').split('|')[0].trim() : getTodayDate()} onChange={e=>setPoNotes(`FECHA: ${e.target.value} | ${poNotes.includes('|')?poNotes.split('|').slice(1).join('|').trim():''}`)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-orange-500" /></div>
                     <div className="col-span-2"><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones</label><input type="text" value={poNotes.includes('|')?poNotes.split('|').slice(1).join('|').trim():''} onChange={e=>setPoNotes(prev=>`FECHA: ${prev.startsWith('FECHA:')?prev.split('|')[0].replace('FECHA:','').trim():getTodayDate()} | ${e.target.value.toUpperCase()}`)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="NOTAS OPCIONALES" /></div>
                   </div>
@@ -9706,6 +9770,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <style>{`
+        html { zoom: 1.25; }
         @media print {
           .no-pdf { display: none !important; }
           .print\\:hidden { display: none !important; }
@@ -9764,17 +9829,15 @@ export default function App() {
                  {[ 
                    {id:'requisiciones', icon:<ClipboardList size={16}/>, label:'Solicitudes Planta', perm:'inventario_solicitudes'},
                    {id:'almacen', icon:<Warehouse size={16}/>, label:'Almacén / OC', perm:'inventario_solicitudes'},
-                   {id:'catalogo', icon:<Box size={16}/>, label:'Inv. General', perm:'inventario_catalogo'}, 
-                   {id:'inv_ordenes_compra', icon:<ShoppingCart size={16}/>, label:'Órdenes Compra', perm:'inventario_catalogo'},
-                   {id:'wip', icon:<Beaker size={16}/>, label:'WIP (Proceso)', perm:'inventario_catalogo'}, 
-                   {id:'finished', icon:<Package size={16}/>, label:'Terminados', perm:'inventario_catalogo'}, 
-                   {id:'cargo', icon:<ArrowDownToLine size={16}/>, label:'Entradas', perm:'inventario_movimientos'}, 
-                   {id:'descargo', icon:<ArrowUpFromLine size={16}/>, label:'Salidas', perm:'inventario_movimientos'}, 
-                   {id:'ajuste', icon:<ShieldCheck size={16}/>, label:'Ajuste Único', perm:'inventario_movimientos'}, 
-                   {id:'toma_fisica', icon:<ClipboardEdit size={16}/>, label:'Toma Física', perm:'inventario_movimientos'}, 
-                   {id:'kardex', icon:<History size={16}/>, label:'Kardex', perm:'inventario_kardex'}, 
-                   {id:'reportes_mod', icon:<FileText size={16}/>, label:'Reportes', perm:'inventario_kardex'}, 
-                   {id:'reporte177', icon:<FileCheck size={16}/>, label:'Art. 177 ISLR', perm:'inventario_kardex'}, 
+                   {id:'catalogo', icon:<Box size={16}/>, label:'Inv. General', perm:'inventario_catalogo'},
+                   {id:'wip', icon:<Beaker size={16}/>, label:'WIP (Proceso)', perm:'inventario_catalogo'},
+                   {id:'finished', icon:<Package size={16}/>, label:'Terminados', perm:'inventario_catalogo'},
+                   {id:'entradas', icon:<ArrowDownToLine size={16}/>, label:'Entradas', perm:'inventario_movimientos'},
+                   {id:'salidas', icon:<ArrowUpFromLine size={16}/>, label:'Salidas', perm:'inventario_movimientos'},
+                   {id:'ajuste', icon:<ShieldCheck size={16}/>, label:'Ajuste Único', perm:'inventario_movimientos'},
+                   {id:'toma_fisica', icon:<ClipboardEdit size={16}/>, label:'Toma Física', perm:'inventario_movimientos'},
+                   {id:'kardex', icon:<History size={16}/>, label:'Kardex', perm:'inventario_kardex'},
+                   {id:'reportes_mod', icon:<FileText size={16}/>, label:'Reportes', perm:'inventario_kardex'},
                  ].filter(t => hasPerm('inventario') && (hasPerm(t.perm) || appUser?.role==='Master')).map(t => (
                     <button key={t.id} onClick={()=>{setInvView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
@@ -9787,7 +9850,7 @@ export default function App() {
               <div className="max-w-7xl mx-auto flex gap-6 px-6 overflow-x-auto">
                  {[ 
                    {id:'proyeccion', icon:<TrendingUp size={16}/>, label:'Proyección MP', perm:'produccion_proyeccion'},
-                   {id:'ordenes_compra', icon:<ShoppingCart size={16}/>, label:'Órdenes Compra', perm:'produccion_ordenes'},
+                   {id:'ordenes_compra', icon:<ClipboardList size={16}/>, label:'Requisición', perm:'produccion_ordenes'},
                    {id:'activos', icon:<PlayCircle size={16}/>, label:'Producción Activa', perm:'produccion_activa'}, 
                    {id:'en_proceso', icon:<Gauge size={16}/>, label:'Reporte en Proceso', perm:'produccion_activa'},
                    {id:'reportes', icon:<FileText size={16}/>, label:'Historial / Reportes', perm:'produccion_historial'}
