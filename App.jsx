@@ -1534,11 +1534,12 @@ export default function App() {
     );
   };
 
-  const renderInventoryReports = () => {
+  const renderInventoryReports = (forcedType) => {
+     const effectiveType = forcedType || invReportType;
      let filteredData = [];
-     if (invReportType === 'entradas') filteredData = invMovements.filter(m => m.type === 'ENTRADA');
-     if (invReportType === 'salidas') filteredData = invMovements.filter(m => m.type === 'SALIDA' || m.type === 'AUTOCONSUMO');
-     if (invReportType === 'ajustes') filteredData = invMovements.filter(m => m.type.includes('AJUSTE'));
+     if (effectiveType === 'entradas') filteredData = invMovements.filter(m => m.type === 'ENTRADA');
+     if (effectiveType === 'salidas') filteredData = invMovements.filter(m => m.type === 'SALIDA' || m.type === 'AUTOCONSUMO');
+     if (effectiveType === 'ajustes') filteredData = invMovements.filter(m => m.type.includes('AJUSTE'));
 
      // Sub-filtro por subtipo (state en componente)
      const subFilters = {
@@ -1546,7 +1547,7 @@ export default function App() {
        salidas:  ['TODOS', 'VENTAS', 'CONSUMO PRODUCCIÓN'],
        ajustes:  ['TODOS'],
      };
-     const activeSubFilters = subFilters[invReportType] || ['TODOS'];
+     const activeSubFilters = subFilters[effectiveType] || ['TODOS'];
      if (invSubFilter !== 'TODOS') {
        if (invSubFilter === 'PRODUCCIÓN')
          filteredData = filteredData.filter(m => String(m.notes||'').toUpperCase().includes('PRODUCCI') || String(m.notes||'').toUpperCase().includes('PROD'));
@@ -1569,8 +1570,8 @@ export default function App() {
           <div data-html2canvas-ignore="true" className="p-6 bg-white border-b border-gray-100 flex flex-wrap gap-3 items-center no-pdf">
              <div className="flex gap-2">
                {['entradas', 'salidas', 'ajustes'].map(type => (
-                  <button key={type} onClick={()=>{setInvReportType(type); setInvSubFilter('TODOS');}}
-                    className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors ${invReportType === type ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                  <button key={type} onClick={()=>{setInvReportType(type); setInvSubFilter('TODOS'); setInvView(type==='ajustes'?'reportes_mod':type);}}
+                    className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors ${effectiveType === type ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
                     {type === 'entradas' ? '⬆ Entradas' : type === 'salidas' ? '⬇ Salidas' : '⚖ Ajustes'}
                   </button>
                ))}
@@ -1693,10 +1694,11 @@ export default function App() {
       );
     }
 
-    if (invView === 'reportes_mod') return renderInventoryReports();
-    if (invView === 'entradas') { setInvReportType('entradas'); return renderInventoryReports(); }
-    if (invView === 'salidas') { setInvReportType('salidas'); return renderInventoryReports(); }
-    if (invView === 'kardex') { return renderInventoryReports(); }
+    if (invView === 'entradas' || invView === 'salidas' || invView === 'kardex' || invView === 'reportes_mod') {
+      // Set the report type based on invView
+      const derivedType = invView === 'entradas' ? 'entradas' : invView === 'salidas' ? 'salidas' : invReportType;
+      return renderInventoryReports(derivedType);
+    }
 
     // ── ÓRDENES DE COMPRA (desde Inventario) ──
     if (invView === 'inv_ordenes_compra') {
@@ -6297,9 +6299,9 @@ export default function App() {
 
             return (
               <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-3xl p-8 max-w-3xl w-full shadow-2xl border-t-8 border-orange-500 max-h-[92vh] overflow-y-auto">
-                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-lg font-black uppercase">Nueva Requisición de Compra</h3>
+                <div className="bg-white rounded-3xl p-5 max-w-3xl w-full shadow-2xl border-t-8 border-orange-500 max-h-[95vh] overflow-y-auto">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-black uppercase">Nueva Requisición para Almacén</h3>
                     <button onClick={()=>{setShowPOModal(false);setSelectedPOItems([]);setPoProvider('');setPoNotes('');setPoAddId('');setPoAddQty('');setPoAddCost('');}} className="p-2 text-gray-400 hover:text-red-500"><X size={20}/></button>
                   </div>
                   {/* Auto-ref display */}
@@ -6307,13 +6309,13 @@ export default function App() {
                     <span className="text-[9px] font-black text-orange-700 uppercase">Referencia Automática</span>
                     <span className="font-black text-orange-600">RQ-{((purchaseOrders||[]).reduce((m,p)=>{const mt=String(p.id||'').match(/^RQ-(\d+)$/);return Math.max(m,mt?parseInt(mt[1]):0);},0)+1).toString().padStart(5,'0')}</span>
                   </div>
-                  <div className="grid grid-cols-2 gap-4 mb-6">
-                    <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Departamento de Procura</label><input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="DEPARTAMENTO DE ALMACÉN" /></div>
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Departamento</label><input type="text" value={poProvider} onChange={e=>setPoProvider(e.target.value.toUpperCase())} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="DEPARTAMENTO DE ALMACÉN" /></div>
                     <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label><input type="date" value={poNotes.startsWith('FECHA:') ? poNotes.replace('FECHA:','').split('|')[0].trim() : getTodayDate()} onChange={e=>setPoNotes(`FECHA: ${e.target.value} | ${poNotes.includes('|')?poNotes.split('|').slice(1).join('|').trim():''}`)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-orange-500" /></div>
                     <div className="col-span-2"><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones</label><input type="text" value={poNotes.includes('|')?poNotes.split('|').slice(1).join('|').trim():''} onChange={e=>setPoNotes(prev=>`FECHA: ${prev.startsWith('FECHA:')?prev.split('|')[0].replace('FECHA:','').trim():getTodayDate()} | ${e.target.value.toUpperCase()}`)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs uppercase outline-none focus:border-orange-500" placeholder="NOTAS OPCIONALES" /></div>
                   </div>
-                  <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-4 mb-4">
-                    <h4 className="text-[10px] font-black uppercase text-orange-800 mb-3">Agregar Producto / Insumo</h4>
+                  <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-3 mb-3">
+                    <h4 className="text-[10px] font-black uppercase text-orange-800 mb-2">Agregar Producto / Insumo</h4>
                     <div className="grid grid-cols-12 gap-2 items-end">
                       <div className="col-span-7">
                         <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Producto</label>
@@ -6357,8 +6359,8 @@ export default function App() {
                     <div className="bg-gray-50 rounded-2xl p-8 text-center text-gray-400 mb-6"><ShoppingCart size={32} className="mx-auto mb-2 opacity-30"/><p className="text-xs font-bold uppercase">Agregue productos a la orden</p></div>
                   )}
                   {/* ── Sección Email ── */}
-                  <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 mb-4">
-                    <h4 className="text-[10px] font-black uppercase text-blue-800 mb-3 flex items-center gap-2"><Mail size={13}/> Notificación por Correo (al guardar)</h4>
+                  <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-3 mb-3">
+                    <h4 className="text-[10px] font-black uppercase text-blue-800 mb-2 flex items-center gap-2"><Mail size={13}/> Notificación por Correo (al guardar)</h4>
                     <div className="grid grid-cols-2 gap-3 mb-3">
                       <div>
                         <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Para (Principal)</label>
@@ -9260,15 +9262,22 @@ export default function App() {
               </div>
             </div>
             <div>
-              <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Lista de Contactos adicionales (aparecen en el dropdown al enviar OC)</label>
-              {(settings.emailContactos||[]).map((c,i) => (
-                <div key={i} className="flex gap-2 items-center bg-gray-50 rounded-xl p-2 mb-1">
-                  <span className="flex-1 text-xs font-bold">{c.nombre}</span>
-                  <span className="flex-1 text-xs text-gray-500">{c.email}</span>
-                  <button onClick={async()=>{const nl=(settings.emailContactos||[]).filter((_,j)=>j!==i);await setDoc(getDocRef('settings','general'),{emailContactos:nl},{merge:true});}} className="p-1 text-red-400 hover:text-red-600"><X size={13}/></button>
-                </div>
-              ))}
-              <div className="flex gap-2 mt-2">
+              <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Lista de Contactos adicionales (aparecen en dropdown al enviar OC)</label>
+              <div className="space-y-1 mb-2">
+                {(settings.emailContactos||[]).map((c,i) => (
+                  <div key={i} className="flex gap-2 items-center bg-gray-50 border border-gray-200 rounded-xl p-1.5">
+                    <input type="text" defaultValue={c.nombre}
+                      onBlur={async e=>{const nl=(settings.emailContactos||[]).map((x,j)=>j===i?{...x,nombre:e.target.value.trim()}:x);await setDoc(getDocRef('settings','general'),{emailContactos:nl},{merge:true});}}
+                      className="flex-1 text-xs font-bold bg-transparent outline-none border-b border-transparent focus:border-blue-400 px-1" placeholder="Nombre"/>
+                    <input type="email" defaultValue={c.email}
+                      onBlur={async e=>{const nl=(settings.emailContactos||[]).map((x,j)=>j===i?{...x,email:e.target.value.trim()}:x);await setDoc(getDocRef('settings','general'),{emailContactos:nl},{merge:true});}}
+                      className="flex-1 text-xs text-gray-600 bg-transparent outline-none border-b border-transparent focus:border-blue-400 px-1" placeholder="email@empresa.com"/>
+                    <button onClick={async()=>{const nl=(settings.emailContactos||[]).filter((_,j)=>j!==i);await setDoc(getDocRef('settings','general'),{emailContactos:nl},{merge:true});}} className="p-1 text-red-400 hover:text-red-600 flex-shrink-0"><Trash2 size={13}/></button>
+                  </div>
+                ))}
+                {(settings.emailContactos||[]).length===0 && <p className="text-[9px] text-gray-400 font-bold italic">Sin contactos agregados aún.</p>}
+              </div>
+              <div className="flex gap-2">
                 <input type="text" id="cfgContactoNombre" className="flex-1 border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-400" placeholder="Nombre (ej: Gerencia)"/>
                 <input type="email" id="cfgContactoEmail" className="flex-1 border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-400" placeholder="email@empresa.com"/>
                 <button onClick={async()=>{
