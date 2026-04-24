@@ -1491,9 +1491,10 @@ export default function App() {
           </div>
        </div>
        <div className="w-1/2 text-right print:w-1/2">
-           <h1 className="text-lg font-black text-black uppercase print:text-black">SERVICIOS JIRET G&amp;B, C.A.</h1>
-           <p className="text-[10px] font-bold text-gray-700 print:text-black">RIF: J-412309374</p>
-           <p className="text-[8px] font-medium text-gray-500 mt-0.5 uppercase print:text-black">Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9, Maracaibo.</p>
+           <h1 className="text-lg font-black text-black uppercase print:text-black">{settings.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.'}</h1>
+           <p className="text-[10px] font-bold text-gray-700 print:text-black">RIF: {settings.empresaRif || 'J-412309374'}</p>
+           <p className="text-[8px] font-medium text-gray-500 mt-0.5 uppercase print:text-black">{settings.empresaDireccion || 'Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9, Maracaibo.'}</p>
+           {settings.empresaTelefono && <p className="text-[8px] font-medium text-gray-500 uppercase print:text-black">Tel: {settings.empresaTelefono}</p>}
        </div>
     </div>
   );
@@ -1697,142 +1698,171 @@ export default function App() {
     if (invView === 'entradas' || invView === 'salidas') {
       const isEntradas = invView === 'entradas';
       const tipos = isEntradas
-        ? ['ENTRADA', 'ENTRADA_DEVOLUCION', 'ENTRADA_INICIAL']
-        : ['SALIDA', 'AUTOCONSUMO', 'AVERIA', 'MUESTRA', 'DEVOLUCION', 'PERDIDA'];
-      const movs = (invMovements||[]).filter(m => tipos.includes(m.type)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        ? [{val:'ENTRADA', label:'ENTRADA (COMPRA/PRODUCCIÓN)'}, {val:'ENTRADA_DEVOLUCION', label:'ENTRADA POR DEVOLUCIÓN'}, {val:'ENTRADA_INICIAL', label:'INVENTARIO INICIAL'}]
+        : [{val:'AUTOCONSUMO', label:'AUTOCONSUMO (USO INTERNO)'}, {val:'SALIDA', label:'SALIDA A PRODUCCIÓN'}, {val:'AVERIA', label:'AVERÍA / DAÑO'}, {val:'MUESTRA', label:'MUESTRA'}, {val:'DEVOLUCION', label:'DEVOLUCIÓN A PROVEEDOR'}, {val:'PERDIDA', label:'PÉRDIDA / MERMA'}];
+      const tipoVals = tipos.map(t=>t.val);
+      const movs = (invMovements||[]).filter(m => tipoVals.includes(m.type)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
       const [showMovForm, setShowMovForm] = React.useState(false);
-      const [movForm, setMovForm] = React.useState({itemId:'', qty:'', type: isEntradas?'ENTRADA':'SALIDA', notes:'', date: getTodayDate()});
+      const [movForm, setMovForm] = React.useState({itemId:'', qty:'', unitCost:'', docRef:'', type: isEntradas?'ENTRADA':'AUTOCONSUMO', notes:'', date: getTodayDate()});
+
+      const selectedInvItem = (inventory||[]).find(i=>i.id===movForm.itemId);
 
       const handleSaveMov = async () => {
-        if(!movForm.itemId || !parseNum(movForm.qty)) return setDialog({title:'Aviso',text:'Complete los campos requeridos.',type:'alert'});
+        if(!movForm.itemId || !parseNum(movForm.qty)) return setDialog({title:'Aviso',text:'Complete artículo y cantidad.',type:'alert'});
         const inv = (inventory||[]).find(i=>i.id===movForm.itemId);
         if(!inv) return;
         const qty = parseNum(movForm.qty);
+        const unitCostNew = parseNum(movForm.unitCost) || inv.cost || 0;
         const newStock = isEntradas ? (inv.stock||0) + qty : Math.max(0,(inv.stock||0) - qty);
-        const mov = {itemId:movForm.itemId, itemDesc:inv.desc, type:movForm.type, qty, previousStock:inv.stock||0, newStock, notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin', timestamp:Date.now()};
+        // If entry, update cost with weighted average
+        const newCost = isEntradas && unitCostNew > 0
+          ? (((inv.stock||0)*parseNum(inv.cost||0)) + (qty*unitCostNew)) / ((inv.stock||0) + qty)
+          : inv.cost;
+        const mov = {itemId:movForm.itemId, itemDesc:inv.desc, type:movForm.type, qty, unitCost: unitCostNew, totalValue: qty * unitCostNew, previousStock:inv.stock||0, newStock, docRef: movForm.docRef, notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin', timestamp:Date.now()};
         try {
           await addDoc(getColRef('inventoryMovements'), mov);
-          await updateDoc(getDocRef('inventory', movForm.itemId), {stock: newStock});
-          setMovForm({itemId:'',qty:'',type:isEntradas?'ENTRADA':'SALIDA',notes:'',date:getTodayDate()});
+          const updateData = {stock: newStock};
+          if(isEntradas && unitCostNew > 0) updateData.cost = newCost;
+          await updateDoc(getDocRef('inventory', movForm.itemId), updateData);
+          setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',type:isEntradas?'ENTRADA':'AUTOCONSUMO',notes:'',date:getTodayDate()});
           setShowMovForm(false);
-          setDialog({title:'✅',text:`Movimiento registrado. Nuevo stock: ${formatNum(newStock)} ${inv.unit}`,type:'alert'});
+          setDialog({title:'✅ Movimiento Procesado',text:`Nuevo stock: ${formatNum(newStock)} ${inv.unit}${isEntradas && unitCostNew>0 ? ` | Costo promedio: $${formatNum(newCost)}`:''}.`,type:'alert'});
         } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
       };
 
       return (
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
-          <div className={`px-8 py-5 border-b ${isEntradas?'bg-green-50':'bg-red-50'} flex justify-between items-center`}>
-            <div>
-              <h2 className={`text-xl font-black uppercase flex items-center gap-3 ${isEntradas?'text-green-900':'text-red-900'}`}>
-                {isEntradas ? <ArrowDownToLine className="text-green-600" size={22}/> : <ArrowUpFromLine className="text-red-500" size={22}/>}
-                {isEntradas ? 'Registro de Entradas' : 'Registro de Salidas'}
-              </h2>
-              <p className={`text-[10px] font-bold mt-0.5 ${isEntradas?'text-green-700':'text-red-600'}`}>
-                {isEntradas ? 'Recepciones de mercancía, devoluciones y cargas iniciales' : 'Autoconsumo, averías, muestras, devoluciones y pérdidas'}
-              </p>
-            </div>
-            <button onClick={()=>setShowMovForm(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 transition-all ${showMovForm?'bg-gray-200 text-gray-700':'bg-black text-white hover:bg-gray-800'}`}>
-              {showMovForm ? <><X size={13}/> Cancelar</> : <><Plus size={13}/> Nuevo Registro</>}
-            </button>
-          </div>
-
-          {/* Formulario de registro */}
+        <div className="space-y-4 animate-in fade-in">
+          {/* Form shown when button clicked */}
           {showMovForm && (
-            <div className={`p-6 border-b ${isEntradas?'bg-green-50/50':'bg-red-50/50'}`}>
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 space-y-4 shadow-sm">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="md:col-span-2">
-                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Artículo / Material *</label>
-                    <select value={movForm.itemId} onChange={e=>setMovForm({...movForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 bg-white">
-                      <option value="">— Seleccione —</option>
-                      {(inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad *</label>
-                    <input type="number" step="0.01" min="0.01" value={movForm.qty} onChange={e=>setMovForm({...movForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="0.00"/>
-                  </div>
-                  <div>
-                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                    <input type="date" value={movForm.date} onChange={e=>setMovForm({...movForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400"/>
-                  </div>
+            <div className="max-w-2xl mx-auto">
+              <div className="flex items-center gap-3 mb-4">
+                <button onClick={()=>setShowMovForm(false)} className="text-xs font-black uppercase px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200">← Volver</button>
+                <h2 className="text-xl font-black uppercase flex items-center gap-2">
+                  {isEntradas ? <><ArrowDownToLine className="text-green-600" size={20}/> Registrar Cargo (Entrada)</> : <><ArrowUpFromLine className="text-red-500" size={20}/> Registrar Descargo (Salida)</>}
+                </h2>
+              </div>
+              <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8 space-y-5">
+                <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
+                  <p className="text-[10px] font-black text-orange-700 uppercase">Atención</p>
+                  <p className="text-[10px] font-bold text-orange-600">Las entradas actualizarán el costo promedio del catálogo y el Kardex automáticamente.</p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tipo de Movimiento</label>
-                    <select value={movForm.type} onChange={e=>setMovForm({...movForm,type:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 bg-white">
-                      {tipos.map(t=><option key={t} value={t}>{t.replace(/_/g,' ')}</option>)}
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Tipo de Operación</label>
+                    <select value={movForm.type} onChange={e=>setMovForm({...movForm,type:e.target.value})} className={`w-full border-2 rounded-xl p-3 text-xs font-black uppercase outline-none bg-white ${isEntradas?'border-green-300 text-green-700 bg-green-50':'border-red-300 text-red-700 bg-red-50'}`}>
+                      {tipos.map(t=><option key={t.val} value={t.val}>{t.label}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Observaciones</label>
-                    <input type="text" value={movForm.notes} onChange={e=>setMovForm({...movForm,notes:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400" placeholder="Referencia, proveedor, motivo..."/>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Fecha</label>
+                    <input type="date" value={movForm.date} onChange={e=>setMovForm({...movForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400"/>
                   </div>
                 </div>
-                <div className="flex justify-end">
-                  <button onClick={handleSaveMov} className={`px-8 py-3 rounded-xl font-black text-xs uppercase shadow-lg flex items-center gap-2 ${isEntradas?'bg-green-600 hover:bg-green-700':'bg-red-600 hover:bg-red-700'} text-white`}>
-                    <CheckCircle2 size={14}/> Guardar Movimiento
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Ítem del Inventario</label>
+                  <select value={movForm.itemId} onChange={e=>setMovForm({...movForm,itemId:e.target.value,unitCost:''})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
+                    <option value="">Seleccione...</option>
+                    {(inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Cantidad</label>
+                    <input type="number" step="0.01" min="0.01" value={movForm.qty} onChange={e=>setMovForm({...movForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="0.00"/>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">
+                      {isEntradas ? 'Nuevo Costo Unitario ($) Compra' : `Costo Unitario Promedio Actual ($)`}
+                    </label>
+                    <input type="number" step="0.0001" min="0" value={isEntradas ? movForm.unitCost : formatNum(selectedInvItem?.cost||0)} readOnly={!isEntradas} onChange={e=>setMovForm({...movForm,unitCost:e.target.value})} className={`w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400 ${!isEntradas?'bg-gray-50 text-gray-500':''}`} placeholder="0.00"/>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Documento Referencia (Factura, OP, Guía)</label>
+                  <input type="text" value={movForm.docRef} onChange={e=>setMovForm({...movForm,docRef:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="EJ: FACT-001 O OP-005"/>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Observaciones o Notas</label>
+                  <input type="text" value={movForm.notes} onChange={e=>setMovForm({...movForm,notes:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="Opcional"/>
+                </div>
+                <div className="flex justify-end pt-2">
+                  <button onClick={handleSaveMov} className="bg-black text-white px-8 py-3 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2">
+                    <CheckCircle2 size={16}/> Procesar Movimiento
                   </button>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Historial */}
-          <div className="p-4">
-            {movs.length === 0 ? (
-              <div className="py-12 text-center text-gray-400 font-bold text-xs uppercase">No hay registros de {isEntradas?'entradas':'salidas'} aún</div>
-            ) : (
-              <div className="overflow-x-auto rounded-xl border border-gray-200">
-                <table className="w-full text-xs">
-                  <thead className={`text-white ${isEntradas?'bg-green-700':'bg-red-700'}`}>
-                    <tr className="uppercase font-black text-[9px] tracking-widest">
-                      <th className="py-3 px-3 border-r border-white/20 text-left">Fecha</th>
-                      <th className="py-3 px-3 border-r border-white/20 text-left">Artículo</th>
-                      <th className="py-3 px-3 border-r border-white/20 text-center">Tipo</th>
-                      <th className="py-3 px-3 border-r border-white/20 text-center">Cantidad</th>
-                      <th className="py-3 px-3 border-r border-white/20 text-center">Stock Ant.</th>
-                      <th className="py-3 px-3 border-r border-white/20 text-center">Stock Nuevo</th>
-                      <th className="py-3 px-3 border-r border-white/20 text-left">Observaciones</th>
-                      <th className="py-3 px-3 text-center">Acción</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {movs.map(m => (
-                      <tr key={m.id||m.timestamp} className="hover:bg-gray-50">
-                        <td className="py-2.5 px-3 border-r font-bold text-gray-600">{m.date}</td>
-                        <td className="py-2.5 px-3 border-r">
-                          <span className="font-black text-orange-600 text-[10px] block">{m.itemId}</span>
-                          <span className="text-[9px] text-gray-400">{m.itemDesc||''}</span>
-                        </td>
-                        <td className="py-2.5 px-3 border-r text-center">
-                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${isEntradas?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>{m.type?.replace(/_/g,' ')}</span>
-                        </td>
-                        <td className="py-2.5 px-3 border-r text-center font-black text-sm">{formatNum(m.qty)}</td>
-                        <td className="py-2.5 px-3 border-r text-center text-gray-400 font-bold">{formatNum(m.previousStock)}</td>
-                        <td className="py-2.5 px-3 border-r text-center font-black text-blue-600">{formatNum(m.newStock)}</td>
-                        <td className="py-2.5 px-3 border-r text-[9px] text-gray-500">{m.notes||'—'} <span className="text-gray-300">| {m.user}</span></td>
-                        <td className="py-2.5 px-3 text-center">
-                          <button onClick={()=>requireAdminPassword(async()=>{
-                            // Revert stock
-                            const inv=(inventory||[]).find(i=>i.id===m.itemId);
-                            if(inv) await updateDoc(getDocRef('inventory',m.itemId),{stock:m.previousStock});
-                            await deleteDoc(getDocRef('inventoryMovements',m.id));
-                          },'Eliminar movimiento y revertir stock')} className="p-1 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="bg-gray-50 border-t-2 border-gray-200">
-                    <tr>
-                      <td colSpan="3" className="py-2.5 px-3 font-black text-[10px] uppercase text-gray-500">Total de Registros: {movs.length}</td>
-                      <td className="py-2.5 px-3 text-center font-black text-sm">{formatNum(movs.reduce((s,m)=>s+parseNum(m.qty),0))}</td>
-                      <td colSpan="4"></td>
-                    </tr>
-                  </tfoot>
-                </table>
+          {/* Reporte / Historial — always visible */}
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden" id="pdf-content">
+            <div className={`px-8 py-5 border-b ${isEntradas?'bg-green-50':'bg-red-50'} flex justify-between items-center`}>
+              <div>
+                <h2 className={`text-xl font-black uppercase flex items-center gap-3 ${isEntradas?'text-green-900':'text-red-900'}`}>
+                  {isEntradas ? <ArrowDownToLine size={20} className="text-green-600"/> : <ArrowUpFromLine size={20} className="text-red-500"/>}
+                  {isEntradas ? 'Historial de Entradas' : 'Historial de Salidas'}
+                </h2>
+                <p className="text-[10px] font-bold text-gray-500 mt-0.5">{movs.length} registros encontrados</p>
               </div>
-            )}
+              <div className="flex gap-2">
+                <button onClick={()=>setShowMovForm(true)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2">
+                  <Plus size={13}/> {isEntradas ? 'Nueva Entrada' : 'Nueva Salida'}
+                </button>
+                <button onClick={()=>handleExportPDF(isEntradas?'Reporte_Entradas':'Reporte_Salidas', false)} className="bg-white border-2 border-gray-200 text-gray-700 px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50 flex items-center gap-2">
+                  <Printer size={13}/> Imprimir
+                </button>
+              </div>
+            </div>
+            <div className="hidden pdf-header mb-4 p-8"><ReportHeader/><h1 className="text-xl font-black uppercase border-b-2 border-orange-500 pb-1">{isEntradas?'REPORTE DE ENTRADAS DE INVENTARIO':'REPORTE DE SALIDAS / EGRESOS DE INVENTARIO'}</h1></div>
+            <div className="p-4">
+              {movs.length === 0 ? (
+                <div className="py-12 text-center text-gray-400 font-bold text-xs uppercase">No hay registros de {isEntradas?'entradas':'salidas'} aún</div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-gray-200">
+                  <table className="w-full text-xs">
+                    <thead className={`text-white ${isEntradas?'bg-green-700':'bg-red-700'}`}>
+                      <tr className="uppercase font-black text-[9px] tracking-widest">
+                        <th className="py-3 px-3 border-r border-white/20 text-left">Fecha</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-left">Artículo</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-center">Tipo</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-center">Cantidad</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-right">Costo U.</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-right">Total</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-center">Stock Nuevo</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-left">Referencia</th>
+                        <th className="py-3 px-3 text-center no-pdf">✕</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {movs.map(m => (
+                        <tr key={m.id||m.timestamp} className="hover:bg-gray-50">
+                          <td className="py-2.5 px-3 border-r font-bold text-gray-600">{m.date}</td>
+                          <td className="py-2.5 px-3 border-r"><span className="font-black text-orange-600 text-[10px] block">{m.itemId}</span><span className="text-[9px] text-gray-400">{m.itemDesc||''}</span></td>
+                          <td className="py-2.5 px-3 border-r text-center"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${isEntradas?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>{m.type?.replace(/_/g,' ')}</span></td>
+                          <td className="py-2.5 px-3 border-r text-center font-black">{formatNum(m.qty)}</td>
+                          <td className="py-2.5 px-3 border-r text-right font-bold">${formatNum(m.unitCost||0)}</td>
+                          <td className="py-2.5 px-3 border-r text-right font-black">${formatNum(m.totalValue||0)}</td>
+                          <td className="py-2.5 px-3 border-r text-center font-black text-blue-600">{formatNum(m.newStock)}</td>
+                          <td className="py-2.5 px-3 border-r text-[9px] text-gray-500">{m.docRef||'—'} {m.notes&&<span className="text-gray-300">| {m.notes}</span>}</td>
+                          <td className="py-2.5 px-3 text-center no-pdf">
+                            <button onClick={()=>requireAdminPassword(async()=>{const inv=(inventory||[]).find(i=>i.id===m.itemId);if(inv) await updateDoc(getDocRef('inventory',m.itemId),{stock:m.previousStock});await deleteDoc(getDocRef('inventoryMovements',m.id));},'Eliminar y revertir stock')} className="p-1 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-black">
+                      <tr>
+                        <td colSpan="3" className="py-2.5 px-3 text-[10px] uppercase text-gray-500">Total: {movs.length} registros</td>
+                        <td className="py-2.5 px-3 text-center">{formatNum(movs.reduce((s,m)=>s+parseNum(m.qty),0))}</td>
+                        <td></td>
+                        <td className="py-2.5 px-3 text-right">${formatNum(movs.reduce((s,m)=>s+parseNum(m.totalValue||0),0))}</td>
+                        <td colSpan="3"></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       );
@@ -1970,10 +2000,17 @@ export default function App() {
                 <Beaker className="text-purple-600" size={24}/> Inventario de Productos en Proceso (WIP)
               </h2>
               <p className="text-[10px] font-bold text-purple-600 mt-1 uppercase tracking-widest">
-                Movimientos: Entradas (Almacen a WIP) y Salidas (WIP a Produccion)
+                Movimientos: Entradas (Almacén a WIP) y Salidas (WIP a Producción)
               </p>
             </div>
             <div className="flex gap-3">
+              <button onClick={()=>requireAdminPassword(async()=>{
+                const all = wipInventory || [];
+                for(const w of all){ try{ await deleteDoc(getDocRef('wipInventory', w.id)); }catch(e){} }
+                setDialog({title:'✅',text:'WIP vaciado.',type:'alert'});
+              },'Limpiar todo el WIP')} className="bg-red-50 text-red-500 border border-red-200 px-4 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-red-500 hover:text-white">
+                Limpiar WIP
+              </button>
               <button
                 onClick={() => {
                   const data = allWipMovs.map(item => [
@@ -2229,6 +2266,15 @@ export default function App() {
                 <Search className="absolute left-3 top-2.5 text-gray-400" size={14}/>
                 <input type="text" placeholder="Buscar OP, cliente, producto..." value={fgSearch} onChange={e=>setFgSearch(e.target.value)} className="pl-9 pr-4 py-2 border-2 border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:border-green-500 w-56" />
               </div>
+              <button onClick={()=>requireAdminPassword(async()=>{
+                // Delete only stale/incorrect FG items (those with 0 stock or marked)
+                const toDelete = (finishedGoodsInventory||[]).filter(fg => parseNum(fg.millares||0)===0 && parseNum(fg.kgProducidos||0)===0);
+                if(toDelete.length===0) return setDialog({title:'Info',text:'No hay artículos con stock 0 para limpiar.',type:'alert'});
+                for(const fg of toDelete){ try{ await deleteDoc(getDocRef('finishedGoodsInventory', fg.id)); }catch(e){} }
+                setDialog({title:'✅',text:`${toDelete.length} artículos con stock 0 eliminados.`,type:'alert'});
+              },'Limpiar artículos FG con stock 0')} className="bg-red-50 text-red-500 border border-red-200 px-3 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-red-500 hover:text-white">
+                Limpiar Stock 0
+              </button>
               <button onClick={()=>setShowCargarProducto(!showCargarProducto)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showCargarProducto?'bg-red-500 text-white':'bg-green-600 text-white hover:bg-green-700'}`}><Plus size={14}/> {showCargarProducto?'CANCELAR':'CARGAR PRODUCTO'}</button>
               <button onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
             </div>
@@ -3497,21 +3543,32 @@ export default function App() {
             }
 
             if (cat === 'Productos Terminados') {
-              items = finishedGoodsInventory.map(item => {
-                const kgProducidos = parseNum(item.kgProducidos);
-                const costoUnitario = parseNum(item.costoUnitario) || 1.0;
-                const total = kgProducidos * costoUnitario;
-
-                return {
-                  id: item.opId, desc: `${item.producto} - ${item.cliente}`, unit: 'kg', cost: costoUnitario, initialStock: 0, initialTotal: 0, monthEntradasQty: kgProducidos, monthEntradasProm: costoUnitario, monthEntradasTotal: total, monthSalidasQty: 0, monthSalidasProm: 0, monthSalidasTotal: 0, invFinalQty: kgProducidos, invFinalCost: costoUnitario, invFinalTotal: total
-                };
+              // Group finishedGoodsInventory same as catalog
+              const fgGroups = {};
+              finishedGoodsInventory.forEach(item => {
+                const esTermo = item.tipoProducto==='TERMOENCOGIBLE';
+                const key = `${item.categoria||'FG'}_${item.cliente||'?'}_${item.producto||'?'}`;
+                if(!fgGroups[key]) fgGroups[key] = {key, desc:`${item.producto||'?'} - ${item.cliente||''}`, unit: esTermo?'KG':'Millares', costoUnit: parseNum(item.costoUnitario||item.costoUnitarioMillar||0), stock:0, total:0};
+                const stock = esTermo ? parseNum(item.kgProducidos) : parseNum(item.millares);
+                const cost = esTermo ? parseNum(item.costoUnitario||0) : parseNum(item.costoUnitarioMillar||0);
+                fgGroups[key].stock += stock;
+                fgGroups[key].total += stock * cost;
               });
+              items = Object.values(fgGroups).map(g => ({
+                id: g.key, desc: g.desc, unit: g.unit, cost: g.costoUnit,
+                initialStock: 0, initialTotal: 0,
+                monthEntradasQty: g.stock, monthEntradasProm: g.costoUnit, monthEntradasTotal: g.total,
+                monthSalidasQty: 0, monthSalidasProm: 0, monthSalidasTotal: 0,
+                invFinalQty: g.stock, invFinalCost: g.costoUnit, invFinalTotal: g.total
+              }));
             }
 
             return { category: cat, items };
           });
 
           let grandInitialTotal = 0; let grandEntradasTotal = 0; let grandSalidasTotal = 0; let grandFinalTotal = 0;
+          const tc = parseNum(settings.tasaCambio || 0); // tasa de cambio Bs/$
+          const fmtMon = (v) => tc > 0 ? `Bs ${formatNum(v * tc)}` : `$${formatNum(v)}`;
 
           return (
             <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
@@ -3524,7 +3581,7 @@ export default function App() {
               </div>
 
               <div className="p-8 print:p-0 bg-white" id="pdf-content">
-                 <div data-html2canvas-ignore="true" className="flex gap-4 mb-8 items-end no-pdf">
+                 <div data-html2canvas-ignore="true" className="flex gap-4 mb-8 items-end no-pdf flex-wrap">
                    <div>
                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes a Reportar</label>
                      <select value={reportMonth} onChange={e=>setReportMonth(parseInt(e.target.value))} className="w-48 border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs uppercase outline-none">
@@ -3535,15 +3592,21 @@ export default function App() {
                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Año</label>
                      <input type="number" value={reportYear} onChange={e=>setReportYear(parseInt(e.target.value))} className="w-32 border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none text-center" />
                    </div>
+                   <div>
+                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa de Cambio (Bs/$)</label>
+                     <input type="number" step="0.01" min="0" id="tasaCambio177" defaultValue={settings.tasaCambio||''} onBlur={async e=>{await setDoc(getDocRef('settings','general'),{tasaCambio:parseNum(e.target.value)},{merge:true});}} className="w-40 border-2 border-orange-300 bg-orange-50 rounded-xl p-3 font-black text-xs outline-none text-center focus:border-orange-500" placeholder="Ej: 90.50"/>
+                     <p className="text-[8px] text-gray-400 font-bold mt-0.5">Si se ingresa, los costos se muestran en Bs</p>
+                   </div>
                  </div>
 
                  <div className="hidden pdf-header mb-6">
                    <ReportHeader />
                    <h1 className="text-xl font-black text-black uppercase border-b-2 border-orange-500 pb-1">REPORTE GENERAL DE INVENTARIO (ART. 177 LISLR)</h1>
-                   <p className="text-xs font-bold text-gray-500 uppercase mt-1">PERÍODO: {reportMonth.toString().padStart(2, '0')} / {reportYear}</p>
+                   <p className="text-xs font-bold text-gray-500 uppercase mt-1">PERÍODO: {reportMonth.toString().padStart(2, '0')} / {reportYear}{settings.tasaCambio ? ` | TASA: Bs ${formatNum(settings.tasaCambio)}/$` : ''}</p>
                  </div>
 
                  <div className="overflow-x-auto print:overflow-hidden border-2 border-black">
+                   {tc > 0 && <div className="bg-orange-100 border-b border-orange-300 px-4 py-1.5 text-[9px] font-black text-orange-800 uppercase">Tasa de Cambio: Bs {formatNum(tc)} / $ — Todos los valores monetarios en Bolívares</div>}
                    <table id="reporte-177-table" className="w-full text-left text-[9px] border-collapse whitespace-nowrap text-black print-tiny">
                      <thead>
                        <tr>
@@ -3594,19 +3657,19 @@ export default function App() {
                                      
                                      <td className="p-2 border-r border-black text-center font-bold print-p-1">{formatNum(item.initialStock)} {item.unit}</td>
                                      <td className="p-2 border-r border-black text-right print-p-1">${formatNum(item.cost)}</td>
-                                     <td className="p-2 border-r-2 border-black text-right font-black bg-gray-50 print-p-1">${formatNum(item.initialTotal)}</td>
+                                     <td className="p-2 border-r-2 border-black text-right font-black bg-gray-50 print-p-1">{fmtMon(item.initialTotal)}</td>
                                      
                                      <td className="p-2 border-r border-black text-center font-bold text-green-700 print-p-1">{formatNum(item.monthEntradasQty)} {item.unit}</td>
-                                     <td className="p-2 border-r border-black text-right text-green-700 print-p-1">${formatNum(item.monthEntradasProm)}</td>
-                                     <td className="p-2 border-r-2 border-black text-right font-black bg-green-50 print-p-1">${formatNum(item.monthEntradasTotal)}</td>
+                                     <td className="p-2 border-r border-black text-right text-green-700 print-p-1">{fmtMon(item.monthEntradasProm)}</td>
+                                     <td className="p-2 border-r-2 border-black text-right font-black bg-green-50 print-p-1">{fmtMon(item.monthEntradasTotal)}</td>
                                      
                                      <td className="p-2 border-r border-black text-center font-bold text-red-700 print-p-1">{formatNum(item.monthSalidasQty)} {item.unit}</td>
-                                     <td className="p-2 border-r border-black text-right text-red-700 print-p-1">${formatNum(item.monthSalidasProm)}</td>
-                                     <td className="p-2 border-r-2 border-black text-right font-black bg-red-50 print-p-1">${formatNum(item.monthSalidasTotal)}</td>
+                                     <td className="p-2 border-r border-black text-right text-red-700 print-p-1">{fmtMon(item.monthSalidasProm)}</td>
+                                     <td className="p-2 border-r-2 border-black text-right font-black bg-red-50 print-p-1">{fmtMon(item.monthSalidasTotal)}</td>
                                      
                                      <td className="p-2 border-r border-black text-center font-black text-blue-700 print-p-1">{formatNum(item.invFinalQty)} {item.unit}</td>
-                                     <td className="p-2 border-r border-black text-right font-bold text-blue-700 print-p-1">${formatNum(item.invFinalCost)}</td>
-                                     <td className="p-2 text-right font-black bg-blue-50 text-xs print-p-1">${formatNum(item.invFinalTotal)}</td>
+                                     <td className="p-2 border-r border-black text-right font-bold text-blue-700 print-p-1">{fmtMon(item.invFinalCost)}</td>
+                                     <td className="p-2 text-right font-black bg-blue-50 text-xs print-p-1">{fmtMon(item.invFinalTotal)}</td>
                                    </tr>
                                 ))}
                                 <tr className="bg-gray-200 font-black border-y-2 border-black">
@@ -3628,13 +3691,13 @@ export default function App() {
                        <tr className="bg-black text-white font-black text-[11px] print-tiny">
                          <td className="p-3 border-r-2 border-black text-right uppercase print-p-1">GRAN TOTAL INVENTARIO</td>
                          <td colSpan="2" className="border-r border-black print-p-1"></td>
-                         <td className="p-3 border-r-2 border-black text-right print-p-1">${formatNum(grandInitialTotal)}</td>
+                         <td className="p-3 border-r-2 border-black text-right print-p-1">{fmtMon(grandInitialTotal)}</td>
                          <td colSpan="2" className="border-r border-black print-p-1"></td>
-                         <td className="p-3 border-r-2 border-black text-right text-green-300 print-p-1">${formatNum(grandEntradasTotal)}</td>
+                         <td className="p-3 border-r-2 border-black text-right text-green-300 print-p-1">{fmtMon(grandEntradasTotal)}</td>
                          <td colSpan="2" className="border-r border-black print-p-1"></td>
-                         <td className="p-3 border-r-2 border-black text-right text-red-300 print-p-1">${formatNum(grandSalidasTotal)}</td>
+                         <td className="p-3 border-r-2 border-black text-right text-red-300 print-p-1">{fmtMon(grandSalidasTotal)}</td>
                          <td colSpan="2" className="border-r border-black print-p-1"></td>
-                         <td className="p-3 text-right text-blue-300 text-[13px] print-p-1">${formatNum(grandFinalTotal)}</td>
+                         <td className="p-3 text-right text-blue-300 text-[13px] print-p-1">{fmtMon(grandFinalTotal)}</td>
                        </tr>
                      </tfoot>
                    </table>
@@ -3883,7 +3946,7 @@ export default function App() {
                       {/* Picker desde Terminados */}
                       {finishedGoodsInventory.filter(fg=>(parseNum(fg.kgProducidos)>0||parseNum(fg.millares)>0)).length > 0 && (
                         <div className="md:col-span-4 bg-green-50 border-2 border-green-200 rounded-2xl p-4">
-                          <label className="text-[10px] font-black text-green-700 uppercase block mb-3 tracking-widest">📦 Desde Inventario de Terminados — Seleccionar Producto</label>
+                          <label className="text-[10px] font-black text-green-700 uppercase block mb-3 tracking-widest">📦 Inventario General / Productos Terminados — Seleccionar Producto</label>
 
                           {/* Selector agrupado por producto (mismo agrupamiento que inventario) */}
                           {(() => {
@@ -9354,6 +9417,43 @@ export default function App() {
 
         {/* Email / Notificaciones */}
         <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-200">
+          {/* DATOS DE EMPRESA */}
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-200">
+          <h2 className="text-xl font-black uppercase text-black mb-4 flex items-center gap-3 border-b pb-3"><FileText className="text-orange-500"/> Datos de la Empresa</h2>
+          <p className="text-xs font-bold text-gray-500 mb-4">Estos datos aparecerán en el encabezado de todos los reportes e impresiones.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="md:col-span-2">
+              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Razón Social *</label>
+              <input type="text" defaultValue={settings.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}
+                onBlur={async e=>{ await setDoc(getDocRef('settings','general'),{empresaRazonSocial:e.target.value.trim().toUpperCase()},{merge:true}); }}
+                className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-orange-400"
+                placeholder="RAZÓN SOCIAL COMPLETA"/>
+            </div>
+            <div>
+              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">RIF *</label>
+              <input type="text" defaultValue={settings.empresaRif||'J-412309374'}
+                onBlur={async e=>{ await setDoc(getDocRef('settings','general'),{empresaRif:e.target.value.trim().toUpperCase()},{merge:true}); }}
+                className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400"
+                placeholder="J-XXXXXXXXX"/>
+            </div>
+            <div>
+              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Teléfono</label>
+              <input type="text" defaultValue={settings.empresaTelefono||''}
+                onBlur={async e=>{ await setDoc(getDocRef('settings','general'),{empresaTelefono:e.target.value.trim()},{merge:true}); }}
+                className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400"
+                placeholder="0261-0000000"/>
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Dirección Fiscal</label>
+              <input type="text" defaultValue={settings.empresaDireccion||''}
+                onBlur={async e=>{ await setDoc(getDocRef('settings','general'),{empresaDireccion:e.target.value.trim().toUpperCase()},{merge:true}); }}
+                className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-orange-400"
+                placeholder="DIRECCIÓN COMPLETA"/>
+            </div>
+          </div>
+          <p className="text-[9px] text-gray-400 font-bold mt-3">Los campos se guardan al hacer clic fuera (blur).</p>
+        </div>
+
           <h2 className="text-xl font-black uppercase text-black mb-4 flex items-center gap-3 border-b pb-3"><Mail className="text-blue-500"/> Configuración de Correos — Notificaciones</h2>
           <p className="text-xs font-bold text-gray-500 mb-4">Configure los correos a los que se enviarán notificaciones de requisiciones y órdenes de compra.</p>
           <div className="space-y-4">
