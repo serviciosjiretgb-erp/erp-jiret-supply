@@ -2572,9 +2572,8 @@ export default function App() {
       const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'PENDIENTE');
 
       return (
-        <div className="space-y-6 animate-in fade-in">
-
-          {/* ── PANEL 1: REQUISICIONES DE PLANTA ── */}
+        <>
+        <div className="space-y-6 animate-in fade-in">          {/* ── PANEL 1: REQUISICIONES DE PLANTA ── */}
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-5 border-b bg-yellow-50 flex justify-between items-center">
               <div>
@@ -2807,7 +2806,7 @@ export default function App() {
             </div>
           );
         })()}
-      </div>
+        </>
       );
     }
 
