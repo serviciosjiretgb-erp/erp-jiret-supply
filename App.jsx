@@ -80,6 +80,20 @@ const getTodayDate = () => {
 };
 
 const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
+
+// Format finished goods label: PRODUCTO ANCHO×LARGO×MICMiC - CLIENTE
+const formatFGLabel = (item) => {
+  if (!item) return '';
+  const cat = (item.producto || item.categoria || item.desc || '').toUpperCase();
+  const ancho = parseFloat(item.ancho||0);
+  const largo = parseFloat(item.largo||0);
+  const micras = parseFloat(item.micras||0);
+  const dims = (ancho > 0 || largo > 0)
+    ? ` ${ancho||'?'}×${largo||'?'}${micras > 0 ? `×${micras.toFixed(3).replace(/\.?0+$/,'')}MIC` : ''}`
+    : '';
+  const cliente = (item.cliente || '').toUpperCase();
+  return `${cat}${dims}${cliente ? ` - ${cliente}` : ''}`.trim();
+};
 const parseNum = (val) => {
   if (!val) return 0;
   if (typeof val === 'number') return val;
@@ -140,6 +154,7 @@ export default function App() {
   const [showMovForm, setShowMovForm] = useState(false);
   const [movForm, setMovForm] = useState({itemId:'', qty:'', unitCost:'', docRef:'', type:'ENTRADA', notes:'', date: getTodayDate()});
   const [showODPModal, setShowODPModal] = useState(false);
+  const [wipSearch, setWipSearch] = useState('');
   const [cargarForm, setCargarForm] = useState({ tipo: 'TERMINADOS', tipoProducto: 'BOLSAS', cliente: '', opId: '', producto: '', ancho: '', largo: '', micras: '', color: 'NATURAL', millares: '', kgProducidos: '', fecha: getTodayDate(), observaciones: '', categoria: '', codigo: '', descripcion: '', unidad: 'KG', cantidad: '', costo: '', proveedor: '' });
   const [invReportType, setInvReportType] = useState('entradas');
   const [invSubFilter, setInvSubFilter] = useState('TODOS');
@@ -2012,6 +2027,20 @@ export default function App() {
       const allWipMovs = [...wipEntradas, ...wipSalidas]
         .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
+      // Apply wipSearch filter
+      const wipSearchUpper = (wipSearch||'').toUpperCase();
+      const filteredWipMovs = wipSearch
+        ? allWipMovs.filter(item =>
+            String(item.opId||'').toUpperCase().includes(wipSearchUpper) ||
+            String(item.cliente||'').toUpperCase().includes(wipSearchUpper) ||
+            String(item.itemId||'').toUpperCase().includes(wipSearchUpper) ||
+            String(item.itemName||'').toUpperCase().includes(wipSearchUpper) ||
+            String(item.descripcion||'').toUpperCase().includes(wipSearchUpper) ||
+            String(item.fase||'').toUpperCase().includes(wipSearchUpper) ||
+            (item.materiales||[]).some(m=>String(m.id||'').toUpperCase().includes(wipSearchUpper))
+          )
+        : allWipMovs;
+
       return (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
           <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-purple-50 flex justify-between items-center no-pdf">
@@ -2052,6 +2081,15 @@ export default function App() {
             </div>
           </div>
 
+          <div className="px-6 py-3 border-b border-gray-100 no-pdf" data-html2canvas-ignore="true">
+            <div className="relative max-w-2xl">
+              <Search className="absolute left-3 top-3 text-gray-400" size={14}/>
+              <input type="text" placeholder="Buscar por OP, cliente, producto, categoría, fase..." value={wipSearch} onChange={e=>setWipSearch(e.target.value)}
+                className="w-full pl-9 pr-8 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-purple-400 uppercase" />
+              {wipSearch && <button onClick={()=>setWipSearch('')} className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"><X size={14}/></button>}
+            </div>
+            {wipSearch && <p className="text-[9px] text-purple-600 font-bold uppercase mt-1">{filteredWipMovs.length} de {allWipMovs.length} resultados</p>}
+          </div>
           <div className="p-8 print:p-0 bg-white" id="pdf-content">
             <div className="hidden pdf-header mb-8">
               <ReportHeader />
@@ -2093,7 +2131,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-black print:divide-black">
-                  {allWipMovs.map((item, idx) => {
+                  {filteredWipMovs.map((item, idx) => {
                     const isEntrada = item.movType === 'ENTRADA';
                     return (
                       <tr key={`${item.id}-${idx}`} className={`hover:bg-gray-50 transition-colors ${isEntrada ? 'bg-green-50/30' : 'bg-red-50/30'}`}>
@@ -2139,7 +2177,7 @@ export default function App() {
                       </tr>
                     );
                   })}
-                  {allWipMovs.length === 0 && (
+                  {filteredWipMovs.length === 0 && (
                     <tr><td colSpan="7" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">
                       No hay movimientos WIP registrados
                     </td></tr>
@@ -2279,20 +2317,7 @@ export default function App() {
                 <Search className="absolute left-3 top-2.5 text-gray-400" size={14}/>
                 <input type="text" placeholder="Buscar OP, cliente, producto..." value={fgSearch} onChange={e=>setFgSearch(e.target.value)} className="pl-9 pr-4 py-2 border-2 border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:border-green-500 w-56" />
               </div>
-              <button onClick={()=>requireAdminPassword(async()=>{
-                // Delete FG items that have $0 cost (costUnitario=0) or are the erroneous NATURAL items
-                const toDelete = (finishedGoodsInventory||[]).filter(fg => {
-                  const cost = parseNum(fg.costoUnitario||0) + parseNum(fg.costoUnitarioMillar||0);
-                  const desc = (fg.producto||fg.id||'').toUpperCase();
-                  // Delete items with 0 cost OR those with NATURAL tag that are errors
-                  return cost === 0 || desc.includes('NATURAL') || (parseNum(fg.millares||0)===0 && parseNum(fg.kgProducidos||0)===0);
-                });
-                if(toDelete.length===0) return setDialog({title:'Info',text:'No hay artículos erróneos para eliminar.',type:'alert'});
-                for(const fg of toDelete){ try{ await deleteDoc(getDocRef('finishedGoodsInventory', fg.id)); }catch(e){} }
-                setDialog({title:'✅',text:`${toDelete.length} artículos erróneos eliminados (costo $0 o stock 0 o NATURAL).`,type:'alert'});
-              },'Eliminar artículos FG erróneos')} className="bg-red-50 text-red-500 border border-red-200 px-3 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-red-500 hover:text-white">
-                Limpiar Erróneos
-              </button>
+
               <button onClick={()=>setShowCargarProducto(!showCargarProducto)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showCargarProducto?'bg-red-500 text-white':'bg-green-600 text-white hover:bg-green-700'}`}><Plus size={14}/> {showCargarProducto?'CANCELAR':'CARGAR PRODUCTO'}</button>
               <button onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
             </div>
@@ -2505,9 +2530,8 @@ export default function App() {
                             return (
                               <tr key={g.key} className={`hover:bg-gray-50 ${idx%2===0?'bg-white':'bg-gray-50/50'}`}>
                                 <td className="py-3 px-4 border-r">
-                                  <div className="font-black text-[11px] text-gray-900 uppercase">{g.categoria||g.producto}</div>
-                                  <div className="text-[9px] text-orange-600 font-bold">{g.cliente}</div>
-                                  {g.ancho && <div className="text-[9px] text-gray-500 font-bold">{g.ancho}×{g.largo}CM {g.micras?(parseNum(g.micras)/1000).toFixed(3)+'MIC':''}</div>}
+                                  <div className="font-black text-[11px] text-gray-900 uppercase">{formatFGLabel(g)}</div>
+                                  <div className="text-[9px] text-gray-400 font-bold">{g.tipoProducto}</div>
                                 </td>
                                 <td className="py-3 px-4 border-r text-center">
                                   <span className="bg-orange-100 text-orange-700 font-black text-[9px] px-2 py-0.5 rounded-full">{g.lotes.length} lote{g.lotes.length!==1?'s':''}</span>
@@ -2883,7 +2907,7 @@ export default function App() {
                   const physNum = physVal !== undefined && physVal !== '' ? parseNum(physVal) : null;
                   const diff = physNum !== null ? physNum - sysStock : null;
                   const desc = isFG
-                    ? `${item.categoria||item.producto} | ${item.cliente} | ${item.ancho||''}×${item.largo||''}cm ${item.micras||''}mic`.toUpperCase()
+                    ? formatFGLabel(item)
                     : item.isWip
                       ? `${item.desc} | ${item.cliente} | OP ${item.opId}`
                       : item.desc;
@@ -2984,7 +3008,7 @@ export default function App() {
       // Descripción: EMBUTIDO 1 - KIRI | INVERSIONES AVICOLAS, C.A | 28×75CM 0.012MIC
       const micDec = g.micras ? `${(parseNum(g.micras)/1000).toFixed(3)}MIC` : '';
       const dimPart = g.ancho ? `${g.ancho}×${g.largo}CM ${micDec}` : micDec;
-      const descFmt = `${g.categoria||g.producto} | ${g.cliente}${dimPart?' | '+dimPart:''}`.toUpperCase();
+      const descFmt = formatFGLabel(g);
       return {
         id: idCorto,
         desc: descFmt,
@@ -4128,7 +4152,7 @@ export default function App() {
                                       const dims = g.ancho ? `${g.ancho}×${g.largo}cm ${g.micras}mic` : '';
                                       return (
                                         <option key={g.key} value={g.key}>
-                                          {g.categoria||g.producto} | {g.cliente}{dims?` | ${dims}`:''} | {formatNum(g.totalStock)} {unit}
+                                          {formatFGLabel(g)} | {formatNum(g.totalStock)} {unit}
                                         </option>
                                       );
                                     })}
@@ -7511,6 +7535,7 @@ export default function App() {
                           </div>
                           <div className="font-bold text-white uppercase mt-1">{req.client}</div>
                           <div className="text-[10px] text-gray-300 mt-0.5">{req.desc} | {req.ancho}cm×{req.largo}cm | {req.micras}mic | {req.color}</div>
+                          {req.categoria && <div className="mt-1"><span className="bg-orange-600 text-white text-[8px] font-black uppercase px-2 py-0.5 rounded">📦 {req.categoria}</span></div>}
                         </div>
                         <div className="text-right text-[10px]">
                           <div className="text-gray-400">Fecha: <span className="text-white font-bold">{req.fecha}</span></div>
