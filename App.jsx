@@ -159,6 +159,7 @@ export default function App() {
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
   const [invSearchTerm, setInvSearchTerm] = useState('');
+  const [kardexProductId, setKardexProductId] = useState(''); // for kardex product filter
   const [reqToApprove, setReqToApprove] = useState(null);
 
   // Estados para Modal de Clave Admin
@@ -1760,7 +1761,7 @@ export default function App() {
                 </div>
                 <div>
                   <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Ítem del Inventario</label>
-                  <select value={movForm.itemId} onChange={e=>setMovForm({...movForm,itemId:e.target.value,unitCost:''})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
+                  <select value={movForm.itemId} onChange={e=>{const inv=(inventory||[]).find(i=>i.id===e.target.value);setMovForm({...movForm,itemId:e.target.value,unitCost:inv?String(inv.cost||0):'0'});}} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
                     <option value="">Seleccione...</option>
                     {(inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
                   </select>
@@ -1845,7 +1846,26 @@ export default function App() {
                           <td className="py-2.5 px-3 border-r text-center font-black text-blue-600">{formatNum(m.newStock)}</td>
                           <td className="py-2.5 px-3 border-r text-[9px] text-gray-500">{m.docRef||'—'} {m.notes&&<span className="text-gray-300">| {m.notes}</span>}</td>
                           <td className="py-2.5 px-3 text-center no-pdf">
-                            <button onClick={()=>requireAdminPassword(async()=>{const inv=(inventory||[]).find(i=>i.id===m.itemId);if(inv) await updateDoc(getDocRef('inventory',m.itemId),{stock:m.previousStock});await deleteDoc(getDocRef('inventoryMovements',m.id));},'Eliminar y revertir stock')} className="p-1 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
+                            <div className="flex gap-1 justify-center">
+                              <button onClick={()=>{
+                                const w = window.open('','_blank');
+                                w.document.write(`<html><body style="font-family:Arial;padding:24px">
+                                  <h2 style="border-bottom:3px solid #f97316;padding-bottom:8px">${isEntradas?'COMPROBANTE DE ENTRADA':'COMPROBANTE DE SALIDA'}</h2>
+                                  <p><b>Fecha:</b> ${m.date} | <b>Tipo:</b> ${m.type?.replace(/_/g,' ')}</p>
+                                  <p><b>Artículo:</b> ${m.itemId} — ${m.itemDesc||''}</p>
+                                  <p><b>Cantidad:</b> ${formatNum(m.qty)}</p>
+                                  <p><b>Costo Unitario:</b> $${formatNum(m.unitCost||0)}</p>
+                                  <p><b>Total:</b> $${formatNum(m.totalValue||0)}</p>
+                                  <p><b>Referencia:</b> ${m.docRef||'—'}</p>
+                                  <p><b>Observaciones:</b> ${m.notes||'—'}</p>
+                                  <p><b>Stock anterior:</b> ${formatNum(m.previousStock)} → <b>Stock nuevo:</b> ${formatNum(m.newStock)}</p>
+                                  <p><b>Usuario:</b> ${m.user||'—'}</p>
+                                  <script>window.print();window.close();</script>
+                                </body></html>`);
+                                w.document.close();
+                              }} className="p-1 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Imprimir"><Printer size={11}/></button>
+                              <button onClick={()=>requireAdminPassword(async()=>{const inv=(inventory||[]).find(i=>i.id===m.itemId);if(inv) await updateDoc(getDocRef('inventory',m.itemId),{stock:m.previousStock});await deleteDoc(getDocRef('inventoryMovements',m.id));},'Eliminar y revertir stock')} className="p-1 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -2004,13 +2024,6 @@ export default function App() {
               </p>
             </div>
             <div className="flex gap-3">
-              <button onClick={()=>requireAdminPassword(async()=>{
-                const toDelete = (wipInventory||[]).filter(w => w.opId !== 'OP-00005');
-                for(const w of toDelete){ try{ await deleteDoc(getDocRef('wipInventory',w.id)); }catch(e){} }
-                setDialog({title:'✅',text:`WIP limpiado. Solo queda OP-00005 (${wipInventory.filter(w=>w.opId==='OP-00005').length} entradas).`,type:'alert'});
-              },'Eliminar WIP — solo conserva OP-00005')} className="bg-red-50 text-red-500 border border-red-200 px-4 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-red-500 hover:text-white">
-                Limpiar (Conservar OP-00005)
-              </button>
               <button
                 onClick={() => {
                   const data = allWipMovs.map(item => [
@@ -2695,7 +2708,12 @@ export default function App() {
                             <td className="py-3 px-4 border-r text-[9px] text-gray-400">{po.notes?.replace(/^FECHA:[^|]+\| /,'') || '—'}</td>
                             <td className="py-3 px-4 text-center">
                               <div className="flex gap-1.5 justify-center items-center">
-                                <button onClick={()=>setViewingPO(po)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Ver"><Eye size={12}/></button>
+                                <button onClick={()=>{
+                                  const w=window.open('','_blank');
+                                  const rows=(po.items||[]).map(it=>`<tr><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;color:#ea580c">${it.productCode}</td><td style="padding:6px 10px;border:1px solid #ddd">${it.productName}</td><td style="padding:6px 10px;border:1px solid #ddd;text-align:center">${formatNum(it.currentStock)}</td><td style="padding:6px 10px;border:1px solid #ddd;text-align:center;font-weight:bold">${formatNum(it.suggestedQty)}</td></tr>`).join('');
+                                  w.document.write(`<html><body style="font-family:Arial;padding:24px;max-width:800px;margin:auto"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:12px;margin-bottom:16px"><div><h1 style="margin:0;font-size:20px">G&B Supply</h1></div><div style="text-align:right"><h2 style="margin:0">${po.id}</h2><p style="color:#f97316;font-weight:bold;margin:0">${po.status}</p></div></div><p><b>Depto:</b> ${po.department||po.provider} | <b>Fecha:</b> ${po.date}</p><table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="background:#1f2937;color:white"><th style="padding:8px 10px;text-align:left">Código</th><th style="padding:8px 10px">Material</th><th style="padding:8px 10px;text-align:center">Stock</th><th style="padding:8px 10px;text-align:center">Cantidad</th></tr></thead><tbody>${rows}</tbody></table>${po.notes?`<p style="margin-top:12px;padding:8px;border:1px solid #ddd;border-radius:4px"><b>Notas:</b> ${po.notes}</p>`:''}<script>window.print();window.close();<\/script></body></html>`);
+                                  w.document.close();
+                                }} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Ver / Imprimir"><Eye size={12}/></button>
                                 {!isODP && po.status === 'PENDIENTE' && (
                                   <button onClick={async()=>{
                                     // Generate OD-P number
@@ -3512,61 +3530,108 @@ export default function App() {
         )}
 
         {invView === 'kardex' && (
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
-            <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><History className="text-orange-500" size={24}/> Kardex / Historial de Movimientos</h2>
-               <button onClick={() => handleExportPDF('Kardex_Inventario', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center">
+              <h2 className="text-xl font-black uppercase flex items-center gap-3"><History className="text-orange-500" size={22}/> Kardex de Inventario</h2>
+              {kardexProductId && <button onClick={()=>handleExportPDF('Kardex_'+kardexProductId, true)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2"><Printer size={14}/> Imprimir</button>}
             </div>
-
-            <div className="p-8 print:p-0 bg-white" id="pdf-content">
-               <div className="hidden pdf-header mb-8">
-                 <ReportHeader />
-                 <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2">REPORTE DE MOVIMIENTOS POR UNIDADES</h1>
-                 <p className="text-sm font-bold text-gray-500 uppercase mt-2">AL: {getTodayDate()}</p>
-               </div>
-
-               <div data-html2canvas-ignore="true" className="relative max-w-2xl mb-8 no-pdf">
-                 <Search className="absolute left-4 top-4 text-gray-400" size={18} />
-                 <input type="text" placeholder="BUSCAR POR CÓDIGO, REFERENCIA O TIPO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
-               </div>
-
-               <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-                 <table className="w-full text-left whitespace-nowrap text-xs">
-                   <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
-                     <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                       <th className="py-3 px-4 border-r print:border-black">Fecha / Usuario</th>
-                       <th className="py-3 px-4 border-r print:border-black">Referencia / Notas</th>
-                       <th className="py-3 px-4 border-r print:border-black">Tipo Operación</th>
-                       <th className="py-3 px-4 border-r print:border-black">Ítem / Código</th>
-                       <th className="py-3 px-4 text-center border-r print:border-black">Cant.</th>
-                       <th className="py-3 px-4 text-right border-r print:border-black">Costo U.</th>
-                       <th className="py-3 px-4 text-right border-r print:border-black">Valor Total</th>
-                       <th className="py-3 px-4 text-center no-pdf">Acciones</th>
-                     </tr>
-                   </thead>
-                   <tbody className="divide-y divide-gray-100 text-black print:divide-black">
-                     {filteredMovements.map(m => {
-                        const isPos = m?.type === 'ENTRADA' || m?.type === 'AJUSTE (POSITIVO)';
-                        return (
-                         <tr key={m?.id} className="hover:bg-gray-50 transition-colors">
-                           <td className="py-3 px-4 font-bold border-r print:border-black">{m?.date}<br/><span className="text-[9px] text-gray-500 print:text-black">{m?.user}</span></td>
-                           <td className="py-3 px-4 font-black border-r print:border-black">{m?.reference}<br/><span className="text-[9px] font-bold text-gray-400 print:text-black">{m?.notes}</span></td>
-                           <td className="py-3 px-4 border-r print:border-black"><span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${isPos ? 'bg-green-100 text-green-700 print:border print:border-black print:bg-transparent print:text-black' : 'bg-red-100 text-red-700 print:border print:border-black print:bg-transparent print:text-black'}`}>{m?.type}</span></td>
-                           <td className="py-3 px-4 font-bold border-r print:border-black">{m?.itemId}<br/><span className="text-[9px] font-black print:text-black">{m?.itemName}</span></td>
-                           <td className={`py-3 px-4 text-center font-black text-sm border-r print:border-black ${isPos ? 'text-green-600' : 'text-red-600'} print:text-black`}>{isPos ? '+' : '-'}{formatNum(m?.qty)}</td>
-                           <td className="py-3 px-4 text-right font-bold text-gray-600 border-r print:border-black print:text-black">${formatNum(m?.cost)}</td>
-                           <td className="py-3 px-4 text-right font-black border-r print:border-black print:text-black">${formatNum(m?.totalValue)}</td>
-                           <td className="py-3 px-4 text-center no-pdf flex justify-center gap-2">
-                              <button onClick={() => setShowMovementReceipt(m)} className="p-2 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-100 transition-colors" title="Imprimir Comprobante"><Printer size={16}/></button>
-                              <button onClick={() => handleDeleteMovement(m)} className="p-2 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 transition-colors" title="Borrar/Revertir Movimiento"><Trash2 size={16}/></button>
-                           </td>
-                         </tr>
-                        );
-                     })}
-                     {filteredMovements.length === 0 && <tr><td colSpan="8" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin movimientos registrados</td></tr>}
-                   </tbody>
-                 </table>
-               </div>
+            <div className="p-6" id="pdf-content">
+              <div className="hidden pdf-header mb-6"><ReportHeader/><h1 className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">KARDEX — {kardexProductId}</h1></div>
+              {/* Product selector */}
+              <div className="mb-6 flex gap-3 items-end flex-wrap">
+                <div className="flex-1 min-w-48">
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Seleccionar Artículo</label>
+                  <select value={kardexProductId} onChange={e=>setKardexProductId(e.target.value)} className="w-full border-2 border-orange-300 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500 bg-white">
+                    <option value="">— Seleccione un artículo —</option>
+                    {[...(inventory||[])].sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc}</option>)}
+                  </select>
+                </div>
+                <div className="flex-1 min-w-48">
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">O buscar por nombre</label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-3 text-gray-400" size={14}/>
+                    <input type="text" placeholder="Buscar artículo..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-3 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400"/>
+                  </div>
+                </div>
+              </div>
+              {/* Search results dropdown */}
+              {invSearchTerm && !kardexProductId && (
+                <div className="mb-4 border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                  {(inventory||[]).filter(i=>String(i.desc||'').toUpperCase().includes(invSearchTerm.toUpperCase())||String(i.id||'').toUpperCase().includes(invSearchTerm.toUpperCase())).slice(0,8).map(i=>(
+                    <button key={i.id} onClick={()=>{setKardexProductId(i.id);setInvSearchTerm('');}} className="w-full text-left px-4 py-2.5 hover:bg-orange-50 border-b border-gray-100 text-xs font-bold flex justify-between">
+                      <span className="text-orange-600 font-black">{i.id}</span><span className="text-gray-600">{i.desc}</span><span className="text-gray-400">Stock: {formatNum(i.stock)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {kardexProductId ? (() => {
+                const item = (inventory||[]).find(i=>i.id===kardexProductId);
+                const movs = (invMovements||[]).filter(m=>m.itemId===kardexProductId).sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
+                let runBalance = 0;
+                const rows = movs.map(m => {
+                  const isIn = m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL';
+                  if(isIn) runBalance += parseNum(m.qty);
+                  else runBalance -= parseNum(m.qty);
+                  return {...m, balance: runBalance};
+                });
+                return (
+                  <div>
+                    {/* Item summary */}
+                    <div className="grid grid-cols-3 gap-3 mb-4">
+                      <div className="bg-gray-50 rounded-xl p-3"><p className="text-[9px] font-black text-gray-500 uppercase">Artículo</p><p className="font-black text-sm">{kardexProductId}</p><p className="text-[10px] text-gray-600">{item?.desc}</p></div>
+                      <div className="bg-orange-50 rounded-xl p-3"><p className="text-[9px] font-black text-orange-700 uppercase">Stock Actual</p><p className="text-2xl font-black text-orange-600">{formatNum(item?.stock||0)}</p><p className="text-[9px] text-gray-500">{item?.unit}</p></div>
+                      <div className="bg-blue-50 rounded-xl p-3"><p className="text-[9px] font-black text-blue-700 uppercase">Costo Promedio</p><p className="text-2xl font-black text-blue-600">${formatNum(item?.cost||0)}</p><p className="text-[9px] text-gray-500">por {item?.unit}</p></div>
+                    </div>
+                    {rows.length === 0 ? (
+                      <div className="py-10 text-center text-gray-400 font-bold text-xs uppercase">Sin movimientos registrados para este artículo</div>
+                    ) : (
+                      <div className="overflow-x-auto rounded-xl border border-gray-200">
+                        <table className="w-full text-xs">
+                          <thead className="bg-gray-800 text-white"><tr className="uppercase font-black text-[9px] tracking-widest">
+                            <th className="py-2.5 px-3 border-r border-gray-700 text-left">Fecha</th>
+                            <th className="py-2.5 px-3 border-r border-gray-700 text-center">Tipo</th>
+                            <th className="py-2.5 px-3 border-r border-gray-700 text-left">Referencia</th>
+                            <th className="py-2.5 px-3 border-r border-gray-700 text-center">Entradas</th>
+                            <th className="py-2.5 px-3 border-r border-gray-700 text-center">Salidas</th>
+                            <th className="py-2.5 px-3 border-r border-gray-700 text-right">Costo U.</th>
+                            <th className="py-2.5 px-3 border-r border-gray-700 text-right">Valor</th>
+                            <th className="py-2.5 px-3 text-center">Saldo</th>
+                          </tr></thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {rows.map((m,i) => {
+                              const isIn = m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL';
+                              return (
+                                <tr key={m.id||i} className="hover:bg-gray-50">
+                                  <td className="py-2 px-3 border-r font-bold text-gray-600">{m.date}</td>
+                                  <td className="py-2 px-3 border-r text-center"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${isIn?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>{isIn?'⬇ ENT':'⬆ SAL'}</span></td>
+                                  <td className="py-2 px-3 border-r text-[10px] text-gray-600">{m.docRef||m.reference||m.notes||'—'}</td>
+                                  <td className="py-2 px-3 border-r text-center font-black text-green-600">{isIn?formatNum(m.qty):'—'}</td>
+                                  <td className="py-2 px-3 border-r text-center font-black text-red-600">{!isIn?formatNum(m.qty):'—'}</td>
+                                  <td className="py-2 px-3 border-r text-right font-bold text-gray-500">${formatNum(m.unitCost||m.cost||0)}</td>
+                                  <td className="py-2 px-3 border-r text-right font-black">${formatNum(m.totalValue||(parseNum(m.qty)*(m.unitCost||m.cost||0)))}</td>
+                                  <td className="py-2 px-3 text-center font-black text-blue-600">{formatNum(m.balance)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                          <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-black">
+                            <tr>
+                              <td colSpan="3" className="py-2 px-3 text-[9px] uppercase text-gray-500">{rows.length} movimientos</td>
+                              <td className="py-2 px-3 text-center text-green-600">{formatNum(rows.filter(m=>m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL').reduce((s,m)=>s+parseNum(m.qty),0))}</td>
+                              <td className="py-2 px-3 text-center text-red-600">{formatNum(rows.filter(m=>m.type!=='ENTRADA'&&m.type!=='ENTRADA_DEVOLUCION'&&m.type!=='ENTRADA_INICIAL').reduce((s,m)=>s+parseNum(m.qty),0))}</td>
+                              <td colSpan="2" className="py-2 px-3 text-right">${formatNum(rows.reduce((s,m)=>s+parseNum(m.totalValue||(parseNum(m.qty)*(m.unitCost||m.cost||0))),0))}</td>
+                              <td className="py-2 px-3 text-center text-blue-700">{formatNum(item?.stock||0)}</td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    )}
+                    <div className="mt-2 text-right"><button onClick={()=>{setKardexProductId('');setInvSearchTerm('');}} className="text-[9px] font-black text-gray-400 uppercase hover:text-gray-600">✕ Limpiar selección</button></div>
+                  </div>
+                );
+              })() : (
+                <div className="py-16 text-center text-gray-400"><History size={48} className="mx-auto mb-3 opacity-20"/><p className="font-black text-xs uppercase">Seleccione un artículo para ver su Kardex</p></div>
+              )}
             </div>
           </div>
         )}
@@ -10305,8 +10370,7 @@ export default function App() {
                       {id:'salidas', icon:<ArrowUpFromLine size={14}/>, label:'Salidas', perm:'inventario_movimientos'},
                       {id:'toma_fisica', icon:<ClipboardEdit size={14}/>, label:'Toma Física', perm:'inventario_movimientos'},
                       {id:'kardex', icon:<History size={14}/>, label:'Kardex', perm:'inventario_kardex'},
-                      {id:'reportes_mod', icon:<FileText size={14}/>, label:'Reportes', perm:'inventario_kardex'},
-                      {id:'reporte177', icon:<FileCheck size={14}/>, label:'Art.177', perm:'inventario_kardex'},
+                         {id:'reporte177', icon:<FileCheck size={14}/>, label:'Art.177', perm:'inventario_kardex'},
                     ].filter(t=>hasPerm('inventario')&&(hasPerm(t.perm)||appUser?.role==='Master')).map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();setShowMovForm(false);if(t.id==='entradas')setMovForm(f=>({...f,type:'ENTRADA'}));if(t.id==='salidas')setMovForm(f=>({...f,type:'AUTOCONSUMO'}));}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
