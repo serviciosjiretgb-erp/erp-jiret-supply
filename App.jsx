@@ -163,6 +163,7 @@ export default function App() {
       {pattern: /termo.*pinturas|pinturas.*caribe/i,      bolsas: false, totalStock: 521.40, cost:  2.71},
     ];
     const applyCorrections = async () => {
+      if(typeof updateDoc !== "function" || typeof getDocRef !== "function") return;
       for(const target of targets) {
         const matches = finishedGoodsInventory.filter(fg => target.pattern.test(`${fg.producto||''} ${fg.cliente||''}`));
         if(matches.length === 0) continue;
@@ -9417,7 +9418,7 @@ export default function App() {
                   </div>
                   {/* Action buttons */}
                   <div className="flex justify-between pt-2 border-t border-gray-100">
-                    <button onClick={()=>{setErMododAnual&&setErModoAnual(false);setErMesesExtra([]);setErMes(new Date().getMonth()+1);setErAno(new Date().getFullYear());}} className="text-[9px] font-black text-orange-600 uppercase hover:underline">Borrar</button>
+                    <button onClick={()=>{setErModoAnual(false);setErMesesExtra([]);setErMes(new Date().getMonth()+1);setErAno(new Date().getFullYear());}} className="text-[9px] font-black text-orange-600 uppercase hover:underline">Borrar</button>
                     <div className="flex gap-2">
                       <button onClick={()=>{setErModoAnual(v=>!v);setErMesesExtra([]);}} className={`text-[9px] font-black uppercase px-2 py-1 rounded-lg ${erModoAnual?'bg-blue-600 text-white':'text-blue-600 hover:bg-blue-50'}`}>
                         {erModoAnual ? '✓ Año completo' : 'Año completo'}
