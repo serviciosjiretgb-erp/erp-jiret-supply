@@ -205,6 +205,8 @@ export default function App() {
   const [invImportLoading, setInvImportLoading] = useState(false);
   const [erView, setErView] = useState('estado');
   const [erMes, setErMes] = useState(new Date().getMonth() + 1);
+  const [erModoAnual, setErModoAnual] = useState(false); // true = todo el año
+  const [erMesesExtra, setErMesesExtra] = useState([]); // additional months selected
   const [erAno, setErAno] = useState(new Date().getFullYear());
   const [erTasa, setErTasa] = useState('');
   const [erExpanded, setErExpanded] = useState({ ingresos: false, costo_ventas: false, costos_op: false });
@@ -1947,8 +1949,8 @@ export default function App() {
       );
     }
 
-    if (invView === 'kardex' || invView === 'reportes_mod') {
-      return renderInventoryReports(invView === 'kardex' ? 'entradas' : invReportType);
+    if (invView === 'reportes_mod') {
+      return renderInventoryReports(invReportType);
     }
 
     // ── ÓRDENES DE COMPRA (desde Inventario) ──
@@ -2330,6 +2332,20 @@ export default function App() {
                       </td>
                       <td className="py-3 px-3 text-center no-pdf">
                         <div className="flex flex-col gap-1">
+                          <button onClick={() => {
+                            const newStock = window.prompt(`Stock actual (${esTermo2?'KG':'Millares'}):`, esTermo2?String(parseNum(item.kgProducidos)):String(parseNum(item.millares)));
+                            if(newStock===null) return;
+                            const newCost = window.prompt(`Costo unitario ($/${esTermo2?'KG':'Millar'}):`, esTermo2?String(parseNum(item.costoUnitario||0)):String(parseNum(item.costoUnitarioMillar||0)));
+                            if(newCost===null) return;
+                            const stk = parseFloat(newStock)||0;
+                            const cst = parseFloat(newCost)||0;
+                            const updateData = esTermo2
+                              ? {kgProducidos:stk, kgProducidosOrigen:Math.max(stk,parseNum(item.kgProducidosOrigen||stk)), costoUnitario:cst, costoTotalProduccion:cst*stk}
+                              : {millares:stk, millaresOrigen:Math.max(stk,parseNum(item.millaresOrigen||stk)), costoUnitarioMillar:cst, costoTotalProduccion:cst*stk};
+                            updateDoc(getDocRef('finishedGoodsInventory',item.id), updateData)
+                              .then(()=>setDialog({title:'✅ Actualizado',text:`Stock: ${formatNum(stk)} | Costo: $${formatNum(cst)}`,type:'alert'}))
+                              .catch(e=>setDialog({title:'Error',text:e.message,type:'alert'}));
+                          }} className="px-2 py-1 bg-orange-50 text-orange-600 rounded-lg text-[9px] font-black uppercase hover:bg-orange-500 hover:text-white flex items-center gap-1 justify-center"><Edit size={10}/> EDITAR</button>
                           <button onClick={() => requireAdminPassword(async () => {
                             await deleteDoc(getDocRef('finishedGoodsInventory', item.id));
                             setDialog({title:'Eliminado', text:'Registro eliminado.', type:'alert'});
@@ -9257,8 +9273,37 @@ export default function App() {
     const MONTHS = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
     const tasa = parseNum(erTasa) || 1;
 
+    // Determine which months to aggregate
     const ymA = `${erAno}-${String(erMes).padStart(2,'0')}`;
-    const dataA = calcEstadoData(ymA);
+    
+    // Build list of year-months to aggregate
+    const getAggregateYMs = () => {
+      if(erModoAnual) return Array.from({length:12},(_,i)=>`${erAno}-${String(i+1).padStart(2,'0')}`);
+      if(erMesesExtra.length > 0) return [ymA, ...erMesesExtra];
+      return [ymA];
+    };
+    
+    // Aggregate calcEstadoData across multiple months
+    const calcMultiMesData = (yms) => {
+      if(yms.length === 1) return calcEstadoData(yms[0]);
+      const results = yms.map(ym => calcEstadoData(ym));
+      const allCogsRows = results.flatMap(r => r.cogsRows||[]);
+      const totalIngresos = results.reduce((s,r)=>s+r.totalIngresos,0);
+      const totalCostoProd = results.reduce((s,r)=>s+r.totalCostoProd,0);
+      const totalCostosOp = results.reduce((s,r)=>s+r.totalCostosOp,0);
+      // Merge costosPorCuenta
+      const costosPorCuenta = {};
+      results.forEach(r=>Object.entries(r.costosPorCuenta||{}).forEach(([k,v])=>{
+        if(!costosPorCuenta[k]) costosPorCuenta[k]={...v,total:0,movs:[]};
+        costosPorCuenta[k].total += v.total;
+        costosPorCuenta[k].movs.push(...v.movs);
+      }));
+      const totalCostos = totalCostoProd + totalCostosOp;
+      return { totalIngresos, totalCostoProd, totalCostosOp, totalCostos, resultado: totalIngresos-totalCostos, cogsRows: allCogsRows, costosPorCuenta, facturasperiodo: results.flatMap(r=>r.facturasperiodo||[]), costosPeriodo: results.flatMap(r=>r.costosPeriodo||[]), movsProd: results.flatMap(r=>r.movsProd||[]) };
+    };
+
+    const activeMYs = getAggregateYMs();
+    const dataA = calcMultiMesData(activeMYs);
     const dataB = calcEstadoData(varMesB);
 
     const pctOf = (val, base) => base !== 0 ? ((val / base) * 100).toFixed(2) + '%' : '0.00%';
@@ -9297,21 +9342,54 @@ export default function App() {
           </div>
 
           {/* Filtros */}
-          <div className="px-8 py-4 bg-gray-50 border-b border-gray-200 flex flex-wrap gap-4 items-end">
+          <div className="px-8 py-4 bg-gray-50 border-b border-gray-200 flex flex-wrap gap-3 items-end">
             {erView === 'estado' ? (
               <>
-                <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes</label>
-                  <select value={erMes} onChange={e=>setErMes(parseInt(e.target.value))} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none bg-white">
-                    {MONTHS.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
-                  </select>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Modo</label>
+                  <div className="flex gap-1">
+                    <button onClick={()=>{setErModoAnual(false); setErMesesExtra([]);}} className={`px-3 py-2 rounded-xl text-[9px] font-black uppercase ${!erModoAnual && erMesesExtra.length===0?'bg-orange-500 text-white':'bg-gray-200 text-gray-700'}`}>Mes</button>
+                    <button onClick={()=>{setErModoAnual(false); setErMesesExtra(prev=>prev.length===0?[]:prev);}} className={`px-3 py-2 rounded-xl text-[9px] font-black uppercase ${!erModoAnual && erMesesExtra.length>0?'bg-purple-500 text-white':'bg-gray-200 text-gray-700'}`}>Varios Meses</button>
+                    <button onClick={()=>setErModoAnual(v=>!v)} className={`px-3 py-2 rounded-xl text-[9px] font-black uppercase ${erModoAnual?'bg-blue-600 text-white':'bg-gray-200 text-gray-700'}`}>Todo el Año</button>
+                  </div>
                 </div>
+                {!erModoAnual && (
+                  <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Principal</label>
+                    <select value={erMes} onChange={e=>setErMes(parseInt(e.target.value))} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none bg-white">
+                      {MONTHS.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
+                    </select>
+                  </div>
+                )}
+                {!erModoAnual && (
+                  <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Meses Adicionales</label>
+                    <div className="flex flex-wrap gap-1 max-w-sm">
+                      {MONTHS.map((m,i)=>{
+                        const ym = `${erAno}-${String(i+1).padStart(2,'0')}`;
+                        const isSelected = erMesesExtra.includes(ym);
+                        return (
+                          <button key={i} onClick={()=>setErMesesExtra(prev=>isSelected?prev.filter(x=>x!==ym):[...prev,ym])}
+                            className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${isSelected?'bg-purple-500 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                            {m.substring(0,3)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Año</label>
                   <input type="number" value={erAno} onChange={e=>setErAno(parseInt(e.target.value))} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-24 text-center" />
                 </div>
                 <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa (Bs/$)</label>
                   <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-32 text-center" />
                 </div>
-                <button onClick={()=>handleExportPDF('Estado_Resultado', false)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir</button>
+                <div className="flex-1 flex justify-end">
+                  <div className="text-right">
+                    <p className="text-[9px] font-black text-orange-600 uppercase">
+                      {erModoAnual ? `Año completo ${erAno}` : erMesesExtra.length > 0 ? `${erMesesExtra.length+1} meses seleccionados` : `${MONTHS[erMes-1]} ${erAno}`}
+                    </p>
+                    <button onClick={()=>handleExportPDF('Estado_Resultado', false)} className="mt-1 bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir</button>
+                  </div>
+                </div>
               </>
             ) : (
               <>
