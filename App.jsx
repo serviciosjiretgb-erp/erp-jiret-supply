@@ -1725,24 +1725,48 @@ export default function App() {
 
       const handleSaveMov = async () => {
         if(!movForm.itemId || !parseNum(movForm.qty)) return setDialog({title:'Aviso',text:'Complete artículo y cantidad.',type:'alert'});
-        const inv = (inventory||[]).find(i=>i.id===movForm.itemId);
-        if(!inv) return;
+        const isFGItem = movForm.itemId.startsWith('FG::');
+        const actualId = isFGItem ? movForm.itemId.replace('FG::','') : movForm.itemId;
         const qty = parseNum(movForm.qty);
-        const unitCostNew = parseNum(movForm.unitCost) || inv.cost || 0;
+        const unitCostNew = parseNum(movForm.unitCost) || 0;
+
+        if(isFGItem) {
+          // FG item - update finishedGoodsInventory
+          const fg = (finishedGoodsInventory||[]).find(f=>f.id===actualId);
+          if(!fg) return setDialog({title:'Error',text:'Producto terminado no encontrado.',type:'alert'});
+          const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
+          const currentStock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+          const newStock = Math.max(0, currentStock - qty);
+          const cost = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+          const mov = {itemId:`FG::${actualId}`, itemDesc: formatFGLabel(fg)||fg.producto||actualId, type:movForm.type, qty, unitCost:cost, totalValue:qty*cost, previousStock:currentStock, newStock, docRef:movForm.docRef, notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin', timestamp:Date.now(), isFG:true};
+          try {
+            await addDoc(getColRef('inventoryMovements'), mov);
+            const updateField = esTermo ? {kgProducidos: newStock} : {millares: newStock};
+            await updateDoc(getDocRef('finishedGoodsInventory', actualId), updateField);
+            setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',type:'AUTOCONSUMO',notes:'',date:getTodayDate()});
+            setShowMovForm(false);
+            setDialog({title:'✅ Movimiento Procesado',text:`Nuevo stock FG: ${formatNum(newStock)} ${esTermo?'KG':'Millares'}`,type:'alert'});
+          } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+          return;
+        }
+
+        const inv = (inventory||[]).find(i=>i.id===actualId);
+        if(!inv) return;
+        const unitCostFinal = unitCostNew || inv.cost || 0;
         const newStock = isEntradas ? (inv.stock||0) + qty : Math.max(0,(inv.stock||0) - qty);
         // If entry, update cost with weighted average
-        const newCost = isEntradas && unitCostNew > 0
-          ? (((inv.stock||0)*parseNum(inv.cost||0)) + (qty*unitCostNew)) / ((inv.stock||0) + qty)
+        const newCost = isEntradas && unitCostFinal > 0
+          ? (((inv.stock||0)*parseNum(inv.cost||0)) + (qty*unitCostFinal)) / ((inv.stock||0) + qty)
           : inv.cost;
-        const mov = {itemId:movForm.itemId, itemDesc:inv.desc, type:movForm.type, qty, unitCost: unitCostNew, totalValue: qty * unitCostNew, previousStock:inv.stock||0, newStock, docRef: movForm.docRef, notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin', timestamp:Date.now()};
+        const mov = {itemId:actualId, itemDesc:inv.desc, type:movForm.type, qty, unitCost: unitCostFinal, totalValue: qty * unitCostFinal, previousStock:inv.stock||0, newStock, docRef: movForm.docRef, notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin', timestamp:Date.now()};
         try {
           await addDoc(getColRef('inventoryMovements'), mov);
           const updateData = {stock: newStock};
-          if(isEntradas && unitCostNew > 0) updateData.cost = newCost;
-          await updateDoc(getDocRef('inventory', movForm.itemId), updateData);
+          if(isEntradas && unitCostFinal > 0) updateData.cost = newCost;
+          await updateDoc(getDocRef('inventory', actualId), updateData);
           setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',type:isEntradas?'ENTRADA':'AUTOCONSUMO',notes:'',date:getTodayDate()});
           setShowMovForm(false);
-          setDialog({title:'✅ Movimiento Procesado',text:`Nuevo stock: ${formatNum(newStock)} ${inv.unit}${isEntradas && unitCostNew>0 ? ` | Costo promedio: $${formatNum(newCost)}`:''}.`,type:'alert'});
+          setDialog({title:'✅ Movimiento Procesado',text:`Nuevo stock: ${formatNum(newStock)} ${inv.unit}${isEntradas && unitCostFinal>0 ? ` | Costo promedio: $${formatNum(newCost)}`:''}.`,type:'alert'});
         } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
       };
 
@@ -1778,7 +1802,27 @@ export default function App() {
                   <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Ítem del Inventario</label>
                   <select value={movForm.itemId} onChange={e=>{const inv=(inventory||[]).find(i=>i.id===e.target.value);setMovForm({...movForm,itemId:e.target.value,unitCost:inv?String(inv.cost||0):'0'});}} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
                     <option value="">Seleccione...</option>
-                    {(inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                    <optgroup label="── Materia Prima / Consumibles ──">
+                      {(inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                    </optgroup>
+                    {!isEntradas && (
+                      <optgroup label="── Productos Terminados ──">
+                        {(() => {
+                          // Build grouped FG for salidas dropdown
+                          const fgGrps = {};
+                          (finishedGoodsInventory||[]).forEach(fg => {
+                            const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
+                            const key = fg.id;
+                            const stock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+                            if(stock <= 0) return;
+                            fgGrps[key] = {id:key, desc:formatFGLabel(fg)||fg.producto, stock, unit:esTermo?'KG':'Millares', cost:esTermo?parseNum(fg.costoUnitario||0):parseNum(fg.costoUnitarioMillar||0), isFG:true};
+                          });
+                          return Object.values(fgGrps).map(g=>(
+                            <option key={g.id} value={`FG::${g.id}`}>{g.desc} (Stock: {formatNum(g.stock)} {g.unit})</option>
+                          ));
+                        })()}
+                      </optgroup>
+                    )}
                   </select>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -3567,7 +3611,20 @@ export default function App() {
                   <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Seleccionar Artículo</label>
                   <select value={kardexProductId} onChange={e=>setKardexProductId(e.target.value)} className="w-full border-2 border-orange-300 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500 bg-white">
                     <option value="">— Seleccione un artículo —</option>
-                    {[...(inventory||[])].sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc}</option>)}
+                    <optgroup label="── Materia Prima / Consumibles ──">
+                      {[...(inventory||[])].sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc}</option>)}
+                    </optgroup>
+                    <optgroup label="── Productos Terminados ──">
+                      {(() => {
+                        const fgMap = {};
+                        (finishedGoodsInventory||[]).forEach(fg=>{
+                          if(!fgMap[fg.id]) fgMap[fg.id] = fg;
+                        });
+                        return Object.values(fgMap).map(fg=>(
+                          <option key={`FG::${fg.id}`} value={`FG::${fg.id}`}>FG — {formatFGLabel(fg)||fg.producto||fg.id}</option>
+                        ));
+                      })()}
+                    </optgroup>
                   </select>
                 </div>
                 <div className="flex-1 min-w-48">
@@ -3589,22 +3646,34 @@ export default function App() {
                 </div>
               )}
               {kardexProductId ? (() => {
-                const item = (inventory||[]).find(i=>i.id===kardexProductId);
-                const movs = (invMovements||[]).filter(m=>m.itemId===kardexProductId).sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
-                let runBalance = 0;
+                const isFGKardex = kardexProductId.startsWith('FG::');
+                const actualKardexId = isFGKardex ? kardexProductId.replace('FG::','') : kardexProductId;
+                const item = isFGKardex
+                  ? (finishedGoodsInventory||[]).find(f=>f.id===actualKardexId)
+                  : (inventory||[]).find(i=>i.id===actualKardexId);
+                const itemLabel = isFGKardex ? formatFGLabel(item)||item?.producto||actualKardexId : item?.desc||actualKardexId;
+                const itemUnit = isFGKardex ? (item?.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millares') : (item?.unit||'');
+                const itemStock = isFGKardex ? (item?.tipoProducto==='TERMOENCOGIBLE'?parseNum(item?.kgProducidos):parseNum(item?.millares)) : (item?.stock||0);
+                const itemCost = isFGKardex ? (item?.tipoProducto==='TERMOENCOGIBLE'?parseNum(item?.costoUnitario||0):parseNum(item?.costoUnitarioMillar||0)) : (item?.cost||0);
+                // All movements for this item (both FG:: and plain id)
+                const movs = (invMovements||[]).filter(m=>
+                  m.itemId===kardexProductId || m.itemId===actualKardexId ||
+                  (isFGKardex && m.itemId===`FG::${actualKardexId}`)
+                ).sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
+                let runBalance = isFGKardex ? 0 : 0; // start from 0, will accumulate
                 const rows = movs.map(m => {
                   const isIn = m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL';
                   if(isIn) runBalance += parseNum(m.qty);
                   else runBalance -= parseNum(m.qty);
-                  return {...m, balance: runBalance};
+                  return {...m, balance: Math.max(0,runBalance)};
                 });
                 return (
                   <div>
                     {/* Item summary */}
                     <div className="grid grid-cols-3 gap-3 mb-4">
-                      <div className="bg-gray-50 rounded-xl p-3"><p className="text-[9px] font-black text-gray-500 uppercase">Artículo</p><p className="font-black text-sm">{kardexProductId}</p><p className="text-[10px] text-gray-600">{item?.desc}</p></div>
-                      <div className="bg-orange-50 rounded-xl p-3"><p className="text-[9px] font-black text-orange-700 uppercase">Stock Actual</p><p className="text-2xl font-black text-orange-600">{formatNum(item?.stock||0)}</p><p className="text-[9px] text-gray-500">{item?.unit}</p></div>
-                      <div className="bg-blue-50 rounded-xl p-3"><p className="text-[9px] font-black text-blue-700 uppercase">Costo Promedio</p><p className="text-2xl font-black text-blue-600">${formatNum(item?.cost||0)}</p><p className="text-[9px] text-gray-500">por {item?.unit}</p></div>
+                      <div className="bg-gray-50 rounded-xl p-3"><p className="text-[9px] font-black text-gray-500 uppercase">Artículo</p><p className="font-black text-sm">{actualKardexId}</p><p className="text-[10px] text-gray-600">{itemLabel}</p></div>
+                      <div className="bg-orange-50 rounded-xl p-3"><p className="text-[9px] font-black text-orange-700 uppercase">Stock Actual</p><p className="text-2xl font-black text-orange-600">{formatNum(itemStock)}</p><p className="text-[9px] text-gray-500">{itemUnit}</p></div>
+                      <div className="bg-blue-50 rounded-xl p-3"><p className="text-[9px] font-black text-blue-700 uppercase">Costo Promedio</p><p className="text-2xl font-black text-blue-600">${formatNum(itemCost)}</p><p className="text-[9px] text-gray-500">por {itemUnit}</p></div>
                     </div>
                     {rows.length === 0 ? (
                       <div className="py-10 text-center text-gray-400 font-bold text-xs uppercase">Sin movimientos registrados para este artículo</div>
@@ -3717,24 +3786,48 @@ export default function App() {
             }
 
             if (cat === 'Productos Terminados') {
-              // Group finishedGoodsInventory same as catalog
+              // Group FG - show proper entries/exits for Art.177
               const fgGroups = {};
               finishedGoodsInventory.forEach(item => {
                 const esTermo = item.tipoProducto==='TERMOENCOGIBLE';
-                const key = `${item.categoria||'FG'}_${item.cliente||'?'}_${item.producto||'?'}`;
-                if(!fgGroups[key]) fgGroups[key] = {key, desc:`${item.producto||'?'} - ${item.cliente||''}`, unit: esTermo?'KG':'Millares', costoUnit: parseNum(item.costoUnitario||item.costoUnitarioMillar||0), stock:0, total:0};
-                const stock = esTermo ? parseNum(item.kgProducidos) : parseNum(item.millares);
-                const cost = esTermo ? parseNum(item.costoUnitario||0) : parseNum(item.costoUnitarioMillar||0);
-                fgGroups[key].stock += stock;
-                fgGroups[key].total += stock * cost;
+                const key = item.id; // use unique ID per item
+                if(!fgGroups[key]) {
+                  const currentStock = esTermo ? parseNum(item.kgProducidos) : parseNum(item.millares);
+                  const stockOrigen = esTermo ? parseNum(item.kgProducidosOrigen||item.kgProducidos) : parseNum(item.millaresOrigen||item.millares);
+                  const costoUnit = esTermo ? parseNum(item.costoUnitario||0) : parseNum(item.costoUnitarioMillar||0);
+                  // FG movements from inventoryMovements
+                  const fgMovsMonth = monthMovements.filter(m=>m.itemId===item.id||m.itemId===`FG::${item.id}`);
+                  const fgEntradas = fgMovsMonth.filter(m=>m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL');
+                  const fgSalidas = fgMovsMonth.filter(m=>m.type==='SALIDA'||m.type==='AUTOCONSUMO'||m.type==='AVERIA'||m.type==='MUESTRA');
+                  // Invoice sales as exits
+                  const invoiceSalesQty = (invoices||[]).filter(inv=>{
+                    const d = inv.fecha||(typeof inv.timestamp==='number'?new Date(inv.timestamp).toISOString().substring(0,7):'');
+                    return d.startsWith(`${reportYear}-${String(reportMonth).padStart(2,'0')}`);
+                  }).reduce((s,inv)=>{
+                    const it = (inv.itemsFacturados||[]).find(i=>i.fgId===item.id);
+                    if(it) return s + parseNum(it.cantidad||0);
+                    if(inv.fgId===item.id) return s + parseNum(inv.fgCantidad||0);
+                    return s;
+                  }, 0);
+                  const monthEntradasQty = fgEntradas.reduce((s,m)=>s+parseNum(m.qty),0) + (fgEntradas.length===0 ? stockOrigen : 0);
+                  const monthEntradasTotal = monthEntradasQty * costoUnit;
+                  const monthSalidasQty = Math.max(0, fgSalidas.reduce((s,m)=>s+parseNum(m.qty),0) + invoiceSalesQty);
+                  const monthSalidasTotal = monthSalidasQty * costoUnit;
+                  const invFinalQty = currentStock;
+                  const invFinalCost = costoUnit;
+                  const invFinalTotal = invFinalQty * invFinalCost;
+                  const initialStock = Math.max(0, invFinalQty + monthSalidasQty - monthEntradasQty);
+                  fgGroups[key] = {
+                    id: item.id, desc: formatFGLabel(item)||`${item.producto||'?'} - ${item.cliente||''}`,
+                    unit: esTermo?'KG':'Millares', cost: costoUnit,
+                    initialStock, initialTotal: initialStock * costoUnit,
+                    monthEntradasQty, monthEntradasProm: costoUnit, monthEntradasTotal,
+                    monthSalidasQty, monthSalidasProm: costoUnit, monthSalidasTotal,
+                    invFinalQty, invFinalCost, invFinalTotal
+                  };
+                }
               });
-              items = Object.values(fgGroups).map(g => ({
-                id: g.key, desc: g.desc, unit: g.unit, cost: g.costoUnit,
-                initialStock: 0, initialTotal: 0,
-                monthEntradasQty: g.stock, monthEntradasProm: g.costoUnit, monthEntradasTotal: g.total,
-                monthSalidasQty: 0, monthSalidasProm: 0, monthSalidasTotal: 0,
-                invFinalQty: g.stock, invFinalCost: g.costoUnit, invFinalTotal: g.total
-              }));
+              items = Object.values(fgGroups).filter(g=>g.monthEntradasQty>0||g.monthSalidasQty>0||g.invFinalQty>0);
             }
 
             return { category: cat, items };
@@ -4044,6 +4137,94 @@ export default function App() {
 
     return (
       <div className="space-y-6 animate-in fade-in">
+        {ventasView === 'productos_vendidos' && (() => {
+          // Build sold products from invoices + FG inventory
+          const soldItems = [];
+          (invoices||[]).forEach(inv => {
+            const itemsFacturados = inv.itemsFacturados || (inv.fgId ? [{fgId:inv.fgId, cantidad:inv.fgCantidad, costoUnit: inv.costoFG||0}] : []);
+            if(itemsFacturados.length === 0 && inv.fgId) {
+              // Legacy single-item invoice
+              const fg = (finishedGoodsInventory||[]).find(f=>f.id===inv.fgId);
+              const esTermo = fg?.tipoProducto==='TERMOENCOGIBLE';
+              const costoU = esTermo ? parseNum(fg?.costoUnitario||0) : parseNum(fg?.costoUnitarioMillar||0);
+              soldItems.push({
+                factura: inv.documento||inv.id, fecha: inv.fecha, cliente: inv.clientName||inv.clientRif,
+                producto: formatFGLabel(fg)||fg?.producto||'—', medida: esTermo?'KG':'Millares',
+                cantidad: parseNum(inv.fgCantidad||0), costoUnd: costoU,
+                montoBase: parseNum(inv.montoBase||0), opId: inv.opAsignada||'—'
+              });
+            } else {
+              itemsFacturados.forEach(it => {
+                const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
+                const esTermo = fg?.tipoProducto==='TERMOENCOGIBLE';
+                const costoU = parseNum(it.costoUnit||0) || (esTermo ? parseNum(fg?.costoUnitario||0) : parseNum(fg?.costoUnitarioMillar||0));
+                soldItems.push({
+                  factura: inv.documento||inv.id, fecha: inv.fecha, cliente: inv.clientName||inv.clientRif,
+                  producto: formatFGLabel(fg)||fg?.producto||it.fgId||'—', medida: esTermo?'KG':'Millares',
+                  cantidad: parseNum(it.cantidad||0), costoUnd: costoU,
+                  montoBase: parseNum(inv.montoBase||0) / Math.max(1,(inv.itemsFacturados||[{x:1}]).length),
+                  opId: inv.opAsignada||'—'
+                });
+              });
+            }
+          });
+          const sorted = soldItems.sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
+          return (
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden" id="pdf-content">
+              <div className="px-8 py-5 border-b bg-green-50 flex justify-between items-center no-pdf">
+                <div>
+                  <h2 className="text-xl font-black text-green-900 uppercase flex items-center gap-3"><Package className="text-green-600" size={22}/> Productos Vendidos</h2>
+                  <p className="text-[10px] font-bold text-green-700 mt-0.5">Detalle de productos despachados por factura</p>
+                </div>
+                <button onClick={()=>handleExportPDF('Productos_Vendidos',true)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2"><Printer size={13}/> Imprimir</button>
+              </div>
+              <div className="hidden pdf-header p-8 mb-4"><ReportHeader/><h1 className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">REPORTE DE PRODUCTOS VENDIDOS</h1></div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-800 text-white">
+                    <tr className="uppercase font-black text-[9px] tracking-widest">
+                      <th className="py-3 px-4 border-r border-gray-700 text-left">Factura</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-center">Fecha</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-left">Cliente</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-left">Producto</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-center">Medida</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-right">Cantidad</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-right">Costo Unit.</th>
+                      <th className="py-3 px-4 text-right">Costo Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {sorted.length === 0 ? (
+                      <tr><td colSpan="8" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas registradas</td></tr>
+                    ) : sorted.map((s,i) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        <td className="py-3 px-4 border-r font-black text-orange-600">{s.factura}</td>
+                        <td className="py-3 px-4 border-r text-center font-bold text-gray-600">{s.fecha}</td>
+                        <td className="py-3 px-4 border-r font-bold uppercase text-[10px]">{s.cliente}</td>
+                        <td className="py-3 px-4 border-r font-black text-[10px]">{s.producto}</td>
+                        <td className="py-3 px-4 border-r text-center"><span className="bg-blue-100 text-blue-700 font-black text-[9px] px-2 py-0.5 rounded">{s.medida}</span></td>
+                        <td className="py-3 px-4 border-r text-right font-black">{formatNum(s.cantidad)}</td>
+                        <td className="py-3 px-4 border-r text-right font-bold text-gray-600">${formatNum(s.costoUnd)}</td>
+                        <td className="py-3 px-4 text-right font-black">${formatNum(s.cantidad * s.costoUnd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  {sorted.length > 0 && (
+                    <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-black">
+                      <tr>
+                        <td colSpan="5" className="py-3 px-4 text-[10px] uppercase text-gray-500">Total: {sorted.length} líneas</td>
+                        <td className="py-3 px-4 text-right">{formatNum(sorted.reduce((s,r)=>s+r.cantidad,0))}</td>
+                        <td></td>
+                        <td className="py-3 px-4 text-right text-orange-600">${formatNum(sorted.reduce((s,r)=>s+r.cantidad*r.costoUnd,0))}</td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+          );
+        })()}
+
         {ventasView === 'clientes' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-6 border-b bg-white flex justify-between items-center">
@@ -8958,76 +9139,52 @@ export default function App() {
 
     facturasperiodo.forEach(inv => {
       const opId = inv.opAsignada;
-      if (!opId) return;
-      const fgDeOp = (finishedGoodsInventory || []).filter(fg => fg.opId === opId);
-      fgDeOp.forEach(fg => {
-        const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-        const millOrigen = parseNum(fg.millaresOrigen || fg.millares || 0);
-        const kgOrigen = parseNum(fg.kgProducidosOrigen || fg.kgProducidos || 0);
 
-        // Calcular costo unitario real desde OP si no está guardado
-        const getCostoUnit = () => {
-          if (esTermo && parseNum(fg.costoUnitario) > 0) return parseNum(fg.costoUnitario);
-          if (!esTermo && parseNum(fg.costoUnitarioMillar) > 0) return parseNum(fg.costoUnitarioMillar);
-          // Recalcular desde batches de la OP
-          const req = (requirements||[]).find(r => r.id === opId);
-          if (!req) return 0;
-          const prod = req.production || {};
-          const allB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])]
-            .filter(b => b.operator !== 'ALMACÉN (DESPACHO)');
-          const costoTotal = allB.reduce((s,b)=>s+parseNum(b.cost||0),0);
-          const lastB = (prod.sellado?.batches||prod.impresion?.batches||prod.extrusion?.batches||[])
-            .filter(b=>b.operator!=='ALMACÉN (DESPACHO)');
-          const kgProd = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
-          const millProd = allB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
-          if (esTermo) return kgProd > 0 ? costoTotal / kgProd : 0;
-          return millProd > 0 ? costoTotal / millProd : 0;
-        };
-        const costoUnit = getCostoUnit();
-
-        // Cantidad vendida = original - stock actual
-        // Para FG antiguos sin millaresOrigen, estimar desde las facturas
-        let cantVendida = esTermo
-          ? Math.max(0, kgOrigen - parseNum(fg.kgProducidos))
-          : Math.max(0, millOrigen - parseNum(fg.millares));
-
-        // Si cantVendida es 0 y el FG está ENTREGADO → asumir que todo fue vendido
-        if (cantVendida <= 0 && fg.status === 'ENTREGADO') {
-          cantVendida = esTermo ? kgOrigen : millOrigen;
-        }
-
-        if (cantVendida <= 0 || costoUnit <= 0) return;
-
-        const costoTotal2 = cantVendida * costoUnit;
-        totalCostoProd += costoTotal2;
-        cogsRows.push({
-          opId,
-          opNum: String(opId).replace('OP-','').padStart(5,'0'),
-          producto: fg.producto || fg.id,
-          cliente: fg.cliente || inv.clientName || '',
-          cantVendida,
-          unidad: esTermo ? 'KG' : 'Millares',
-          costoUnit,
-          costoTotal: costoTotal2,
-          esTermo,
-          factura: inv.documento
-        });
-      });
-      // Si no hay FG → usar movimientos de inventario como fallback
-      if (fgDeOp.length === 0) {
-        const movsFallback = (invMovements || []).filter(m =>
-          m.type === 'SALIDA' && String(m.notes||'').toUpperCase().includes('PRODUCCI') &&
-          m.opAsignada === opId && (m.date||'').startsWith(ym)
-        );
-        movsFallback.forEach(m => {
-          const val = parseNum(m.totalValue);
-          totalCostoProd += val;
+      // Build FG groups for this invoice (same grouping as catalog)
+      const itemsFacturados = inv.itemsFacturados || (inv.fgId ? [{fgId:inv.fgId, cantidad: parseNum(inv.fgCantidad||0)}] : []);
+      
+      if (itemsFacturados.length > 0) {
+        // Use invoice line items with FG cost
+        itemsFacturados.forEach(it => {
+          const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
+          if (!fg) return;
+          const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+          const costoUnit = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+          if (costoUnit <= 0) return;
+          const cant = parseNum(it.cantidad||0);
+          if (cant <= 0) return;
+          const costoTotal2 = cant * costoUnit;
+          totalCostoProd += costoTotal2;
           cogsRows.push({
-            opId: opId, opNum: String(opId).replace('OP-','').padStart(5,'0'),
-            producto: m.itemName || m.itemId || 'MP', cliente: inv.clientName || '',
-            cantVendida: parseNum(m.qty), unidad: 'KG',
-            costoUnit: parseNum(m.cost), costoTotal: val,
-            esTermo: false, factura: inv.documento
+            opId: opId||'—', opNum: String(opId||'').replace('OP-','').padStart(5,'0'),
+            producto: formatFGLabel(fg)||fg.producto||fg.id,
+            cliente: fg.cliente || inv.clientName || '',
+            cantVendida: cant, unidad: esTermo ? 'KG' : 'Millares',
+            costoUnit, costoTotal: costoTotal2, esTermo, factura: inv.documento
+          });
+        });
+      } else if (opId) {
+        // Fallback: derive from FG in inventory linked to this OP
+        const fgDeOp = (finishedGoodsInventory || []).filter(fg => fg.opId === opId);
+        fgDeOp.forEach(fg => {
+          const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+          const millOrigen = parseNum(fg.millaresOrigen || fg.millares || 0);
+          const kgOrigen = parseNum(fg.kgProducidosOrigen || fg.kgProducidos || 0);
+          const costoUnit = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+          if (costoUnit <= 0) return;
+          let cantVendida = esTermo
+            ? Math.max(0, kgOrigen - parseNum(fg.kgProducidos))
+            : Math.max(0, millOrigen - parseNum(fg.millares));
+          if (cantVendida <= 0 && fg.status === 'ENTREGADO') cantVendida = esTermo ? kgOrigen : millOrigen;
+          if (cantVendida <= 0) return;
+          const costoTotal2 = cantVendida * costoUnit;
+          totalCostoProd += costoTotal2;
+          cogsRows.push({
+            opId, opNum: String(opId).replace('OP-','').padStart(5,'0'),
+            producto: formatFGLabel(fg)||fg.producto||fg.id,
+            cliente: fg.cliente || inv.clientName || '',
+            cantVendida, unidad: esTermo ? 'KG' : 'Millares',
+            costoUnit, costoTotal: costoTotal2, esTermo, factura: inv.documento
           });
         });
       }
@@ -10350,7 +10507,8 @@ export default function App() {
                  {[ 
                    {id:'facturacion', icon:<Receipt size={16}/>, label:'Facturación'}, 
                    {id:'clientes', icon:<Users size={16}/>, label:'Directorio'}, 
-                   {id:'requisiciones', icon:<FileText size={16}/>, label:'OPs'} 
+                   {id:'requisiciones', icon:<FileText size={16}/>, label:'OPs'},
+                   {id:'productos_vendidos', icon:<Package size={16}/>, label:'Productos Vendidos'},
                  ].map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
