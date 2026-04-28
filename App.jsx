@@ -2378,7 +2378,31 @@ export default function App() {
                 <input type="text" placeholder="Buscar OP, cliente, producto..." value={fgSearch} onChange={e=>setFgSearch(e.target.value)} className="pl-9 pr-4 py-2 border-2 border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:border-green-500 w-56" />
               </div>
 
-              <button onClick={()=>setShowCargarProducto(!showCargarProducto)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showCargarProducto?'bg-red-500 text-white':'bg-green-600 text-white hover:bg-green-700'}`}><Plus size={14}/> {showCargarProducto?'CANCELAR':'CARGAR PRODUCTO'}</button>
+              <button onClick={()=>requireAdminPassword(async()=>{
+                // Apply stock/cost corrections for specific FG items
+                const corrections = [
+                  {pattern: /embutido.*1.*kiri|kiri.*embutido.*1/i, bolsas: true, stock: 241.45, cost: 86.64},
+                  {pattern: /pa[ñn]al.*kiri/i, bolsas: true, stock: 168.30, cost: 78.01},
+                  {pattern: /termo.*pinturas|pinturas.*caribe.*termo/i, bolsas: false, stock: 521.40, cost: 2.71},
+                ];
+                let updated = 0;
+                for(const fg of (finishedGoodsInventory||[])) {
+                  const label = `${fg.producto||''} ${fg.cliente||''}`;
+                  for(const c of corrections) {
+                    if(c.pattern.test(label)) {
+                      const updateData = c.bolsas
+                        ? {millares:c.stock, millaresOrigen:Math.max(c.stock, parseNum(fg.millaresOrigen||c.stock)), costoUnitarioMillar:c.cost, costoTotalProduccion:c.cost*c.stock}
+                        : {kgProducidos:c.stock, kgProducidosOrigen:Math.max(c.stock, parseNum(fg.kgProducidosOrigen||c.stock)), costoUnitario:c.cost, costoTotalProduccion:c.cost*c.stock};
+                      await updateDoc(getDocRef('finishedGoodsInventory', fg.id), updateData);
+                      updated++;
+                    }
+                  }
+                }
+                setDialog({title:'✅ Corrección Aplicada', text:`${updated} registro(s) actualizados con los stocks y costos correctos.`, type:'alert'});
+              },'Aplicar corrección de datos FG')} className="bg-orange-500 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-orange-600 flex items-center gap-1">
+                <RefreshCw size={12}/> Corregir Datos
+              </button>
+              <button onClick={()=>setShowCargarProducto(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showCargarProducto?'bg-red-500 text-white':'bg-green-600 text-white hover:bg-green-700'}`}><Plus size={14}/> {showCargarProducto?'CANCELAR':'CARGAR PRODUCTO'}</button>
               <button onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
             </div>
           </div>
@@ -3803,16 +3827,18 @@ export default function App() {
             if (cat !== 'WIP - Productos en Proceso' && cat !== 'Productos Terminados') {
               items = inventory.filter(item => item.category === cat).map(item => {
                 const itemMovements = monthMovements.filter(m => m.itemId === item.id);
-                const entradas = itemMovements.filter(m => m.type === 'ENTRADA' || m.type?.includes('AJUSTE (POSITIVO)'));
-                const salidas = itemMovements.filter(m => m.type === 'SALIDA' || m.type === 'AUTOCONSUMO' || m.type?.includes('AJUSTE (NEGATIVO)'));
+                const entradas = itemMovements.filter(m => m.type === 'ENTRADA' || m.type === 'ENTRADA_DEVOLUCION' || m.type === 'ENTRADA_INICIAL' || m.type?.includes('AJUSTE (POSITIVO)'));
+                const salidas = itemMovements.filter(m => m.type === 'SALIDA' || m.type === 'AUTOCONSUMO' || m.type === 'AVERIA' || m.type === 'MUESTRA' || m.type === 'PERDIDA' || m.type?.includes('AJUSTE (NEGATIVO)'));
 
                 const monthEntradasQty = entradas.reduce((sum, m) => sum + parseNum(m.qty), 0);
-                const monthEntradasTotal = entradas.reduce((sum, m) => sum + parseNum(m.totalValue), 0);
-                const monthEntradasProm = monthEntradasQty > 0 ? monthEntradasTotal / monthEntradasQty : 0;
+                // Use item.cost as the reference cost (costo promedio)
+                const avgCost = item.cost || 0;
+                const monthEntradasTotal = monthEntradasQty * avgCost;
+                const monthEntradasProm = avgCost;
 
                 const monthSalidasQty = salidas.reduce((sum, m) => sum + parseNum(m.qty), 0);
-                const monthSalidasTotal = salidas.reduce((sum, m) => sum + parseNum(m.totalValue), 0);
-                const monthSalidasProm = monthSalidasQty > 0 ? monthSalidasTotal / monthSalidasQty : 0;
+                const monthSalidasTotal = monthSalidasQty * avgCost;
+                const monthSalidasProm = avgCost;
 
                 const initialStock = item.stock + monthSalidasQty - monthEntradasQty;
                 const initialTotal = initialStock * item.cost;
@@ -3849,14 +3875,18 @@ export default function App() {
                 const currentStock = esTermo ? parseNum(item.kgProducidos) : parseNum(item.millares);
                 const stockOrigen = esTermo ? parseNum(item.kgProducidosOrigen||item.kgProducidos) : parseNum(item.millaresOrigen||item.millares);
                 const costoUnit = esTermo ? parseNum(item.costoUnitario||0) : parseNum(item.costoUnitarioMillar||0);
-                // Invoice sales for this item in the month
+                const ym177 = `${reportYear}-${String(reportMonth).padStart(2,'0')}`;
+                // Invoice sales for this FG in the period
                 const invSalesQty = (invoices||[]).filter(inv=>{
                   const d = inv.fecha||(typeof inv.timestamp==='number'?new Date(inv.timestamp).toISOString().substring(0,7):'');
-                  return d.startsWith(`${reportYear}-${String(reportMonth).padStart(2,'0')}`);
+                  return d.startsWith(ym177);
                 }).reduce((s,inv)=>{
                   if(inv.fgId===item.id) return s + parseNum(inv.fgCantidad||0);
                   return s + (inv.itemsFacturados||[]).filter(it=>it.fgId===item.id).reduce((ss,it)=>ss+parseNum(it.cantidad||0),0);
                 }, 0);
+                // Manual FG movements (SALIDA/AUTOCONSUMO etc.) in period
+                const fgManualSalidaQty = monthMovements.filter(m=>(m.itemId===item.id||m.itemId===`FG::${item.id}`)&&(m.type==='SALIDA'||m.type==='AUTOCONSUMO'||m.type==='AVERIA'||m.type==='MUESTRA')).reduce((s,m)=>s+parseNum(m.qty),0);
+                const totalSalesThisItem = invSalesQty + fgManualSalidaQty;
 
                 if(!fgGroups[grpKey]) {
                   fgGroups[grpKey] = {
@@ -3867,7 +3897,7 @@ export default function App() {
                 }
                 fgGroups[grpKey].totalCurrentStock += currentStock;
                 fgGroups[grpKey].totalOrigen += stockOrigen;
-                fgGroups[grpKey].totalSales += invSalesQty;
+                fgGroups[grpKey].totalSales += totalSalesThisItem;
                 // Use highest non-zero cost
                 if(costoUnit > 0 && fgGroups[grpKey].cost === 0) fgGroups[grpKey].cost = costoUnit;
               });
@@ -9342,53 +9372,64 @@ export default function App() {
           </div>
 
           {/* Filtros */}
-          <div className="px-8 py-4 bg-gray-50 border-b border-gray-200 flex flex-wrap gap-3 items-end">
+          <div className="px-8 py-4 bg-gray-50 border-b border-gray-200 flex flex-wrap gap-4 items-start">
             {erView === 'estado' ? (
               <>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Modo</label>
-                  <div className="flex gap-1">
-                    <button onClick={()=>{setErModoAnual(false); setErMesesExtra([]);}} className={`px-3 py-2 rounded-xl text-[9px] font-black uppercase ${!erModoAnual && erMesesExtra.length===0?'bg-orange-500 text-white':'bg-gray-200 text-gray-700'}`}>Mes</button>
-                    <button onClick={()=>{setErModoAnual(false); setErMesesExtra(prev=>prev.length===0?[]:prev);}} className={`px-3 py-2 rounded-xl text-[9px] font-black uppercase ${!erModoAnual && erMesesExtra.length>0?'bg-purple-500 text-white':'bg-gray-200 text-gray-700'}`}>Varios Meses</button>
-                    <button onClick={()=>setErModoAnual(v=>!v)} className={`px-3 py-2 rounded-xl text-[9px] font-black uppercase ${erModoAnual?'bg-blue-600 text-white':'bg-gray-200 text-gray-700'}`}>Todo el Año</button>
+                {/* Calendar-style month picker */}
+                <div className="bg-white border-2 border-gray-200 rounded-2xl p-4 shadow-sm min-w-64">
+                  {/* Year selector */}
+                  <div className="flex items-center justify-between mb-3">
+                    <button onClick={()=>setErAno(v=>v-1)} className="p-1 hover:bg-gray-100 rounded-lg font-black text-gray-600">‹</button>
+                    <span className="font-black text-sm">{erAno}</span>
+                    <button onClick={()=>setErAno(v=>v+1)} className="p-1 hover:bg-gray-100 rounded-lg font-black text-gray-600">›</button>
                   </div>
-                </div>
-                {!erModoAnual && (
-                  <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Principal</label>
-                    <select value={erMes} onChange={e=>setErMes(parseInt(e.target.value))} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none bg-white">
-                      {MONTHS.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
-                    </select>
+                  {/* Month grid */}
+                  <div className="grid grid-cols-4 gap-1 mb-3">
+                    {['ene.','feb.','mar.','abr.','may.','jun.','jul.','ago.','sept.','oct.','nov.','dic.'].map((m,i)=>{
+                      const ym = `${erAno}-${String(i+1).padStart(2,'0')}`;
+                      const isMain = erMes === i+1 && !erModoAnual;
+                      const isExtra = erMesesExtra.includes(ym);
+                      const isAny = isMain || isExtra || erModoAnual;
+                      return (
+                        <button key={i} onClick={()=>{
+                          if(erModoAnual){setErModoAnual(false);setErMes(i+1);setErMesesExtra([]);return;}
+                          if(isMain && erMesesExtra.length===0){return;} // already selected as main
+                          if(isExtra){setErMesesExtra(prev=>prev.filter(x=>x!==ym));return;}
+                          if(isMain){return;}
+                          // If clicking a new month while main is set: add to extra
+                          if(erMesesExtra.length===0 && erMes!==i+1){setErMes(i+1);return;}
+                          setErMesesExtra(prev=>[...prev,ym]);
+                        }}
+                        className={`py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${isMain?'bg-orange-500 text-white shadow-md':isExtra?'bg-blue-500 text-white':erModoAnual?'bg-blue-100 text-blue-700':'hover:bg-gray-100 text-gray-600'}`}>
+                          {m}
+                        </button>
+                      );
+                    })}
                   </div>
-                )}
-                {!erModoAnual && (
-                  <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Meses Adicionales</label>
-                    <div className="flex flex-wrap gap-1 max-w-sm">
-                      {MONTHS.map((m,i)=>{
-                        const ym = `${erAno}-${String(i+1).padStart(2,'0')}`;
-                        const isSelected = erMesesExtra.includes(ym);
-                        return (
-                          <button key={i} onClick={()=>setErMesesExtra(prev=>isSelected?prev.filter(x=>x!==ym):[...prev,ym])}
-                            className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${isSelected?'bg-purple-500 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                            {m.substring(0,3)}
-                          </button>
-                        );
-                      })}
+                  {/* Action buttons */}
+                  <div className="flex justify-between pt-2 border-t border-gray-100">
+                    <button onClick={()=>{setErMododAnual&&setErModoAnual(false);setErMesesExtra([]);setErMes(new Date().getMonth()+1);setErAno(new Date().getFullYear());}} className="text-[9px] font-black text-orange-600 uppercase hover:underline">Borrar</button>
+                    <div className="flex gap-2">
+                      <button onClick={()=>{setErModoAnual(v=>!v);setErMesesExtra([]);}} className={`text-[9px] font-black uppercase px-2 py-1 rounded-lg ${erModoAnual?'bg-blue-600 text-white':'text-blue-600 hover:bg-blue-50'}`}>
+                        {erModoAnual ? '✓ Año completo' : 'Año completo'}
+                      </button>
+                      <button onClick={()=>{setErMes(new Date().getMonth()+1);setErModoAnual(false);setErMesesExtra([]);}} className="text-[9px] font-black text-gray-500 uppercase hover:underline">Este mes</button>
                     </div>
                   </div>
-                )}
-                <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Año</label>
-                  <input type="number" value={erAno} onChange={e=>setErAno(parseInt(e.target.value))} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-24 text-center" />
                 </div>
-                <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa (Bs/$)</label>
-                  <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-32 text-center" />
-                </div>
-                <div className="flex-1 flex justify-end">
-                  <div className="text-right">
-                    <p className="text-[9px] font-black text-orange-600 uppercase">
-                      {erModoAnual ? `Año completo ${erAno}` : erMesesExtra.length > 0 ? `${erMesesExtra.length+1} meses seleccionados` : `${MONTHS[erMes-1]} ${erAno}`}
-                    </p>
-                    <button onClick={()=>handleExportPDF('Estado_Resultado', false)} className="mt-1 bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir</button>
+
+                <div className="flex flex-col gap-3">
+                  <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Período activo</label>
+                    <div className="bg-orange-50 border border-orange-200 rounded-xl px-3 py-2">
+                      <p className="font-black text-orange-700 text-xs">
+                        {erModoAnual ? `Año completo ${erAno}` : erMesesExtra.length > 0 ? `${['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][erMes-1]} + ${erMesesExtra.length} más (${erAno})` : `${['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][erMes-1]} ${erAno}`}
+                      </p>
+                    </div>
                   </div>
+                  <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa (Bs/$)</label>
+                    <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-32 text-center" />
+                  </div>
+                  <button onClick={()=>handleExportPDF('Estado_Resultado', false)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir</button>
                 </div>
               </>
             ) : (
