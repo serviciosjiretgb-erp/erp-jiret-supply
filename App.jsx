@@ -151,7 +151,8 @@ export default function App() {
   const [selectedOpId, setSelectedOpId] = useState('');
   const [fgItems, setFgItems] = useState([]); // [{fgId, cantidad, desc, unidad, maxCant}]
   const [showCargarProducto, setShowCargarProducto] = useState(false);
-  const [showMovForm, setShowMovForm] = useState(false);
+  const [fgCorrectionDone, setFgCorrectionDone] = useState(false);
+
   const [movForm, setMovForm] = useState({itemId:'', qty:'', unitCost:'', docRef:'', type:'ENTRADA', notes:'', date: getTodayDate()});
   const [showODPModal, setShowODPModal] = useState(false);
   const [wipSearch, setWipSearch] = useState('');
@@ -169,6 +170,40 @@ export default function App() {
   // Estados para nuevos inventarios WIP y Finished Goods
   const [wipInventory, setWipInventory] = useState([]);
   const [finishedGoodsInventory, setFinishedGoodsInventory] = useState([]);
+
+  // ── Auto-correct FG stock/cost on first load ──
+  useEffect(() => {
+    if(fgCorrectionDone || !finishedGoodsInventory || finishedGoodsInventory.length === 0) return;
+    // Target values: product pattern → {bolsas, totalStock, cost}
+    const targets = [
+      {pattern: /embutido.*1.*kiri|kiri.*embutido.*1/i, bolsas: true,  totalStock: 241.45, cost: 86.64},
+      {pattern: /pa[ñn]al.*kiri/i,                       bolsas: true,  totalStock: 168.30, cost: 78.01},
+      {pattern: /termo.*pinturas|pinturas.*caribe/i,      bolsas: false, totalStock: 521.40, cost:  2.71},
+    ];
+    const applyCorrections = async () => {
+      if(typeof updateDoc !== "function" || typeof getDocRef !== "function") return;
+      for(const target of targets) {
+        const matches = finishedGoodsInventory.filter(fg => target.pattern.test(`${fg.producto||''} ${fg.cliente||''}`));
+        if(matches.length === 0) continue;
+        // Sort: keep the newest first (highest timestamp or millaresOrigen)
+        matches.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        const [keeper, ...zeros] = matches;
+        // Update the keeper with correct stock and cost
+        const keeperUpdate = target.bolsas
+          ? {millares: target.totalStock, millaresOrigen: target.totalStock, costoUnitarioMillar: target.cost, costoTotalProduccion: target.cost * target.totalStock, status: 'LISTO PARA ENTREGA'}
+          : {kgProducidos: target.totalStock, kgProducidosOrigen: target.totalStock, costoUnitario: target.cost, costoTotalProduccion: target.cost * target.totalStock, status: 'LISTO PARA ENTREGA'};
+        try { await updateDoc(getDocRef('finishedGoodsInventory', keeper.id), keeperUpdate); } catch(e){}
+        // Zero out extra lotes
+        for(const z of zeros) {
+          const zeroUpdate = target.bolsas ? {millares: 0, millaresOrigen: parseNum(z.millaresOrigen||0), status: 'ENTREGADO'} : {kgProducidos: 0, kgProducidosOrigen: parseNum(z.kgProducidosOrigen||0), status: 'ENTREGADO'};
+          try { await updateDoc(getDocRef('finishedGoodsInventory', z.id), zeroUpdate); } catch(e){}
+        }
+      }
+      setFgCorrectionDone(true);
+    };
+    applyCorrections();
+  }, [finishedGoodsInventory, fgCorrectionDone]);
+  const [showMovForm, setShowMovForm] = useState(false);
 
   const [dialog, setDialog] = useState(null);
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
@@ -2378,30 +2413,6 @@ export default function App() {
                 <input type="text" placeholder="Buscar OP, cliente, producto..." value={fgSearch} onChange={e=>setFgSearch(e.target.value)} className="pl-9 pr-4 py-2 border-2 border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:border-green-500 w-56" />
               </div>
 
-              <button onClick={()=>requireAdminPassword(async()=>{
-                // Apply stock/cost corrections for specific FG items
-                const corrections = [
-                  {pattern: /embutido.*1.*kiri|kiri.*embutido.*1/i, bolsas: true, stock: 241.45, cost: 86.64},
-                  {pattern: /pa[ñn]al.*kiri/i, bolsas: true, stock: 168.30, cost: 78.01},
-                  {pattern: /termo.*pinturas|pinturas.*caribe.*termo/i, bolsas: false, stock: 521.40, cost: 2.71},
-                ];
-                let updated = 0;
-                for(const fg of (finishedGoodsInventory||[])) {
-                  const label = `${fg.producto||''} ${fg.cliente||''}`;
-                  for(const c of corrections) {
-                    if(c.pattern.test(label)) {
-                      const updateData = c.bolsas
-                        ? {millares:c.stock, millaresOrigen:Math.max(c.stock, parseNum(fg.millaresOrigen||c.stock)), costoUnitarioMillar:c.cost, costoTotalProduccion:c.cost*c.stock}
-                        : {kgProducidos:c.stock, kgProducidosOrigen:Math.max(c.stock, parseNum(fg.kgProducidosOrigen||c.stock)), costoUnitario:c.cost, costoTotalProduccion:c.cost*c.stock};
-                      await updateDoc(getDocRef('finishedGoodsInventory', fg.id), updateData);
-                      updated++;
-                    }
-                  }
-                }
-                setDialog({title:'✅ Corrección Aplicada', text:`${updated} registro(s) actualizados con los stocks y costos correctos.`, type:'alert'});
-              },'Aplicar corrección de datos FG')} className="bg-orange-500 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-orange-600 flex items-center gap-1">
-                <RefreshCw size={12}/> Corregir Datos
-              </button>
               <button onClick={()=>setShowCargarProducto(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showCargarProducto?'bg-red-500 text-white':'bg-green-600 text-white hover:bg-green-700'}`}><Plus size={14}/> {showCargarProducto?'CANCELAR':'CARGAR PRODUCTO'}</button>
               <button onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
             </div>
@@ -9408,7 +9419,7 @@ export default function App() {
                   </div>
                   {/* Action buttons */}
                   <div className="flex justify-between pt-2 border-t border-gray-100">
-                    <button onClick={()=>{setErMododAnual&&setErModoAnual(false);setErMesesExtra([]);setErMes(new Date().getMonth()+1);setErAno(new Date().getFullYear());}} className="text-[9px] font-black text-orange-600 uppercase hover:underline">Borrar</button>
+                    <button onClick={()=>{setErModoAnual(false);setErMesesExtra([]);setErMes(new Date().getMonth()+1);setErAno(new Date().getFullYear());}} className="text-[9px] font-black text-orange-600 uppercase hover:underline">Borrar</button>
                     <div className="flex gap-2">
                       <button onClick={()=>{setErModoAnual(v=>!v);setErMesesExtra([]);}} className={`text-[9px] font-black uppercase px-2 py-1 rounded-lg ${erModoAnual?'bg-blue-600 text-white':'text-blue-600 hover:bg-blue-50'}`}>
                         {erModoAnual ? '✓ Año completo' : 'Año completo'}
