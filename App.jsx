@@ -913,8 +913,16 @@ export default function App() {
     e.preventDefault(); 
     if(!newInvoiceForm.clientRif || !newInvoiceForm.montoBase) return setDialog({title: 'Aviso', text: 'Selecciona un cliente e ingresa el monto base.', type: 'alert'});
     const id = editingInvoiceId || newInvoiceForm.documento || generateInvoiceId();
+    // Build itemsFacturados from fgItems for persistence
+    const itemsFacturadosSave = fgItems.map(it => ({
+      fgId: it.fgId,
+      cantidad: it.cantidad,
+      desc: it.desc,
+      unidad: it.unidad,
+      esTermo: it.esTermo
+    }));
     try { 
-      await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: editingInvoiceId ? (newInvoiceForm.timestamp || Date.now()) : Date.now(), user: appUser?.name }); 
+      await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: editingInvoiceId ? (newInvoiceForm.timestamp || Date.now()) : Date.now(), user: appUser?.name, itemsFacturados: itemsFacturadosSave, fgId: fgItems[0]?.fgId||newInvoiceForm.fgId||'', fgCantidad: fgItems[0]?.cantidad||0 }); 
 
       // ── Construir lista de items a descontar del inventario ──
       // Se ejecuta SIEMPRE (creación Y edición) para garantizar el descuento
@@ -1052,7 +1060,44 @@ export default function App() {
   };
   const startEditInvoice = (inv) => {
     setEditingInvoiceId(inv.id);
-    setNewInvoiceForm({ fecha: inv.fecha || getTodayDate(), clientRif: inv.clientRif || '', clientName: inv.clientName || '', documento: inv.documento || '', productoMaquilado: inv.productoMaquilado || '', vendedor: inv.vendedor || '', montoBase: String(inv.montoBase || ''), iva: String(inv.iva || ''), total: String(inv.total || ''), aplicaIva: inv.aplicaIva || 'SI', opAsignada: inv.opAsignada || '', opData: inv.opData || null, fgId: inv.fgId || '', timestamp: inv.timestamp });
+    setNewInvoiceForm({ fecha: inv.fecha || getTodayDate(), clientRif: inv.clientRif || '', clientName: inv.clientName || '', documento: inv.documento || '', productoMaquilado: inv.productoMaquilado || '', vendedor: inv.vendedor || '', montoBase: String(inv.montoBase || ''), iva: String(inv.iva || ''), total: String(inv.total || ''), aplicaIva: inv.aplicaIva || 'SI', opAsignada: inv.opAsignada || '', opData: inv.opData || null, fgId: '', timestamp: inv.timestamp });
+    
+    // Restore fgItems from saved invoice data
+    const restoredItems = [];
+    // From itemsFacturados array (multi-product invoices)
+    if((inv.itemsFacturados||[]).length > 0) {
+      inv.itemsFacturados.forEach(it => {
+        const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
+        if(fg) {
+          const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
+          const currentStock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+          restoredItems.push({
+            fgGrpKey: fg.id, fgId: fg.id,
+            cantidad: parseNum(it.cantidad||0),
+            desc: formatFGLabel(fg)||fg.producto||fg.id,
+            unidad: esTermo?'KG':'Mill.',
+            maxCant: parseNum(it.cantidad||0) + currentStock,
+            esTermo, grpLotes: [fg], _savedItem: true
+          });
+        }
+      });
+    } else if(inv.fgId) {
+      // Legacy single-item invoice
+      const fg = (finishedGoodsInventory||[]).find(f=>f.id===inv.fgId);
+      if(fg) {
+        const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
+        const currentStock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+        restoredItems.push({
+          fgGrpKey: fg.id, fgId: fg.id,
+          cantidad: parseNum(inv.fgCantidad||0),
+          desc: formatFGLabel(fg)||fg.producto||fg.id,
+          unidad: esTermo?'KG':'Mill.',
+          maxCant: parseNum(inv.fgCantidad||0) + currentStock,
+          esTermo, grpLotes: [fg], _savedItem: true
+        });
+      }
+    }
+    setFgItems(restoredItems);
     setShowNewInvoicePanel(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -2516,8 +2561,35 @@ export default function App() {
                         const mill = parseNum(cargarForm.millares||0);
                         const kg = parseNum(cargarForm.kgProducidos||0);
                         const cu = parseNum(cargarForm.costoUnit||0);
-                        const cuMillar = cargarForm.tipoProducto==='TERMOENCOGIBLE' ? 0 : cu;
-                        const cuKg = cargarForm.tipoProducto==='TERMOENCOGIBLE' ? cu : (mill>0?cu*kg/mill:0);
+                        const esTermo2 = cargarForm.tipoProducto==='TERMOENCOGIBLE';
+                        const cuMillar = esTermo2 ? 0 : cu;
+                        const cuKg = esTermo2 ? cu : (mill>0?cu*kg/mill:0);
+
+                        // Check if same product already exists → weighted average cost
+                        const existingFG = (finishedGoodsInventory||[]).find(fg => {
+                          const sameProduct = (fg.producto||'').toUpperCase() === (cargarForm.producto||'').toUpperCase();
+                          const sameClient = (fg.cliente||'').toUpperCase() === (cargarForm.cliente||'').toUpperCase();
+                          const sameDims = parseNum(fg.ancho||0)===parseNum(cargarForm.ancho||0) && parseNum(fg.largo||0)===parseNum(cargarForm.largo||0) && parseNum(fg.micras||0)===parseNum(cargarForm.micras||0);
+                          const sameType = fg.tipoProducto === cargarForm.tipoProducto;
+                          return sameProduct && sameClient && sameDims && sameType;
+                        });
+
+                        if(existingFG) {
+                          // Calculate weighted average cost
+                          const existStock = esTermo2 ? parseNum(existingFG.kgProducidos) : parseNum(existingFG.millares);
+                          const existCost = esTermo2 ? parseNum(existingFG.costoUnitario||0) : parseNum(existingFG.costoUnitarioMillar||0);
+                          const newQty = esTermo2 ? kg : mill;
+                          const totalQty = existStock + newQty;
+                          const avgCost = totalQty > 0 ? ((existStock * existCost) + (newQty * cu)) / totalQty : cu;
+                          const updateData = esTermo2
+                            ? {kgProducidos: totalQty, kgProducidosOrigen: Math.max(totalQty, parseNum(existingFG.kgProducidosOrigen||totalQty)), costoUnitario: avgCost, costoTotalProduccion: avgCost * totalQty}
+                            : {millares: totalQty, millaresOrigen: Math.max(totalQty, parseNum(existingFG.millaresOrigen||totalQty)), costoUnitarioMillar: avgCost, costoTotalProduccion: avgCost * totalQty};
+                          await updateDoc(getDocRef('finishedGoodsInventory', existingFG.id), updateData);
+                          setDialog({title:'✅ Stock Actualizado',text:`Producto existente actualizado.\nStock: ${formatNum(totalQty)} ${esTermo2?'KG':'Millares'}\nCosto promedio: $${formatNum(avgCost)}/${esTermo2?'KG':'Millar'}`,type:'alert'});
+                          setCargarForm({...cargarForm, producto:'', cliente:'', millares:'', kgProducidos:'', costoUnit:''});
+                          setShowCargarProducto(false);
+                          return;
+                        }
                         await setDoc(getDocRef('finishedGoodsInventory', newId), {
                           id: newId, opId: cargarForm.opId||'MANUAL', reqId: cargarForm.opId||'MANUAL',
                           cliente: cargarForm.cliente, tipoProducto: cargarForm.tipoProducto,
@@ -4240,21 +4312,17 @@ export default function App() {
     return (
       <div className="space-y-6 animate-in fade-in">
         {ventasView === 'productos_vendidos' && (() => {
-          // Build sold products from invoices using fgId field
+          // Build sold products from invoices - always read itemsFacturados (now always saved)
           const soldItems = [];
           (invoices||[]).forEach(inv => {
-            // Each invoice has fgId (primary product) and possibly fgItems (multi)
-            // Also check itemsFacturados for saved multi-item invoices
             const allItems = [];
-            // Multi items saved to invoice
             if((inv.itemsFacturados||[]).length > 0) {
-              inv.itemsFacturados.forEach(it => allItems.push({fgId: it.fgId, cantidad: parseNum(it.cantidad||0)}));
+              inv.itemsFacturados.forEach(it => allItems.push({fgId: it.fgId, cantidad: parseNum(it.cantidad||0), desc: it.desc||'', unidad: it.unidad||''}));
             } else if(inv.fgId) {
-              allItems.push({fgId: inv.fgId, cantidad: parseNum(inv.fgCantidad||0)});
+              allItems.push({fgId: inv.fgId, cantidad: parseNum(inv.fgCantidad||0), desc:'', unidad:''});
             }
             allItems.forEach(it => {
               if(!it.fgId || it.cantidad <= 0) return;
-              // Find FG item - use millaresOrigen/kgProducidosOrigen to determine amount sold
               const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
               const esTermo = fg?.tipoProducto==='TERMOENCOGIBLE';
               const costoU = fg ? (esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0)) : 0;
@@ -4262,8 +4330,8 @@ export default function App() {
                 factura: inv.documento||inv.id,
                 fecha: inv.fecha,
                 cliente: inv.clientName||inv.clientRif||'—',
-                producto: fg ? (formatFGLabel(fg)||fg.producto||fg.id) : (it.fgId),
-                medida: fg ? (esTermo?'KG':'Millares') : '—',
+                producto: fg ? (formatFGLabel(fg)||fg.producto||fg.id) : (it.desc||it.fgId),
+                medida: it.unidad || (fg ? (esTermo?'KG':'Millares') : '—'),
                 cantidad: it.cantidad,
                 costoUnd: costoU,
                 opId: inv.opAsignada||'—'
