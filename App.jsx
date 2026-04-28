@@ -3655,12 +3655,11 @@ export default function App() {
                 const itemUnit = isFGKardex ? (item?.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millares') : (item?.unit||'');
                 const itemStock = isFGKardex ? (item?.tipoProducto==='TERMOENCOGIBLE'?parseNum(item?.kgProducidos):parseNum(item?.millares)) : (item?.stock||0);
                 const itemCost = isFGKardex ? (item?.tipoProducto==='TERMOENCOGIBLE'?parseNum(item?.costoUnitario||0):parseNum(item?.costoUnitarioMillar||0)) : (item?.cost||0);
-                // All movements for this item (both FG:: and plain id)
                 const movs = (invMovements||[]).filter(m=>
                   m.itemId===kardexProductId || m.itemId===actualKardexId ||
                   (isFGKardex && m.itemId===`FG::${actualKardexId}`)
                 ).sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
-                let runBalance = isFGKardex ? 0 : 0; // start from 0, will accumulate
+                let runBalance = 0;
                 const rows = movs.map(m => {
                   const isIn = m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL';
                   if(isIn) runBalance += parseNum(m.qty);
@@ -3670,55 +3669,94 @@ export default function App() {
                 return (
                   <div>
                     {/* Item summary */}
-                    <div className="grid grid-cols-3 gap-3 mb-4">
+                    <div className="grid grid-cols-3 gap-3 mb-5">
                       <div className="bg-gray-50 rounded-xl p-3"><p className="text-[9px] font-black text-gray-500 uppercase">Artículo</p><p className="font-black text-sm">{actualKardexId}</p><p className="text-[10px] text-gray-600">{itemLabel}</p></div>
                       <div className="bg-orange-50 rounded-xl p-3"><p className="text-[9px] font-black text-orange-700 uppercase">Stock Actual</p><p className="text-2xl font-black text-orange-600">{formatNum(itemStock)}</p><p className="text-[9px] text-gray-500">{itemUnit}</p></div>
                       <div className="bg-blue-50 rounded-xl p-3"><p className="text-[9px] font-black text-blue-700 uppercase">Costo Promedio</p><p className="text-2xl font-black text-blue-600">${formatNum(itemCost)}</p><p className="text-[9px] text-gray-500">por {itemUnit}</p></div>
                     </div>
-                    {rows.length === 0 ? (
-                      <div className="py-10 text-center text-gray-400 font-bold text-xs uppercase">Sin movimientos registrados para este artículo</div>
-                    ) : (
-                      <div className="overflow-x-auto rounded-xl border border-gray-200">
-                        <table className="w-full text-xs">
-                          <thead className="bg-gray-800 text-white"><tr className="uppercase font-black text-[9px] tracking-widest">
-                            <th className="py-2.5 px-3 border-r border-gray-700 text-left">Fecha</th>
-                            <th className="py-2.5 px-3 border-r border-gray-700 text-center">Tipo</th>
-                            <th className="py-2.5 px-3 border-r border-gray-700 text-left">Referencia</th>
-                            <th className="py-2.5 px-3 border-r border-gray-700 text-center">Entradas</th>
-                            <th className="py-2.5 px-3 border-r border-gray-700 text-center">Salidas</th>
-                            <th className="py-2.5 px-3 border-r border-gray-700 text-right">Costo U.</th>
-                            <th className="py-2.5 px-3 border-r border-gray-700 text-right">Valor</th>
-                            <th className="py-2.5 px-3 text-center">Saldo</th>
-                          </tr></thead>
-                          <tbody className="divide-y divide-gray-100">
-                            {rows.map((m,i) => {
-                              const isIn = m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL';
-                              return (
-                                <tr key={m.id||i} className="hover:bg-gray-50">
-                                  <td className="py-2 px-3 border-r font-bold text-gray-600">{m.date}</td>
-                                  <td className="py-2 px-3 border-r text-center"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${isIn?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>{isIn?'⬇ ENT':'⬆ SAL'}</span></td>
-                                  <td className="py-2 px-3 border-r text-[10px] text-gray-600">{m.docRef||m.reference||m.notes||'—'}</td>
-                                  <td className="py-2 px-3 border-r text-center font-black text-green-600">{isIn?formatNum(m.qty):'—'}</td>
-                                  <td className="py-2 px-3 border-r text-center font-black text-red-600">{!isIn?formatNum(m.qty):'—'}</td>
-                                  <td className="py-2 px-3 border-r text-right font-bold text-gray-500">${formatNum(m.unitCost||m.cost||0)}</td>
-                                  <td className="py-2 px-3 border-r text-right font-black">${formatNum(m.totalValue||(parseNum(m.qty)*(m.unitCost||m.cost||0)))}</td>
-                                  <td className="py-2 px-3 text-center font-black text-blue-600">{formatNum(m.balance)}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                          <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-black">
-                            <tr>
-                              <td colSpan="3" className="py-2 px-3 text-[9px] uppercase text-gray-500">{rows.length} movimientos</td>
-                              <td className="py-2 px-3 text-center text-green-600">{formatNum(rows.filter(m=>m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL').reduce((s,m)=>s+parseNum(m.qty),0))}</td>
-                              <td className="py-2 px-3 text-center text-red-600">{formatNum(rows.filter(m=>m.type!=='ENTRADA'&&m.type!=='ENTRADA_DEVOLUCION'&&m.type!=='ENTRADA_INICIAL').reduce((s,m)=>s+parseNum(m.qty),0))}</td>
-                              <td colSpan="2" className="py-2 px-3 text-right">${formatNum(rows.reduce((s,m)=>s+parseNum(m.totalValue||(parseNum(m.qty)*(m.unitCost||m.cost||0))),0))}</td>
-                              <td className="py-2 px-3 text-center text-blue-700">{formatNum(item?.stock||0)}</td>
-                            </tr>
-                          </tfoot>
-                        </table>
+                    {/* Professional Kardex Table */}
+                    <div className="border-2 border-gray-300 rounded-xl overflow-hidden print:border-black">
+                      {/* Kardex header */}
+                      <div className="bg-gray-800 text-white px-4 py-2 text-center print:bg-transparent print:text-black print:border-b-2 print:border-black">
+                        <h3 className="font-black text-sm uppercase tracking-widest">CONTROL DE EXISTENCIAS EN EL INVENTARIO</h3>
                       </div>
-                    )}
+                      <div className="grid grid-cols-2 gap-0 border-b-2 border-gray-300 print:border-black">
+                        <div className="px-4 py-2 border-r-2 border-gray-300 print:border-black">
+                          <span className="text-[9px] font-black text-gray-500 uppercase">Producto: </span>
+                          <span className="text-[10px] font-black text-black uppercase">{itemLabel}</span>
+                        </div>
+                        <div className="px-4 py-2">
+                          <span className="text-[9px] font-black text-gray-500 uppercase">Referencia: </span>
+                          <span className="text-[10px] font-black text-black">{actualKardexId}</span>
+                        </div>
+                      </div>
+                      {rows.length === 0 ? (
+                        <div className="py-10 text-center text-gray-400 font-bold text-xs uppercase">Sin movimientos registrados</div>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-[10px] border-collapse">
+                            <thead>
+                              <tr className="bg-gray-100 print:bg-transparent">
+                                <th rowSpan={2} className="border border-gray-300 print:border-black px-2 py-1.5 text-center font-black uppercase text-[9px] align-middle">Fecha</th>
+                                <th rowSpan={2} className="border border-gray-300 print:border-black px-2 py-1.5 text-center font-black uppercase text-[9px] align-middle">Detalle / Concepto</th>
+                                <th rowSpan={2} className="border border-gray-300 print:border-black px-2 py-1.5 text-center font-black uppercase text-[9px] align-middle">Fra / Doc.</th>
+                                <th colSpan={3} className="border border-gray-300 print:border-black px-2 py-1.5 text-center font-black uppercase text-[9px] bg-green-100 print:bg-transparent">ENTRADAS</th>
+                                <th colSpan={3} className="border border-gray-300 print:border-black px-2 py-1.5 text-center font-black uppercase text-[9px] bg-red-100 print:bg-transparent">SALIDAS</th>
+                                <th colSpan={3} className="border border-gray-300 print:border-black px-2 py-1.5 text-center font-black uppercase text-[9px] bg-blue-100 print:bg-transparent">SALDOS</th>
+                              </tr>
+                              <tr className="bg-gray-100 print:bg-transparent">
+                                {['Cantidad','Vr. Unitario','Vr. Total','Cantidad','Vr. Unitario','Vr. Total','Cantidad','Vr. Unitario','Total'].map((h,i)=>(
+                                  <th key={i} className={`border border-gray-300 print:border-black px-2 py-1 text-center font-black uppercase text-[8px] ${i<3?'bg-green-50':i<6?'bg-red-50':'bg-blue-50'} print:bg-transparent`}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map((m,i) => {
+                                const isIn = m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL';
+                                const cu = m.unitCost||m.cost||itemCost||0;
+                                const val = m.totalValue||(parseNum(m.qty)*cu);
+                                return (
+                                  <tr key={m.id||i} className="hover:bg-gray-50 print:hover:bg-transparent">
+                                    <td className="border border-gray-200 print:border-black px-2 py-1.5 text-center font-bold">{m.date}</td>
+                                    <td className="border border-gray-200 print:border-black px-2 py-1.5 font-bold text-[9px]">
+                                      <span className={`block ${isIn?'text-green-700':'text-red-700'} font-black`}>{m.type?.replace(/_/g,' ')}</span>
+                                      <span className="text-gray-500">{m.docRef||m.notes||m.reference||'—'}</span>
+                                    </td>
+                                    <td className="border border-gray-200 print:border-black px-2 py-1.5 text-center text-[9px] text-orange-600 font-black">{m.docRef||'—'}</td>
+                                    {/* ENTRADAS */}
+                                    <td className="border border-gray-200 print:border-black px-2 py-1.5 text-right font-black text-green-700">{isIn?formatNum(m.qty):'—'}</td>
+                                    <td className="border border-gray-200 print:border-black px-2 py-1.5 text-right font-bold">{isIn?`$${formatNum(cu)}`:'—'}</td>
+                                    <td className="border border-gray-200 print:border-black px-2 py-1.5 text-right font-black text-green-700">{isIn?`$${formatNum(val)}`:'—'}</td>
+                                    {/* SALIDAS */}
+                                    <td className="border border-gray-200 print:border-black px-2 py-1.5 text-right font-black text-red-600">{!isIn?formatNum(m.qty):'—'}</td>
+                                    <td className="border border-gray-200 print:border-black px-2 py-1.5 text-right font-bold">{!isIn?`$${formatNum(cu)}`:'—'}</td>
+                                    <td className="border border-gray-200 print:border-black px-2 py-1.5 text-right font-black text-red-600">{!isIn?`$${formatNum(val)}`:'—'}</td>
+                                    {/* SALDOS */}
+                                    <td className="border border-gray-200 print:border-black px-2 py-1.5 text-right font-black text-blue-700 bg-blue-50/50 print:bg-transparent">{formatNum(m.balance)}</td>
+                                    <td className="border border-gray-200 print:border-black px-2 py-1.5 text-right font-bold bg-blue-50/50 print:bg-transparent">${formatNum(cu)}</td>
+                                    <td className="border border-gray-200 print:border-black px-2 py-1.5 text-right font-black text-blue-700 bg-blue-50/50 print:bg-transparent">${formatNum(m.balance * cu)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                            <tfoot className="bg-gray-100 print:bg-transparent font-black border-t-2 border-gray-300 print:border-black">
+                              <tr>
+                                <td colSpan={3} className="border border-gray-300 print:border-black px-2 py-2 font-black uppercase text-[9px]">Costos</td>
+                                <td className="border border-gray-300 print:border-black px-2 py-2 text-right text-green-700">{formatNum(rows.filter(r=>r.type==='ENTRADA'||r.type==='ENTRADA_DEVOLUCION'||r.type==='ENTRADA_INICIAL').reduce((s,r)=>s+parseNum(r.qty),0))}</td>
+                                <td className="border border-gray-300 print:border-black px-2 py-2 text-right">${formatNum(itemCost)}</td>
+                                <td className="border border-gray-300 print:border-black px-2 py-2 text-right text-green-700">${formatNum(rows.filter(r=>r.type==='ENTRADA'||r.type==='ENTRADA_DEVOLUCION'||r.type==='ENTRADA_INICIAL').reduce((s,r)=>s+parseNum(r.totalValue||(parseNum(r.qty)*(r.unitCost||r.cost||itemCost))),0))}</td>
+                                <td className="border border-gray-300 print:border-black px-2 py-2 text-right text-red-600">{formatNum(rows.filter(r=>r.type!=='ENTRADA'&&r.type!=='ENTRADA_DEVOLUCION'&&r.type!=='ENTRADA_INICIAL').reduce((s,r)=>s+parseNum(r.qty),0))}</td>
+                                <td className="border border-gray-300 print:border-black px-2 py-2 text-right">${formatNum(itemCost)}</td>
+                                <td className="border border-gray-300 print:border-black px-2 py-2 text-right text-red-600">${formatNum(rows.filter(r=>r.type!=='ENTRADA'&&r.type!=='ENTRADA_DEVOLUCION'&&r.type!=='ENTRADA_INICIAL').reduce((s,r)=>s+parseNum(r.totalValue||(parseNum(r.qty)*(r.unitCost||r.cost||itemCost))),0))}</td>
+                                <td className="border border-gray-300 print:border-black px-2 py-2 text-right text-blue-700 font-black">{formatNum(itemStock)}</td>
+                                <td className="border border-gray-300 print:border-black px-2 py-2 text-right">${formatNum(itemCost)}</td>
+                                <td className="border border-gray-300 print:border-black px-2 py-2 text-right text-blue-700 font-black">${formatNum(itemStock*itemCost)}</td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      )}
+                    </div>
                     <div className="mt-2 text-right"><button onClick={()=>{setKardexProductId('');setInvSearchTerm('');}} className="text-[9px] font-black text-gray-400 uppercase hover:text-gray-600">✕ Limpiar selección</button></div>
                   </div>
                 );
@@ -3786,48 +3824,55 @@ export default function App() {
             }
 
             if (cat === 'Productos Terminados') {
-              // Group FG - show proper entries/exits for Art.177
+              // Group FG by product+cliente+dimensions to avoid duplicates
               const fgGroups = {};
               finishedGoodsInventory.forEach(item => {
                 const esTermo = item.tipoProducto==='TERMOENCOGIBLE';
-                const key = item.id; // use unique ID per item
-                if(!fgGroups[key]) {
-                  const currentStock = esTermo ? parseNum(item.kgProducidos) : parseNum(item.millares);
-                  const stockOrigen = esTermo ? parseNum(item.kgProducidosOrigen||item.kgProducidos) : parseNum(item.millaresOrigen||item.millares);
-                  const costoUnit = esTermo ? parseNum(item.costoUnitario||0) : parseNum(item.costoUnitarioMillar||0);
-                  // FG movements from inventoryMovements
-                  const fgMovsMonth = monthMovements.filter(m=>m.itemId===item.id||m.itemId===`FG::${item.id}`);
-                  const fgEntradas = fgMovsMonth.filter(m=>m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL');
-                  const fgSalidas = fgMovsMonth.filter(m=>m.type==='SALIDA'||m.type==='AUTOCONSUMO'||m.type==='AVERIA'||m.type==='MUESTRA');
-                  // Invoice sales as exits
-                  const invoiceSalesQty = (invoices||[]).filter(inv=>{
-                    const d = inv.fecha||(typeof inv.timestamp==='number'?new Date(inv.timestamp).toISOString().substring(0,7):'');
-                    return d.startsWith(`${reportYear}-${String(reportMonth).padStart(2,'0')}`);
-                  }).reduce((s,inv)=>{
-                    const it = (inv.itemsFacturados||[]).find(i=>i.fgId===item.id);
-                    if(it) return s + parseNum(it.cantidad||0);
-                    if(inv.fgId===item.id) return s + parseNum(inv.fgCantidad||0);
-                    return s;
-                  }, 0);
-                  const monthEntradasQty = fgEntradas.reduce((s,m)=>s+parseNum(m.qty),0) + (fgEntradas.length===0 ? stockOrigen : 0);
-                  const monthEntradasTotal = monthEntradasQty * costoUnit;
-                  const monthSalidasQty = Math.max(0, fgSalidas.reduce((s,m)=>s+parseNum(m.qty),0) + invoiceSalesQty);
-                  const monthSalidasTotal = monthSalidasQty * costoUnit;
-                  const invFinalQty = currentStock;
-                  const invFinalCost = costoUnit;
-                  const invFinalTotal = invFinalQty * invFinalCost;
-                  const initialStock = Math.max(0, invFinalQty + monthSalidasQty - monthEntradasQty);
-                  fgGroups[key] = {
-                    id: item.id, desc: formatFGLabel(item)||`${item.producto||'?'} - ${item.cliente||''}`,
+                // Use a natural key: producto + cliente + ancho×largo×micras
+                const grpKey = `${(item.producto||'').toUpperCase().replace(/\s+/g,'_')}__${(item.cliente||'').toUpperCase().replace(/\s+/g,'_')}__${item.ancho||0}x${item.largo||0}x${item.micras||0}__${item.tipoProducto||'BOLSAS'}`;
+                const currentStock = esTermo ? parseNum(item.kgProducidos) : parseNum(item.millares);
+                const stockOrigen = esTermo ? parseNum(item.kgProducidosOrigen||item.kgProducidos) : parseNum(item.millaresOrigen||item.millares);
+                const costoUnit = esTermo ? parseNum(item.costoUnitario||0) : parseNum(item.costoUnitarioMillar||0);
+                // Invoice sales for this item in the month
+                const invSalesQty = (invoices||[]).filter(inv=>{
+                  const d = inv.fecha||(typeof inv.timestamp==='number'?new Date(inv.timestamp).toISOString().substring(0,7):'');
+                  return d.startsWith(`${reportYear}-${String(reportMonth).padStart(2,'0')}`);
+                }).reduce((s,inv)=>{
+                  if(inv.fgId===item.id) return s + parseNum(inv.fgCantidad||0);
+                  return s + (inv.itemsFacturados||[]).filter(it=>it.fgId===item.id).reduce((ss,it)=>ss+parseNum(it.cantidad||0),0);
+                }, 0);
+
+                if(!fgGroups[grpKey]) {
+                  fgGroups[grpKey] = {
+                    id: grpKey, desc: formatFGLabel(item)||`${item.producto} - ${item.cliente}`,
                     unit: esTermo?'KG':'Millares', cost: costoUnit,
-                    initialStock, initialTotal: initialStock * costoUnit,
-                    monthEntradasQty, monthEntradasProm: costoUnit, monthEntradasTotal,
-                    monthSalidasQty, monthSalidasProm: costoUnit, monthSalidasTotal,
-                    invFinalQty, invFinalCost, invFinalTotal
+                    totalCurrentStock: 0, totalOrigen: 0, totalSales: 0
                   };
                 }
+                fgGroups[grpKey].totalCurrentStock += currentStock;
+                fgGroups[grpKey].totalOrigen += stockOrigen;
+                fgGroups[grpKey].totalSales += invSalesQty;
+                // Use highest non-zero cost
+                if(costoUnit > 0 && fgGroups[grpKey].cost === 0) fgGroups[grpKey].cost = costoUnit;
               });
-              items = Object.values(fgGroups).filter(g=>g.monthEntradasQty>0||g.monthSalidasQty>0||g.invFinalQty>0);
+
+              items = Object.values(fgGroups).map(g => {
+                const monthEntradasQty = g.totalOrigen;
+                const monthEntradasTotal = monthEntradasQty * g.cost;
+                const monthSalidasQty = g.totalSales;
+                const monthSalidasTotal = monthSalidasQty * g.cost;
+                const invFinalQty = g.totalCurrentStock;
+                const invFinalCost = g.cost;
+                const invFinalTotal = invFinalQty * invFinalCost;
+                const initialStock = Math.max(0, invFinalQty + monthSalidasQty - monthEntradasQty);
+                return {
+                  id: g.id, desc: g.desc, unit: g.unit, cost: g.cost,
+                  initialStock, initialTotal: initialStock * g.cost,
+                  monthEntradasQty, monthEntradasProm: g.cost, monthEntradasTotal,
+                  monthSalidasQty, monthSalidasProm: g.cost, monthSalidasTotal,
+                  invFinalQty, invFinalCost, invFinalTotal
+                };
+              }).filter(g => g.monthEntradasQty > 0 || g.monthSalidasQty > 0 || g.invFinalQty > 0);
             }
 
             return { category: cat, items };
@@ -4138,35 +4183,35 @@ export default function App() {
     return (
       <div className="space-y-6 animate-in fade-in">
         {ventasView === 'productos_vendidos' && (() => {
-          // Build sold products from invoices + FG inventory
+          // Build sold products from invoices using fgId field
           const soldItems = [];
           (invoices||[]).forEach(inv => {
-            const itemsFacturados = inv.itemsFacturados || (inv.fgId ? [{fgId:inv.fgId, cantidad:inv.fgCantidad, costoUnit: inv.costoFG||0}] : []);
-            if(itemsFacturados.length === 0 && inv.fgId) {
-              // Legacy single-item invoice
-              const fg = (finishedGoodsInventory||[]).find(f=>f.id===inv.fgId);
-              const esTermo = fg?.tipoProducto==='TERMOENCOGIBLE';
-              const costoU = esTermo ? parseNum(fg?.costoUnitario||0) : parseNum(fg?.costoUnitarioMillar||0);
-              soldItems.push({
-                factura: inv.documento||inv.id, fecha: inv.fecha, cliente: inv.clientName||inv.clientRif,
-                producto: formatFGLabel(fg)||fg?.producto||'—', medida: esTermo?'KG':'Millares',
-                cantidad: parseNum(inv.fgCantidad||0), costoUnd: costoU,
-                montoBase: parseNum(inv.montoBase||0), opId: inv.opAsignada||'—'
-              });
-            } else {
-              itemsFacturados.forEach(it => {
-                const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
-                const esTermo = fg?.tipoProducto==='TERMOENCOGIBLE';
-                const costoU = parseNum(it.costoUnit||0) || (esTermo ? parseNum(fg?.costoUnitario||0) : parseNum(fg?.costoUnitarioMillar||0));
-                soldItems.push({
-                  factura: inv.documento||inv.id, fecha: inv.fecha, cliente: inv.clientName||inv.clientRif,
-                  producto: formatFGLabel(fg)||fg?.producto||it.fgId||'—', medida: esTermo?'KG':'Millares',
-                  cantidad: parseNum(it.cantidad||0), costoUnd: costoU,
-                  montoBase: parseNum(inv.montoBase||0) / Math.max(1,(inv.itemsFacturados||[{x:1}]).length),
-                  opId: inv.opAsignada||'—'
-                });
-              });
+            // Each invoice has fgId (primary product) and possibly fgItems (multi)
+            // Also check itemsFacturados for saved multi-item invoices
+            const allItems = [];
+            // Multi items saved to invoice
+            if((inv.itemsFacturados||[]).length > 0) {
+              inv.itemsFacturados.forEach(it => allItems.push({fgId: it.fgId, cantidad: parseNum(it.cantidad||0)}));
+            } else if(inv.fgId) {
+              allItems.push({fgId: inv.fgId, cantidad: parseNum(inv.fgCantidad||0)});
             }
+            allItems.forEach(it => {
+              if(!it.fgId || it.cantidad <= 0) return;
+              // Find FG item - use millaresOrigen/kgProducidosOrigen to determine amount sold
+              const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
+              const esTermo = fg?.tipoProducto==='TERMOENCOGIBLE';
+              const costoU = fg ? (esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0)) : 0;
+              soldItems.push({
+                factura: inv.documento||inv.id,
+                fecha: inv.fecha,
+                cliente: inv.clientName||inv.clientRif||'—',
+                producto: fg ? (formatFGLabel(fg)||fg.producto||fg.id) : (it.fgId),
+                medida: fg ? (esTermo?'KG':'Millares') : '—',
+                cantidad: it.cantidad,
+                costoUnd: costoU,
+                opId: inv.opAsignada||'—'
+              });
+            });
           });
           const sorted = soldItems.sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
           return (
@@ -4195,7 +4240,7 @@ export default function App() {
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {sorted.length === 0 ? (
-                      <tr><td colSpan="8" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas registradas</td></tr>
+                      <tr><td colSpan="8" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas registradas. Asegúrese que las facturas tienen un producto FG asignado.</td></tr>
                     ) : sorted.map((s,i) => (
                       <tr key={i} className="hover:bg-gray-50">
                         <td className="py-3 px-4 border-r font-black text-orange-600">{s.factura}</td>
@@ -9138,56 +9183,37 @@ export default function App() {
     const cogsRows = []; // [{opId, opNum, producto, cantVendida, unidad, costoUnit, costoTotal, esTermo}]
 
     facturasperiodo.forEach(inv => {
-      const opId = inv.opAsignada;
-
-      // Build FG groups for this invoice (same grouping as catalog)
-      const itemsFacturados = inv.itemsFacturados || (inv.fgId ? [{fgId:inv.fgId, cantidad: parseNum(inv.fgCantidad||0)}] : []);
-      
-      if (itemsFacturados.length > 0) {
-        // Use invoice line items with FG cost
-        itemsFacturados.forEach(it => {
-          const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
-          if (!fg) return;
-          const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-          const costoUnit = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-          if (costoUnit <= 0) return;
-          const cant = parseNum(it.cantidad||0);
-          if (cant <= 0) return;
-          const costoTotal2 = cant * costoUnit;
-          totalCostoProd += costoTotal2;
-          cogsRows.push({
-            opId: opId||'—', opNum: String(opId||'').replace('OP-','').padStart(5,'0'),
-            producto: formatFGLabel(fg)||fg.producto||fg.id,
-            cliente: fg.cliente || inv.clientName || '',
-            cantVendida: cant, unidad: esTermo ? 'KG' : 'Millares',
-            costoUnit, costoTotal: costoTotal2, esTermo, factura: inv.documento
-          });
-        });
-      } else if (opId) {
-        // Fallback: derive from FG in inventory linked to this OP
-        const fgDeOp = (finishedGoodsInventory || []).filter(fg => fg.opId === opId);
-        fgDeOp.forEach(fg => {
-          const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-          const millOrigen = parseNum(fg.millaresOrigen || fg.millares || 0);
-          const kgOrigen = parseNum(fg.kgProducidosOrigen || fg.kgProducidos || 0);
-          const costoUnit = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-          if (costoUnit <= 0) return;
-          let cantVendida = esTermo
-            ? Math.max(0, kgOrigen - parseNum(fg.kgProducidos))
-            : Math.max(0, millOrigen - parseNum(fg.millares));
-          if (cantVendida <= 0 && fg.status === 'ENTREGADO') cantVendida = esTermo ? kgOrigen : millOrigen;
-          if (cantVendida <= 0) return;
-          const costoTotal2 = cantVendida * costoUnit;
-          totalCostoProd += costoTotal2;
-          cogsRows.push({
-            opId, opNum: String(opId).replace('OP-','').padStart(5,'0'),
-            producto: formatFGLabel(fg)||fg.producto||fg.id,
-            cliente: fg.cliente || inv.clientName || '',
-            cantVendida, unidad: esTermo ? 'KG' : 'Millares',
-            costoUnit, costoTotal: costoTotal2, esTermo, factura: inv.documento
-          });
-        });
+      // Get all FG items for this invoice
+      const allItems = [];
+      if((inv.itemsFacturados||[]).length > 0) {
+        inv.itemsFacturados.forEach(it => allItems.push({fgId: it.fgId, cantidad: parseNum(it.cantidad||0)}));
+      } else if(inv.fgId) {
+        allItems.push({fgId: inv.fgId, cantidad: parseNum(inv.fgCantidad||0)});
       }
+
+      allItems.forEach(it => {
+        if(!it.fgId || it.cantidad <= 0) return;
+        const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
+        if(!fg) return;
+        const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+        const costoUnit = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+        if(costoUnit <= 0) return;
+        const cant = it.cantidad;
+        const costoTotal2 = cant * costoUnit;
+        totalCostoProd += costoTotal2;
+        cogsRows.push({
+          opId: inv.opAsignada||'—',
+          opNum: String(inv.opAsignada||'').replace('OP-','').padStart(5,'0'),
+          producto: formatFGLabel(fg)||fg.producto||fg.id,
+          cliente: fg.cliente||inv.clientName||'',
+          cantVendida: cant,
+          unidad: esTermo ? 'KG' : 'Millares',
+          costoUnit,
+          costoTotal: costoTotal2,
+          esTermo,
+          factura: inv.documento||inv.id
+        });
+      });
     });
 
     // Costos operativos del periodo, agrupados por cuenta contable
