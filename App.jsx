@@ -944,7 +944,10 @@ export default function App() {
       }
 
       // ── Descontar cada item del inventario de terminados (FIFO por lote) ──
-      for (const item of itemsToProcess) {
+      // Only deduct items that are NEW (not already saved from a previous invoice save)
+      const itemsToDeduct = itemsToProcess.filter(it => !it._savedItem);
+
+      for (const item of itemsToDeduct) {
         const cantFacturada = parseNum(item.cantidad);
         if (cantFacturada <= 0) continue;
         const esTermo = item.esTermo ?? ((finishedGoodsInventory||[]).find(f=>f.id===item.fgId)?.tipoProducto === 'TERMOENCOGIBLE');
@@ -964,25 +967,27 @@ export default function App() {
           const cantDeEste = Math.min(porDescontar, stockLote);
           porDescontar -= cantDeEste;
           const nuevoStock = Math.max(0, stockLote - cantDeEste);
-          const kgOrigen = parseNum(fg.kgProducidosOrigen || fg.kgProducidos);
-          const millOrigen = parseNum(fg.millaresOrigen || fg.millares || 1);
-          const newKg = esTermo ? nuevoStock : Math.max(0, kgOrigen * nuevoStock / Math.max(0.0001, millOrigen));
+          const costoUnit = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
           if (nuevoStock <= 0.001) {
             await updateDoc(getDocRef('finishedGoodsInventory', fg.id), { status: 'ENTREGADO', millares: 0, kgProducidos: 0 });
           } else {
-            await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {
-              millares: esTermo ? parseNum(fg.millares) : nuevoStock, kgProducidos: newKg,
-              observaciones: ((fg.observaciones||'') + ` | ${formatNum(cantDeEste)} FAC ${id}`).trim()
-            });
+            const updateFG = esTermo
+              ? {kgProducidos: nuevoStock, observaciones: ((fg.observaciones||'') + ` | ${formatNum(cantDeEste)} FAC ${id}`).trim()}
+              : {millares: nuevoStock, observaciones: ((fg.observaciones||'') + ` | ${formatNum(cantDeEste)} FAC ${id}`).trim()};
+            await updateDoc(getDocRef('finishedGoodsInventory', fg.id), updateFG);
           }
-          if (!editingInvoiceId) {
-            let cuKg = parseNum(fg.costoUnitario||0);
-            if (!cuKg && parseNum(fg.costoUnitarioMillar)>0 && parseNum(fg.millares)>0)
-              cuKg = parseNum(fg.costoUnitarioMillar)*parseNum(fg.kgProducidos)/Math.max(0.001,parseNum(fg.millares));
-            const kgFact = esTermo ? cantDeEste : (cantDeEste * parseNum(fg.kgProducidos) / Math.max(0.001, parseNum(fg.millares)));
-            const costoFG = cuKg * kgFact;
-            if (costoFG > 0) await registrarAsientoContable(null, { debito:'5.1.01.01.001', credito:'1.1.03.01.008', monto:costoFG, descripcion:`COSTO PROD — FAC ${id} — ${fg.producto||fg.id}`, referencia:id, fecha:newInvoiceForm.fecha });
-          }
+          // ── Registrar movimiento en Kardex / inventoryMovements ──
+          await addDoc(getColRef('inventoryMovements'), {
+            itemId: `FG::${fg.id}`, itemDesc: formatFGLabel(fg)||fg.producto||fg.id,
+            type: 'SALIDA', qty: cantDeEste, unitCost: costoUnit,
+            totalValue: cantDeEste * costoUnit, previousStock: stockLote,
+            newStock: Math.max(0, stockLote - cantDeEste),
+            docRef: id, notes: `VENTA FAC ${id}`,
+            date: newInvoiceForm.fecha||getTodayDate(),
+            user: appUser?.name||'Admin', timestamp: Date.now(), isFG: true
+          });
+          const costoFG = cantDeEste * costoUnit;
+          if (costoFG > 0) await registrarAsientoContable(null, { debito:'5.1.01.01.001', credito:'1.1.03.01.008', monto:costoFG, descripcion:`COSTO PROD — FAC ${id} — ${fg.producto||fg.id}`, referencia:id, fecha:newInvoiceForm.fecha });
         }
       }
 
@@ -1882,29 +1887,29 @@ export default function App() {
                 </div>
                 <div>
                   <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Ítem del Inventario</label>
-                  <select value={movForm.itemId} onChange={e=>{const inv=(inventory||[]).find(i=>i.id===e.target.value);setMovForm({...movForm,itemId:e.target.value,unitCost:inv?String(inv.cost||0):'0'});}} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
+                  <select value={movForm.itemId} onChange={e=>{
+                    const isFG = e.target.value.startsWith('FG::');
+                    const actualId = isFG ? e.target.value.replace('FG::','') : e.target.value;
+                    const inv = isFG
+                      ? (finishedGoodsInventory||[]).find(f=>f.id===actualId)
+                      : (inventory||[]).find(i=>i.id===actualId);
+                    const cost = isFG
+                      ? (inv?.tipoProducto==='TERMOENCOGIBLE' ? parseNum(inv?.costoUnitario||0) : parseNum(inv?.costoUnitarioMillar||0))
+                      : parseNum(inv?.cost||0);
+                    setMovForm({...movForm, itemId:e.target.value, unitCost:String(cost||0)});
+                  }} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
                     <option value="">Seleccione...</option>
                     <optgroup label="── Materia Prima / Consumibles ──">
                       {(inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
                     </optgroup>
-                    {!isEntradas && (
-                      <optgroup label="── Productos Terminados ──">
-                        {(() => {
-                          // Build grouped FG for salidas dropdown
-                          const fgGrps = {};
-                          (finishedGoodsInventory||[]).forEach(fg => {
-                            const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
-                            const key = fg.id;
-                            const stock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-                            if(stock <= 0) return;
-                            fgGrps[key] = {id:key, desc:formatFGLabel(fg)||fg.producto, stock, unit:esTermo?'KG':'Millares', cost:esTermo?parseNum(fg.costoUnitario||0):parseNum(fg.costoUnitarioMillar||0), isFG:true};
-                          });
-                          return Object.values(fgGrps).map(g=>(
-                            <option key={g.id} value={`FG::${g.id}`}>{g.desc} (Stock: {formatNum(g.stock)} {g.unit})</option>
-                          ));
-                        })()}
-                      </optgroup>
-                    )}
+                    <optgroup label="── Productos Terminados ──">
+                      {(finishedGoodsInventory||[]).filter(fg=>parseNum(fg.kgProducidos)>0||parseNum(fg.millares)>0).map(fg=>{
+                        const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+                        const stk=esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
+                        const un=esTermo?'KG':'Millares';
+                        return <option key={`FG::${fg.id}`} value={`FG::${fg.id}`}>{formatFGLabel(fg)||fg.producto||fg.id} (Stock: {formatNum(stk)} {un})</option>;
+                      })}
+                    </optgroup>
                   </select>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -3480,18 +3485,18 @@ export default function App() {
                            const totalVal = parseNum(inv?.cost) * parseNum(inv?.stock);
                            rows.push(
                              <tr key={inv?.id} className="hover:bg-gray-50 transition-colors group">
-                               <td className="py-3 px-4 font-black text-orange-600 text-xs print:text-black">{inv?.id}</td>
-                               <td className="py-3 px-4 font-black uppercase text-xs text-black">{inv?.desc}</td>
-                               <td className="py-3 px-4 text-center">
-                                 <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${colClass}`}>{inv?.category}</span>
+                               <td className="py-2 px-2 font-black text-orange-600 text-[10px] print:text-black">{inv?.id}</td>
+                               <td className="py-2 px-2 font-black uppercase text-[10px] text-black">{inv?.desc}</td>
+                               <td className="py-2 px-2 text-center hidden md:table-cell">
+                                 <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase text-white ${colClass}`}>{(inv?.category||'').substring(0,6)}</span>
                                </td>
-                               <td className="py-3 px-4 text-center font-bold text-gray-600 print:text-black">${formatNum(inv?.cost)}</td>
-                               <td className="py-3 px-4 text-right font-black text-blue-600 text-sm print:text-black">{formatNum(inv?.stock)} <span className="text-xs text-gray-400">{inv?.unit}</span></td>
-                               <td className="py-3 px-4 text-right font-black text-green-600 text-sm print:text-black">${formatNum(totalVal)}</td>
-                               <td className="py-3 px-4 text-center no-pdf print:hidden">
-                                 <div className="flex gap-1 justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                   <button onClick={()=>requireAdminPassword(()=>startEditInvItem(inv),'Editar artículo del catálogo')} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white transition-all"><Edit size={12}/></button>
-                                   <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('inventory',inv.id));setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});},'Eliminar artículo de catálogo')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={12}/></button>
+                               <td className="py-2 px-2 text-right font-bold text-gray-600 text-[10px] print:text-black">${formatNum(inv?.cost)}</td>
+                               <td className="py-2 px-2 text-right font-black text-blue-600 text-[10px] print:text-black">{formatNum(inv?.stock)} <span className="text-[8px] text-gray-400">{inv?.unit}</span></td>
+                               <td className="py-2 px-2 text-right font-black text-green-600 text-[10px] print:text-black hidden lg:table-cell">${formatNum(totalVal)}</td>
+                               <td className="py-2 px-2 text-center no-pdf print:hidden">
+                                 <div className="flex gap-1 justify-center">
+                                   <button onClick={()=>requireAdminPassword(()=>startEditInvItem(inv),'Editar artículo del catálogo')} className="p-1 bg-orange-100 text-orange-600 rounded hover:bg-orange-500 hover:text-white"><Edit size={11}/></button>
+                                   <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('inventory',inv.id));setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});},'Eliminar artículo de catálogo')} className="p-1 bg-red-50 text-red-400 rounded hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
                                  </div>
                                </td>
                              </tr>
