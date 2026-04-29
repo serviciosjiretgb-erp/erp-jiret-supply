@@ -661,9 +661,49 @@ export default function App() {
   // LOGICA INVENTARIO Y COSTO PROMEDIO
   // ============================================================================
   const handleSaveInvItem = async (e) => {
-    e.preventDefault(); if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
-    const itemData = { ...newInvItemForm, id: newInvItemForm.id.toUpperCase(), desc: newInvItemForm.desc.toUpperCase(), cost: parseNum(newInvItemForm.cost), stock: parseNum(newInvItemForm.stock), timestamp: Date.now() };
-    try { await setDoc(getDocRef('inventory', itemData.id), itemData, { merge: true }); setNewInvItemForm(initialInvItemForm); setEditingInvId(null); setDialog({ title: 'Éxito', text: 'Artículo guardado.', type: 'alert' }); } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
+    e.preventDefault(); 
+    if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
+    const existingItem = (inventory||[]).find(i=>i.id===newInvItemForm.id.toUpperCase());
+    const newCost = parseNum(newInvItemForm.cost);
+    const newStock = parseNum(newInvItemForm.stock);
+    
+    // If existing item and stock/cost changed, calculate weighted average
+    let finalCost = newCost;
+    let prevStock = existingItem?.stock || 0;
+    let prevCost = existingItem?.cost || 0;
+    if(existingItem && editingInvId) {
+      // On edit: keep weighted average only if stock increased
+      const stockDiff = newStock - prevStock;
+      if(stockDiff > 0 && newCost > 0) {
+        finalCost = ((prevStock * prevCost) + (stockDiff * newCost)) / newStock;
+      } else {
+        finalCost = newCost || prevCost;
+      }
+    }
+    
+    const itemData = { ...newInvItemForm, id: newInvItemForm.id.toUpperCase(), desc: newInvItemForm.desc.toUpperCase(), cost: finalCost, stock: newStock, timestamp: Date.now() };
+    try { 
+      await setDoc(getDocRef('inventory', itemData.id), itemData, { merge: true }); 
+      
+      // Register kardex movement if stock changed
+      if(existingItem && editingInvId) {
+        const stockDiff = newStock - prevStock;
+        if(Math.abs(stockDiff) > 0.001) {
+          await addDoc(getColRef('inventoryMovements'), {
+            itemId: itemData.id, itemDesc: itemData.desc,
+            type: stockDiff > 0 ? 'ENTRADA' : 'SALIDA',
+            qty: Math.abs(stockDiff), unitCost: finalCost,
+            totalValue: Math.abs(stockDiff) * finalCost,
+            previousStock: prevStock, newStock,
+            docRef: 'AJUSTE MANUAL', notes: 'Edición en Inventario General',
+            date: getTodayDate(), user: appUser?.name||'Admin', timestamp: Date.now()
+          });
+        }
+      }
+      
+      setNewInvItemForm(initialInvItemForm); setEditingInvId(null); 
+      setDialog({ title: '✅ Éxito', text: `Artículo guardado. ${existingItem?'Stock actualizado en Inventario General.':'Nuevo artículo creado.'}`, type: 'alert' }); 
+    } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
   const startEditInvItem = (item) => { setEditingInvId(item.id); setNewInvItemForm({ id: item.id, desc: item.desc, category: item.category || 'Materia Prima', cost: item.cost || '', stock: item.stock || '', unit: item.unit || 'kg' }); setShowInvItemForm(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
@@ -2668,17 +2708,23 @@ export default function App() {
                         if (!cargarForm.codigo || !cargarForm.descripcion) return setDialog({title:'Aviso',text:'Complete código y descripción.',type:'alert'});
                         const existingItem = (inventory||[]).find(i=>i.id===cargarForm.codigo);
                         if (existingItem) {
-                          // Si existe, sumar al stock
+                          // Update existing: weighted average cost
+                          const existStock = parseNum(existingItem.stock||0);
+                          const existCost = parseNum(existingItem.cost||0);
+                          const addQty = parseNum(cargarForm.cantidad||0);
+                          const newCostMP = parseNum(cargarForm.costo||0) || existCost;
+                          const totalStock = existStock + addQty;
+                          const avgCostMP = totalStock > 0 ? ((existStock*existCost)+(addQty*newCostMP))/totalStock : newCostMP;
                           await updateDoc(getDocRef('inventory', cargarForm.codigo), {
-                            stock: parseNum(existingItem.stock||0) + parseNum(cargarForm.cantidad||0),
-                            cost: parseNum(cargarForm.costo||0) || existingItem.cost,
+                            stock: totalStock, cost: avgCostMP
                           });
-                          // Movimiento kardex
-                          await setDoc(getDocRef('inventoryMovements', `MOV-${Date.now()}`), {
-                            itemId: cargarForm.codigo, desc: existingItem.desc||cargarForm.descripcion,
-                            type: 'ENTRADA', qty: parseNum(cargarForm.cantidad||0),
-                            date: cargarForm.fecha||getTodayDate(), reason: cargarForm.observaciones||'Carga manual',
-                            proveedor: cargarForm.proveedor||'', costo: parseNum(cargarForm.costo||0), timestamp: Date.now()
+                          // Kardex movement
+                          await addDoc(getColRef('inventoryMovements'), {
+                            itemId: cargarForm.codigo, itemDesc: existingItem.desc||cargarForm.descripcion,
+                            type: 'ENTRADA', qty: addQty, unitCost: newCostMP, totalValue: addQty*newCostMP,
+                            previousStock: existStock, newStock: totalStock,
+                            docRef: cargarForm.proveedor||'CARGA MANUAL', notes: cargarForm.observaciones||'Carga manual',
+                            date: cargarForm.fecha||getTodayDate(), user: appUser?.name||'Admin', timestamp: Date.now()
                           });
                         } else {
                           // Crear nuevo item en inventario
@@ -3548,8 +3594,17 @@ export default function App() {
                                <td className="py-2 px-2 text-right font-black text-green-600 text-[10px] print:text-black hidden lg:table-cell">${formatNum(totalVal)}</td>
                                <td className="py-2 px-2 text-center no-pdf print:hidden">
                                  <div className="flex gap-1 justify-center">
-                                   <button onClick={()=>requireAdminPassword(()=>startEditInvItem(inv),'Editar artículo del catálogo')} className="p-1 bg-orange-100 text-orange-600 rounded hover:bg-orange-500 hover:text-white"><Edit size={11}/></button>
-                                   <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('inventory',inv.id));setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});},'Eliminar artículo de catálogo')} className="p-1 bg-red-50 text-red-400 rounded hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
+                                   {inv?._isFGGroup ? (
+                                     // FG items: redirect to Terminados view for editing
+                                     <button onClick={()=>{setInvView('finished');}} className="p-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-500 hover:text-white text-[8px] font-black px-2 uppercase" title="Ver en Terminados">
+                                       Ver FG
+                                     </button>
+                                   ) : (
+                                     <>
+                                       <button onClick={()=>requireAdminPassword(()=>startEditInvItem(inv),'Editar artículo del catálogo')} className="p-1 bg-orange-100 text-orange-600 rounded hover:bg-orange-500 hover:text-white"><Edit size={11}/></button>
+                                       <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('inventory',inv.id));setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});},'Eliminar artículo de catálogo')} className="p-1 bg-red-50 text-red-400 rounded hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
+                                     </>
+                                   )}
                                  </div>
                                </td>
                              </tr>
