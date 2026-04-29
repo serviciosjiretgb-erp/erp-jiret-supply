@@ -171,55 +171,6 @@ export default function App() {
   const [finishedGoodsInventory, setFinishedGoodsInventory] = useState([]);
 
   // ── One-time data correction (runs once per session via sessionStorage flag) ──
-  useEffect(() => {
-    if(fgCorrectionDone || !finishedGoodsInventory || finishedGoodsInventory.length === 0) return;
-    if(sessionStorage.getItem('erp_data_v4') === 'done') { setFgCorrectionDone(true); return; }
-    const run = async () => {
-      try {
-        // 1. TERMO → stock 1.40 KG (was 521.40, sold 520)
-        for(const fg of finishedGoodsInventory.filter(fg=>/termo.*pinturas|pinturas.*caribe/i.test(`${fg.producto||''} ${fg.cliente||''}`))) {
-          if(fg.tipoProducto==='TERMOENCOGIBLE' && parseNum(fg.kgProducidos) > 2) {
-            await updateDoc(getDocRef('finishedGoodsInventory', fg.id), {kgProducidos:1.40, kgProducidosOrigen:521.40, costoUnitario:2.71});
-          }
-        }
-        // 2. Kardex ENTRADAS for 3 FG products
-        const entradas = [
-          {pat:/termo.*pinturas|pinturas.*caribe/i, qty:521.40, cost:2.71,  date:'2026-03-01'},
-          {pat:/pa[ñn]al.*kiri/i,                   qty:24.60,  cost:2.32,  date:'2026-03-01'},
-          {pat:/embutido.*1.*kiri/i,                 qty:219.97, cost:73.39, date:'2026-03-01'},
-        ];
-        for(const e of entradas) {
-          const fg = finishedGoodsInventory.find(fg=>e.pat.test(`${fg.producto||''} ${fg.cliente||''}`));
-          if(!fg) continue;
-          await addDoc(getColRef('inventoryMovements'), {
-            itemId:`FG::${fg.id}`, itemDesc:formatFGLabel(fg)||fg.producto,
-            type:'ENTRADA_INICIAL', qty:e.qty, unitCost:e.cost, totalValue:e.qty*e.cost,
-            previousStock:0, newStock:e.qty, docRef:'INV.INICIAL', notes:'Existencia inicial',
-            date:e.date, user:'Admin', timestamp:new Date(e.date).getTime(), isFG:true
-          });
-        }
-        // 3. Kardex SALIDAS for Art.177 (ventas del período)
-        const salidas = [
-          {pat:/embutido.*1.*kiri/i, qty:220.00, total:19060.80, date:'2026-04-01'},
-          {pat:/pa[ñn]al.*kiri/i,   qty:65.00,  total:5070.65,  date:'2026-04-01'},
-          {pat:/termo.*pinturas|pinturas.*caribe/i, qty:520.00, total:1409.20, date:'2026-04-01'},
-        ];
-        for(const s of salidas) {
-          const fg = finishedGoodsInventory.find(fg=>s.pat.test(`${fg.producto||''} ${fg.cliente||''}`));
-          if(!fg) continue;
-          await addDoc(getColRef('inventoryMovements'), {
-            itemId:`FG::${fg.id}`, itemDesc:formatFGLabel(fg)||fg.producto,
-            type:'SALIDA', qty:s.qty, unitCost:s.total/s.qty, totalValue:s.total,
-            previousStock:s.qty, newStock:0, docRef:'VENTA', notes:'Venta período',
-            date:s.date, user:'Admin', timestamp:new Date(s.date).getTime(), isFG:true
-          });
-        }
-        sessionStorage.setItem('erp_data_v4','done');
-        setFgCorrectionDone(true);
-      } catch(err){ console.warn('Correction error:',err); }
-    };
-    run();
-  }, [finishedGoodsInventory, fgCorrectionDone]);
 
   // FG corrections are applied via the Edit button in Terminados view
   const [showMovForm, setShowMovForm] = useState(false);
@@ -2611,6 +2562,20 @@ export default function App() {
                 <input type="text" placeholder="Buscar OP, cliente, producto..." value={fgSearch} onChange={e=>setFgSearch(e.target.value)} className="pl-9 pr-4 py-2 border-2 border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:border-green-500 w-56" />
               </div>
 
+              <button onClick={()=>requireAdminPassword(async()=>{
+                // Fix TERMO stock to 1.40 KG
+                const termoFGs = (finishedGoodsInventory||[]).filter(fg=>/termo.*pinturas|pinturas.*caribe/i.test(`${fg.producto||''} ${fg.cliente||''}`));
+                let fixed=0;
+                for(const fg of termoFGs){
+                  if(fg.tipoProducto==='TERMOENCOGIBLE'){
+                    await updateDoc(getDocRef('finishedGoodsInventory',fg.id),{kgProducidos:1.40,kgProducidosOrigen:521.40,costoUnitario:2.71});
+                    fixed++;
+                  }
+                }
+                setDialog({title:'✅ Ajuste Aplicado',text:`TERMO actualizado a 1.40 KG. (${fixed} registro(s))`,type:'alert'});
+              },'Ajustar stock TERMO a 1.40 KG')} className="bg-purple-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-purple-700 flex items-center gap-1 whitespace-nowrap">
+                <RefreshCw size={12}/> Ajustar TERMO
+              </button>
               <button onClick={()=>setShowCargarProducto(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showCargarProducto?'bg-red-500 text-white':'bg-green-600 text-white hover:bg-green-700'}`}><Plus size={14}/> {showCargarProducto?'CANCELAR':'CARGAR PRODUCTO'}</button>
               <button onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
             </div>
@@ -4197,7 +4162,7 @@ export default function App() {
                 const totalCurrentStock = fgItems2.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
                 const totalOrigen = fgItems2.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidosOrigen||fg.kgProducidos):parseNum(fg.millaresOrigen||fg.millares)),0);
 
-                // Sales from invoices — match any lote in this group
+                // Sales from invoices ONLY — match any lote in this group
                 const fgIdsInGrp = new Set(fgItems2.map(f=>f.id));
                 const invSalesQty = (invoices||[]).filter(inv=>{
                   const d = inv.fecha||(typeof inv.timestamp==='number'?new Date(inv.timestamp).toISOString().substring(0,7):'');
@@ -4206,14 +4171,7 @@ export default function App() {
                   if(fgIdsInGrp.has(inv.fgId)) return s + parseNum(inv.fgCantidad||0);
                   return s + (inv.itemsFacturados||[]).filter(it=>fgIdsInGrp.has(it.fgId)).reduce((ss,it)=>ss+parseNum(it.cantidad||0),0);
                 }, 0);
-
-                // Manual movements — match FG::id for any item in group
-                const fgManualSalidaQty = monthMovements.filter(m=>{
-                  const mid = m.itemId?.replace('FG::','');
-                  return fgIdsInGrp.has(mid) && (m.type==='SALIDA'||m.type==='AUTOCONSUMO'||m.type==='AVERIA'||m.type==='MUESTRA');
-                }).reduce((s,m)=>s+parseNum(m.qty),0);
-
-                const monthSalidasQty = invSalesQty + fgManualSalidaQty;
+                const monthSalidasQty = invSalesQty;
                 const monthEntradasQty = totalOrigen;
                 const invFinalQty = totalCurrentStock;
                 const initialStock = Math.max(0, invFinalQty + monthSalidasQty - monthEntradasQty);
