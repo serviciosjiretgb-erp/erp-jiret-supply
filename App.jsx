@@ -3747,12 +3747,20 @@ export default function App() {
                     </optgroup>
                     <optgroup label="── Productos Terminados ──">
                       {(() => {
-                        const fgMap = {};
+                        // Build unique products (same as Art.177 grouping)
+                        const kardexFGMap = {};
                         (finishedGoodsInventory||[]).forEach(fg=>{
-                          if(!fgMap[fg.id]) fgMap[fg.id] = fg;
+                          const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+                          const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                          const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                          const grpKey=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
+                          if(!kardexFGMap[grpKey]) kardexFGMap[grpKey]={key:grpKey, label:formatFGLabel(fg)||fg.producto||fg.id, ids:[fg.id], esTermo, stock:0, unit:esTermo?'KG':'Millares'};
+                          const stk=esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
+                          kardexFGMap[grpKey].stock+=stk;
+                          if(!kardexFGMap[grpKey].ids.includes(fg.id)) kardexFGMap[grpKey].ids.push(fg.id);
                         });
-                        return Object.values(fgMap).map(fg=>(
-                          <option key={`FG::${fg.id}`} value={`FG::${fg.id}`}>FG — {formatFGLabel(fg)||fg.producto||fg.id}</option>
+                        return Object.values(kardexFGMap).map(g=>(
+                          <option key={g.key} value={`FG::${g.key}`}>{g.label} (Stock: {formatNum(g.stock)} {g.unit})</option>
                         ));
                       })()}
                     </optgroup>
@@ -3779,17 +3787,45 @@ export default function App() {
               {kardexProductId ? (() => {
                 const isFGKardex = kardexProductId.startsWith('FG::');
                 const actualKardexId = isFGKardex ? kardexProductId.replace('FG::','') : kardexProductId;
-                const item = isFGKardex
-                  ? (finishedGoodsInventory||[]).find(f=>f.id===actualKardexId)
-                  : (inventory||[]).find(i=>i.id===actualKardexId);
-                const itemLabel = isFGKardex ? formatFGLabel(item)||item?.producto||actualKardexId : item?.desc||actualKardexId;
-                const itemUnit = isFGKardex ? (item?.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millares') : (item?.unit||'');
-                const itemStock = isFGKardex ? (item?.tipoProducto==='TERMOENCOGIBLE'?parseNum(item?.kgProducidos):parseNum(item?.millares)) : (item?.stock||0);
-                const itemCost = isFGKardex ? (item?.tipoProducto==='TERMOENCOGIBLE'?parseNum(item?.costoUnitario||0):parseNum(item?.costoUnitarioMillar||0)) : (item?.cost||0);
-                const movs = (invMovements||[]).filter(m=>
-                  m.itemId===kardexProductId || m.itemId===actualKardexId ||
-                  (isFGKardex && m.itemId===`FG::${actualKardexId}`)
-                ).sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
+                
+                // For FG: resolve all matching FG items in the group
+                let fgGroupItems = [];
+                let item = null;
+                let itemLabel = '', itemUnit = '', itemStock = 0, itemCost = 0;
+                
+                if(isFGKardex) {
+                  // Find all FG items that belong to this group key
+                  (finishedGoodsInventory||[]).forEach(fg=>{
+                    const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+                    const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                    const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                    const grpKey=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
+                    if(grpKey===actualKardexId || fg.id===actualKardexId) fgGroupItems.push(fg);
+                  });
+                  item = fgGroupItems[0] || null;
+                  const esTermo=item?.tipoProducto==='TERMOENCOGIBLE';
+                  itemLabel = formatFGLabel(item)||item?.producto||actualKardexId;
+                  itemUnit = esTermo?'KG':'Millares';
+                  itemStock = fgGroupItems.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
+                  itemCost = item ? (esTermo?parseNum(item.costoUnitario||0):parseNum(item.costoUnitarioMillar||0)) : 0;
+                } else {
+                  item = (inventory||[]).find(i=>i.id===actualKardexId);
+                  itemLabel = item?.desc||actualKardexId;
+                  itemUnit = item?.unit||'';
+                  itemStock = item?.stock||0;
+                  itemCost = item?.cost||0;
+                }
+
+                // Get all movements for this item (from all FG IDs in group)
+                const fgIdSet = new Set(fgGroupItems.map(f=>f.id));
+                const movs = (invMovements||[]).filter(m=>{
+                  if(isFGKardex) {
+                    const mid = m.itemId?.replace('FG::','');
+                    return fgIdSet.has(mid) || fgIdSet.has(m.itemId);
+                  }
+                  return m.itemId===actualKardexId;
+                }).sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
+                
                 let runBalance = 0;
                 const rows = movs.map(m => {
                   const isIn = m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL';
@@ -3957,57 +3993,57 @@ export default function App() {
             }
 
             if (cat === 'Productos Terminados') {
-              // Group FG by product+cliente+dimensions to avoid duplicates
+              // Group FG items — use catalog ID (FG-EMBUTIDO1KIRI-...) as the canonical ID
+              // Items with same catalog ID are the same product regardless of how many records exist
               const fgGroups = {};
+              const ym177 = `${reportYear}-${String(reportMonth).padStart(2,'0')}`;
+
+              // Build canonical catalog IDs (same as Inventario General view)
+              const catGrps = {};
               finishedGoodsInventory.forEach(item => {
                 const esTermo = item.tipoProducto==='TERMOENCOGIBLE';
-                // Use a natural key: producto + cliente + ancho×largo×micras
-                const grpKey = `${(item.producto||'').toUpperCase().replace(/\s+/g,'_')}__${(item.cliente||'').toUpperCase().replace(/\s+/g,'_')}__${item.ancho||0}x${item.largo||0}x${item.micras||0}__${item.tipoProducto||'BOLSAS'}`;
-                const currentStock = esTermo ? parseNum(item.kgProducidos) : parseNum(item.millares);
-                const stockOrigen = esTermo ? parseNum(item.kgProducidosOrigen||item.kgProducidos) : parseNum(item.millaresOrigen||item.millares);
-                const costoUnit = esTermo ? parseNum(item.costoUnitario||0) : parseNum(item.costoUnitarioMillar||0);
-                const ym177 = `${reportYear}-${String(reportMonth).padStart(2,'0')}`;
-                // Invoice sales for this FG in the period
+                // Normalize key: producto + cliente + tipo only (dimensions may vary between manual/auto)
+                const prodNorm = (item.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                const cliNorm = (item.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                const grpKey = `${prodNorm}__${cliNorm}__${item.tipoProducto||'BOLSAS'}`;
+                if(!catGrps[grpKey]) catGrps[grpKey] = {grpKey, items:[], esTermo, desc: formatFGLabel(item)||`${item.producto} - ${item.cliente}`, unit: esTermo?'KG':'Millares', cost: 0};
+                catGrps[grpKey].items.push(item);
+                const cu = esTermo ? parseNum(item.costoUnitario||0) : parseNum(item.costoUnitarioMillar||0);
+                if(cu > catGrps[grpKey].cost) catGrps[grpKey].cost = cu;
+              });
+
+              // For each group, sum stock and compute sales
+              items = Object.values(catGrps).map(grp => {
+                const {items: fgItems2, esTermo, desc, unit, cost} = grp;
+                const totalCurrentStock = fgItems2.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
+                const totalOrigen = fgItems2.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidosOrigen||fg.kgProducidos):parseNum(fg.millaresOrigen||fg.millares)),0);
+
+                // Sales from invoices — match any lote in this group
+                const fgIdsInGrp = new Set(fgItems2.map(f=>f.id));
                 const invSalesQty = (invoices||[]).filter(inv=>{
                   const d = inv.fecha||(typeof inv.timestamp==='number'?new Date(inv.timestamp).toISOString().substring(0,7):'');
                   return d.startsWith(ym177);
                 }).reduce((s,inv)=>{
-                  if(inv.fgId===item.id) return s + parseNum(inv.fgCantidad||0);
-                  return s + (inv.itemsFacturados||[]).filter(it=>it.fgId===item.id).reduce((ss,it)=>ss+parseNum(it.cantidad||0),0);
+                  if(fgIdsInGrp.has(inv.fgId)) return s + parseNum(inv.fgCantidad||0);
+                  return s + (inv.itemsFacturados||[]).filter(it=>fgIdsInGrp.has(it.fgId)).reduce((ss,it)=>ss+parseNum(it.cantidad||0),0);
                 }, 0);
-                // Manual FG movements (SALIDA/AUTOCONSUMO etc.) in period
-                const fgManualSalidaQty = monthMovements.filter(m=>(m.itemId===item.id||m.itemId===`FG::${item.id}`)&&(m.type==='SALIDA'||m.type==='AUTOCONSUMO'||m.type==='AVERIA'||m.type==='MUESTRA')).reduce((s,m)=>s+parseNum(m.qty),0);
-                const totalSalesThisItem = invSalesQty + fgManualSalidaQty;
 
-                if(!fgGroups[grpKey]) {
-                  fgGroups[grpKey] = {
-                    id: grpKey, desc: formatFGLabel(item)||`${item.producto} - ${item.cliente}`,
-                    unit: esTermo?'KG':'Millares', cost: costoUnit,
-                    totalCurrentStock: 0, totalOrigen: 0, totalSales: 0
-                  };
-                }
-                fgGroups[grpKey].totalCurrentStock += currentStock;
-                fgGroups[grpKey].totalOrigen += stockOrigen;
-                fgGroups[grpKey].totalSales += totalSalesThisItem;
-                // Use highest non-zero cost
-                if(costoUnit > 0 && fgGroups[grpKey].cost === 0) fgGroups[grpKey].cost = costoUnit;
-              });
+                // Manual movements — match FG::id for any item in group
+                const fgManualSalidaQty = monthMovements.filter(m=>{
+                  const mid = m.itemId?.replace('FG::','');
+                  return fgIdsInGrp.has(mid) && (m.type==='SALIDA'||m.type==='AUTOCONSUMO'||m.type==='AVERIA'||m.type==='MUESTRA');
+                }).reduce((s,m)=>s+parseNum(m.qty),0);
 
-              items = Object.values(fgGroups).map(g => {
-                const monthEntradasQty = g.totalOrigen;
-                const monthEntradasTotal = monthEntradasQty * g.cost;
-                const monthSalidasQty = g.totalSales;
-                const monthSalidasTotal = monthSalidasQty * g.cost;
-                const invFinalQty = g.totalCurrentStock;
-                const invFinalCost = g.cost;
-                const invFinalTotal = invFinalQty * invFinalCost;
+                const monthSalidasQty = invSalesQty + fgManualSalidaQty;
+                const monthEntradasQty = totalOrigen;
+                const invFinalQty = totalCurrentStock;
                 const initialStock = Math.max(0, invFinalQty + monthSalidasQty - monthEntradasQty);
                 return {
-                  id: g.id, desc: g.desc, unit: g.unit, cost: g.cost,
-                  initialStock, initialTotal: initialStock * g.cost,
-                  monthEntradasQty, monthEntradasProm: g.cost, monthEntradasTotal,
-                  monthSalidasQty, monthSalidasProm: g.cost, monthSalidasTotal,
-                  invFinalQty, invFinalCost, invFinalTotal
+                  id: grp.grpKey, desc, unit, cost,
+                  initialStock, initialTotal: initialStock * cost,
+                  monthEntradasQty, monthEntradasProm: cost, monthEntradasTotal: monthEntradasQty * cost,
+                  monthSalidasQty, monthSalidasProm: cost, monthSalidasTotal: monthSalidasQty * cost,
+                  invFinalQty, invFinalCost: cost, invFinalTotal: invFinalQty * cost
                 };
               }).filter(g => g.monthEntradasQty > 0 || g.monthSalidasQty > 0 || g.invFinalQty > 0);
             }
