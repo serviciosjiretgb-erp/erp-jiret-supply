@@ -1336,6 +1336,18 @@ export default function App() {
           timestamp: Date.now()
         };
         await setDoc(getDocRef('finishedGoodsInventory', finishedEntry.id), finishedEntry);
+        // ── Kardex ENTRADA for FG produced ──
+        try {
+          const fgProdQty = finishedEntry.tipoProducto==='TERMOENCOGIBLE' ? parseNum(finishedEntry.kgProducidos||0) : parseNum(finishedEntry.millares||0);
+          const fgProdCost = finishedEntry.tipoProducto==='TERMOENCOGIBLE' ? parseNum(finishedEntry.costoUnitario||0) : parseNum(finishedEntry.costoUnitarioMillar||0);
+          if(fgProdQty > 0) await addDoc(getColRef('inventoryMovements'), {
+            itemId:`FG::${finishedEntry.id}`, itemDesc:`${finishedEntry.producto||''} - ${finishedEntry.cliente||''}`,
+            type:'ENTRADA_INICIAL', qty:fgProdQty, unitCost:fgProdCost, totalValue:fgProdQty*fgProdCost,
+            previousStock:0, newStock:fgProdQty, docRef:finishedEntry.opId||'PRODUCCION',
+            notes:`Produccion ${finishedEntry.opId||''} — ${finishedEntry.producto||''}`,
+            date:getTodayDate(), user:appUser?.name||'Admin', timestamp:Date.now(), isFG:true
+          });
+        } catch(e){}
         return;
       }
 
@@ -1364,6 +1376,18 @@ export default function App() {
         };
 
         await setDoc(getDocRef('finishedGoodsInventory', finishedEntry.id), finishedEntry);
+        // ── Kardex ENTRADA for FG produced ──
+        try {
+          const fgProdQty = finishedEntry.tipoProducto==='TERMOENCOGIBLE' ? parseNum(finishedEntry.kgProducidos||0) : parseNum(finishedEntry.millares||0);
+          const fgProdCost = finishedEntry.tipoProducto==='TERMOENCOGIBLE' ? parseNum(finishedEntry.costoUnitario||0) : parseNum(finishedEntry.costoUnitarioMillar||0);
+          if(fgProdQty > 0) await addDoc(getColRef('inventoryMovements'), {
+            itemId:`FG::${finishedEntry.id}`, itemDesc:`${finishedEntry.producto||''} - ${finishedEntry.cliente||''}`,
+            type:'ENTRADA_INICIAL', qty:fgProdQty, unitCost:fgProdCost, totalValue:fgProdQty*fgProdCost,
+            previousStock:0, newStock:fgProdQty, docRef:finishedEntry.opId||'PRODUCCION',
+            notes:`Produccion ${finishedEntry.opId||''} — ${finishedEntry.producto||''}`,
+            date:getTodayDate(), user:appUser?.name||'Admin', timestamp:Date.now(), isFG:true
+          });
+        } catch(e){}
         await updateDoc(getDocRef('wipInventory', wipEntry.id), {
           status: 'COMPLETADO',
           fechaCompletado: getTodayDate()
@@ -4195,33 +4219,33 @@ export default function App() {
                    <p className="text-xs font-bold text-gray-500 uppercase mt-1">PERÍODO: {reportMonth.toString().padStart(2, '0')} / {reportYear}{settings.tasaCambio ? ` | TASA: Bs ${formatNum(settings.tasaCambio)}/$` : ''}</p>
                  </div>
 
-                 <div className="overflow-x-auto print:overflow-hidden border-2 border-black">
-                   {tc > 0 && <div className="bg-orange-100 border-b border-orange-300 px-4 py-1.5 text-[9px] font-black text-orange-800 uppercase">Tasa de Cambio: Bs {formatNum(tc)} / $ — Todos los valores monetarios en Bolívares</div>}
-                   <table id="reporte-177-table" className="w-full text-left text-[9px] border-collapse whitespace-nowrap text-black print-tiny">
+                 <div className="border-2 border-black">
+                   {tc > 0 && <div className="bg-orange-100 border-b border-orange-300 px-3 py-1 text-[8px] font-black text-orange-800 uppercase">Tasa: Bs {formatNum(tc)}/$</div>}
+                   <table id="reporte-177-table" className="w-full text-left text-[8px] border-collapse text-black" style={{tableLayout:'fixed'}}>
+                     <colgroup>
+                       <col style={{width:'28%'}}/>
+                       <col style={{width:'6%'}}/><col style={{width:'7%'}}/>
+                       <col style={{width:'6%'}}/><col style={{width:'7%'}}/>
+                       <col style={{width:'6%'}}/><col style={{width:'7%'}}/>
+                       <col style={{width:'6%'}}/><col style={{width:'7%'}}/>
+                     </colgroup>
                      <thead>
                        <tr>
-                         <th rowSpan="2" className="border-r-2 border-b-2 border-black p-3 bg-gray-200 font-black uppercase text-center w-1/5 print-p-1">PRODUCTO / CÓDIGO</th>
-                         <th colSpan="3" className="border-r-2 border-b-2 border-black p-2 text-center bg-gray-100 font-black uppercase print-p-1">INVENTARIO INICIAL</th>
-                         <th colSpan="3" className="border-r-2 border-b-2 border-black p-2 text-center bg-green-50 font-black uppercase print-p-1">ENTRADAS</th>
-                         <th colSpan="3" className="border-r-2 border-b-2 border-black p-2 text-center bg-red-50 font-black uppercase print-p-1">SALIDAS / AUTOCONSUMO</th>
-                         <th colSpan="3" className="border-b-2 border-black p-2 text-center bg-blue-50 font-black uppercase print-p-1">INVENTARIO FINAL</th>
+                         <th rowSpan="2" className="border-r-2 border-b-2 border-black p-1.5 bg-gray-200 font-black uppercase text-center text-[8px]">PRODUCTO / CÓDIGO</th>
+                         <th colSpan="2" className="border-r-2 border-b border-black p-1 text-center bg-gray-100 font-black uppercase text-[7px]">INV. INICIAL</th>
+                         <th colSpan="2" className="border-r-2 border-b border-black p-1 text-center bg-green-50 font-black uppercase text-[7px]">ENTRADAS</th>
+                         <th colSpan="2" className="border-r-2 border-b border-black p-1 text-center bg-red-50 font-black uppercase text-[7px]">SALIDAS</th>
+                         <th colSpan="2" className="border-b border-black p-1 text-center bg-blue-50 font-black uppercase text-[7px]">INV. FINAL</th>
                        </tr>
-                       <tr className="bg-gray-50 font-bold uppercase text-[8px] text-center border-b-2 border-black print-tiny">
-                         <th className="border-r border-black p-2 print-p-1">Cant.</th>
-                         <th className="border-r border-black p-2 print-p-1">Costo U.</th>
-                         <th className="border-r-2 border-black p-2 print-p-1">Total ($)</th>
-                         
-                         <th className="border-r border-black p-2 print-p-1">Cant.</th>
-                         <th className="border-r border-black p-2 print-p-1">Costo Prom.</th>
-                         <th className="border-r-2 border-black p-2 print-p-1">Total ($)</th>
-                         
-                         <th className="border-r border-black p-2 print-p-1">Cant.</th>
-                         <th className="border-r border-black p-2 print-p-1">Costo Prom.</th>
-                         <th className="border-r-2 border-black p-2 print-p-1">Total ($)</th>
-                         
-                         <th className="border-r border-black p-2 print-p-1">Cant.</th>
-                         <th className="border-r border-black p-2 print-p-1">Costo U.</th>
-                         <th className="p-2 print-p-1">Total ($)</th>
+                       <tr className="font-bold uppercase text-[7px] text-center border-b-2 border-black">
+                         <th className="border-r border-black p-1">Cant.</th>
+                         <th className="border-r-2 border-black p-1">Total</th>
+                         <th className="border-r border-black p-1">Cant.</th>
+                         <th className="border-r-2 border-black p-1">Total</th>
+                         <th className="border-r border-black p-1">Cant.</th>
+                         <th className="border-r-2 border-black p-1">Total</th>
+                         <th className="border-r border-black p-1">Cant.</th>
+                         <th className="p-1">Total</th>
                        </tr>
                      </thead>
                      <tbody>
@@ -4239,55 +4263,47 @@ export default function App() {
                           return (
                              <React.Fragment key={catIndex}>
                                 <tr>
-                                   <td colSpan="13" className="bg-black text-white p-2 font-black uppercase tracking-widest border-b-2 border-black print-p-1">Categoría: {cat.category}</td>
+                                   <td colSpan="9" className="bg-black text-white p-1.5 font-black uppercase tracking-widest text-[8px]">Categoría: {cat.category}</td>
                                 </tr>
                                 {cat.items.map(item => (
-                                   <tr key={item.id} className="border-b border-gray-300 print:border-black hover:bg-gray-50">
-                                     <td className="p-2 border-r-2 border-black font-bold uppercase print-p-1">{item.desc} <span className="text-gray-500 block text-[7px]">{item.id}</span></td>
-                                     
-                                     <td className="p-2 border-r border-black text-center font-bold print-p-1">{formatNum(item.initialStock)} {item.unit}</td>
-                                     <td className="p-2 border-r border-black text-right print-p-1">${formatNum(item.cost)}</td>
-                                     <td className="p-2 border-r-2 border-black text-right font-black bg-gray-50 print-p-1">{fmtMon(item.initialTotal)}</td>
-                                     
-                                     <td className="p-2 border-r border-black text-center font-bold text-green-700 print-p-1">{formatNum(item.monthEntradasQty)} {item.unit}</td>
-                                     <td className="p-2 border-r border-black text-right text-green-700 print-p-1">{fmtMon(item.monthEntradasProm)}</td>
-                                     <td className="p-2 border-r-2 border-black text-right font-black bg-green-50 print-p-1">{fmtMon(item.monthEntradasTotal)}</td>
-                                     
-                                     <td className="p-2 border-r border-black text-center font-bold text-red-700 print-p-1">{formatNum(item.monthSalidasQty)} {item.unit}</td>
-                                     <td className="p-2 border-r border-black text-right text-red-700 print-p-1">{fmtMon(item.monthSalidasProm)}</td>
-                                     <td className="p-2 border-r-2 border-black text-right font-black bg-red-50 print-p-1">{fmtMon(item.monthSalidasTotal)}</td>
-                                     
-                                     <td className="p-2 border-r border-black text-center font-black text-blue-700 print-p-1">{formatNum(item.invFinalQty)} {item.unit}</td>
-                                     <td className="p-2 border-r border-black text-right font-bold text-blue-700 print-p-1">{fmtMon(item.invFinalCost)}</td>
-                                     <td className="p-2 text-right font-black bg-blue-50 text-xs print-p-1">{fmtMon(item.invFinalTotal)}</td>
+                                   <tr key={item.id} className="border-b border-gray-300 hover:bg-gray-50">
+                                     <td className="p-1 border-r-2 border-black font-bold text-[8px] uppercase truncate" title={item.desc}>{item.desc} <span className="text-gray-400 block text-[7px] truncate">{item.id} | {item.unit}</span></td>
+                                     <td className="p-1 border-r border-black text-right text-[8px]">{formatNum(item.initialStock)}</td>
+                                     <td className="p-1 border-r-2 border-black text-right font-black bg-gray-50 text-[8px]">{fmtMon(item.initialTotal)}</td>
+                                     <td className="p-1 border-r border-black text-right text-green-700 font-bold text-[8px]">{formatNum(item.monthEntradasQty)}</td>
+                                     <td className="p-1 border-r-2 border-black text-right font-black bg-green-50 text-[8px]">{fmtMon(item.monthEntradasTotal)}</td>
+                                     <td className="p-1 border-r border-black text-right text-red-700 font-bold text-[8px]">{formatNum(item.monthSalidasQty)}</td>
+                                     <td className="p-1 border-r-2 border-black text-right font-black bg-red-50 text-[8px]">{fmtMon(item.monthSalidasTotal)}</td>
+                                     <td className="p-1 border-r border-black text-right text-blue-700 font-black text-[8px]">{formatNum(item.invFinalQty)}</td>
+                                     <td className="p-1 text-right font-black bg-blue-50 text-[8px]">{fmtMon(item.invFinalTotal)}</td>
                                    </tr>
                                 ))}
-                                <tr className="bg-gray-200 font-black border-y-2 border-black">
-                                  <td className="p-2 border-r-2 border-black text-right uppercase print-p-1">TOTAL {cat.category}</td>
-                                  <td colSpan="2" className="border-r border-black print-p-1"></td>
-                                  <td className="p-2 border-r-2 border-black text-right print-p-1">${formatNum(catInitialTotal)}</td>
-                                  <td colSpan="2" className="border-r border-black print-p-1"></td>
-                                  <td className="p-2 border-r-2 border-black text-right text-green-700 print-p-1">${formatNum(catEntradasTotal)}</td>
-                                  <td colSpan="2" className="border-r border-black print-p-1"></td>
-                                  <td className="p-2 border-r-2 border-black text-right text-red-700 print-p-1">${formatNum(catSalidasTotal)}</td>
-                                  <td colSpan="2" className="border-r border-black print-p-1"></td>
-                                  <td className="p-2 text-right text-blue-700 text-xs print-p-1">${formatNum(catFinalTotal)}</td>
+                                <tr className="bg-gray-200 font-black border-y-2 border-black text-[8px]">
+                                  <td className="p-1.5 border-r-2 border-black text-right uppercase">SUBTOTAL {cat.category.substring(0,15)}</td>
+                                  <td className="border-r border-black"></td>
+                                  <td className="p-1.5 border-r-2 border-black text-right">{fmtMon(catInitialTotal)}</td>
+                                  <td className="border-r border-black"></td>
+                                  <td className="p-1.5 border-r-2 border-black text-right text-green-700">{fmtMon(catEntradasTotal)}</td>
+                                  <td className="border-r border-black"></td>
+                                  <td className="p-1.5 border-r-2 border-black text-right text-red-700">{fmtMon(catSalidasTotal)}</td>
+                                  <td className="border-r border-black"></td>
+                                  <td className="p-1.5 text-right text-blue-700">{fmtMon(catFinalTotal)}</td>
                                 </tr>
                              </React.Fragment>
                           );
                        })}
                      </tbody>
                      <tfoot>
-                       <tr className="bg-black text-white font-black text-[11px] print-tiny">
-                         <td className="p-3 border-r-2 border-black text-right uppercase print-p-1">GRAN TOTAL INVENTARIO</td>
-                         <td colSpan="2" className="border-r border-black print-p-1"></td>
-                         <td className="p-3 border-r-2 border-black text-right print-p-1">{fmtMon(grandInitialTotal)}</td>
-                         <td colSpan="2" className="border-r border-black print-p-1"></td>
+                       <tr className="bg-black text-white font-black text-[9px]">
+                         <td className="p-2 border-r-2 border-black text-right uppercase">GRAN TOTAL</td>
+                         <td className="border-r border-black"></td>
+                         <td className="p-2 border-r-2 border-black text-right">{fmtMon(grandInitialTotal)}</td>
+                         <td className="border-r border-black"></td>
                          <td className="p-3 border-r-2 border-black text-right text-green-300 print-p-1">{fmtMon(grandEntradasTotal)}</td>
                          <td colSpan="2" className="border-r border-black print-p-1"></td>
-                         <td className="p-3 border-r-2 border-black text-right text-red-300 print-p-1">{fmtMon(grandSalidasTotal)}</td>
-                         <td colSpan="2" className="border-r border-black print-p-1"></td>
-                         <td className="p-3 text-right text-blue-300 text-[13px] print-p-1">{fmtMon(grandFinalTotal)}</td>
+                         <td className="p-2 border-r-2 border-black text-right text-red-300">{fmtMon(grandSalidasTotal)}</td>
+                         <td className="border-r border-black"></td>
+                         <td className="p-2 text-right text-blue-300 font-black">{fmtMon(grandFinalTotal)}</td>
                        </tr>
                      </tfoot>
                    </table>
@@ -4514,7 +4530,7 @@ export default function App() {
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {sorted.length === 0 ? (
-                      <tr><td colSpan="8" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas registradas. Asegúrese que las facturas tienen un producto FG asignado.</td></tr>
+                      <tr><td colSpan="9" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas registradas. Asegúrese que las facturas tienen un producto FG asignado.</td></tr>
                     ) : sorted.map((s,i) => (
                       <tr key={i} className="hover:bg-gray-50">
                         <td className="py-3 px-4 border-r font-black text-orange-600">{s.factura}</td>
