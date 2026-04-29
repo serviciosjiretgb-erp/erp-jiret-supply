@@ -171,38 +171,7 @@ export default function App() {
   const [wipInventory, setWipInventory] = useState([]);
   const [finishedGoodsInventory, setFinishedGoodsInventory] = useState([]);
 
-  // ── Auto-correct FG stock/cost on first load ──
-  useEffect(() => {
-    if(fgCorrectionDone || !finishedGoodsInventory || finishedGoodsInventory.length === 0) return;
-    // Target values: product pattern → {bolsas, totalStock, cost}
-    const targets = [
-      {pattern: /embutido.*1.*kiri|kiri.*embutido.*1/i, bolsas: true,  totalStock: 241.45, cost: 86.64},
-      {pattern: /pa[ñn]al.*kiri/i,                       bolsas: true,  totalStock: 168.30, cost: 78.01},
-      {pattern: /termo.*pinturas|pinturas.*caribe/i,      bolsas: false, totalStock: 521.40, cost:  2.71},
-    ];
-    const applyCorrections = async () => {
-      if(typeof updateDoc !== "function" || typeof getDocRef !== "function") return;
-      for(const target of targets) {
-        const matches = finishedGoodsInventory.filter(fg => target.pattern.test(`${fg.producto||''} ${fg.cliente||''}`));
-        if(matches.length === 0) continue;
-        // Sort: keep the newest first (highest timestamp or millaresOrigen)
-        matches.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-        const [keeper, ...zeros] = matches;
-        // Update the keeper with correct stock and cost
-        const keeperUpdate = target.bolsas
-          ? {millares: target.totalStock, millaresOrigen: target.totalStock, costoUnitarioMillar: target.cost, costoTotalProduccion: target.cost * target.totalStock, status: 'LISTO PARA ENTREGA'}
-          : {kgProducidos: target.totalStock, kgProducidosOrigen: target.totalStock, costoUnitario: target.cost, costoTotalProduccion: target.cost * target.totalStock, status: 'LISTO PARA ENTREGA'};
-        try { await updateDoc(getDocRef('finishedGoodsInventory', keeper.id), keeperUpdate); } catch(e){}
-        // Zero out extra lotes
-        for(const z of zeros) {
-          const zeroUpdate = target.bolsas ? {millares: 0, millaresOrigen: parseNum(z.millaresOrigen||0), status: 'ENTREGADO'} : {kgProducidos: 0, kgProducidosOrigen: parseNum(z.kgProducidosOrigen||0), status: 'ENTREGADO'};
-          try { await updateDoc(getDocRef('finishedGoodsInventory', z.id), zeroUpdate); } catch(e){}
-        }
-      }
-      setFgCorrectionDone(true);
-    };
-    applyCorrections();
-  }, [finishedGoodsInventory, fgCorrectionDone]);
+  // FG corrections are applied via the Edit button in Terminados view
   const [showMovForm, setShowMovForm] = useState(false);
 
   const [dialog, setDialog] = useState(null);
@@ -950,42 +919,57 @@ export default function App() {
       for (const item of itemsToDeduct) {
         const cantFacturada = parseNum(item.cantidad);
         if (cantFacturada <= 0) continue;
-        const esTermo = item.esTermo ?? ((finishedGoodsInventory||[]).find(f=>f.id===item.fgId)?.tipoProducto === 'TERMOENCOGIBLE');
 
-        // Lotes a descontar: grpLotes (grupo) o lote individual
-        const lotesADescontar = item.grpLotes || (() => {
+        // Always use FRESH FG data from current state (not stale grpLotes from click time)
+        // Find all FG items that match this product (by fgId or by grpKey)
+        let lotesADescontar = [];
+        if(item.grpLotes && item.grpLotes.length > 0) {
+          // Re-fetch fresh data for each lote
+          lotesADescontar = item.grpLotes.map(g => (finishedGoodsInventory||[]).find(f=>f.id===g.id)).filter(Boolean);
+        }
+        if(!lotesADescontar.length && item.fgId) {
           const fg = (finishedGoodsInventory||[]).find(f => f.id === item.fgId);
-          return fg ? [fg] : [];
-        })();
-        if (!lotesADescontar.length) continue;
+          if(fg) lotesADescontar = [fg];
+        }
+        if (!lotesADescontar.length) {
+          console.warn('No FG lotes found for item:', item.fgId, item.fgGrpKey);
+          continue;
+        }
+
+        const esTermo = item.esTermo ?? (lotesADescontar[0]?.tipoProducto === 'TERMOENCOGIBLE');
 
         let porDescontar = cantFacturada;
-        for (const fg of lotesADescontar) {
+        for (const fgOld of lotesADescontar) {
           if (porDescontar <= 0.001) break;
+          // Get the absolute freshest data
+          const fg = (finishedGoodsInventory||[]).find(f=>f.id===fgOld.id) || fgOld;
           const stockLote = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-          if (stockLote <= 0) continue;
+          if (stockLote <= 0.001) continue;
           const cantDeEste = Math.min(porDescontar, stockLote);
           porDescontar -= cantDeEste;
           const nuevoStock = Math.max(0, stockLote - cantDeEste);
           const costoUnit = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+          
+          // Update finishedGoodsInventory
           if (nuevoStock <= 0.001) {
             await updateDoc(getDocRef('finishedGoodsInventory', fg.id), { status: 'ENTREGADO', millares: 0, kgProducidos: 0 });
           } else {
             const updateFG = esTermo
-              ? {kgProducidos: nuevoStock, observaciones: ((fg.observaciones||'') + ` | ${formatNum(cantDeEste)} FAC ${id}`).trim()}
-              : {millares: nuevoStock, observaciones: ((fg.observaciones||'') + ` | ${formatNum(cantDeEste)} FAC ${id}`).trim()};
+              ? {kgProducidos: nuevoStock}
+              : {millares: nuevoStock};
             await updateDoc(getDocRef('finishedGoodsInventory', fg.id), updateFG);
           }
+          
           // ── Registrar movimiento en Kardex / inventoryMovements ──
           await addDoc(getColRef('inventoryMovements'), {
             itemId: `FG::${fg.id}`, itemDesc: formatFGLabel(fg)||fg.producto||fg.id,
             type: 'SALIDA', qty: cantDeEste, unitCost: costoUnit,
             totalValue: cantDeEste * costoUnit, previousStock: stockLote,
-            newStock: Math.max(0, stockLote - cantDeEste),
-            docRef: id, notes: `VENTA FAC ${id}`,
+            newStock: nuevoStock, docRef: id, notes: `VENTA FAC ${id}`,
             date: newInvoiceForm.fecha||getTodayDate(),
             user: appUser?.name||'Admin', timestamp: Date.now(), isFG: true
           });
+          
           const costoFG = cantDeEste * costoUnit;
           if (costoFG > 0) await registrarAsientoContable(null, { debito:'5.1.01.01.001', credito:'1.1.03.01.008', monto:costoFG, descripcion:`COSTO PROD — FAC ${id} — ${fg.producto||fg.id}`, referencia:id, fecha:newInvoiceForm.fecha });
         }
@@ -2590,7 +2574,15 @@ export default function App() {
                             ? {kgProducidos: totalQty, kgProducidosOrigen: Math.max(totalQty, parseNum(existingFG.kgProducidosOrigen||totalQty)), costoUnitario: avgCost, costoTotalProduccion: avgCost * totalQty}
                             : {millares: totalQty, millaresOrigen: Math.max(totalQty, parseNum(existingFG.millaresOrigen||totalQty)), costoUnitarioMillar: avgCost, costoTotalProduccion: avgCost * totalQty};
                           await updateDoc(getDocRef('finishedGoodsInventory', existingFG.id), updateData);
-                          setDialog({title:'✅ Stock Actualizado',text:`Producto existente actualizado.\nStock: ${formatNum(totalQty)} ${esTermo2?'KG':'Millares'}\nCosto promedio: $${formatNum(avgCost)}/${esTermo2?'KG':'Millar'}`,type:'alert'});
+                          // Kardex ENTRADA
+                          await addDoc(getColRef('inventoryMovements'), {
+                            itemId:`FG::${existingFG.id}`, itemDesc:formatFGLabel(existingFG)||existingFG.producto,
+                            type:'ENTRADA', qty:newQty, unitCost:cu, totalValue:newQty*cu,
+                            previousStock:existStock, newStock:totalQty,
+                            docRef:'CARGA MANUAL', notes: cargarForm.observaciones||'Carga manual',
+                            date:cargarForm.fecha||getTodayDate(), user:appUser?.name||'Admin', timestamp:Date.now(), isFG:true
+                          });
+                          setDialog({title:'✅ Stock Actualizado',text:`Costo promedio: $${formatNum(avgCost)}/${esTermo2?'KG':'Millar'} | Stock: ${formatNum(totalQty)}`,type:'alert'});
                           setCargarForm({...cargarForm, producto:'', cliente:'', millares:'', kgProducidos:'', costoUnit:''});
                           setShowCargarProducto(false);
                           return;
@@ -2605,11 +2597,22 @@ export default function App() {
                           millares: mill, millaresOrigen: mill,
                           costoUnitario: cuKg,
                           costoUnitarioMillar: cuMillar,
-                          costoTotalProduccion: cargarForm.tipoProducto==='TERMOENCOGIBLE' ? cu*kg : cu*mill,
+                          costoTotalProduccion: esTermo2 ? cu*kg : cu*mill,
                           fechaFinalizacion: cargarForm.fecha||getTodayDate(),
                           ubicacion: 'ALMACEN GENERAL', status: 'LISTO PARA ENTREGA',
                           observaciones: cargarForm.observaciones||'Carga manual', timestamp: Date.now()
                         });
+                        // Kardex ENTRADA for new FG
+                        const newQtyFG = esTermo2 ? kg : mill;
+                        if(newQtyFG > 0 && cu > 0) {
+                          await addDoc(getColRef('inventoryMovements'), {
+                            itemId:`FG::${newId}`, itemDesc:`${cargarForm.producto||''} - ${cargarForm.cliente||''}`,
+                            type:'ENTRADA_INICIAL', qty:newQtyFG, unitCost:cu, totalValue:newQtyFG*cu,
+                            previousStock:0, newStock:newQtyFG,
+                            docRef:'CARGA MANUAL', notes:cargarForm.observaciones||'Carga manual',
+                            date:cargarForm.fecha||getTodayDate(), user:appUser?.name||'Admin', timestamp:Date.now(), isFG:true
+                          });
+                        }
                       } else {
                         // MP, Consumibles, Mercancía → agregar al catálogo de inventario
                         if (!cargarForm.codigo || !cargarForm.descripcion) return setDialog({title:'Aviso',text:'Complete código y descripción.',type:'alert'});
