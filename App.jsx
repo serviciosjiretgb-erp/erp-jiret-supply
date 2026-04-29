@@ -1796,48 +1796,75 @@ export default function App() {
 
       const handleSaveMov = async () => {
         if(!movForm.itemId || !parseNum(movForm.qty)) return setDialog({title:'Aviso',text:'Complete artículo y cantidad.',type:'alert'});
+        const isFGGrp = movForm.itemId.startsWith('FGG::');
         const isFGItem = movForm.itemId.startsWith('FG::');
-        const actualId = isFGItem ? movForm.itemId.replace('FG::','') : movForm.itemId;
         const qty = parseNum(movForm.qty);
-        const unitCostNew = parseNum(movForm.unitCost) || 0;
+        const unitCostInput = parseNum(movForm.unitCost) || 0;
 
-        if(isFGItem) {
-          // FG item - update finishedGoodsInventory
-          const fg = (finishedGoodsInventory||[]).find(f=>f.id===actualId);
-          if(!fg) return setDialog({title:'Error',text:'Producto terminado no encontrado.',type:'alert'});
-          const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
-          const currentStock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-          const newStock = Math.max(0, currentStock - qty);
-          const cost = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-          const mov = {itemId:`FG::${actualId}`, itemDesc: formatFGLabel(fg)||fg.producto||actualId, type:movForm.type, qty, unitCost:cost, totalValue:qty*cost, previousStock:currentStock, newStock, docRef:movForm.docRef, notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin', timestamp:Date.now(), isFG:true};
-          try {
-            await addDoc(getColRef('inventoryMovements'), mov);
-            const updateField = esTermo ? {kgProducidos: newStock} : {millares: newStock};
-            await updateDoc(getDocRef('finishedGoodsInventory', actualId), updateField);
-            setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',type:'AUTOCONSUMO',notes:'',date:getTodayDate()});
-            setShowMovForm(false);
-            setDialog({title:'✅ Movimiento Procesado',text:`Nuevo stock FG: ${formatNum(newStock)} ${esTermo?'KG':'Millares'}`,type:'alert'});
-          } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+        if(isFGGrp || isFGItem) {
+          // Find ALL FG items in the group
+          const grpKey = isFGGrp ? movForm.itemId.replace('FGG::','') : movForm.itemId.replace('FG::','');
+          
+          // Find all matching FG items (by grpKey normalization)
+          const matchingFGs = (finishedGoodsInventory||[]).filter(fg => {
+            if(isFGItem && fg.id === grpKey) return true; // direct id match
+            const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+            const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+            const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+            const fgGrpKey=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
+            return fgGrpKey === grpKey;
+          });
+          
+          if(matchingFGs.length === 0) return setDialog({title:'Error',text:'Producto no encontrado.',type:'alert'});
+          const esTermo = matchingFGs[0].tipoProducto==='TERMOENCOGIBLE';
+          const totalStock = matchingFGs.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
+          const cost = unitCostInput || (esTermo ? parseNum(matchingFGs[0].costoUnitario||0) : parseNum(matchingFGs[0].costoUnitarioMillar||0));
+          const isInMov = movForm.type==='ENTRADA'||movForm.type==='ENTRADA_DEVOLUCION'||movForm.type==='ENTRADA_INICIAL';
+          
+          if(!isInMov && qty > totalStock + 0.001) return setDialog({title:'Aviso',text:`Stock insuficiente. Disponible: ${formatNum(totalStock)} ${esTermo?'KG':'Millares'}`,type:'alert'});
+          
+          // Deduct/add from FG items proportionally  
+          let remaining = qty;
+          for(const fg of matchingFGs) {
+            if(remaining <= 0.001) break;
+            const fgStock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+            if(!isInMov && fgStock <= 0) continue;
+            const cantDeEste = isInMov ? qty : Math.min(remaining, fgStock);
+            remaining -= cantDeEste;
+            const newStk = isInMov ? fgStock + cantDeEste : Math.max(0, fgStock - cantDeEste);
+            const updateFG = esTermo ? {kgProducidos: newStk} : {millares: newStk};
+            await updateDoc(getDocRef('finishedGoodsInventory', fg.id), updateFG);
+            await addDoc(getColRef('inventoryMovements'), {
+              itemId:`FG::${fg.id}`, itemDesc:formatFGLabel(fg)||fg.producto||fg.id,
+              type:movForm.type, qty:cantDeEste, unitCost:cost, totalValue:cantDeEste*cost,
+              previousStock:fgStock, newStock:newStk, docRef:movForm.docRef,
+              notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin',
+              timestamp:Date.now(), isFG:true
+            });
+          }
+          setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',type:isEntradas?'ENTRADA':'AUTOCONSUMO',notes:'',date:getTodayDate()});
+          setShowMovForm(false);
+          setDialog({title:'✅ Movimiento Procesado',text:`${isInMov?'Entrada':'Salida'} registrada para ${esTermo?'KG':'Millares'}: ${formatNum(qty)}`,type:'alert'});
           return;
         }
 
-        const inv = (inventory||[]).find(i=>i.id===actualId);
+        // MP / Consumibles normal item
+        const inv = (inventory||[]).find(i=>i.id===movForm.itemId);
         if(!inv) return;
-        const unitCostFinal = unitCostNew || inv.cost || 0;
+        const unitCostFinal = unitCostInput || inv.cost || 0;
         const newStock = isEntradas ? (inv.stock||0) + qty : Math.max(0,(inv.stock||0) - qty);
-        // If entry, update cost with weighted average
         const newCost = isEntradas && unitCostFinal > 0
           ? (((inv.stock||0)*parseNum(inv.cost||0)) + (qty*unitCostFinal)) / ((inv.stock||0) + qty)
           : inv.cost;
-        const mov = {itemId:actualId, itemDesc:inv.desc, type:movForm.type, qty, unitCost: unitCostFinal, totalValue: qty * unitCostFinal, previousStock:inv.stock||0, newStock, docRef: movForm.docRef, notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin', timestamp:Date.now()};
+        const mov = {itemId:movForm.itemId, itemDesc:inv.desc, type:movForm.type, qty, unitCost: unitCostFinal, totalValue: qty * unitCostFinal, previousStock:inv.stock||0, newStock, docRef: movForm.docRef, notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin', timestamp:Date.now()};
         try {
           await addDoc(getColRef('inventoryMovements'), mov);
           const updateData = {stock: newStock};
           if(isEntradas && unitCostFinal > 0) updateData.cost = newCost;
-          await updateDoc(getDocRef('inventory', actualId), updateData);
+          await updateDoc(getDocRef('inventory', movForm.itemId), updateData);
           setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',type:isEntradas?'ENTRADA':'AUTOCONSUMO',notes:'',date:getTodayDate()});
           setShowMovForm(false);
-          setDialog({title:'✅ Movimiento Procesado',text:`Nuevo stock: ${formatNum(newStock)} ${inv.unit}${isEntradas && unitCostFinal>0 ? ` | Costo promedio: $${formatNum(newCost)}`:''}.`,type:'alert'});
+          setDialog({title:'✅ Movimiento Procesado',text:`Nuevo stock: ${formatNum(newStock)} ${inv.unit}`,type:'alert'});
         } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
       };
 
@@ -1872,27 +1899,50 @@ export default function App() {
                 <div>
                   <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Ítem del Inventario</label>
                   <select value={movForm.itemId} onChange={e=>{
-                    const isFG = e.target.value.startsWith('FG::');
-                    const actualId = isFG ? e.target.value.replace('FG::','') : e.target.value;
-                    const inv = isFG
-                      ? (finishedGoodsInventory||[]).find(f=>f.id===actualId)
-                      : (inventory||[]).find(i=>i.id===actualId);
-                    const cost = isFG
-                      ? (inv?.tipoProducto==='TERMOENCOGIBLE' ? parseNum(inv?.costoUnitario||0) : parseNum(inv?.costoUnitarioMillar||0))
-                      : parseNum(inv?.cost||0);
-                    setMovForm({...movForm, itemId:e.target.value, unitCost:String(cost||0)});
+                    const val = e.target.value;
+                    const isFGG = val.startsWith('FGG::');
+                    const isFG = val.startsWith('FG::');
+                    let cost = 0;
+                    if(isFGG) {
+                      const grpKey = val.replace('FGG::','');
+                      const matchFG = (finishedGoodsInventory||[]).find(fg=>{
+                        const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                        const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                        return `${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}` === grpKey;
+                      });
+                      const esTermo=matchFG?.tipoProducto==='TERMOENCOGIBLE';
+                      cost = matchFG ? (esTermo?parseNum(matchFG.costoUnitario||0):parseNum(matchFG.costoUnitarioMillar||0)) : 0;
+                    } else if(isFG) {
+                      const fg=(finishedGoodsInventory||[]).find(f=>f.id===val.replace('FG::',''));
+                      const esTermo=fg?.tipoProducto==='TERMOENCOGIBLE';
+                      cost = fg ? (esTermo?parseNum(fg.costoUnitario||0):parseNum(fg.costoUnitarioMillar||0)) : 0;
+                    } else {
+                      const inv=(inventory||[]).find(i=>i.id===val);
+                      cost = parseNum(inv?.cost||0);
+                    }
+                    setMovForm({...movForm, itemId:val, unitCost:String(cost||0)});
                   }} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
                     <option value="">Seleccione...</option>
                     <optgroup label="── Materia Prima / Consumibles ──">
                       {(inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
                     </optgroup>
                     <optgroup label="── Productos Terminados ──">
-                      {(finishedGoodsInventory||[]).filter(fg=>parseNum(fg.kgProducidos)>0||parseNum(fg.millares)>0).map(fg=>{
-                        const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
-                        const stk=esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
-                        const un=esTermo?'KG':'Millares';
-                        return <option key={`FG::${fg.id}`} value={`FG::${fg.id}`}>{formatFGLabel(fg)||fg.producto||fg.id} (Stock: {formatNum(stk)} {un})</option>;
-                      })}
+                      {(() => {
+                        const fgSelMap = {};
+                        (finishedGoodsInventory||[]).forEach(fg => {
+                          const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+                          const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                          const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                          const gk=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
+                          if(!fgSelMap[gk]) fgSelMap[gk]={key:gk, ids:[fg.id], label:formatFGLabel(fg)||fg.producto||fg.id, esTermo, stk:0, unit:esTermo?'KG':'Millares'};
+                          else fgSelMap[gk].ids.push(fg.id);
+                          const stk=esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
+                          fgSelMap[gk].stk+=stk;
+                        });
+                        return Object.values(fgSelMap).filter(g=>g.stk>0).map(g=>(
+                          <option key={`FGG::${g.key}`} value={`FGG::${g.key}`}>{g.label} (Stock: {formatNum(g.stk)} {g.unit})</option>
+                        ));
+                      })()}
                     </optgroup>
                   </select>
                 </div>
