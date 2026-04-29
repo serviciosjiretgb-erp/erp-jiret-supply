@@ -153,6 +153,23 @@ export default function App() {
   const [showCargarProducto, setShowCargarProducto] = useState(false);
   const [fgCorrectionDone, setFgCorrectionDone] = useState(false);
 
+  const [showODPModal, setShowODPModal] = useState(false);
+  const [wipSearch, setWipSearch] = useState('');
+  const [cargarForm, setCargarForm] = useState({ tipo: 'TERMINADOS', tipoProducto: 'BOLSAS', cliente: '', opId: '', producto: '', ancho: '', largo: '', micras: '', color: 'NATURAL', millares: '', kgProducidos: '', fecha: getTodayDate(), observaciones: '', categoria: '', codigo: '', descripcion: '', unidad: 'KG', cantidad: '', costo: '', proveedor: '' });
+  const [invReportType, setInvReportType] = useState('entradas');
+  const [invSubFilter, setInvSubFilter] = useState('TODOS');
+
+  const [inventory, setInventory] = useState([]);
+  const [invMovements, setInvMovements] = useState([]); 
+  const [clients, setClients] = useState([]);
+  const [requirements, setRequirements] = useState([]);
+  const [invoices, setInvoices] = useState([]);
+  const [invRequisitions, setInvRequisitions] = useState([]);
+
+  // Estados para nuevos inventarios WIP y Finished Goods
+  const [wipInventory, setWipInventory] = useState([]);
+  const [finishedGoodsInventory, setFinishedGoodsInventory] = useState([]);
+
   // ── One-time data correction (runs once per session via sessionStorage flag) ──
   useEffect(() => {
     if(fgCorrectionDone || !finishedGoodsInventory || finishedGoodsInventory.length === 0) return;
@@ -203,22 +220,6 @@ export default function App() {
     };
     run();
   }, [finishedGoodsInventory, fgCorrectionDone]);
-  const [showODPModal, setShowODPModal] = useState(false);
-  const [wipSearch, setWipSearch] = useState('');
-  const [cargarForm, setCargarForm] = useState({ tipo: 'TERMINADOS', tipoProducto: 'BOLSAS', cliente: '', opId: '', producto: '', ancho: '', largo: '', micras: '', color: 'NATURAL', millares: '', kgProducidos: '', fecha: getTodayDate(), observaciones: '', categoria: '', codigo: '', descripcion: '', unidad: 'KG', cantidad: '', costo: '', proveedor: '' });
-  const [invReportType, setInvReportType] = useState('entradas');
-  const [invSubFilter, setInvSubFilter] = useState('TODOS');
-
-  const [inventory, setInventory] = useState([]);
-  const [invMovements, setInvMovements] = useState([]); 
-  const [clients, setClients] = useState([]);
-  const [requirements, setRequirements] = useState([]);
-  const [invoices, setInvoices] = useState([]);
-  const [invRequisitions, setInvRequisitions] = useState([]);
-
-  // Estados para nuevos inventarios WIP y Finished Goods
-  const [wipInventory, setWipInventory] = useState([]);
-  const [finishedGoodsInventory, setFinishedGoodsInventory] = useState([]);
 
   // FG corrections are applied via the Edit button in Terminados view
   const [showMovForm, setShowMovForm] = useState(false);
