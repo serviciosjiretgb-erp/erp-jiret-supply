@@ -366,7 +366,7 @@ export default function App() {
   const [bobinaIngId, setBobinaIngId] = useState('');
   const [bobinaIngQty, setBobinaIngQty] = useState('');
   const [activeBobinaId, setActiveBobinaId] = useState(null);
-  const [bobinaPhaseForm, setBobinaPhaseForm] = useState({ date:getTodayDate(), insumos:[], producedKg:'', mermaKg:'', observaciones:'', operadorExt:'', zona1:'', zona2:'', zona3:'', zona4:'', zona5:'', zona6:'', cabezalA:'', cabezalB:'', motorExt:'', ventilador:'', jalador:'', tratado:'' });
+  const [bobinaPhaseForm, setBobinaPhaseForm] = useState({ date:getTodayDate(), insumos:[], producedKg:'', mermaKg:'', mermaTroquelTransp:'', mermaTroquelPigm:'', mermaTorta:'', observaciones:'', operadorExt:'', zona1:'', zona2:'', zona3:'', zona4:'', zona5:'', zona6:'', cabezalA:'', cabezalB:'', motorExt:'', ventilador:'', jalador:'', tratado:'' });
   // ── Stock mínimo (edición admin en Proyección MP) ──
   const [editingMinStock, setEditingMinStock] = useState(null); // {id, value}
   // ============================================================================
@@ -7204,10 +7204,18 @@ export default function App() {
         if(!bobinaForm.categoria || !bKgProcesar || (bobinaForm.insumos||[]).length===0)
           return setDialog({title:'Aviso',text:'Complete categoría, KG a procesar y al menos un insumo.',type:'alert'});
         try {
-          const bobId = `BOB-PROD-${Date.now()}`;
+          // ID secuencial legible: BOB-PROD-{nnnnn}
+          const nextNum = ((bobinaProductions||[]).reduce((m,b)=>{
+            const mt=String(b.nro||0); return Math.max(m, parseInt(mt)||0);
+          },0)+1).toString().padStart(5,'0');
+          const bobId = `BOB-PROD-${nextNum}`;
+          // Nombre del ítem de inventario: BOB-{categoria_limpia}-{dims}
+          const catSlug = (bobinaForm.categoria||'').replace(/\s+/g,'-').replace(/[^A-Z0-9\-]/gi,'').toUpperCase().substring(0,20);
+          const micStr = bm ? String(bm) : '0';
+          const bobLabel = `BOB-${catSlug}-${bw}X${bl}X${micStr}MIC`;
           await setDoc(getDocRef('bobinaProductions', bobId), {
-            id: bobId, status: 'PENDIENTE_ALMACÉN',
-            categoria: bobinaForm.categoria,
+            id: bobId, nro: parseInt(nextNum), status: 'PENDIENTE_ALMACÉN',
+            categoria: bobinaForm.categoria, bobLabel,
             ancho: bw, fuelles: bfu, largo: bl, micras: bm,
             kgPlanificados: bKgProcesar, mermaPorc: bMermaPorc,
             insumos: bobinaForm.insumos,
@@ -7217,13 +7225,13 @@ export default function App() {
           await addDoc(getColRef('inventoryRequisitions'), {
             opId: bobId, phase: 'extrusion',
             items: bobinaForm.insumos, status: 'PENDIENTE',
-            isBobina: true, bobinaProdId: bobId,
+            isBobina: true, bobinaProdId: bobId, bobLabel,
             timestamp: Date.now(), date: getTodayDate(), user: appUser?.name||'Planta'
           });
           setBobinaForm({categoria:'',ancho:'',fuelles:'',largo:'',micras:'',kgProcesar:'',mermaPorc:'5',insumos:[],fecha:getTodayDate(),observaciones:''});
           setBobinaIngId(''); setBobinaIngQty('');
           setShowBobinaPanel(false);
-          setDialog({title:'✅ Solicitud Enviada',text:'Requisición enviada a Almacén. La extrusión iniciará cuando sea aprobada.',type:'alert'});
+          setDialog({title:'✅ Solicitud Enviada',text:`Requisición ${bobId} enviada a Almacén. La extrusión iniciará cuando sea aprobada.`,type:'alert'});
         } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
       };
 
@@ -7447,35 +7455,113 @@ export default function App() {
                 {enProcesoBobinas.map(b=>{
                   const isOpen = activeBobinaId === b.id;
                   const wipB = (wipInventory||[]).find(w=>w.opId===b.id&&w.isBobina);
+                  const totalDespachado = wipB?.kgAsignados||0;
+                  const kgConsumidoEnForm = (bobinaPhaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                  const autoMerma = kgConsumidoEnForm > 0 && parseNum(bobinaPhaseForm.producedKg) > 0
+                    ? Math.max(0, kgConsumidoEnForm - parseNum(bobinaPhaseForm.producedKg)).toFixed(2) : bobinaPhaseForm.mermaKg;
+                  const mermaDesglose = parseNum(bobinaPhaseForm.mermaTroquelTransp)+parseNum(bobinaPhaseForm.mermaTroquelPigm)+parseNum(bobinaPhaseForm.mermaTorta);
+                  const pctMerma = kgConsumidoEnForm > 0 ? (parseNum(bobinaPhaseForm.mermaKg)/kgConsumidoEnForm)*100 : 0;
+                  const semaforoColor = pctMerma <= 5 ? 'border-green-400 bg-green-50 text-green-700' : pctMerma <= 7 ? 'border-yellow-400 bg-yellow-50 text-yellow-700' : 'border-red-400 bg-red-50 text-red-700';
+                  const micStr = b.micras ? String(b.micras) : '?';
+                  const dimsLabel = b.fuelles > 0 ? `(${b.ancho}+${b.fuelles/2}+${b.fuelles/2})×${b.largo}×${micStr}MIC` : `${b.ancho}×${b.largo}×${micStr}MIC`;
                   return (
-                    <div key={b.id} className="bg-green-50 border-2 border-green-200 rounded-2xl overflow-hidden mb-4">
-                      <div className="flex justify-between items-center p-4 bg-white border-b border-green-100">
+                    <div key={b.id} className="bg-white border-2 border-green-200 rounded-2xl overflow-hidden mb-4 shadow-sm">
+                      {/* Header igual a Producción Activa */}
+                      <div className="flex justify-between items-start p-5 bg-white border-b border-gray-100">
                         <div>
-                          <div className="font-black text-sm text-gray-900 uppercase">{b.categoria} — {b.ancho}×{b.largo}×{b.micras}MIC</div>
-                          <div className="text-[9px] text-gray-500 mt-0.5">{b.fecha} | {formatNum(b.kgPlanificados)} KG planificados | MP Asignada: {formatNum(wipB?.kgAsignados||0)} KG | Costo/KG MP: ${formatNum(wipB?.costoPromedio||0)}</div>
+                          <h3 className="font-black text-black text-sm uppercase">{b.id} — {b.categoria}</h3>
+                          <p className="text-[10px] font-bold text-gray-500 mt-1">{dimsLabel} | NATURAL | {b.ancho}cm×{b.largo}cm | {micStr}mic | {formatNum(b.kgPlanificados)} KG</p>
+                          <p className="text-[9px] text-gray-400 mt-0.5">MP Asignada: {formatNum(totalDespachado)} KG | Costo/KG MP: ${formatNum(wipB?.costoPromedio||0)} | {b.fecha}</p>
                         </div>
                         <button onClick={()=>{
                           if(isOpen){setActiveBobinaId(null);}
                           else{setActiveBobinaId(b.id); setBobinaPhaseForm(p=>({...p,date:getTodayDate()}));}
-                        }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${isOpen?'bg-gray-200 text-gray-700':'bg-green-600 text-white hover:bg-green-700 shadow-md'}`}>
-                          {isOpen?<><X size={14}/>Cerrar</>:<><PlayCircle size={14}/>Registrar Extrusión</>}
+                        }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${isOpen?'bg-gray-200 text-gray-700':'bg-orange-500 text-white hover:bg-orange-600 shadow-md'}`}>
+                          {isOpen?<><X size={14}/>Cerrar</>:<><Plus size={14}/>Registrar Extrusión</>}
                         </button>
                       </div>
+
                       {isOpen && (
-                        <div className="p-5 space-y-4">
-                          {/* Parámetros técnicos extrusión */}
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                              <input type="date" value={bobinaPhaseForm.date} onChange={e=>setBobinaPhaseForm(p=>({...p,date:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500"/></div>
-                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Operador</label>
-                              <input type="text" value={bobinaPhaseForm.operadorExt} onChange={e=>setBobinaPhaseForm(p=>({...p,operadorExt:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500 uppercase" placeholder="Nombre operador"/></div>
-                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Motor Extrusora</label>
-                              <input type="text" value={bobinaPhaseForm.motorExt} onChange={e=>setBobinaPhaseForm(p=>({...p,motorExt:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500" placeholder="Hz / RPM"/></div>
-                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tratado</label>
-                              <select value={bobinaPhaseForm.tratado} onChange={e=>setBobinaPhaseForm(p=>({...p,tratado:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500 bg-white">
-                                <option value="">—</option><option value="SI">SI</option><option value="NO">NO</option>
-                              </select></div>
+                        <div className="p-5 bg-orange-50/30 space-y-4">
+                          {/* Fila 1: Fecha / KG Procesados / Merma Auto — igual a producción activa */}
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-black text-blue-600 uppercase block">📅 Fecha de Salida — Extrusión</label>
+                              <input type="date" value={bobinaPhaseForm.date} onChange={e=>setBobinaPhaseForm(p=>({...p,date:e.target.value}))}
+                                className="w-full border-2 border-blue-300 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500 bg-blue-50 text-blue-900"/>
+                              <span className="text-[8px] text-blue-500 font-bold">Fecha en que sale el producto de esta fase</span>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-black text-gray-600 uppercase block">KG Procesados (Extrusión)</label>
+                              <input type="number" step="0.01" value={bobinaPhaseForm.producedKg}
+                                onChange={e=>{
+                                  const kg=e.target.value;
+                                  const base=totalDespachado>0?totalDespachado:kgConsumidoEnForm;
+                                  const am=base>0&&parseNum(kg)>=0?Math.max(0,base-parseNum(kg)).toFixed(2):bobinaPhaseForm.mermaKg;
+                                  setBobinaPhaseForm(p=>({...p,producedKg:kg,mermaKg:am}));
+                                }}
+                                className="w-full border-2 border-gray-300 rounded-xl p-2 text-sm font-black outline-none focus:border-gray-500 text-center bg-white" placeholder="0.00"/>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-black text-gray-600 uppercase block">Merma KG <span className="text-orange-500">(Auto)</span> 🔒</label>
+                              <div className="relative">
+                                <input type="number" step="0.01" value={bobinaPhaseForm.mermaKg} readOnly
+                                  className={`w-full border-2 rounded-xl p-2 text-sm font-black outline-none text-center cursor-not-allowed opacity-90 ${semaforoColor}`} placeholder="0.00"/>
+                                {pctMerma > 0 && <span className={`absolute -top-5 right-0 text-[9px] font-black ${pctMerma<=5?'text-green-600':pctMerma<=7?'text-yellow-600':'text-red-600'}`}>{pctMerma.toFixed(1)}% {pctMerma<=5?'🟢':pctMerma<=7?'🟡':'🔴'}</span>}
+                              </div>
+                            </div>
                           </div>
+
+                          {/* Desglose de Merma — IGUAL que Producción Activa */}
+                          <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-4 space-y-3">
+                            <div className="flex justify-between items-center">
+                              <h5 className="text-[9px] font-black text-red-700 uppercase">♻️ Desglose de Merma → Inventario Reciclado</h5>
+                              {mermaDesglose > 0 && <span className="text-[9px] font-black text-red-600">Total desglosado: {formatNum(mermaDesglose)} KG</span>}
+                            </div>
+                            <div className="grid grid-cols-3 gap-3">
+                              <div className="bg-white rounded-xl border border-gray-200 p-3">
+                                <label className="text-[8px] font-black text-gray-500 uppercase block mb-1">🔵 Troquel/Grafilado<br/>TRANSPARENTE</label>
+                                <input type="number" step="0.01" value={bobinaPhaseForm.mermaTroquelTransp}
+                                  onChange={e=>{const v=e.target.value;const t=parseNum(v)+parseNum(bobinaPhaseForm.mermaTroquelPigm)+parseNum(bobinaPhaseForm.mermaTorta);setBobinaPhaseForm(p=>({...p,mermaTroquelTransp:v,mermaKg:t.toFixed(2)}));}}
+                                  className="w-full border border-blue-200 rounded-lg p-2 text-xs font-black text-center outline-none bg-blue-50 text-blue-700" placeholder="0.00"/>
+                                <span className="text-[8px] text-blue-600 font-bold block mt-1">→ RECICLADO TRANSPARENTE</span>
+                              </div>
+                              <div className="bg-white rounded-xl border border-gray-200 p-3">
+                                <label className="text-[8px] font-black text-gray-500 uppercase block mb-1">🟠 Troquel/Grafilado<br/>PIGMENTADO</label>
+                                <input type="number" step="0.01" value={bobinaPhaseForm.mermaTroquelPigm}
+                                  onChange={e=>{const v=e.target.value;const t=parseNum(bobinaPhaseForm.mermaTroquelTransp)+parseNum(v)+parseNum(bobinaPhaseForm.mermaTorta);setBobinaPhaseForm(p=>({...p,mermaTroquelPigm:v,mermaKg:t.toFixed(2)}));}}
+                                  className="w-full border border-orange-200 rounded-lg p-2 text-xs font-black text-center outline-none bg-orange-50 text-orange-700" placeholder="0.00"/>
+                                <span className="text-[8px] text-orange-600 font-bold block mt-1">→ RECICLADO PIGMENTADO</span>
+                              </div>
+                              <div className="bg-white rounded-xl border border-gray-200 p-3">
+                                <label className="text-[8px] font-black text-gray-500 uppercase block mb-1">🟤 Merma<br/>TORTA</label>
+                                <input type="number" step="0.01" value={bobinaPhaseForm.mermaTorta}
+                                  onChange={e=>{const v=e.target.value;const t=parseNum(bobinaPhaseForm.mermaTroquelTransp)+parseNum(bobinaPhaseForm.mermaTroquelPigm)+parseNum(v);setBobinaPhaseForm(p=>({...p,mermaTorta:v,mermaKg:t.toFixed(2)}));}}
+                                  className="w-full border border-amber-200 rounded-lg p-2 text-xs font-black text-center outline-none bg-amber-50 text-amber-700" placeholder="0.00"/>
+                                <span className="text-[8px] text-amber-600 font-bold block mt-1">→ RECICLADO TORTA</span>
+                              </div>
+                            </div>
+                            <p className="text-[8px] text-red-500 font-bold">Al guardar la fase, estas cantidades se registran automáticamente en el inventario como material reciclado.</p>
+                          </div>
+
+                          {/* Operador / Motor / Tratado */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Ext.</label>
+                              <input type="text" value={bobinaPhaseForm.operadorExt} onChange={e=>setBobinaPhaseForm(p=>({...p,operadorExt:e.target.value.toUpperCase()}))}
+                                className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" placeholder="Nombre operador"/></div>
+                            <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Motor Ext.</label>
+                              <input type="number" step="0.1" value={bobinaPhaseForm.motorExt} onChange={e=>setBobinaPhaseForm(p=>({...p,motorExt:e.target.value}))}
+                                className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" placeholder="Hz / RPM"/></div>
+                            <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tratado</label>
+                              <select value={bobinaPhaseForm.tratado} onChange={e=>setBobinaPhaseForm(p=>({...p,tratado:e.target.value}))}
+                                className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white">
+                                <option value="">Sin tratado</option><option value="1 CARA">1 CARA</option><option value="2 CARAS">2 CARAS</option>
+                              </select></div>
+                            <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Jalador</label>
+                              <input type="text" value={bobinaPhaseForm.jalador} onChange={e=>setBobinaPhaseForm(p=>({...p,jalador:e.target.value}))}
+                                className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" placeholder="Hz"/></div>
+                          </div>
+
                           {/* Zonas de temperatura */}
                           <div>
                             <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Zonas de Temperatura (°C)</label>
@@ -7483,46 +7569,108 @@ export default function App() {
                               {['zona1','zona2','zona3','zona4','zona5','zona6'].map((z,i)=>(
                                 <div key={z}><label className="text-[8px] font-bold text-gray-400 block text-center">Z{i+1}</label>
                                   <input type="number" value={bobinaPhaseForm[z]} onChange={e=>setBobinaPhaseForm(p=>({...p,[z]:e.target.value}))}
-                                    className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-black text-center outline-none focus:border-green-500" placeholder="0"/></div>
+                                    className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="0"/></div>
                               ))}
                             </div>
                           </div>
+
                           {/* Cabezales */}
-                          <div className="grid grid-cols-3 gap-3">
+                          <div className="grid grid-cols-2 gap-3">
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cabezal A (°C)</label>
-                              <input type="number" value={bobinaPhaseForm.cabezalA} onChange={e=>setBobinaPhaseForm(p=>({...p,cabezalA:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold text-center outline-none focus:border-green-500" placeholder="0"/></div>
+                              <input type="number" value={bobinaPhaseForm.cabezalA} onChange={e=>setBobinaPhaseForm(p=>({...p,cabezalA:e.target.value}))}
+                                className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold text-center outline-none focus:border-orange-400" placeholder="0"/></div>
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cabezal B (°C)</label>
-                              <input type="number" value={bobinaPhaseForm.cabezalB} onChange={e=>setBobinaPhaseForm(p=>({...p,cabezalB:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold text-center outline-none focus:border-green-500" placeholder="0"/></div>
-                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Jalador</label>
-                              <input type="text" value={bobinaPhaseForm.jalador} onChange={e=>setBobinaPhaseForm(p=>({...p,jalador:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500" placeholder="Hz"/></div>
+                              <input type="number" value={bobinaPhaseForm.cabezalB} onChange={e=>setBobinaPhaseForm(p=>({...p,cabezalB:e.target.value}))}
+                                className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold text-center outline-none focus:border-orange-400" placeholder="0"/></div>
                           </div>
-                          {/* KG producidos y merma */}
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 bg-green-50 border-2 border-green-200 rounded-2xl p-4">
-                            <div>
-                              <label className="text-[9px] font-black text-green-700 uppercase block mb-1">⭐ KG Producidos (Bobina)</label>
-                              <input type="number" step="0.01" value={bobinaPhaseForm.producedKg} onChange={e=>setBobinaPhaseForm(p=>({...p,producedKg:e.target.value}))}
-                                className="w-full border-2 border-green-400 rounded-xl p-3 text-sm font-black text-center outline-none focus:border-green-600 bg-white" placeholder="0.00" autoFocus/>
+
+                          {/* Insumos Consumidos — panel progreso igual que producción activa */}
+                          <div className="bg-white rounded-xl border border-orange-200 p-4">
+                            <h4 className="text-[9px] font-black text-gray-700 uppercase mb-3">Insumos Consumidos en esta Fase</h4>
+                            {/* Progreso de consumo */}
+                            <div className="bg-gray-800 text-white rounded-xl p-3 mb-3">
+                              <p className="text-[9px] font-black uppercase mb-2 text-orange-400">📊 Progreso de Consumo — {b.id}</p>
+                              <div className="grid grid-cols-4 gap-2 text-center">
+                                <div><div className="text-[8px] text-gray-400">Total Despachado</div><div className="font-black text-blue-300">{formatNum(totalDespachado)} KG</div></div>
+                                <div><div className="text-[8px] text-gray-400">Ya Consumido</div><div className="font-black text-orange-300">0,00 KG</div></div>
+                                <div><div className="text-[8px] text-gray-400">Este Lote</div><div className="font-black text-yellow-300">{formatNum(kgConsumidoEnForm)} KG</div></div>
+                                <div><div className="text-[8px] text-gray-400">Disponible</div><div className={`font-black ${(totalDespachado-kgConsumidoEnForm)<=0?'text-red-400':'text-green-300'}`}>{formatNum(Math.max(0,totalDespachado-kgConsumidoEnForm))} KG</div></div>
+                              </div>
+                              {totalDespachado > 0 && (
+                                <div className="mt-2">
+                                  <div className="w-full bg-gray-700 rounded-full h-1.5">
+                                    <div className="bg-orange-400 h-1.5 rounded-full" style={{width:`${Math.min(100,(kgConsumidoEnForm/totalDespachado)*100)}%`}}></div>
+                                  </div>
+                                  <div className="text-[8px] text-gray-400 text-right mt-0.5">{((kgConsumidoEnForm/totalDespachado)*100).toFixed(1)}% consumido</div>
+                                </div>
+                              )}
                             </div>
-                            <div>
-                              <label className="text-[9px] font-black text-red-600 uppercase block mb-1">Merma KG</label>
-                              <input type="number" step="0.01" value={bobinaPhaseForm.mermaKg} onChange={e=>setBobinaPhaseForm(p=>({...p,mermaKg:e.target.value}))}
-                                className="w-full border-2 border-red-200 rounded-xl p-3 text-sm font-bold text-center outline-none focus:border-red-400 bg-white" placeholder="0.00"/>
-                            </div>
-                            <div>
-                              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Observaciones</label>
-                              <input type="text" value={bobinaPhaseForm.observaciones} onChange={e=>setBobinaPhaseForm(p=>({...p,observaciones:e.target.value}))}
-                                className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-green-500" placeholder="Opcional"/>
-                            </div>
-                            {parseNum(bobinaPhaseForm.producedKg) > 0 && wipB && (
-                              <div className="col-span-3 bg-white rounded-xl p-3 flex gap-6 text-center">
-                                <div><div className="text-[9px] font-black text-gray-500 uppercase">KG Netos</div><div className="font-black text-green-700">{formatNum(bobinaPhaseForm.producedKg)} KG</div></div>
-                                <div><div className="text-[9px] font-black text-gray-500 uppercase">Costo Total MP</div><div className="font-black text-blue-700">${formatNum(wipB.phaseCost||0)}</div></div>
-                                <div><div className="text-[9px] font-black text-gray-500 uppercase">Costo/KG Bobina</div><div className="font-black text-orange-700">${formatNum(parseNum(wipB.phaseCost||0)/parseNum(bobinaPhaseForm.producedKg))}</div></div>
-                                <div><div className="text-[9px] font-black text-gray-500 uppercase">% Merma Real</div><div className="font-black text-red-600">{(((wipB.kgAsignados||0)-parseNum(bobinaPhaseForm.producedKg))/(wipB.kgAsignados||1)*100).toFixed(1)}%</div></div>
+                            {/* Materiales disponibles */}
+                            {wipB && (wipB.materiales||[]).length > 0 && (
+                              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
+                                <p className="text-[9px] font-black text-blue-700 uppercase mb-2">📦 Materiales Despachados:</p>
+                                {(wipB.materiales||[]).map(mat=>{
+                                  const inv=(inventory||[]).find(i=>i.id===mat.id);
+                                  const usadoEnForm=(bobinaPhaseForm.insumos||[]).filter(ing=>ing.id===mat.id).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                  const disp=Math.max(0,mat.qty-usadoEnForm);
+                                  return (
+                                    <div key={mat.id} className="mb-1.5 bg-white rounded px-2 py-1.5 border border-blue-100">
+                                      <div className="flex justify-between text-[9px] font-bold text-blue-600">
+                                        <span className="font-black text-gray-800">{inv?.desc||mat.id}</span>
+                                        <div className="flex gap-2 text-[8px]">
+                                          <span className="text-blue-700">Desp: {formatNum(mat.qty)}</span>
+                                          {usadoEnForm>0&&<span className="text-yellow-600">Este: {formatNum(usadoEnForm)}</span>}
+                                          <span className={disp<=0?'text-red-600 font-black':'text-green-600 font-black'}>Disp: {formatNum(disp)} {disp<=0?'⚠':''}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             )}
+                            {/* Selector insumo a consumir */}
+                            <div className="flex gap-2 mb-2">
+                              <select value={bobinaIngId} onChange={e=>setBobinaIngId(e.target.value)}
+                                className="flex-1 border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 bg-white">
+                                <option value="">— Seleccionar MP —</option>
+                                {(wipB?.materiales||[]).map(mat=>{
+                                  const inv=(inventory||[]).find(i=>i.id===mat.id);
+                                  return <option key={mat.id} value={mat.id}>{mat.id} — {inv?.desc||mat.id} (Desp: {formatNum(mat.qty)} KG)</option>;
+                                })}
+                              </select>
+                              <input type="number" step="0.01" value={bobinaIngQty} onChange={e=>setBobinaIngQty(e.target.value)}
+                                className="w-28 border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="KG"/>
+                              <button onClick={()=>{
+                                if(!bobinaIngId||!parseNum(bobinaIngQty)) return;
+                                setBobinaPhaseForm(p=>({...p,insumos:[...(p.insumos||[]),{id:bobinaIngId,qty:parseNum(bobinaIngQty)}]}));
+                                setBobinaIngId(''); setBobinaIngQty('');
+                              }} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center gap-1"><Plus size={13}/></button>
+                            </div>
+                            {(bobinaPhaseForm.insumos||[]).map((ing,i)=>{
+                              const inv=(inventory||[]).find(x=>x.id===ing.id);
+                              return <div key={i} className="flex items-center gap-2 bg-orange-50 rounded-lg px-3 py-1.5 mb-1">
+                                <span className="font-black text-[10px] flex-1">{ing.id} — {inv?.desc||''}</span>
+                                <span className="font-black text-[10px]">{formatNum(ing.qty)} KG</span>
+                                <button onClick={()=>setBobinaPhaseForm(p=>({...p,insumos:p.insumos.filter((_,j)=>j!==i)}))} className="text-red-400 hover:text-red-600"><X size={12}/></button>
+                              </div>;
+                            })}
                           </div>
-                          <div className="flex justify-end">
+
+                          {/* Costo resumen */}
+                          {parseNum(bobinaPhaseForm.producedKg) > 0 && wipB && (
+                            <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 grid grid-cols-4 gap-2 text-center text-xs">
+                              <div><div className="text-[9px] font-black text-gray-500 uppercase">KG Producidos</div><div className="font-black text-green-700">{formatNum(bobinaPhaseForm.producedKg)}</div></div>
+                              <div><div className="text-[9px] font-black text-gray-500 uppercase">Merma KG</div><div className="font-black text-red-600">{formatNum(bobinaPhaseForm.mermaKg)}</div></div>
+                              <div><div className="text-[9px] font-black text-gray-500 uppercase">Costo Total MP</div><div className="font-black text-blue-700">${formatNum(wipB.phaseCost||0)}</div></div>
+                              <div><div className="text-[9px] font-black text-gray-500 uppercase">Costo/KG Bobina</div><div className="font-black text-orange-700 text-base">${formatNum(parseNum(wipB.phaseCost||0)/parseNum(bobinaPhaseForm.producedKg))}</div></div>
+                            </div>
+                          )}
+
+                          <div className="flex gap-3 justify-end pt-2 border-t border-orange-200">
+                            <div className="flex-1">
+                              <input type="text" value={bobinaPhaseForm.observaciones} onChange={e=>setBobinaPhaseForm(p=>({...p,observaciones:e.target.value}))}
+                                placeholder="Observaciones opcionales..." className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white"/>
+                            </div>
                             <button onClick={()=>handleCerrarBobinaExtrusión(b)}
                               className="bg-indigo-700 text-white px-8 py-3 rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-indigo-800 flex items-center gap-2">
                               <CheckCircle2 size={16}/> Cerrar Bobina → Semielaborados
