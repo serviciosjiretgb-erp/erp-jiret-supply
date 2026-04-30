@@ -365,6 +365,8 @@ export default function App() {
   const [showBobinaPanel, setShowBobinaPanel] = useState(false);
   const [bobinaIngId, setBobinaIngId] = useState('');
   const [bobinaIngQty, setBobinaIngQty] = useState('');
+  const [activeBobinaId, setActiveBobinaId] = useState(null);
+  const [bobinaPhaseForm, setBobinaPhaseForm] = useState({ date:getTodayDate(), insumos:[], producedKg:'', mermaKg:'', observaciones:'', operadorExt:'', zona1:'', zona2:'', zona3:'', zona4:'', zona5:'', zona6:'', cabezalA:'', cabezalB:'', motorExt:'', ventilador:'', jalador:'', tratado:'' });
   // ── Stock mínimo (edición admin en Proyección MP) ──
   const [editingMinStock, setEditingMinStock] = useState(null); // {id, value}
   // ============================================================================
@@ -1335,7 +1337,71 @@ export default function App() {
     e.preventDefault();
     if (!reqToApprove) return;
     try {
-        const req = reqToApprove; const targetOP = (requirements || []).find(r => r.id === req.opId);
+        const req = reqToApprove;
+
+        // ── RAMA BOBINAS: requisición de producción de semielaborado ──
+        if (req.isBobina) {
+          const bobina = (bobinaProductions||[]).find(b => b.id === (req.bobinaProdId || req.opId));
+          if (!bobina) throw new Error('Producción de bobina no encontrada.');
+          const validItems = req.items.filter(i => parseNum(i.qty) > 0);
+          if (validItems.length === 0) throw new Error('No hay ítems con cantidad válida.');
+
+          const batch = writeBatch(db);
+          let phaseCost = 0; let totalInsumosKg = 0;
+          for (let ing of validItems) {
+            const item = (inventory||[]).find(i=>i.id===ing.id);
+            if (!item) throw new Error(`Ítem ${ing.id} no encontrado.`);
+            phaseCost += (item.cost * parseNum(ing.qty));
+            totalInsumosKg += parseNum(ing.qty);
+            batch.update(getDocRef('inventory', item.id), {stock: (item.stock||0) - parseNum(ing.qty)});
+            const movId = Date.now().toString() + Math.floor(Math.random()*1000);
+            batch.set(getDocRef('inventoryMovements', movId), {
+              id: movId, date: getTodayDate(), itemId: item.id, itemName: item.desc,
+              type: 'SALIDA', qty: parseNum(ing.qty), cost: item.cost,
+              totalValue: parseNum(ing.qty)*item.cost,
+              reference: `BOB-${bobina.id}`, opAsignada: bobina.id,
+              notes: 'DESPACHO BOBINAS ALMACÉN', timestamp: Date.now(), user: appUser?.name||'Almacén'
+            });
+          }
+          batch.update(getDocRef('inventoryRequisitions', req.id), {
+            status: 'APROBADO', dispatchDate: getTodayDate(), items: validItems,
+            approvedBy: appUser?.name, kgDespachados: totalInsumosKg, costoDespachado: phaseCost
+          });
+          batch.update(getDocRef('bobinaProductions', bobina.id), {status: 'EN_PROCESO', reqId: req.id});
+          await batch.commit();
+
+          // Crear entrada WIP
+          const costoPromedio = totalInsumosKg > 0 ? phaseCost / totalInsumosKg : 0;
+          const wipId = `WIP-BOB-${Date.now()}`;
+          await setDoc(getDocRef('wipInventory', wipId), {
+            id: wipId, opId: bobina.id, reqId: req.id,
+            cliente: 'INTERNO — BOBINAS',
+            producto: `BOBINA ${bobina.categoria}`,
+            especificaciones: `${bobina.ancho}×${bobina.largo} - ${bobina.micras}mic`,
+            materiales: validItems.map(it=>({id:it.id, qty:parseNum(it.qty), cost:(inventory||[]).find(i=>i.id===it.id)?.cost||0})),
+            kgAsignados: totalInsumosKg, costoPromedio, phaseCost,
+            fase: 'extrusion', fechaAsignacion: getTodayDate(),
+            status: 'EN PROCESO', isBobina: true, timestamp: Date.now()
+          });
+
+          // Asiento contable
+          for (let ing of validItems) {
+            const item = (inventory||[]).find(i=>i.id===ing.id);
+            if (!item) continue;
+            await registrarAsientoContable(null, {
+              debito:'1.1.03.01.007', credito: getCtaInventario(item.category),
+              monto: parseNum(ing.qty)*(item.cost||0),
+              descripcion:`DESCARGO BOBINA — ${item.desc}`,
+              referencia:`BOB-${bobina.id}`, fecha:getTodayDate()
+            });
+          }
+          setReqToApprove(null);
+          setDialog({title:'✅ Descargo Aprobado',text:'Materiales despachados. La fase de extrusión de bobinas está lista para iniciar.',type:'alert'});
+          return;
+        }
+
+        // ── RAMA NORMAL: OP de producción regular ──
+        const targetOP = (requirements || []).find(r => r.id === req.opId);
         if (!targetOP) throw new Error('La OP asociada ya no existe.');
         const validItems = req.items.filter(i => parseNum(i.qty) > 0);
         if (validItems.length === 0) throw new Error('No hay ítems con cantidad válida.');
@@ -1345,64 +1411,46 @@ export default function App() {
         for (let ing of validItems) {
            const item = (inventory || []).find(i => i.id === ing.id);
            if (!item) throw new Error(`Ítem ${ing.id} no encontrado en catálogo.`);
-           // Se permite despacho aunque el stock quede negativo (el inventario se refleja en negativo)
            phaseCost += (item.cost * ing.qty); totalInsumosKg += parseFloat(ing.qty);
            batch.update(getDocRef('inventory', item.id), { stock: (item.stock || 0) - ing.qty });
            const movId = Date.now().toString() + Math.floor(Math.random()*1000);
            batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: getTodayDate(), itemId: item.id, itemName: item.desc, type: 'SALIDA', qty: ing.qty, cost: item.cost, totalValue: ing.qty * item.cost, reference: `REQ-${targetOP.id}-${req.phase.substring(0,3).toUpperCase()}`, opAsignada: targetOP.id, notes: 'DESPACHO ALMACÉN', timestamp: Date.now(), user: appUser?.name || 'Almacén' });
         }
 
-        // NO creamos batch aquí — el operador registrará cuánto usó realmente
-        // Solo actualizamos la requisición como APROBADA con los KG despachados
         batch.update(getDocRef('inventoryRequisitions', req.id), { status: 'APROBADO', dispatchDate: getTodayDate(), items: validItems, approvedBy: appUser?.name, kgDespachados: totalInsumosKg, costoDespachado: phaseCost });
 
         await batch.commit(); 
         
-        // Registrar en WIP Inventory
         const reqDoc = (requirements || []).find(r => r.id === req.opId);
         if (reqDoc && req.phase) {
           const wipEntry = {
             id: `WIP-${Date.now()}`,
-            opId: req.opId,
-            reqId: req.id,
+            opId: req.opId, reqId: req.id,
             cliente: reqDoc.client || 'N/A',
             producto: reqDoc.desc || reqDoc.categoria || 'Producto',
             especificaciones: `${reqDoc.ancho}x${reqDoc.largo} - ${reqDoc.micras}mic`,
-            materiales: req.items.map(it => ({
-              id: it.id,
-              qty: parseNum(it.qty),
-              cost: (inventory || []).find(i => i.id === it.id)?.cost || 0
-            })),
+            materiales: req.items.map(it => ({ id: it.id, qty: parseNum(it.qty), cost: (inventory || []).find(i => i.id === it.id)?.cost || 0 })),
             kgAsignados: req.items.reduce((sum, it) => sum + parseNum(it.qty), 0),
             costoPromedio: (() => {
-              const totalCost = req.items.reduce((sum, it) => {
-                const invItem = (inventory || []).find(i => i.id === it.id);
-                return sum + (parseNum(it.qty) * (invItem?.cost || 0));
-              }, 0);
+              const totalCost = req.items.reduce((sum, it) => { const invItem = (inventory || []).find(i => i.id === it.id); return sum + (parseNum(it.qty) * (invItem?.cost || 0)); }, 0);
               const totalQty = req.items.reduce((sum, it) => sum + parseNum(it.qty), 0);
               return totalQty > 0 ? totalCost / totalQty : 0;
             })(),
-            fase: req.phase,
-            fechaAsignacion: getTodayDate(),
-            status: 'EN PROCESO',
-            timestamp: Date.now()
+            fase: req.phase, fechaAsignacion: getTodayDate(),
+            status: 'EN PROCESO', timestamp: Date.now()
           };
           await setDoc(getDocRef('wipInventory', wipEntry.id), wipEntry);
         }
 
-        // ── Asientos contables: por cada ítem despachado → WIP ──
         for (let ing of validItems) {
           const item = (inventory || []).find(i => i.id === ing.id);
           if (!item) continue;
           const ctaInventario = getCtaInventario(item.category);
           const montoIng = parseNum(ing.qty) * (item.cost || 0);
           await registrarAsientoContable(null, {
-            debito: '1.1.03.01.007',
-            credito: ctaInventario,
-            monto: montoIng,
+            debito: '1.1.03.01.007', credito: ctaInventario, monto: montoIng,
             descripcion: `DESCARGO A PLANTA — ${item.desc} — FASE: ${req.phase.toUpperCase()}`,
-            referencia: `REQ-${targetOP.id}`,
-            fecha: getTodayDate(),
+            referencia: `REQ-${targetOP.id}`, fecha: getTodayDate(),
           });
         }
 
@@ -7133,100 +7181,133 @@ export default function App() {
       return renderFiniquitoOP(req);
     }
 
+
     // ── PRODUCCIÓN DE BOBINAS ─────────────────────────────────────────
     if (prodView === 'bobinas') {
       const bolsasFormulas = (formulas||[]).filter(f=>!f.tipoProducto||f.tipoProducto==='BOLSAS');
 
-      // Calcular estimados al vuelo
-      const w = parseNum(bobinaForm.ancho), fu = parseNum(bobinaForm.fuelles);
-      const l = parseNum(bobinaForm.largo), m = parseNum(bobinaForm.micras);
-      const pesoMillar = (w + fu) * l * m;
-      const kgProcesar = parseNum(bobinaForm.kgProcesar);
-      const mermaPorc = parseNum(bobinaForm.mermaPorc) || 5;
-      const kgNetos = kgProcesar > 0 ? kgProcesar * (1 - mermaPorc / 100) : 0;
-      const millaresTeóricos = pesoMillar > 0 && kgNetos > 0 ? kgNetos / pesoMillar : 0;
-      const costoInsumos = (bobinaForm.insumos||[]).reduce((s,ing)=>{
+      // Calcular estimados del formulario nueva bobina
+      const bw = parseNum(bobinaForm.ancho), bfu = parseNum(bobinaForm.fuelles);
+      const bl = parseNum(bobinaForm.largo), bm = parseNum(bobinaForm.micras);
+      const bPesoMillar = (bw + bfu) * bl * bm;
+      const bKgProcesar = parseNum(bobinaForm.kgProcesar);
+      const bMermaPorc = parseNum(bobinaForm.mermaPorc) || 5;
+      const bKgNetos = bKgProcesar > 0 ? bKgProcesar * (1 - bMermaPorc / 100) : 0;
+      const bMillaresTeóricos = bPesoMillar > 0 && bKgNetos > 0 ? bKgNetos / bPesoMillar : 0;
+      const bCostoInsumos = (bobinaForm.insumos||[]).reduce((s,ing)=>{
         const inv=(inventory||[]).find(i=>i.id===ing.id);
         return s+(parseNum(ing.qty)*(inv?.cost||0));
       },0);
-      const costoUnitKg = kgNetos > 0 ? costoInsumos / kgNetos : 0;
 
-      const handleCerrarBobina = async () => {
-        if(!bobinaForm.categoria||!kgProcesar||(bobinaForm.insumos||[]).length===0)
-          return setDialog({title:'Aviso',text:'Complete categoría, KG y al menos un insumo.',type:'alert'});
+      // Función: enviar solicitud a almacén
+      const handleEnviarBobinaAlmacen = async () => {
+        if(!bobinaForm.categoria || !bKgProcesar || (bobinaForm.insumos||[]).length===0)
+          return setDialog({title:'Aviso',text:'Complete categoría, KG a procesar y al menos un insumo.',type:'alert'});
+        try {
+          const bobId = `BOB-PROD-${Date.now()}`;
+          await setDoc(getDocRef('bobinaProductions', bobId), {
+            id: bobId, status: 'PENDIENTE_ALMACÉN',
+            categoria: bobinaForm.categoria,
+            ancho: bw, fuelles: bfu, largo: bl, micras: bm,
+            kgPlanificados: bKgProcesar, mermaPorc: bMermaPorc,
+            insumos: bobinaForm.insumos,
+            pesoMillar: bPesoMillar, millaresTeóricos: bMillaresTeóricos,
+            fecha: bobinaForm.fecha, user: appUser?.name||'Planta', timestamp: Date.now()
+          });
+          await addDoc(getColRef('inventoryRequisitions'), {
+            opId: bobId, phase: 'extrusion',
+            items: bobinaForm.insumos, status: 'PENDIENTE',
+            isBobina: true, bobinaProdId: bobId,
+            timestamp: Date.now(), date: getTodayDate(), user: appUser?.name||'Planta'
+          });
+          setBobinaForm({categoria:'',ancho:'',fuelles:'',largo:'',micras:'',kgProcesar:'',mermaPorc:'5',insumos:[],fecha:getTodayDate(),observaciones:''});
+          setBobinaIngId(''); setBobinaIngQty('');
+          setShowBobinaPanel(false);
+          setDialog({title:'✅ Solicitud Enviada',text:'Requisición enviada a Almacén. La extrusión iniciará cuando sea aprobada.',type:'alert'});
+        } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+      };
+
+      // Función: cerrar extrusión y pasar a Semielaborados
+      const handleCerrarBobinaExtrusión = async (bobina) => {
+        const kgProducidos = parseNum(bobinaPhaseForm.producedKg);
+        if (!kgProducidos) return setDialog({title:'Aviso',text:'Ingrese los KG producidos.',type:'alert'});
         setDialog({
-          title:'Cerrar Bobina',
-          text:`¿Confirmar producción de ${formatNum(kgNetos)} KG netos de bobina y descontar insumos del inventario?`,
+          title:'Cerrar Extrusión de Bobina',
+          text:`¿Confirmar ${formatNum(kgProducidos)} KG de bobina producidos? Se registrarán en Semielaborados del Inventario General.`,
           type:'confirm',
           onConfirm: async () => {
             try {
-              // 1. Descontar insumos del inventario
-              for(const ing of (bobinaForm.insumos||[])){
-                const inv=(inventory||[]).find(i=>i.id===ing.id);
-                if(!inv) continue;
-                await updateDoc(getDocRef('inventory',ing.id),{stock:Math.max(0,(inv.stock||0)-parseNum(ing.qty))});
-                await addDoc(getColRef('inventoryMovements'),{
-                  itemId:ing.id, itemDesc:inv.desc, type:'SALIDA', qty:parseNum(ing.qty),
-                  unitCost:inv.cost||0, totalValue:parseNum(ing.qty)*(inv.cost||0),
-                  previousStock:inv.stock||0, newStock:Math.max(0,(inv.stock||0)-parseNum(ing.qty)),
-                  docRef:`BOB-${Date.now()}`, notes:`PROD BOBINA ${bobinaForm.categoria}`,
-                  date:bobinaForm.fecha, user:appUser?.name||'Admin', timestamp:Date.now()
-                });
-              }
-              // 2. Crear/actualizar ítem semielaborado en inventario general
-              const micDec = m > 0 ? (m < 1 ? `${(m*1000).toFixed(0)}` : m) : 0;
-              const dims = fu > 0 ? `(${w}+${fu/2}+${fu/2})X${l}X${micDec}MIC` : `${w}X${l}X${micDec}MIC`;
-              const bobDesc = `${bobinaForm.categoria} ${w}×${l}×${m}MIC - BOBINA`;
-              const bobId = `BOB-${(bobinaForm.categoria||'').replace(/[^A-Z0-9]/gi,'').substring(0,10).toUpperCase()}-${w}X${l}X${m}`;
-              const existBob = (inventory||[]).find(i=>i.id===bobId);
-              if(existBob){
-                const newStk = (existBob.stock||0)+kgNetos;
-                const avgCost = ((existBob.stock||0)*(existBob.cost||0)+kgNetos*costoUnitKg)/newStk;
-                await updateDoc(getDocRef('inventory',bobId),{stock:newStk,cost:avgCost});
-                await addDoc(getColRef('inventoryMovements'),{
-                  itemId:bobId, itemDesc:bobDesc, type:'ENTRADA', qty:kgNetos, unitCost:costoUnitKg,
-                  totalValue:kgNetos*costoUnitKg, previousStock:existBob.stock||0, newStock:newStk,
-                  docRef:`BOB-${Date.now()}`, notes:'PRODUCCIÓN BOBINA',
-                  date:bobinaForm.fecha, user:appUser?.name||'Admin', timestamp:Date.now()
-                });
+              // Costo desde WIP
+              const wipEntry = (wipInventory||[]).find(w=>w.opId===bobina.id&&w.isBobina);
+              const costoTotal = wipEntry ? parseNum(wipEntry.phaseCost||0) || parseNum(wipEntry.kgAsignados)*parseNum(wipEntry.costoPromedio) : 0;
+              const costoUnitKg = kgProducidos > 0 ? costoTotal / kgProducidos : 0;
+
+              // Crear/actualizar ítem Semielaborado
+              const micStr = bobina.micras ? String(bobina.micras) : '0';
+              const bobDesc = `${bobina.categoria} ${bobina.ancho}×${bobina.largo}×${micStr}MIC - BOBINA`.toUpperCase();
+              const bobInvId = `BOB-${(bobina.categoria||'').replace(/[^A-Z0-9]/gi,'').substring(0,10).toUpperCase()}-${bobina.ancho}X${bobina.largo}X${micStr}`;
+              const existBob = (inventory||[]).find(i=>i.id===bobInvId);
+              const prevStock = existBob?.stock||0;
+              if (existBob) {
+                const newStk = prevStock + kgProducidos;
+                const avgCost = ((prevStock*(existBob.cost||0))+(kgProducidos*costoUnitKg))/newStk;
+                await updateDoc(getDocRef('inventory', bobInvId), {stock: newStk, cost: avgCost});
               } else {
-                await setDoc(getDocRef('inventory',bobId),{
-                  id:bobId, desc:bobDesc.toUpperCase(), category:'Semielaborados', unit:'kg',
-                  stock:kgNetos, cost:costoUnitKg, timestamp:Date.now()
-                });
-                await addDoc(getColRef('inventoryMovements'),{
-                  itemId:bobId, itemDesc:bobDesc.toUpperCase(), type:'ENTRADA_INICIAL', qty:kgNetos, unitCost:costoUnitKg,
-                  totalValue:kgNetos*costoUnitKg, previousStock:0, newStock:kgNetos,
-                  docRef:`BOB-${Date.now()}`, notes:'PRODUCCIÓN BOBINA',
-                  date:bobinaForm.fecha, user:appUser?.name||'Admin', timestamp:Date.now()
+                await setDoc(getDocRef('inventory', bobInvId), {
+                  id: bobInvId, desc: bobDesc, category: 'Semielaborados', unit: 'kg',
+                  stock: kgProducidos, cost: costoUnitKg, timestamp: Date.now()
                 });
               }
-              // 3. Guardar registro histórico de producción de bobina
-              await addDoc(getColRef('bobinaProductions'),{
-                categoria:bobinaForm.categoria, ancho:w, fuelles:fu, largo:l, micras:m,
-                kgProcesados:kgProcesar, kgNetos, mermaKg:kgProcesar-kgNetos, mermaPorc,
-                millaresTeóricos, pesoMillar, insumos:bobinaForm.insumos, costoTotal:costoInsumos,
-                costoUnitKg, bobInventarioId:bobId, bobDesc,
-                fecha:bobinaForm.fecha, user:appUser?.name||'Admin', timestamp:Date.now(), status:'COMPLETADO'
+              // Kardex entry
+              await addDoc(getColRef('inventoryMovements'), {
+                itemId: bobInvId, itemDesc: bobDesc,
+                type: existBob ? 'ENTRADA' : 'ENTRADA_INICIAL',
+                qty: kgProducidos, unitCost: costoUnitKg,
+                totalValue: kgProducidos * costoUnitKg,
+                previousStock: prevStock, newStock: prevStock + kgProducidos,
+                docRef: bobina.id, notes: 'CIERRE PRODUCCIÓN BOBINA',
+                date: bobinaPhaseForm.date||getTodayDate(),
+                user: appUser?.name||'Admin', timestamp: Date.now()
               });
-              setBobinaForm({categoria:'',ancho:'',fuelles:'',largo:'',micras:'',kgProcesar:'',mermaPorc:'5',insumos:[],fecha:getTodayDate(),observaciones:''});
-              setShowBobinaPanel(false);
-              setDialog({title:'✅ Bobina Registrada',text:`${formatNum(kgNetos)} KG de bobina "${bobDesc}" cargados al inventario de Semielaborados.`,type:'alert'});
+              // Cerrar bobina production
+              await updateDoc(getDocRef('bobinaProductions', bobina.id), {
+                status: 'COMPLETADO', kgProducidos, costoTotal, costoUnitKg,
+                bobInventarioId: bobInvId, fechaCierre: getTodayDate(),
+                extrusionData: {...bobinaPhaseForm}
+              });
+              // Asiento contable WIP → Semielaborados
+              if (costoTotal > 0) {
+                await registrarAsientoContable(null, {
+                  debito: '1.1.03.01.003', credito: '1.1.03.01.007',
+                  monto: costoTotal,
+                  descripcion: `CIERRE BOBINA — ${bobDesc}`,
+                  referencia: bobina.id, fecha: getTodayDate()
+                });
+              }
+              setBobinaPhaseForm({date:getTodayDate(),insumos:[],producedKg:'',mermaKg:'',observaciones:'',operadorExt:'',zona1:'',zona2:'',zona3:'',zona4:'',zona5:'',zona6:'',cabezalA:'',cabezalB:'',motorExt:'',ventilador:'',jalador:'',tratado:''});
+              setActiveBobinaId(null);
+              setDialog({title:'✅ Bobina Completada',text:`${formatNum(kgProducidos)} KG → Semielaborados (${bobInvId}). Costo/KG: $${formatNum(costoUnitKg)}`,type:'alert'});
             } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           }
         });
       };
 
+      const pendientesBobinas = bobinaProductions.filter(b=>b.status==='PENDIENTE_ALMACÉN');
+      const enProcesoBobinas = bobinaProductions.filter(b=>b.status==='EN_PROCESO');
+      const completadasBobinas = bobinaProductions.filter(b=>b.status==='COMPLETADO');
+
       return (
         <div className="space-y-6 animate-in fade-in">
-          {/* Header */}
+          {/* ── ENCABEZADO ── */}
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-6 border-b border-gray-200 bg-indigo-50 flex justify-between items-center">
               <div>
                 <h2 className="text-xl font-black text-indigo-800 uppercase flex items-center gap-3">
                   <Box className="text-indigo-600" size={24}/> Producción de Bobinas (Semielaborados)
                 </h2>
-                <p className="text-[10px] font-bold text-indigo-600 mt-1 uppercase">Extrusión interna — resultado va a Inventario General como Semielaborado</p>
+                <p className="text-[10px] font-bold text-indigo-600 mt-1 uppercase">
+                  Flujo: Solicitud → Almacén aprueba → Extrusión → Semielaborados (Inventario General)
+                </p>
               </div>
               <button onClick={()=>setShowBobinaPanel(v=>!v)}
                 className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showBobinaPanel?'bg-red-500 text-white':'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
@@ -7234,65 +7315,53 @@ export default function App() {
               </button>
             </div>
 
-            {/* Formulario nueva bobina */}
+            {/* ── FORMULARIO NUEVA BOBINA ── */}
             {showBobinaPanel && (
-              <div className="p-6 border-b border-gray-200 bg-indigo-50/30">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                  {/* Selección categoría/fórmula */}
-                  <div className="md:col-span-3">
+              <div className="p-6 border-b border-gray-200 bg-indigo-50/20 space-y-4">
+                <h3 className="text-sm font-black uppercase text-indigo-800 border-b border-indigo-200 pb-2">Nueva Solicitud de Producción de Bobina</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="md:col-span-4">
                     <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Categoría / Fórmula (solo BOLSAS)</label>
-                    <select value={bobinaForm.categoria}
-                      onChange={e=>{
-                        const cat = e.target.value;
-                        const fm = bolsasFormulas.find(f=>f.categoria===cat);
-                        setBobinaForm(prev=>({...prev,
-                          categoria:cat,
-                          ancho:fm?.ancho||'', fuelles:fm?.fuelles||'', largo:fm?.largo||'', micras:fm?.micras||''
-                        }));
-                      }}
-                      className="w-full border-2 border-indigo-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-indigo-500 bg-white">
-                      <option value="">— Seleccionar categoría —</option>
-                      {bolsasFormulas.map(f=><option key={f.id} value={f.categoria}>{f.categoria}</option>)}
+                    <select value={bobinaForm.categoria} onChange={e=>{
+                      const cat=e.target.value;
+                      const fm=bolsasFormulas.find(f=>f.categoria===cat);
+                      setBobinaForm(prev=>({...prev,categoria:cat,ancho:fm?.ancho||'',fuelles:fm?.fuelles||'',largo:fm?.largo||'',micras:fm?.micras||''}));
+                    }} className="w-full border-2 border-indigo-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-indigo-500 bg-white">
+                      <option value="">— Seleccionar categoría de fórmula —</option>
+                      {bolsasFormulas.map(f=><option key={f.id} value={f.categoria}>{f.categoria} — {f.ancho||'?'}×{f.largo||'?'}×{f.micras||'?'}MIC</option>)}
                     </select>
                   </div>
-                  {/* Dimensiones (auto-llenado, editable) */}
                   {[['ancho','Ancho (CM)'],['fuelles','Fuelles (CM)'],['largo','Largo (CM)'],['micras','Micras']].map(([field,label])=>(
                     <div key={field}>
                       <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">{label}</label>
-                      <input type="number" step="0.001" value={bobinaForm[field]}
-                        onChange={e=>setBobinaForm(prev=>({...prev,[field]:e.target.value}))}
-                        className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold text-center outline-none focus:border-indigo-500 bg-white"
-                        placeholder="0"/>
+                      <input type="number" step="0.001" value={bobinaForm[field]} onChange={e=>setBobinaForm(p=>({...p,[field]:e.target.value}))}
+                        className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold text-center outline-none focus:border-indigo-500 bg-white" placeholder="0"/>
                     </div>
                   ))}
                   <div>
                     <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG a Procesar</label>
-                    <input type="number" step="0.01" value={bobinaForm.kgProcesar}
-                      onChange={e=>setBobinaForm(prev=>({...prev,kgProcesar:e.target.value}))}
+                    <input type="number" step="0.01" value={bobinaForm.kgProcesar} onChange={e=>setBobinaForm(p=>({...p,kgProcesar:e.target.value}))}
                       className="w-full border-2 border-indigo-300 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-500 bg-white" placeholder="0.00"/>
                   </div>
                   <div>
-                    <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">% Merma Estimada</label>
-                    <input type="number" step="0.1" value={bobinaForm.mermaPorc}
-                      onChange={e=>setBobinaForm(prev=>({...prev,mermaPorc:e.target.value}))}
+                    <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">% Merma Est.</label>
+                    <input type="number" step="0.1" value={bobinaForm.mermaPorc} onChange={e=>setBobinaForm(p=>({...p,mermaPorc:e.target.value}))}
                       className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold text-center outline-none focus:border-indigo-500 bg-white" placeholder="5"/>
                   </div>
                   <div>
                     <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Fecha</label>
-                    <input type="date" value={bobinaForm.fecha}
-                      onChange={e=>setBobinaForm(prev=>({...prev,fecha:e.target.value}))}
+                    <input type="date" value={bobinaForm.fecha} onChange={e=>setBobinaForm(p=>({...p,fecha:e.target.value}))}
                       className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-500 bg-white"/>
                   </div>
                 </div>
 
                 {/* Estimados */}
-                {kgProcesar > 0 && (
-                  <div className="grid grid-cols-4 gap-3 mb-4">
-                    {[
-                      ['KG Netos (sin merma)', formatNum(kgNetos)+' KG', 'bg-blue-50 border-blue-200 text-blue-700'],
-                      ['Merma Estimada', formatNum(kgProcesar-kgNetos)+' KG', 'bg-red-50 border-red-200 text-red-600'],
-                      ['Peso por Millar', pesoMillar>0?formatNum(pesoMillar)+' KG/Mill':'— (complete dims)', 'bg-gray-50 border-gray-200 text-gray-700'],
-                      ['Millares Teóricos', millaresTeóricos>0?formatNum(millaresTeóricos)+' Mill.':'—', 'bg-indigo-50 border-indigo-200 text-indigo-700'],
+                {bKgProcesar > 0 && (
+                  <div className="grid grid-cols-4 gap-3">
+                    {[['KG Netos',formatNum(bKgNetos)+' KG','bg-blue-50 border-blue-200 text-blue-700'],
+                      ['Merma',formatNum(bKgProcesar-bKgNetos)+' KG','bg-red-50 border-red-200 text-red-600'],
+                      ['Peso/Millar',bPesoMillar>0?formatNum(bPesoMillar)+' KG':'— (complete dims)','bg-gray-50 border-gray-200 text-gray-700'],
+                      ['Millares Teóricos',bMillaresTeóricos>0?formatNum(bMillaresTeóricos)+' Mill.':'—','bg-indigo-50 border-indigo-200 text-indigo-700'],
                     ].map(([l,v,cls])=>(
                       <div key={l} className={`border rounded-xl p-3 text-center ${cls}`}>
                         <div className="text-[9px] font-black uppercase mb-1">{l}</div>
@@ -7302,9 +7371,9 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Insumos (MP) */}
-                <div className="bg-white border-2 border-indigo-200 rounded-2xl p-4 mb-4">
-                  <h4 className="text-[10px] font-black text-indigo-800 uppercase mb-3">Materia Prima Consumida</h4>
+                {/* Insumos (MP a solicitar) */}
+                <div className="bg-white border-2 border-indigo-200 rounded-2xl p-4">
+                  <h4 className="text-[10px] font-black text-indigo-800 uppercase mb-3">Materia Prima a Solicitar a Almacén</h4>
                   <div className="flex gap-2 mb-3">
                     <select value={bobinaIngId} onChange={e=>setBobinaIngId(e.target.value)}
                       className="flex-1 border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-500 bg-white">
@@ -7317,74 +7386,187 @@ export default function App() {
                       className="w-28 border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-indigo-500" placeholder="KG"/>
                     <button onClick={()=>{
                       if(!bobinaIngId||!parseNum(bobinaIngQty)) return;
-                      setBobinaForm(prev=>({...prev,insumos:[...(prev.insumos||[]),{id:bobinaIngId,qty:parseNum(bobinaIngQty)}]}));
+                      setBobinaForm(p=>({...p,insumos:[...(p.insumos||[]),{id:bobinaIngId,qty:parseNum(bobinaIngQty)}]}));
                       setBobinaIngId(''); setBobinaIngQty('');
                     }} className="bg-indigo-600 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-indigo-700 flex items-center gap-1"><Plus size={13}/> Agregar</button>
                   </div>
                   {(bobinaForm.insumos||[]).length > 0 && (
-                    <div className="space-y-1">
+                    <div className="space-y-1.5 mb-3">
                       {bobinaForm.insumos.map((ing,i)=>{
                         const inv=(inventory||[]).find(x=>x.id===ing.id);
                         return (
-                          <div key={i} className="flex items-center gap-2 bg-indigo-50 rounded-lg px-3 py-1.5">
+                          <div key={i} className="flex items-center gap-2 bg-indigo-50 rounded-lg px-3 py-2">
                             <span className="font-black text-[10px] text-indigo-700 flex-1">{ing.id} — {inv?.desc||''}</span>
                             <span className="font-black text-[10px]">{formatNum(ing.qty)} KG</span>
                             <span className="text-[9px] text-gray-400">${formatNum((inv?.cost||0)*ing.qty)}</span>
-                            <button onClick={()=>setBobinaForm(prev=>({...prev,insumos:prev.insumos.filter((_,j)=>j!==i)}))} className="text-red-400 hover:text-red-600"><X size={12}/></button>
+                            <button onClick={()=>setBobinaForm(p=>({...p,insumos:p.insumos.filter((_,j)=>j!==i)}))} className="text-red-400 hover:text-red-600"><X size={12}/></button>
                           </div>
                         );
                       })}
-                      <div className="text-right text-[10px] font-black text-indigo-700 pt-1">
-                        Costo Total: ${formatNum(costoInsumos)} | Costo/KG Neto: ${formatNum(costoUnitKg)}
-                      </div>
+                      <div className="text-right text-[10px] font-black text-indigo-700 pt-1">Costo Total estimado: ${formatNum(bCostoInsumos)}</div>
                     </div>
                   )}
                 </div>
 
                 <div className="flex justify-end">
-                  <button onClick={handleCerrarBobina}
-                    className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-indigo-700 flex items-center gap-2">
-                    <CheckCircle2 size={16}/> Cerrar Bobina → Inventario
+                  <button onClick={handleEnviarBobinaAlmacen}
+                    className="bg-orange-500 text-white px-8 py-3 rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-orange-600 flex items-center gap-2">
+                    <ArrowUpFromLine size={16}/> Enviar Solicitud a Almacén
                   </button>
                 </div>
               </div>
             )}
 
-            {/* Historial de bobinas */}
+            {/* ── PASO 1: Pendiente de Almacén ── */}
+            {pendientesBobinas.length > 0 && (
+              <div className="p-6 border-b border-gray-100">
+                <h3 className="text-sm font-black uppercase text-orange-700 mb-3 flex items-center gap-2">
+                  <AlertTriangle size={16} className="text-orange-500"/> Pendiente de Aprobación Almacén ({pendientesBobinas.length})
+                </h3>
+                <div className="space-y-2">
+                  {pendientesBobinas.map(b=>(
+                    <div key={b.id} className="bg-orange-50 border border-orange-200 rounded-xl p-4 flex justify-between items-center">
+                      <div>
+                        <div className="font-black text-[11px] text-orange-800 uppercase">{b.categoria} — {b.ancho}×{b.largo}×{b.micras}MIC</div>
+                        <div className="text-[9px] text-gray-500 mt-0.5">{b.fecha} | {formatNum(b.kgPlanificados)} KG planificados | {b.user}</div>
+                        <div className="text-[9px] text-orange-600 mt-0.5 font-bold">Insumos solicitados: {(b.insumos||[]).map(i=>`${i.id}: ${formatNum(i.qty)} KG`).join(' | ')}</div>
+                      </div>
+                      <span className="bg-orange-200 text-orange-800 px-3 py-1 rounded-lg text-[9px] font-black uppercase">⏳ Esperando Almacén</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── PASO 2: En Proceso (Extrusión activa) ── */}
+            {enProcesoBobinas.length > 0 && (
+              <div className="p-6 border-b border-gray-100">
+                <h3 className="text-sm font-black uppercase text-green-700 mb-3 flex items-center gap-2">
+                  <PlayCircle size={16} className="text-green-600"/> En Proceso — Fase Extrusión ({enProcesoBobinas.length})
+                </h3>
+                {enProcesoBobinas.map(b=>{
+                  const isOpen = activeBobinaId === b.id;
+                  const wipB = (wipInventory||[]).find(w=>w.opId===b.id&&w.isBobina);
+                  return (
+                    <div key={b.id} className="bg-green-50 border-2 border-green-200 rounded-2xl overflow-hidden mb-4">
+                      <div className="flex justify-between items-center p-4 bg-white border-b border-green-100">
+                        <div>
+                          <div className="font-black text-sm text-gray-900 uppercase">{b.categoria} — {b.ancho}×{b.largo}×{b.micras}MIC</div>
+                          <div className="text-[9px] text-gray-500 mt-0.5">{b.fecha} | {formatNum(b.kgPlanificados)} KG planificados | MP Asignada: {formatNum(wipB?.kgAsignados||0)} KG | Costo/KG MP: ${formatNum(wipB?.costoPromedio||0)}</div>
+                        </div>
+                        <button onClick={()=>{
+                          if(isOpen){setActiveBobinaId(null);}
+                          else{setActiveBobinaId(b.id); setBobinaPhaseForm(p=>({...p,date:getTodayDate()}));}
+                        }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${isOpen?'bg-gray-200 text-gray-700':'bg-green-600 text-white hover:bg-green-700 shadow-md'}`}>
+                          {isOpen?<><X size={14}/>Cerrar</>:<><PlayCircle size={14}/>Registrar Extrusión</>}
+                        </button>
+                      </div>
+                      {isOpen && (
+                        <div className="p-5 space-y-4">
+                          {/* Parámetros técnicos extrusión */}
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                              <input type="date" value={bobinaPhaseForm.date} onChange={e=>setBobinaPhaseForm(p=>({...p,date:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500"/></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Operador</label>
+                              <input type="text" value={bobinaPhaseForm.operadorExt} onChange={e=>setBobinaPhaseForm(p=>({...p,operadorExt:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500 uppercase" placeholder="Nombre operador"/></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Motor Extrusora</label>
+                              <input type="text" value={bobinaPhaseForm.motorExt} onChange={e=>setBobinaPhaseForm(p=>({...p,motorExt:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500" placeholder="Hz / RPM"/></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tratado</label>
+                              <select value={bobinaPhaseForm.tratado} onChange={e=>setBobinaPhaseForm(p=>({...p,tratado:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500 bg-white">
+                                <option value="">—</option><option value="SI">SI</option><option value="NO">NO</option>
+                              </select></div>
+                          </div>
+                          {/* Zonas de temperatura */}
+                          <div>
+                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Zonas de Temperatura (°C)</label>
+                            <div className="grid grid-cols-6 gap-2">
+                              {['zona1','zona2','zona3','zona4','zona5','zona6'].map((z,i)=>(
+                                <div key={z}><label className="text-[8px] font-bold text-gray-400 block text-center">Z{i+1}</label>
+                                  <input type="number" value={bobinaPhaseForm[z]} onChange={e=>setBobinaPhaseForm(p=>({...p,[z]:e.target.value}))}
+                                    className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-black text-center outline-none focus:border-green-500" placeholder="0"/></div>
+                              ))}
+                            </div>
+                          </div>
+                          {/* Cabezales */}
+                          <div className="grid grid-cols-3 gap-3">
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cabezal A (°C)</label>
+                              <input type="number" value={bobinaPhaseForm.cabezalA} onChange={e=>setBobinaPhaseForm(p=>({...p,cabezalA:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold text-center outline-none focus:border-green-500" placeholder="0"/></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cabezal B (°C)</label>
+                              <input type="number" value={bobinaPhaseForm.cabezalB} onChange={e=>setBobinaPhaseForm(p=>({...p,cabezalB:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold text-center outline-none focus:border-green-500" placeholder="0"/></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Jalador</label>
+                              <input type="text" value={bobinaPhaseForm.jalador} onChange={e=>setBobinaPhaseForm(p=>({...p,jalador:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500" placeholder="Hz"/></div>
+                          </div>
+                          {/* KG producidos y merma */}
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 bg-green-50 border-2 border-green-200 rounded-2xl p-4">
+                            <div>
+                              <label className="text-[9px] font-black text-green-700 uppercase block mb-1">⭐ KG Producidos (Bobina)</label>
+                              <input type="number" step="0.01" value={bobinaPhaseForm.producedKg} onChange={e=>setBobinaPhaseForm(p=>({...p,producedKg:e.target.value}))}
+                                className="w-full border-2 border-green-400 rounded-xl p-3 text-sm font-black text-center outline-none focus:border-green-600 bg-white" placeholder="0.00" autoFocus/>
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-black text-red-600 uppercase block mb-1">Merma KG</label>
+                              <input type="number" step="0.01" value={bobinaPhaseForm.mermaKg} onChange={e=>setBobinaPhaseForm(p=>({...p,mermaKg:e.target.value}))}
+                                className="w-full border-2 border-red-200 rounded-xl p-3 text-sm font-bold text-center outline-none focus:border-red-400 bg-white" placeholder="0.00"/>
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Observaciones</label>
+                              <input type="text" value={bobinaPhaseForm.observaciones} onChange={e=>setBobinaPhaseForm(p=>({...p,observaciones:e.target.value}))}
+                                className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-green-500" placeholder="Opcional"/>
+                            </div>
+                            {parseNum(bobinaPhaseForm.producedKg) > 0 && wipB && (
+                              <div className="col-span-3 bg-white rounded-xl p-3 flex gap-6 text-center">
+                                <div><div className="text-[9px] font-black text-gray-500 uppercase">KG Netos</div><div className="font-black text-green-700">{formatNum(bobinaPhaseForm.producedKg)} KG</div></div>
+                                <div><div className="text-[9px] font-black text-gray-500 uppercase">Costo Total MP</div><div className="font-black text-blue-700">${formatNum(wipB.phaseCost||0)}</div></div>
+                                <div><div className="text-[9px] font-black text-gray-500 uppercase">Costo/KG Bobina</div><div className="font-black text-orange-700">${formatNum(parseNum(wipB.phaseCost||0)/parseNum(bobinaPhaseForm.producedKg))}</div></div>
+                                <div><div className="text-[9px] font-black text-gray-500 uppercase">% Merma Real</div><div className="font-black text-red-600">{(((wipB.kgAsignados||0)-parseNum(bobinaPhaseForm.producedKg))/(wipB.kgAsignados||1)*100).toFixed(1)}%</div></div>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex justify-end">
+                            <button onClick={()=>handleCerrarBobinaExtrusión(b)}
+                              className="bg-indigo-700 text-white px-8 py-3 rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-indigo-800 flex items-center gap-2">
+                              <CheckCircle2 size={16}/> Cerrar Bobina → Semielaborados
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* ── Historial completadas ── */}
             <div className="p-6">
-              {bobinaProductions.length === 0 ? (
-                <div className="text-center py-12 text-gray-400"><Box size={40} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">Sin producciones de bobina registradas</p></div>
+              <h3 className="text-sm font-black uppercase text-gray-700 mb-3 flex items-center gap-2">
+                <History size={16}/> Historial ({completadasBobinas.length} completadas)
+              </h3>
+              {completadasBobinas.length === 0 ? (
+                <div className="text-center py-10 text-gray-400"><Box size={36} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">Sin producciones completadas aún</p></div>
               ) : (
                 <div className="overflow-x-auto rounded-xl border border-gray-200">
                   <table className="w-full text-xs text-left">
-                    <thead className="bg-indigo-700 text-white">
+                    <thead className="bg-gray-800 text-white">
                       <tr className="uppercase font-black text-[9px] tracking-widest">
-                        <th className="py-3 px-4 border-r border-indigo-600">Fecha</th>
-                        <th className="py-3 px-4 border-r border-indigo-600">Categoría / Dims</th>
-                        <th className="py-3 px-4 border-r border-indigo-600 text-center">KG Procesados</th>
-                        <th className="py-3 px-4 border-r border-indigo-600 text-center">KG Netos</th>
-                        <th className="py-3 px-4 border-r border-indigo-600 text-center">Merma</th>
-                        <th className="py-3 px-4 border-r border-indigo-600 text-center">Mill. Teóricos</th>
-                        <th className="py-3 px-4 border-r border-indigo-600 text-right">Costo Total</th>
+                        <th className="py-3 px-4 border-r border-gray-700">Fecha</th>
+                        <th className="py-3 px-4 border-r border-gray-700">Categoría / Dims</th>
+                        <th className="py-3 px-4 border-r border-gray-700 text-center">KG Planif.</th>
+                        <th className="py-3 px-4 border-r border-gray-700 text-center">KG Producidos</th>
+                        <th className="py-3 px-4 border-r border-gray-700 text-right">Costo/KG</th>
+                        <th className="py-3 px-4 border-r border-gray-700">Ítem Inventario</th>
                         <th className="py-3 px-4 text-center">Estado</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {bobinaProductions.map(b=>(
+                      {completadasBobinas.map(b=>(
                         <tr key={b.id} className="hover:bg-gray-50">
-                          <td className="py-3 px-4 border-r font-bold text-gray-600">{b.fecha}</td>
-                          <td className="py-3 px-4 border-r">
-                            <div className="font-black text-[11px] text-gray-900 uppercase">{b.categoria}</div>
-                            <div className="text-[9px] text-gray-400">{b.ancho}×{b.largo}×{b.micras}MIC</div>
-                          </td>
-                          <td className="py-3 px-4 border-r text-center font-black text-blue-600">{formatNum(b.kgProcesados)}</td>
-                          <td className="py-3 px-4 border-r text-center font-black text-green-600">{formatNum(b.kgNetos)}</td>
-                          <td className="py-3 px-4 border-r text-center font-bold text-red-500">{formatNum(b.mermaKg)} ({parseNum(b.mermaPorc).toFixed(1)}%)</td>
-                          <td className="py-3 px-4 border-r text-center font-black text-indigo-600">{formatNum(b.millaresTeóricos)}</td>
-                          <td className="py-3 px-4 border-r text-right font-black">${formatNum(b.costoTotal)}</td>
-                          <td className="py-3 px-4 text-center">
-                            <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-lg text-[9px] font-black uppercase">✓ {b.status}</span>
-                          </td>
+                          <td className="py-3 px-4 border-r font-bold text-gray-600">{b.fechaCierre||b.fecha}</td>
+                          <td className="py-3 px-4 border-r"><div className="font-black text-[11px] uppercase">{b.categoria}</div><div className="text-[9px] text-gray-400">{b.ancho}×{b.largo}×{b.micras}MIC</div></td>
+                          <td className="py-3 px-4 border-r text-center font-bold text-blue-600">{formatNum(b.kgPlanificados)}</td>
+                          <td className="py-3 px-4 border-r text-center font-black text-green-600">{formatNum(b.kgProducidos)}</td>
+                          <td className="py-3 px-4 border-r text-right font-black">${formatNum(b.costoUnitKg)}</td>
+                          <td className="py-3 px-4 border-r text-[9px] font-bold text-indigo-600">{b.bobInventarioId||'—'}</td>
+                          <td className="py-3 px-4 text-center"><span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-lg text-[9px] font-black uppercase">✓ COMPLETADO</span></td>
                         </tr>
                       ))}
                     </tbody>
@@ -7396,6 +7578,7 @@ export default function App() {
         </div>
       );
     }
+
 
     // ── PROYECCIÓN MP ────────────────────────────────────────────────
     if (prodView === 'proyeccion') {
