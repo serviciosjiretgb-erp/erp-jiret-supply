@@ -799,6 +799,8 @@ export default function App() {
 
   const handleSaveMov = async () => {
     if(!movForm.itemId || !parseNum(movForm.qty)) return setDialog({title:'Aviso',text:'Complete artículo y cantidad.',type:'alert'});
+    // Determinar si es entrada o salida desde el tipo del formulario
+    const isEntradas = movForm.type==='ENTRADA'||movForm.type==='ENTRADA_DEVOLUCION'||movForm.type==='ENTRADA_INICIAL';
     const isFGGrp = movForm.itemId.startsWith('FGG::');
     const isFGItem = movForm.itemId.startsWith('FG::');
     const qty = parseNum(movForm.qty);
@@ -2094,7 +2096,7 @@ export default function App() {
                 <p className="text-[10px] font-bold text-gray-500 mt-0.5">{movs.length} registros encontrados</p>
               </div>
               <div className="flex gap-2">
-                <button onClick={()=>setShowMovForm(true)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2">
+                <button onClick={()=>{ setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',notes:'',date:getTodayDate(), type: isEntradas ? 'ENTRADA' : 'AUTOCONSUMO'}); setShowMovForm(true); }} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2">
                   <Plus size={13}/> {isEntradas ? 'Nueva Entrada' : 'Nueva Salida'}
                 </button>
                 <button onClick={()=>handleExportPDF(isEntradas?'Reporte_Entradas':'Reporte_Salidas', false)} className="bg-white border-2 border-gray-200 text-gray-700 px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50 flex items-center gap-2">
@@ -2941,7 +2943,45 @@ export default function App() {
                       {renderGrpTable(termosGrp, true)}
                     </div>
                   )}
-                  {groups.length === 0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>}
+                  {/* Ítems de Inventario General con categoría "Productos Terminados" */}
+                  {(() => {
+                    const invPT = (inventory||[]).filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0);
+                    if(!invPT.length) return null;
+                    return (
+                      <div className="mb-6">
+                        <h3 className="text-sm font-black uppercase text-orange-700 mb-3 flex items-center gap-2"><span className="bg-orange-100 px-3 py-1 rounded-lg">📋 TERMINADOS (INVENTARIO GENERAL)</span></h3>
+                        <div className="overflow-x-auto rounded-xl border border-gray-200">
+                          <table className="w-full text-left text-xs">
+                            <thead className="bg-orange-700 text-white">
+                              <tr className="uppercase font-black text-[9px] tracking-widest">
+                                <th className="py-3 px-4 border-r border-white/20">Código / Descripción</th>
+                                <th className="py-3 px-4 border-r border-white/20 text-center">Unidad</th>
+                                <th className="py-3 px-4 border-r border-white/20 text-center">Costo Unit.</th>
+                                <th className="py-3 px-4 text-center">Stock</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {invPT.map((item,idx)=>(
+                                <tr key={item.id} className={idx%2===0?'bg-white':'bg-gray-50/50'}>
+                                  <td className="py-3 px-4 border-r">
+                                    <div className="font-black text-[11px] text-gray-900 uppercase">{item.desc}</div>
+                                    <div className="text-[9px] text-gray-400 font-bold">{item.id}</div>
+                                  </td>
+                                  <td className="py-3 px-4 border-r text-center font-bold text-gray-500 text-[10px]">{item.unit||'KG'}</td>
+                                  <td className="py-3 px-4 border-r text-center font-black text-orange-600">${formatNum(item.cost)}</td>
+                                  <td className="py-3 px-4 text-center">
+                                    <div className="font-black text-xl text-orange-600">{formatNum(item.stock)}</div>
+                                    <div className="text-[9px] font-bold text-gray-400 uppercase">{item.unit||'KG'}</div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {groups.length === 0 && inventory.filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0).length===0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>}
                 </>
               );
             })()}
@@ -3264,7 +3304,9 @@ export default function App() {
               <tbody className="divide-y divide-gray-100">
                 {items.map(item => {
                   const pfId = item.id;
-                  const sysStock = isFG ? item.totalStock : (item.isWip ? item.kgEn : parseNum(item.stock));
+                  const sysStock = isFG
+                    ? (item._isInvItem ? parseNum(item.totalStock) : item.totalStock)
+                    : (item.isWip ? item.kgEn : parseNum(item.stock));
                   const physVal = physicalCounts[pfId];
                   const physNum = physVal !== undefined && physVal !== '' ? parseNum(physVal) : null;
                   const diff = physNum !== null ? physNum - sysStock : null;
@@ -3322,13 +3364,19 @@ export default function App() {
             </div>
 
             {/* 1. Inventario General (MP, Consumibles, etc.) */}
-            {renderTFSection('📦 Inventario General (Materia Prima / Consumibles)', 'bg-gray-700', inventory, false, false)}
+            {renderTFSection('📦 Inventario General (Materia Prima / Consumibles)', 'bg-gray-700', inventory.filter(i=>i.category!=='Productos Terminados'&&i.category!=='Semielaborados'), false, false)}
+
+            {/* 1b. Semielaborados / Bobinas */}
+            {inventory.some(i=>i.category==='Semielaborados') && renderTFSection('🔄 Semielaborados / Bobinas (en proceso)', 'bg-indigo-600', inventory.filter(i=>i.category==='Semielaborados'), false, false)}
 
             {/* 2. Productos en Proceso (WIP) */}
-            {renderTFSection('⚙ En Proceso (WIP)', 'bg-blue-600', wipItems, false, false)}
+            {renderTFSection('⚙ En Proceso (WIP) — Remanente de MP', 'bg-blue-600', wipItems, false, false)}
 
-            {/* 3. Productos Terminados */}
-            {renderTFSection('✅ Productos Terminados', 'bg-green-700', tfFGList.map(g=>({...g, id:`FG-TF-${g.key}`, unit:g.esTermo?'KG':'Millares'})), false, true)}
+            {/* 3. Productos Terminados (FG de producción + inventory PT) */}
+            {renderTFSection('✅ Productos Terminados', 'bg-green-700', [
+              ...tfFGList.map(g=>({...g, id:`FG-TF-${g.key}`, unit:g.esTermo?'KG':'Millares'})),
+              ...inventory.filter(i=>i.category==='Productos Terminados').map(i=>({...i, id:`INV-PT-${i.id}`, unit:i.unit||'KG', totalStock:i.stock, _isInvItem:true}))
+            ], false, true)}
           </div>
         </div>
       );
@@ -3569,6 +3617,7 @@ export default function App() {
                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
                      <select value={newInvItemForm.category} onChange={e=>setNewInvItemForm({...newInvItemForm, category: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
                         <option value="Materia Prima">Materia Prima</option>
+                        <option value="Semielaborados">Semielaborados / Bobinas</option>
                         <option value="Pigmentos">Pigmentos</option>
                         <option value="Tintas">Tintas</option>
                         <option value="Químicos">Químicos</option>
@@ -4163,9 +4212,11 @@ export default function App() {
         )}
 
         {invView === 'reporte177' && (() => {
-          const categories = [...new Set(inventory.map(i => i.category))];
+          // Excluir "Productos Terminados" y "Semielaborados" del listado dinámico de inventory
+          // porque se manejan con secciones especiales
+          const categories = [...new Set(inventory.map(i => i.category).filter(c => c !== 'Productos Terminados'))];
           
-          if (finishedGoodsInventory.length > 0) categories.push('Productos Terminados');
+          if (finishedGoodsInventory.length > 0 || inventory.some(i=>i.category==='Productos Terminados')) categories.push('Productos Terminados');
 
           const startOfMonth = new Date(reportYear, reportMonth - 1, 1);
           const endOfMonth = new Date(reportYear, reportMonth, 0, 23, 59, 59, 999);
@@ -4251,6 +4302,25 @@ export default function App() {
                   invFinalQty, invFinalCost, invFinalTotal: invFinalQty * invFinalCost
                 };
               }).filter(g => g.monthEntradasQty > 0 || g.monthSalidasQty > 0 || g.invFinalQty > 0);
+
+              // Agregar también los ítems de inventory con category === 'Productos Terminados'
+              const invPT = inventory.filter(item => item.category === 'Productos Terminados');
+              invPT.forEach(item => {
+                const itemMovements = monthMovements.filter(m => m.itemId === item.id);
+                const entradas = itemMovements.filter(m => m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL');
+                const salidas = itemMovements.filter(m => m.type==='SALIDA'||m.type==='AUTOCONSUMO'||m.type==='AVERIA'||m.type==='MUESTRA'||m.type==='PERDIDA');
+                const monthEntradasQty = entradas.reduce((s,m)=>s+parseNum(m.qty),0);
+                const monthSalidasQty = salidas.reduce((s,m)=>s+parseNum(m.qty),0);
+                const avgCost = item.cost || 0;
+                const initialStock = item.stock + monthSalidasQty - monthEntradasQty;
+                items.push({
+                  id: item.id, desc: item.desc, unit: item.unit||'KG', cost: avgCost,
+                  initialStock, initialTotal: initialStock * avgCost,
+                  monthEntradasQty, monthEntradasProm: avgCost, monthEntradasTotal: monthEntradasQty * avgCost,
+                  monthSalidasQty, monthSalidasProm: avgCost, monthSalidasTotal: monthSalidasQty * avgCost,
+                  invFinalQty: item.stock, invFinalCost: avgCost, invFinalTotal: item.stock * avgCost
+                });
+              });
             }
 
             return { category: cat, items };
