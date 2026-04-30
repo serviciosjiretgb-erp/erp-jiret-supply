@@ -175,14 +175,14 @@ export default function App() {
     if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v7') === 'done') return;
     const CORRECT = [
       // Stocks correctos = INV.FINAL del Reporte 177 (entradas - salidas)
-      {pat:/embutido.*1.*kiri|kiri.*embutido.*1/i, esTermo:false, finalStock:21.45, cost:86.64, entQty:241.45, salQty:220.00, salCost:86.64},
-      {pat:/pa[ñn]al.*kiri/i,                       esTermo:false, finalStock:103.30, cost:78.01, entQty:168.30, salQty:65.00,  salCost:78.01},
-      {pat:/termo.*pinturas|pinturas.*caribe/i,      esTermo:true,  finalStock:1.40,   cost:2.71,  entQty:521.40, salQty:520.00, salCost:2.71},
+      {pat:/embutido.*1.*kiri|kiri.*embutido.*1/i, esTermo:false, finalStock:21.45, cost:86.64},
+      {pat:/pa[ñn]al.*kiri/i,                       esTermo:false, finalStock:103.30, cost:78.01},
+      {pat:/termo.*pinturas|pinturas.*caribe/i,      esTermo:true,  finalStock:1.40,   cost:2.71},
       // Eliminar producto erróneo (28+5+5)X75X12MIC - stock a cero
-      {pat:/\(28\+5\+5\)/i,                          esTermo:false, finalStock:0,      cost:0,     entQty:0,      salQty:0,      salCost:0},
+      {pat:/\(28\+5\+5\)/i,                          esTermo:false, finalStock:0,      cost:0},
     ];
     const run = async () => {
-      // 1. Update FG stocks in Firebase
+      // Solo actualizar stocks en Firebase — NO tocar movimientos (para evitar duplicados)
       const groups = {};
       finishedGoodsInventory.forEach(fg => {
         const key = CORRECT.findIndex(c=>c.pat.test(`${fg.producto||''} ${fg.cliente||''}`));
@@ -195,37 +195,12 @@ export default function App() {
         fgs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
         const [keeper, ...zeros] = fgs;
         const ku = ref.esTermo
-          ? {kgProducidos:ref.finalStock, kgProducidosOrigen:521.40, costoUnitario:ref.cost}
-          : {millares:ref.finalStock, millaresOrigen:ref.finalStock, costoUnitarioMillar:ref.cost};
+          ? {kgProducidos:ref.finalStock, costoUnitario:ref.cost}
+          : {millares:ref.finalStock, costoUnitarioMillar:ref.cost};
         try { await updateDoc(getDocRef('finishedGoodsInventory', keeper.id), ku); } catch(e){}
         for(const z of zeros) {
           try { await updateDoc(getDocRef('finishedGoodsInventory', z.id), ref.esTermo?{kgProducidos:0}:{millares:0}); } catch(e){}
         }
-        // 2. Delete ALL existing FG:: movements for this product
-        const allFGIds = fgs.map(f=>f.id);
-        const existingMovs = (invMovements||[]).filter(m=>{
-          const mid = m.itemId?.replace('FG::','');
-          return allFGIds.includes(mid);
-        });
-        for(const m of existingMovs) { try{ await deleteDoc(getDocRef('inventoryMovements',m.id)); }catch(e){} }
-        // 3. Add exactly ONE entrada and ONE salida per product
-        const fg0 = fgs[0];
-        const entTs = new Date('2026-03-01').getTime() + parseInt(key)*1000;
-        const salTs = new Date('2026-04-01').getTime() + parseInt(key)*1000;
-        try {
-          await addDoc(getColRef('inventoryMovements'), {
-            itemId:`FG::${fg0.id}`, itemDesc:formatFGLabel(fg0)||fg0.producto||fg0.id,
-            type:'ENTRADA_INICIAL', qty:ref.entQty, unitCost:ref.cost, totalValue:ref.entQty*ref.cost,
-            previousStock:0, newStock:ref.entQty, docRef:'INV.INICIAL', notes:'Existencia inicial',
-            date:'2026-03-01', user:'Admin', timestamp:entTs, isFG:true
-          });
-          await addDoc(getColRef('inventoryMovements'), {
-            itemId:`FG::${fg0.id}`, itemDesc:formatFGLabel(fg0)||fg0.producto||fg0.id,
-            type:'SALIDA', qty:ref.salQty, unitCost:ref.salCost, totalValue:ref.salQty*ref.salCost,
-            previousStock:ref.entQty, newStock:ref.finalStock, docRef:'VENTA', notes:'Venta período',
-            date:'2026-04-01', user:'Admin', timestamp:salTs, isFG:true
-          });
-        } catch(e){}
       }
       sessionStorage.setItem('fg_stock_v7','done');
     };
@@ -3237,19 +3212,36 @@ export default function App() {
       });
       const tfFGList = Object.values(tfFGGroups);
 
-      // WIP items (inventory in production)
+      // WIP = MP despachada por almacén MENOS lo ya consumido en lotes de producción
       const wipItems = [];
-      (requirements||[]).filter(r=>r.status!=='COMPLETADO').forEach(req => {
+      const activeOPsWip = (requirements||[]).filter(r => r.status !== 'COMPLETADO');
+      activeOPsWip.forEach(req => {
+        // Materiales despachados: requisiciones aprobadas para esta OP
+        const despachado = {};
+        (invRequisitions||[])
+          .filter(r => r.opId === req.id && (r.status === 'APROBADO' || r.status === 'APROBADA'))
+          .forEach(r => { (r.items||[]).forEach(it => { if(it.id){ despachado[it.id] = (despachado[it.id]||0) + parseNum(it.qty); } }); });
+
+        // Materiales consumidos en todos los lotes guardados
+        const consumido = {};
         const prod = req.production || {};
         ['extrusion','impresion','sellado'].forEach(phase => {
-          const b = (prod[phase]?.batches||[]).filter(b=>b.operator!=='ALMACÉN (DESPACHO)');
-          if (b.length > 0) {
-            const kgEn = b.reduce((s,x)=>s+parseNum(x.producedKg),0);
-            if (kgEn > 0) wipItems.push({
-              id: `WIP-${req.id}-${phase}`,
-              desc: `${req.desc} — ${phase.toUpperCase()}`,
-              cliente: req.client, opId: req.id, phase, kgEn,
-              unit: 'KG', isWip: true
+          (prod[phase]?.batches||[]).forEach(b => {
+            (b.insumos||[]).forEach(ing => { if(ing.id){ consumido[ing.id] = (consumido[ing.id]||0) + parseNum(ing.qty); } });
+          });
+        });
+
+        // Remanente = despachado - consumido (solo positivos)
+        Object.keys(despachado).forEach(matId => {
+          const restante = Math.max(0, despachado[matId] - (consumido[matId]||0));
+          if (restante >= 0.01) {
+            const invItem = (inventory||[]).find(i => i.id === matId);
+            wipItems.push({
+              id: `WIP-${req.id}-${matId}`,
+              desc: `${invItem?.desc || matId}`,
+              subtit: `OP ${req.id} — ${req.client} | Desp: ${formatNum(despachado[matId])} / Consumido: ${formatNum(consumido[matId]||0)}`,
+              cliente: req.client, opId: req.id, matId,
+              kgEn: restante, unit: invItem?.unit || 'KG', isWip: true
             });
           }
         });
@@ -3279,13 +3271,13 @@ export default function App() {
                   const desc = isFG
                     ? formatFGLabel(item)
                     : item.isWip
-                      ? `${item.desc} | ${item.cliente} | OP ${item.opId}`
+                      ? item.desc
                       : item.desc;
                   return (
                     <tr key={pfId} className="hover:bg-gray-50">
                       <td className="py-2 px-4 border-r">
                         <div className="font-black text-[10px] text-gray-900 uppercase">{desc}</div>
-                        <div className="text-[9px] text-gray-400 font-bold">{pfId}</div>
+                        <div className="text-[9px] text-gray-400 font-bold">{item.isWip ? item.subtit : pfId}</div>
                       </td>
                       <td className="py-2 px-4 border-r text-center font-bold text-gray-500">{item.unit||'KG'}</td>
                       <td className="py-2 px-4 border-r text-center font-black text-blue-600">{formatNum(sysStock)}</td>
@@ -4054,8 +4046,16 @@ export default function App() {
                   return m.itemId===actualKardexId;
                 }).sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
                 
+                // Deduplicar movimientos con mismo tipo+fecha+cantidad (versiones anteriores crearon duplicados)
+                const _seenMovKeys = new Set();
+                const dedupMovs = movs.filter(m => {
+                  const k = `${m.type}|${m.date}|${String(parseNum(m.qty).toFixed(4))}`;
+                  if (_seenMovKeys.has(k)) return false;
+                  _seenMovKeys.add(k);
+                  return true;
+                });
                 let runBalance = 0;
-                const rows = movs.map(m => {
+                const rows = dedupMovs.map(m => {
                   const isIn = m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL';
                   if(isIn) runBalance += parseNum(m.qty);
                   else runBalance -= parseNum(m.qty);
@@ -7204,6 +7204,15 @@ export default function App() {
                   <h2 className="text-xl font-black text-blue-800 uppercase flex items-center gap-3"><ClipboardList className="text-blue-600" size={24}/> Requisiciones Generadas</h2>
                   <p className="text-[10px] font-bold text-blue-600 mt-0.5">Requisiciones de planta enviadas a Almacén. Transforme a OD-P desde Almacén/OC.</p>
                 </div>
+                <button onClick={()=>{
+                  setPoProvider('PLANTA DE PRODUCCIÓN');
+                  setPoNotes(`FECHA: ${getTodayDate()} | `);
+                  setSelectedPOItems([]);
+                  setPoAddId(''); setPoAddQty('');
+                  setShowPOModal(true);
+                }} className="bg-blue-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-blue-700 flex items-center gap-2">
+                  <Plus size={14}/> Nueva Requisición de Planta
+                </button>
               </div>
               <div className="p-6">
                 {rqOrders.length === 0 ? (
