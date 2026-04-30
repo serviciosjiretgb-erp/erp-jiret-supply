@@ -817,6 +817,80 @@ export default function App() {
       setNewMovementForm(initialMovementForm); setDialog({title: 'Éxito', text: `Movimiento registrado. ${newMovementForm.type === 'ENTRADA' ? 'Costo promedio actualizado.' : ''}`, type: 'alert'});
     } catch (err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
+
+  const handleSaveMov = async () => {
+    if(!movForm.itemId || !parseNum(movForm.qty)) return setDialog({title:'Aviso',text:'Complete artículo y cantidad.',type:'alert'});
+    const isFGGrp = movForm.itemId.startsWith('FGG::');
+    const isFGItem = movForm.itemId.startsWith('FG::');
+    const qty = parseNum(movForm.qty);
+    const unitCostInput = parseNum(movForm.unitCost) || 0;
+
+    if(isFGGrp || isFGItem) {
+      // Find ALL FG items in the group
+      const grpKey = isFGGrp ? movForm.itemId.replace('FGG::','') : movForm.itemId.replace('FG::','');
+      
+      // Find all matching FG items (by grpKey normalization)
+      const matchingFGs = (finishedGoodsInventory||[]).filter(fg => {
+        if(isFGItem && fg.id === grpKey) return true; // direct id match
+        const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+        const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+        const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+        const fgGrpKey=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
+        return fgGrpKey === grpKey;
+      });
+      
+      if(matchingFGs.length === 0) return setDialog({title:'Error',text:'Producto no encontrado.',type:'alert'});
+      const esTermo = matchingFGs[0].tipoProducto==='TERMOENCOGIBLE';
+      const totalStock = matchingFGs.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
+      const cost = unitCostInput || (esTermo ? parseNum(matchingFGs[0].costoUnitario||0) : parseNum(matchingFGs[0].costoUnitarioMillar||0));
+      const isInMov = movForm.type==='ENTRADA'||movForm.type==='ENTRADA_DEVOLUCION'||movForm.type==='ENTRADA_INICIAL';
+      
+      if(!isInMov && qty > totalStock + 0.001) return setDialog({title:'Aviso',text:`Stock insuficiente. Disponible: ${formatNum(totalStock)} ${esTermo?'KG':'Millares'}`,type:'alert'});
+      
+      // Deduct/add from FG items proportionally  
+      let remaining = qty;
+      for(const fg of matchingFGs) {
+        if(remaining <= 0.001) break;
+        const fgStock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+        if(!isInMov && fgStock <= 0) continue;
+        const cantDeEste = isInMov ? qty : Math.min(remaining, fgStock);
+        remaining -= cantDeEste;
+        const newStk = isInMov ? fgStock + cantDeEste : Math.max(0, fgStock - cantDeEste);
+        const updateFG = esTermo ? {kgProducidos: newStk} : {millares: newStk};
+        await updateDoc(getDocRef('finishedGoodsInventory', fg.id), updateFG);
+        await addDoc(getColRef('inventoryMovements'), {
+          itemId:`FG::${fg.id}`, itemDesc:formatFGLabel(fg)||fg.producto||fg.id,
+          type:movForm.type, qty:cantDeEste, unitCost:cost, totalValue:cantDeEste*cost,
+          previousStock:fgStock, newStock:newStk, docRef:movForm.docRef,
+          notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin',
+          timestamp:Date.now(), isFG:true
+        });
+      }
+      setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',type:isEntradas?'ENTRADA':'AUTOCONSUMO',notes:'',date:getTodayDate()});
+      setShowMovForm(false);
+      setDialog({title:'✅ Movimiento Procesado',text:`${isInMov?'Entrada':'Salida'} registrada para ${esTermo?'KG':'Millares'}: ${formatNum(qty)}`,type:'alert'});
+      return;
+    }
+
+    // MP / Consumibles normal item
+    const inv = (inventory||[]).find(i=>i.id===movForm.itemId);
+    if(!inv) return;
+    const unitCostFinal = unitCostInput || inv.cost || 0;
+    const newStock = isEntradas ? (inv.stock||0) + qty : Math.max(0,(inv.stock||0) - qty);
+    const newCost = isEntradas && unitCostFinal > 0
+      ? (((inv.stock||0)*parseNum(inv.cost||0)) + (qty*unitCostFinal)) / ((inv.stock||0) + qty)
+      : inv.cost;
+    const mov = {itemId:movForm.itemId, itemDesc:inv.desc, type:movForm.type, qty, unitCost: unitCostFinal, totalValue: qty * unitCostFinal, previousStock:inv.stock||0, newStock, docRef: movForm.docRef, notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin', timestamp:Date.now()};
+    try {
+      await addDoc(getColRef('inventoryMovements'), mov);
+      const updateData = {stock: newStock};
+      if(isEntradas && unitCostFinal > 0) updateData.cost = newCost;
+      await updateDoc(getDocRef('inventory', movForm.itemId), updateData);
+      setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',type:isEntradas?'ENTRADA':'AUTOCONSUMO',notes:'',date:getTodayDate()});
+      setShowMovForm(false);
+      setDialog({title:'✅ Movimiento Procesado',text:`Nuevo stock: ${formatNum(newStock)} ${inv.unit}`,type:'alert'});
+    } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
   
   const handleDeleteInvItem = (id) => {
     setDialog({ 
@@ -1918,79 +1992,7 @@ export default function App() {
       const movs = (invMovements||[]).filter(m => tipoVals.includes(m.type)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
       const selectedInvItem = (inventory||[]).find(i=>i.id===movForm.itemId);
 
-      const handleSaveMov = async () => {
-        if(!movForm.itemId || !parseNum(movForm.qty)) return setDialog({title:'Aviso',text:'Complete artículo y cantidad.',type:'alert'});
-        const isFGGrp = movForm.itemId.startsWith('FGG::');
-        const isFGItem = movForm.itemId.startsWith('FG::');
-        const qty = parseNum(movForm.qty);
-        const unitCostInput = parseNum(movForm.unitCost) || 0;
-
-        if(isFGGrp || isFGItem) {
-          // Find ALL FG items in the group
-          const grpKey = isFGGrp ? movForm.itemId.replace('FGG::','') : movForm.itemId.replace('FG::','');
-          
-          // Find all matching FG items (by grpKey normalization)
-          const matchingFGs = (finishedGoodsInventory||[]).filter(fg => {
-            if(isFGItem && fg.id === grpKey) return true; // direct id match
-            const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
-            const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-            const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-            const fgGrpKey=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
-            return fgGrpKey === grpKey;
-          });
-          
-          if(matchingFGs.length === 0) return setDialog({title:'Error',text:'Producto no encontrado.',type:'alert'});
-          const esTermo = matchingFGs[0].tipoProducto==='TERMOENCOGIBLE';
-          const totalStock = matchingFGs.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
-          const cost = unitCostInput || (esTermo ? parseNum(matchingFGs[0].costoUnitario||0) : parseNum(matchingFGs[0].costoUnitarioMillar||0));
-          const isInMov = movForm.type==='ENTRADA'||movForm.type==='ENTRADA_DEVOLUCION'||movForm.type==='ENTRADA_INICIAL';
-          
-          if(!isInMov && qty > totalStock + 0.001) return setDialog({title:'Aviso',text:`Stock insuficiente. Disponible: ${formatNum(totalStock)} ${esTermo?'KG':'Millares'}`,type:'alert'});
-          
-          // Deduct/add from FG items proportionally  
-          let remaining = qty;
-          for(const fg of matchingFGs) {
-            if(remaining <= 0.001) break;
-            const fgStock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-            if(!isInMov && fgStock <= 0) continue;
-            const cantDeEste = isInMov ? qty : Math.min(remaining, fgStock);
-            remaining -= cantDeEste;
-            const newStk = isInMov ? fgStock + cantDeEste : Math.max(0, fgStock - cantDeEste);
-            const updateFG = esTermo ? {kgProducidos: newStk} : {millares: newStk};
-            await updateDoc(getDocRef('finishedGoodsInventory', fg.id), updateFG);
-            await addDoc(getColRef('inventoryMovements'), {
-              itemId:`FG::${fg.id}`, itemDesc:formatFGLabel(fg)||fg.producto||fg.id,
-              type:movForm.type, qty:cantDeEste, unitCost:cost, totalValue:cantDeEste*cost,
-              previousStock:fgStock, newStock:newStk, docRef:movForm.docRef,
-              notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin',
-              timestamp:Date.now(), isFG:true
-            });
-          }
-          setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',type:isEntradas?'ENTRADA':'AUTOCONSUMO',notes:'',date:getTodayDate()});
-          setShowMovForm(false);
-          setDialog({title:'✅ Movimiento Procesado',text:`${isInMov?'Entrada':'Salida'} registrada para ${esTermo?'KG':'Millares'}: ${formatNum(qty)}`,type:'alert'});
-          return;
-        }
-
-        // MP / Consumibles normal item
-        const inv = (inventory||[]).find(i=>i.id===movForm.itemId);
-        if(!inv) return;
-        const unitCostFinal = unitCostInput || inv.cost || 0;
-        const newStock = isEntradas ? (inv.stock||0) + qty : Math.max(0,(inv.stock||0) - qty);
-        const newCost = isEntradas && unitCostFinal > 0
-          ? (((inv.stock||0)*parseNum(inv.cost||0)) + (qty*unitCostFinal)) / ((inv.stock||0) + qty)
-          : inv.cost;
-        const mov = {itemId:movForm.itemId, itemDesc:inv.desc, type:movForm.type, qty, unitCost: unitCostFinal, totalValue: qty * unitCostFinal, previousStock:inv.stock||0, newStock, docRef: movForm.docRef, notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin', timestamp:Date.now()};
-        try {
-          await addDoc(getColRef('inventoryMovements'), mov);
-          const updateData = {stock: newStock};
-          if(isEntradas && unitCostFinal > 0) updateData.cost = newCost;
-          await updateDoc(getDocRef('inventory', movForm.itemId), updateData);
-          setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',type:isEntradas?'ENTRADA':'AUTOCONSUMO',notes:'',date:getTodayDate()});
-          setShowMovForm(false);
-          setDialog({title:'✅ Movimiento Procesado',text:`Nuevo stock: ${formatNum(newStock)} ${inv.unit}`,type:'alert'});
-        } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-      };
+      // handleSaveMov defined at component level
 
       return (
         <div className="space-y-4 animate-in fade-in">
@@ -2663,59 +2665,78 @@ export default function App() {
               {/* Formulario según tipo */}
               <div className="bg-white rounded-2xl border border-gray-200 p-5">
                 {cargarForm.tipo === 'TERMINADOS' ? (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {/* Categoría — auto-llena dimensiones desde fórmulas */}
-                    <div className="md:col-span-2">
-                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Categoría (desde fórmulas)</label>
-                      <select value={cargarForm.categoria} onChange={e=>{
-                        const cat = e.target.value;
-                        const formula = (formulas||[]).find(f=>(f.categoria||'').toUpperCase()===cat.toUpperCase());
-                        const esTermo = formula?.tipoProducto === 'TERMOENCOGIBLE' || cat.toUpperCase().includes('TERMO');
-                        const pesoMillar = formula ? (()=>{
-                          const w=parseNum(formula.ancho),l=parseNum(formula.largo),m=parseNum(formula.micras),fu=parseNum(formula.fuelles||0);
-                          const perim=(w+2*fu)*2;const areaM2=perim*l/10000;
-                          return (areaM2*m*0.92).toFixed(3);
-                        })() : '';
-                        setCargarForm({...cargarForm, categoria:cat,
-                          ancho: formula?.ancho||'', largo: formula?.largo||'', micras: formula?.micras||'',
-                          tipoProducto: esTermo?'TERMOENCOGIBLE':'BOLSAS',
-                          pesoMillar: pesoMillar,
-                          producto: formula ? `${formula.categoria} ${formula.ancho||''}×${formula.largo||''}×${formula.micras||''}MIC` : cargarForm.producto
+                  <div className="space-y-4">
+                    {/* Select from existing FG products */}
+                    <div>
+                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Seleccionar Producto Terminado</label>
+                      <select value={cargarForm._fgSelectKey||''} onChange={e=>{
+                        const gk = e.target.value;
+                        // Find the group from finishedGoodsInventory
+                        const fgGrps = {};
+                        (finishedGoodsInventory||[]).forEach(fg=>{
+                          const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                          const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                          const gk2=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
+                          if(!fgGrps[gk2]) fgGrps[gk2]={key:gk2,items:[],fg,desc:formatFGLabel(fg)||fg.producto,esTermo:fg.tipoProducto==='TERMOENCOGIBLE'};
+                          fgGrps[gk2].items.push(fg);
                         });
-                      }} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500 bg-white">
-                        <option value="">— Seleccione categoría —</option>
-                        {(formulas||[]).map(f=><option key={f.id||f.categoria} value={f.categoria||''}>{f.categoria}</option>)}
-                        <option value="OTRO">OTRO (manual)</option>
+                        const grp = fgGrps[gk];
+                        if(grp) {
+                          const existStock = grp.esTermo ? grp.items.reduce((s,f)=>s+parseNum(f.kgProducidos),0) : grp.items.reduce((s,f)=>s+parseNum(f.millares),0);
+                          const existCost = grp.esTermo ? parseNum(grp.fg.costoUnitario||0) : parseNum(grp.fg.costoUnitarioMillar||0);
+                          setCargarForm({...cargarForm, _fgSelectKey:gk, _fgGrpItems:grp.items, _fgEsTermo:grp.esTermo, _fgExistStock:existStock, _fgExistCost:existCost, _fgDesc:grp.desc, millares:'', kgProducidos:'', costoUnit:''});
+                        } else {
+                          setCargarForm({...cargarForm, _fgSelectKey:'', _fgGrpItems:null});
+                        }
+                      }} className="w-full border-2 border-green-300 rounded-xl p-3 text-xs font-bold outline-none focus:border-green-500 bg-white">
+                        <option value="">— Seleccione producto —</option>
+                        {(() => {
+                          const fgGrps = {};
+                          (finishedGoodsInventory||[]).forEach(fg=>{
+                            const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                            const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                            const gk=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
+                            if(!fgGrps[gk]) fgGrps[gk]={key:gk, desc:formatFGLabel(fg)||fg.producto, esTermo:fg.tipoProducto==='TERMOENCOGIBLE', stk:0};
+                            fgGrps[gk].stk += fg.tipoProducto==='TERMOENCOGIBLE'?parseNum(fg.kgProducidos):parseNum(fg.millares);
+                          });
+                          return Object.values(fgGrps).map(g=>(
+                            <option key={g.key} value={g.key}>{g.desc} — Stock: {formatNum(g.stk)} {g.esTermo?'KG':'Millares'}</option>
+                          ));
+                        })()}
                       </select>
+                      {cargarForm._fgSelectKey && <div className="mt-1.5 bg-blue-50 rounded-lg px-3 py-1.5 text-[9px] font-bold text-blue-700">Stock actual: {formatNum(cargarForm._fgExistStock)} {cargarForm._fgEsTermo?'KG':'Millares'} | Costo promedio actual: ${formatNum(cargarForm._fgExistCost)}</div>}
                     </div>
-                    <div>
-                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tipo Producto</label>
-                      <select value={cargarForm.tipoProducto} onChange={e=>setCargarForm({...cargarForm,tipoProducto:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500">
-                        <option value="BOLSAS">BOLSAS</option><option value="TERMOENCOGIBLE">TERMOENCOGIBLE</option>
-                      </select>
-                    </div>
-                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cliente</label><input value={cargarForm.cliente} onChange={e=>setCargarForm({...cargarForm,cliente:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="Nombre cliente"/></div>
-                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">OP Ref.</label><input value={cargarForm.opId} onChange={e=>setCargarForm({...cargarForm,opId:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="OP-00001"/></div>
-                    <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Producto / Descripción</label><input value={cargarForm.producto} onChange={e=>setCargarForm({...cargarForm,producto:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="EJ: EMBUTIDO 1 - KIRI"/></div>
-                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Ancho (cm)</label><input type="number" value={cargarForm.ancho} onChange={e=>setCargarForm({...cargarForm,ancho:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500"/></div>
-                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Largo (cm)</label><input type="number" value={cargarForm.largo} onChange={e=>setCargarForm({...cargarForm,largo:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500"/></div>
-                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Micras</label><input type="number" value={cargarForm.micras} onChange={e=>setCargarForm({...cargarForm,micras:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500"/></div>
-                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Color</label><input value={cargarForm.color} onChange={e=>setCargarForm({...cargarForm,color:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="NATURAL"/></div>
-                    {cargarForm.tipoProducto !== 'TERMOENCOGIBLE' && <>
-                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares</label><input type="number" step="0.01" value={cargarForm.millares} onChange={e=>setCargarForm({...cargarForm,millares:e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none focus:border-green-500 text-center bg-green-50"/></div>
-                      <div>
-                        <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">⚖ Peso / Millar (KG)</label>
-                        <input type="number" step="0.001" value={cargarForm.pesoMillar||''} onChange={e=>{
-                          const pm=parseNum(e.target.value); const mill=parseNum(cargarForm.millares||0);
-                          setCargarForm({...cargarForm, pesoMillar:e.target.value, kgProducidos: pm>0&&mill>0?(mill*pm).toFixed(2):cargarForm.kgProducidos});
-                        }} className="w-full border-2 border-yellow-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-yellow-400 text-center bg-yellow-50" placeholder="KG/Millar"/>
-                        {parseNum(cargarForm.pesoMillar)>0&&parseNum(cargarForm.millares)>0&&<div className="text-[8px] text-yellow-700 text-center mt-0.5">→ {formatNum(parseNum(cargarForm.millares)*parseNum(cargarForm.pesoMillar))} KG totales</div>}
+                    {cargarForm._fgSelectKey && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cantidad a Agregar ({cargarForm._fgEsTermo?'KG':'Millares'})</label>
+                          <input type="number" step="0.01" min="0.01" value={cargarForm._fgAddQty||''} onChange={e=>{
+                            const q=parseNum(e.target.value);
+                            const avgCost = q>0&&parseNum(cargarForm._fgAddCost)>0
+                              ? (((cargarForm._fgExistStock||0)*(cargarForm._fgExistCost||0)) + (q*parseNum(cargarForm._fgAddCost))) / ((cargarForm._fgExistStock||0)+q)
+                              : cargarForm._fgExistCost||0;
+                            setCargarForm({...cargarForm, _fgAddQty:e.target.value, _fgAvgCost:avgCost});
+                          }} className="w-full border-2 border-green-300 rounded-xl p-3 text-sm font-black text-center outline-none focus:border-green-500 bg-green-50" placeholder="0.00"/>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Costo Unitario Nueva Entrada ($/{cargarForm._fgEsTermo?'KG':'Millar'})</label>
+                          <input type="number" step="0.01" min="0" value={cargarForm._fgAddCost||''} onChange={e=>{
+                            const c=parseNum(e.target.value); const q=parseNum(cargarForm._fgAddQty||0);
+                            const avgCost = q>0&&c>0
+                              ? (((cargarForm._fgExistStock||0)*(cargarForm._fgExistCost||0)) + (q*c)) / ((cargarForm._fgExistStock||0)+q)
+                              : c||cargarForm._fgExistCost||0;
+                            setCargarForm({...cargarForm, _fgAddCost:e.target.value, _fgAvgCost:avgCost});
+                          }} className="w-full border-2 border-orange-200 rounded-xl p-3 text-sm font-black text-center outline-none focus:border-orange-500 bg-orange-50" placeholder="0.00"/>
+                        </div>
+                        {parseNum(cargarForm._fgAddQty)>0 && parseNum(cargarForm._fgAddCost)>0 && (
+                          <div className="col-span-2 bg-green-50 border border-green-200 rounded-xl p-3">
+                            <p className="text-[9px] font-black text-green-800 uppercase">Resumen del ajuste:</p>
+                            <p className="text-xs font-bold text-green-700">Stock nuevo: {formatNum((cargarForm._fgExistStock||0)+parseNum(cargarForm._fgAddQty))} {cargarForm._fgEsTermo?'KG':'Millares'}</p>
+                            <p className="text-xs font-bold text-orange-700">Costo promedio resultante: ${formatNum(cargarForm._fgAvgCost||0)} / {cargarForm._fgEsTermo?'KG':'Millar'}</p>
+                          </div>
+                        )}
                       </div>
-                    </>}
-                    <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG {cargarForm.tipoProducto==='TERMOENCOGIBLE'?'(Principal)':'(Calculado)'}</label><input type="number" step="0.01" value={cargarForm.kgProducidos} onChange={e=>setCargarForm({...cargarForm,kgProducidos:e.target.value})} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none focus:border-green-500 text-center bg-green-50"/></div>
-                    <div>
-                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">💲 Costo Unit. ({cargarForm.tipoProducto==='TERMOENCOGIBLE'?'$/KG':'$/Millar'})</label>
-                      <input type="number" step="0.01" value={cargarForm.costoUnit||''} onChange={e=>setCargarForm({...cargarForm,costoUnit:e.target.value})} className="w-full border-2 border-orange-200 rounded-xl p-2 text-sm font-black outline-none focus:border-orange-400 text-center bg-orange-50" placeholder="0.00"/>
+                    )}
                     </div>
                     <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Fecha</label><input type="date" value={cargarForm.fecha} onChange={e=>setCargarForm({...cargarForm,fecha:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500"/></div>
                     <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Observaciones</label><input value={cargarForm.observaciones} onChange={e=>setCargarForm({...cargarForm,observaciones:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="Carga manual de inventario..."/></div>
@@ -2736,48 +2757,33 @@ export default function App() {
                   <button type="button" onClick={async () => {
                     try {
                       if (cargarForm.tipo === 'TERMINADOS') {
-                        if (!cargarForm.producto || !cargarForm.cliente) return setDialog({title:'Aviso',text:'Complete producto y cliente.',type:'alert'});
-                        const newId = `FG-MANUAL-${Date.now()}`;
-                        const mill = parseNum(cargarForm.millares||0);
-                        const kg = parseNum(cargarForm.kgProducidos||0);
-                        const cu = parseNum(cargarForm.costoUnit||0);
-                        const esTermo2 = cargarForm.tipoProducto==='TERMOENCOGIBLE';
-                        const cuMillar = esTermo2 ? 0 : cu;
-                        const cuKg = esTermo2 ? cu : (mill>0?cu*kg/mill:0);
-
-                        // Check if same product already exists → weighted average cost
-                        const existingFG = (finishedGoodsInventory||[]).find(fg => {
-                          const sameProduct = (fg.producto||'').toUpperCase() === (cargarForm.producto||'').toUpperCase();
-                          const sameClient = (fg.cliente||'').toUpperCase() === (cargarForm.cliente||'').toUpperCase();
-                          const sameDims = parseNum(fg.ancho||0)===parseNum(cargarForm.ancho||0) && parseNum(fg.largo||0)===parseNum(cargarForm.largo||0) && parseNum(fg.micras||0)===parseNum(cargarForm.micras||0);
-                          const sameType = fg.tipoProducto === cargarForm.tipoProducto;
-                          return sameProduct && sameClient && sameDims && sameType;
+                        if (!cargarForm._fgSelectKey || !parseNum(cargarForm._fgAddQty)) return setDialog({title:'Aviso',text:'Seleccione un producto y especifique la cantidad.',type:'alert'});
+                        const addQty = parseNum(cargarForm._fgAddQty);
+                        const addCost = parseNum(cargarForm._fgAddCost||0);
+                        const existStock = cargarForm._fgExistStock||0;
+                        const existCost = cargarForm._fgExistCost||0;
+                        const totalQty = existStock + addQty;
+                        const avgCost = addCost>0 ? ((existStock*existCost)+(addQty*addCost))/totalQty : existCost;
+                        const esTermo2 = cargarForm._fgEsTermo;
+                        const grpItems = cargarForm._fgGrpItems||[];
+                        const keeper = grpItems[0];
+                        if(!keeper) return setDialog({title:'Error',text:'Producto no encontrado.',type:'alert'});
+                        const updateData = esTermo2
+                          ? {kgProducidos: totalQty, kgProducidosOrigen: Math.max(totalQty, parseNum(keeper.kgProducidosOrigen||totalQty)), costoUnitario: avgCost, costoTotalProduccion: avgCost*totalQty}
+                          : {millares: totalQty, millaresOrigen: Math.max(totalQty, parseNum(keeper.millaresOrigen||totalQty)), costoUnitarioMillar: avgCost, costoTotalProduccion: avgCost*totalQty};
+                        await updateDoc(getDocRef('finishedGoodsInventory', keeper.id), updateData);
+                        // Kardex ENTRADA
+                        await addDoc(getColRef('inventoryMovements'), {
+                          itemId:`FG::${keeper.id}`, itemDesc:formatFGLabel(keeper)||keeper.producto||keeper.id,
+                          type:'ENTRADA', qty:addQty, unitCost:addCost||avgCost, totalValue:addQty*(addCost||avgCost),
+                          previousStock:existStock, newStock:totalQty,
+                          docRef:'CARGA MANUAL', notes:cargarForm.observaciones||'Carga manual',
+                          date:cargarForm.fecha||getTodayDate(), user:appUser?.name||'Admin', timestamp:Date.now(), isFG:true
                         });
-
-                        if(existingFG) {
-                          // Calculate weighted average cost
-                          const existStock = esTermo2 ? parseNum(existingFG.kgProducidos) : parseNum(existingFG.millares);
-                          const existCost = esTermo2 ? parseNum(existingFG.costoUnitario||0) : parseNum(existingFG.costoUnitarioMillar||0);
-                          const newQty = esTermo2 ? kg : mill;
-                          const totalQty = existStock + newQty;
-                          const avgCost = totalQty > 0 ? ((existStock * existCost) + (newQty * cu)) / totalQty : cu;
-                          const updateData = esTermo2
-                            ? {kgProducidos: totalQty, kgProducidosOrigen: Math.max(totalQty, parseNum(existingFG.kgProducidosOrigen||totalQty)), costoUnitario: avgCost, costoTotalProduccion: avgCost * totalQty}
-                            : {millares: totalQty, millaresOrigen: Math.max(totalQty, parseNum(existingFG.millaresOrigen||totalQty)), costoUnitarioMillar: avgCost, costoTotalProduccion: avgCost * totalQty};
-                          await updateDoc(getDocRef('finishedGoodsInventory', existingFG.id), updateData);
-                          // Kardex ENTRADA
-                          await addDoc(getColRef('inventoryMovements'), {
-                            itemId:`FG::${existingFG.id}`, itemDesc:formatFGLabel(existingFG)||existingFG.producto,
-                            type:'ENTRADA', qty:newQty, unitCost:cu, totalValue:newQty*cu,
-                            previousStock:existStock, newStock:totalQty,
-                            docRef:'CARGA MANUAL', notes: cargarForm.observaciones||'Carga manual',
-                            date:cargarForm.fecha||getTodayDate(), user:appUser?.name||'Admin', timestamp:Date.now(), isFG:true
-                          });
-                          setDialog({title:'✅ Stock Actualizado',text:`Costo promedio: $${formatNum(avgCost)}/${esTermo2?'KG':'Millar'} | Stock: ${formatNum(totalQty)}`,type:'alert'});
-                          setCargarForm({...cargarForm, producto:'', cliente:'', millares:'', kgProducidos:'', costoUnit:''});
-                          setShowCargarProducto(false);
-                          return;
-                        }
+                        setDialog({title:'✅ Stock Actualizado',text:`${cargarForm._fgDesc}\nStock: ${formatNum(totalQty)} ${esTermo2?'KG':'Millares'}\nCosto promedio: $${formatNum(avgCost)}/${esTermo2?'KG':'Millar'}`,type:'alert'});
+                        setCargarForm({...cargarForm, _fgSelectKey:'', _fgGrpItems:null, _fgAddQty:'', _fgAddCost:'', _fgAvgCost:0});
+                        setShowCargarProducto(false);
+                        return;
                         await setDoc(getDocRef('finishedGoodsInventory', newId), {
                           id: newId, opId: cargarForm.opId||'MANUAL', reqId: cargarForm.opId||'MANUAL',
                           cliente: cargarForm.cliente, tipoProducto: cargarForm.tipoProducto,
@@ -3582,6 +3588,7 @@ export default function App() {
                         <option value="Consumibles">Consumibles</option>
                         <option value="Herramientas">Herramientas</option>
                         <option value="Seguridad Industrial">Seguridad Industrial</option>
+                        <option value="Productos Terminados">Productos Terminados</option>
                         <option value="Otros">Otros</option>
                      </select>
                    </div>
@@ -3593,7 +3600,7 @@ export default function App() {
                      <div>
                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">UM</label>
                        <select value={newInvItemForm.unit} onChange={e=>setNewInvItemForm({...newInvItemForm, unit: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
-                          <option value="kg">KG</option><option value="lts">LTS</option><option value="und">UND</option><option value="par">PAR</option><option value="saco">SACO</option>
+                          <option value="kg">KG</option><option value="lts">LTS</option><option value="und">UND</option><option value="millares">MILLARES</option><option value="par">PAR</option><option value="saco">SACO</option>
                        </select>
                      </div>
                    </div>
