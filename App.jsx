@@ -359,8 +359,14 @@ export default function App() {
   const [poAddQty, setPoAddQty] = useState('');
   const [poAddCost, setPoAddCost] = useState('');
 
-  // ============================================================================
-  // EXPORTACIONES CORREGIDAS
+  // ── Producción de Bobinas ──
+  const [bobinaProductions, setBobinaProductions] = useState([]);
+  const [bobinaForm, setBobinaForm] = useState({ categoria:'', ancho:'', fuelles:'', largo:'', micras:'', kgProcesar:'', mermaPorc:'5', insumos:[], fecha:getTodayDate(), observaciones:'' });
+  const [showBobinaPanel, setShowBobinaPanel] = useState(false);
+  const [bobinaIngId, setBobinaIngId] = useState('');
+  const [bobinaIngQty, setBobinaIngQty] = useState('');
+  // ── Stock mínimo (edición admin en Proyección MP) ──
+  const [editingMinStock, setEditingMinStock] = useState(null); // {id, value}
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     window.print();
@@ -530,6 +536,7 @@ export default function App() {
     const unsubPOs = onSnapshot(getColRef('purchaseOrders'), (s) => setPurchaseOrders(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubWIP = onSnapshot(getColRef('wipInventory'), (s) => setWipInventory(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubFinished = onSnapshot(getColRef('finishedGoodsInventory'), (s) => setFinishedGoodsInventory(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    const unsubBobinas = onSnapshot(getColRef('bobinaProductions'), (s) => setBobinaProductions(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubFormulas = onSnapshot(getColRef('formulas'), (s) => setFormulas(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(a.categoria||'').localeCompare(b.categoria||''))));
     
     const unsubPDC = onSnapshot(getColRef('planDeCuentas'), (s) => setPlanDeCuentas(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
@@ -537,7 +544,7 @@ export default function App() {
     
     return () => { 
       unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
-      unsubPOs(); unsubWIP(); unsubFinished(); unsubFormulas(); unsubPDC(); unsubAST();
+      unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST();
     };
   }, [fbUser]);
 
@@ -1661,12 +1668,26 @@ export default function App() {
 
        const availableReal = mp.stock - committedStock;
        const daysRemaining = dailyAvg > 0 ? availableReal / dailyAvg : 999;
+       const minStock = parseNum(mp.minStock || 0);
        
-       const isCritical = daysRemaining <= 30 || availableReal <= 0;
-       const suggestOrder = isCritical ? Math.ceil(Math.abs(availableReal < 0 ? availableReal : 0) + (dailyAvg * 45)) : 0; 
+       // Crítico si: stock disponible <= stock mínimo, O días de cobertura <= 30 (si no hay minStock)
+       const isCritical = availableReal <= 0 || (minStock > 0 ? mp.stock <= minStock : daysRemaining <= 30);
+       const deficit = minStock > 0 ? Math.max(0, minStock - mp.stock) : 0;
+       const suggestOrder = isCritical
+         ? Math.ceil(deficit > 0 ? deficit + (dailyAvg * 15) : Math.abs(availableReal < 0 ? availableReal : 0) + (dailyAvg * 45))
+         : 0;
 
-       return { ...mp, dailyAvg, daysRemaining, committedStock, availableReal, suggestOrder, isCritical };
+       return { ...mp, dailyAvg, daysRemaining, committedStock, availableReal, suggestOrder, isCritical, minStock };
     });
+  };
+
+  // ── Guardar stock mínimo de MP (solo admin) ──
+  const handleSaveMinStock = async (itemId, value) => {
+    try {
+      await updateDoc(getDocRef('inventory', itemId), { minStock: parseNum(value) });
+      setEditingMinStock(null);
+      setDialog({title:'✅ Guardado', text:`Stock mínimo actualizado para ${itemId}.`, type:'alert'});
+    } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
   };
 
   const handleGeneratePurchaseOrder = () => {
@@ -7112,6 +7133,270 @@ export default function App() {
       return renderFiniquitoOP(req);
     }
 
+    // ── PRODUCCIÓN DE BOBINAS ─────────────────────────────────────────
+    if (prodView === 'bobinas') {
+      const bolsasFormulas = (formulas||[]).filter(f=>!f.tipoProducto||f.tipoProducto==='BOLSAS');
+
+      // Calcular estimados al vuelo
+      const w = parseNum(bobinaForm.ancho), fu = parseNum(bobinaForm.fuelles);
+      const l = parseNum(bobinaForm.largo), m = parseNum(bobinaForm.micras);
+      const pesoMillar = (w + fu) * l * m;
+      const kgProcesar = parseNum(bobinaForm.kgProcesar);
+      const mermaPorc = parseNum(bobinaForm.mermaPorc) || 5;
+      const kgNetos = kgProcesar > 0 ? kgProcesar * (1 - mermaPorc / 100) : 0;
+      const millaresTeóricos = pesoMillar > 0 && kgNetos > 0 ? kgNetos / pesoMillar : 0;
+      const costoInsumos = (bobinaForm.insumos||[]).reduce((s,ing)=>{
+        const inv=(inventory||[]).find(i=>i.id===ing.id);
+        return s+(parseNum(ing.qty)*(inv?.cost||0));
+      },0);
+      const costoUnitKg = kgNetos > 0 ? costoInsumos / kgNetos : 0;
+
+      const handleCerrarBobina = async () => {
+        if(!bobinaForm.categoria||!kgProcesar||(bobinaForm.insumos||[]).length===0)
+          return setDialog({title:'Aviso',text:'Complete categoría, KG y al menos un insumo.',type:'alert'});
+        setDialog({
+          title:'Cerrar Bobina',
+          text:`¿Confirmar producción de ${formatNum(kgNetos)} KG netos de bobina y descontar insumos del inventario?`,
+          type:'confirm',
+          onConfirm: async () => {
+            try {
+              // 1. Descontar insumos del inventario
+              for(const ing of (bobinaForm.insumos||[])){
+                const inv=(inventory||[]).find(i=>i.id===ing.id);
+                if(!inv) continue;
+                await updateDoc(getDocRef('inventory',ing.id),{stock:Math.max(0,(inv.stock||0)-parseNum(ing.qty))});
+                await addDoc(getColRef('inventoryMovements'),{
+                  itemId:ing.id, itemDesc:inv.desc, type:'SALIDA', qty:parseNum(ing.qty),
+                  unitCost:inv.cost||0, totalValue:parseNum(ing.qty)*(inv.cost||0),
+                  previousStock:inv.stock||0, newStock:Math.max(0,(inv.stock||0)-parseNum(ing.qty)),
+                  docRef:`BOB-${Date.now()}`, notes:`PROD BOBINA ${bobinaForm.categoria}`,
+                  date:bobinaForm.fecha, user:appUser?.name||'Admin', timestamp:Date.now()
+                });
+              }
+              // 2. Crear/actualizar ítem semielaborado en inventario general
+              const micDec = m > 0 ? (m < 1 ? `${(m*1000).toFixed(0)}` : m) : 0;
+              const dims = fu > 0 ? `(${w}+${fu/2}+${fu/2})X${l}X${micDec}MIC` : `${w}X${l}X${micDec}MIC`;
+              const bobDesc = `${bobinaForm.categoria} ${w}×${l}×${m}MIC - BOBINA`;
+              const bobId = `BOB-${(bobinaForm.categoria||'').replace(/[^A-Z0-9]/gi,'').substring(0,10).toUpperCase()}-${w}X${l}X${m}`;
+              const existBob = (inventory||[]).find(i=>i.id===bobId);
+              if(existBob){
+                const newStk = (existBob.stock||0)+kgNetos;
+                const avgCost = ((existBob.stock||0)*(existBob.cost||0)+kgNetos*costoUnitKg)/newStk;
+                await updateDoc(getDocRef('inventory',bobId),{stock:newStk,cost:avgCost});
+                await addDoc(getColRef('inventoryMovements'),{
+                  itemId:bobId, itemDesc:bobDesc, type:'ENTRADA', qty:kgNetos, unitCost:costoUnitKg,
+                  totalValue:kgNetos*costoUnitKg, previousStock:existBob.stock||0, newStock:newStk,
+                  docRef:`BOB-${Date.now()}`, notes:'PRODUCCIÓN BOBINA',
+                  date:bobinaForm.fecha, user:appUser?.name||'Admin', timestamp:Date.now()
+                });
+              } else {
+                await setDoc(getDocRef('inventory',bobId),{
+                  id:bobId, desc:bobDesc.toUpperCase(), category:'Semielaborados', unit:'kg',
+                  stock:kgNetos, cost:costoUnitKg, timestamp:Date.now()
+                });
+                await addDoc(getColRef('inventoryMovements'),{
+                  itemId:bobId, itemDesc:bobDesc.toUpperCase(), type:'ENTRADA_INICIAL', qty:kgNetos, unitCost:costoUnitKg,
+                  totalValue:kgNetos*costoUnitKg, previousStock:0, newStock:kgNetos,
+                  docRef:`BOB-${Date.now()}`, notes:'PRODUCCIÓN BOBINA',
+                  date:bobinaForm.fecha, user:appUser?.name||'Admin', timestamp:Date.now()
+                });
+              }
+              // 3. Guardar registro histórico de producción de bobina
+              await addDoc(getColRef('bobinaProductions'),{
+                categoria:bobinaForm.categoria, ancho:w, fuelles:fu, largo:l, micras:m,
+                kgProcesados:kgProcesar, kgNetos, mermaKg:kgProcesar-kgNetos, mermaPorc,
+                millaresTeóricos, pesoMillar, insumos:bobinaForm.insumos, costoTotal:costoInsumos,
+                costoUnitKg, bobInventarioId:bobId, bobDesc,
+                fecha:bobinaForm.fecha, user:appUser?.name||'Admin', timestamp:Date.now(), status:'COMPLETADO'
+              });
+              setBobinaForm({categoria:'',ancho:'',fuelles:'',largo:'',micras:'',kgProcesar:'',mermaPorc:'5',insumos:[],fecha:getTodayDate(),observaciones:''});
+              setShowBobinaPanel(false);
+              setDialog({title:'✅ Bobina Registrada',text:`${formatNum(kgNetos)} KG de bobina "${bobDesc}" cargados al inventario de Semielaborados.`,type:'alert'});
+            } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+          }
+        });
+      };
+
+      return (
+        <div className="space-y-6 animate-in fade-in">
+          {/* Header */}
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-8 py-6 border-b border-gray-200 bg-indigo-50 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-black text-indigo-800 uppercase flex items-center gap-3">
+                  <Box className="text-indigo-600" size={24}/> Producción de Bobinas (Semielaborados)
+                </h2>
+                <p className="text-[10px] font-bold text-indigo-600 mt-1 uppercase">Extrusión interna — resultado va a Inventario General como Semielaborado</p>
+              </div>
+              <button onClick={()=>setShowBobinaPanel(v=>!v)}
+                className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showBobinaPanel?'bg-red-500 text-white':'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
+                {showBobinaPanel?<><X size={14}/>Cancelar</>:<><Plus size={14}/>Nueva Bobina</>}
+              </button>
+            </div>
+
+            {/* Formulario nueva bobina */}
+            {showBobinaPanel && (
+              <div className="p-6 border-b border-gray-200 bg-indigo-50/30">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                  {/* Selección categoría/fórmula */}
+                  <div className="md:col-span-3">
+                    <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Categoría / Fórmula (solo BOLSAS)</label>
+                    <select value={bobinaForm.categoria}
+                      onChange={e=>{
+                        const cat = e.target.value;
+                        const fm = bolsasFormulas.find(f=>f.categoria===cat);
+                        setBobinaForm(prev=>({...prev,
+                          categoria:cat,
+                          ancho:fm?.ancho||'', fuelles:fm?.fuelles||'', largo:fm?.largo||'', micras:fm?.micras||''
+                        }));
+                      }}
+                      className="w-full border-2 border-indigo-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-indigo-500 bg-white">
+                      <option value="">— Seleccionar categoría —</option>
+                      {bolsasFormulas.map(f=><option key={f.id} value={f.categoria}>{f.categoria}</option>)}
+                    </select>
+                  </div>
+                  {/* Dimensiones (auto-llenado, editable) */}
+                  {[['ancho','Ancho (CM)'],['fuelles','Fuelles (CM)'],['largo','Largo (CM)'],['micras','Micras']].map(([field,label])=>(
+                    <div key={field}>
+                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">{label}</label>
+                      <input type="number" step="0.001" value={bobinaForm[field]}
+                        onChange={e=>setBobinaForm(prev=>({...prev,[field]:e.target.value}))}
+                        className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold text-center outline-none focus:border-indigo-500 bg-white"
+                        placeholder="0"/>
+                    </div>
+                  ))}
+                  <div>
+                    <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG a Procesar</label>
+                    <input type="number" step="0.01" value={bobinaForm.kgProcesar}
+                      onChange={e=>setBobinaForm(prev=>({...prev,kgProcesar:e.target.value}))}
+                      className="w-full border-2 border-indigo-300 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-500 bg-white" placeholder="0.00"/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">% Merma Estimada</label>
+                    <input type="number" step="0.1" value={bobinaForm.mermaPorc}
+                      onChange={e=>setBobinaForm(prev=>({...prev,mermaPorc:e.target.value}))}
+                      className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold text-center outline-none focus:border-indigo-500 bg-white" placeholder="5"/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Fecha</label>
+                    <input type="date" value={bobinaForm.fecha}
+                      onChange={e=>setBobinaForm(prev=>({...prev,fecha:e.target.value}))}
+                      className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-500 bg-white"/>
+                  </div>
+                </div>
+
+                {/* Estimados */}
+                {kgProcesar > 0 && (
+                  <div className="grid grid-cols-4 gap-3 mb-4">
+                    {[
+                      ['KG Netos (sin merma)', formatNum(kgNetos)+' KG', 'bg-blue-50 border-blue-200 text-blue-700'],
+                      ['Merma Estimada', formatNum(kgProcesar-kgNetos)+' KG', 'bg-red-50 border-red-200 text-red-600'],
+                      ['Peso por Millar', pesoMillar>0?formatNum(pesoMillar)+' KG/Mill':'— (complete dims)', 'bg-gray-50 border-gray-200 text-gray-700'],
+                      ['Millares Teóricos', millaresTeóricos>0?formatNum(millaresTeóricos)+' Mill.':'—', 'bg-indigo-50 border-indigo-200 text-indigo-700'],
+                    ].map(([l,v,cls])=>(
+                      <div key={l} className={`border rounded-xl p-3 text-center ${cls}`}>
+                        <div className="text-[9px] font-black uppercase mb-1">{l}</div>
+                        <div className="text-base font-black">{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Insumos (MP) */}
+                <div className="bg-white border-2 border-indigo-200 rounded-2xl p-4 mb-4">
+                  <h4 className="text-[10px] font-black text-indigo-800 uppercase mb-3">Materia Prima Consumida</h4>
+                  <div className="flex gap-2 mb-3">
+                    <select value={bobinaIngId} onChange={e=>setBobinaIngId(e.target.value)}
+                      className="flex-1 border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-500 bg-white">
+                      <option value="">— Seleccionar MP —</option>
+                      {(inventory||[]).filter(i=>i.category==='Materia Prima'||i.category==='Pigmentos').map(i=>(
+                        <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>
+                      ))}
+                    </select>
+                    <input type="number" step="0.01" value={bobinaIngQty} onChange={e=>setBobinaIngQty(e.target.value)}
+                      className="w-28 border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-indigo-500" placeholder="KG"/>
+                    <button onClick={()=>{
+                      if(!bobinaIngId||!parseNum(bobinaIngQty)) return;
+                      setBobinaForm(prev=>({...prev,insumos:[...(prev.insumos||[]),{id:bobinaIngId,qty:parseNum(bobinaIngQty)}]}));
+                      setBobinaIngId(''); setBobinaIngQty('');
+                    }} className="bg-indigo-600 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-indigo-700 flex items-center gap-1"><Plus size={13}/> Agregar</button>
+                  </div>
+                  {(bobinaForm.insumos||[]).length > 0 && (
+                    <div className="space-y-1">
+                      {bobinaForm.insumos.map((ing,i)=>{
+                        const inv=(inventory||[]).find(x=>x.id===ing.id);
+                        return (
+                          <div key={i} className="flex items-center gap-2 bg-indigo-50 rounded-lg px-3 py-1.5">
+                            <span className="font-black text-[10px] text-indigo-700 flex-1">{ing.id} — {inv?.desc||''}</span>
+                            <span className="font-black text-[10px]">{formatNum(ing.qty)} KG</span>
+                            <span className="text-[9px] text-gray-400">${formatNum((inv?.cost||0)*ing.qty)}</span>
+                            <button onClick={()=>setBobinaForm(prev=>({...prev,insumos:prev.insumos.filter((_,j)=>j!==i)}))} className="text-red-400 hover:text-red-600"><X size={12}/></button>
+                          </div>
+                        );
+                      })}
+                      <div className="text-right text-[10px] font-black text-indigo-700 pt-1">
+                        Costo Total: ${formatNum(costoInsumos)} | Costo/KG Neto: ${formatNum(costoUnitKg)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end">
+                  <button onClick={handleCerrarBobina}
+                    className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-indigo-700 flex items-center gap-2">
+                    <CheckCircle2 size={16}/> Cerrar Bobina → Inventario
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Historial de bobinas */}
+            <div className="p-6">
+              {bobinaProductions.length === 0 ? (
+                <div className="text-center py-12 text-gray-400"><Box size={40} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">Sin producciones de bobina registradas</p></div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-gray-200">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-indigo-700 text-white">
+                      <tr className="uppercase font-black text-[9px] tracking-widest">
+                        <th className="py-3 px-4 border-r border-indigo-600">Fecha</th>
+                        <th className="py-3 px-4 border-r border-indigo-600">Categoría / Dims</th>
+                        <th className="py-3 px-4 border-r border-indigo-600 text-center">KG Procesados</th>
+                        <th className="py-3 px-4 border-r border-indigo-600 text-center">KG Netos</th>
+                        <th className="py-3 px-4 border-r border-indigo-600 text-center">Merma</th>
+                        <th className="py-3 px-4 border-r border-indigo-600 text-center">Mill. Teóricos</th>
+                        <th className="py-3 px-4 border-r border-indigo-600 text-right">Costo Total</th>
+                        <th className="py-3 px-4 text-center">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {bobinaProductions.map(b=>(
+                        <tr key={b.id} className="hover:bg-gray-50">
+                          <td className="py-3 px-4 border-r font-bold text-gray-600">{b.fecha}</td>
+                          <td className="py-3 px-4 border-r">
+                            <div className="font-black text-[11px] text-gray-900 uppercase">{b.categoria}</div>
+                            <div className="text-[9px] text-gray-400">{b.ancho}×{b.largo}×{b.micras}MIC</div>
+                          </td>
+                          <td className="py-3 px-4 border-r text-center font-black text-blue-600">{formatNum(b.kgProcesados)}</td>
+                          <td className="py-3 px-4 border-r text-center font-black text-green-600">{formatNum(b.kgNetos)}</td>
+                          <td className="py-3 px-4 border-r text-center font-bold text-red-500">{formatNum(b.mermaKg)} ({parseNum(b.mermaPorc).toFixed(1)}%)</td>
+                          <td className="py-3 px-4 border-r text-center font-black text-indigo-600">{formatNum(b.millaresTeóricos)}</td>
+                          <td className="py-3 px-4 border-r text-right font-black">${formatNum(b.costoTotal)}</td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-lg text-[9px] font-black uppercase">✓ {b.status}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // ── PROYECCIÓN MP ────────────────────────────────────────────────
     if (prodView === 'proyeccion') {
       const projection = generateProjectionData();
@@ -7121,9 +7406,8 @@ export default function App() {
             <div className="px-8 py-6 border-b border-gray-200 bg-orange-50 flex justify-between items-center">
               <div>
                 <h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><TrendingUp className="text-orange-500" size={24}/> Proyección de Materia Prima</h2>
-                <p className="text-[10px] font-bold text-orange-700 mt-1 uppercase">Análisis de inventario y días de cobertura estimados</p>
+                <p className="text-[10px] font-bold text-orange-700 mt-1 uppercase">Stock mínimo configurable — estado crítico por stock mínimo o días cobertura</p>
               </div>
-              
             </div>
             <div className="p-6">
               {projection.length === 0 ? (
@@ -7135,6 +7419,7 @@ export default function App() {
                       <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
                         <th className="py-3 px-4 border-r">Código / Material</th>
                         <th className="py-3 px-4 border-r text-center">Stock Actual</th>
+                        <th className="py-3 px-4 border-r text-center bg-yellow-50">Stock Mínimo 🔒</th>
                         <th className="py-3 px-4 border-r text-center">Comprometido</th>
                         <th className="py-3 px-4 border-r text-center">Disponible Real</th>
                         <th className="py-3 px-4 border-r text-center">Consumo/Día</th>
@@ -7148,6 +7433,23 @@ export default function App() {
                         <tr key={mp.id} className={`hover:bg-gray-50 transition-colors ${mp.isCritical ? 'bg-red-50/50' : ''}`}>
                           <td className="py-3 px-4 border-r font-black text-orange-600">{mp.id}<br/><span className="text-[9px] font-bold text-gray-500 uppercase">{mp.desc}</span></td>
                           <td className="py-3 px-4 border-r text-center font-black text-blue-600">{formatNum(mp.stock)}</td>
+                          <td className="py-3 px-4 border-r text-center bg-yellow-50/50">
+                            {editingMinStock?.id === mp.id ? (
+                              <div className="flex gap-1 items-center justify-center">
+                                <input type="number" step="0.01" min="0" value={editingMinStock.value}
+                                  onChange={e=>setEditingMinStock({...editingMinStock,value:e.target.value})}
+                                  className="w-20 border-2 border-orange-400 rounded-lg p-1 text-center font-black text-xs outline-none" autoFocus/>
+                                <button onClick={()=>handleSaveMinStock(mp.id,editingMinStock.value)} className="p-1 bg-green-500 text-white rounded-md hover:bg-green-600"><CheckCircle size={12}/></button>
+                                <button onClick={()=>setEditingMinStock(null)} className="p-1 bg-gray-200 rounded-md hover:bg-gray-300"><X size={12}/></button>
+                              </div>
+                            ) : (
+                              <div className="flex gap-1 items-center justify-center">
+                                <span className={`font-black ${mp.minStock>0&&mp.stock<=mp.minStock?'text-red-600':'text-gray-600'}`}>{mp.minStock>0?formatNum(mp.minStock):'—'}</span>
+                                <button onClick={()=>requireAdminPassword(()=>setEditingMinStock({id:mp.id,value:String(mp.minStock||0)}),'Editar Stock Mínimo')}
+                                  className="p-0.5 text-gray-400 hover:text-orange-500" title="Editar (Admin)"><Edit size={11}/></button>
+                              </div>
+                            )}
+                          </td>
                           <td className="py-3 px-4 border-r text-center font-bold text-red-400">{formatNum(mp.committedStock)}</td>
                           <td className={`py-3 px-4 border-r text-center font-black ${mp.availableReal < 0 ? 'text-red-600' : 'text-green-600'}`}>{formatNum(mp.availableReal)}</td>
                           <td className="py-3 px-4 border-r text-center font-bold text-gray-600">{formatNum(mp.dailyAvg)}</td>
@@ -11092,6 +11394,7 @@ export default function App() {
               <div className="max-w-7xl mx-auto flex gap-6 px-6 overflow-x-auto">
                  {[ 
                    {id:'proyeccion', icon:<TrendingUp size={16}/>, label:'Proyección MP', perm:'produccion_proyeccion'},
+                   {id:'bobinas', icon:<Box size={16}/>, label:'Prod. Bobinas', perm:'produccion_activa'},
                    {id:'ordenes_compra', icon:<ClipboardList size={16}/>, label:'Requisición', perm:'produccion_ordenes'},
                    {id:'activos', icon:<PlayCircle size={16}/>, label:'Producción Activa', perm:'produccion_activa'}, 
                    {id:'en_proceso', icon:<Gauge size={16}/>, label:'Reporte en Proceso', perm:'produccion_activa'},
