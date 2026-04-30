@@ -2100,7 +2100,10 @@ export default function App() {
                   }} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
                     <option value="">Seleccione...</option>
                     <optgroup label="── Materia Prima / Consumibles ──">
-                      {(inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                      {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                    </optgroup>
+                    <optgroup label="── Semielaborados / Bobinas ──">
+                      {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>)}
                     </optgroup>
                     <optgroup label="── Productos Terminados ──">
                       {(() => {
@@ -2979,26 +2982,37 @@ export default function App() {
               return (
                 <>
                   {/* KPIs */}
-                  <div className="grid grid-cols-4 gap-4 mb-6">
-                    <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
-                      <div className="text-[9px] font-black text-blue-700 uppercase mb-1">📦 Bolsas</div>
-                      <div className="font-black text-blue-600 text-lg">{formatNum(totalMillares)} Mill.</div>
-                      <div className="text-[9px] text-gray-500">{bolsasGrp.length} producto{bolsasGrp.length!==1?'s':''}</div>
-                    </div>
-                    <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
-                      <div className="text-[9px] font-black text-green-700 uppercase mb-1">🟢 Termoencogible</div>
-                      <div className="font-black text-green-600 text-lg">{formatNum(totalKgTermo)} KG</div>
-                      <div className="text-[9px] text-gray-500">{termosGrp.length} producto{termosGrp.length!==1?'s':''}</div>
-                    </div>
-                    <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 text-center">
-                      <div className="text-[9px] font-black text-orange-700 uppercase mb-1">Valor Bolsas</div>
-                      <div className="font-black text-orange-600">${formatNum(bolsasGrp.reduce((s,g)=>s+g.totalStock*(g.totalStock>0?g.pesoTot/g.totalStock:0),0))}</div>
-                    </div>
-                    <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-center">
-                      <div className="text-[9px] font-black text-gray-700 uppercase mb-1">Valor Termo</div>
-                      <div className="font-black text-gray-800">${formatNum(termosGrp.reduce((s,g)=>s+g.totalStock*(g.totalStock>0?g.pesoTot/g.totalStock:0),0))}</div>
-                    </div>
-                  </div>
+                  {(() => {
+                    const semGrp = (inventory||[]).filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0);
+                    const totalSemKg = semGrp.reduce((s,i)=>s+parseNum(i.stock),0);
+                    return (
+                      <div className="grid grid-cols-4 gap-4 mb-6">
+                        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
+                          <div className="text-[9px] font-black text-blue-700 uppercase mb-1">📦 Bolsas</div>
+                          <div className="font-black text-blue-600 text-lg">{formatNum(totalMillares)} Mill.</div>
+                          <div className="text-[9px] text-gray-500">{bolsasGrp.length} producto{bolsasGrp.length!==1?'s':''}</div>
+                        </div>
+                        <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+                          <div className="text-[9px] font-black text-green-700 uppercase mb-1">🟢 Termoencogible</div>
+                          <div className="font-black text-green-600 text-lg">{formatNum(totalKgTermo)} KG</div>
+                          <div className="text-[9px] text-gray-500">{termosGrp.length} producto{termosGrp.length!==1?'s':''}</div>
+                        </div>
+                        <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 text-center">
+                          <div className="text-[9px] font-black text-indigo-700 uppercase mb-1">🔄 Semielaborados/Bobinas</div>
+                          <div className="font-black text-indigo-600 text-lg">{formatNum(totalSemKg)} KG</div>
+                          <div className="text-[9px] text-gray-500">{semGrp.length} artículo{semGrp.length!==1?'s':''}</div>
+                        </div>
+                        <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 text-center">
+                          <div className="text-[9px] font-black text-orange-700 uppercase mb-1">Valor Total</div>
+                          <div className="font-black text-orange-600">${formatNum(
+                            bolsasGrp.reduce((s,g)=>s+g.totalStock*(g.totalStock>0?g.pesoTot/g.totalStock:0),0)+
+                            termosGrp.reduce((s,g)=>s+g.totalStock*(g.totalStock>0?g.pesoTot/g.totalStock:0),0)+
+                            semGrp.reduce((s,i)=>s+parseNum(i.stock)*parseNum(i.cost||0),0)
+                          )}</div>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {bolsasGrp.length > 0 && (
                     <div className="mb-6">
@@ -3050,7 +3064,53 @@ export default function App() {
                       </div>
                     );
                   })()}
-                  {groups.length === 0 && inventory.filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0).length===0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>}
+                  {groups.length === 0 && inventory.filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0).length===0 && inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0).length===0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>}
+
+                  {/* ── Semielaborados / Bobinas (de Inventario General) ── */}
+                  {(() => {
+                    const semItems = (inventory||[]).filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0);
+                    if(!semItems.length) return null;
+                    return (
+                      <div className="mb-6">
+                        <h3 className="text-sm font-black uppercase text-indigo-700 mb-3 flex items-center gap-2"><span className="bg-indigo-100 px-3 py-1 rounded-lg">🔄 SEMIELABORADOS / BOBINAS — en KG</span></h3>
+                        <div className="overflow-x-auto rounded-xl border border-gray-200">
+                          <table className="w-full text-left text-xs">
+                            <thead className="bg-indigo-700 text-white">
+                              <tr className="uppercase font-black text-[9px] tracking-widest">
+                                <th className="py-3 px-4 border-r border-white/20">Código / Descripción</th>
+                                <th className="py-3 px-4 border-r border-white/20 text-center">Costo Unit. ($/KG)</th>
+                                <th className="py-3 px-4 border-r border-white/20 text-center">KG en Stock</th>
+                                <th className="py-3 px-4 text-center">Valor Total</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {semItems.map((item,idx)=>(
+                                <tr key={item.id} className={idx%2===0?'bg-white':'bg-gray-50/50'}>
+                                  <td className="py-3 px-4 border-r">
+                                    <div className="font-black text-[11px] text-indigo-900 uppercase">{item.desc}</div>
+                                    <div className="text-[9px] text-gray-400 font-bold">{item.id}</div>
+                                  </td>
+                                  <td className="py-3 px-4 border-r text-center font-black text-orange-600">${formatNum(item.cost)}<span className="text-[8px] font-bold text-gray-400">/KG</span></td>
+                                  <td className="py-3 px-4 border-r text-center">
+                                    <div className="font-black text-xl text-indigo-600">{formatNum(item.stock)}</div>
+                                    <div className="text-[9px] font-bold text-gray-400 uppercase">KG</div>
+                                  </td>
+                                  <td className="py-3 px-4 text-center font-black text-gray-700">${formatNum(parseNum(item.stock)*parseNum(item.cost))}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot className="bg-indigo-50 text-indigo-800 border-t-2">
+                              <tr className="font-black text-[10px] uppercase">
+                                <td colSpan="2" className="py-2 px-4 text-right">Total Semielaborados:</td>
+                                <td className="py-2 px-4 text-center text-lg">{formatNum(semItems.reduce((s,i)=>s+parseNum(i.stock),0))} KG</td>
+                                <td className="py-2 px-4 text-center">${formatNum(semItems.reduce((s,i)=>s+parseNum(i.stock)*parseNum(i.cost),0))}</td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </>
               );
             })()}
@@ -4081,7 +4141,10 @@ export default function App() {
                   <select value={kardexProductId} onChange={e=>setKardexProductId(e.target.value)} className="w-full border-2 border-orange-300 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500 bg-white">
                     <option value="">— Seleccione un artículo —</option>
                     <optgroup label="── Materia Prima / Consumibles ──">
-                      {[...(inventory||[])].sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc}</option>)}
+                      {[...(inventory||[])].filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc}</option>)}
+                    </optgroup>
+                    <optgroup label="── Semielaborados / Bobinas ──">
+                      {[...(inventory||[])].filter(i=>i.category==='Semielaborados').sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} ({formatNum(i.stock)} KG)</option>)}
                     </optgroup>
                     <optgroup label="── Productos Terminados ──">
                       {(() => {
@@ -7635,13 +7698,21 @@ export default function App() {
                                 <option value="">— Seleccionar MP —</option>
                                 {(wipB?.materiales||[]).map(mat=>{
                                   const inv=(inventory||[]).find(i=>i.id===mat.id);
-                                  return <option key={mat.id} value={mat.id}>{mat.id} — {inv?.desc||mat.id} (Desp: {formatNum(mat.qty)} KG)</option>;
-                                })}
+                                  const usadoEnForm=(bobinaPhaseForm.insumos||[]).filter(i=>i.id===mat.id).reduce((s,i)=>s+parseNum(i.qty),0);
+                                  const restante=Math.max(0,mat.qty-usadoEnForm);
+                                  if(restante<=0.01) return null; // ocultar si ya totalmente consumido
+                                  return <option key={mat.id} value={mat.id}>{mat.id} — {inv?.desc||mat.id} (Disponible: {formatNum(restante)} KG)</option>;
+                                }).filter(Boolean)}
                               </select>
                               <input type="number" step="0.01" value={bobinaIngQty} onChange={e=>setBobinaIngQty(e.target.value)}
                                 className="w-28 border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="KG"/>
                               <button onClick={()=>{
                                 if(!bobinaIngId||!parseNum(bobinaIngQty)) return;
+                                // Validate against available
+                                const mat=(wipB?.materiales||[]).find(m=>m.id===bobinaIngId);
+                                const usadoYa=(bobinaPhaseForm.insumos||[]).filter(i=>i.id===bobinaIngId).reduce((s,i)=>s+parseNum(i.qty),0);
+                                const restante=mat?Math.max(0,mat.qty-usadoYa):9999;
+                                if(parseNum(bobinaIngQty)>restante+0.01) return setDialog({title:'Aviso',text:`Cantidad supera el disponible (${formatNum(restante)} KG).`,type:'alert'});
                                 setBobinaPhaseForm(p=>({...p,insumos:[...(p.insumos||[]),{id:bobinaIngId,qty:parseNum(bobinaIngQty)}]}));
                                 setBobinaIngId(''); setBobinaIngQty('');
                               }} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center gap-1"><Plus size={13}/></button>
@@ -11738,6 +11809,10 @@ export default function App() {
         )}
 
         <main className="flex-1 p-4 md:p-8 max-w-[1400px] mx-auto w-full print:p-0 print:m-0 print:max-w-none print:w-full bg-transparent print:bg-white">
+           {/* ── MEMBRETE GLOBAL — visible solo al imprimir ── */}
+           <div className="hidden print:block print:mb-6">
+             <ReportHeader />
+           </div>
            {activeTab === 'home' && renderHome()}
            {activeTab === 'ventas' && renderVentasModule()}
            {activeTab === 'formulas' && renderFormulasModule()}
