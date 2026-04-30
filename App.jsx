@@ -2728,7 +2728,7 @@ export default function App() {
                             setCargarForm({...cargarForm, _fgAddCost:e.target.value, _fgAvgCost:avgCost});
                           }} className="w-full border-2 border-orange-200 rounded-xl p-3 text-sm font-black text-center outline-none focus:border-orange-500 bg-orange-50" placeholder="0.00"/>
                         </div>
-                        {parseNum(cargarForm._fgAddQty)>0 && parseNum(cargarForm._fgAddCost)>0 && (
+                      {parseNum(cargarForm._fgAddQty)>0 && parseNum(cargarForm._fgAddCost)>0 && (
                           <div className="col-span-2 bg-green-50 border border-green-200 rounded-xl p-3">
                             <p className="text-[9px] font-black text-green-800 uppercase">Resumen del ajuste:</p>
                             <p className="text-xs font-bold text-green-700">Stock nuevo: {formatNum((cargarForm._fgExistStock||0)+parseNum(cargarForm._fgAddQty))} {cargarForm._fgEsTermo?'KG':'Millares'}</p>
@@ -2737,7 +2737,9 @@ export default function App() {
                         )}
                       </div>
                     )}
-                    </div>
+                    
+                    {/* ✅ La etiqueta de cierre extra fue eliminada aquí */}
+                    
                     <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Fecha</label><input type="date" value={cargarForm.fecha} onChange={e=>setCargarForm({...cargarForm,fecha:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500"/></div>
                     <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Observaciones</label><input value={cargarForm.observaciones} onChange={e=>setCargarForm({...cargarForm,observaciones:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-green-500" placeholder="Carga manual de inventario..."/></div>
                   </div>
