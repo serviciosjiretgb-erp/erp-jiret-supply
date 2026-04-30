@@ -170,6 +170,65 @@ export default function App() {
   const [wipInventory, setWipInventory] = useState([]);
   const [finishedGoodsInventory, setFinishedGoodsInventory] = useState([]);
 
+  // One-time: set correct final stocks in Firebase (guarded by sessionStorage)
+  useEffect(() => {
+    if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v5') === 'done') return;
+    const CORRECT = [
+      {pat:/embutido.*1.*kiri|kiri.*embutido.*1/i, esTermo:false, finalStock:241.45, cost:86.64, entQty:241.45, salQty:220.00, salCost:86.64},
+      {pat:/pa[ñn]al.*kiri/i,                       esTermo:false, finalStock:168.30, cost:78.01, entQty:168.30, salQty:65.00,  salCost:78.01},
+      {pat:/termo.*pinturas|pinturas.*caribe/i,      esTermo:true,  finalStock:1.40,   cost:2.71,  entQty:521.40, salQty:520.00, salCost:2.71},
+    ];
+    const run = async () => {
+      // 1. Update FG stocks in Firebase
+      const groups = {};
+      finishedGoodsInventory.forEach(fg => {
+        const key = CORRECT.findIndex(c=>c.pat.test(`${fg.producto||''} ${fg.cliente||''}`));
+        if(key < 0) return;
+        if(!groups[key]) groups[key]=[];
+        groups[key].push(fg);
+      });
+      for(const [key, fgs] of Object.entries(groups)) {
+        const ref = CORRECT[parseInt(key)];
+        fgs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        const [keeper, ...zeros] = fgs;
+        const ku = ref.esTermo
+          ? {kgProducidos:ref.finalStock, kgProducidosOrigen:521.40, costoUnitario:ref.cost}
+          : {millares:ref.finalStock, millaresOrigen:ref.finalStock, costoUnitarioMillar:ref.cost};
+        try { await updateDoc(getDocRef('finishedGoodsInventory', keeper.id), ku); } catch(e){}
+        for(const z of zeros) {
+          try { await updateDoc(getDocRef('finishedGoodsInventory', z.id), ref.esTermo?{kgProducidos:0}:{millares:0}); } catch(e){}
+        }
+        // 2. Delete ALL existing FG:: movements for this product
+        const allFGIds = fgs.map(f=>f.id);
+        const existingMovs = (invMovements||[]).filter(m=>{
+          const mid = m.itemId?.replace('FG::','');
+          return allFGIds.includes(mid);
+        });
+        for(const m of existingMovs) { try{ await deleteDoc(getDocRef('inventoryMovements',m.id)); }catch(e){} }
+        // 3. Add exactly ONE entrada and ONE salida per product
+        const fg0 = fgs[0];
+        const entTs = new Date('2026-03-01').getTime() + parseInt(key)*1000;
+        const salTs = new Date('2026-04-01').getTime() + parseInt(key)*1000;
+        try {
+          await addDoc(getColRef('inventoryMovements'), {
+            itemId:`FG::${fg0.id}`, itemDesc:formatFGLabel(fg0)||fg0.producto||fg0.id,
+            type:'ENTRADA_INICIAL', qty:ref.entQty, unitCost:ref.cost, totalValue:ref.entQty*ref.cost,
+            previousStock:0, newStock:ref.entQty, docRef:'INV.INICIAL', notes:'Existencia inicial',
+            date:'2026-03-01', user:'Admin', timestamp:entTs, isFG:true
+          });
+          await addDoc(getColRef('inventoryMovements'), {
+            itemId:`FG::${fg0.id}`, itemDesc:formatFGLabel(fg0)||fg0.producto||fg0.id,
+            type:'SALIDA', qty:ref.salQty, unitCost:ref.salCost, totalValue:ref.salQty*ref.salCost,
+            previousStock:ref.entQty, newStock:ref.finalStock, docRef:'VENTA', notes:'Venta período',
+            date:'2026-04-01', user:'Admin', timestamp:salTs, isFG:true
+          });
+        } catch(e){}
+      }
+      sessionStorage.setItem('fg_stock_v5','done');
+    };
+    run();
+  }, [finishedGoodsInventory]);
+
   // ── One-time data correction (runs once per session via sessionStorage flag) ──
 
   // FG corrections are applied via the Edit button in Terminados view
@@ -4191,9 +4250,11 @@ export default function App() {
                 const monthEntradasCost = ref ? ref.entCost : cost;
                 const monthSalidasQty = ref ? ref.salQty : 0;
                 const monthSalidasCost = ref ? ref.salCost : cost;
-                const invFinalQty = totalCurrentStock; // actual current stock
+                // INV INICIAL = 0 (no hay stock inicial)
+                const initialStock = 0;
+                // INV FINAL = ENTRADAS - SALIDAS (solo lo que queda)
+                const invFinalQty = Math.max(0, monthEntradasQty - monthSalidasQty);
                 const invFinalCost = ref ? ref.entCost : cost;
-                const initialStock = Math.max(0, invFinalQty + monthSalidasQty - monthEntradasQty);
                 return {
                   id: grp.grpKey, desc, unit, cost: monthEntradasCost,
                   initialStock, initialTotal: initialStock * monthEntradasCost,
