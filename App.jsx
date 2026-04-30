@@ -172,11 +172,14 @@ export default function App() {
 
   // One-time: set correct final stocks in Firebase (guarded by sessionStorage)
   useEffect(() => {
-    if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v5') === 'done') return;
+    if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v7') === 'done') return;
     const CORRECT = [
-      {pat:/embutido.*1.*kiri|kiri.*embutido.*1/i, esTermo:false, finalStock:241.45, cost:86.64, entQty:241.45, salQty:220.00, salCost:86.64},
-      {pat:/pa[ñn]al.*kiri/i,                       esTermo:false, finalStock:168.30, cost:78.01, entQty:168.30, salQty:65.00,  salCost:78.01},
+      // Stocks correctos = INV.FINAL del Reporte 177 (entradas - salidas)
+      {pat:/embutido.*1.*kiri|kiri.*embutido.*1/i, esTermo:false, finalStock:21.45, cost:86.64, entQty:241.45, salQty:220.00, salCost:86.64},
+      {pat:/pa[ñn]al.*kiri/i,                       esTermo:false, finalStock:103.30, cost:78.01, entQty:168.30, salQty:65.00,  salCost:78.01},
       {pat:/termo.*pinturas|pinturas.*caribe/i,      esTermo:true,  finalStock:1.40,   cost:2.71,  entQty:521.40, salQty:520.00, salCost:2.71},
+      // Eliminar producto erróneo (28+5+5)X75X12MIC - stock a cero
+      {pat:/\(28\+5\+5\)/i,                          esTermo:false, finalStock:0,      cost:0,     entQty:0,      salQty:0,      salCost:0},
     ];
     const run = async () => {
       // 1. Update FG stocks in Firebase
@@ -224,7 +227,7 @@ export default function App() {
           });
         } catch(e){}
       }
-      sessionStorage.setItem('fg_stock_v5','done');
+      sessionStorage.setItem('fg_stock_v7','done');
     };
     run();
   }, [finishedGoodsInventory]);
@@ -233,6 +236,7 @@ export default function App() {
 
   // FG corrections are applied via the Edit button in Terminados view
   const [showMovForm, setShowMovForm] = useState(false);
+  const [movForm, setMovForm] = useState({itemId:'',qty:'',unitCost:'',docRef:'',type:'ENTRADA',notes:'',date:getTodayDate()});
 
   const [dialog, setDialog] = useState(null);
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
@@ -2626,20 +2630,6 @@ export default function App() {
                 <input type="text" placeholder="Buscar OP, cliente, producto..." value={fgSearch} onChange={e=>setFgSearch(e.target.value)} className="pl-9 pr-4 py-2 border-2 border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:border-green-500 w-56" />
               </div>
 
-              <button onClick={()=>requireAdminPassword(async()=>{
-                // Fix TERMO stock to 1.40 KG
-                const termoFGs = (finishedGoodsInventory||[]).filter(fg=>/termo.*pinturas|pinturas.*caribe/i.test(`${fg.producto||''} ${fg.cliente||''}`));
-                let fixed=0;
-                for(const fg of termoFGs){
-                  if(fg.tipoProducto==='TERMOENCOGIBLE'){
-                    await updateDoc(getDocRef('finishedGoodsInventory',fg.id),{kgProducidos:1.40,kgProducidosOrigen:521.40,costoUnitario:2.71});
-                    fixed++;
-                  }
-                }
-                setDialog({title:'✅ Ajuste Aplicado',text:`TERMO actualizado a 1.40 KG. (${fixed} registro(s))`,type:'alert'});
-              },'Ajustar stock TERMO a 1.40 KG')} className="bg-purple-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-purple-700 flex items-center gap-1 whitespace-nowrap">
-                <RefreshCw size={12}/> Ajustar TERMO
-              </button>
               <button onClick={()=>setShowCargarProducto(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showCargarProducto?'bg-red-500 text-white':'bg-green-600 text-white hover:bg-green-700'}`}><Plus size={14}/> {showCargarProducto?'CANCELAR':'CARGAR PRODUCTO'}</button>
               <button onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
             </div>
@@ -3416,6 +3406,9 @@ export default function App() {
            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
              <div className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><ClipboardList className="text-orange-500" size={24}/> Requisiciones de Planta a Almacén</h2>
+               <button onClick={()=>setShowODPModal(true)} className="bg-orange-500 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-600 flex items-center gap-2 transition-all">
+                 <Plus size={14}/> Nueva Requisición (Almacén)
+               </button>
              </div>
              <div className="p-8">
                <div className="overflow-x-auto rounded-xl border border-gray-200">
@@ -4172,7 +4165,6 @@ export default function App() {
         {invView === 'reporte177' && (() => {
           const categories = [...new Set(inventory.map(i => i.category))];
           
-          if (wipInventory.length > 0) categories.push('WIP - Productos en Proceso');
           if (finishedGoodsInventory.length > 0) categories.push('Productos Terminados');
 
           const startOfMonth = new Date(reportYear, reportMonth - 1, 1);
@@ -4186,7 +4178,7 @@ export default function App() {
           const reporte177Data = categories.map(cat => {
             let items = [];
 
-            if (cat !== 'WIP - Productos en Proceso' && cat !== 'Productos Terminados') {
+            if (cat !== 'Productos Terminados') {
               items = inventory.filter(item => item.category === cat).map(item => {
                 const itemMovements = monthMovements.filter(m => m.itemId === item.id);
                 const entradas = itemMovements.filter(m => m.type === 'ENTRADA' || m.type === 'ENTRADA_DEVOLUCION' || m.type === 'ENTRADA_INICIAL' || m.type?.includes('AJUSTE (POSITIVO)'));
@@ -4215,20 +4207,7 @@ export default function App() {
               });
             }
 
-            if (cat === 'WIP - Productos en Proceso') {
-              items = wipInventory.map(item => {
-                const kgAsignados = parseNum(item.kgAsignados);
-                const costoPromedio = parseNum(item.costoPromedio) || 1.0;
-                const total = kgAsignados * costoPromedio;
-
-                return {
-                  id: item.opId, desc: `${item.producto} - ${item.cliente}`, unit: 'kg', cost: costoPromedio, initialStock: 0, initialTotal: 0, monthEntradasQty: kgAsignados, monthEntradasProm: costoPromedio, monthEntradasTotal: total, monthSalidasQty: 0, monthSalidasProm: 0, monthSalidasTotal: 0, invFinalQty: kgAsignados, invFinalCost: costoPromedio, invFinalTotal: total
-                };
-              });
-            }
-
             if (cat === 'Productos Terminados') {
-              // Hardcoded reference values (correct data as specified)
               const FG_REF = [
                 {pat:/embutido.*1.*kiri|kiri.*embutido.*1/i,  entQty:241.45, entCost:86.64, salQty:220.00, salCost:86.64, unit:'Millares', esTermo:false},
                 {pat:/pa[ñn]al.*kiri/i,                        entQty:168.30, entCost:78.01, salQty:65.00,  salCost:78.01, unit:'Millares', esTermo:false},
