@@ -6696,6 +6696,7 @@ export default function App() {
   };
   const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
   const [enProcesoOpFilter, setEnProcesoOpFilter] = useState('TODAS');
+  const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
 
   const handlePartialDelivery = async () => {
     if (!showPartialModal) return;
@@ -9560,6 +9561,8 @@ export default function App() {
 
     const REPORT_CARDS = [
       { id: 'mermas', icon: <AlertTriangle size={26}/>, label: 'Mermas', desc: 'Perdidas y desperdicios', color: 'orange' },
+      { id: 'mermas_bobinas', icon: <Box size={26}/>, label: 'Mermas Bobinas', desc: 'Mermas producción de semielaborados', color: 'indigo' },
+      { id: 'reporte_bobinas', icon: <Box size={26}/>, label: 'Reporte Bobinas', desc: 'Reporte de producción de semielaborados', color: 'indigo' },
       { id: 'resumen_mensual', icon: <ClipboardList size={26}/>, label: 'Resumen Mensual', desc: 'Todas las OPs del mes', color: 'teal' },
       { id: 'super_finiquito', icon: <FileCheck size={26}/>, label: 'Finiquito por OP', desc: 'Por orden individual', color: 'purple' },
       { id: 'estado_financiero', icon: <TrendingUp size={26}/>, label: 'Estado Financiero', desc: 'Estado de resultado integral', color: 'gray' },
@@ -9611,7 +9614,7 @@ export default function App() {
               {/* Acceso a Estado de Resultado está en el menú lateral */}
             </div>
 
-            {['general','ingresos_vs_costos','mermas','super_finiquito','resumen_mensual'].includes(showReportType) && (
+            {['general','ingresos_vs_costos','mermas','mermas_bobinas','reporte_bobinas','super_finiquito','resumen_mensual'].includes(showReportType) && (
               <div className="flex gap-4 items-center no-pdf">
                 <div>
                   <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes de Analisis</label>
@@ -10021,6 +10024,218 @@ export default function App() {
                       })()}
                     </div>
                   )}
+                </div>
+              );
+            })()}
+
+            {/* ── MERMAS BOBINAS ── */}
+            {showReportType === 'mermas_bobinas' && (() => {
+              const [sy, sm] = selectedMonth.split('-').map(Number);
+              const bobinasMes = (bobinaProductions||[]).filter(b=>{
+                const d = b.fechaCierre||b.fecha||'';
+                const [by,bm] = d.split('-').map(Number);
+                return by===sy && bm===sm;
+              });
+              const totalIn = bobinasMes.reduce((s,b)=>s+parseNum(b.kgPlanificados),0);
+              const totalOut = bobinasMes.reduce((s,b)=>s+parseNum(b.kgProducidos||0),0);
+              const totalMerma = Math.max(0,totalIn-totalOut);
+              const pctGlobal = totalIn>0?((totalMerma/totalIn)*100).toFixed(1):'0.0';
+              const totalTransp = bobinasMes.reduce((s,b)=>s+parseNum(b.extrusionData?.mermaTroquelTransp||0),0);
+              const totalPigm  = bobinasMes.reduce((s,b)=>s+parseNum(b.extrusionData?.mermaTroquelPigm||0),0);
+              const totalTorta = bobinasMes.reduce((s,b)=>s+parseNum(b.extrusionData?.mermaTorta||0),0);
+              return (
+                <div id="pdf-content" className="space-y-6">
+                  <div className="flex justify-between items-center no-pdf">
+                    <h3 className="text-lg font-black uppercase flex items-center gap-2"><Box className="text-indigo-500" size={20}/> Mermas — Producción de Bobinas — {selectedMonth.replace('-','/')}</h3>
+                    <button onClick={()=>handleExportPDF('Mermas_Bobinas',false)} className="bg-black text-white px-6 py-3 rounded-xl font-black text-xs uppercase flex items-center gap-2 shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
+                  </div>
+                  <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-indigo-500 pb-2">MERMAS — PRODUCCIÓN DE BOBINAS — {selectedMonth}</h1></div>
+                  {/* KPIs */}
+                  <div className="grid grid-cols-3 md:grid-cols-6 gap-4">
+                    {[
+                      ['KG Procesados',formatNum(totalIn)+' KG','bg-blue-50 border-blue-200 text-blue-700'],
+                      ['KG Bobinas',formatNum(totalOut)+' KG','bg-green-50 border-green-200 text-green-700'],
+                      ['Merma Total',formatNum(totalMerma)+' KG','bg-red-50 border-red-200 text-red-700'],
+                      ['% Merma Global',pctGlobal+'%',parseFloat(pctGlobal)>5?'bg-red-50 border-red-200 text-red-700':'bg-yellow-50 border-yellow-200 text-yellow-700'],
+                      ['♻ Reciclado Transp.',formatNum(totalTransp)+' KG','bg-blue-50 border-blue-100 text-blue-600'],
+                      ['♻ Reciclado Torta',formatNum(totalTorta)+' KG','bg-amber-50 border-amber-200 text-amber-700'],
+                    ].map(([l,v,cls])=>(
+                      <div key={l} className={`border-2 rounded-2xl p-4 text-center ${cls}`}>
+                        <div className="text-[9px] font-black uppercase mb-1">{l}</div>
+                        <div className="text-xl font-black">{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {bobinasMes.length===0 ? (
+                    <div className="text-center py-16 text-gray-400 font-bold uppercase border border-gray-200 rounded-2xl">Sin bobinas completadas en este período</div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-gray-200">
+                      <table className="w-full text-xs">
+                        <thead className="bg-indigo-700 text-white">
+                          <tr className="uppercase font-black text-[9px] tracking-widest">
+                            <th className="py-3 px-4 border-r border-indigo-600 text-left">ID</th>
+                            <th className="py-3 px-4 border-r border-indigo-600 text-left">Categoría / Dims</th>
+                            <th className="py-3 px-4 border-r border-indigo-600 text-center">Fecha</th>
+                            <th className="py-3 px-4 border-r border-indigo-600 text-center">KG Entrada</th>
+                            <th className="py-3 px-4 border-r border-indigo-600 text-center">KG Bobina</th>
+                            <th className="py-3 px-4 border-r border-indigo-600 text-center">Merma KG</th>
+                            <th className="py-3 px-4 border-r border-indigo-600 text-center">%</th>
+                            <th className="py-3 px-4 border-r border-indigo-600 text-center">♻ Transp.</th>
+                            <th className="py-3 px-4 border-r border-indigo-600 text-center">♻ Pigm.</th>
+                            <th className="py-3 px-4 text-center">♻ Torta</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {bobinasMes.map((b,i)=>{
+                            const mKg=Math.max(0,parseNum(b.kgPlanificados)-parseNum(b.kgProducidos||0));
+                            const pct=parseNum(b.kgPlanificados)>0?((mKg/parseNum(b.kgPlanificados))*100).toFixed(1):'0.0';
+                            const tr=parseNum(b.extrusionData?.mermaTroquelTransp||0);
+                            const pg=parseNum(b.extrusionData?.mermaTroquelPigm||0);
+                            const tt=parseNum(b.extrusionData?.mermaTorta||0);
+                            return <tr key={b.id} className={i%2===0?'bg-white':'bg-gray-50/50'}>
+                              <td className="py-3 px-4 border-r font-black text-indigo-600">{b.id}</td>
+                              <td className="py-3 px-4 border-r"><div className="font-black text-[11px] uppercase">{b.categoria}</div><div className="text-[9px] text-gray-400">{b.ancho}×{b.largo}×{b.micras}MIC</div></td>
+                              <td className="py-3 px-4 border-r text-center font-bold text-gray-500">{b.fechaCierre||b.fecha}</td>
+                              <td className="py-3 px-4 border-r text-center font-black text-blue-600">{formatNum(b.kgPlanificados)} KG</td>
+                              <td className="py-3 px-4 border-r text-center font-black text-green-600">{formatNum(b.kgProducidos||0)} KG</td>
+                              <td className="py-3 px-4 border-r text-center font-black text-red-600">{formatNum(mKg)} KG</td>
+                              <td className="py-3 px-4 border-r text-center"><span className={`px-2 py-0.5 rounded-lg text-[9px] font-black ${parseFloat(pct)>5?'bg-red-100 text-red-700':parseFloat(pct)>2?'bg-yellow-100 text-yellow-700':'bg-green-100 text-green-700'}`}>{pct}%</span></td>
+                              <td className="py-3 px-4 border-r text-center font-bold text-blue-600">{tr>0?`${formatNum(tr)} KG`:'—'}</td>
+                              <td className="py-3 px-4 border-r text-center font-bold text-orange-600">{pg>0?`${formatNum(pg)} KG`:'—'}</td>
+                              <td className="py-3 px-4 text-center font-bold text-amber-600">{tt>0?`${formatNum(tt)} KG`:'—'}</td>
+                            </tr>;
+                          })}
+                        </tbody>
+                        <tfoot className="bg-indigo-50 border-t-2 border-indigo-200">
+                          <tr className="font-black text-[10px]">
+                            <td colSpan="3" className="py-2 px-4 text-right uppercase text-indigo-700">Totales del mes:</td>
+                            <td className="py-2 px-4 text-center text-blue-700">{formatNum(totalIn)} KG</td>
+                            <td className="py-2 px-4 text-center text-green-700">{formatNum(totalOut)} KG</td>
+                            <td className="py-2 px-4 text-center text-red-700">{formatNum(totalMerma)} KG</td>
+                            <td className="py-2 px-4 text-center text-orange-700">{pctGlobal}%</td>
+                            <td className="py-2 px-4 text-center text-blue-600">{totalTransp>0?`${formatNum(totalTransp)} KG`:'—'}</td>
+                            <td className="py-2 px-4 text-center text-orange-600">{totalPigm>0?`${formatNum(totalPigm)} KG`:'—'}</td>
+                            <td className="py-2 px-4 text-center text-amber-600">{totalTorta>0?`${formatNum(totalTorta)} KG`:'—'}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ── REPORTE DE PRODUCCIÓN DE BOBINAS ── */}
+            {showReportType === 'reporte_bobinas' && (() => {
+              const [sy, sm] = selectedMonth.split('-').map(Number);
+              const bobinasMes = (bobinaProductions||[]).filter(b=>{
+                const d = b.fechaCierre||b.fecha||'';
+                const [by,bm] = d.split('-').map(Number);
+                return by===sy && bm===sm;
+              });
+              const totalKgIn  = bobinasMes.reduce((s,b)=>s+parseNum(b.kgPlanificados),0);
+              const totalKgOut = bobinasMes.reduce((s,b)=>s+parseNum(b.kgProducidos||0),0);
+              const totalCosto = bobinasMes.reduce((s,b)=>s+parseNum(b.costoTotal||0),0);
+              const costoUnitGlobal = totalKgOut>0?totalCosto/totalKgOut:0;
+              return (
+                <div id="pdf-content" className="space-y-6">
+                  <div className="flex justify-between items-center no-pdf">
+                    <h3 className="text-lg font-black uppercase flex items-center gap-2"><Box className="text-indigo-500" size={20}/> Reporte de Producción de Bobinas — {selectedMonth.replace('-','/')}</h3>
+                    <button onClick={()=>handleExportPDF('Reporte_Produccion_Bobinas',false)} className="bg-black text-white px-6 py-3 rounded-xl font-black text-xs uppercase flex items-center gap-2 shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
+                  </div>
+                  <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-indigo-500 pb-2">REPORTE DE PRODUCCIÓN DE BOBINAS — {selectedMonth}</h1></div>
+                  {/* KPIs globales */}
+                  <div className="grid grid-cols-4 gap-0 border-2 border-gray-300 rounded-xl overflow-hidden">
+                    {[
+                      ['Total Producciones',bobinasMes.length+' bobinas','text-indigo-600'],
+                      ['KG Totales Producidos',formatNum(totalKgOut)+' KG','text-green-600'],
+                      ['Costo Total MP','$'+formatNum(totalCosto),'text-orange-600'],
+                      ['Costo Promedio/KG','$'+formatNum(costoUnitGlobal),'text-blue-700'],
+                    ].map(([l,v,color],i)=>(
+                      <div key={l} className={`p-5 text-center bg-gray-50 ${i<3?'border-r border-gray-300':''}`}>
+                        <div className="text-[9px] font-black uppercase text-gray-500 mb-1">{l}</div>
+                        <div className={`text-2xl font-black ${color}`}>{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {bobinasMes.length===0 ? (
+                    <div className="text-center py-16 text-gray-400 font-bold uppercase border border-gray-200 rounded-2xl">Sin bobinas completadas en este período</div>
+                  ) : bobinasMes.map((b,bi)=>{
+                    const mKg=Math.max(0,parseNum(b.kgPlanificados)-parseNum(b.kgProducidos||0));
+                    const pctM=parseNum(b.kgPlanificados)>0?((mKg/parseNum(b.kgPlanificados))*100).toFixed(1):'0.0';
+                    const micStr=b.micras?String(b.micras):'?';
+                    const dimsLabel=b.fuelles>0?`(${b.ancho}+${b.fuelles/2}+${b.fuelles/2})×${b.largo}×${micStr}MIC`:`${b.ancho}×${b.largo}×${micStr}MIC`;
+                    return (
+                      <div key={b.id} className="rounded-2xl border-2 border-indigo-200 overflow-hidden">
+                        {/* Encabezado de bobina */}
+                        <div className="bg-indigo-700 text-white px-5 py-3 flex justify-between items-center">
+                          <div>
+                            <span className="font-black text-indigo-100 text-sm">{b.id}</span>
+                            <span className="mx-3 text-indigo-400">—</span>
+                            <span className="font-bold text-white uppercase">{b.categoria}</span>
+                            <span className="ml-3 text-[10px] text-indigo-300">{dimsLabel}</span>
+                          </div>
+                          <div className="flex gap-6 text-right text-[10px]">
+                            <div><span className="text-indigo-300 block text-[9px]">Fecha cierre</span><span className="font-black">{b.fechaCierre||b.fecha}</span></div>
+                            <div><span className="text-indigo-300 block text-[9px]">KG Producidos</span><span className="font-black text-green-300">{formatNum(b.kgProducidos||0)} KG</span></div>
+                            <div><span className="text-indigo-300 block text-[9px]">Costo/KG</span><span className="font-black text-yellow-300">${formatNum(b.costoUnitKg||0)}</span></div>
+                            <div><span className="text-indigo-300 block text-[9px]">% Merma</span><span className={`font-black ${parseFloat(pctM)>5?'text-red-300':'text-green-300'}`}>{pctM}%</span></div>
+                          </div>
+                        </div>
+                        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {/* MP Consumida */}
+                          <div>
+                            <div className="text-[9px] font-black uppercase text-gray-500 mb-2">Materia Prima Consumida</div>
+                            <table className="w-full text-xs border border-gray-200 rounded-xl overflow-hidden">
+                              <thead className="bg-orange-50"><tr className="uppercase text-[9px] font-black text-gray-500">
+                                <th className="p-2 border-r text-left">MP</th><th className="p-2 border-r text-center">KG</th><th className="p-2 border-r text-right">$/KG</th><th className="p-2 text-right">Total</th>
+                              </tr></thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {(b.insumos||[]).map((ing,j)=>{
+                                  const inv=(inventory||[]).find(x=>x.id===ing.id);
+                                  const uc=parseNum(ing.unitCost||inv?.cost||0);
+                                  return <tr key={j}><td className="p-2 border-r font-bold text-orange-600">{ing.id}</td><td className="p-2 border-r text-center font-black">{formatNum(ing.qty)}</td><td className="p-2 border-r text-right">${formatNum(uc)}</td><td className="p-2 text-right font-black">${formatNum(parseNum(ing.qty)*uc)}</td></tr>;
+                                })}
+                              </tbody>
+                              <tfoot className="bg-gray-50 border-t"><tr className="font-black text-[9px]"><td colSpan="3" className="p-2 text-right">Costo Total:</td><td className="p-2 text-right text-orange-600">${formatNum(b.costoTotal||0)}</td></tr></tfoot>
+                            </table>
+                          </div>
+                          {/* Parámetros + Merma */}
+                          <div className="space-y-3">
+                            {b.extrusionData && (
+                              <div>
+                                <div className="text-[9px] font-black uppercase text-gray-500 mb-2">Parámetros Técnicos</div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  {[['Operador',b.extrusionData.operadorExt],['Motor',b.extrusionData.motorExt],['Jalador',b.extrusionData.jalador],['Tratado',b.extrusionData.tratado||'Sin tratado'],['Cab. A',b.extrusionData.cabezalA?b.extrusionData.cabezalA+'°C':'—'],['Cab. B',b.extrusionData.cabezalB?b.extrusionData.cabezalB+'°C':'—']].filter(([,v])=>v).map(([k,v])=>(
+                                    <div key={k} className="bg-gray-50 border rounded-lg p-2 text-center"><div className="text-[8px] font-black text-gray-400 uppercase">{k}</div><div className="font-black text-[10px] uppercase">{v||'—'}</div></div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            <div>
+                              <div className="text-[9px] font-black uppercase text-gray-500 mb-2">Desglose de Merma</div>
+                              <div className="grid grid-cols-3 gap-2">
+                                {[['Transp.',b.extrusionData?.mermaTroquelTransp||0,'text-blue-600'],['Pigm.',b.extrusionData?.mermaTroquelPigm||0,'text-orange-600'],['Torta',b.extrusionData?.mermaTorta||0,'text-amber-600']].map(([l,v,c])=>(
+                                  <div key={l} className="bg-gray-50 border rounded-lg p-2 text-center"><div className="text-[8px] font-black text-gray-400 uppercase">{l}</div><div className={`font-black text-sm ${c}`}>{formatNum(v)} KG</div></div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        {/* Zonas */}
+                        {b.extrusionData && [1,2,3,4,5,6].some(z=>b.extrusionData[`zona${z}`]) && (
+                          <div className="px-4 pb-4">
+                            <div className="text-[9px] font-black uppercase text-gray-500 mb-2">Zonas de Temperatura</div>
+                            <div className="grid grid-cols-6 gap-2">
+                              {[1,2,3,4,5,6].map(z=>(
+                                <div key={z} className="bg-indigo-50 border border-indigo-100 rounded-lg p-2 text-center"><div className="text-[8px] font-black text-indigo-400">Z{z}</div><div className="font-black text-indigo-800">{b.extrusionData[`zona${z}`]||'—'}°C</div></div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })()}
