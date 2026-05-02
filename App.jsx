@@ -6239,6 +6239,46 @@ export default function App() {
             })()}
           </div>
 
+          {/* Entregas Parciales — si las hay */}
+          {(req.entregasParciales||[]).length > 0 && (
+            <div className="mb-6">
+              <div className="bg-teal-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg flex justify-between">
+                <span>📦 Entregas Parciales Realizadas ({req.entregasParciales.length})</span>
+                <span className="text-teal-200">Total: {formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0))} KG / {formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares||0),0))} Mill.</span>
+              </div>
+              <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50"><tr className="uppercase font-black text-[9px] text-gray-600">
+                    <th className="p-3 border-r text-center">#</th>
+                    <th className="p-3 border-r text-center">Fecha</th>
+                    <th className="p-3 border-r text-center">KG Entregados</th>
+                    <th className="p-3 border-r text-center">Millares Entregados</th>
+                    {costsMode && <th className="p-3 border-r text-right">Costo Unit.</th>}
+                    {costsMode && <th className="p-3 text-right">Costo Parcial</th>}
+                  </tr></thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {(req.entregasParciales||[]).map((ep,i)=>(
+                      <tr key={i} className={i%2===0?'bg-white':'bg-teal-50/30'}>
+                        <td className="p-3 border-r text-center font-black text-teal-600">EP-{String(i+1).padStart(2,'0')}</td>
+                        <td className="p-3 border-r text-center font-bold">{ep.fecha}</td>
+                        <td className="p-3 border-r text-center font-black text-blue-600">{formatNum(ep.kg)} KG</td>
+                        <td className="p-3 border-r text-center font-black text-orange-600">{ep.millares>0?formatNum(ep.millares)+' Mill.':'—'}</td>
+                        {costsMode && <td className="p-3 border-r text-right font-bold">${formatNum(ep.costoUnit||0)}</td>}
+                        {costsMode && <td className="p-3 text-right font-black">${formatNum((ep.costoUnit||0)*parseNum(ep.kg))}</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-teal-50 border-t-2 border-teal-200"><tr className="font-black text-[10px]">
+                    <td colSpan={costsMode?4:3} className="p-3 text-right uppercase">Total Entregado:</td>
+                    <td className="p-3 text-center font-black text-blue-600">{formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0))} KG</td>
+                    <td className="p-3 text-center font-black text-orange-600">{formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares||0),0))} Mill.</td>
+                    {costsMode && <><td/><td className="p-3 text-right font-black text-teal-700">${formatNum((req.entregasParciales||[]).reduce((s,e)=>s+(parseNum(e.costoUnit||0)*parseNum(e.kg)),0))}</td></>}
+                  </tr></tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* Sección 1: Desglose de Producción (MP) — por lote */}
           <div className="mb-6">
             <div className="bg-orange-500 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">1. Desglose de Producción (MP)</div>
@@ -6620,10 +6660,21 @@ export default function App() {
   const handlePartialDelivery = async () => {
     if (!showPartialModal) return;
     const req = showPartialModal;
+    const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
     const kgEntrega = parseNum(partialKg);
-    const millEntrega = parseNum(partialMillares);
-    if (kgEntrega <= 0) return setDialog({ title: 'Aviso', text: 'Ingrese los KG a entregar.', type: 'alert' });
+    const millEntrega = esTermo ? 0 : parseNum(partialMillares);
+
+    if (esTermo && kgEntrega <= 0) return setDialog({ title: 'Aviso', text: 'Ingrese los KG a entregar.', type: 'alert' });
+    if (!esTermo && millEntrega <= 0) return setDialog({ title: 'Aviso', text: 'Ingrese los Millares a entregar.', type: 'alert' });
+
     try {
+      // 1. Calcular costo promedio desde WIP asociado a esta OP
+      const wipAsoc = (wipInventory||[]).filter(w => w.opId === req.id);
+      const totalWIPKg = wipAsoc.reduce((s,w)=>s+parseNum(w.kgAsignados),0);
+      const totalWIPCost = wipAsoc.reduce((s,w)=>s+parseNum(w.costoPromedio)*parseNum(w.kgAsignados),0);
+      const costoUnitWIP = totalWIPKg > 0 ? totalWIPCost / totalWIPKg : 0;
+
+      // 2. Crear entrada en finishedGoodsInventory
       const fgId = `FG-${Date.now()}`;
       const fgEntry = {
         id: fgId, opId: req.id, reqId: req.id,
@@ -6634,23 +6685,69 @@ export default function App() {
         ancho: req.ancho || 0, largo: req.largo || 0, micras: req.micras || 0,
         color: req.color || 'NATURAL', tratamiento: req.tratamiento || 'LISO',
         kgProducidos: kgEntrega,
-        millares: req.tipoProducto === 'TERMOENCOGIBLE' ? 0 : millEntrega,
-        costoUnitario: 0,
+        millares: millEntrega,
+        costoUnitario: costoUnitWIP,
+        costoTotal: costoUnitWIP * kgEntrega,
         fechaFinalizacion: getTodayDate(),
         ubicacion: 'ALMACEN GENERAL',
         status: 'LISTO PARA ENTREGA',
         esEntregaParcial: true,
-        observaciones: `ENTREGA PARCIAL — ${formatNum(kgEntrega)} KG`,
+        observaciones: `ENTREGA PARCIAL — ${esTermo ? formatNum(kgEntrega)+' KG' : formatNum(millEntrega)+' Mill. / '+formatNum(kgEntrega)+' KG'}`,
         timestamp: Date.now()
       };
       await setDoc(getDocRef('finishedGoodsInventory', fgId), fgEntry);
-      // Registrar en OP que hubo entrega parcial
+
+      // 3. Actualizar inventario general (Inventario → "Productos Terminados")
+      const invKey = `PT-${(req.desc||'').replace(/[^A-Z0-9]/gi,'').substring(0,16).toUpperCase()}-${req.client||'CLI'}`.toUpperCase().replace(/\s/g,'');
+      const existPT = (inventory||[]).find(i => i.id === invKey);
+      if (existPT) {
+        const newStk = parseNum(existPT.stock) + (esTermo ? kgEntrega : millEntrega);
+        const avgCost = ((parseNum(existPT.stock)*parseNum(existPT.cost)) + (kgEntrega*costoUnitWIP)) / Math.max(newStk, 0.001);
+        await updateDoc(getDocRef('inventory', invKey), { stock: newStk, cost: avgCost });
+        await addDoc(getColRef('inventoryMovements'), {
+          itemId: invKey, itemDesc: existPT.desc, type: 'ENTRADA',
+          qty: esTermo ? kgEntrega : millEntrega, unitCost: costoUnitWIP, totalValue: kgEntrega * costoUnitWIP,
+          previousStock: existPT.stock, newStock: newStk,
+          docRef: req.id, notes: `ENTREGA PARCIAL OP ${req.id}`, date: getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now()
+        });
+      } else {
+        const desc = `${req.desc||''} — ${req.client||''} (${esTermo?'KG':'Millares'})`.toUpperCase();
+        await setDoc(getDocRef('inventory', invKey), {
+          id: invKey, desc, category: 'Productos Terminados', unit: esTermo ? 'KG' : 'Millares',
+          stock: esTermo ? kgEntrega : millEntrega, cost: costoUnitWIP, timestamp: Date.now()
+        });
+        await addDoc(getColRef('inventoryMovements'), {
+          itemId: invKey, itemDesc: desc, type: 'ENTRADA_INICIAL',
+          qty: esTermo ? kgEntrega : millEntrega, unitCost: costoUnitWIP, totalValue: kgEntrega * costoUnitWIP,
+          previousStock: 0, newStock: esTermo ? kgEntrega : millEntrega,
+          docRef: req.id, notes: `ENTREGA PARCIAL OP ${req.id}`, date: getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now()
+        });
+      }
+
+      // 4. Registrar asiento contable WIP → Terminados
+      if (costoUnitWIP > 0 && kgEntrega > 0) {
+        await registrarAsientoContable(null, {
+          debito: '1.1.03.01.008', credito: '1.1.03.01.007',
+          monto: costoUnitWIP * kgEntrega,
+          descripcion: `ENTREGA PARCIAL OP ${req.id} — ${req.desc}`,
+          referencia: req.id, fecha: getTodayDate()
+        });
+      }
+
+      // 5. Guardar historial de entrega parcial en la OP
       const prevParciales = req.entregasParciales || [];
       await updateDoc(getDocRef('requirements', req.id), {
-        entregasParciales: [...prevParciales, { fgId, kg: kgEntrega, millares: millEntrega, fecha: getTodayDate() }]
+        entregasParciales: [...prevParciales, {
+          fgId, kg: kgEntrega, millares: millEntrega,
+          fecha: getTodayDate(), invKey, costoUnit: costoUnitWIP,
+          user: appUser?.name||'Sistema'
+        }]
       });
+
       setShowPartialModal(null); setPartialKg(''); setPartialMillares('');
-      setDialog({ title: '✅ Entrega Parcial Registrada', text: `Se movieron ${formatNum(kgEntrega)} KG a Terminados. La OP sigue abierta para producción adicional.`, type: 'alert' });
+      setDialog({ title: '✅ Entrega Parcial Registrada',
+        text: `${esTermo ? formatNum(kgEntrega)+' KG' : formatNum(millEntrega)+' Mill.'} cargados a Inventario de Productos Terminados, Kardex y Reporte 177. La OP sigue abierta.`,
+        type: 'alert' });
     } catch (err) {
       setDialog({ title: 'Error', text: err.message, type: 'alert' });
     }
@@ -6660,58 +6757,106 @@ export default function App() {
     if (!req) return;
     setDialog({
       title: 'Cierre de OP ' + String(req.id).replace('OP-', '').padStart(5, '0'),
-      text: 'Se cerrara la OP completa y el producto pasara a Inventario de Terminados. Esta accion no se puede deshacer. Continuar?',
+      text: 'Se cerrará la OP completa. Solo se cargará la producción PENDIENTE a Terminados (lo ya entregado parcialmente no se duplica). ¿Continuar?',
       type: 'confirm',
       onConfirm: async () => {
         try {
+          const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
           const prod = req.production || {};
           const filterReal = (b) => b.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b.producedKg) > 0;
           const selBatch = (prod.sellado?.batches||[]).filter(filterReal);
           const impBatch = (prod.impresion?.batches||[]).filter(filterReal);
           const extBatch = (prod.extrusion?.batches||[]).filter(filterReal);
-          // KG finales = ÚLTIMA fase activa (cadena: ext→imp→sel)
           const lastBatches = selBatch.length>0 ? selBatch : impBatch.length>0 ? impBatch : extBatch;
           const totalKgProd = lastBatches.reduce((s, b) => s + parseNum(b.producedKg), 0);
           const totalMillares = selBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
             || impBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
             || extBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
 
-          // Marcar todas las fases abiertas como cerradas
+          // Calcular ya entregado parcialmente
+          const yaEntregadoKg = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0);
+          const yaEntregadoMill = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0);
+          const pendienteKg = Math.max(0, totalKgProd - yaEntregadoKg);
+          const pendienteMill = Math.max(0, totalMillares - yaEntregadoMill);
+
+          // Marcar fases como cerradas
           const updatedProd = { ...prod };
           ['extrusion', 'impresion', 'sellado'].forEach(phase => {
             if (updatedProd[phase] && !updatedProd[phase].isClosed) {
               updatedProd[phase] = { ...updatedProd[phase], isClosed: true };
             }
           });
-
           await updateDoc(getDocRef('requirements', req.id), {
-            production: updatedProd,
-            status: 'COMPLETADO',
-            fechaCierre: getTodayDate(),
+            production: updatedProd, status: 'COMPLETADO', fechaCierre: getTodayDate(),
           });
 
-          // No se crea entrada en Terminados — ya fue registrada por lote en handleSavePhaseDirectly
-          // El reporte de producción (renderFiniquitoOP) lee directamente de req.production
+          // Solo cargar la diferencia pendiente (no lo que ya fue entregado parcialmente)
+          if (pendienteKg > 0) {
+            const wipAsoc = (wipInventory||[]).filter(w => w.opId === req.id);
+            const totalWIPKg = wipAsoc.reduce((s,w)=>s+parseNum(w.kgAsignados),0);
+            const totalWIPCost = wipAsoc.reduce((s,w)=>s+parseNum(w.costoPromedio)*parseNum(w.kgAsignados),0);
+            const costoUnit = totalWIPKg > 0 ? totalWIPCost / totalWIPKg : 0;
 
-          // ── Asiento contable: WIP → Productos Terminados ──
-          // Calcular costo total de los WIP asociados a esta OP
-          const wipAsociados = (wipInventory || []).filter(w => w.opId === req.id);
-          const costoTotalWIP = wipAsociados.reduce((s, w) => s + (parseNum(w.costoPromedio) * parseNum(w.kgAsignados)), 0);
-          if (costoTotalWIP > 0) {
-            await registrarAsientoContable(null, {
-              debito: '1.1.03.01.008',
-              credito: '1.1.03.01.007',
-              monto: costoTotalWIP,
-              descripcion: `CIERRE OP — TRASLADO WIP A TERMINADOS — ${req.desc || req.id}`,
-              referencia: req.id,
-              fecha: getTodayDate(),
+            // FG entry solo por lo pendiente
+            const fgId = `FG-${Date.now()}`;
+            await setDoc(getDocRef('finishedGoodsInventory', fgId), {
+              id: fgId, opId: req.id, reqId: req.id,
+              cliente: req.client||'N/A', tipoProducto: req.tipoProducto||'BOLSAS',
+              categoria: req.categoria||'', producto: req.desc||'Producto',
+              ancho: req.ancho||0, largo: req.largo||0, micras: req.micras||0,
+              color: req.color||'NATURAL', tratamiento: req.tratamiento||'LISO',
+              kgProducidos: pendienteKg, millares: esTermo ? 0 : pendienteMill,
+              costoUnitario: costoUnit, costoTotal: costoUnit * pendienteKg,
+              fechaFinalizacion: getTodayDate(), ubicacion: 'ALMACEN GENERAL',
+              status: 'LISTO PARA ENTREGA', esCierreFinal: true,
+              observaciones: `CIERRE OP — ${formatNum(pendienteKg)} KG (pendiente tras ${formatNum(yaEntregadoKg)} KG entregados)`,
+              timestamp: Date.now()
             });
+
+            // Actualizar inventario general Productos Terminados
+            const invKey = `PT-${(req.desc||'').replace(/[^A-Z0-9]/gi,'').substring(0,16).toUpperCase()}-${req.client||'CLI'}`.toUpperCase().replace(/\s/g,'');
+            const existPT = (inventory||[]).find(i => i.id === invKey);
+            const addQty = esTermo ? pendienteKg : pendienteMill;
+            if (existPT) {
+              const newStk = parseNum(existPT.stock) + addQty;
+              const avgCost = ((parseNum(existPT.stock)*parseNum(existPT.cost)) + (pendienteKg*costoUnit)) / Math.max(newStk, 0.001);
+              await updateDoc(getDocRef('inventory', invKey), { stock: newStk, cost: avgCost });
+              await addDoc(getColRef('inventoryMovements'), {
+                itemId: invKey, itemDesc: existPT.desc, type: 'ENTRADA', qty: addQty,
+                unitCost: costoUnit, totalValue: pendienteKg * costoUnit,
+                previousStock: existPT.stock, newStock: newStk,
+                docRef: req.id, notes: `CIERRE OP ${req.id} — PENDIENTE`, date: getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now()
+              });
+            } else {
+              const desc = `${req.desc||''} — ${req.client||''} (${esTermo?'KG':'Millares'})`.toUpperCase();
+              await setDoc(getDocRef('inventory', invKey), {
+                id: invKey, desc, category: 'Productos Terminados', unit: esTermo ? 'KG' : 'Millares',
+                stock: addQty, cost: costoUnit, timestamp: Date.now()
+              });
+              await addDoc(getColRef('inventoryMovements'), {
+                itemId: invKey, itemDesc: desc, type: 'ENTRADA_INICIAL', qty: addQty,
+                unitCost: costoUnit, totalValue: pendienteKg * costoUnit, previousStock: 0, newStock: addQty,
+                docRef: req.id, notes: `CIERRE OP ${req.id}`, date: getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now()
+              });
+            }
+
+            // Asiento contable WIP → Terminados (solo pendiente)
+            if (costoUnit > 0) {
+              await registrarAsientoContable(null, {
+                debito: '1.1.03.01.008', credito: '1.1.03.01.007',
+                monto: costoUnit * pendienteKg,
+                descripcion: `CIERRE OP ${req.id} — ${req.desc} (pendiente ${formatNum(pendienteKg)} KG)`,
+                referencia: req.id, fecha: getTodayDate()
+              });
+            }
           }
 
           setSelectedPhaseReqId(null);
           setDialog({
-            title: 'OP Cerrada',
-            text: 'La OP fue cerrada y movida a Inventario de Terminados correctamente.',
+            title: 'OP Cerrada ✅',
+            text: yaEntregadoKg > 0
+              ? `OP cerrada. Ya entregado: ${formatNum(yaEntregadoKg)} KG. Pendiente cargado ahora: ${formatNum(pendienteKg)} KG. No se duplicó nada.`
+              : `OP cerrada. ${formatNum(totalKgProd)} KG cargados a Inventario de Terminados.`,
             type: 'alert'
           });
         } catch (err) {
@@ -8549,22 +8694,49 @@ export default function App() {
                                     <div className="flex gap-2 mb-3">
                                       <select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
                                         <option value="">Seleccione material...</option>
-                                        {(inventory||[]).map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                                        <optgroup label="📌 MATERIA PRIMA">
+                                          {(inventory||[]).filter(i=>i.category==='Materia Prima'||i.category==='Pigmentos').map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                                        </optgroup>
+                                        <optgroup label="🔄 SEMIELABORADOS / BOBINAS">
+                                          {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} (Stock: {formatNum(i.stock)} KG)</option>)}
+                                        </optgroup>
+                                        <optgroup label="📦 CONSUMIBLES / HERRAMIENTAS">
+                                          {(inventory||[]).filter(i=>i.category==='Consumibles'||i.category==='Herramientas'||i.category==='Tintas'||i.category==='Químicos'||i.category==='Seguridad Industrial').map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                                        </optgroup>
+                                        <optgroup label="📂 OTROS">
+                                          {(inventory||[]).filter(i=>!['Materia Prima','Pigmentos','Semielaborados','Consumibles','Herramientas','Tintas','Químicos','Seguridad Industrial'].includes(i.category)).map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                                        </optgroup>
                                       </select>
                                       <input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} className="w-24 border border-gray-200 rounded-lg p-2 text-xs font-bold text-center outline-none" placeholder="Cant." />
                                       <button onClick={()=>{ if(!phaseIngId||!phaseIngQty) return; setPhaseForm({...phaseForm, insumos:[...(phaseForm.insumos||[]),{id:phaseIngId,qty:parseFloat(phaseIngQty)}]}); setPhaseIngId(''); setPhaseIngQty(''); }} className="bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-blue-600 flex items-center"><Plus size={14}/></button>
                                     </div>
-                                    {(phaseForm.insumos||[]).map((ins,i)=>{
-                                      const invItem = (inventory||[]).find(iv=>iv.id===ins.id);
-                                      return (
-                                        <div key={i} className="flex justify-between items-center bg-blue-50 p-2 rounded-lg border border-blue-100 mb-1">
-                                          <div><span className="text-xs font-black text-blue-700">{ins.id}</span><span className="text-[9px] text-gray-500 ml-2">{invItem?.desc||''}</span></div>
-                                          <span className="text-xs font-black">{formatNum(ins.qty)} {invItem?.unit||'kg'}</span>
-                                          <button onClick={()=>setPhaseForm({...phaseForm,insumos:phaseForm.insumos.filter((_,j)=>j!==i)})} className="text-red-400 hover:text-red-600"><X size={12}/></button>
+                                    {/* Mostrar insumos agrupados por categoría */}
+                                    {(()=>{
+                                      const ingList = phaseForm.insumos||[];
+                                      const mpList = ingList.filter(ins=>{ const it=(inventory||[]).find(i=>i.id===ins.id); return it?.category==='Materia Prima'||it?.category==='Pigmentos'; });
+                                      const semList = ingList.filter(ins=>{ const it=(inventory||[]).find(i=>i.id===ins.id); return it?.category==='Semielaborados'; });
+                                      const consList = ingList.filter(ins=>{ const it=(inventory||[]).find(i=>i.id===ins.id); return !mpList.includes(ins)&&!semList.includes(ins); });
+                                      const renderGrp = (list, label, color) => list.length>0&&(
+                                        <div key={label} className="mb-2">
+                                          <div className={`text-[8px] font-black uppercase px-2 py-0.5 rounded mb-1 ${color}`}>{label}</div>
+                                          {list.map((ins,i)=>{
+                                            const globalIdx = ingList.indexOf(ins);
+                                            const invItem=(inventory||[]).find(iv=>iv.id===ins.id);
+                                            return <div key={i} className="flex justify-between items-center bg-blue-50 p-2 rounded-lg border border-blue-100 mb-1">
+                                              <div><span className="text-xs font-black text-blue-700">{ins.id}</span><span className="text-[9px] text-gray-500 ml-2">{invItem?.desc||''}</span></div>
+                                              <span className="text-xs font-black">{formatNum(ins.qty)} {invItem?.unit||'kg'}</span>
+                                              <button onClick={()=>setPhaseForm({...phaseForm,insumos:phaseForm.insumos.filter((_,j)=>j!==globalIdx)})} className="text-red-400 hover:text-red-600"><X size={12}/></button>
+                                            </div>;
+                                          })}
                                         </div>
                                       );
-                                    })}
-                                    {(phaseForm.insumos||[]).length === 0 && <div className="text-center text-xs text-gray-400 py-4 font-bold">Agregue materiales a la solicitud</div>}
+                                      return (<>
+                                        {renderGrp(mpList,'🔴 Materia Prima','bg-red-100 text-red-700')}
+                                        {renderGrp(semList,'🔄 Semielaborados / Bobinas','bg-indigo-100 text-indigo-700')}
+                                        {renderGrp(consList,'📦 Consumibles / Otros','bg-gray-100 text-gray-600')}
+                                        {ingList.length===0&&<div className="text-center text-xs text-gray-400 py-4 font-bold">Agregue materiales a la solicitud</div>}
+                                      </>);
+                                    })()}
                                   </div>
 
                                   <div className="flex gap-3 justify-end">
@@ -11837,6 +12009,67 @@ export default function App() {
           })()}
         </div>
 
+        {/* ── GESTIÓN DE PRODUCCIONES DE BOBINAS ── */}
+        <div className="bg-white p-8 rounded-3xl shadow-sm border border-indigo-100 mt-6">
+          <h2 className="text-xl font-black uppercase text-black mb-2 flex items-center gap-3 border-b border-indigo-100 pb-4">
+            <Box className="text-indigo-500"/> Gestión / Eliminación — Producción de Bobinas (Semielaborados)
+          </h2>
+          <p className="text-xs text-gray-500 font-bold mb-6">Elimina producciones de bobinas y revierte el stock de semielaborados. Requiere clave de administrador.</p>
+          {(() => {
+            const allBobs = [...(bobinaProductions||[])].sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+            return (
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
+                {allBobs.length === 0
+                  ? <div className="text-center py-10 text-gray-400 font-bold text-xs uppercase">No hay producciones de bobinas registradas</div>
+                  : <table className="w-full text-xs text-left">
+                      <thead className="bg-indigo-700 text-white">
+                        <tr className="uppercase font-black text-[9px] tracking-widest">
+                          <th className="py-3 px-4 border-r border-indigo-600">ID</th>
+                          <th className="py-3 px-4 border-r border-indigo-600">Categoría / Dims</th>
+                          <th className="py-3 px-4 border-r border-indigo-600 text-center">Fecha</th>
+                          <th className="py-3 px-4 border-r border-indigo-600 text-center">KG Prod.</th>
+                          <th className="py-3 px-4 border-r border-indigo-600">Estado</th>
+                          <th className="py-3 px-4 text-center">Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {allBobs.map(b=>(
+                          <tr key={b.id} className="hover:bg-gray-50">
+                            <td className="py-3 px-4 border-r font-black text-indigo-600">{b.id}</td>
+                            <td className="py-3 px-4 border-r"><div className="font-black text-[11px] uppercase">{b.categoria}</div><div className="text-[9px] text-gray-400">{b.ancho}×{b.largo}×{b.micras}MIC</div></td>
+                            <td className="py-3 px-4 border-r text-center font-bold text-gray-600">{b.fechaCierre||b.fecha}</td>
+                            <td className="py-3 px-4 border-r text-center font-black text-green-600">{formatNum(b.kgProducidos||b.kgPlanificados||0)}</td>
+                            <td className="py-3 px-4 border-r">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${b.status==='COMPLETADO'?'bg-green-100 text-green-700':b.status==='EN_PROCESO'?'bg-orange-100 text-orange-700':'bg-yellow-100 text-yellow-700'}`}>{b.status}</span>
+                            </td>
+                            <td className="py-3 px-4 text-center">
+                              <button onClick={()=>requireAdminPassword(async()=>{
+                                // Revertir stock del ítem semielaborado
+                                if(b.bobInventarioId && b.kgProducidos>0){
+                                  const semItem=(inventory||[]).find(i=>i.id===b.bobInventarioId);
+                                  if(semItem) await updateDoc(getDocRef('inventory',semItem.id),{stock:Math.max(0,(semItem.stock||0)-parseNum(b.kgProducidos))});
+                                }
+                                // Eliminar registro
+                                await deleteDoc(getDocRef('bobinaProductions',b.id));
+                                // Eliminar requisición asociada
+                                const bobReqs=(invRequisitions||[]).filter(r=>r.bobinaProdId===b.id);
+                                for(const r of bobReqs) await deleteDoc(getDocRef('inventoryRequisitions',r.id));
+                                setDialog({title:'✅ Eliminada',text:`Producción ${b.id} eliminada y stock revertido.`,type:'alert'});
+                              },'Eliminar Producción de Bobina')}
+                                className="bg-red-500 text-white px-3 py-1.5 rounded-lg text-[9px] font-black uppercase hover:bg-red-600 flex items-center gap-1 mx-auto">
+                                <Trash2 size={11}/> Eliminar
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                }
+              </div>
+            );
+          })()}
+        </div>
+
       </div>
     );
   };
@@ -12067,15 +12300,41 @@ export default function App() {
                   </div>
                 </div>
                 <div className="space-y-4 mb-6">
-                  <div>
-                    <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">KG a Entregar *</label>
-                    <input type="number" step="0.01" value={partialKg} onChange={e=>setPartialKg(e.target.value)} className="w-full border-2 border-blue-300 rounded-xl p-3 font-black text-lg text-center outline-none focus:border-blue-500" placeholder="0.00" autoFocus />
-                  </div>
-                  {!esTermo && (
+                  {esTermo ? (
+                    // TERMOENCOGIBLE: solo KG
                     <div>
-                      <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Millares a Entregar</label>
-                      <input type="number" step="0.01" value={partialMillares} onChange={e=>setPartialMillares(e.target.value)} className="w-full border-2 border-blue-200 rounded-xl p-3 font-black text-lg text-center outline-none focus:border-blue-500" placeholder="0.00" />
+                      <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">KG a Entregar *</label>
+                      <input type="number" step="0.01" value={partialKg} onChange={e=>setPartialKg(e.target.value)} className="w-full border-2 border-blue-300 rounded-xl p-3 font-black text-lg text-center outline-none focus:border-blue-500" placeholder="0.00" autoFocus />
                     </div>
+                  ) : (
+                    // BOLSAS: Millares primario, KG calculado del peso/millar
+                    <>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Millares a Entregar *</label>
+                        <input type="number" step="0.01" value={partialMillares} onChange={e=>{
+                          const mill=e.target.value;
+                          // Calcular KG según peso/millar teórico de la OP
+                          const kgPorMillarOp = (() => {
+                            const ancho=parseNum(req.ancho), fuelles=parseNum(req.fuelles||0), largo=parseNum(req.largo), micras=parseNum(req.micras);
+                            const p=(ancho+fuelles)*largo*micras;
+                            return p>0?p:0;
+                          })();
+                          const autoKg = kgPorMillarOp>0 ? (parseNum(mill)*kgPorMillarOp).toFixed(3) : partialKg;
+                          setPartialMillares(mill);
+                          setPartialKg(autoKg);
+                        }} className="w-full border-2 border-blue-300 rounded-xl p-3 font-black text-lg text-center outline-none focus:border-blue-500" placeholder="0.00" autoFocus />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">KG Equivalentes (calculado por peso/millar)</label>
+                        <input type="number" step="0.001" value={partialKg} onChange={e=>setPartialKg(e.target.value)}
+                          className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-sm text-center outline-none focus:border-blue-300 bg-gray-50" placeholder="0.000" />
+                        {(() => {
+                          const ancho=parseNum(req.ancho), fuelles=parseNum(req.fuelles||0), largo=parseNum(req.largo), micras=parseNum(req.micras);
+                          const pm=(ancho+fuelles)*largo*micras;
+                          return pm>0 && <p className="text-[9px] text-blue-500 font-bold mt-1 text-center">Peso teórico/millar: {formatNum(pm)} KG — edita KG si el peso real difiere</p>;
+                        })()}
+                      </div>
+                    </>
                   )}
                 </div>
                 <p className="text-[9px] font-bold text-gray-400 mb-4 text-center uppercase">La OP permanece activa para producción adicional. Se genera una entrada en Productos Terminados.</p>
