@@ -9421,6 +9421,45 @@ export default function App() {
                           </div>
                         </div>
                       )}
+
+                      {/* 5. Entregas parciales realizadas */}
+                      {(req.entregasParciales||[]).length > 0 && (
+                        <div>
+                          <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">5. Entregas Parciales Realizadas</h4>
+                          <div className="overflow-x-auto rounded-xl border border-teal-200">
+                            <table className="w-full text-xs">
+                              <thead className="bg-teal-600 text-white">
+                                <tr className="uppercase font-black text-[9px]">
+                                  <th className="py-2 px-3 border-r border-teal-500 text-center">#</th>
+                                  <th className="py-2 px-3 border-r border-teal-500 text-center">Fecha</th>
+                                  <th className="py-2 px-3 border-r border-teal-500 text-center">KG Entregados</th>
+                                  {!esTermo && <th className="py-2 px-3 border-r border-teal-500 text-center">Millares</th>}
+                                  <th className="py-2 px-3 text-center">Costo Unit.</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {(req.entregasParciales||[]).map((ep,i)=>(
+                                  <tr key={i} className={i%2===0?'bg-white':'bg-teal-50/30'}>
+                                    <td className="py-2 px-3 border-r text-center font-black text-teal-600">EP-{String(i+1).padStart(2,'0')}</td>
+                                    <td className="py-2 px-3 border-r text-center font-bold text-gray-600">{ep.fecha}</td>
+                                    <td className="py-2 px-3 border-r text-center font-black text-blue-600">{formatNum(ep.kg)} KG</td>
+                                    {!esTermo && <td className="py-2 px-3 border-r text-center font-black text-orange-600">{ep.millares>0?formatNum(ep.millares)+' Mill.':'—'}</td>}
+                                    <td className="py-2 px-3 text-center font-bold">{ep.costoUnit>0?'$'+formatNum(ep.costoUnit):'—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                              <tfoot className="bg-teal-50 border-t-2 border-teal-200">
+                                <tr className="font-black text-[10px]">
+                                  <td colSpan="2" className="py-2 px-3 text-right uppercase text-teal-700">Total Entregado:</td>
+                                  <td className="py-2 px-3 text-center text-blue-700 text-base">{formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0))} KG</td>
+                                  {!esTermo && <td className="py-2 px-3 text-center text-orange-700 text-base">{formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares||0),0))} Mill.</td>}
+                                  <td className="py-2 px-3"></td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                        </div>
+                      )}
                       </>)} {/* end expandedOPs */}
                     </div>
                   </div>
@@ -9560,8 +9599,7 @@ export default function App() {
     const pctOf = (val, base) => base !== 0 ? ((val/base)*100).toFixed(2)+'%' : '0.00%';
 
     const REPORT_CARDS = [
-      { id: 'mermas', icon: <AlertTriangle size={26}/>, label: 'Mermas', desc: 'Perdidas y desperdicios', color: 'orange' },
-      { id: 'mermas_bobinas', icon: <Box size={26}/>, label: 'Mermas Bobinas', desc: 'Mermas producción de semielaborados', color: 'indigo' },
+      { id: 'mermas', icon: <AlertTriangle size={26}/>, label: 'Mermas', desc: 'OPs + Bobinas — Pérdidas y desperdicios', color: 'orange' },
       { id: 'reporte_bobinas', icon: <Box size={26}/>, label: 'Reporte Bobinas', desc: 'Reporte de producción de semielaborados', color: 'indigo' },
       { id: 'resumen_mensual', icon: <ClipboardList size={26}/>, label: 'Resumen Mensual', desc: 'Todas las OPs del mes', color: 'teal' },
       { id: 'super_finiquito', icon: <FileCheck size={26}/>, label: 'Finiquito por OP', desc: 'Por orden individual', color: 'purple' },
@@ -10028,102 +10066,8 @@ export default function App() {
               );
             })()}
 
-            {/* ── MERMAS BOBINAS ── */}
-            {showReportType === 'mermas_bobinas' && (() => {
-              const [sy, sm] = selectedMonth.split('-').map(Number);
-              const bobinasMes = (bobinaProductions||[]).filter(b=>{
-                const d = b.fechaCierre||b.fecha||'';
-                const [by,bm] = d.split('-').map(Number);
-                return by===sy && bm===sm;
-              });
-              const totalIn = bobinasMes.reduce((s,b)=>s+parseNum(b.kgPlanificados),0);
-              const totalOut = bobinasMes.reduce((s,b)=>s+parseNum(b.kgProducidos||0),0);
-              const totalMerma = Math.max(0,totalIn-totalOut);
-              const pctGlobal = totalIn>0?((totalMerma/totalIn)*100).toFixed(1):'0.0';
-              const totalTransp = bobinasMes.reduce((s,b)=>s+parseNum(b.extrusionData?.mermaTroquelTransp||0),0);
-              const totalPigm  = bobinasMes.reduce((s,b)=>s+parseNum(b.extrusionData?.mermaTroquelPigm||0),0);
-              const totalTorta = bobinasMes.reduce((s,b)=>s+parseNum(b.extrusionData?.mermaTorta||0),0);
-              return (
-                <div id="pdf-content" className="space-y-6">
-                  <div className="flex justify-between items-center no-pdf">
-                    <h3 className="text-lg font-black uppercase flex items-center gap-2"><Box className="text-indigo-500" size={20}/> Mermas — Producción de Bobinas — {selectedMonth.replace('-','/')}</h3>
-                    <button onClick={()=>handleExportPDF('Mermas_Bobinas',false)} className="bg-black text-white px-6 py-3 rounded-xl font-black text-xs uppercase flex items-center gap-2 shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
-                  </div>
-                  <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-indigo-500 pb-2">MERMAS — PRODUCCIÓN DE BOBINAS — {selectedMonth}</h1></div>
-                  {/* KPIs */}
-                  <div className="grid grid-cols-3 md:grid-cols-6 gap-4">
-                    {[
-                      ['KG Procesados',formatNum(totalIn)+' KG','bg-blue-50 border-blue-200 text-blue-700'],
-                      ['KG Bobinas',formatNum(totalOut)+' KG','bg-green-50 border-green-200 text-green-700'],
-                      ['Merma Total',formatNum(totalMerma)+' KG','bg-red-50 border-red-200 text-red-700'],
-                      ['% Merma Global',pctGlobal+'%',parseFloat(pctGlobal)>5?'bg-red-50 border-red-200 text-red-700':'bg-yellow-50 border-yellow-200 text-yellow-700'],
-                      ['♻ Reciclado Transp.',formatNum(totalTransp)+' KG','bg-blue-50 border-blue-100 text-blue-600'],
-                      ['♻ Reciclado Torta',formatNum(totalTorta)+' KG','bg-amber-50 border-amber-200 text-amber-700'],
-                    ].map(([l,v,cls])=>(
-                      <div key={l} className={`border-2 rounded-2xl p-4 text-center ${cls}`}>
-                        <div className="text-[9px] font-black uppercase mb-1">{l}</div>
-                        <div className="text-xl font-black">{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {bobinasMes.length===0 ? (
-                    <div className="text-center py-16 text-gray-400 font-bold uppercase border border-gray-200 rounded-2xl">Sin bobinas completadas en este período</div>
-                  ) : (
-                    <div className="overflow-x-auto rounded-xl border border-gray-200">
-                      <table className="w-full text-xs">
-                        <thead className="bg-indigo-700 text-white">
-                          <tr className="uppercase font-black text-[9px] tracking-widest">
-                            <th className="py-3 px-4 border-r border-indigo-600 text-left">ID</th>
-                            <th className="py-3 px-4 border-r border-indigo-600 text-left">Categoría / Dims</th>
-                            <th className="py-3 px-4 border-r border-indigo-600 text-center">Fecha</th>
-                            <th className="py-3 px-4 border-r border-indigo-600 text-center">KG Entrada</th>
-                            <th className="py-3 px-4 border-r border-indigo-600 text-center">KG Bobina</th>
-                            <th className="py-3 px-4 border-r border-indigo-600 text-center">Merma KG</th>
-                            <th className="py-3 px-4 border-r border-indigo-600 text-center">%</th>
-                            <th className="py-3 px-4 border-r border-indigo-600 text-center">♻ Transp.</th>
-                            <th className="py-3 px-4 border-r border-indigo-600 text-center">♻ Pigm.</th>
-                            <th className="py-3 px-4 text-center">♻ Torta</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {bobinasMes.map((b,i)=>{
-                            const mKg=Math.max(0,parseNum(b.kgPlanificados)-parseNum(b.kgProducidos||0));
-                            const pct=parseNum(b.kgPlanificados)>0?((mKg/parseNum(b.kgPlanificados))*100).toFixed(1):'0.0';
-                            const tr=parseNum(b.extrusionData?.mermaTroquelTransp||0);
-                            const pg=parseNum(b.extrusionData?.mermaTroquelPigm||0);
-                            const tt=parseNum(b.extrusionData?.mermaTorta||0);
-                            return <tr key={b.id} className={i%2===0?'bg-white':'bg-gray-50/50'}>
-                              <td className="py-3 px-4 border-r font-black text-indigo-600">{b.id}</td>
-                              <td className="py-3 px-4 border-r"><div className="font-black text-[11px] uppercase">{b.categoria}</div><div className="text-[9px] text-gray-400">{b.ancho}×{b.largo}×{b.micras}MIC</div></td>
-                              <td className="py-3 px-4 border-r text-center font-bold text-gray-500">{b.fechaCierre||b.fecha}</td>
-                              <td className="py-3 px-4 border-r text-center font-black text-blue-600">{formatNum(b.kgPlanificados)} KG</td>
-                              <td className="py-3 px-4 border-r text-center font-black text-green-600">{formatNum(b.kgProducidos||0)} KG</td>
-                              <td className="py-3 px-4 border-r text-center font-black text-red-600">{formatNum(mKg)} KG</td>
-                              <td className="py-3 px-4 border-r text-center"><span className={`px-2 py-0.5 rounded-lg text-[9px] font-black ${parseFloat(pct)>5?'bg-red-100 text-red-700':parseFloat(pct)>2?'bg-yellow-100 text-yellow-700':'bg-green-100 text-green-700'}`}>{pct}%</span></td>
-                              <td className="py-3 px-4 border-r text-center font-bold text-blue-600">{tr>0?`${formatNum(tr)} KG`:'—'}</td>
-                              <td className="py-3 px-4 border-r text-center font-bold text-orange-600">{pg>0?`${formatNum(pg)} KG`:'—'}</td>
-                              <td className="py-3 px-4 text-center font-bold text-amber-600">{tt>0?`${formatNum(tt)} KG`:'—'}</td>
-                            </tr>;
-                          })}
-                        </tbody>
-                        <tfoot className="bg-indigo-50 border-t-2 border-indigo-200">
-                          <tr className="font-black text-[10px]">
-                            <td colSpan="3" className="py-2 px-4 text-right uppercase text-indigo-700">Totales del mes:</td>
-                            <td className="py-2 px-4 text-center text-blue-700">{formatNum(totalIn)} KG</td>
-                            <td className="py-2 px-4 text-center text-green-700">{formatNum(totalOut)} KG</td>
-                            <td className="py-2 px-4 text-center text-red-700">{formatNum(totalMerma)} KG</td>
-                            <td className="py-2 px-4 text-center text-orange-700">{pctGlobal}%</td>
-                            <td className="py-2 px-4 text-center text-blue-600">{totalTransp>0?`${formatNum(totalTransp)} KG`:'—'}</td>
-                            <td className="py-2 px-4 text-center text-orange-600">{totalPigm>0?`${formatNum(totalPigm)} KG`:'—'}</td>
-                            <td className="py-2 px-4 text-center text-amber-600">{totalTorta>0?`${formatNum(totalTorta)} KG`:'—'}</td>
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+            {/* ── MERMAS BOBINAS (ya integrado al final del bloque 'mermas') ── */}
+            {showReportType === 'mermas_bobinas' && null}
 
             {/* ── REPORTE DE PRODUCCIÓN DE BOBINAS ── */}
             {showReportType === 'reporte_bobinas' && (() => {
@@ -12579,23 +12523,22 @@ export default function App() {
           const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
           return (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[99999] p-4 print:hidden">
-              <div className="bg-white p-10 rounded-[2rem] shadow-2xl max-w-md w-full border-t-8 border-blue-500">
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-lg font-black uppercase text-blue-800">Entrega Parcial de Producción</h3>
-                  <button onClick={()=>{ setShowPartialModal(null); setPartialTargetFgKey(''); }} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
+              <div className="bg-white p-6 rounded-[1.5rem] shadow-2xl max-w-sm w-full border-t-8 border-blue-500">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="text-sm font-black uppercase text-blue-800">Entrega Parcial</h3>
+                  <button onClick={()=>{ setShowPartialModal(null); setPartialTargetFgKey(''); }} className="text-gray-400 hover:text-red-500"><X size={18}/></button>
                 </div>
-                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 mb-6 text-xs font-bold">
-                  <p className="text-blue-800 font-black uppercase mb-2">OP #{String(req.id).replace('OP-','').padStart(5,'0')} — {req.client}</p>
-                  <div className="grid grid-cols-2 gap-2 text-[10px]">
-                    <div><span className="text-gray-500">KG Producidos:</span> <span className="font-black text-blue-700">{formatNum(totalKgProd)} KG</span></div>
-                    <div><span className="text-gray-500">Ya Entregado:</span> <span className="font-black text-green-700">{formatNum(yaEntregado)} KG</span></div>
-                    {!esTermo && <div><span className="text-gray-500">Millares Prod.:</span> <span className="font-black text-blue-700">{formatNum(totalMillProd)}</span></div>}
-                    {!esTermo && <div><span className="text-gray-500">Mill. Entregados:</span> <span className="font-black text-green-700">{formatNum(yaMillares)}</span></div>}
-                    <div className="col-span-2"><span className="text-gray-500">Pendiente:</span> <span className="font-black text-orange-600">{formatNum(Math.max(0,totalKgProd-yaEntregado))} KG</span></div>
+                {/* Info compacta */}
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3 text-[10px]">
+                  <p className="text-blue-800 font-black uppercase mb-1">OP #{String(req.id).replace('OP-','').padStart(5,'0')} — {req.client}</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                    <div><span className="text-gray-400">Producidos:</span> <span className="font-black text-blue-700">{esTermo?formatNum(totalKgProd)+' KG':formatNum(totalMillProd)+' Mill.'}</span></div>
+                    <div><span className="text-gray-400">Entregado:</span> <span className="font-black text-green-700">{esTermo?formatNum(yaEntregado)+' KG':formatNum(yaMillares)+' Mill.'}</span></div>
+                    <div className="col-span-2"><span className="text-gray-400">Pendiente:</span> <span className="font-black text-orange-600">{esTermo?formatNum(Math.max(0,totalKgProd-yaEntregado))+' KG':formatNum(Math.max(0,totalMillProd-yaMillares))+' Mill.'}</span></div>
                   </div>
                 </div>
-                <div className="space-y-4 mb-6">
-                  {/* Selector de producto destino */}
+                <div className="space-y-3 mb-3">
+                  {/* Selector de producto destino — compacto */}
                   {(() => {
                     const fgGrps = {};
                     (finishedGoodsInventory||[]).forEach(fg=>{
@@ -12609,76 +12552,70 @@ export default function App() {
                     if(grpList.length === 0) return null;
                     return (
                       <div>
-                        <label className="text-[10px] font-black text-blue-700 uppercase block mb-1">📦 Sumar a Producto Existente (opcional)</label>
+                        <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">📦 Sumar a producto existente</label>
                         <select value={partialTargetFgKey} onChange={e=>setPartialTargetFgKey(e.target.value)}
-                          className="w-full border-2 border-blue-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-500 bg-white">
+                          className="w-full border-2 border-blue-200 rounded-xl p-2 text-[10px] font-bold outline-none focus:border-blue-500 bg-white">
                           <option value="">— Crear nuevo lote independiente —</option>
                           {grpList.map(g=>(
-                            <option key={g.key} value={g.key}>{g.label} (Stock: {formatNum(g.stk)} {g.unit})</option>
+                            <option key={g.key} value={g.key}>{g.label} ({formatNum(g.stk)} {g.unit})</option>
                           ))}
                         </select>
-                        <p className="text-[9px] text-blue-500 font-bold mt-1">Si el producto ya existe, selecciónalo para sumar la existencia y actualizar costo promedio</p>
                       </div>
                     );
                   })()}
 
                   {esTermo ? (
                     <div>
-                      <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">KG a Entregar *</label>
-                      <input type="number" step="0.01" value={partialKg} onChange={e=>setPartialKg(e.target.value)} className="w-full border-2 border-blue-300 rounded-xl p-3 font-black text-lg text-center outline-none focus:border-blue-500" placeholder="0.00" autoFocus />
+                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG a Entregar *</label>
+                      <input type="number" step="0.01" value={partialKg} onChange={e=>setPartialKg(e.target.value)} className="w-full border-2 border-blue-300 rounded-xl p-2.5 font-black text-base text-center outline-none focus:border-blue-500" placeholder="0.00" autoFocus />
                     </div>
                   ) : (
-                    <>
+                    <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Millares a Entregar *</label>
+                        <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares *</label>
                         <input type="number" step="0.01" value={partialMillares} onChange={e=>{
                           const mill=e.target.value;
                           const kgPorMillarOp = (() => {
                             const ancho=parseNum(req.ancho), fuelles=parseNum(req.fuelles||0), largo=parseNum(req.largo), micras=parseNum(req.micras);
                             const p=(ancho+fuelles)*largo*micras; return p>0?p:0;
                           })();
-                          const autoKg = kgPorMillarOp>0 ? (parseNum(mill)*kgPorMillarOp).toFixed(3) : partialKg;
-                          setPartialMillares(mill); setPartialKg(autoKg);
-                        }} className="w-full border-2 border-blue-300 rounded-xl p-3 font-black text-lg text-center outline-none focus:border-blue-500" placeholder="0.00" autoFocus />
+                          setPartialMillares(mill);
+                          setPartialKg(kgPorMillarOp>0?(parseNum(mill)*kgPorMillarOp).toFixed(3):partialKg);
+                        }} className="w-full border-2 border-blue-300 rounded-xl p-2.5 font-black text-base text-center outline-none focus:border-blue-500" placeholder="0.00" autoFocus />
                       </div>
                       <div>
-                        <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">KG Equivalentes (peso/millar calculado)</label>
+                        <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG equiv.</label>
                         <input type="number" step="0.001" value={partialKg} onChange={e=>setPartialKg(e.target.value)}
-                          className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-sm text-center outline-none focus:border-blue-300 bg-gray-50" placeholder="0.000" />
-                        {(() => {
-                          const ancho=parseNum(req.ancho), fuelles=parseNum(req.fuelles||0), largo=parseNum(req.largo), micras=parseNum(req.micras);
-                          const pm=(ancho+fuelles)*largo*micras;
-                          return pm>0 && <p className="text-[9px] text-blue-500 font-bold mt-1 text-center">Peso teórico/millar: {formatNum(pm)} KG</p>;
-                        })()}
+                          className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-black text-base text-center outline-none focus:border-blue-300 bg-gray-50" placeholder="0.000" />
                       </div>
-                    </>
+                      {(() => {
+                        const ancho=parseNum(req.ancho), fuelles=parseNum(req.fuelles||0), largo=parseNum(req.largo), micras=parseNum(req.micras);
+                        const pm=(ancho+fuelles)*largo*micras;
+                        return pm>0 && <p className="col-span-2 text-[9px] text-blue-500 font-bold -mt-1">Peso teórico: {formatNum(pm)} KG/Mill.</p>;
+                      })()}
+                    </div>
                   )}
                 </div>
 
-                {/* Historial de entregas parciales con botón reversar */}
+                {/* Historial EP compacto */}
                 {(req.entregasParciales||[]).length > 0 && (
-                  <div className="mb-4 bg-orange-50 border border-orange-200 rounded-xl p-3">
-                    <p className="text-[9px] font-black text-orange-700 uppercase mb-2">Entregas anteriores de esta OP:</p>
+                  <div className="mb-3 bg-orange-50 border border-orange-200 rounded-xl p-2">
+                    <p className="text-[8px] font-black text-orange-700 uppercase mb-1">Entregas anteriores:</p>
                     {(req.entregasParciales||[]).map((ep,i)=>(
-                      <div key={i} className="flex items-center justify-between bg-white rounded-lg px-3 py-2 mb-1 border border-orange-100">
-                        <div className="text-[9px] font-bold text-gray-700">
-                          <span className="font-black text-orange-600">EP-{String(i+1).padStart(2,'0')}</span>
-                          <span className="ml-2">{ep.fecha}</span>
-                          <span className="ml-2 text-blue-700 font-black">{formatNum(ep.kg)} KG{ep.millares>0?' / '+formatNum(ep.millares)+' Mill.':''}</span>
-                        </div>
-                        <button onClick={()=>handleReversePartialDelivery(req,ep)}
-                          className="text-red-400 hover:text-red-600 text-[9px] font-black uppercase flex items-center gap-1">
-                          <RefreshCw size={11}/> Reversar
-                        </button>
+                      <div key={i} className="flex items-center justify-between text-[9px] mb-0.5">
+                        <span className="font-black text-orange-600">EP-{String(i+1).padStart(2,'0')}</span>
+                        <span className="text-gray-500">{ep.fecha}</span>
+                        <span className="font-black text-blue-700">{formatNum(ep.kg)} KG{ep.millares>0?' / '+formatNum(ep.millares)+' Mill.':''}</span>
+                        <button onClick={()=>handleReversePartialDelivery(req,ep)} className="text-red-400 hover:text-red-600 flex items-center gap-0.5 font-black uppercase"><RefreshCw size={9}/> Rev.</button>
                       </div>
                     ))}
                   </div>
                 )}
 
-                <p className="text-[9px] font-bold text-gray-400 mb-4 text-center uppercase">La OP permanece activa. La cantidad se suma al producto seleccionado en Terminados.</p>
-                <div className="flex gap-3">
-                  <button onClick={()=>setShowPartialModal(null)} className="flex-1 bg-gray-200 text-gray-700 font-black py-4 rounded-xl uppercase text-xs hover:bg-gray-300">Cancelar</button>
-                  <button onClick={handlePartialDelivery} className="flex-1 bg-blue-600 text-white font-black py-4 rounded-xl uppercase text-xs shadow-lg hover:bg-blue-700 flex items-center justify-center gap-2"><ArrowUpFromLine size={16}/> Confirmar Entrega</button>
+                <p className="text-[8px] font-bold text-gray-400 mb-3 text-center uppercase">La OP permanece activa. La cantidad se suma al producto seleccionado.</p>
+                <div className="flex gap-2">
+                  <button onClick={()=>{ setShowPartialModal(null); setPartialTargetFgKey(''); }} className="flex-1 bg-gray-200 text-gray-700 font-black py-2.5 rounded-xl uppercase text-xs hover:bg-gray-300">Cancelar</button>
+                  <button onClick={handlePartialDelivery} className="flex-1 bg-blue-600 text-white font-black py-2.5 rounded-xl uppercase text-xs shadow-lg hover:bg-blue-700 flex items-center justify-center gap-2"><ArrowUpFromLine size={14}/> Confirmar</button>
                 </div>
               </div>
             </div>
