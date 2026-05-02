@@ -6653,7 +6653,47 @@ export default function App() {
   const [showPartialModal, setShowPartialModal] = useState(null); // req
   const [partialKg, setPartialKg] = useState('');
   const [partialMillares, setPartialMillares] = useState('');
-  const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
+  const [partialTargetFgKey, setPartialTargetFgKey] = useState(''); // group key of existing FG product
+
+  // ── Reversar entrega parcial ──────────────────────────────────────────
+  const handleReversePartialDelivery = async (req, ep) => {
+    setDialog({
+      title: 'Reversar Entrega Parcial',
+      text: `¿Reversar la entrega del ${ep.fecha}? Se revertirá el stock de ${formatNum(ep.kg)} KG / ${ep.millares>0?formatNum(ep.millares)+' Mill.':''} y se eliminará el registro.`,
+      type: 'confirm',
+      onConfirm: async () => {
+        try {
+          const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
+          // 1. Eliminar entrada FG
+          if (ep.fgId) {
+            try { await deleteDoc(getDocRef('finishedGoodsInventory', ep.fgId)); } catch(e){}
+          }
+          // 2. Revertir stock en FG agrupado (finishedGoodsInventory tiene el stock distribuido en el doc)
+          // El stock ya está en el documento FG eliminado arriba — nada más que hacer en FG
+
+          // 3. Si se creó un ítem PT en inventory general (error previo), revertirlo
+          if (ep.invKey) {
+            const ptItem = (inventory||[]).find(i=>i.id===ep.invKey);
+            if (ptItem) {
+              const revertQty = esTermo ? parseNum(ep.kg) : parseNum(ep.millares||0);
+              const newStk = Math.max(0, parseNum(ptItem.stock) - revertQty);
+              if (newStk <= 0.001) {
+                await deleteDoc(getDocRef('inventory', ep.invKey));
+              } else {
+                await updateDoc(getDocRef('inventory', ep.invKey), { stock: newStk });
+              }
+            }
+          }
+
+          // 4. Quitar del array entregasParciales de la OP
+          const nuevasParciales = (req.entregasParciales||[]).filter(e=>e.fgId !== ep.fgId);
+          await updateDoc(getDocRef('requirements', req.id), { entregasParciales: nuevasParciales });
+
+          setDialog({title:'✅ Reversado',text:`Entrega del ${ep.fecha} (${formatNum(ep.kg)} KG) reversada correctamente.`,type:'alert'});
+        } catch(err) { setDialog({title:'Error',text:err.message,type:'alert'}); }
+      }
+    });
+  };
   const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
   const [enProcesoOpFilter, setEnProcesoOpFilter] = useState('TODAS');
 
@@ -6668,63 +6708,69 @@ export default function App() {
     if (!esTermo && millEntrega <= 0) return setDialog({ title: 'Aviso', text: 'Ingrese los Millares a entregar.', type: 'alert' });
 
     try {
-      // 1. Calcular costo promedio desde WIP asociado a esta OP
+      // Costo desde WIP
       const wipAsoc = (wipInventory||[]).filter(w => w.opId === req.id);
       const totalWIPKg = wipAsoc.reduce((s,w)=>s+parseNum(w.kgAsignados),0);
       const totalWIPCost = wipAsoc.reduce((s,w)=>s+parseNum(w.costoPromedio)*parseNum(w.kgAsignados),0);
       const costoUnitWIP = totalWIPKg > 0 ? totalWIPCost / totalWIPKg : 0;
 
-      // 2. Crear entrada en finishedGoodsInventory
-      const fgId = `FG-${Date.now()}`;
-      const fgEntry = {
-        id: fgId, opId: req.id, reqId: req.id,
-        cliente: req.client || 'N/A',
-        tipoProducto: req.tipoProducto || 'BOLSAS',
-        categoria: req.categoria || '',
-        producto: req.desc || 'Producto',
-        ancho: req.ancho || 0, largo: req.largo || 0, micras: req.micras || 0,
-        color: req.color || 'NATURAL', tratamiento: req.tratamiento || 'LISO',
-        kgProducidos: kgEntrega,
-        millares: millEntrega,
-        costoUnitario: costoUnitWIP,
-        costoTotal: costoUnitWIP * kgEntrega,
-        fechaFinalizacion: getTodayDate(),
-        ubicacion: 'ALMACEN GENERAL',
-        status: 'LISTO PARA ENTREGA',
-        esEntregaParcial: true,
-        observaciones: `ENTREGA PARCIAL — ${esTermo ? formatNum(kgEntrega)+' KG' : formatNum(millEntrega)+' Mill. / '+formatNum(kgEntrega)+' KG'}`,
-        timestamp: Date.now()
-      };
-      await setDoc(getDocRef('finishedGoodsInventory', fgId), fgEntry);
+      // ── Determinar si sumar a un FG existente o crear uno nuevo ──
+      let fgId;
+      if (partialTargetFgKey) {
+        // Sumar al FG seleccionado
+        const targetFGs = (finishedGoodsInventory||[]).filter(fg=>{
+          const esTF=fg.tipoProducto==='TERMOENCOGIBLE';
+          const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+          const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+          return `${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}` === partialTargetFgKey;
+        });
+        // Actualizar el primer doc del grupo (o el más reciente)
+        const targetFG = targetFGs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))[0];
+        if (targetFG) {
+          const prevKg = parseNum(targetFG.kgProducidos||0);
+          const prevMill = parseNum(targetFG.millares||0);
+          const prevCost = parseNum(targetFG.costoUnitario||0);
+          const newKg = prevKg + kgEntrega;
+          const newMill = prevMill + millEntrega;
+          // Costo promedio ponderado
+          const avgCost = newKg > 0 ? ((prevKg*prevCost)+(kgEntrega*costoUnitWIP))/newKg : costoUnitWIP;
+          await updateDoc(getDocRef('finishedGoodsInventory', targetFG.id), {
+            kgProducidos: newKg, millares: newMill, costoUnitario: avgCost,
+            costoTotal: avgCost * newKg
+          });
+          fgId = targetFG.id;
+        } else { partialTargetFgKey && console.warn('FG target not found'); }
+      }
 
-      // 3. Actualizar inventario general (Inventario → "Productos Terminados")
-      const invKey = `PT-${(req.desc||'').replace(/[^A-Z0-9]/gi,'').substring(0,16).toUpperCase()}-${req.client||'CLI'}`.toUpperCase().replace(/\s/g,'');
-      const existPT = (inventory||[]).find(i => i.id === invKey);
-      if (existPT) {
-        const newStk = parseNum(existPT.stock) + (esTermo ? kgEntrega : millEntrega);
-        const avgCost = ((parseNum(existPT.stock)*parseNum(existPT.cost)) + (kgEntrega*costoUnitWIP)) / Math.max(newStk, 0.001);
-        await updateDoc(getDocRef('inventory', invKey), { stock: newStk, cost: avgCost });
-        await addDoc(getColRef('inventoryMovements'), {
-          itemId: invKey, itemDesc: existPT.desc, type: 'ENTRADA',
-          qty: esTermo ? kgEntrega : millEntrega, unitCost: costoUnitWIP, totalValue: kgEntrega * costoUnitWIP,
-          previousStock: existPT.stock, newStock: newStk,
-          docRef: req.id, notes: `ENTREGA PARCIAL OP ${req.id}`, date: getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now()
-        });
-      } else {
-        const desc = `${req.desc||''} — ${req.client||''} (${esTermo?'KG':'Millares'})`.toUpperCase();
-        await setDoc(getDocRef('inventory', invKey), {
-          id: invKey, desc, category: 'Productos Terminados', unit: esTermo ? 'KG' : 'Millares',
-          stock: esTermo ? kgEntrega : millEntrega, cost: costoUnitWIP, timestamp: Date.now()
-        });
-        await addDoc(getColRef('inventoryMovements'), {
-          itemId: invKey, itemDesc: desc, type: 'ENTRADA_INICIAL',
-          qty: esTermo ? kgEntrega : millEntrega, unitCost: costoUnitWIP, totalValue: kgEntrega * costoUnitWIP,
-          previousStock: 0, newStock: esTermo ? kgEntrega : millEntrega,
-          docRef: req.id, notes: `ENTREGA PARCIAL OP ${req.id}`, date: getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now()
+      if (!fgId) {
+        // Crear nuevo lote FG
+        fgId = `FG-${Date.now()}`;
+        await setDoc(getDocRef('finishedGoodsInventory', fgId), {
+          id: fgId, opId: req.id, reqId: req.id,
+          cliente: req.client||'N/A', tipoProducto: req.tipoProducto||'BOLSAS',
+          categoria: req.categoria||'', producto: req.desc||'Producto',
+          ancho: req.ancho||0, largo: req.largo||0, micras: req.micras||0,
+          color: req.color||'NATURAL', tratamiento: req.tratamiento||'LISO',
+          kgProducidos: kgEntrega, millares: millEntrega,
+          costoUnitario: costoUnitWIP, costoTotal: costoUnitWIP*kgEntrega,
+          fechaFinalizacion: getTodayDate(), ubicacion: 'ALMACEN GENERAL',
+          status: 'LISTO PARA ENTREGA', esEntregaParcial: true,
+          observaciones: `ENTREGA PARCIAL — ${esTermo?formatNum(kgEntrega)+' KG':formatNum(millEntrega)+' Mill. / '+formatNum(kgEntrega)+' KG'}`,
+          timestamp: Date.now()
         });
       }
 
-      // 4. Registrar asiento contable WIP → Terminados
+      // Kardex del FG (en movimientos de inventario como FG::id)
+      await addDoc(getColRef('inventoryMovements'), {
+        itemId: `FG::${fgId}`, itemDesc: `${req.desc||''} — ${req.client||''}`,
+        type: 'ENTRADA', qty: esTermo ? kgEntrega : millEntrega,
+        unitCost: costoUnitWIP, totalValue: kgEntrega * costoUnitWIP,
+        previousStock: 0, newStock: esTermo ? kgEntrega : millEntrega,
+        docRef: req.id, notes: `ENTREGA PARCIAL OP ${req.id}`,
+        date: getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now(), isFG: true
+      });
+
+      // Asiento contable
       if (costoUnitWIP > 0 && kgEntrega > 0) {
         await registrarAsientoContable(null, {
           debito: '1.1.03.01.008', credito: '1.1.03.01.007',
@@ -6734,19 +6780,19 @@ export default function App() {
         });
       }
 
-      // 5. Guardar historial de entrega parcial en la OP
+      // Historial en la OP
       const prevParciales = req.entregasParciales || [];
       await updateDoc(getDocRef('requirements', req.id), {
         entregasParciales: [...prevParciales, {
           fgId, kg: kgEntrega, millares: millEntrega,
-          fecha: getTodayDate(), invKey, costoUnit: costoUnitWIP,
+          fecha: getTodayDate(), costoUnit: costoUnitWIP,
           user: appUser?.name||'Sistema'
         }]
       });
 
-      setShowPartialModal(null); setPartialKg(''); setPartialMillares('');
+      setShowPartialModal(null); setPartialKg(''); setPartialMillares(''); setPartialTargetFgKey('');
       setDialog({ title: '✅ Entrega Parcial Registrada',
-        text: `${esTermo ? formatNum(kgEntrega)+' KG' : formatNum(millEntrega)+' Mill.'} cargados a Inventario de Productos Terminados, Kardex y Reporte 177. La OP sigue abierta.`,
+        text: `${esTermo?formatNum(kgEntrega)+' KG':formatNum(millEntrega)+' Mill.'} sumados al Inventario de Productos Terminados. La OP sigue abierta.`,
         type: 'alert' });
     } catch (err) {
       setDialog({ title: 'Error', text: err.message, type: 'alert' });
@@ -6813,32 +6859,15 @@ export default function App() {
               timestamp: Date.now()
             });
 
-            // Actualizar inventario general Productos Terminados
-            const invKey = `PT-${(req.desc||'').replace(/[^A-Z0-9]/gi,'').substring(0,16).toUpperCase()}-${req.client||'CLI'}`.toUpperCase().replace(/\s/g,'');
-            const existPT = (inventory||[]).find(i => i.id === invKey);
-            const addQty = esTermo ? pendienteKg : pendienteMill;
-            if (existPT) {
-              const newStk = parseNum(existPT.stock) + addQty;
-              const avgCost = ((parseNum(existPT.stock)*parseNum(existPT.cost)) + (pendienteKg*costoUnit)) / Math.max(newStk, 0.001);
-              await updateDoc(getDocRef('inventory', invKey), { stock: newStk, cost: avgCost });
-              await addDoc(getColRef('inventoryMovements'), {
-                itemId: invKey, itemDesc: existPT.desc, type: 'ENTRADA', qty: addQty,
-                unitCost: costoUnit, totalValue: pendienteKg * costoUnit,
-                previousStock: existPT.stock, newStock: newStk,
-                docRef: req.id, notes: `CIERRE OP ${req.id} — PENDIENTE`, date: getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now()
-              });
-            } else {
-              const desc = `${req.desc||''} — ${req.client||''} (${esTermo?'KG':'Millares'})`.toUpperCase();
-              await setDoc(getDocRef('inventory', invKey), {
-                id: invKey, desc, category: 'Productos Terminados', unit: esTermo ? 'KG' : 'Millares',
-                stock: addQty, cost: costoUnit, timestamp: Date.now()
-              });
-              await addDoc(getColRef('inventoryMovements'), {
-                itemId: invKey, itemDesc: desc, type: 'ENTRADA_INICIAL', qty: addQty,
-                unitCost: costoUnit, totalValue: pendienteKg * costoUnit, previousStock: 0, newStock: addQty,
-                docRef: req.id, notes: `CIERRE OP ${req.id}`, date: getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now()
-              });
-            }
+            // Kardex del FG de cierre
+            await addDoc(getColRef('inventoryMovements'), {
+              itemId: `FG::${fgId}`, itemDesc: `${req.desc||''} — ${req.client||''}`,
+              type: 'ENTRADA', qty: esTermo ? pendienteKg : pendienteMill,
+              unitCost: costoUnit, totalValue: pendienteKg * costoUnit,
+              previousStock: 0, newStock: esTermo ? pendienteKg : pendienteMill,
+              docRef: req.id, notes: `CIERRE OP ${req.id} — PENDIENTE`,
+              date: getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now(), isFG: true
+            });
 
             // Asiento contable WIP → Terminados (solo pendiente)
             if (costoUnit > 0) {
@@ -12338,7 +12367,7 @@ export default function App() {
               <div className="bg-white p-10 rounded-[2rem] shadow-2xl max-w-md w-full border-t-8 border-blue-500">
                 <div className="flex justify-between items-center mb-6">
                   <h3 className="text-lg font-black uppercase text-blue-800">Entrega Parcial de Producción</h3>
-                  <button onClick={()=>setShowPartialModal(null)} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
+                  <button onClick={()=>{ setShowPartialModal(null); setPartialTargetFgKey(''); }} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
                 </div>
                 <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 mb-6 text-xs font-bold">
                   <p className="text-blue-800 font-black uppercase mb-2">OP #{String(req.id).replace('OP-','').padStart(5,'0')} — {req.client}</p>
@@ -12351,44 +12380,87 @@ export default function App() {
                   </div>
                 </div>
                 <div className="space-y-4 mb-6">
+                  {/* Selector de producto destino */}
+                  {(() => {
+                    const fgGrps = {};
+                    (finishedGoodsInventory||[]).forEach(fg=>{
+                      const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                      const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                      const gk=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
+                      if(!fgGrps[gk]) fgGrps[gk]={key:gk, label:formatFGLabel(fg)||fg.producto||fg.id, esTermo:fg.tipoProducto==='TERMOENCOGIBLE', stk:0, unit:fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millares'};
+                      fgGrps[gk].stk += fg.tipoProducto==='TERMOENCOGIBLE' ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+                    });
+                    const grpList = Object.values(fgGrps);
+                    if(grpList.length === 0) return null;
+                    return (
+                      <div>
+                        <label className="text-[10px] font-black text-blue-700 uppercase block mb-1">📦 Sumar a Producto Existente (opcional)</label>
+                        <select value={partialTargetFgKey} onChange={e=>setPartialTargetFgKey(e.target.value)}
+                          className="w-full border-2 border-blue-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-500 bg-white">
+                          <option value="">— Crear nuevo lote independiente —</option>
+                          {grpList.map(g=>(
+                            <option key={g.key} value={g.key}>{g.label} (Stock: {formatNum(g.stk)} {g.unit})</option>
+                          ))}
+                        </select>
+                        <p className="text-[9px] text-blue-500 font-bold mt-1">Si el producto ya existe, selecciónalo para sumar la existencia y actualizar costo promedio</p>
+                      </div>
+                    );
+                  })()}
+
                   {esTermo ? (
-                    // TERMOENCOGIBLE: solo KG
                     <div>
                       <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">KG a Entregar *</label>
                       <input type="number" step="0.01" value={partialKg} onChange={e=>setPartialKg(e.target.value)} className="w-full border-2 border-blue-300 rounded-xl p-3 font-black text-lg text-center outline-none focus:border-blue-500" placeholder="0.00" autoFocus />
                     </div>
                   ) : (
-                    // BOLSAS: Millares primario, KG calculado del peso/millar
                     <>
                       <div>
                         <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Millares a Entregar *</label>
                         <input type="number" step="0.01" value={partialMillares} onChange={e=>{
                           const mill=e.target.value;
-                          // Calcular KG según peso/millar teórico de la OP
                           const kgPorMillarOp = (() => {
                             const ancho=parseNum(req.ancho), fuelles=parseNum(req.fuelles||0), largo=parseNum(req.largo), micras=parseNum(req.micras);
-                            const p=(ancho+fuelles)*largo*micras;
-                            return p>0?p:0;
+                            const p=(ancho+fuelles)*largo*micras; return p>0?p:0;
                           })();
                           const autoKg = kgPorMillarOp>0 ? (parseNum(mill)*kgPorMillarOp).toFixed(3) : partialKg;
-                          setPartialMillares(mill);
-                          setPartialKg(autoKg);
+                          setPartialMillares(mill); setPartialKg(autoKg);
                         }} className="w-full border-2 border-blue-300 rounded-xl p-3 font-black text-lg text-center outline-none focus:border-blue-500" placeholder="0.00" autoFocus />
                       </div>
                       <div>
-                        <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">KG Equivalentes (calculado por peso/millar)</label>
+                        <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">KG Equivalentes (peso/millar calculado)</label>
                         <input type="number" step="0.001" value={partialKg} onChange={e=>setPartialKg(e.target.value)}
                           className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-sm text-center outline-none focus:border-blue-300 bg-gray-50" placeholder="0.000" />
                         {(() => {
                           const ancho=parseNum(req.ancho), fuelles=parseNum(req.fuelles||0), largo=parseNum(req.largo), micras=parseNum(req.micras);
                           const pm=(ancho+fuelles)*largo*micras;
-                          return pm>0 && <p className="text-[9px] text-blue-500 font-bold mt-1 text-center">Peso teórico/millar: {formatNum(pm)} KG — edita KG si el peso real difiere</p>;
+                          return pm>0 && <p className="text-[9px] text-blue-500 font-bold mt-1 text-center">Peso teórico/millar: {formatNum(pm)} KG</p>;
                         })()}
                       </div>
                     </>
                   )}
                 </div>
-                <p className="text-[9px] font-bold text-gray-400 mb-4 text-center uppercase">La OP permanece activa para producción adicional. Se genera una entrada en Productos Terminados.</p>
+
+                {/* Historial de entregas parciales con botón reversar */}
+                {(req.entregasParciales||[]).length > 0 && (
+                  <div className="mb-4 bg-orange-50 border border-orange-200 rounded-xl p-3">
+                    <p className="text-[9px] font-black text-orange-700 uppercase mb-2">Entregas anteriores de esta OP:</p>
+                    {(req.entregasParciales||[]).map((ep,i)=>(
+                      <div key={i} className="flex items-center justify-between bg-white rounded-lg px-3 py-2 mb-1 border border-orange-100">
+                        <div className="text-[9px] font-bold text-gray-700">
+                          <span className="font-black text-orange-600">EP-{String(i+1).padStart(2,'0')}</span>
+                          <span className="ml-2">{ep.fecha}</span>
+                          <span className="ml-2 text-blue-700 font-black">{formatNum(ep.kg)} KG{ep.millares>0?' / '+formatNum(ep.millares)+' Mill.':''}</span>
+                        </div>
+                        <button onClick={()=>handleReversePartialDelivery(req,ep)}
+                          className="text-red-400 hover:text-red-600 text-[9px] font-black uppercase flex items-center gap-1">
+                          <RefreshCw size={11}/> Reversar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <p className="text-[9px] font-bold text-gray-400 mb-4 text-center uppercase">La OP permanece activa. La cantidad se suma al producto seleccionado en Terminados.</p>
                 <div className="flex gap-3">
                   <button onClick={()=>setShowPartialModal(null)} className="flex-1 bg-gray-200 text-gray-700 font-black py-4 rounded-xl uppercase text-xs hover:bg-gray-300">Cancelar</button>
                   <button onClick={handlePartialDelivery} className="flex-1 bg-blue-600 text-white font-black py-4 rounded-xl uppercase text-xs shadow-lg hover:bg-blue-700 flex items-center justify-center gap-2"><ArrowUpFromLine size={16}/> Confirmar Entrega</button>
