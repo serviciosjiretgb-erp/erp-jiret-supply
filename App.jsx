@@ -6702,36 +6702,42 @@ export default function App() {
   const handleReversePartialDelivery = async (req, ep) => {
     setDialog({
       title: 'Reversar Entrega Parcial',
-      text: `¿Reversar la entrega del ${ep.fecha}? Se revertirá el stock de ${formatNum(ep.kg)} KG / ${ep.millares>0?formatNum(ep.millares)+' Mill.':''} y se eliminará el registro.`,
+      text: `¿Reversar la entrega del ${ep.fecha}? Se revertirá el stock de ${formatNum(ep.kg)} KG / ${ep.millares>0?formatNum(ep.millares)+' Mill.':''}.`,
       type: 'confirm',
       onConfirm: async () => {
         try {
           const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
 
-          // Verificar si el fgId referencia un documento existente que fue ACTUALIZADO (no creado)
-          // vs uno que fue CREADO exclusivamente para este EP
           if (ep.fgId) {
             const fgDoc = (finishedGoodsInventory||[]).find(fg => fg.id === ep.fgId);
             if (fgDoc) {
-              const prevKg = parseNum(fgDoc.kgProducidos||0);
-              const prevMill = parseNum(fgDoc.millares||0);
-              const newKg = Math.max(0, prevKg - parseNum(ep.kg));
-              const newMill = Math.max(0, prevMill - parseNum(ep.millares||0));
-
-              if (newKg < 0.001 && newMill < 0.001) {
-                // El documento quedó vacío: sí eliminarlo
-                await deleteDoc(getDocRef('finishedGoodsInventory', ep.fgId));
+              // ── Estrategia: si tenemos snapshot previo, restaurar exactamente ese valor
+              //    Si NO tenemos snapshot (EP creado antes del fix), restar con piso en 0
+              //    NUNCA eliminar un documento existente
+              if (ep.fgPrevKg !== null && ep.fgPrevKg !== undefined) {
+                // Restaurar estado exacto anterior — sin riesgo de sobreescribir stock real
+                await updateDoc(getDocRef('finishedGoodsInventory', ep.fgId), {
+                  kgProducidos: ep.fgPrevKg,
+                  millares: esTermo ? 0 : (ep.fgPrevMill ?? ep.fgPrevKg),
+                });
               } else {
-                // Quedan existencias: solo restar, NO eliminar el documento
+                // Sin snapshot: restar conservadoramente — NUNCA bajar de 0, NUNCA eliminar
+                const curKg   = parseNum(fgDoc.kgProducidos||0);
+                const curMill = parseNum(fgDoc.millares||0);
+                const newKg   = Math.max(0, curKg   - parseNum(ep.kg));
+                const newMill = Math.max(0, curMill - parseNum(ep.millares||0));
                 await updateDoc(getDocRef('finishedGoodsInventory', ep.fgId), {
                   kgProducidos: newKg,
                   millares: esTermo ? 0 : newMill,
                 });
+                // NUNCA deleteDoc aquí — el v9 maneja la restauración si hiciera falta
               }
+            } else if (!ep.fgPrevKg && !ep.fgPrevMill) {
+              // El doc no existe y no hay snapshot → era un doc creado solo para este EP, nada que hacer
             }
           }
 
-          // Si se creó un ítem PT en inventory general (flujo anterior), también revertirlo
+          // Revertir ítem PT en inventory general si existía (flujo antiguo)
           if (ep.invKey) {
             const ptItem = (inventory||[]).find(i=>i.id===ep.invKey);
             if (ptItem) {
@@ -6745,11 +6751,21 @@ export default function App() {
             }
           }
 
-          // Quitar del array entregasParciales de la OP
-          const nuevasParciales = (req.entregasParciales||[]).filter(e=>e.fgId !== ep.fgId || e.fecha !== ep.fecha || e.kg !== ep.kg);
-          await updateDoc(getDocRef('requirements', req.id), { entregasParciales: nuevasParciales });
+          // Quitar del array entregasParciales usando fecha+kg como discriminador
+          const nuevasParciales = (req.entregasParciales||[]).filter(
+            (e,i) => !(e.fgId === ep.fgId && e.fecha === ep.fecha && e.kg === ep.kg && e.millares === ep.millares)
+          );
+          // Si hay duplicados exactos, eliminar solo el primero
+          let removedOne = false;
+          const nuevasParcialesSafe = (req.entregasParciales||[]).filter(e => {
+            if(!removedOne && e.fgId===ep.fgId && e.fecha===ep.fecha && parseNum(e.kg)===parseNum(ep.kg)){
+              removedOne = true; return false;
+            }
+            return true;
+          });
+          await updateDoc(getDocRef('requirements', req.id), { entregasParciales: nuevasParcialesSafe });
 
-          setDialog({title:'✅ Reversado',text:`Entrega del ${ep.fecha} (${formatNum(ep.kg)} KG) reversada. El stock fue ajustado sin eliminar el producto.`,type:'alert'});
+          setDialog({title:'✅ Reversado', text:`Entrega del ${ep.fecha} reversada. El stock fue restaurado al valor previo.`, type:'alert'});
         } catch(err) { setDialog({title:'Error',text:err.message,type:'alert'}); }
       }
     });
@@ -6777,30 +6793,27 @@ export default function App() {
 
       // ── Determinar si sumar a un FG existente o crear uno nuevo ──
       let fgId;
+      let snapshotPrevKg = null;   // para poder reversar exactamente
+      let snapshotPrevMill = null;
       if (partialTargetFgKey) {
-        // Sumar al FG seleccionado
         const targetFGs = (finishedGoodsInventory||[]).filter(fg=>{
-          const esTF=fg.tipoProducto==='TERMOENCOGIBLE';
           const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
           const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
           return `${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}` === partialTargetFgKey;
         });
-        // Actualizar el primer doc del grupo (o el más reciente)
         const targetFG = targetFGs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))[0];
         if (targetFG) {
-          const prevKg = parseNum(targetFG.kgProducidos||0);
-          const prevMill = parseNum(targetFG.millares||0);
-          const prevCost = parseNum(targetFG.costoUnitario||0);
-          const newKg = prevKg + kgEntrega;
-          const newMill = prevMill + millEntrega;
-          // Costo promedio ponderado
-          const avgCost = newKg > 0 ? ((prevKg*prevCost)+(kgEntrega*costoUnitWIP))/newKg : costoUnitWIP;
+          snapshotPrevKg   = parseNum(targetFG.kgProducidos||0);
+          snapshotPrevMill = parseNum(targetFG.millares||0);
+          const prevCost   = parseNum(targetFG.costoUnitario||0);
+          const newKg      = snapshotPrevKg + kgEntrega;
+          const newMill    = snapshotPrevMill + millEntrega;
+          const avgCost    = newKg > 0 ? ((snapshotPrevKg*prevCost)+(kgEntrega*costoUnitWIP))/newKg : costoUnitWIP;
           await updateDoc(getDocRef('finishedGoodsInventory', targetFG.id), {
-            kgProducidos: newKg, millares: newMill, costoUnitario: avgCost,
-            costoTotal: avgCost * newKg
+            kgProducidos: newKg, millares: newMill, costoUnitario: avgCost, costoTotal: avgCost*newKg
           });
           fgId = targetFG.id;
-        } else { partialTargetFgKey && console.warn('FG target not found'); }
+        }
       }
 
       if (!fgId) {
@@ -6855,7 +6868,10 @@ export default function App() {
         entregasParciales: [...prevParciales, {
           fgId, kg: kgEntrega, millares: millEntrega,
           fecha: getTodayDate(), costoUnit: costoUnitDisplay,
-          costoUnitKg: costoUnitWIP, // siempre guardamos también el costo/KG para referencia
+          costoUnitKg: costoUnitWIP,
+          // Snapshot del estado ANTERIOR del FG (para reversar exactamente sin restar)
+          fgPrevKg:   snapshotPrevKg,
+          fgPrevMill: snapshotPrevMill,
           user: appUser?.name||'Sistema'
         }]
       });
