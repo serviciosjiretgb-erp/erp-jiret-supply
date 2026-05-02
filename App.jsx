@@ -9434,7 +9434,8 @@ export default function App() {
                                   <th className="py-2 px-3 border-r border-teal-500 text-center">Fecha</th>
                                   <th className="py-2 px-3 border-r border-teal-500 text-center">KG Entregados</th>
                                   {!esTermo && <th className="py-2 px-3 border-r border-teal-500 text-center">Millares</th>}
-                                  <th className="py-2 px-3 text-center">Costo Unit.</th>
+                                  <th className="py-2 px-3 border-r border-teal-500 text-center">Costo Unit.</th>
+                                  <th className="py-2 px-3 text-center no-pdf">Acción</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-gray-100">
@@ -9444,7 +9445,13 @@ export default function App() {
                                     <td className="py-2 px-3 border-r text-center font-bold text-gray-600">{ep.fecha}</td>
                                     <td className="py-2 px-3 border-r text-center font-black text-blue-600">{formatNum(ep.kg)} KG</td>
                                     {!esTermo && <td className="py-2 px-3 border-r text-center font-black text-orange-600">{ep.millares>0?formatNum(ep.millares)+' Mill.':'—'}</td>}
-                                    <td className="py-2 px-3 text-center font-bold">{ep.costoUnit>0?'$'+formatNum(ep.costoUnit):'—'}</td>
+                                    <td className="py-2 px-3 border-r text-center font-bold">{ep.costoUnit>0?'$'+formatNum(ep.costoUnit):'—'}</td>
+                                    <td className="py-2 px-3 text-center no-pdf">
+                                      <button onClick={()=>handleReversePartialDelivery(req,ep)}
+                                        className="bg-red-100 text-red-600 hover:bg-red-500 hover:text-white px-2 py-1 rounded-lg text-[9px] font-black uppercase flex items-center gap-1 mx-auto transition-all">
+                                        <Trash2 size={10}/> Eliminar
+                                      </button>
+                                    </td>
                                   </tr>
                                 ))}
                               </tbody>
