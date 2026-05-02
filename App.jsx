@@ -183,17 +183,10 @@ export default function App() {
         try { await deleteDoc(getDocRef('finishedGoodsInventory', fg.id)); } catch(e){}
       }
 
-      // 2. Eliminar ítems Semielaborados huérfanos (su bobinaProduction fue eliminada)
-      const activeBobinaIds = new Set((bobinaProductions||[]).map(b=>b.bobInventarioId).filter(Boolean));
-      const semItems = (inventory||[]).filter(i=>i.category==='Semielaborados');
+      // 2. Eliminar ítems Semielaborados con stock <= 0 (residuos de producciones de prueba)
+      const semItems = (inventory||[]).filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)<=0.001);
       for(const si of semItems){
-        // Si no existe ninguna bobina activa que referencie este ítem Y tiene stock ≤ 0, eliminar
-        const hasActiveBobina = activeBobinaIds.has(si.id);
-        if(!hasActiveBobina && parseNum(si.stock)<=0.001){
-          try { await deleteDoc(getDocRef('inventory', si.id)); } catch(e){}
-        }
-        // Si fue de una producción de bobinas eliminada (stock > 0 pero la bobina ya no existe)
-        // el usuario puede eliminarlo manualmente desde Catálogo con el botón Eliminar (admin)
+        try { await deleteDoc(getDocRef('inventory', si.id)); } catch(e){}
       }
 
       // 3. Asegurar EMBUTIDO 1 KIRI = 21.45 Millares
@@ -252,7 +245,7 @@ export default function App() {
       sessionStorage.setItem('fg_stock_v9','done');
     };
     run();
-  }, [finishedGoodsInventory, inventory, bobinaProductions]);
+  }, [finishedGoodsInventory, inventory]);
 
   // ── One-time data correction (runs once per session via sessionStorage flag) ──
 
