@@ -172,17 +172,16 @@ export default function App() {
 
   // One-time: set correct final stocks in Firebase (guarded by sessionStorage)
   useEffect(() => {
-    if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v7') === 'done') return;
+    if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v8') === 'done') return;
     const CORRECT = [
       // Stocks correctos = INV.FINAL del Reporte 177 (entradas - salidas)
+      // v8: restaura EMBUTIDO 1 KIRI que fue eliminado por reverso incorrecto de EP
       {pat:/embutido.*1.*kiri|kiri.*embutido.*1/i, esTermo:false, finalStock:21.45, cost:86.64},
       {pat:/pa[ñn]al.*kiri/i,                       esTermo:false, finalStock:103.30, cost:78.01},
       {pat:/termo.*pinturas|pinturas.*caribe/i,      esTermo:true,  finalStock:1.40,   cost:2.71},
-      // Eliminar producto erróneo (28+5+5)X75X12MIC - stock a cero
       {pat:/\(28\+5\+5\)/i,                          esTermo:false, finalStock:0,      cost:0},
     ];
     const run = async () => {
-      // Solo actualizar stocks en Firebase — NO tocar movimientos (para evitar duplicados)
       const groups = {};
       finishedGoodsInventory.forEach(fg => {
         const key = CORRECT.findIndex(c=>c.pat.test(`${fg.producto||''} ${fg.cliente||''}`));
@@ -190,19 +189,45 @@ export default function App() {
         if(!groups[key]) groups[key]=[];
         groups[key].push(fg);
       });
+
       for(const [key, fgs] of Object.entries(groups)) {
         const ref = CORRECT[parseInt(key)];
         fgs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
         const [keeper, ...zeros] = fgs;
+
+        // Forzar el stock correcto independientemente del valor actual
         const ku = ref.esTermo
           ? {kgProducidos:ref.finalStock, costoUnitario:ref.cost}
-          : {millares:ref.finalStock, costoUnitarioMillar:ref.cost};
+          : {millares:ref.finalStock, costoUnitarioMillar:ref.cost, costoUnitario:ref.cost};
         try { await updateDoc(getDocRef('finishedGoodsInventory', keeper.id), ku); } catch(e){}
         for(const z of zeros) {
           try { await updateDoc(getDocRef('finishedGoodsInventory', z.id), ref.esTermo?{kgProducidos:0}:{millares:0}); } catch(e){}
         }
       }
-      sessionStorage.setItem('fg_stock_v7','done');
+
+      // Si no existe ningún documento para EMBUTIDO 1 KIRI, crearlo
+      const hasEmbutido = finishedGoodsInventory.some(fg =>
+        /embutido.*1.*kiri|kiri.*embutido.*1/i.test(`${fg.producto||''} ${fg.cliente||''}`)
+      );
+      if (!hasEmbutido) {
+        const newFgId = `FG-EMBUTIDO1KIRI-RESTORE`;
+        try {
+          await setDoc(getDocRef('finishedGoodsInventory', newFgId), {
+            id: newFgId, opId: 'RESTAURADO', reqId: '',
+            cliente: 'INVERSIONES AVICOLAS, C.A', tipoProducto: 'BOLSAS',
+            categoria: 'EMBUTIDO 1 - KIRI', producto: 'EMBUTIDO 1 - KIRI 28×75×0.012MIC',
+            ancho: 28, largo: 75, micras: 0.012, color: 'NATURAL', tratamiento: 'LISO',
+            kgProducidos: 241.45 * 0.021, millares: 21.45,
+            costoUnitario: 86.64, costoUnitarioMillar: 86.64,
+            fechaFinalizacion: '2026-03-01', ubicacion: 'ALMACEN GENERAL',
+            status: 'LISTO PARA ENTREGA',
+            observaciones: 'STOCK RESTAURADO — 21.45 Millares según Reporte 177',
+            timestamp: Date.now()
+          });
+        } catch(e) {}
+      }
+
+      sessionStorage.setItem('fg_stock_v8','done');
     };
     run();
   }, [finishedGoodsInventory]);
@@ -6253,26 +6278,29 @@ export default function App() {
                     <th className="p-3 border-r text-center">Fecha</th>
                     <th className="p-3 border-r text-center">KG Entregados</th>
                     <th className="p-3 border-r text-center">Millares Entregados</th>
-                    {costsMode && <th className="p-3 border-r text-right">Costo Unit.</th>}
+                    {costsMode && <th className="p-3 border-r text-right">{req?.tipoProducto==='TERMOENCOGIBLE'?'Costo/KG':'Costo/Millar'}</th>}
                     {costsMode && <th className="p-3 text-right">Costo Parcial</th>}
                   </tr></thead>
                   <tbody className="divide-y divide-gray-100">
-                    {(req.entregasParciales||[]).map((ep,i)=>(
+                    {(req.entregasParciales||[]).map((ep,i)=>{
+                      const isTermoRep = req?.tipoProducto==='TERMOENCOGIBLE';
+                      return (
                       <tr key={i} className={i%2===0?'bg-white':'bg-teal-50/30'}>
                         <td className="p-3 border-r text-center font-black text-teal-600">EP-{String(i+1).padStart(2,'0')}</td>
                         <td className="p-3 border-r text-center font-bold">{ep.fecha}</td>
                         <td className="p-3 border-r text-center font-black text-blue-600">{formatNum(ep.kg)} KG</td>
                         <td className="p-3 border-r text-center font-black text-orange-600">{ep.millares>0?formatNum(ep.millares)+' Mill.':'—'}</td>
-                        {costsMode && <td className="p-3 border-r text-right font-bold">${formatNum(ep.costoUnit||0)}</td>}
-                        {costsMode && <td className="p-3 text-right font-black">${formatNum((ep.costoUnit||0)*parseNum(ep.kg))}</td>}
+                        {costsMode && <td className="p-3 border-r text-right font-bold">${formatNum(ep.costoUnit||0)}/{isTermoRep?'KG':'Mill.'}</td>}
+                        {costsMode && <td className="p-3 text-right font-black">${formatNum((ep.costoUnitKg||ep.costoUnit||0)*parseNum(ep.kg))}</td>}
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                   <tfoot className="bg-teal-50 border-t-2 border-teal-200"><tr className="font-black text-[10px]">
                     <td colSpan={costsMode?4:3} className="p-3 text-right uppercase">Total Entregado:</td>
                     <td className="p-3 text-center font-black text-blue-600">{formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0))} KG</td>
                     <td className="p-3 text-center font-black text-orange-600">{formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares||0),0))} Mill.</td>
-                    {costsMode && <><td/><td className="p-3 text-right font-black text-teal-700">${formatNum((req.entregasParciales||[]).reduce((s,e)=>s+(parseNum(e.costoUnit||0)*parseNum(e.kg)),0))}</td></>}
+                    {costsMode && <><td/><td className="p-3 text-right font-black text-teal-700">${formatNum((req.entregasParciales||[]).reduce((s,e)=>s+(parseNum(e.costoUnitKg||e.costoUnit||0)*parseNum(e.kg)),0))}</td></>}
                   </tr></tfoot>
                 </table>
               </div>
@@ -6664,14 +6692,31 @@ export default function App() {
       onConfirm: async () => {
         try {
           const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
-          // 1. Eliminar entrada FG
-          if (ep.fgId) {
-            try { await deleteDoc(getDocRef('finishedGoodsInventory', ep.fgId)); } catch(e){}
-          }
-          // 2. Revertir stock en FG agrupado (finishedGoodsInventory tiene el stock distribuido en el doc)
-          // El stock ya está en el documento FG eliminado arriba — nada más que hacer en FG
 
-          // 3. Si se creó un ítem PT en inventory general (error previo), revertirlo
+          // Verificar si el fgId referencia un documento existente que fue ACTUALIZADO (no creado)
+          // vs uno que fue CREADO exclusivamente para este EP
+          if (ep.fgId) {
+            const fgDoc = (finishedGoodsInventory||[]).find(fg => fg.id === ep.fgId);
+            if (fgDoc) {
+              const prevKg = parseNum(fgDoc.kgProducidos||0);
+              const prevMill = parseNum(fgDoc.millares||0);
+              const newKg = Math.max(0, prevKg - parseNum(ep.kg));
+              const newMill = Math.max(0, prevMill - parseNum(ep.millares||0));
+
+              if (newKg < 0.001 && newMill < 0.001) {
+                // El documento quedó vacío: sí eliminarlo
+                await deleteDoc(getDocRef('finishedGoodsInventory', ep.fgId));
+              } else {
+                // Quedan existencias: solo restar, NO eliminar el documento
+                await updateDoc(getDocRef('finishedGoodsInventory', ep.fgId), {
+                  kgProducidos: newKg,
+                  millares: esTermo ? 0 : newMill,
+                });
+              }
+            }
+          }
+
+          // Si se creó un ítem PT en inventory general (flujo anterior), también revertirlo
           if (ep.invKey) {
             const ptItem = (inventory||[]).find(i=>i.id===ep.invKey);
             if (ptItem) {
@@ -6685,11 +6730,11 @@ export default function App() {
             }
           }
 
-          // 4. Quitar del array entregasParciales de la OP
-          const nuevasParciales = (req.entregasParciales||[]).filter(e=>e.fgId !== ep.fgId);
+          // Quitar del array entregasParciales de la OP
+          const nuevasParciales = (req.entregasParciales||[]).filter(e=>e.fgId !== ep.fgId || e.fecha !== ep.fecha || e.kg !== ep.kg);
           await updateDoc(getDocRef('requirements', req.id), { entregasParciales: nuevasParciales });
 
-          setDialog({title:'✅ Reversado',text:`Entrega del ${ep.fecha} (${formatNum(ep.kg)} KG) reversada correctamente.`,type:'alert'});
+          setDialog({title:'✅ Reversado',text:`Entrega del ${ep.fecha} (${formatNum(ep.kg)} KG) reversada. El stock fue ajustado sin eliminar el producto.`,type:'alert'});
         } catch(err) { setDialog({title:'Error',text:err.message,type:'alert'}); }
       }
     });
@@ -6783,10 +6828,19 @@ export default function App() {
 
       // Historial en la OP
       const prevParciales = req.entregasParciales || [];
+      // costoUnit: por MILLAR si es bolsa, por KG si es termo
+      const kgPorMillarOp = (() => {
+        const ancho=parseNum(req.ancho), fuelles=parseNum(req.fuelles||0), largo=parseNum(req.largo), micras=parseNum(req.micras);
+        const p=(ancho+fuelles)*largo*micras; return p>0?p:0;
+      })();
+      const costoUnitDisplay = esTermo
+        ? costoUnitWIP  // $/KG
+        : (kgPorMillarOp > 0 ? costoUnitWIP * kgPorMillarOp : costoUnitWIP * (millEntrega > 0 ? kgEntrega / millEntrega : 1)); // $/Millar
       await updateDoc(getDocRef('requirements', req.id), {
         entregasParciales: [...prevParciales, {
           fgId, kg: kgEntrega, millares: millEntrega,
-          fecha: getTodayDate(), costoUnit: costoUnitWIP,
+          fecha: getTodayDate(), costoUnit: costoUnitDisplay,
+          costoUnitKg: costoUnitWIP, // siempre guardamos también el costo/KG para referencia
           user: appUser?.name||'Sistema'
         }]
       });
@@ -9435,6 +9489,7 @@ export default function App() {
                                   <th className="py-2 px-3 border-r border-teal-500 text-center">KG Entregados</th>
                                   {!esTermo && <th className="py-2 px-3 border-r border-teal-500 text-center">Millares</th>}
                                   <th className="py-2 px-3 border-r border-teal-500 text-center">Costo Unit.</th>
+                                  <th className="py-2 px-3 border-r border-teal-500 text-center">{esTermo ? '$/KG' : '$/Millar'}</th>
                                   <th className="py-2 px-3 text-center no-pdf">Acción</th>
                                 </tr>
                               </thead>
@@ -9445,7 +9500,11 @@ export default function App() {
                                     <td className="py-2 px-3 border-r text-center font-bold text-gray-600">{ep.fecha}</td>
                                     <td className="py-2 px-3 border-r text-center font-black text-blue-600">{formatNum(ep.kg)} KG</td>
                                     {!esTermo && <td className="py-2 px-3 border-r text-center font-black text-orange-600">{ep.millares>0?formatNum(ep.millares)+' Mill.':'—'}</td>}
-                                    <td className="py-2 px-3 border-r text-center font-bold">{ep.costoUnit>0?'$'+formatNum(ep.costoUnit):'—'}</td>
+                                    <td className="py-2 px-3 border-r text-center font-bold">
+                                      {ep.costoUnit>0 ? (
+                                        <span>{`$${formatNum(ep.costoUnit)}`}<span className="text-[8px] text-gray-400 ml-0.5">/{esTermo?'KG':'Mill.'}</span></span>
+                                      ) : '—'}
+                                    </td>
                                     <td className="py-2 px-3 text-center no-pdf">
                                       <button onClick={()=>handleReversePartialDelivery(req,ep)}
                                         className="bg-red-100 text-red-600 hover:bg-red-500 hover:text-white px-2 py-1 rounded-lg text-[9px] font-black uppercase flex items-center gap-1 mx-auto transition-all">
