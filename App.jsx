@@ -172,44 +172,50 @@ export default function App() {
 
   // One-time: set correct final stocks in Firebase (guarded by sessionStorage)
   useEffect(() => {
-    if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v8') === 'done') return;
-    const CORRECT = [
-      // Stocks correctos = INV.FINAL del Reporte 177 (entradas - salidas)
-      // v8: restaura EMBUTIDO 1 KIRI que fue eliminado por reverso incorrecto de EP
-      {pat:/embutido.*1.*kiri|kiri.*embutido.*1/i, esTermo:false, finalStock:21.45, cost:86.64},
-      {pat:/pa[ñn]al.*kiri/i,                       esTermo:false, finalStock:103.30, cost:78.01},
-      {pat:/termo.*pinturas|pinturas.*caribe/i,      esTermo:true,  finalStock:1.40,   cost:2.71},
-      {pat:/\(28\+5\+5\)/i,                          esTermo:false, finalStock:0,      cost:0},
-    ];
+    if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v9') === 'done') return;
     const run = async () => {
-      const groups = {};
-      finishedGoodsInventory.forEach(fg => {
-        const key = CORRECT.findIndex(c=>c.pat.test(`${fg.producto||''} ${fg.cliente||''}`));
-        if(key < 0) return;
-        if(!groups[key]) groups[key]=[];
-        groups[key].push(fg);
-      });
-
-      for(const [key, fgs] of Object.entries(groups)) {
-        const ref = CORRECT[parseInt(key)];
-        fgs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-        const [keeper, ...zeros] = fgs;
-
-        // Forzar el stock correcto independientemente del valor actual
-        const ku = ref.esTermo
-          ? {kgProducidos:ref.finalStock, costoUnitario:ref.cost}
-          : {millares:ref.finalStock, costoUnitarioMillar:ref.cost, costoUnitario:ref.cost};
-        try { await updateDoc(getDocRef('finishedGoodsInventory', keeper.id), ku); } catch(e){}
-        for(const z of zeros) {
-          try { await updateDoc(getDocRef('finishedGoodsInventory', z.id), ref.esTermo?{kgProducidos:0}:{millares:0}); } catch(e){}
-        }
+      // 1. Eliminar TODOS los documentos FG con (28+5+5) en producto/descripción (stock 0 o positivo)
+      const phantomFGs = finishedGoodsInventory.filter(fg =>
+        /\(28\+5\+5\)/i.test(`${fg.producto||''} ${fg.cliente||''} ${fg.categoria||''}`) ||
+        parseNum(fg.millares) === 122  // era el stock erróneo original
+      );
+      for (const fg of phantomFGs) {
+        try { await deleteDoc(getDocRef('finishedGoodsInventory', fg.id)); } catch(e){}
       }
 
-      // Si no existe ningún documento para EMBUTIDO 1 KIRI, crearlo
-      const hasEmbutido = finishedGoodsInventory.some(fg =>
-        /embutido.*1.*kiri|kiri.*embutido.*1/i.test(`${fg.producto||''} ${fg.cliente||''}`)
+      // 2. Eliminar ítems Semielaborados huérfanos (su bobinaProduction fue eliminada)
+      const activeBobinaIds = new Set((bobinaProductions||[]).map(b=>b.bobInventarioId).filter(Boolean));
+      const semItems = (inventory||[]).filter(i=>i.category==='Semielaborados');
+      for(const si of semItems){
+        // Si no existe ninguna bobina activa que referencie este ítem Y tiene stock ≤ 0, eliminar
+        const hasActiveBobina = activeBobinaIds.has(si.id);
+        if(!hasActiveBobina && parseNum(si.stock)<=0.001){
+          try { await deleteDoc(getDocRef('inventory', si.id)); } catch(e){}
+        }
+        // Si fue de una producción de bobinas eliminada (stock > 0 pero la bobina ya no existe)
+        // el usuario puede eliminarlo manualmente desde Catálogo con el botón Eliminar (admin)
+      }
+
+      // 3. Asegurar EMBUTIDO 1 KIRI = 21.45 Millares
+      const embutidoDocs = finishedGoodsInventory.filter(fg =>
+        /embutido.*1.*kiri|kiri.*embutido.*1/i.test(`${fg.producto||''} ${fg.cliente||''}`) &&
+        !(/\(28\+5\+5\)/i.test(`${fg.producto||''}`))
       );
-      if (!hasEmbutido) {
+      if (embutidoDocs.length > 0) {
+        embutidoDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        const keeper = embutidoDocs[0];
+        try {
+          await updateDoc(getDocRef('finishedGoodsInventory', keeper.id), {
+            millares: 21.45, kgProducidos: 5.07,
+            costoUnitario: 86.64, costoUnitarioMillar: 86.64
+          });
+        } catch(e){}
+        // Cero los demás duplicados
+        for (const dup of embutidoDocs.slice(1)) {
+          try { await updateDoc(getDocRef('finishedGoodsInventory', dup.id), {millares:0,kgProducidos:0}); } catch(e){}
+        }
+      } else {
+        // No existe ningún doc: crear
         const newFgId = `FG-EMBUTIDO1KIRI-RESTORE`;
         try {
           await setDoc(getDocRef('finishedGoodsInventory', newFgId), {
@@ -217,20 +223,36 @@ export default function App() {
             cliente: 'INVERSIONES AVICOLAS, C.A', tipoProducto: 'BOLSAS',
             categoria: 'EMBUTIDO 1 - KIRI', producto: 'EMBUTIDO 1 - KIRI 28×75×0.012MIC',
             ancho: 28, largo: 75, micras: 0.012, color: 'NATURAL', tratamiento: 'LISO',
-            kgProducidos: 241.45 * 0.021, millares: 21.45,
+            kgProducidos: 5.07, millares: 21.45,
             costoUnitario: 86.64, costoUnitarioMillar: 86.64,
             fechaFinalizacion: '2026-03-01', ubicacion: 'ALMACEN GENERAL',
             status: 'LISTO PARA ENTREGA',
             observaciones: 'STOCK RESTAURADO — 21.45 Millares según Reporte 177',
             timestamp: Date.now()
           });
-        } catch(e) {}
+        } catch(e){}
       }
 
-      sessionStorage.setItem('fg_stock_v8','done');
+      // 4. Pañal Kiri = 103.30 Millares
+      const panalDocs = finishedGoodsInventory.filter(fg => /pa[ñn]al.*kiri/i.test(`${fg.producto||''} ${fg.cliente||''}`));
+      if (panalDocs.length > 0) {
+        panalDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        try { await updateDoc(getDocRef('finishedGoodsInventory', panalDocs[0].id), {millares:103.30,costoUnitario:78.01,costoUnitarioMillar:78.01}); } catch(e){}
+        for (const dup of panalDocs.slice(1)) { try { await updateDoc(getDocRef('finishedGoodsInventory', dup.id), {millares:0}); } catch(e){} }
+      }
+
+      // 5. Termo Pinturas Caribe = 1.40 KG
+      const termoDocs = finishedGoodsInventory.filter(fg => /termo.*pinturas|pinturas.*caribe/i.test(`${fg.producto||''} ${fg.cliente||''}`));
+      if (termoDocs.length > 0) {
+        termoDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        try { await updateDoc(getDocRef('finishedGoodsInventory', termoDocs[0].id), {kgProducidos:1.40,costoUnitario:2.71}); } catch(e){}
+        for (const dup of termoDocs.slice(1)) { try { await updateDoc(getDocRef('finishedGoodsInventory', dup.id), {kgProducidos:0}); } catch(e){} }
+      }
+
+      sessionStorage.setItem('fg_stock_v9','done');
     };
     run();
-  }, [finishedGoodsInventory]);
+  }, [finishedGoodsInventory, inventory, bobinaProductions]);
 
   // ── One-time data correction (runs once per session via sessionStorage flag) ──
 
@@ -1995,7 +2017,7 @@ export default function App() {
              </div>
 
              <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-               <table className="w-full text-left whitespace-nowrap text-xs">
+               <table className="w-full text-left text-xs">
                  <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
                    <tr className="uppercase font-black text-[10px] tracking-widest text-black">
                      <th className="py-3 px-4 border-r print:border-black">Fecha / Usuario</th>
@@ -2524,7 +2546,7 @@ export default function App() {
             </div>
 
             <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-              <table className="w-full text-left whitespace-nowrap text-xs">
+              <table className="w-full text-left text-xs">
                 <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
                   <tr className="uppercase font-black text-[10px] tracking-widest text-black">
                     <th className="py-3 px-4 border-r print:border-black">Tipo Mov.</th>
@@ -3863,8 +3885,8 @@ export default function App() {
                    ))}
                  </div>
                </div>
-               <div className="overflow-x-auto rounded-xl print:border print:border-black print:rounded-none">
-                  <table className="w-full text-left whitespace-nowrap">
+               <div className="rounded-xl print:border print:border-black print:rounded-none">
+                  <table className="w-full text-left">
                    <thead className="bg-gray-100 border-b-2 border-gray-200 print:border-black">
                      <tr className="uppercase font-black text-gray-800 text-[10px] tracking-widest print:text-black">
                        <th className="py-4 px-4">Código</th>
