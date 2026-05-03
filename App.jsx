@@ -170,6 +170,23 @@ export default function App() {
   const [wipInventory, setWipInventory] = useState([]);
   const [finishedGoodsInventory, setFinishedGoodsInventory] = useState([]);
 
+  // ── Notificaciones ────────────────────────────────────────────────────────────
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
+
+  // pushNotif: crea una notificación en Firebase (llamar después de login cargado)
+  const pushNotif = async (type, title, body, meta={}) => {
+    try {
+      const id = `NOTIF-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+      await setDoc(getDocRef('notifications', id), {
+        id, type, title, body, meta,
+        from: appUser?.name || 'Sistema',
+        timestamp: Date.now(), date: getTodayDate(),
+        read: false, readBy: []
+      });
+    } catch(e) { console.warn('pushNotif error:', e); }
+  };
+
   // ── One-time cleanup: eliminar registros huérfanos de OP-00007 ──────────────
   useEffect(() => {
     if (sessionStorage.getItem('op007_cleanup_done') === 'done') return;
@@ -295,22 +312,6 @@ export default function App() {
   const [showMovForm, setShowMovForm] = useState(false);
   const [movForm, setMovForm] = useState({itemId:'',qty:'',unitCost:'',docRef:'',type:'ENTRADA',notes:'',date:getTodayDate()});
 
-  const [notifications, setNotifications] = useState([]);
-  const [showNotifPanel, setShowNotifPanel] = useState(false);
-
-  // ── Helper: create notification ──────────────────────────────────────────────
-  const pushNotif = async (type, title, body, meta={}) => {
-    try {
-      const id = `NOTIF-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-      await setDoc(getDocRef('notifications', id), {
-        id, type, title, body, meta,
-        from: appUser?.name || 'Sistema',
-        timestamp: Date.now(),
-        date: getTodayDate(),
-        read: false, readBy: []
-      });
-    } catch(e) { console.warn('pushNotif error:', e); }
-  };
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
   const [invSearchTerm, setInvSearchTerm] = useState('');
