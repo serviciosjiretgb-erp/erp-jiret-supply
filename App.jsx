@@ -682,47 +682,109 @@ export default function App() {
   // LOGICA TOMA FÍSICA Y AJUSTE MASIVO DE INVENTARIO
   // ============================================================================
   const handleProcessTomaFisica = async () => {
+    const changes = [];
+
+    // Recopilar todos los ajustes pendientes en physicalCounts
+    for (const item of inventory) {
+      const val = physicalCounts[item.id];
+      if (val !== undefined && val !== '') {
+        const newStock = parseNum(val);
+        const diff = newStock - parseNum(item.stock || 0);
+        if (Math.abs(diff) > 0.0001) changes.push({ kind: 'inventory', item, newStock, diff });
+      }
+    }
+
+    // WIP items (id prefix "WIP-")
+    for (const [pfId, val] of Object.entries(physicalCounts)) {
+      if (!pfId.startsWith('WIP-')) continue;
+      if (val === undefined || val === '') continue;
+      // pfId = "WIP-{opId}-{matId}"
+      const parts = pfId.replace('WIP-','').split('-');
+      const matId = parts.slice(1).join('-');
+      const wipItem = (wipInventory||[]).find(w => w.opId === parts[0]) || null;
+      const invItem = (inventory||[]).find(i => i.id === matId);
+      if (!invItem) continue;
+      const newStock = parseNum(val);
+      const diff = newStock - parseNum(physicalCounts[pfId + '_sys'] || 0);
+      if (Math.abs(diff) > 0.0001) changes.push({ kind: 'wip', item: invItem, newStock, diff, wipId: pfId });
+    }
+
+    // FG Terminados (id prefix "FG-TF-" or "INV-PT-")
+    for (const [pfId, val] of Object.entries(physicalCounts)) {
+      if (val === undefined || val === '') continue;
+      if (pfId.startsWith('FG-TF-')) {
+        const grpKey = pfId.replace('FG-TF-','');
+        const fgDocs = (finishedGoodsInventory||[]).filter(fg => {
+          const key = `${fg.categoria||fg.producto||''}__${fg.cliente||''}__${fg.tipoProducto}`;
+          return key === grpKey && (parseNum(fg.kgProducidos)>0 || parseNum(fg.millares)>0);
+        });
+        if (fgDocs.length > 0) {
+          const esTermo = fgDocs[0].tipoProducto === 'TERMOENCOGIBLE';
+          const sysStock = fgDocs.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
+          const newStock = parseNum(val);
+          const diff = newStock - sysStock;
+          if (Math.abs(diff) > 0.0001) changes.push({ kind: 'fg', fgDocs, esTermo, sysStock, newStock, diff, pfId });
+        }
+      } else if (pfId.startsWith('INV-PT-')) {
+        const invId = pfId.replace('INV-PT-','');
+        const invItem = (inventory||[]).find(i=>i.id===invId);
+        if (!invItem) continue;
+        const newStock = parseNum(val);
+        const diff = newStock - parseNum(invItem.stock||0);
+        if (Math.abs(diff) > 0.0001) changes.push({ kind: 'inventory', item: invItem, newStock, diff });
+      }
+    }
+
+    if (changes.length === 0) {
+      return setDialog({title:'Aviso', text:'No se encontraron diferencias para ajustar, o los conteos están en blanco.', type:'alert'});
+    }
+
     setDialog({
       title: 'Procesar Toma Física',
-      text: '¿Desea aplicar los ajustes de inventario? Se generarán los movimientos automáticos en el Kardex de todos los ítems con diferencia.',
+      text: `Se ajustarán ${changes.length} ítem(s): Inventario General, WIP y/o Terminados. ¿Confirmar?`,
       type: 'confirm',
       onConfirm: async () => {
         try {
           const batch = writeBatch(db);
-          let adjustmentsCount = 0;
           const timestamp = Date.now();
+          let count = 0;
 
-          for (let item of inventory) {
-             const newStockStr = physicalCounts[item.id];
-             if (newStockStr !== undefined && newStockStr !== '') {
-                const newStock = parseNum(newStockStr);
-                const diff = newStock - (item.stock || 0);
+          for (const ch of changes) {
+            count++;
+            if (ch.kind === 'inventory') {
+              const type = ch.diff > 0 ? 'AJUSTE (POSITIVO)' : 'AJUSTE (NEGATIVO)';
+              const qty = Math.abs(ch.diff);
+              const movId = `TF-${timestamp}-${ch.item.id}`;
+              batch.set(getDocRef('inventoryMovements', movId), {
+                id: movId, date: getTodayDate(), itemId: ch.item.id, itemName: ch.item.desc,
+                type, qty, cost: ch.item.cost, totalValue: qty * ch.item.cost,
+                reference: 'TOMA FÍSICA', notes: 'AJUSTE MASIVO SISTEMA',
+                timestamp, user: appUser?.name || 'Sistema'
+              });
+              batch.update(getDocRef('inventory', ch.item.id), { stock: ch.newStock });
 
-                if (diff !== 0) {
-                   adjustmentsCount++;
-                   const movId = `TF-${timestamp}-${item.id}`;
-                   const type = diff > 0 ? 'AJUSTE (POSITIVO)' : 'AJUSTE (NEGATIVO)';
-                   const qty = Math.abs(diff);
-
-                   batch.set(getDocRef('inventoryMovements', movId), {
-                      id: movId, date: getTodayDate(), itemId: item.id, itemName: item.desc, 
-                      type, qty, cost: item.cost, totalValue: qty * item.cost, 
-                      reference: 'TOMA FÍSICA', notes: 'AJUSTE MASIVO SISTEMA', 
-                      timestamp, user: appUser?.name || 'Sistema'
-                   });
-                   batch.update(getDocRef('inventory', item.id), { stock: newStock });
-                }
-             }
+            } else if (ch.kind === 'fg') {
+              // Ajustar el primer doc del grupo FG (el más reciente)
+              const mainDoc = ch.fgDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))[0];
+              const updateField = ch.esTermo ? {kgProducidos: ch.newStock} : {millares: ch.newStock};
+              batch.update(getDocRef('finishedGoodsInventory', mainDoc.id), updateField);
+              const movId = `TF-FG-${timestamp}-${mainDoc.id}`;
+              batch.set(getDocRef('inventoryMovements', movId), {
+                id: movId, date: getTodayDate(), itemId: `FG::${mainDoc.id}`,
+                itemName: `${mainDoc.categoria||mainDoc.producto||'FG'} — ${mainDoc.cliente||''}`,
+                type: ch.diff > 0 ? 'AJUSTE (POSITIVO)' : 'AJUSTE (NEGATIVO)',
+                qty: Math.abs(ch.diff), cost: mainDoc.costoUnitario||0,
+                totalValue: Math.abs(ch.diff)*(mainDoc.costoUnitario||0),
+                reference: 'TOMA FÍSICA', notes: 'AJUSTE MASIVO TERMINADOS',
+                timestamp, user: appUser?.name||'Sistema', isFG: true
+              });
+            }
           }
 
-          if (adjustmentsCount > 0) {
-             await batch.commit();
-             setPhysicalCounts({});
-             setDialog({title: 'Éxito', text: `Se aplicaron ${adjustmentsCount} ajustes de inventario exitosamente.`, type: 'alert'});
-          } else {
-             setDialog({title: 'Aviso', text: 'No se encontraron diferencias para ajustar, o los conteos están en blanco.', type: 'alert'});
-          }
-        } catch (e) {
+          await batch.commit();
+          setPhysicalCounts({});
+          setDialog({title: '✅ Toma Física Procesada', text: `${count} ajuste(s) aplicados en Inventario General, WIP y Terminados.`, type: 'alert'});
+        } catch(e) {
           setDialog({title: 'Error', text: e.message, type: 'alert'});
         }
       }
@@ -1373,62 +1435,75 @@ export default function App() {
   const handleDeleteReq = (id) => {
     requireAdminPassword(async () => {
       setDialog({
-        title: 'Eliminar OP — Borrado en Cascada',
-        text: `Se eliminará la OP #${String(id).replace('OP-','').padStart(5,'0')} y TODOS sus datos relacionados: requisiciones, entradas a WIP, movimientos de inventario, FGs parciales y asientos contables. ¿Confirmar?`,
+        title: '🗑 Eliminación Total — OP #' + String(id).replace('OP-','').padStart(5,'0'),
+        text: `BORRADO EN CASCADA: Se eliminarán la OP y TODOS sus registros relacionados:\n• Requisiciones de almacén\n• WIP (materiales en proceso)\n• Productos Terminados parciales\n• Movimientos de Kardex\n• Asientos contables\n• Se revertirá el stock de materiales despachados\n\nEsta acción es IRREVERSIBLE. ¿Confirmar?`,
         type: 'confirm',
         onConfirm: async () => {
           try {
-            const batch = writeBatch(db);
+            const BATCH_LIMIT = 490; // Firestore limit 500 ops/batch
+            let ops = [];
+            const addOp = (fn) => ops.push(fn);
 
-            // 1. Eliminar la OP principal
-            batch.delete(getDocRef('requirements', id));
+            // 1. OP principal
+            addOp(b => b.delete(getDocRef('requirements', id)));
 
-            // 2. Eliminar todas las requisiciones de inventario asociadas
-            const reqsAsoc = (invRequisitions || []).filter(r => r.opId === id || r.bobinaProdId === id);
-            reqsAsoc.forEach(r => batch.delete(getDocRef('inventoryRequisitions', r.id)));
+            // 2. Requisiciones de inventario
+            const reqsAsoc = (invRequisitions||[]).filter(r => r.opId === id || r.bobinaProdId === id);
+            reqsAsoc.forEach(r => addOp(b => b.delete(getDocRef('inventoryRequisitions', r.id))));
 
-            // 3. Eliminar entradas WIP asociadas
-            const wipAsoc = (wipInventory || []).filter(w => w.opId === id);
-            wipAsoc.forEach(w => batch.delete(getDocRef('wipInventory', w.id)));
+            // 3. WIP
+            const wipAsoc = (wipInventory||[]).filter(w => w.opId === id);
+            wipAsoc.forEach(w => addOp(b => b.delete(getDocRef('wipInventory', w.id))));
 
-            // 4. Eliminar FG parciales (entregas parciales sin factura)
-            const fgsAsoc = (finishedGoodsInventory || []).filter(fg => fg.opId === id);
-            fgsAsoc.forEach(fg => batch.delete(getDocRef('finishedGoodsInventory', fg.id)));
+            // 4. FG parciales
+            const fgsAsoc = (finishedGoodsInventory||[]).filter(fg => fg.opId === id);
+            fgsAsoc.forEach(fg => addOp(b => b.delete(getDocRef('finishedGoodsInventory', fg.id))));
 
-            // 5. Eliminar movimientos de inventario asociados a esta OP
-            const movsAsoc = (invMovements || []).filter(m =>
+            // 5. Movimientos de inventario
+            const movsAsoc = (invMovements||[]).filter(m =>
               m.opAsignada === id ||
               m.docRef === id ||
-              String(m.notes || '').includes(id) ||
-              String(m.reference || '').includes(id)
+              String(m.notes||'').includes(id) ||
+              String(m.reference||'').includes(id)
             );
-            movsAsoc.forEach(m => batch.delete(getDocRef('inventoryMovements', m.id)));
+            movsAsoc.forEach(m => addOp(b => b.delete(getDocRef('inventoryMovements', m.id))));
 
-            // 6. Revertir el stock de los materiales que fueron descontados por las requisiciones aprobadas
-            for (const req of reqsAsoc.filter(r => r.status === 'APROBADO' || r.status === 'APROBADA')) {
-              for (const ing of (req.items || [])) {
-                const invItem = (inventory || []).find(i => i.id === ing.id);
+            // 6. Revertir stock de materiales descontados por requisiciones APROBADAS
+            for (const req of reqsAsoc.filter(r => r.status==='APROBADO'||r.status==='APROBADA')) {
+              for (const ing of (req.items||[])) {
+                const invItem = (inventory||[]).find(i => i.id === ing.id);
                 if (invItem && parseNum(ing.qty) > 0) {
-                  // Sumar de vuelta lo que se descontó
-                  batch.update(getDocRef('inventory', ing.id), {
-                    stock: Math.max(0, parseNum(invItem.stock || 0) + parseNum(ing.qty))
-                  });
+                  const restored = Math.max(0, parseNum(invItem.stock||0) + parseNum(ing.qty));
+                  addOp(b => b.update(getDocRef('inventory', ing.id), { stock: restored }));
                 }
               }
             }
 
-            // 7. Eliminar asientos contables relacionados
-            const asientosAsoc = (asientosContables || []).filter(a =>
-              String(a.referencia || '').includes(id) ||
-              String(a.descripcion || '').includes(id)
+            // 7. Asientos contables
+            const asientosAsoc = (asientosContables||[]).filter(a =>
+              String(a.referencia||'').includes(id) ||
+              String(a.descripcion||'').includes(id)
             );
-            asientosAsoc.forEach(a => batch.delete(getDocRef('asientosContables', a.id)));
+            asientosAsoc.forEach(a => addOp(b => b.delete(getDocRef('asientosContables', a.id))));
 
-            await batch.commit();
+            // 8. Bobinas de producción asociadas (si la OP era de bobinas)
+            const bobinasAsoc = (bobinaProductions||[]).filter(b => b.id === id || b.reqId === id);
+            bobinasAsoc.forEach(bob => addOp(b => b.delete(getDocRef('bobinaProductions', bob.id))));
 
+            // Ejecutar en batches de 490 ops
+            const chunks = [];
+            for (let i = 0; i < ops.length; i += BATCH_LIMIT) chunks.push(ops.slice(i, i + BATCH_LIMIT));
+            for (const chunk of chunks) {
+              const batch = writeBatch(db);
+              chunk.forEach(fn => fn(batch));
+              await batch.commit();
+            }
+
+            const total = ops.length;
+            setSelectedPhaseReqId(null);
             setDialog({
-              title: '✅ OP Eliminada',
-              text: `OP #${String(id).replace('OP-','').padStart(5,'0')} eliminada. ${reqsAsoc.length} requisición(es), ${wipAsoc.length} WIP, ${fgsAsoc.length} FG, ${movsAsoc.length} movimiento(s) y ${asientosAsoc.length} asiento(s) borrados. Stock revertido.`,
+              title: '✅ OP Eliminada Completamente',
+              text: `OP #${String(id).replace('OP-','').padStart(5,'0')} y ${total} registro(s) borrados en cascada.\n• ${reqsAsoc.length} requisición(es)\n• ${wipAsoc.length} WIP\n• ${fgsAsoc.length} FG\n• ${movsAsoc.length} movimiento(s)\n• ${asientosAsoc.length} asiento(s)\n• ${bobinasAsoc.length} bobina(s)\nStock de materiales revertido.`,
               type: 'alert'
             });
           } catch(err) {
@@ -1436,7 +1511,7 @@ export default function App() {
           }
         }
       });
-    }, 'Eliminar OP Completa (Cascada)');
+    }, 'Eliminar OP — Borrado en Cascada');
   };
 
   // ============================================================================
@@ -3665,20 +3740,27 @@ export default function App() {
               Ingresa el conteo físico real. El sistema calculará la diferencia y generará ajustes automáticos en el Kardex al procesar.
             </div>
 
-            {/* 1. Inventario General (MP, Consumibles, etc.) */}
-            {renderTFSection('📦 Inventario General (Materia Prima / Consumibles)', 'bg-gray-700', inventory.filter(i=>i.category!=='Productos Terminados'&&i.category!=='Semielaborados'), false, false)}
+            {/* 1. Inventario General — siempre visible */}
+            {renderTFSection('📦 Inventario General (Materia Prima / Consumibles)', 'bg-gray-700',
+              inventory.filter(i=>i.category!=='Productos Terminados'&&i.category!=='Semielaborados'), false, false)}
 
-            {/* 1b. Semielaborados / Bobinas — solo si hay stock > 0 */}
-            {inventory.some(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0) && renderTFSection('🔄 Semielaborados / Bobinas (en proceso)', 'bg-indigo-600', inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0), false, false)}
+            {/* 1b. Semielaborados — solo si hay stock > 0 */}
+            {inventory.some(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0) &&
+              renderTFSection('🔄 Semielaborados / Bobinas (en proceso)', 'bg-indigo-600',
+                inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0), false, false)}
 
-            {/* 2. Productos en Proceso (WIP) */}
-            {renderTFSection('⚙ En Proceso (WIP) — Remanente de MP', 'bg-blue-600', wipItems, false, false)}
+            {/* 2. WIP — solo si hay remanentes */}
+            {wipItems.length > 0 &&
+              renderTFSection('⚙ En Proceso (WIP) — Remanente de MP', 'bg-blue-600', wipItems, false, false)}
 
-            {/* 3. Productos Terminados (FG de producción + inventory PT) */}
-            {renderTFSection('✅ Productos Terminados', 'bg-green-700', [
-              ...tfFGList.map(g=>({...g, id:`FG-TF-${g.key}`, unit:g.esTermo?'KG':'Millares'})),
-              ...inventory.filter(i=>i.category==='Productos Terminados').map(i=>({...i, id:`INV-PT-${i.id}`, unit:i.unit||'KG', totalStock:i.stock, _isInvItem:true}))
-            ], false, true)}
+            {/* 3. Productos Terminados — solo si hay FGs o PT en inventory */}
+            {(() => {
+              const termList = [
+                ...tfFGList.map(g=>({...g, id:`FG-TF-${g.key}`, unit:g.esTermo?'KG':'Millares'})),
+                ...inventory.filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0).map(i=>({...i, id:`INV-PT-${i.id}`, unit:i.unit||'KG', totalStock:i.stock, _isInvItem:true}))
+              ];
+              return termList.length > 0 ? renderTFSection('✅ Productos Terminados', 'bg-green-700', termList, false, true) : null;
+            })()}
           </div>
         </div>
       );
