@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, Factory, TrendingUp, TrendingDown, AlertTriangle, 
   ClipboardList, PlayCircle, History, FileText, Settings2, Trash2, 
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
-  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing, MessageSquare, Send
+  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail
 } from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
@@ -170,186 +170,7 @@ export default function App() {
   const [wipInventory, setWipInventory] = useState([]);
   const [finishedGoodsInventory, setFinishedGoodsInventory] = useState([]);
 
-  // ── Notificaciones ────────────────────────────────────────────────────────────
-  const [notifications, setNotifications] = useState([]);
-  const [showNotifPanel, setShowNotifPanel] = useState(false);
-
-  // pushNotif: crea una notificación en Firebase (llamar después de login cargado)
-  const pushNotif = async (type, title, body, meta={}) => {
-    try {
-      const id = `NOTIF-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-      await setDoc(getDocRef('notifications', id), {
-        id, type, title, body, meta,
-        from: appUser?.name || 'Sistema',
-        timestamp: Date.now(), date: getTodayDate(),
-        read: false, readBy: []
-      });
-    } catch(e) { console.warn('pushNotif error:', e); }
-  };
-
   // ── One-time cleanup: eliminar registros huérfanos de OP-00007 ──────────────
-
-  // ── One-time data correction (runs once per session via sessionStorage flag) ──
-
-  // FG corrections are applied via the Edit button in Terminados view
-  const [showMovForm, setShowMovForm] = useState(false);
-  const [movForm, setMovForm] = useState({itemId:'',qty:'',unitCost:'',docRef:'',type:'ENTRADA',notes:'',date:getTodayDate()});
-
-  const [clientSearchTerm, setClientSearchTerm] = useState(''); 
-  const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
-  const [invSearchTerm, setInvSearchTerm] = useState('');
-  const [kardexProductId, setKardexProductId] = useState(''); // for kardex product filter
-  const [reqToApprove, setReqToApprove] = useState(null);
-
-  // Estados para Modal de Clave Admin
-  const [showAdminModal, setShowAdminModal] = useState(false);
-  const [adminPassword, setAdminPassword] = useState('');
-  const [adminAction, setAdminAction] = useState(null);
-  const [adminActionName, setAdminActionName] = useState('');
-
-  const [showNewReqPanel, setShowNewReqPanel] = useState(false);
-  const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
-  const [showGeneralInvoicesReport, setShowGeneralInvoicesReport] = useState(false);
-  const [showClientReport, setShowClientReport] = useState(false);
-  const [showReqReport, setShowReqReport] = useState(false);
-  const [showSingleReqReport, setShowSingleReqReport] = useState(null);
-  const [showSingleInvoice, setShowSingleInvoice] = useState(null);
-  const [showMovementReceipt, setShowMovementReceipt] = useState(null);
-  const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
-
-  // Estados para Toma Física
-  const [physicalCounts, setPhysicalCounts] = useState({});
-
-  const [planDeCuentas, setPlanDeCuentas] = useState([]);
-  const [asientosContables, setAsientosContables] = useState([]);
-  const [ldSearch, setLdSearch] = useState('');
-  const [ldFiltro, setLdFiltro] = useState('TODOS');
-  const [showInvImport, setShowInvImport] = useState(false);
-  const [invImportPreview, setInvImportPreview] = useState([]);
-  const [invImportLoading, setInvImportLoading] = useState(false);
-  const [erView, setErView] = useState('estado');
-  const [erMes, setErMes] = useState(new Date().getMonth() + 1);
-  const [erModoAnual, setErModoAnual] = useState(false); // true = todo el año
-  const [erMesesExtra, setErMesesExtra] = useState([]); // additional months selected
-  const [erAno, setErAno] = useState(new Date().getFullYear());
-  const [erTasa, setErTasa] = useState('');
-  const [erExpanded, setErExpanded] = useState({ ingresos: false, costo_ventas: false, costos_op: false });
-  const [varMesA, setVarMesA] = useState(new Date().toISOString().substring(0,7));
-  const [varMesB, setVarMesB] = useState(prevMonth());
-
-  // Estados Plan de Cuentas
-  const [showPDCImport, setShowPDCImport] = useState(false);
-  const [pdcSearchTerm, setPdcSearchTerm] = useState('');
-  // Cuenta contable para ingresos (configurable)
-  const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
-  const [newUserForm, setNewUserForm] = useState(initialUserForm);
-  const [editingUserId, setEditingUserId] = useState(null);
-
-  // Formularios de Ventas
-  const [newClientForm, setNewClientForm] = useState(initialClientForm);
-  const [showAddClientForm, setShowAddClientForm] = useState(false);
-  const [editingClientId, setEditingClientId] = useState(null);
-  const [newReqForm, setNewReqForm] = useState(initialReqForm);
-  const [editingReqId, setEditingReqId] = useState(null);
-  const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
-
-  // Formularios Producción
-  const [showWorkOrder, setShowWorkOrder] = useState(null);
-  const [showPhaseReport, setShowPhaseReport] = useState(null);
-  const [showFiniquito, setShowFiniquito] = useState(null);
-  const [selectedPhaseReqId, setSelectedPhaseReqId] = useState(null);
-  const [activePhaseTab, setActivePhaseTab] = useState('extrusion');
-  const [phaseForm, setPhaseForm] = useState(initialPhaseForm);
-  // Segmentación de lotes de producción por OP
-  const [activeLoteIndex, setActiveLoteIndex] = useState(0); // índice del lote activo dentro de la OP
-  const [showLotePanel, setShowLotePanel] = useState(false);
-  const [phaseIngId, setPhaseIngId] = useState('');
-  const [phaseIngQty, setPhaseIngQty] = useState('');
-
-  // Simulador Inverso
-  const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
-
-  // Formularios Inventario
-  const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
-  const [editingInvId, setEditingInvId] = useState(null);
-  const [showInvItemForm, setShowInvItemForm] = useState(false); // collapsible form
-  const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
-  const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
-  const [reportYear, setReportYear] = useState(new Date().getFullYear());
-
-  // Formularios Costos Operativos
-  const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
-  const [opCosts, setOpCosts] = useState([]);
-  const [costFilterCategory, setCostFilterCategory] = useState('TODAS');
-  const [costFilterMonth, setCostFilterMonth] = useState('TODOS');
-
-  // Estados para Dashboard de Reportes
-  const [reportPeriod, setReportPeriod] = useState('mensual');
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
-  const [showReportType, setShowReportType] = useState(null); 
-
-  // Estados para Categorías Dinámicas de Costos
-  const [costCategories, setCostCategories] = useState(COSTO_CATEGORIES);
-  const [showNewCategoryModal, setShowNewCategoryModal] = useState(false);
-  const [newCategoryName, setNewCategoryName] = useState('');
-
-  // Estados para Órdenes de Compra
-  const [purchaseOrders, setPurchaseOrders] = useState([]);
-  const [showPOModal, setShowPOModal] = useState(false);
-  // Estados Fórmulas / Recetas
-  const [formulas, setFormulas] = useState([]);
-  const [formulaFilter, setFormulaFilter] = useState('TODOS');
-  const [formulaSearch, setFormulaSearch] = useState('');
-  const [showFormulaPanel, setShowFormulaPanel] = useState(false);
-  const [editingFormulaId, setEditingFormulaId] = useState(null);
-  const [formulaForm, setFormulaForm] = useState({ categoria: '', tipoProducto: 'BOLSAS', fases: { extrusion: true, impresion: false, sellado: false }, ancho: '', fuelles: '', largo: '', micras: '', ingredientes: [] });
-  const [formulaIngId, setFormulaIngId] = useState('');
-  const [formulaIngPct, setFormulaIngPct] = useState('');
-  const [selectedPOItems, setSelectedPOItems] = useState([]);
-  const [poProvider, setPoProvider] = useState('');
-  const [poNotes, setPoNotes] = useState('');
-  const [viewingPO, setViewingPO] = useState(null);
-  const [showFiniquitoOP, setShowFiniquitoOP] = useState(null);
-  const [finiquitoMode, setFiniquitoMode] = useState('full'); // 'full' | 'resumen'
-  const [expandedOPs, setExpandedOPs] = useState({}); // {opId: true/false}
-  const [showOrdenTrabajo, setShowOrdenTrabajo] = useState(null);
-  const [prodSubMode, setProdSubMode] = useState('fase');
-  // Estado para agregar items a PO manualmente
-  const [poAddId, setPoAddId] = useState('');
-  const [poAddQty, setPoAddQty] = useState('');
-  const [poAddCost, setPoAddCost] = useState('');
-
-  // ── Producción de Bobinas ──
-  const [bobinaProductions, setBobinaProductions] = useState([]);
-  const [bobinaForm, setBobinaForm] = useState({ categoria:'', ancho:'', fuelles:'', largo:'', micras:'', kgProcesar:'', mermaPorc:'5', insumos:[], fecha:getTodayDate(), observaciones:'' });
-  const [showBobinaPanel, setShowBobinaPanel] = useState(false);
-  const [bobinaIngId, setBobinaIngId] = useState('');
-  const [bobinaIngQty, setBobinaIngQty] = useState('');
-  const [activeBobinaId, setActiveBobinaId] = useState(null);
-  const [showBobinaReporte, setShowBobinaReporte] = useState(null); // bobina object
-  const [bobinaPhaseForm, setBobinaPhaseForm] = useState({ date:getTodayDate(), insumos:[], producedKg:'', mermaKg:'', mermaTroquelTransp:'', mermaTroquelPigm:'', mermaTorta:'', observaciones:'', operadorExt:'', zona1:'', zona2:'', zona3:'', zona4:'', zona5:'', zona6:'', cabezalA:'', cabezalB:'', motorExt:'', ventilador:'', jalador:'', tratado:'' });
-  // ── Stock mínimo (edición admin en Proyección MP) ──
-  const [editingMinStock, setEditingMinStock] = useState(null); // {id, value}
-
-  // ── AUTO RESPALDO PROGRAMADO ────────────────────────────────────────────────
-  // Estados de respaldo declarados aquí para que el useEffect los pueda usar sin TDZ
-  const [backupFreq, setBackupFreq] = useState(() => localStorage.getItem('backupFreq') || 'manual');
-  const [backupLastRun, setBackupLastRun] = useState(() => localStorage.getItem('backupLastRun') || '');
-  const [backupTime, setBackupTime] = useState(() => localStorage.getItem('backupTime') || '08:00');
-  
-  const [editingInvoiceId, setEditingInvoiceId] = useState(null);
-
-  // ── CIERRE TOTAL DE OP → mueve a Terminados ──────────────────────────────
-  // ── ENTREGA PARCIAL: mover KG a Terminados sin cerrar la OP ─────────
-  const [showPartialModal, setShowPartialModal] = useState(null); // req
-  const [partialKg, setPartialKg] = useState('');
-  const [partialMillares, setPartialMillares] = useState('');
-  const [partialTargetFgKey, setPartialTargetFgKey] = useState(''); // group key of existing FG product
-  const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
-  const [enProcesoOpFilter, setEnProcesoOpFilter] = useState('TODAS');
-  const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
-
   useEffect(() => {
     if (sessionStorage.getItem('op007_cleanup_done') === 'done') return;
     if (!invMovements.length && !wipInventory.length) return; // esperar datos
@@ -468,7 +289,61 @@ export default function App() {
     run();
   }, [finishedGoodsInventory, inventory]);
 
+  // ── One-time data correction (runs once per session via sessionStorage flag) ──
+
+  // FG corrections are applied via the Edit button in Terminados view
+  const [showMovForm, setShowMovForm] = useState(false);
+  const [movForm, setMovForm] = useState({itemId:'',qty:'',unitCost:'',docRef:'',type:'ENTRADA',notes:'',date:getTodayDate()});
+
+  const [dialog, setDialog] = useState(null);
+  const [clientSearchTerm, setClientSearchTerm] = useState(''); 
+  const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
+  const [invSearchTerm, setInvSearchTerm] = useState('');
+  const [kardexProductId, setKardexProductId] = useState(''); // for kardex product filter
+  const [reqToApprove, setReqToApprove] = useState(null);
+
+  // Estados para Modal de Clave Admin
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminAction, setAdminAction] = useState(null);
+  const [adminActionName, setAdminActionName] = useState('');
+
+  const [showNewReqPanel, setShowNewReqPanel] = useState(false);
+  const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
+  const [showGeneralInvoicesReport, setShowGeneralInvoicesReport] = useState(false);
+  const [showClientReport, setShowClientReport] = useState(false);
+  const [showReqReport, setShowReqReport] = useState(false);
+  const [showSingleReqReport, setShowSingleReqReport] = useState(null);
+  const [showSingleInvoice, setShowSingleInvoice] = useState(null);
+  const [showMovementReceipt, setShowMovementReceipt] = useState(null);
+  const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
+
+  // Estados para Toma Física
+  const [physicalCounts, setPhysicalCounts] = useState({});
+
+  const [planDeCuentas, setPlanDeCuentas] = useState([]);
+  const [asientosContables, setAsientosContables] = useState([]);
+  const [ldSearch, setLdSearch] = useState('');
+  const [ldFiltro, setLdFiltro] = useState('TODOS');
+  const [showInvImport, setShowInvImport] = useState(false);
+  const [invImportPreview, setInvImportPreview] = useState([]);
+  const [invImportLoading, setInvImportLoading] = useState(false);
+  const [erView, setErView] = useState('estado');
+  const [erMes, setErMes] = useState(new Date().getMonth() + 1);
+  const [erModoAnual, setErModoAnual] = useState(false); // true = todo el año
+  const [erMesesExtra, setErMesesExtra] = useState([]); // additional months selected
+  const [erAno, setErAno] = useState(new Date().getFullYear());
+  const [erTasa, setErTasa] = useState('');
+  const [erExpanded, setErExpanded] = useState({ ingresos: false, costo_ventas: false, costos_op: false });
   const prevMonth = () => { const d = new Date(); d.setMonth(d.getMonth()-1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
+  const [varMesA, setVarMesA] = useState(new Date().toISOString().substring(0,7));
+  const [varMesB, setVarMesB] = useState(prevMonth());
+
+  // Estados Plan de Cuentas
+  const [showPDCImport, setShowPDCImport] = useState(false);
+  const [pdcSearchTerm, setPdcSearchTerm] = useState('');
+  // Cuenta contable para ingresos (configurable)
+  const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
 
   // Formularios de Configuración
   const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: {
@@ -480,14 +355,103 @@ export default function App() {
     costos: false,       costos_operativos: false, costos_reportes: false,
     configuracion: false
   } };
+  const [newUserForm, setNewUserForm] = useState(initialUserForm);
+  const [editingUserId, setEditingUserId] = useState(null);
+
+  // Formularios de Ventas
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
+  const [newClientForm, setNewClientForm] = useState(initialClientForm);
+  const [showAddClientForm, setShowAddClientForm] = useState(false);
+  const [editingClientId, setEditingClientId] = useState(null);
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
+  const [newReqForm, setNewReqForm] = useState(initialReqForm);
+  const [editingReqId, setEditingReqId] = useState(null);
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '' };
+  const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
+
+  // Formularios Producción
   const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '', mermaTroquelTransp: '', mermaTroquelPigm: '', mermaTorta: '', observaciones: '', pesoMillarReal: '', operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '', zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '', operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '', operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: '' };
+  const [showWorkOrder, setShowWorkOrder] = useState(null);
+  const [showPhaseReport, setShowPhaseReport] = useState(null);
+  const [showFiniquito, setShowFiniquito] = useState(null);
+  const [selectedPhaseReqId, setSelectedPhaseReqId] = useState(null);
+  const [activePhaseTab, setActivePhaseTab] = useState('extrusion');
+  const [phaseForm, setPhaseForm] = useState(initialPhaseForm);
+  // Segmentación de lotes de producción por OP
+  const [activeLoteIndex, setActiveLoteIndex] = useState(0); // índice del lote activo dentro de la OP
+  const [showLotePanel, setShowLotePanel] = useState(false);
+  const [phaseIngId, setPhaseIngId] = useState('');
+  const [phaseIngQty, setPhaseIngQty] = useState('');
+
+  // Simulador Inverso
   const initialCalcInputs = { ingredientes: [{ id: Date.now() + 1, nombre: 'MP-0240', pct: 80, costo: 0.96 }, { id: Date.now() + 2, nombre: 'MP-RECICLADO', pct: 20, costo: 1.00 }], cantidadSolicitada: '', mermaGlobalPorc: 5, tipoProducto: 'BOLSAS', ancho: '', fuelles: '', largo: '', micras: '' };
+  const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
+
+  // Formularios Inventario
   const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '' };
+  const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
+  const [editingInvId, setEditingInvId] = useState(null);
+  const [showInvItemForm, setShowInvItemForm] = useState(false); // collapsible form
   const initialMovementForm = { date: getTodayDate(), itemId: '', type: 'ENTRADA', qty: '', cost: '', reference: '', notes: '', opAsignada: '' };
+  const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
+  const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
+  const [reportYear, setReportYear] = useState(new Date().getFullYear());
+
+  // Formularios Costos Operativos
   const initialOpCostForm = { date: getTodayDate(), category: 'Electricidad', description: '', amount: '', cuentaContable: '' };
+  const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
+  const [opCosts, setOpCosts] = useState([]);
+  const [costFilterCategory, setCostFilterCategory] = useState('TODAS');
+  const [costFilterMonth, setCostFilterMonth] = useState('TODOS');
+
+  // Estados para Dashboard de Reportes
+  const [reportPeriod, setReportPeriod] = useState('mensual');
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
+  const [showReportType, setShowReportType] = useState(null); 
+
+  // Estados para Categorías Dinámicas de Costos
+  const [costCategories, setCostCategories] = useState(COSTO_CATEGORIES);
+  const [showNewCategoryModal, setShowNewCategoryModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+
+  // Estados para Órdenes de Compra
+  const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [showPOModal, setShowPOModal] = useState(false);
+  // Estados Fórmulas / Recetas
+  const [formulas, setFormulas] = useState([]);
+  const [formulaFilter, setFormulaFilter] = useState('TODOS');
+  const [formulaSearch, setFormulaSearch] = useState('');
+  const [showFormulaPanel, setShowFormulaPanel] = useState(false);
+  const [editingFormulaId, setEditingFormulaId] = useState(null);
+  const [formulaForm, setFormulaForm] = useState({ categoria: '', tipoProducto: 'BOLSAS', fases: { extrusion: true, impresion: false, sellado: false }, ancho: '', fuelles: '', largo: '', micras: '', ingredientes: [] });
+  const [formulaIngId, setFormulaIngId] = useState('');
+  const [formulaIngPct, setFormulaIngPct] = useState('');
+  const [selectedPOItems, setSelectedPOItems] = useState([]);
+  const [poProvider, setPoProvider] = useState('');
+  const [poNotes, setPoNotes] = useState('');
+  const [viewingPO, setViewingPO] = useState(null);
+  const [showFiniquitoOP, setShowFiniquitoOP] = useState(null);
+  const [finiquitoMode, setFiniquitoMode] = useState('full'); // 'full' | 'resumen'
+  const [expandedOPs, setExpandedOPs] = useState({}); // {opId: true/false}
+  const [showOrdenTrabajo, setShowOrdenTrabajo] = useState(null);
+  const [prodSubMode, setProdSubMode] = useState('fase');
+  // Estado para agregar items a PO manualmente
+  const [poAddId, setPoAddId] = useState('');
+  const [poAddQty, setPoAddQty] = useState('');
+  const [poAddCost, setPoAddCost] = useState('');
+
+  // ── Producción de Bobinas ──
+  const [bobinaProductions, setBobinaProductions] = useState([]);
+  const [bobinaForm, setBobinaForm] = useState({ categoria:'', ancho:'', fuelles:'', largo:'', micras:'', kgProcesar:'', mermaPorc:'5', insumos:[], fecha:getTodayDate(), observaciones:'' });
+  const [showBobinaPanel, setShowBobinaPanel] = useState(false);
+  const [bobinaIngId, setBobinaIngId] = useState('');
+  const [bobinaIngQty, setBobinaIngQty] = useState('');
+  const [activeBobinaId, setActiveBobinaId] = useState(null);
+  const [showBobinaReporte, setShowBobinaReporte] = useState(null); // bobina object
+  const [bobinaPhaseForm, setBobinaPhaseForm] = useState({ date:getTodayDate(), insumos:[], producedKg:'', mermaKg:'', mermaTroquelTransp:'', mermaTroquelPigm:'', mermaTorta:'', observaciones:'', operadorExt:'', zona1:'', zona2:'', zona3:'', zona4:'', zona5:'', zona6:'', cabezalA:'', cabezalB:'', motorExt:'', ventilador:'', jalador:'', tratado:'' });
+  // ── Stock mínimo (edición admin en Proyección MP) ──
+  const [editingMinStock, setEditingMinStock] = useState(null); // {id, value}
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     window.print();
@@ -734,10 +698,6 @@ export default function App() {
     const unsubWIP = onSnapshot(getColRef('wipInventory'), (s) => setWipInventory(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubFinished = onSnapshot(getColRef('finishedGoodsInventory'), (s) => setFinishedGoodsInventory(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubBobinas = onSnapshot(getColRef('bobinaProductions'), (s) => setBobinaProductions(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
-    const unsubNotifs = onSnapshot(getColRef('notifications'), (s) => {
-      const all = s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-      setNotifications(all.slice(0, 100)); // last 100
-    });
     const unsubFormulas = onSnapshot(getColRef('formulas'), (s) => setFormulas(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(a.categoria||'').localeCompare(b.categoria||''))));
     
     const unsubPDC = onSnapshot(getColRef('planDeCuentas'), (s) => setPlanDeCuentas(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
@@ -745,9 +705,15 @@ export default function App() {
     
     return () => { 
       unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
-      unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST(); unsubNotifs();
+      unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST();
     };
   }, [fbUser]);
+
+  // ── AUTO RESPALDO PROGRAMADO ────────────────────────────────────────────────
+  // Estados de respaldo declarados aquí para que el useEffect los pueda usar sin TDZ
+  const [backupFreq, setBackupFreq] = useState(() => localStorage.getItem('backupFreq') || 'manual');
+  const [backupLastRun, setBackupLastRun] = useState(() => localStorage.getItem('backupLastRun') || '');
+  const [backupTime, setBackupTime] = useState(() => localStorage.getItem('backupTime') || '08:00');
 
   useEffect(() => {
     if (backupFreq === 'manual') return;
@@ -1326,6 +1292,8 @@ export default function App() {
     }
     setNewInvoiceForm(f);
   };
+  
+  const [editingInvoiceId, setEditingInvoiceId] = useState(null);
 
   const handleCreateInvoice = async (e) => {
     e.preventDefault(); 
@@ -1579,9 +1547,7 @@ export default function App() {
 
   const handleCreateRequirement = async (e) => {
     e.preventDefault(); const opId = editingReqId ? editingReqId : generateReqId();
-    try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', viewedByPlanta: false }, { merge: true });
-      if (!editingReqId) { await pushNotif('OP_NUEVA', '📋 Nueva OP para Planta', `OP #${opId.replace('OP-','').padStart(5,'0')} — ${newReqForm.client||'N/A'} | ${newReqForm.desc||''}`, { opId, destino:'planta' }); }
-      setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
+    try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', viewedByPlanta: false }, { merge: true }); setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
   const startEditReq = (r) => { setEditingReqId(r.id); setNewReqForm({ fecha: r.fecha||getTodayDate(), client: r.client||'', tipoProducto: r.tipoProducto||'BOLSAS', desc: r.desc||'', ancho: r.ancho||'', fuelles: r.fuelles||'', largo: r.largo||'', micras: r.micras||'', pesoMillar: r.tipoProducto==='TERMOENCOGIBLE'?'N/A':(r.pesoMillar||''), presentacion: r.presentacion||'MILLAR', cantidad: r.cantidad||'', requestedKg: r.requestedKg||'', color: r.color||'NATURAL', tratamiento: r.tratamiento||'LISO', vendedor: r.vendedor||'' }); setShowNewReqPanel(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteReq = (id) => {
@@ -1674,7 +1640,6 @@ export default function App() {
     const newReq = { opId: selectedPhaseReqId, phase: activePhaseTab, items: phaseForm.insumos, status: 'PENDIENTE', timestamp: Date.now(), date: getTodayDate(), user: appUser?.name || 'Operador de Planta' };
     try {
       await addDoc(getColRef('inventoryRequisitions'), newReq);
-      await pushNotif('REQ_ALMACEN', '📦 Solicitud de Materiales — Almacén', `Planta solicita materiales para OP #${String(selectedPhaseReqId||'').replace('OP-','').padStart(5,'0')} — Fase: ${activePhaseTab?.toUpperCase()}. ${phaseForm.insumos?.length||0} ítem(s).`, { opId: selectedPhaseReqId, fase: activePhaseTab, destino:'almacen' });
       setPhaseForm({...phaseForm, insumos: []});
       // ── Auto-notificación por correo ──
       const emailTo = settings.emailProcura || '';
@@ -1815,9 +1780,7 @@ export default function App() {
           });
         }
 
-        setReqToApprove(null);
-        await pushNotif('REQ_APROBADA', '✅ Almacén Aprobó tu Solicitud', `Requisición aprobada para OP #${String(req.opId||'').replace('OP-','').padStart(5,'0')} — Fase: ${req.phase?.toUpperCase()||''}. Materiales despachados y asignados a WIP.`, { opId: req.opId, fase: req.phase, destino:'planta' });
-        setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada, stock descontado y materiales asignados a WIP.', type:'alert'});
+        setReqToApprove(null); setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada, stock descontado y materiales asignados a WIP.', type:'alert'});
     } catch(err) { setDialog({title:'Error', text:err.message, type:'alert'}); }
   };
 
@@ -7028,6 +6991,13 @@ export default function App() {
     );
   };
 
+  // ── CIERRE TOTAL DE OP → mueve a Terminados ──────────────────────────────
+  // ── ENTREGA PARCIAL: mover KG a Terminados sin cerrar la OP ─────────
+  const [showPartialModal, setShowPartialModal] = useState(null); // req
+  const [partialKg, setPartialKg] = useState('');
+  const [partialMillares, setPartialMillares] = useState('');
+  const [partialTargetFgKey, setPartialTargetFgKey] = useState(''); // group key of existing FG product
+
   // ── Reversar entrega parcial ──────────────────────────────────────────
   const handleReversePartialDelivery = async (req, ep) => {
     setDialog({
@@ -7100,6 +7070,9 @@ export default function App() {
       }
     });
   };
+  const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
+  const [enProcesoOpFilter, setEnProcesoOpFilter] = useState('TODAS');
+  const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
 
   const handlePartialDelivery = async () => {
     if (!showPartialModal) return;
@@ -7204,7 +7177,6 @@ export default function App() {
       });
 
       setShowPartialModal(null); setPartialKg(''); setPartialMillares(''); setPartialTargetFgKey('');
-      await pushNotif('ENTREGA_PARCIAL', '📤 Entrega Parcial Registrada', `OP #${String(req.id||'').replace('OP-','').padStart(5,'0')} — ${req.client||''}: ${esTermo?formatNum(kgEntrega)+' KG':formatNum(millEntrega)+' Mill.'} enviados a Terminados.`, { opId: req.id, destino:'ventas' });
       setDialog({ title: '✅ Entrega Parcial Registrada',
         text: `${esTermo?formatNum(kgEntrega)+' KG':formatNum(millEntrega)+' Mill.'} sumados al Inventario de Productos Terminados. La OP sigue abierta.`,
         type: 'alert' });
@@ -7295,7 +7267,6 @@ export default function App() {
           }
 
           setSelectedPhaseReqId(null);
-          await pushNotif('OP_CERRADA', '🏁 Producción Completada', `OP #${String(req.id||'').replace('OP-','').padStart(5,'0')} — ${req.client||''} cerrada. ${yaEntregadoKg > 0 ? `Ya entregado: ${formatNum(yaEntregadoKg)} KG. Pendiente final: ${formatNum(pendienteKg)} KG.` : `${formatNum(totalKgProd)} KG listos.`}`, { opId: req.id, destino:'ventas' });
           setDialog({
             title: 'OP Cerrada ✅',
             text: yaEntregadoKg > 0
@@ -12814,74 +12785,6 @@ export default function App() {
                  </div>
                  <div className="h-8 w-px bg-gray-800 mx-2 hidden sm:block"></div>
                  {hasPerm('configuracion') && <button onClick={() => {clearAllReports(); setActiveTab('configuracion');}} className="p-2.5 bg-gray-900 text-gray-400 rounded-xl hover:text-white hover:bg-gray-800 transition-all border border-gray-800"><Settings2 size={18}/></button>}
-                 {/* ── NOTIFICACIONES ── */}
-                 <div className="relative">
-                   <button onClick={()=>setShowNotifPanel(v=>!v)}
-                     className={`relative p-2.5 rounded-xl transition-all border ${showNotifPanel?'bg-orange-100 text-orange-600 border-orange-200':'text-gray-500 hover:bg-gray-100 border-transparent hover:text-gray-700'}`}
-                     title="Notificaciones">
-                     {notifications.filter(n=>!n.readBy?.includes(appUser?.username)).length > 0
-                       ? <BellRing size={18} className="text-orange-500"/>
-                       : <Bell size={18}/>}
-                     {notifications.filter(n=>!n.readBy?.includes(appUser?.username)).length > 0 && (
-                       <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center">
-                         {Math.min(99, notifications.filter(n=>!n.readBy?.includes(appUser?.username)).length)}
-                       </span>
-                     )}
-                   </button>
-                   {showNotifPanel && (
-                     <div className="absolute right-0 top-12 w-96 bg-white border border-gray-200 rounded-2xl shadow-2xl z-[99999] overflow-hidden">
-                       <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                         <h3 className="font-black text-xs uppercase text-gray-700 flex items-center gap-2"><Bell size={13}/> Notificaciones</h3>
-                         <div className="flex gap-3 items-center">
-                           {notifications.some(n=>!n.readBy?.includes(appUser?.username)) && (
-                             <button onClick={async()=>{ for(const n of notifications.filter(x=>!(x.readBy||[]).includes(appUser?.username))){ try{await updateDoc(getDocRef('notifications',n.id),{readBy:[...(n.readBy||[]),appUser?.username]});}catch(e){} } }}
-                               className="text-[9px] font-black text-blue-500 hover:text-blue-700 uppercase">Todo leído</button>
-                           )}
-                           <button onClick={()=>setShowNotifPanel(false)} className="text-gray-400 hover:text-red-500"><X size={13}/></button>
-                         </div>
-                       </div>
-                       <div className="max-h-[500px] overflow-y-auto divide-y divide-gray-50">
-                         {notifications.length === 0
-                           ? <div className="py-12 text-center text-gray-400 text-xs font-bold uppercase flex flex-col items-center gap-2"><Bell size={28} className="opacity-20"/><span>Sin notificaciones</span></div>
-                           : notifications.map(n => {
-                             const isUnread = !(n.readBy||[]).includes(appUser?.username);
-                             const typeStyle = {
-                               OP_NUEVA:'border-l-blue-500',REQ_ALMACEN:'border-l-orange-500',
-                               REQ_APROBADA:'border-l-green-500',REQ_RECHAZADA:'border-l-red-500',
-                               OP_CERRADA:'border-l-purple-500',ENTREGA_PARCIAL:'border-l-teal-500',
-                               STOCK_CRITICO:'border-l-red-600',
-                             };
-                             const navTarget = {planta:'produccion',almacen:'inventario',ventas:'ventas'};
-                             return (
-                               <div key={n.id}
-                                 onClick={async()=>{
-                                   if(isUnread) try{await updateDoc(getDocRef('notifications',n.id),{readBy:[...(n.readBy||[]),appUser?.username]});}catch(e){}
-                                   if(n.meta?.destino && navTarget[n.meta.destino]) setActiveTab(navTarget[n.meta.destino]);
-                                   setShowNotifPanel(false);
-                                 }}
-                                 className={`px-4 py-3 border-l-4 cursor-pointer hover:bg-gray-50 transition-all ${typeStyle[n.type]||'border-l-gray-300'} ${isUnread?'bg-white':'bg-gray-50/40 opacity-70'}`}>
-                                 <div className="flex justify-between items-start gap-2">
-                                   <div className="flex-1 min-w-0">
-                                     <p className={`text-[11px] font-black ${isUnread?'text-gray-900':'text-gray-600'}`}>{n.title}</p>
-                                     <p className="text-[10px] text-gray-500 mt-0.5 leading-relaxed">{n.body}</p>
-                                     <p className="text-[9px] text-gray-400 mt-1">{n.date} · {n.from}</p>
-                                   </div>
-                                   {isUnread && <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0 mt-1.5"></span>}
-                                 </div>
-                               </div>
-                             );
-                           })
-                         }
-                       </div>
-                       {notifications.length > 0 && (
-                         <div className="px-4 py-2 border-t border-gray-100 bg-gray-50 text-center">
-                           <button onClick={async()=>{ if(!window.confirm('¿Limpiar todas las notificaciones?'))return; for(const n of notifications){try{await deleteDoc(getDocRef('notifications',n.id));}catch(e){}} }}
-                             className="text-[9px] font-black text-red-400 hover:text-red-600 uppercase">Limpiar todo</button>
-                         </div>
-                       )}
-                     </div>
-                   )}
-                 </div>
                  <button onClick={() => setAppUser(null)} className="p-2.5 bg-red-500/10 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all border border-red-500/20 flex items-center gap-2 text-[10px] font-black uppercase"><LogOut size={16}/> <span className="hidden sm:inline">Salir</span></button>
               </div>
            </div>
