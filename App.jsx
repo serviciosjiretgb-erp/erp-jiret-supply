@@ -189,18 +189,24 @@ export default function App() {
 
   // ── One-time cleanup: eliminar registros huérfanos de OP-00007 ──────────────
 
-  // ── Estados adicionales (reubicados antes de useEffect) ──────────────────
+  // ── One-time data correction (runs once per session via sessionStorage flag) ──
+
+  // FG corrections are applied via the Edit button in Terminados view
   const [showMovForm, setShowMovForm] = useState(false);
   const [movForm, setMovForm] = useState({itemId:'',qty:'',unitCost:'',docRef:'',type:'ENTRADA',notes:'',date:getTodayDate()});
+
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
   const [invSearchTerm, setInvSearchTerm] = useState('');
   const [kardexProductId, setKardexProductId] = useState(''); // for kardex product filter
   const [reqToApprove, setReqToApprove] = useState(null);
+
+  // Estados para Modal de Clave Admin
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
   const [adminAction, setAdminAction] = useState(null);
   const [adminActionName, setAdminActionName] = useState('');
+
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
   const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
   const [showGeneralInvoicesReport, setShowGeneralInvoicesReport] = useState(false);
@@ -210,7 +216,10 @@ export default function App() {
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
   const [showMovementReceipt, setShowMovementReceipt] = useState(null);
   const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
+
+  // Estados para Toma Física
   const [physicalCounts, setPhysicalCounts] = useState({});
+
   const [planDeCuentas, setPlanDeCuentas] = useState([]);
   const [asientosContables, setAsientosContables] = useState([]);
   const [ldSearch, setLdSearch] = useState('');
@@ -227,47 +236,68 @@ export default function App() {
   const [erExpanded, setErExpanded] = useState({ ingresos: false, costo_ventas: false, costos_op: false });
   const [varMesA, setVarMesA] = useState(new Date().toISOString().substring(0,7));
   const [varMesB, setVarMesB] = useState(prevMonth());
+
+  // Estados Plan de Cuentas
   const [showPDCImport, setShowPDCImport] = useState(false);
   const [pdcSearchTerm, setPdcSearchTerm] = useState('');
+  // Cuenta contable para ingresos (configurable)
   const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
   const [newUserForm, setNewUserForm] = useState(initialUserForm);
   const [editingUserId, setEditingUserId] = useState(null);
+
+  // Formularios de Ventas
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [showAddClientForm, setShowAddClientForm] = useState(false);
   const [editingClientId, setEditingClientId] = useState(null);
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
+
+  // Formularios Producción
   const [showWorkOrder, setShowWorkOrder] = useState(null);
   const [showPhaseReport, setShowPhaseReport] = useState(null);
   const [showFiniquito, setShowFiniquito] = useState(null);
   const [selectedPhaseReqId, setSelectedPhaseReqId] = useState(null);
   const [activePhaseTab, setActivePhaseTab] = useState('extrusion');
   const [phaseForm, setPhaseForm] = useState(initialPhaseForm);
+  // Segmentación de lotes de producción por OP
   const [activeLoteIndex, setActiveLoteIndex] = useState(0); // índice del lote activo dentro de la OP
   const [showLotePanel, setShowLotePanel] = useState(false);
   const [phaseIngId, setPhaseIngId] = useState('');
   const [phaseIngQty, setPhaseIngQty] = useState('');
+
+  // Simulador Inverso
   const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
+
+  // Formularios Inventario
   const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
   const [editingInvId, setEditingInvId] = useState(null);
   const [showInvItemForm, setShowInvItemForm] = useState(false); // collapsible form
   const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
+
+  // Formularios Costos Operativos
   const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
   const [opCosts, setOpCosts] = useState([]);
   const [costFilterCategory, setCostFilterCategory] = useState('TODAS');
   const [costFilterMonth, setCostFilterMonth] = useState('TODOS');
+
+  // Estados para Dashboard de Reportes
   const [reportPeriod, setReportPeriod] = useState('mensual');
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [showReportType, setShowReportType] = useState(null); 
+
+  // Estados para Categorías Dinámicas de Costos
   const [costCategories, setCostCategories] = useState(COSTO_CATEGORIES);
   const [showNewCategoryModal, setShowNewCategoryModal] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
+
+  // Estados para Órdenes de Compra
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [showPOModal, setShowPOModal] = useState(false);
+  // Estados Fórmulas / Recetas
   const [formulas, setFormulas] = useState([]);
   const [formulaFilter, setFormulaFilter] = useState('TODOS');
   const [formulaSearch, setFormulaSearch] = useState('');
@@ -285,9 +315,12 @@ export default function App() {
   const [expandedOPs, setExpandedOPs] = useState({}); // {opId: true/false}
   const [showOrdenTrabajo, setShowOrdenTrabajo] = useState(null);
   const [prodSubMode, setProdSubMode] = useState('fase');
+  // Estado para agregar items a PO manualmente
   const [poAddId, setPoAddId] = useState('');
   const [poAddQty, setPoAddQty] = useState('');
   const [poAddCost, setPoAddCost] = useState('');
+
+  // ── Producción de Bobinas ──
   const [bobinaProductions, setBobinaProductions] = useState([]);
   const [bobinaForm, setBobinaForm] = useState({ categoria:'', ancho:'', fuelles:'', largo:'', micras:'', kgProcesar:'', mermaPorc:'5', insumos:[], fecha:getTodayDate(), observaciones:'' });
   const [showBobinaPanel, setShowBobinaPanel] = useState(false);
@@ -296,11 +329,19 @@ export default function App() {
   const [activeBobinaId, setActiveBobinaId] = useState(null);
   const [showBobinaReporte, setShowBobinaReporte] = useState(null); // bobina object
   const [bobinaPhaseForm, setBobinaPhaseForm] = useState({ date:getTodayDate(), insumos:[], producedKg:'', mermaKg:'', mermaTroquelTransp:'', mermaTroquelPigm:'', mermaTorta:'', observaciones:'', operadorExt:'', zona1:'', zona2:'', zona3:'', zona4:'', zona5:'', zona6:'', cabezalA:'', cabezalB:'', motorExt:'', ventilador:'', jalador:'', tratado:'' });
+  // ── Stock mínimo (edición admin en Proyección MP) ──
   const [editingMinStock, setEditingMinStock] = useState(null); // {id, value}
+
+  // ── AUTO RESPALDO PROGRAMADO ────────────────────────────────────────────────
+  // Estados de respaldo declarados aquí para que el useEffect los pueda usar sin TDZ
   const [backupFreq, setBackupFreq] = useState(() => localStorage.getItem('backupFreq') || 'manual');
   const [backupLastRun, setBackupLastRun] = useState(() => localStorage.getItem('backupLastRun') || '');
   const [backupTime, setBackupTime] = useState(() => localStorage.getItem('backupTime') || '08:00');
+  
   const [editingInvoiceId, setEditingInvoiceId] = useState(null);
+
+  // ── CIERRE TOTAL DE OP → mueve a Terminados ──────────────────────────────
+  // ── ENTREGA PARCIAL: mover KG a Terminados sin cerrar la OP ─────────
   const [showPartialModal, setShowPartialModal] = useState(null); // req
   const [partialKg, setPartialKg] = useState('');
   const [partialMillares, setPartialMillares] = useState('');
@@ -427,20 +468,7 @@ export default function App() {
     run();
   }, [finishedGoodsInventory, inventory]);
 
-  // ── One-time data correction (runs once per session via sessionStorage flag) ──
-
-  // FG corrections are applied via the Edit button in Terminados view
-
-
-  // Estados para Modal de Clave Admin
-
-
-  // Estados para Toma Física
-
   const prevMonth = () => { const d = new Date(); d.setMonth(d.getMonth()-1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
-
-  // Estados Plan de Cuentas
-  // Cuenta contable para ingresos (configurable)
 
   // Formularios de Configuración
   const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: {
@@ -452,36 +480,14 @@ export default function App() {
     costos: false,       costos_operativos: false, costos_reportes: false,
     configuracion: false
   } };
-
-  // Formularios de Ventas
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '' };
-
-  // Formularios Producción
   const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '', mermaTroquelTransp: '', mermaTroquelPigm: '', mermaTorta: '', observaciones: '', pesoMillarReal: '', operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '', zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '', operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '', operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: '' };
-  // Segmentación de lotes de producción por OP
-
-  // Simulador Inverso
   const initialCalcInputs = { ingredientes: [{ id: Date.now() + 1, nombre: 'MP-0240', pct: 80, costo: 0.96 }, { id: Date.now() + 2, nombre: 'MP-RECICLADO', pct: 20, costo: 1.00 }], cantidadSolicitada: '', mermaGlobalPorc: 5, tipoProducto: 'BOLSAS', ancho: '', fuelles: '', largo: '', micras: '' };
-
-  // Formularios Inventario
   const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '' };
   const initialMovementForm = { date: getTodayDate(), itemId: '', type: 'ENTRADA', qty: '', cost: '', reference: '', notes: '', opAsignada: '' };
-
-  // Formularios Costos Operativos
   const initialOpCostForm = { date: getTodayDate(), category: 'Electricidad', description: '', amount: '', cuentaContable: '' };
-
-  // Estados para Dashboard de Reportes
-
-  // Estados para Categorías Dinámicas de Costos
-
-  // Estados para Órdenes de Compra
-  // Estados Fórmulas / Recetas
-  // Estado para agregar items a PO manualmente
-
-  // ── Producción de Bobinas ──
-  // ── Stock mínimo (edición admin en Proyección MP) ──
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     window.print();
@@ -742,9 +748,6 @@ export default function App() {
       unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST(); unsubNotifs();
     };
   }, [fbUser]);
-
-  // ── AUTO RESPALDO PROGRAMADO ────────────────────────────────────────────────
-  // Estados de respaldo declarados aquí para que el useEffect los pueda usar sin TDZ
 
   useEffect(() => {
     if (backupFreq === 'manual') return;
@@ -1323,7 +1326,6 @@ export default function App() {
     }
     setNewInvoiceForm(f);
   };
-  
 
   const handleCreateInvoice = async (e) => {
     e.preventDefault(); 
@@ -7025,9 +7027,6 @@ export default function App() {
       </div>
     );
   };
-
-  // ── CIERRE TOTAL DE OP → mueve a Terminados ──────────────────────────────
-  // ── ENTREGA PARCIAL: mover KG a Terminados sin cerrar la OP ─────────
 
   // ── Reversar entrega parcial ──────────────────────────────────────────
   const handleReversePartialDelivery = async (req, ep) => {
