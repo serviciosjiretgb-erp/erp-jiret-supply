@@ -211,6 +211,9 @@ export default function App() {
     };
     run();
   }, [invMovements, wipInventory, finishedGoodsInventory, invRequisitions]);
+
+  // ── One-time: set correct final stocks in Firebase ────────────────────────
+  useEffect(() => {
     if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v9') === 'done') return;
     const run = async () => {
       // 1. Eliminar TODOS los documentos FG con (28+5+5) en producto/descripción (stock 0 o positivo)
