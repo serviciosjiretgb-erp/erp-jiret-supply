@@ -171,8 +171,10 @@ export default function App() {
   const [finishedGoodsInventory, setFinishedGoodsInventory] = useState([]);
 
   // ── One-time cleanup: eliminar registros huérfanos de OP-00007 ──────────────
+  // ── Notification states ──
   const [notifications, setNotifications] = useState([]);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
+  // ── Remaining states (moved here to satisfy React hooks rules) ──
   const [showMovForm, setShowMovForm] = useState(false);
   const [movForm, setMovForm] = useState({itemId:'',qty:'',unitCost:'',docRef:'',type:'ENTRADA',notes:'',date:getTodayDate()});
   const [dialog, setDialog] = useState(null);
@@ -296,15 +298,15 @@ export default function App() {
 
   const pushNotif = async (type, title, body, meta={}) => {
     try {
-      const id = 'NOTIF-' + Date.now() + '-' + Math.random().toString(36).slice(2,7);
-      const db2 = getFirestore();
-      await setDoc(doc(db2, 'notifications', id), {
-        id, type, title, body, meta,
+      const nid = 'NOTIF-' + Date.now() + '-' + Math.random().toString(36).slice(2,7);
+      await setDoc(getDocRef('notifications', nid), {
+        id: nid, type, title, body, meta,
         from: appUser?.name || 'Sistema',
-        timestamp: Date.now(), date: new Date().toISOString().split('T')[0],
+        timestamp: Date.now(),
+        date: new Date().toISOString().split('T')[0],
         read: false, readBy: []
       });
-    } catch(e) { console.warn('pushNotif:', e); }
+    } catch(e) {}
   };
   useEffect(() => {
     if (sessionStorage.getItem('op007_cleanup_done') === 'done') return;
@@ -730,8 +732,8 @@ export default function App() {
     const unsubPDC = onSnapshot(getColRef('planDeCuentas'), (s) => setPlanDeCuentas(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
     const unsubAST = onSnapshot(getColRef('asientosContables'), (s) => setAsientosContables(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     
-    
-    const unsubNotifs = onSnapshot(collection(db, 'notifications'), (s) => {
+
+    const unsubNotifs = onSnapshot(getColRef('notifications'), (s) => {
       setNotifications(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0)).slice(0,100));
     });
     return () => { 
@@ -1574,7 +1576,7 @@ export default function App() {
 
   const handleCreateRequirement = async (e) => {
     e.preventDefault(); const opId = editingReqId ? editingReqId : generateReqId();
-    try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', viewedByPlanta: false }, { merge: true }); if(!editingReqId){await pushNotif('OP_NUEVA','📋 Nueva OP',`Ventas generó la OP #${opId.replace('OP-','')} para ${newReqForm.client||'N/A'}.`,{opId,destino:'planta',targetTab:'produccion'});} setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
+    try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', viewedByPlanta: false }, { merge: true }); if(!editingReqId){await pushNotif('OP_NUEVA','📋 Nueva OP',`OP #${opId.replace('OP-','')} para ${newReqForm.client||'N/A'}.`,{opId,destino:'planta',targetTab:'produccion'});} setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
   const startEditReq = (r) => { setEditingReqId(r.id); setNewReqForm({ fecha: r.fecha||getTodayDate(), client: r.client||'', tipoProducto: r.tipoProducto||'BOLSAS', desc: r.desc||'', ancho: r.ancho||'', fuelles: r.fuelles||'', largo: r.largo||'', micras: r.micras||'', pesoMillar: r.tipoProducto==='TERMOENCOGIBLE'?'N/A':(r.pesoMillar||''), presentacion: r.presentacion||'MILLAR', cantidad: r.cantidad||'', requestedKg: r.requestedKg||'', color: r.color||'NATURAL', tratamiento: r.tratamiento||'LISO', vendedor: r.vendedor||'' }); setShowNewReqPanel(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteReq = (id) => {
@@ -1682,7 +1684,7 @@ export default function App() {
         const mailtoLink = `mailto:${emailTo}${emailCC?'?cc='+emailCC+'&':'?'}subject=${subject}&body=${body}`;
         window.open(mailtoLink, '_blank');
       }
-      await pushNotif('REQ_ALMACEN','📦 Solicitud de Planta',`Materiales requeridos para la OP #${String(selectedPhaseReqId).replace('OP-','')}. Fase: ${activePhaseTab}.`,{opId:selectedPhaseReqId,destino:'almacen',targetTab:'inventario'});
+      await pushNotif('REQ_ALMACEN','📦 Solicitud de Planta',`Materiales para OP #${String(selectedPhaseReqId||'').replace('OP-','')}.`,{opId:selectedPhaseReqId,destino:'almacen',targetTab:'inventario'});
       setDialog({title: '✅ Solicitud Enviada', text: `Requisición enviada al Almacén.${emailTo?' Se abrió el cliente de correo para notificar a Procura.':''}`, type: 'alert'});
     } catch(e) { setDialog({title: 'Error', text: e.message, type: 'alert'}); }
   };
@@ -1808,7 +1810,7 @@ export default function App() {
           });
         }
 
-        setReqToApprove(null); await pushNotif('REQ_APROBADA','✅ Materiales Despachados',`Almacén aprobó los materiales para la OP #${String(req.opId).replace('OP-','')}.`,{opId:req.opId,destino:'planta',targetTab:'produccion'}); setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada, stock descontado y materiales asignados a WIP.', type:'alert'});
+        setReqToApprove(null); await pushNotif('REQ_APROBADA','✅ Materiales Despachados',`Almacén aprobó materiales para OP #${String(req?.opId||'').replace('OP-','')}.`,{opId:req?.opId,destino:'planta',targetTab:'produccion'}); setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada, stock descontado y materiales asignados a WIP.', type:'alert'});
     } catch(err) { setDialog({title:'Error', text:err.message, type:'alert'}); }
   };
 
@@ -1860,7 +1862,7 @@ export default function App() {
           timestamp: Date.now()
         };
         await setDoc(getDocRef('finishedGoodsInventory', finishedEntry.id), finishedEntry);
-      await pushNotif('OP_CERRADA','🏁 OP Finalizada',`La OP #${reqId.replace('OP-','')} ha sido cerrada.`,{opId:reqId,destino:'ventas',targetTab:'ventas'});
+      await pushNotif('OP_CERRADA','🏁 OP Finalizada',`La OP #${String(reqId||'').replace('OP-','')} fue cerrada.`,{opId:reqId,destino:'ventas',targetTab:'ventas'});
         // ── Kardex ENTRADA for FG produced ──
         try {
           const fgProdQty = finishedEntry.tipoProducto==='TERMOENCOGIBLE' ? parseNum(finishedEntry.kgProducidos||0) : parseNum(finishedEntry.millares||0);
@@ -12770,32 +12772,33 @@ export default function App() {
 
   const hasPerm = (module) => { if (!appUser) return false; if (appUser.role === 'Master') return true; const p = appUser.permissions || {}; return !!p[module]; };
 
-  // ── Notification logic ──────────────────────────────────────────────────────
   const myNotifications = (notifications||[]).filter(n => {
     if (!n.meta?.destino) return true;
     const dest = String(n.meta.destino).toLowerCase();
     const rol = String(appUser?.role || '').toLowerCase();
     if (rol === 'master' || rol === 'admin') return true;
     if (rol === 'planta' && dest === 'planta') return true;
-    if ((rol === 'almacen' || rol === 'almacén') && dest === 'almacen') return true;
+    if ((rol === 'almacen' || rol === 'almacen') && dest === 'almacen') return true;
     if (rol === 'ventas' && dest === 'ventas') return true;
     return false;
   });
-  const unreadCount = myNotifications.filter(n=>!(n.readBy||[]).includes(appUser?.username)).length;
+  const unreadCount = myNotifications.filter(n => !(n.readBy||[]).includes(appUser?.username)).length;
   const handleNotifClick = async (notif) => {
-    if (!appUser?.username || !(notif.readBy||[]).includes(appUser.username)) {
-      try { await updateDoc(doc(getFirestore(),'notifications',notif.id),{readBy:[...(notif.readBy||[]),appUser.username]}); } catch(e){}
+    if (appUser?.username && !(notif.readBy||[]).includes(appUser.username)) {
+      try { await updateDoc(getDocRef('notifications', notif.id), { readBy: [...(notif.readBy||[]), appUser.username] }); } catch(e) {}
     }
     setShowNotifPanel(false);
-    if (notif.meta?.targetTab) { setActiveTab(notif.meta.targetTab); }
+    if (notif.meta?.targetTab) setActiveTab(notif.meta.targetTab);
   };
   const markAllAsRead = async () => {
-    for(const n of myNotifications.filter(n=>!(n.readBy||[]).includes(appUser?.username))) {
-      try { await updateDoc(doc(getFirestore(),'notifications',n.id),{readBy:[...(n.readBy||[]),appUser?.username]}); } catch(e){}
+    for (const n of myNotifications.filter(n => !(n.readBy||[]).includes(appUser?.username))) {
+      try { await updateDoc(getDocRef('notifications', n.id), { readBy: [...(n.readBy||[]), appUser?.username] }); } catch(e) {}
     }
   };
   const clearAllNotifs = async () => {
-    for(const n of myNotifications) { try { await deleteDoc(doc(getFirestore(),'notifications',n.id)); } catch(e){} }
+    for (const n of myNotifications) {
+      try { await deleteDoc(getDocRef('notifications', n.id)); } catch(e) {}
+    }
   };
 
   return (
@@ -12835,35 +12838,38 @@ export default function App() {
                  </div>
                  <div className="h-8 w-px bg-gray-800 mx-2 hidden sm:block"></div>
                  {hasPerm('configuracion') && <button onClick={() => {clearAllReports(); setActiveTab('configuracion');}} className="p-2.5 bg-gray-900 text-gray-400 rounded-xl hover:text-white hover:bg-gray-800 transition-all border border-gray-800"><Settings2 size={18}/></button>}
-                 <div className="relative flex items-center mr-2">
-                   <button onClick={()=>setShowNotifPanel(v=>!v)} className={`relative p-2 text-gray-600 hover:text-orange-500 transition-colors ${unreadCount>0?'animate-pulse':''}`}>
+                 <div className="relative flex items-center">
+                   <button onClick={() => setShowNotifPanel(v => !v)} className="relative p-2 text-gray-500 hover:text-orange-500 transition-colors">
                      <Bell size={22}/>
-                     {unreadCount>0&&<span className="absolute top-0 right-0 bg-red-500 text-white text-[9px] font-black rounded-full h-4 w-4 flex items-center justify-center border border-white">{unreadCount>9?'9+':unreadCount}</span>}
+                     {unreadCount > 0 && <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[8px] font-black rounded-full h-4 w-4 flex items-center justify-center">{unreadCount > 9 ? '9+' : unreadCount}</span>}
                    </button>
-                   {showNotifPanel&&(
-                     <div className="absolute top-full mt-2 right-0 w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 z-[9999] overflow-hidden flex flex-col">
+                   {showNotifPanel && (
+                     <div className="absolute top-full right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 z-[9999] overflow-hidden">
                        <div className="p-3 border-b bg-gray-50 flex justify-between items-center">
-                         <h3 className="font-black text-xs uppercase text-gray-800 flex items-center gap-2"><Bell size={12}/> Notificaciones</h3>
-                         <div className="flex gap-3">
-                           <button onClick={markAllAsRead} className="text-[9px] font-bold text-blue-600 hover:underline">Todo Leído</button>
-                           <button onClick={clearAllNotifs} className="text-[9px] font-bold text-red-500 hover:underline">Limpiar</button>
+                         <span className="font-black text-xs uppercase text-gray-700">Notificaciones</span>
+                         <div className="flex gap-2">
+                           <button onClick={markAllAsRead} className="text-[9px] text-blue-500 font-bold hover:underline">Todo leído</button>
+                           <button onClick={clearAllNotifs} className="text-[9px] text-red-400 font-bold hover:underline">Limpiar</button>
                          </div>
                        </div>
-                       <div className="max-h-96 overflow-y-auto">
-                         {myNotifications.length===0?(<div className="p-8 text-center text-gray-400 text-xs font-bold uppercase">Nada por aquí</div>)
-                           :myNotifications.map(n=>{
-                             const isUnread=!(n.readBy||[]).includes(appUser?.username);
-                             const stripe={OP_NUEVA:'bg-blue-500',REQ_ALMACEN:'bg-orange-500',REQ_APROBADA:'bg-green-500',ENTREGA_PARCIAL:'bg-teal-500',OP_CERRADA:'bg-purple-500'}[n.type]||'bg-gray-400';
-                             return(<div key={n.id} onClick={()=>handleNotifClick(n)} className={`relative p-4 border-b border-gray-50 flex gap-2 cursor-pointer hover:bg-gray-100 transition-colors ${isUnread?'bg-blue-50/30':''}`}>
-                               <div className={`w-1 absolute left-0 top-0 bottom-0 ${stripe}`}/>
-                               <div className="flex-1 pl-2 min-w-0">
-                                 <p className="text-[10px] font-black uppercase text-gray-800 truncate">{n.title}</p>
-                                 <p className="text-[11px] text-gray-500 mt-0.5">{n.body}</p>
-                                 <p className="text-[9px] text-gray-400 mt-1">{n.date} · {n.from}</p>
-                               </div>
-                               {isUnread&&<div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0 mt-1"/>}
-                             </div>);
-                           })
+                       <div className="max-h-80 overflow-y-auto divide-y divide-gray-50">
+                         {myNotifications.length === 0
+                           ? <p className="p-8 text-center text-xs text-gray-400 font-bold uppercase">Sin notificaciones</p>
+                           : myNotifications.map(n => {
+                               const unread = !(n.readBy||[]).includes(appUser?.username);
+                               const color = {OP_NUEVA:'bg-blue-500',REQ_ALMACEN:'bg-orange-500',REQ_APROBADA:'bg-green-500',ENTREGA_PARCIAL:'bg-teal-500',OP_CERRADA:'bg-purple-500'}[n.type]||'bg-gray-400';
+                               return (
+                                 <div key={n.id} onClick={() => handleNotifClick(n)} className={`relative flex gap-2 p-3 cursor-pointer hover:bg-gray-50 ${unread ? 'bg-blue-50/40' : ''}`}>
+                                   <div className={`absolute left-0 top-0 bottom-0 w-1 ${color}`}/>
+                                   <div className="pl-2 flex-1 min-w-0">
+                                     <p className="text-[10px] font-black uppercase text-gray-800">{n.title}</p>
+                                     <p className="text-[11px] text-gray-500 mt-0.5">{n.body}</p>
+                                     <p className="text-[9px] text-gray-400 mt-1">{n.date}</p>
+                                   </div>
+                                   {unread && <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0 mt-1"/>}
+                                 </div>
+                               );
+                             })
                          }
                        </div>
                      </div>
