@@ -187,124 +187,6 @@ export default function App() {
     } catch(e) { console.warn('pushNotif error:', e); }
   };
 
-  // ── One-time cleanup: eliminar registros huérfanos de OP-00007 ──────────────
-  useEffect(() => {
-    if (sessionStorage.getItem('op007_cleanup_done') === 'done') return;
-    if (!invMovements.length && !wipInventory.length) return; // esperar datos
-    sessionStorage.setItem('op007_cleanup_done', 'done');
-    const OP_ID = 'OP-00007';
-    const stillExists = (requirements||[]).some(r => r.id === OP_ID);
-    if (stillExists) return; // solo limpiar si ya fue eliminada
-
-    const run = async () => {
-      try {
-        const ops = [];
-        // Movimientos de Kardex
-        (invMovements||[]).filter(m =>
-          m.opAsignada === OP_ID || m.docRef === OP_ID ||
-          String(m.notes||'').includes(OP_ID) || String(m.reference||'').includes(OP_ID)
-        ).forEach(m => ops.push(() => deleteDoc(getDocRef('inventoryMovements', m.id))));
-
-        // WIP
-        (wipInventory||[]).filter(w => w.opId === OP_ID)
-          .forEach(w => ops.push(() => deleteDoc(getDocRef('wipInventory', w.id))));
-
-        // FG
-        (finishedGoodsInventory||[]).filter(fg => fg.opId === OP_ID)
-          .forEach(fg => ops.push(() => deleteDoc(getDocRef('finishedGoodsInventory', fg.id))));
-
-        // Requisiciones
-        (invRequisitions||[]).filter(r => r.opId === OP_ID)
-          .forEach(r => ops.push(() => deleteDoc(getDocRef('inventoryRequisitions', r.id))));
-
-        // Asientos contables
-        (asientosContables||[]).filter(a =>
-          String(a.referencia||'').includes(OP_ID) || String(a.descripcion||'').includes(OP_ID)
-        ).forEach(a => ops.push(() => deleteDoc(getDocRef('asientosContables', a.id))));
-
-        for (const op of ops) { try { await op(); } catch(e){} }
-        if (ops.length > 0) console.log(`OP-00007 cleanup: ${ops.length} orphan records deleted`);
-      } catch(e) { console.error('OP-00007 cleanup error:', e); }
-    };
-    run();
-  }, [invMovements, wipInventory, finishedGoodsInventory, invRequisitions]);
-
-  // ── One-time: set correct final stocks in Firebase ────────────────────────
-  useEffect(() => {
-    if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v9') === 'done') return;
-    const run = async () => {
-      // 1. Eliminar TODOS los documentos FG con (28+5+5) en producto/descripción (stock 0 o positivo)
-      const phantomFGs = finishedGoodsInventory.filter(fg =>
-        /\(28\+5\+5\)/i.test(`${fg.producto||''} ${fg.cliente||''} ${fg.categoria||''}`) ||
-        parseNum(fg.millares) === 122  // era el stock erróneo original
-      );
-      for (const fg of phantomFGs) {
-        try { await deleteDoc(getDocRef('finishedGoodsInventory', fg.id)); } catch(e){}
-      }
-
-      // 2. Eliminar ítems Semielaborados con stock <= 0 (residuos de producciones de prueba)
-      const semItems = (inventory||[]).filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)<=0.001);
-      for(const si of semItems){
-        try { await deleteDoc(getDocRef('inventory', si.id)); } catch(e){}
-      }
-
-      // 3. Asegurar EMBUTIDO 1 KIRI = 21.45 Millares
-      const embutidoDocs = finishedGoodsInventory.filter(fg =>
-        /embutido.*1.*kiri|kiri.*embutido.*1/i.test(`${fg.producto||''} ${fg.cliente||''}`) &&
-        !(/\(28\+5\+5\)/i.test(`${fg.producto||''}`))
-      );
-      if (embutidoDocs.length > 0) {
-        embutidoDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-        const keeper = embutidoDocs[0];
-        try {
-          await updateDoc(getDocRef('finishedGoodsInventory', keeper.id), {
-            millares: 21.45, kgProducidos: 5.07,
-            costoUnitario: 86.64, costoUnitarioMillar: 86.64
-          });
-        } catch(e){}
-        // Cero los demás duplicados
-        for (const dup of embutidoDocs.slice(1)) {
-          try { await updateDoc(getDocRef('finishedGoodsInventory', dup.id), {millares:0,kgProducidos:0}); } catch(e){}
-        }
-      } else {
-        // No existe ningún doc: crear
-        const newFgId = `FG-EMBUTIDO1KIRI-RESTORE`;
-        try {
-          await setDoc(getDocRef('finishedGoodsInventory', newFgId), {
-            id: newFgId, opId: 'RESTAURADO', reqId: '',
-            cliente: 'INVERSIONES AVICOLAS, C.A', tipoProducto: 'BOLSAS',
-            categoria: 'EMBUTIDO 1 - KIRI', producto: 'EMBUTIDO 1 - KIRI 28×75×0.012MIC',
-            ancho: 28, largo: 75, micras: 0.012, color: 'NATURAL', tratamiento: 'LISO',
-            kgProducidos: 5.07, millares: 21.45,
-            costoUnitario: 86.64, costoUnitarioMillar: 86.64,
-            fechaFinalizacion: '2026-03-01', ubicacion: 'ALMACEN GENERAL',
-            status: 'LISTO PARA ENTREGA',
-            observaciones: 'STOCK RESTAURADO — 21.45 Millares según Reporte 177',
-            timestamp: Date.now()
-          });
-        } catch(e){}
-      }
-
-      // 4. Pañal Kiri = 103.30 Millares
-      const panalDocs = finishedGoodsInventory.filter(fg => /pa[ñn]al.*kiri/i.test(`${fg.producto||''} ${fg.cliente||''}`));
-      if (panalDocs.length > 0) {
-        panalDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-        try { await updateDoc(getDocRef('finishedGoodsInventory', panalDocs[0].id), {millares:103.30,costoUnitario:78.01,costoUnitarioMillar:78.01}); } catch(e){}
-        for (const dup of panalDocs.slice(1)) { try { await updateDoc(getDocRef('finishedGoodsInventory', dup.id), {millares:0}); } catch(e){} }
-      }
-
-      // 5. Termo Pinturas Caribe = 1.40 KG
-      const termoDocs = finishedGoodsInventory.filter(fg => /termo.*pinturas|pinturas.*caribe/i.test(`${fg.producto||''} ${fg.cliente||''}`));
-      if (termoDocs.length > 0) {
-        termoDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-        try { await updateDoc(getDocRef('finishedGoodsInventory', termoDocs[0].id), {kgProducidos:1.40,costoUnitario:2.71}); } catch(e){}
-        for (const dup of termoDocs.slice(1)) { try { await updateDoc(getDocRef('finishedGoodsInventory', dup.id), {kgProducidos:0}); } catch(e){} }
-      }
-
-      sessionStorage.setItem('fg_stock_v9','done');
-    };
-    run();
-  }, [finishedGoodsInventory, inventory]);
 
   // ── One-time data correction (runs once per session via sessionStorage flag) ──
 
@@ -467,7 +349,135 @@ export default function App() {
   const [showBobinaReporte, setShowBobinaReporte] = useState(null); // bobina object
   const [bobinaPhaseForm, setBobinaPhaseForm] = useState({ date:getTodayDate(), insumos:[], producedKg:'', mermaKg:'', mermaTroquelTransp:'', mermaTroquelPigm:'', mermaTorta:'', observaciones:'', operadorExt:'', zona1:'', zona2:'', zona3:'', zona4:'', zona5:'', zona6:'', cabezalA:'', cabezalB:'', motorExt:'', ventilador:'', jalador:'', tratado:'' });
   // ── Stock mínimo (edición admin en Proyección MP) ──
-  const [editingMinStock, setEditingMinStock] = useState(null); // {id, value}
+
+  const [backupFreq, setBackupFreq] = useState(() => localStorage.getItem('backupFreq') || 'manual');
+  const [backupLastRun, setBackupLastRun] = useState(() => localStorage.getItem('backupLastRun') || '');
+  const [backupTime, setBackupTime] = useState(() => localStorage.getItem('backupTime') || '08:00');
+  const [editingInvoiceId, setEditingInvoiceId] = useState(null);
+  const [showPartialModal, setShowPartialModal] = useState(null); // req
+  const [partialKg, setPartialKg] = useState('');
+  const [partialMillares, setPartialMillares] = useState('');
+  const [partialTargetFgKey, setPartialTargetFgKey] = useState(''); // group key of existing FG product
+  const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
+  const [enProcesoOpFilter, setEnProcesoOpFilter] = useState('TODAS');
+  const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
+  useEffect(() => {
+    if (sessionStorage.getItem('op007_cleanup_done') === 'done') return;
+    if (!invMovements.length && !wipInventory.length) return; // esperar datos
+    sessionStorage.setItem('op007_cleanup_done', 'done');
+    const OP_ID = 'OP-00007';
+    const stillExists = (requirements||[]).some(r => r.id === OP_ID);
+    if (stillExists) return; // solo limpiar si ya fue eliminada
+
+    const run = async () => {
+      try {
+        const ops = [];
+        // Movimientos de Kardex
+        (invMovements||[]).filter(m =>
+          m.opAsignada === OP_ID || m.docRef === OP_ID ||
+          String(m.notes||'').includes(OP_ID) || String(m.reference||'').includes(OP_ID)
+        ).forEach(m => ops.push(() => deleteDoc(getDocRef('inventoryMovements', m.id))));
+
+        // WIP
+        (wipInventory||[]).filter(w => w.opId === OP_ID)
+          .forEach(w => ops.push(() => deleteDoc(getDocRef('wipInventory', w.id))));
+
+        // FG
+        (finishedGoodsInventory||[]).filter(fg => fg.opId === OP_ID)
+          .forEach(fg => ops.push(() => deleteDoc(getDocRef('finishedGoodsInventory', fg.id))));
+
+        // Requisiciones
+        (invRequisitions||[]).filter(r => r.opId === OP_ID)
+          .forEach(r => ops.push(() => deleteDoc(getDocRef('inventoryRequisitions', r.id))));
+
+        // Asientos contables
+        (asientosContables||[]).filter(a =>
+          String(a.referencia||'').includes(OP_ID) || String(a.descripcion||'').includes(OP_ID)
+        ).forEach(a => ops.push(() => deleteDoc(getDocRef('asientosContables', a.id))));
+
+        for (const op of ops) { try { await op(); } catch(e){} }
+        if (ops.length > 0) console.log(`OP-00007 cleanup: ${ops.length} orphan records deleted`);
+      } catch(e) { console.error('OP-00007 cleanup error:', e); }
+    };
+    run();
+  }, [invMovements, wipInventory, finishedGoodsInventory, invRequisitions]);
+
+  // ── One-time: set correct final stocks in Firebase ────────────────────────
+  useEffect(() => {
+    if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v9') === 'done') return;
+    const run = async () => {
+      // 1. Eliminar TODOS los documentos FG con (28+5+5) en producto/descripción (stock 0 o positivo)
+      const phantomFGs = finishedGoodsInventory.filter(fg =>
+        /\(28\+5\+5\)/i.test(`${fg.producto||''} ${fg.cliente||''} ${fg.categoria||''}`) ||
+        parseNum(fg.millares) === 122  // era el stock erróneo original
+      );
+      for (const fg of phantomFGs) {
+        try { await deleteDoc(getDocRef('finishedGoodsInventory', fg.id)); } catch(e){}
+      }
+
+      // 2. Eliminar ítems Semielaborados con stock <= 0 (residuos de producciones de prueba)
+      const semItems = (inventory||[]).filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)<=0.001);
+      for(const si of semItems){
+        try { await deleteDoc(getDocRef('inventory', si.id)); } catch(e){}
+      }
+
+      // 3. Asegurar EMBUTIDO 1 KIRI = 21.45 Millares
+      const embutidoDocs = finishedGoodsInventory.filter(fg =>
+        /embutido.*1.*kiri|kiri.*embutido.*1/i.test(`${fg.producto||''} ${fg.cliente||''}`) &&
+        !(/\(28\+5\+5\)/i.test(`${fg.producto||''}`))
+      );
+      if (embutidoDocs.length > 0) {
+        embutidoDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        const keeper = embutidoDocs[0];
+        try {
+          await updateDoc(getDocRef('finishedGoodsInventory', keeper.id), {
+            millares: 21.45, kgProducidos: 5.07,
+            costoUnitario: 86.64, costoUnitarioMillar: 86.64
+          });
+        } catch(e){}
+        // Cero los demás duplicados
+        for (const dup of embutidoDocs.slice(1)) {
+          try { await updateDoc(getDocRef('finishedGoodsInventory', dup.id), {millares:0,kgProducidos:0}); } catch(e){}
+        }
+      } else {
+        // No existe ningún doc: crear
+        const newFgId = `FG-EMBUTIDO1KIRI-RESTORE`;
+        try {
+          await setDoc(getDocRef('finishedGoodsInventory', newFgId), {
+            id: newFgId, opId: 'RESTAURADO', reqId: '',
+            cliente: 'INVERSIONES AVICOLAS, C.A', tipoProducto: 'BOLSAS',
+            categoria: 'EMBUTIDO 1 - KIRI', producto: 'EMBUTIDO 1 - KIRI 28×75×0.012MIC',
+            ancho: 28, largo: 75, micras: 0.012, color: 'NATURAL', tratamiento: 'LISO',
+            kgProducidos: 5.07, millares: 21.45,
+            costoUnitario: 86.64, costoUnitarioMillar: 86.64,
+            fechaFinalizacion: '2026-03-01', ubicacion: 'ALMACEN GENERAL',
+            status: 'LISTO PARA ENTREGA',
+            observaciones: 'STOCK RESTAURADO — 21.45 Millares según Reporte 177',
+            timestamp: Date.now()
+          });
+        } catch(e){}
+      }
+
+      // 4. Pañal Kiri = 103.30 Millares
+      const panalDocs = finishedGoodsInventory.filter(fg => /pa[ñn]al.*kiri/i.test(`${fg.producto||''} ${fg.cliente||''}`));
+      if (panalDocs.length > 0) {
+        panalDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        try { await updateDoc(getDocRef('finishedGoodsInventory', panalDocs[0].id), {millares:103.30,costoUnitario:78.01,costoUnitarioMillar:78.01}); } catch(e){}
+        for (const dup of panalDocs.slice(1)) { try { await updateDoc(getDocRef('finishedGoodsInventory', dup.id), {millares:0}); } catch(e){} }
+      }
+
+      // 5. Termo Pinturas Caribe = 1.40 KG
+      const termoDocs = finishedGoodsInventory.filter(fg => /termo.*pinturas|pinturas.*caribe/i.test(`${fg.producto||''} ${fg.cliente||''}`));
+      if (termoDocs.length > 0) {
+        termoDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        try { await updateDoc(getDocRef('finishedGoodsInventory', termoDocs[0].id), {kgProducidos:1.40,costoUnitario:2.71}); } catch(e){}
+        for (const dup of termoDocs.slice(1)) { try { await updateDoc(getDocRef('finishedGoodsInventory', dup.id), {kgProducidos:0}); } catch(e){} }
+      }
+
+      sessionStorage.setItem('fg_stock_v9','done');
+    };
+    run();
+  }, [finishedGoodsInventory, inventory]);
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     window.print();
@@ -731,9 +741,6 @@ export default function App() {
 
   // ── AUTO RESPALDO PROGRAMADO ────────────────────────────────────────────────
   // Estados de respaldo declarados aquí para que el useEffect los pueda usar sin TDZ
-  const [backupFreq, setBackupFreq] = useState(() => localStorage.getItem('backupFreq') || 'manual');
-  const [backupLastRun, setBackupLastRun] = useState(() => localStorage.getItem('backupLastRun') || '');
-  const [backupTime, setBackupTime] = useState(() => localStorage.getItem('backupTime') || '08:00');
 
   useEffect(() => {
     if (backupFreq === 'manual') return;
@@ -1313,7 +1320,6 @@ export default function App() {
     setNewInvoiceForm(f);
   };
   
-  const [editingInvoiceId, setEditingInvoiceId] = useState(null);
 
   const handleCreateInvoice = async (e) => {
     e.preventDefault(); 
@@ -7018,10 +7024,6 @@ export default function App() {
 
   // ── CIERRE TOTAL DE OP → mueve a Terminados ──────────────────────────────
   // ── ENTREGA PARCIAL: mover KG a Terminados sin cerrar la OP ─────────
-  const [showPartialModal, setShowPartialModal] = useState(null); // req
-  const [partialKg, setPartialKg] = useState('');
-  const [partialMillares, setPartialMillares] = useState('');
-  const [partialTargetFgKey, setPartialTargetFgKey] = useState(''); // group key of existing FG product
 
   // ── Reversar entrega parcial ──────────────────────────────────────────
   const handleReversePartialDelivery = async (req, ep) => {
@@ -7095,9 +7097,6 @@ export default function App() {
       }
     });
   };
-  const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
-  const [enProcesoOpFilter, setEnProcesoOpFilter] = useState('TODAS');
-  const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
 
   const handlePartialDelivery = async () => {
     if (!showPartialModal) return;
