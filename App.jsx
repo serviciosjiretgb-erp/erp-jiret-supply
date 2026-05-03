@@ -171,26 +171,20 @@ export default function App() {
   const [finishedGoodsInventory, setFinishedGoodsInventory] = useState([]);
 
   // ── One-time cleanup: eliminar registros huérfanos de OP-00007 ──────────────
-
-  // ── One-time data correction (runs once per session via sessionStorage flag) ──
-
-  // FG corrections are applied via the Edit button in Terminados view
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
   const [showMovForm, setShowMovForm] = useState(false);
   const [movForm, setMovForm] = useState({itemId:'',qty:'',unitCost:'',docRef:'',type:'ENTRADA',notes:'',date:getTodayDate()});
-
   const [dialog, setDialog] = useState(null);
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
   const [invSearchTerm, setInvSearchTerm] = useState('');
   const [kardexProductId, setKardexProductId] = useState(''); // for kardex product filter
   const [reqToApprove, setReqToApprove] = useState(null);
-
-  // Estados para Modal de Clave Admin
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
   const [adminAction, setAdminAction] = useState(null);
   const [adminActionName, setAdminActionName] = useState('');
-
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
   const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
   const [showGeneralInvoicesReport, setShowGeneralInvoicesReport] = useState(false);
@@ -200,10 +194,7 @@ export default function App() {
   const [showSingleInvoice, setShowSingleInvoice] = useState(null);
   const [showMovementReceipt, setShowMovementReceipt] = useState(null);
   const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
-
-  // Estados para Toma Física
   const [physicalCounts, setPhysicalCounts] = useState({});
-
   const [planDeCuentas, setPlanDeCuentas] = useState([]);
   const [asientosContables, setAsientosContables] = useState([]);
   const [ldSearch, setLdSearch] = useState('');
@@ -220,68 +211,47 @@ export default function App() {
   const [erExpanded, setErExpanded] = useState({ ingresos: false, costo_ventas: false, costos_op: false });
   const [varMesA, setVarMesA] = useState(new Date().toISOString().substring(0,7));
   const [varMesB, setVarMesB] = useState(prevMonth());
-
-  // Estados Plan de Cuentas
   const [showPDCImport, setShowPDCImport] = useState(false);
   const [pdcSearchTerm, setPdcSearchTerm] = useState('');
-  // Cuenta contable para ingresos (configurable)
   const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
   const [newUserForm, setNewUserForm] = useState(initialUserForm);
   const [editingUserId, setEditingUserId] = useState(null);
-
-  // Formularios de Ventas
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [showAddClientForm, setShowAddClientForm] = useState(false);
   const [editingClientId, setEditingClientId] = useState(null);
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
-
-  // Formularios Producción
   const [showWorkOrder, setShowWorkOrder] = useState(null);
   const [showPhaseReport, setShowPhaseReport] = useState(null);
   const [showFiniquito, setShowFiniquito] = useState(null);
   const [selectedPhaseReqId, setSelectedPhaseReqId] = useState(null);
   const [activePhaseTab, setActivePhaseTab] = useState('extrusion');
   const [phaseForm, setPhaseForm] = useState(initialPhaseForm);
-  // Segmentación de lotes de producción por OP
   const [activeLoteIndex, setActiveLoteIndex] = useState(0); // índice del lote activo dentro de la OP
   const [showLotePanel, setShowLotePanel] = useState(false);
   const [phaseIngId, setPhaseIngId] = useState('');
   const [phaseIngQty, setPhaseIngQty] = useState('');
-
-  // Simulador Inverso
   const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
-
-  // Formularios Inventario
   const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
   const [editingInvId, setEditingInvId] = useState(null);
   const [showInvItemForm, setShowInvItemForm] = useState(false); // collapsible form
   const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
-
-  // Formularios Costos Operativos
   const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
   const [opCosts, setOpCosts] = useState([]);
   const [costFilterCategory, setCostFilterCategory] = useState('TODAS');
   const [costFilterMonth, setCostFilterMonth] = useState('TODOS');
-
-  // Estados para Dashboard de Reportes
   const [reportPeriod, setReportPeriod] = useState('mensual');
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [showReportType, setShowReportType] = useState(null); 
-
-  // Estados para Categorías Dinámicas de Costos
   const [costCategories, setCostCategories] = useState(COSTO_CATEGORIES);
   const [showNewCategoryModal, setShowNewCategoryModal] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
-
-  // Estados para Órdenes de Compra
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [showPOModal, setShowPOModal] = useState(false);
-  // Estados Fórmulas / Recetas
   const [formulas, setFormulas] = useState([]);
   const [formulaFilter, setFormulaFilter] = useState('TODOS');
   const [formulaSearch, setFormulaSearch] = useState('');
@@ -299,12 +269,9 @@ export default function App() {
   const [expandedOPs, setExpandedOPs] = useState({}); // {opId: true/false}
   const [showOrdenTrabajo, setShowOrdenTrabajo] = useState(null);
   const [prodSubMode, setProdSubMode] = useState('fase');
-  // Estado para agregar items a PO manualmente
   const [poAddId, setPoAddId] = useState('');
   const [poAddQty, setPoAddQty] = useState('');
   const [poAddCost, setPoAddCost] = useState('');
-
-  // ── Producción de Bobinas ──
   const [bobinaProductions, setBobinaProductions] = useState([]);
   const [bobinaForm, setBobinaForm] = useState({ categoria:'', ancho:'', fuelles:'', largo:'', micras:'', kgProcesar:'', mermaPorc:'5', insumos:[], fecha:getTodayDate(), observaciones:'' });
   const [showBobinaPanel, setShowBobinaPanel] = useState(false);
@@ -313,19 +280,11 @@ export default function App() {
   const [activeBobinaId, setActiveBobinaId] = useState(null);
   const [showBobinaReporte, setShowBobinaReporte] = useState(null); // bobina object
   const [bobinaPhaseForm, setBobinaPhaseForm] = useState({ date:getTodayDate(), insumos:[], producedKg:'', mermaKg:'', mermaTroquelTransp:'', mermaTroquelPigm:'', mermaTorta:'', observaciones:'', operadorExt:'', zona1:'', zona2:'', zona3:'', zona4:'', zona5:'', zona6:'', cabezalA:'', cabezalB:'', motorExt:'', ventilador:'', jalador:'', tratado:'' });
-  // ── Stock mínimo (edición admin en Proyección MP) ──
   const [editingMinStock, setEditingMinStock] = useState(null); // {id, value}
-
-  // ── AUTO RESPALDO PROGRAMADO ────────────────────────────────────────────────
-  // Estados de respaldo declarados aquí para que el useEffect los pueda usar sin TDZ
   const [backupFreq, setBackupFreq] = useState(() => localStorage.getItem('backupFreq') || 'manual');
   const [backupLastRun, setBackupLastRun] = useState(() => localStorage.getItem('backupLastRun') || '');
   const [backupTime, setBackupTime] = useState(() => localStorage.getItem('backupTime') || '08:00');
-  
   const [editingInvoiceId, setEditingInvoiceId] = useState(null);
-
-  // ── CIERRE TOTAL DE OP → mueve a Terminados ──────────────────────────────
-  // ── ENTREGA PARCIAL: mover KG a Terminados sin cerrar la OP ─────────
   const [showPartialModal, setShowPartialModal] = useState(null); // req
   const [partialKg, setPartialKg] = useState('');
   const [partialMillares, setPartialMillares] = useState('');
@@ -334,6 +293,19 @@ export default function App() {
   const [enProcesoOpFilter, setEnProcesoOpFilter] = useState('TODAS');
   const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
 
+
+  const pushNotif = async (type, title, body, meta={}) => {
+    try {
+      const id = 'NOTIF-' + Date.now() + '-' + Math.random().toString(36).slice(2,7);
+      const db2 = getFirestore();
+      await setDoc(doc(db2, 'notifications', id), {
+        id, type, title, body, meta,
+        from: appUser?.name || 'Sistema',
+        timestamp: Date.now(), date: new Date().toISOString().split('T')[0],
+        read: false, readBy: []
+      });
+    } catch(e) { console.warn('pushNotif:', e); }
+  };
   useEffect(() => {
     if (sessionStorage.getItem('op007_cleanup_done') === 'done') return;
     if (!invMovements.length && !wipInventory.length) return; // esperar datos
@@ -452,7 +424,20 @@ export default function App() {
     run();
   }, [finishedGoodsInventory, inventory]);
 
+  // ── One-time data correction (runs once per session via sessionStorage flag) ──
+
+  // FG corrections are applied via the Edit button in Terminados view
+
+
+  // Estados para Modal de Clave Admin
+
+
+  // Estados para Toma Física
+
   const prevMonth = () => { const d = new Date(); d.setMonth(d.getMonth()-1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
+
+  // Estados Plan de Cuentas
+  // Cuenta contable para ingresos (configurable)
 
   // Formularios de Configuración
   const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: {
@@ -464,14 +449,36 @@ export default function App() {
     costos: false,       costos_operativos: false, costos_reportes: false,
     configuracion: false
   } };
+
+  // Formularios de Ventas
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '' };
+
+  // Formularios Producción
   const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '', mermaTroquelTransp: '', mermaTroquelPigm: '', mermaTorta: '', observaciones: '', pesoMillarReal: '', operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '', zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '', operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '', operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: '' };
+  // Segmentación de lotes de producción por OP
+
+  // Simulador Inverso
   const initialCalcInputs = { ingredientes: [{ id: Date.now() + 1, nombre: 'MP-0240', pct: 80, costo: 0.96 }, { id: Date.now() + 2, nombre: 'MP-RECICLADO', pct: 20, costo: 1.00 }], cantidadSolicitada: '', mermaGlobalPorc: 5, tipoProducto: 'BOLSAS', ancho: '', fuelles: '', largo: '', micras: '' };
+
+  // Formularios Inventario
   const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '' };
   const initialMovementForm = { date: getTodayDate(), itemId: '', type: 'ENTRADA', qty: '', cost: '', reference: '', notes: '', opAsignada: '' };
+
+  // Formularios Costos Operativos
   const initialOpCostForm = { date: getTodayDate(), category: 'Electricidad', description: '', amount: '', cuentaContable: '' };
+
+  // Estados para Dashboard de Reportes
+
+  // Estados para Categorías Dinámicas de Costos
+
+  // Estados para Órdenes de Compra
+  // Estados Fórmulas / Recetas
+  // Estado para agregar items a PO manualmente
+
+  // ── Producción de Bobinas ──
+  // ── Stock mínimo (edición admin en Proyección MP) ──
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     window.print();
@@ -723,11 +730,18 @@ export default function App() {
     const unsubPDC = onSnapshot(getColRef('planDeCuentas'), (s) => setPlanDeCuentas(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
     const unsubAST = onSnapshot(getColRef('asientosContables'), (s) => setAsientosContables(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     
+    
+    const unsubNotifs = onSnapshot(collection(db, 'notifications'), (s) => {
+      setNotifications(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0)).slice(0,100));
+    });
     return () => { 
       unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
-      unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST();
+      unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST(); unsubNotifs();
     };
   }, [fbUser]);
+
+  // ── AUTO RESPALDO PROGRAMADO ────────────────────────────────────────────────
+  // Estados de respaldo declarados aquí para que el useEffect los pueda usar sin TDZ
 
   useEffect(() => {
     if (backupFreq === 'manual') return;
@@ -1306,6 +1320,7 @@ export default function App() {
     }
     setNewInvoiceForm(f);
   };
+  
 
   const handleCreateInvoice = async (e) => {
     e.preventDefault(); 
@@ -1559,7 +1574,7 @@ export default function App() {
 
   const handleCreateRequirement = async (e) => {
     e.preventDefault(); const opId = editingReqId ? editingReqId : generateReqId();
-    try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', viewedByPlanta: false }, { merge: true }); if (!editingReqId) { await pushNotif('OP_NUEVA', '📋 Nueva OP', `Ventas generó la OP #${opId.replace('OP-','')} para ${newReqForm.client||'N/A'}.`, { opId, destino:'planta', targetTab:'produccion' }); } setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
+    try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', viewedByPlanta: false }, { merge: true }); if(!editingReqId){await pushNotif('OP_NUEVA','📋 Nueva OP',`Ventas generó la OP #${opId.replace('OP-','')} para ${newReqForm.client||'N/A'}.`,{opId,destino:'planta',targetTab:'produccion'});} setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
   const startEditReq = (r) => { setEditingReqId(r.id); setNewReqForm({ fecha: r.fecha||getTodayDate(), client: r.client||'', tipoProducto: r.tipoProducto||'BOLSAS', desc: r.desc||'', ancho: r.ancho||'', fuelles: r.fuelles||'', largo: r.largo||'', micras: r.micras||'', pesoMillar: r.tipoProducto==='TERMOENCOGIBLE'?'N/A':(r.pesoMillar||''), presentacion: r.presentacion||'MILLAR', cantidad: r.cantidad||'', requestedKg: r.requestedKg||'', color: r.color||'NATURAL', tratamiento: r.tratamiento||'LISO', vendedor: r.vendedor||'' }); setShowNewReqPanel(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteReq = (id) => {
@@ -1667,7 +1682,7 @@ export default function App() {
         const mailtoLink = `mailto:${emailTo}${emailCC?'?cc='+emailCC+'&':'?'}subject=${subject}&body=${body}`;
         window.open(mailtoLink, '_blank');
       }
-      await pushNotif('REQ_ALMACEN', '📦 Solicitud de Planta', `Materiales requeridos para la OP #${String(selectedPhaseReqId).replace('OP-','')}. Fase: ${activePhaseTab}.`, { opId: selectedPhaseReqId, destino:'almacen', targetTab:'inventario' });
+      await pushNotif('REQ_ALMACEN','📦 Solicitud de Planta',`Materiales requeridos para la OP #${String(selectedPhaseReqId).replace('OP-','')}. Fase: ${activePhaseTab}.`,{opId:selectedPhaseReqId,destino:'almacen',targetTab:'inventario'});
       setDialog({title: '✅ Solicitud Enviada', text: `Requisición enviada al Almacén.${emailTo?' Se abrió el cliente de correo para notificar a Procura.':''}`, type: 'alert'});
     } catch(e) { setDialog({title: 'Error', text: e.message, type: 'alert'}); }
   };
@@ -1793,9 +1808,7 @@ export default function App() {
           });
         }
 
-        setReqToApprove(null);
-        await pushNotif('REQ_APROBADA', '✅ Materiales Despachados', `Almacén aprobó los materiales para la OP #${String(req.opId).replace('OP-','')}.`, { opId: req.opId, destino:'planta', targetTab:'produccion' });
-        setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada, stock descontado y materiales asignados a WIP.', type:'alert'});
+        setReqToApprove(null); await pushNotif('REQ_APROBADA','✅ Materiales Despachados',`Almacén aprobó los materiales para la OP #${String(req.opId).replace('OP-','')}.`,{opId:req.opId,destino:'planta',targetTab:'produccion'}); setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada, stock descontado y materiales asignados a WIP.', type:'alert'});
     } catch(err) { setDialog({title:'Error', text:err.message, type:'alert'}); }
   };
 
@@ -1847,7 +1860,7 @@ export default function App() {
           timestamp: Date.now()
         };
         await setDoc(getDocRef('finishedGoodsInventory', finishedEntry.id), finishedEntry);
-      await pushNotif('OP_CERRADA', '🏁 OP Finalizada', `La OP #${reqId.replace('OP-','')} ha sido cerrada y enviada a Terminados.`, { opId: reqId, destino:'ventas', targetTab:'ventas' });
+      await pushNotif('OP_CERRADA','🏁 OP Finalizada',`La OP #${reqId.replace('OP-','')} ha sido cerrada.`,{opId:reqId,destino:'ventas',targetTab:'ventas'});
         // ── Kardex ENTRADA for FG produced ──
         try {
           const fgProdQty = finishedEntry.tipoProducto==='TERMOENCOGIBLE' ? parseNum(finishedEntry.kgProducidos||0) : parseNum(finishedEntry.millares||0);
@@ -7006,6 +7019,9 @@ export default function App() {
       </div>
     );
   };
+
+  // ── CIERRE TOTAL DE OP → mueve a Terminados ──────────────────────────────
+  // ── ENTREGA PARCIAL: mover KG a Terminados sin cerrar la OP ─────────
 
   // ── Reversar entrega parcial ──────────────────────────────────────────
   const handleReversePartialDelivery = async (req, ep) => {
@@ -12754,8 +12770,7 @@ export default function App() {
 
   const hasPerm = (module) => { if (!appUser) return false; if (appUser.role === 'Master') return true; const p = appUser.permissions || {}; return !!p[module]; };
 
-
-  // ── Lógica de Notificaciones ─────────────────────────────────────────────────
+  // ── Notification logic ──────────────────────────────────────────────────────
   const myNotifications = (notifications||[]).filter(n => {
     if (!n.meta?.destino) return true;
     const dest = String(n.meta.destino).toLowerCase();
@@ -12766,26 +12781,21 @@ export default function App() {
     if (rol === 'ventas' && dest === 'ventas') return true;
     return false;
   });
-  const unreadCount = myNotifications.filter(n => !(n.readBy || []).includes(appUser?.username)).length;
+  const unreadCount = myNotifications.filter(n=>!(n.readBy||[]).includes(appUser?.username)).length;
   const handleNotifClick = async (notif) => {
-    if (!appUser?.username || !(notif.readBy || []).includes(appUser.username)) {
-      await updateDoc(getDocRef('notifications', notif.id), { readBy: [...(notif.readBy || []), appUser.username] });
+    if (!appUser?.username || !(notif.readBy||[]).includes(appUser.username)) {
+      try { await updateDoc(doc(getFirestore(),'notifications',notif.id),{readBy:[...(notif.readBy||[]),appUser.username]}); } catch(e){}
     }
     setShowNotifPanel(false);
-    if (notif.meta?.targetTab) { clearAllReports(); setActiveTab(notif.meta.targetTab); }
+    if (notif.meta?.targetTab) { setActiveTab(notif.meta.targetTab); }
   };
   const markAllAsRead = async () => {
-    const batch = writeBatch(db);
-    myNotifications.forEach(n => {
-      if (!(n.readBy || []).includes(appUser?.username))
-        batch.update(getDocRef('notifications', n.id), { readBy: [...(n.readBy || []), appUser?.username] });
-    });
-    await batch.commit();
+    for(const n of myNotifications.filter(n=>!(n.readBy||[]).includes(appUser?.username))) {
+      try { await updateDoc(doc(getFirestore(),'notifications',n.id),{readBy:[...(n.readBy||[]),appUser?.username]}); } catch(e){}
+    }
   };
   const clearAllNotifs = async () => {
-    const batch = writeBatch(db);
-    myNotifications.forEach(n => batch.delete(getDocRef('notifications', n.id)));
-    await batch.commit();
+    for(const n of myNotifications) { try { await deleteDoc(doc(getFirestore(),'notifications',n.id)); } catch(e){} }
   };
 
   return (
@@ -12826,50 +12836,35 @@ export default function App() {
                  <div className="h-8 w-px bg-gray-800 mx-2 hidden sm:block"></div>
                  {hasPerm('configuracion') && <button onClick={() => {clearAllReports(); setActiveTab('configuracion');}} className="p-2.5 bg-gray-900 text-gray-400 rounded-xl hover:text-white hover:bg-gray-800 transition-all border border-gray-800"><Settings2 size={18}/></button>}
                  <div className="relative flex items-center mr-2">
-                   <button
-                     onClick={() => setShowNotifPanel(!showNotifPanel)}
-                     className={`relative p-2 text-gray-600 hover:text-orange-500 transition-colors ${unreadCount > 0 ? 'animate-pulse' : ''}`}
-                   >
-                     <Bell size={24} />
-                     {unreadCount > 0 && (
-                       <span className="absolute top-0 right-0 bg-red-500 text-white text-[9px] font-black rounded-full h-4 w-4 flex items-center justify-center border-2 border-white shadow-sm">
-                         {unreadCount > 9 ? '9+' : unreadCount}
-                       </span>
-                     )}
+                   <button onClick={()=>setShowNotifPanel(v=>!v)} className={`relative p-2 text-gray-600 hover:text-orange-500 transition-colors ${unreadCount>0?'animate-pulse':''}`}>
+                     <Bell size={22}/>
+                     {unreadCount>0&&<span className="absolute top-0 right-0 bg-red-500 text-white text-[9px] font-black rounded-full h-4 w-4 flex items-center justify-center border border-white">{unreadCount>9?'9+':unreadCount}</span>}
                    </button>
-                   {showNotifPanel && (
-                     <div className="absolute top-full mt-3 right-0 w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 z-50 overflow-hidden flex flex-col">
-                       <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                         <h3 className="font-black text-xs uppercase text-gray-800">Notificaciones</h3>
+                   {showNotifPanel&&(
+                     <div className="absolute top-full mt-2 right-0 w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 z-[9999] overflow-hidden flex flex-col">
+                       <div className="p-3 border-b bg-gray-50 flex justify-between items-center">
+                         <h3 className="font-black text-xs uppercase text-gray-800 flex items-center gap-2"><Bell size={12}/> Notificaciones</h3>
                          <div className="flex gap-3">
-                           <button onClick={markAllAsRead} className="text-[9px] font-bold text-blue-600 hover:text-blue-800">Todo Leído</button>
-                           <button onClick={clearAllNotifs} className="text-[9px] font-bold text-red-500 hover:text-red-700">Limpiar</button>
+                           <button onClick={markAllAsRead} className="text-[9px] font-bold text-blue-600 hover:underline">Todo Leído</button>
+                           <button onClick={clearAllNotifs} className="text-[9px] font-bold text-red-500 hover:underline">Limpiar</button>
                          </div>
                        </div>
                        <div className="max-h-96 overflow-y-auto">
-                         {myNotifications.length === 0 ? (
-                           <div className="p-8 text-center text-gray-400 text-xs font-bold uppercase tracking-widest">Nada por aquí</div>
-                         ) : myNotifications.map(n => {
-                           const isUnread = !(n.readBy || []).includes(appUser?.username);
-                           let stripeColor = 'bg-gray-400';
-                           if (n.type === 'OP_NUEVA') stripeColor = 'bg-blue-500';
-                           if (n.type === 'REQ_ALMACEN') stripeColor = 'bg-orange-500';
-                           if (n.type === 'REQ_APROBADA') stripeColor = 'bg-green-500';
-                           if (n.type === 'ENTREGA_PARCIAL') stripeColor = 'bg-teal-500';
-                           if (n.type === 'OP_CERRADA') stripeColor = 'bg-purple-500';
-                           return (
-                             <div key={n.id} onClick={() => handleNotifClick(n)} className={`p-4 border-b border-gray-50 flex gap-3 cursor-pointer hover:bg-gray-100 transition-colors relative ${isUnread ? 'bg-blue-50/20' : ''}`}>
-                               <div className={`w-1.5 absolute left-0 top-0 bottom-0 ${stripeColor}`}></div>
-                               <div className="flex-1 pl-2">
-                                 <div className="flex justify-between items-start mb-1">
-                                   <span className="text-[10px] font-black uppercase text-gray-800">{n.title}</span>
-                                 </div>
-                                 <p className="text-[11px] text-gray-600">{n.body}</p>
+                         {myNotifications.length===0?(<div className="p-8 text-center text-gray-400 text-xs font-bold uppercase">Nada por aquí</div>)
+                           :myNotifications.map(n=>{
+                             const isUnread=!(n.readBy||[]).includes(appUser?.username);
+                             const stripe={OP_NUEVA:'bg-blue-500',REQ_ALMACEN:'bg-orange-500',REQ_APROBADA:'bg-green-500',ENTREGA_PARCIAL:'bg-teal-500',OP_CERRADA:'bg-purple-500'}[n.type]||'bg-gray-400';
+                             return(<div key={n.id} onClick={()=>handleNotifClick(n)} className={`relative p-4 border-b border-gray-50 flex gap-2 cursor-pointer hover:bg-gray-100 transition-colors ${isUnread?'bg-blue-50/30':''}`}>
+                               <div className={`w-1 absolute left-0 top-0 bottom-0 ${stripe}`}/>
+                               <div className="flex-1 pl-2 min-w-0">
+                                 <p className="text-[10px] font-black uppercase text-gray-800 truncate">{n.title}</p>
+                                 <p className="text-[11px] text-gray-500 mt-0.5">{n.body}</p>
+                                 <p className="text-[9px] text-gray-400 mt-1">{n.date} · {n.from}</p>
                                </div>
-                               {isUnread && <div className="w-2 h-2 rounded-full bg-blue-500 mt-1 flex-shrink-0"></div>}
-                             </div>
-                           );
-                         })}
+                               {isUnread&&<div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0 mt-1"/>}
+                             </div>);
+                           })
+                         }
                        </div>
                      </div>
                    )}
