@@ -170,8 +170,47 @@ export default function App() {
   const [wipInventory, setWipInventory] = useState([]);
   const [finishedGoodsInventory, setFinishedGoodsInventory] = useState([]);
 
-  // One-time: set correct final stocks in Firebase (guarded by sessionStorage)
+  // ── One-time cleanup: eliminar registros huérfanos de OP-00007 ──────────────
   useEffect(() => {
+    if (sessionStorage.getItem('op007_cleanup_done') === 'done') return;
+    if (!invMovements.length && !wipInventory.length) return; // esperar datos
+    sessionStorage.setItem('op007_cleanup_done', 'done');
+    const OP_ID = 'OP-00007';
+    const stillExists = (requirements||[]).some(r => r.id === OP_ID);
+    if (stillExists) return; // solo limpiar si ya fue eliminada
+
+    const run = async () => {
+      try {
+        const ops = [];
+        // Movimientos de Kardex
+        (invMovements||[]).filter(m =>
+          m.opAsignada === OP_ID || m.docRef === OP_ID ||
+          String(m.notes||'').includes(OP_ID) || String(m.reference||'').includes(OP_ID)
+        ).forEach(m => ops.push(() => deleteDoc(getDocRef('inventoryMovements', m.id))));
+
+        // WIP
+        (wipInventory||[]).filter(w => w.opId === OP_ID)
+          .forEach(w => ops.push(() => deleteDoc(getDocRef('wipInventory', w.id))));
+
+        // FG
+        (finishedGoodsInventory||[]).filter(fg => fg.opId === OP_ID)
+          .forEach(fg => ops.push(() => deleteDoc(getDocRef('finishedGoodsInventory', fg.id))));
+
+        // Requisiciones
+        (invRequisitions||[]).filter(r => r.opId === OP_ID)
+          .forEach(r => ops.push(() => deleteDoc(getDocRef('inventoryRequisitions', r.id))));
+
+        // Asientos contables
+        (asientosContables||[]).filter(a =>
+          String(a.referencia||'').includes(OP_ID) || String(a.descripcion||'').includes(OP_ID)
+        ).forEach(a => ops.push(() => deleteDoc(getDocRef('asientosContables', a.id))));
+
+        for (const op of ops) { try { await op(); } catch(e){} }
+        if (ops.length > 0) console.log(`OP-00007 cleanup: ${ops.length} orphan records deleted`);
+      } catch(e) { console.error('OP-00007 cleanup error:', e); }
+    };
+    run();
+  }, [invMovements, wipInventory, finishedGoodsInventory, invRequisitions]);
     if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v9') === 'done') return;
     const run = async () => {
       // 1. Eliminar TODOS los documentos FG con (28+5+5) en producto/descripción (stock 0 o positivo)
@@ -433,74 +472,150 @@ export default function App() {
 
   const exportTomaFisicaExcel = () => {
     const today = getTodayDate();
+    const sectionHeader = (label, color='#2d3748') =>
+      `<tr><td colspan="7" style="background-color:${color};color:#fff;font-weight:bold;text-align:center;padding:6px;font-size:11px;">${label}</td></tr>`;
+
+    const itemRow = (id, desc, unit, stock, altBg='') => `<tr>
+      <td style="${altBg}">${id}</td>
+      <td style="${altBg}">${desc.toUpperCase()}</td>
+      <td style="text-align:center;${altBg}">${unit || 'KG'}</td>
+      <td style="text-align:right;${altBg}">${formatNum(stock)}</td>
+      <td style="background-color:#ffffcc;"></td>
+      <td style="background-color:#ffffcc;"></td>
+      <td></td>
+    </tr>`;
+
     let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
     <head><meta charset="utf-8">
     <style>
-      body { font-family: Arial, sans-serif; }
-      h2, h3 { text-align: center; margin: 10px 0; }
-      table { border-collapse: collapse; width: 100%; margin: 20px 0; }
-      th, td { border: 2px solid #000; padding: 8px; text-align: left; }
-      th { background-color: #f0f0f0; font-weight: bold; text-align: center; }
-      .header { text-align: center; margin-bottom: 20px; }
-      .signatures { margin-top: 40px; }
-      .sig-line { border-top: 2px solid #000; width: 200px; display: inline-block; margin: 0 20px; }
-    </style>
-    </head><body>`;
-    
-    html += `<div class="header">`;
-    html += `<h2>SERVICIOS JIRET G&B, C.A.</h2>`;
-    html += `<h3>RIF: J-412309374</h3>`;
-    html += `<h3>FORMATO DE TOMA FÍSICA DE INVENTARIO</h3>`;
-    html += `<p><strong>Fecha:</strong> ${today}</p>`;
-    html += `</div>`;
-    
-    html += `<table>`;
-    html += `<thead><tr>
-      <th style="width: 12%;">Código</th>
-      <th style="width: 30%;">Descripción</th>
-      <th style="width: 8%;">Unidad</th>
-      <th style="width: 12%;">Stock Sistema</th>
-      <th style="width: 12%;">Conteo Físico</th>
-      <th style="width: 12%;">Diferencia</th>
-      <th style="width: 14%;">Observaciones</th>
-    </tr></thead>`;
-    
-    html += `<tbody>`;
+      body{font-family:Arial,sans-serif;}
+      table{border-collapse:collapse;width:100%;margin:15px 0;}
+      th,td{border:1px solid #555;padding:6px 8px;font-size:10px;}
+      th{background:#e8e8e8;font-weight:bold;text-align:center;}
+    </style></head><body>
+    <div style="text-align:center;margin-bottom:16px;">
+      <h2 style="margin:4px 0;font-size:14px;">SERVICIOS JIRET G&amp;B, C.A.</h2>
+      <p style="margin:2px 0;font-size:11px;"><strong>RIF: J-412309374</strong></p>
+      <h3 style="margin:4px 0;font-size:13px;">FORMATO DE TOMA FÍSICA DE INVENTARIO</h3>
+      <p style="font-size:11px;"><strong>Fecha:</strong> ${today}</p>
+    </div>
+    <table>
+      <thead><tr>
+        <th style="width:11%">Código</th>
+        <th style="width:30%">Descripción</th>
+        <th style="width:7%">Unidad</th>
+        <th style="width:12%">Stock Sistema</th>
+        <th style="width:12%">Conteo Físico</th>
+        <th style="width:12%">Diferencia</th>
+        <th style="width:16%">Observaciones</th>
+      </tr></thead>
+      <tbody>`;
+
+    // ── INVENTARIO GENERAL agrupado por categoría ──
+    const catGroups = {};
     inventory.forEach(item => {
-      html += `<tr>
-        <td>${item.id}</td>
-        <td>${item.desc}</td>
-        <td style="text-align: center;">${item.unit || 'KG'}</td>
-        <td style="text-align: right;">${formatNum(item.stock)}</td>
-        <td style="background-color: #ffffcc;"></td>
-        <td style="background-color: #ffffcc;"></td>
-        <td></td>
-      </tr>`;
+      const cat = item.category || 'Otros';
+      if (!catGroups[cat]) catGroups[cat] = [];
+      catGroups[cat].push(item);
     });
-    html += `</tbody></table>`;
-    
-    html += `<div class="signatures">`;
-    html += `<p><strong>Realizado por:</strong> <span class="sig-line"></span> &nbsp;&nbsp;&nbsp; <strong>Supervisado por:</strong> <span class="sig-line"></span></p>`;
-    html += `<p><strong>Firma:</strong> <span class="sig-line"></span> &nbsp;&nbsp;&nbsp; <strong>Firma:</strong> <span class="sig-line"></span></p>`;
-    html += `<p><strong>Fecha:</strong> _______________ &nbsp;&nbsp;&nbsp; <strong>Fecha:</strong> _______________</p>`;
-    html += `</div>`;
-    
-    html += `</body></html>`;
-    
+
+    // Orden preferido de categorías
+    const catOrder = ['Materia Prima','Pigmentos','Semielaborados','Consumibles','Herramientas','Tintas','Químicos','Seguridad Industrial','Productos Terminados','Otros'];
+    const sortedCats = [...catOrder.filter(c=>catGroups[c]), ...Object.keys(catGroups).filter(c=>!catOrder.includes(c))];
+
+    const catColors = {
+      'Materia Prima':'#2d5016','Pigmentos':'#7b3f00','Semielaborados':'#3730a3',
+      'Consumibles':'#1e40af','Herramientas':'#92400e','Tintas':'#6d28d9',
+      'Químicos':'#065f46','Seguridad Industrial':'#7c3aed','Productos Terminados':'#065f46','Otros':'#374151'
+    };
+
+    for (const cat of sortedCats) {
+      if (cat === 'Productos Terminados') continue; // se añade en sección propia al final
+      const items = catGroups[cat] || [];
+      if (items.length === 0) continue;
+      html += sectionHeader(`📦 ${cat.toUpperCase()} (${items.length} artículo${items.length!==1?'s':''})`, catColors[cat]||'#374151');
+      items.forEach((item, i) => { html += itemRow(item.id, item.desc, item.unit, item.stock, i%2===1?'background-color:#f9f9f9;':''); });
+    }
+
+    // ── WIP ──
+    const activeOPs = (requirements||[]).filter(r=>r.status!=='COMPLETADO');
+    let wipRows = '';
+    activeOPs.forEach(req => {
+      const despachado = {};
+      (invRequisitions||[]).filter(r=>r.opId===req.id&&(r.status==='APROBADO'||r.status==='APROBADA'))
+        .forEach(r=>{(r.items||[]).forEach(it=>{if(it.id) despachado[it.id]=(despachado[it.id]||0)+parseNum(it.qty);});});
+      const consumido = {};
+      ['extrusion','impresion','sellado'].forEach(phase=>{
+        ((req.production||{})[phase]?.batches||[]).forEach(b=>{(b.insumos||[]).forEach(ing=>{if(ing.id) consumido[ing.id]=(consumido[ing.id]||0)+parseNum(ing.qty);});});
+      });
+      Object.keys(despachado).forEach(matId=>{
+        const restante=Math.max(0,despachado[matId]-(consumido[matId]||0));
+        if(restante>=0.01){
+          const inv=(inventory||[]).find(i=>i.id===matId);
+          const id=`WIP-${req.id}-${matId}`;
+          wipRows+=`<tr>
+            <td>${id}</td>
+            <td>${(inv?.desc||matId).toUpperCase()} (OP ${req.id} — ${req.client})</td>
+            <td style="text-align:center">${inv?.unit||'KG'}</td>
+            <td style="text-align:right">${formatNum(restante)}</td>
+            <td style="background-color:#d1fae5"></td>
+            <td style="background-color:#d1fae5"></td>
+            <td></td>
+          </tr>`;
+        }
+      });
+    });
+    if(wipRows){
+      html += sectionHeader('⚙ EN PROCESO (WIP) — REMANENTE DE MP','#1e40af');
+      html += wipRows;
+    }
+
+    // ── PRODUCTOS TERMINADOS ──
+    const termItems = [
+      ...(finishedGoodsInventory||[]).filter(fg=>parseNum(fg.kgProducidos)>0||parseNum(fg.millares)>0),
+    ];
+    if(termItems.length>0){
+      html += sectionHeader('✅ PRODUCTOS TERMINADOS','#065f46');
+      termItems.forEach((fg,i)=>{
+        const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+        const stock=esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
+        const unit=esTermo?'KG':'Millares';
+        const label=`${fg.categoria||fg.producto||'PT'} — ${fg.cliente||''}`;
+        html+=`<tr style="${i%2===1?'background-color:#f0fff4':''}">
+          <td>${fg.id}</td><td>${label.toUpperCase()}</td>
+          <td style="text-align:center">${unit}</td>
+          <td style="text-align:right">${formatNum(stock)}</td>
+          <td style="background-color:#ffffcc"></td>
+          <td style="background-color:#ffffcc"></td>
+          <td></td>
+        </tr>`;
+      });
+      // Inventory PT items
+      (catGroups['Productos Terminados']||[]).forEach((item,i)=>{
+        html+=`<tr style="${i%2===1?'background-color:#f0fff4':''}">
+          <td>${item.id}</td><td>${(item.desc||'').toUpperCase()}</td>
+          <td style="text-align:center">${item.unit||'KG'}</td>
+          <td style="text-align:right">${formatNum(item.stock)}</td>
+          <td style="background-color:#ffffcc"></td>
+          <td style="background-color:#ffffcc"></td>
+          <td></td>
+        </tr>`;
+      });
+    }
+
+    html += `</tbody></table>
+    <div style="margin-top:40px">
+      <p><strong>Realizado por:</strong> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <strong>Supervisado por:</strong></p>
+      <p><strong>Firma:</strong> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <strong>Firma:</strong></p>
+      <p><strong>Fecha:</strong> _______________ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <strong>Fecha:</strong> _______________</p>
+    </div></body></html>`;
+
     const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `Toma_Fisica_Inventario_${today}.xls`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    setDialog({
-      title: 'Exportación Exitosa',
-      text: 'El formato de toma física ha sido descargado. Puede imprimirlo y usarlo para el conteo físico.',
-      type: 'alert'
-    });
+    const a = document.createElement('a');
+    a.href = url; a.download = `Toma_Fisica_${today}.xls`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setDialog({ title: '✅ Exportación Exitosa', text: 'Formato de Toma Física descargado con todas las secciones: MP, Consumibles, WIP y Terminados.', type: 'alert' });
   };
 
   // ============================================================================
@@ -3749,18 +3864,14 @@ export default function App() {
               renderTFSection('🔄 Semielaborados / Bobinas (en proceso)', 'bg-indigo-600',
                 inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0), false, false)}
 
-            {/* 2. WIP — solo si hay remanentes */}
-            {wipItems.length > 0 &&
-              renderTFSection('⚙ En Proceso (WIP) — Remanente de MP', 'bg-blue-600', wipItems, false, false)}
+            {/* 2. WIP — siempre visible (muestra "Sin registros" si está vacío) */}
+            {renderTFSection('⚙ En Proceso (WIP) — Remanente de Materia Prima', 'bg-blue-600', wipItems, false, false)}
 
-            {/* 3. Productos Terminados — solo si hay FGs o PT en inventory */}
-            {(() => {
-              const termList = [
-                ...tfFGList.map(g=>({...g, id:`FG-TF-${g.key}`, unit:g.esTermo?'KG':'Millares'})),
-                ...inventory.filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0).map(i=>({...i, id:`INV-PT-${i.id}`, unit:i.unit||'KG', totalStock:i.stock, _isInvItem:true}))
-              ];
-              return termList.length > 0 ? renderTFSection('✅ Productos Terminados', 'bg-green-700', termList, false, true) : null;
-            })()}
+            {/* 3. Productos Terminados — siempre visible */}
+            {renderTFSection('✅ Productos Terminados', 'bg-green-700', [
+              ...tfFGList.map(g=>({...g, id:`FG-TF-${g.key}`, unit:g.esTermo?'KG':'Millares'})),
+              ...inventory.filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0).map(i=>({...i, id:`INV-PT-${i.id}`, unit:i.unit||'KG', totalStock:i.stock, _isInvItem:true}))
+            ], false, true)}
           </div>
         </div>
       );
