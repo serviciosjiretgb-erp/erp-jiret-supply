@@ -323,6 +323,10 @@ export default function App() {
 
   // Estados para Toma Física
   const [physicalCounts, setPhysicalCounts] = useState({});
+  const [tomasFisicas, setTomasFisicas] = useState([]);
+  const [showTomaHistorial, setShowTomaHistorial] = useState(false);
+  const [viewingTomaFisica, setViewingTomaFisica] = useState(null);
+  const [editingTomaFisica, setEditingTomaFisica] = useState(null);
 
   const [planDeCuentas, setPlanDeCuentas] = useState([]);
   const [asientosContables, setAsientosContables] = useState([]);
@@ -706,11 +710,13 @@ export default function App() {
     const unsubPDC = onSnapshot(getColRef('planDeCuentas'), (s) => setPlanDeCuentas(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
     const unsubAST = onSnapshot(getColRef('asientosContables'), (s) => setAsientosContables(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubNotifs = onSnapshot(getColRef('notifications'), (s) => setNotifications(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    const unsubTomas = onSnapshot(getColRef('tomasFisicas'), (s) => setTomasFisicas(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     
     return () => { 
       unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
       unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST();
       if (typeof unsubNotifs === 'function') unsubNotifs();
+      if (typeof unsubTomas === 'function') unsubTomas();
     };
   }, [fbUser]);
 
@@ -905,6 +911,55 @@ export default function App() {
           }
 
           await batch.commit();
+
+          // Guardar registro de toma física en Firebase
+          const tomaSnapshot = [];
+          for (const item of inventory) {
+            const val = physicalCounts[item.id];
+            if (val !== undefined && val !== '') {
+              const sysStock = parseNum(item.stock || 0);
+              const physCount = parseNum(val);
+              tomaSnapshot.push({ id: item.id, desc: item.desc, category: item.category || 'General', unit: item.unit || 'KG', sysStock, physCount, diff: physCount - sysStock, kind: 'inventory' });
+            }
+          }
+          for (const [pfId, val] of Object.entries(physicalCounts)) {
+            if (!pfId.startsWith('WIP-') || val === undefined || val === '') continue;
+            const parts = pfId.replace('WIP-','').split('-');
+            const matId = parts.slice(1).join('-');
+            const invItem = (inventory||[]).find(i => i.id === matId);
+            if (!invItem) continue;
+            const physCount = parseNum(val);
+            const ch = changes.find(c => c.wipId === pfId);
+            const sysStock = ch ? physCount - ch.diff : physCount;
+            tomaSnapshot.push({ id: pfId, desc: `${invItem.desc} (WIP: OP-${parts[0]})`, category: 'En Proceso (WIP)', unit: invItem.unit || 'KG', sysStock, physCount, diff: ch ? ch.diff : 0, kind: 'wip' });
+          }
+          for (const [pfId, val] of Object.entries(physicalCounts)) {
+            if (!pfId.startsWith('FG-TF-') || val === undefined || val === '') continue;
+            const grpKey = pfId.replace('FG-TF-','');
+            const fgDocs = (finishedGoodsInventory||[]).filter(fg => { const key = `${fg.categoria||fg.producto||''}__${fg.cliente||''}__${fg.tipoProducto}`; return key === grpKey && (parseNum(fg.kgProducidos)>0||parseNum(fg.millares)>0); });
+            if (!fgDocs.length) continue;
+            const esTermo = fgDocs[0].tipoProducto === 'TERMOENCOGIBLE';
+            const sysStock = fgDocs.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
+            const physCount = parseNum(val);
+            tomaSnapshot.push({ id: pfId, desc: formatFGLabel(fgDocs[0]), category: 'Productos Terminados', unit: esTermo?'KG':'Millares', sysStock, physCount, diff: physCount - sysStock, kind: 'fg' });
+          }
+          for (const [pfId, val] of Object.entries(physicalCounts)) {
+            if (!pfId.startsWith('INV-PT-') || val === undefined || val === '') continue;
+            const invItem = (inventory||[]).find(i => i.id === pfId.replace('INV-PT-',''));
+            if (!invItem) continue;
+            const physCount = parseNum(val);
+            const sysStock = parseNum(invItem.stock || 0);
+            tomaSnapshot.push({ id: invItem.id, desc: invItem.desc, category: 'Productos Terminados', unit: invItem.unit||'KG', sysStock, physCount, diff: physCount - sysStock, kind: 'inv-pt' });
+          }
+          try {
+            await addDoc(getColRef('tomasFisicas'), {
+              fecha: getTodayDate(), fechaHora: new Date().toLocaleString('es-VE'),
+              timestamp: Date.now(), realizadaPor: appUser?.name || 'Sistema',
+              username: appUser?.username || '', observaciones: '',
+              totalItems: tomaSnapshot.length, totalAjustes: count, items: tomaSnapshot
+            });
+          } catch(e) { console.warn('Error al guardar registro de toma física:', e); }
+
           setPhysicalCounts({});
           setDialog({title: '✅ Toma Física Procesada', text: `${count} ajuste(s) aplicados en Inventario General, WIP y Terminados.`, type: 'alert'});
         } catch(e) {
@@ -912,6 +967,48 @@ export default function App() {
         }
       }
     });
+  };
+
+  // ============================================================================
+  // HELPERS TOMA FÍSICA — Eliminar / Editar / Exportar registro guardado
+  // ============================================================================
+  const handleDeleteTomaFisica = (id) => {
+    requireAdminPassword(async () => {
+      setDialog({ title: '🗑 Eliminar Toma Física', text: 'Se eliminará el registro histórico. Los ajustes de inventario ya aplicados NO se revierten. ¿Confirmar?', type: 'confirm', onConfirm: async () => {
+        try { await deleteDoc(getDocRef('tomasFisicas', id)); setDialog({title:'Eliminado', text:'Registro de toma física eliminado.', type:'alert'}); } catch(e) { setDialog({title:'Error', text: e.message, type:'alert'}); }
+      }});
+    }, 'Eliminar Registro de Toma Física');
+  };
+
+  const handleSaveEditTomaFisica = async () => {
+    if (!editingTomaFisica) return;
+    try {
+      await updateDoc(getDocRef('tomasFisicas', editingTomaFisica.id), { realizadaPor: editingTomaFisica.realizadaPor, observaciones: editingTomaFisica.observaciones, fecha: editingTomaFisica.fecha });
+      setEditingTomaFisica(null);
+      setDialog({title:'Guardado', text:'Registro actualizado correctamente.', type:'alert'});
+    } catch(e) { setDialog({title:'Error', text: e.message, type:'alert'}); }
+  };
+
+  const exportTomaFisicaExcelByRecord = (toma) => {
+    const catColors = {'Materia Prima':'#2d5016','Pigmentos':'#7b3f00','Semielaborados':'#3730a3','Consumibles':'#1e40af','Herramientas':'#92400e','Tintas':'#6d28d9','Quimicos':'#065f46','Seguridad Industrial':'#7c3aed','Productos Terminados':'#065f46','En Proceso (WIP)':'#1e40af','General':'#374151'};
+    const grouped = {};
+    (toma.items||[]).forEach(it => { const cat = it.category||'General'; if(!grouped[cat]) grouped[cat]=[]; grouped[cat].push(it); });
+    let rows = '';
+    Object.keys(grouped).forEach(cat => {
+      const color = catColors[cat]||'#374151';
+      rows += `<tr><td colspan="6" style="background:${color};color:#fff;font-weight:bold;padding:6px;font-size:11px;">📦 ${cat.toUpperCase()}</td></tr>`;
+      grouped[cat].forEach((it,i) => {
+        const bg = i%2===1?'background:#f9f9f9':'';
+        const diffColor = it.diff>0?'color:#166534':it.diff<0?'color:#991b1b':'color:#6b7280';
+        rows += `<tr><td style="${bg}">${it.id}</td><td style="${bg}">${(it.desc||'').toUpperCase()}</td><td style="text-align:center;${bg}">${it.unit||'KG'}</td><td style="text-align:right;${bg}">${formatNum(it.sysStock)}</td><td style="text-align:right;${bg}">${formatNum(it.physCount)}</td><td style="text-align:right;font-weight:bold;${diffColor};${bg}">${it.diff>0?'+':''}${formatNum(it.diff)}</td></tr>`;
+      });
+    });
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial}table{border-collapse:collapse;width:100%}th,td{border:1px solid #555;padding:5px 8px;font-size:10px}th{background:#e8e8e8;font-weight:bold;text-align:center}</style></head><body>
+    <div style="text-align:center;margin-bottom:16px"><h2 style="margin:2px 0;font-size:14px">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px"><strong>RIF: J-412309374</strong> | Pto. La Cruz, Anzoategui</p><h3 style="margin:4px 0;font-size:13px">REPORTE DE TOMA FISICA DE INVENTARIO</h3><p style="font-size:11px"><strong>Fecha:</strong> ${toma.fecha} | <strong>Realizado por:</strong> ${toma.realizadaPor} | <strong>Ref.:</strong> TF-${String(toma.timestamp).slice(-6)}</p>${toma.observaciones?`<p style="font-size:10px;color:#555">Obs: ${toma.observaciones}</p>`:''}</div>
+    <table><thead><tr><th style="width:12%">Codigo</th><th style="width:32%">Descripcion</th><th style="width:8%">Unidad</th><th style="width:13%">Stock Sistema</th><th style="width:13%">Conteo Fisico</th><th style="width:13%">Diferencia</th></tr></thead><tbody>${rows}</tbody></table>
+    <div style="margin-top:40px;font-size:11px"><p><strong>Total items contados:</strong> ${toma.totalItems} | <strong>Ajustes aplicados:</strong> ${toma.totalAjustes}</p><br/><table style="width:100%;border:none"><tr><td style="border:none;width:50%"><strong>Realizado por:</strong> ${toma.realizadaPor}<br/><br/>Firma: _______________________<br/>Fecha: ${toma.fecha}</td><td style="border:none;width:50%"><strong>Supervisado por:</strong> _______________________<br/><br/>Firma: _______________________<br/>Fecha: _______________</td></tr></table></div></body></html>`;
+    const blob = new Blob([html], {type:'application/vnd.ms-excel'});
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download=`TF_${toma.fecha}_${String(toma.timestamp).slice(-6)}.xls`; document.body.appendChild(a); a.click(); document.body.removeChild(a);
   };
 
   // ============================================================================
@@ -3761,13 +3858,10 @@ export default function App() {
       const wipItems = [];
       const activeOPsWip = (requirements||[]).filter(r => r.status !== 'COMPLETADO');
       activeOPsWip.forEach(req => {
-        // Materiales despachados: requisiciones aprobadas para esta OP
         const despachado = {};
         (invRequisitions||[])
           .filter(r => r.opId === req.id && (r.status === 'APROBADO' || r.status === 'APROBADA'))
           .forEach(r => { (r.items||[]).forEach(it => { if(it.id){ despachado[it.id] = (despachado[it.id]||0) + parseNum(it.qty); } }); });
-
-        // Materiales consumidos en todos los lotes guardados
         const consumido = {};
         const prod = req.production || {};
         ['extrusion','impresion','sellado'].forEach(phase => {
@@ -3775,19 +3869,11 @@ export default function App() {
             (b.insumos||[]).forEach(ing => { if(ing.id){ consumido[ing.id] = (consumido[ing.id]||0) + parseNum(ing.qty); } });
           });
         });
-
-        // Remanente = despachado - consumido (solo positivos)
         Object.keys(despachado).forEach(matId => {
           const restante = Math.max(0, despachado[matId] - (consumido[matId]||0));
           if (restante >= 0.01) {
             const invItem = (inventory||[]).find(i => i.id === matId);
-            wipItems.push({
-              id: `WIP-${req.id}-${matId}`,
-              desc: `${invItem?.desc || matId}`,
-              subtit: `OP ${req.id} — ${req.client} | Desp: ${formatNum(despachado[matId])} / Consumido: ${formatNum(consumido[matId]||0)}`,
-              cliente: req.client, opId: req.id, matId,
-              kgEn: restante, unit: invItem?.unit || 'KG', isWip: true
-            });
+            wipItems.push({ id: `WIP-${req.id}-${matId}`, desc: `${invItem?.desc || matId}`, subtit: `OP ${req.id} — ${req.client} | Desp: ${formatNum(despachado[matId])} / Consumido: ${formatNum(consumido[matId]||0)}`, cliente: req.client, opId: req.id, matId, kgEn: restante, unit: invItem?.unit || 'KG', isWip: true });
           }
         });
       });
@@ -3815,11 +3901,7 @@ export default function App() {
                   const physVal = physicalCounts[pfId];
                   const physNum = physVal !== undefined && physVal !== '' ? parseNum(physVal) : null;
                   const diff = physNum !== null ? physNum - sysStock : null;
-                  const desc = isFG
-                    ? formatFGLabel(item)
-                    : item.isWip
-                      ? item.desc
-                      : item.desc;
+                  const desc = isFG ? formatFGLabel(item) : item.isWip ? item.desc : item.desc;
                   return (
                     <tr key={pfId} className="hover:bg-gray-50">
                       <td className="py-2 px-4 border-r">
@@ -3847,6 +3929,85 @@ export default function App() {
         </div>
       );
 
+      // ── HISTORIAL VIEW ──
+      if (showTomaHistorial) {
+        return (
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
+            {/* Header */}
+            <div className="px-8 py-6 border-b border-gray-200 bg-orange-50 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-black text-orange-800 uppercase flex items-center gap-3 tracking-tighter">
+                  <History className="text-orange-600" size={24}/> Historial de Tomas Físicas
+                </h2>
+                <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase tracking-widest">{tomasFisicas.length} registro(s) almacenados</p>
+              </div>
+              <button onClick={()=>setShowTomaHistorial(false)} className="bg-orange-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 flex items-center gap-2"><ClipboardEdit size={14}/> Nueva Toma</button>
+            </div>
+
+            <div className="p-6">
+              {tomasFisicas.length === 0 ? (
+                <div className="text-center py-16 text-gray-400">
+                  <ClipboardEdit size={48} className="mx-auto mb-4 opacity-30"/>
+                  <p className="font-black uppercase text-sm">Sin registros de toma física</p>
+                  <p className="text-xs mt-1">Procesa tu primera toma física para verla aquí.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {tomasFisicas.map((toma, idx) => {
+                    const ajustes = (toma.items||[]).filter(i => Math.abs(i.diff||0) > 0.001).length;
+                    const positivos = (toma.items||[]).filter(i => (i.diff||0) > 0.001).length;
+                    const negativos = (toma.items||[]).filter(i => (i.diff||0) < -0.001).length;
+                    return (
+                      <div key={toma.id} className="border border-gray-200 rounded-2xl overflow-hidden hover:shadow-md transition-shadow">
+                        <div className="flex items-center gap-4 p-4 bg-gray-50 border-b border-gray-100">
+                          <div className="bg-orange-100 text-orange-700 rounded-xl px-3 py-2 font-black text-[10px] uppercase text-center min-w-[60px]">
+                            <div className="text-lg leading-none">{String(tomasFisicas.length - idx).padStart(2,'0')}</div>
+                            <div>TF</div>
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <span className="font-black text-sm text-gray-900">{toma.fecha}</span>
+                              <span className="text-[9px] font-bold text-gray-400 uppercase">{toma.fechaHora}</span>
+                              <span className="bg-blue-100 text-blue-700 text-[9px] font-black px-2 py-0.5 rounded-full uppercase">Ref: TF-{String(toma.timestamp).slice(-6)}</span>
+                            </div>
+                            <div className="flex items-center gap-3 mt-1 flex-wrap">
+                              <span className="text-[10px] text-gray-600 font-bold">👤 {toma.realizadaPor}</span>
+                              <span className="text-[10px] text-gray-500">{toma.totalItems||0} ítems contados</span>
+                              {positivos > 0 && <span className="text-[9px] font-black text-green-600">▲ {positivos} positivo(s)</span>}
+                              {negativos > 0 && <span className="text-[9px] font-black text-red-600">▼ {negativos} negativo(s)</span>}
+                              {ajustes === 0 && <span className="text-[9px] font-black text-gray-400">Sin diferencias</span>}
+                              {toma.observaciones && <span className="text-[9px] text-gray-400 italic">"{toma.observaciones}"</span>}
+                            </div>
+                          </div>
+                          <div className="flex gap-2 flex-shrink-0">
+                            <button onClick={()=>setViewingTomaFisica(toma)} className="bg-purple-600 text-white px-3 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-purple-700 flex items-center gap-1.5"><Printer size={12}/> PDF</button>
+                            <button onClick={()=>exportTomaFisicaExcelByRecord(toma)} className="bg-green-700 text-white px-3 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-green-800 flex items-center gap-1.5"><Download size={12}/> Excel</button>
+                            <button onClick={()=>setEditingTomaFisica({...toma})} className="bg-blue-600 text-white px-3 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-blue-700 flex items-center gap-1.5"><Edit size={12}/> Editar</button>
+                            <button onClick={()=>handleDeleteTomaFisica(toma.id)} className="bg-red-100 text-red-600 px-3 py-2 rounded-xl text-[9px] font-black uppercase hover:bg-red-200 flex items-center gap-1.5"><Trash2 size={12}/> Eliminar</button>
+                          </div>
+                        </div>
+                        {/* Mini resumen de ítems con diferencia */}
+                        {ajustes > 0 && (
+                          <div className="px-4 py-2 flex flex-wrap gap-2">
+                            {(toma.items||[]).filter(i=>Math.abs(i.diff||0)>0.001).slice(0,6).map((it,j)=>(
+                              <span key={j} className={`text-[9px] font-black px-2 py-1 rounded-lg ${it.diff>0?'bg-green-50 text-green-700':'bg-red-50 text-red-700'}`}>
+                                {it.id}: {it.diff>0?'+':''}{formatNum(it.diff)} {it.unit}
+                              </span>
+                            ))}
+                            {ajustes > 6 && <span className="text-[9px] font-bold text-gray-400">+{ajustes-6} más...</span>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      // ── NUEVA TOMA VIEW (default) ──
       return (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
           <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-orange-50 flex justify-between items-center no-pdf">
@@ -3857,8 +4018,9 @@ export default function App() {
               <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase tracking-widest">Todos los inventarios — Ajuste Masivo Directo al Sistema</p>
             </div>
             <div className="flex gap-2">
-              <button onClick={exportTomaFisicaExcel} className="bg-white border-2 border-gray-200 text-gray-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 flex items-center gap-2"><Download size={16}/> EXCEL</button>
-              <button onClick={() => requireAdminPassword(handleProcessTomaFisica, 'Procesar Ajuste de Toma Fisica')} className="bg-orange-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 flex items-center gap-2"><CheckCircle2 size={16}/> PROCESAR AJUSTES</button>
+              <button onClick={()=>setShowTomaHistorial(true)} className="bg-white border-2 border-orange-200 text-orange-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-orange-50 flex items-center gap-2"><History size={16}/> Historial ({tomasFisicas.length})</button>
+              <button onClick={exportTomaFisicaExcel} className="bg-white border-2 border-gray-200 text-gray-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 flex items-center gap-2"><Download size={16}/> Excel Formato</button>
+              <button onClick={() => requireAdminPassword(handleProcessTomaFisica, 'Procesar Ajuste de Toma Fisica')} className="bg-orange-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 flex items-center gap-2"><CheckCircle2 size={16}/> Procesar Ajustes</button>
             </div>
           </div>
 
@@ -3868,19 +4030,12 @@ export default function App() {
               Ingresa el conteo físico real. El sistema calculará la diferencia y generará ajustes automáticos en el Kardex al procesar.
             </div>
 
-            {/* 1. Inventario General — siempre visible */}
             {renderTFSection('📦 Inventario General (Materia Prima / Consumibles)', 'bg-gray-700',
               inventory.filter(i=>i.category!=='Productos Terminados'&&i.category!=='Semielaborados'), false, false)}
-
-            {/* 1b. Semielaborados — solo si hay stock > 0 */}
             {inventory.some(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0) &&
               renderTFSection('🔄 Semielaborados / Bobinas (en proceso)', 'bg-indigo-600',
                 inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0), false, false)}
-
-            {/* 2. WIP — siempre visible (muestra "Sin registros" si está vacío) */}
             {renderTFSection('⚙ En Proceso (WIP) — Remanente de Materia Prima', 'bg-blue-600', wipItems, false, false)}
-
-            {/* 3. Productos Terminados — siempre visible */}
             {renderTFSection('✅ Productos Terminados', 'bg-green-700', [
               ...tfFGList.map(g=>({...g, id:`FG-TF-${g.key}`, unit:g.esTermo?'KG':'Millares'})),
               ...inventory.filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0).map(i=>({...i, id:`INV-PT-${i.id}`, unit:i.unit||'KG', totalStock:i.stock, _isInvItem:true}))
@@ -13131,6 +13286,183 @@ export default function App() {
             </div>
           );
         })()}
+
+        {/* ============================================================ */}
+        {/* MODAL: VER / IMPRIMIR TOMA FÍSICA PDF CON MEMBRETE          */}
+        {/* ============================================================ */}
+        {viewingTomaFisica && (() => {
+          const toma = viewingTomaFisica;
+          const grouped = {};
+          (toma.items||[]).forEach(it => { const cat = it.category||'General'; if(!grouped[cat]) grouped[cat]=[]; grouped[cat].push(it); });
+          const catColorMap = {'Materia Prima':'#2d5016','Pigmentos':'#7b3f00','Semielaborados':'#3730a3','Consumibles':'#1e40af','Herramientas':'#92400e','Tintas':'#6d28d9','En Proceso (WIP)':'#1e40af','Productos Terminados':'#065f46','General':'#374151'};
+          return (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-start justify-center z-[99990] p-4 overflow-y-auto print:hidden">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-6">
+                {/* Toolbar */}
+                <div className="flex items-center justify-between px-6 py-4 bg-gray-50 border-b rounded-t-2xl print:hidden">
+                  <h3 className="font-black text-sm uppercase text-gray-800 flex items-center gap-2"><Printer size={16}/> Reporte de Toma Física — TF-{String(toma.timestamp).slice(-6)}</h3>
+                  <div className="flex gap-2">
+                    <button onClick={()=>exportTomaFisicaExcelByRecord(toma)} className="bg-green-700 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-green-800 flex items-center gap-1.5"><Download size={13}/> Excel</button>
+                    <button onClick={()=>window.print()} className="bg-purple-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 flex items-center gap-1.5"><Printer size={13}/> Imprimir / PDF</button>
+                    <button onClick={()=>setViewingTomaFisica(null)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 flex items-center gap-1.5"><X size={13}/> Cerrar</button>
+                  </div>
+                </div>
+
+                {/* Printable content */}
+                <div id="tf-pdf-print" className="p-8">
+                  {/* MEMBRETE */}
+                  <div className="border-b-4 border-orange-500 pb-4 mb-6">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h1 className="text-2xl font-black text-gray-900 uppercase tracking-tight">SERVICIOS JIRET G&B, C.A.</h1>
+                        <p className="text-sm font-bold text-gray-600 mt-0.5">RIF: J-412309374 &nbsp;|&nbsp; Puerto La Cruz, Anzoátegui</p>
+                        <p className="text-xs text-gray-500">Fabricación y Maquila de Empaques Plásticos</p>
+                      </div>
+                      <div className="text-right">
+                        <div className="bg-orange-500 text-white px-4 py-2 rounded-xl">
+                          <p className="text-[9px] font-bold uppercase">Ref. Documento</p>
+                          <p className="text-lg font-black">TF-{String(toma.timestamp).slice(-6)}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-4 bg-gray-100 rounded-xl px-5 py-3 flex flex-wrap gap-6">
+                      <div><p className="text-[9px] font-bold text-gray-500 uppercase">Tipo de Documento</p><p className="font-black text-sm text-gray-900">TOMA FÍSICA DE INVENTARIO</p></div>
+                      <div><p className="text-[9px] font-bold text-gray-500 uppercase">Fecha</p><p className="font-black text-sm text-gray-900">{toma.fecha}</p></div>
+                      <div><p className="text-[9px] font-bold text-gray-500 uppercase">Hora</p><p className="font-black text-sm text-gray-900">{toma.fechaHora}</p></div>
+                      <div><p className="text-[9px] font-bold text-gray-500 uppercase">Realizado por</p><p className="font-black text-sm text-gray-900">{toma.realizadaPor}</p></div>
+                      <div><p className="text-[9px] font-bold text-gray-500 uppercase">Ítems Contados</p><p className="font-black text-sm text-orange-600">{toma.totalItems||0}</p></div>
+                      <div><p className="text-[9px] font-bold text-gray-500 uppercase">Ajustes Aplicados</p><p className="font-black text-sm text-red-600">{toma.totalAjustes||0}</p></div>
+                    </div>
+                    {toma.observaciones && <p className="mt-3 text-xs text-gray-600 italic bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2"><strong>Observaciones:</strong> {toma.observaciones}</p>}
+                  </div>
+
+                  {/* RESUMEN EJECUTIVO */}
+                  {(() => {
+                    const positivos = (toma.items||[]).filter(i=>(i.diff||0)>0.001);
+                    const negativos = (toma.items||[]).filter(i=>(i.diff||0)<-0.001);
+                    const cero = (toma.items||[]).filter(i=>Math.abs(i.diff||0)<=0.001);
+                    return (
+                      <div className="grid grid-cols-3 gap-3 mb-6">
+                        <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+                          <p className="text-xs font-black text-green-700 uppercase">▲ Positivos</p>
+                          <p className="text-2xl font-black text-green-600">{positivos.length}</p>
+                          <p className="text-[9px] text-green-600">Exceso de stock</p>
+                        </div>
+                        <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+                          <p className="text-xs font-black text-red-700 uppercase">▼ Negativos</p>
+                          <p className="text-2xl font-black text-red-600">{negativos.length}</p>
+                          <p className="text-[9px] text-red-600">Faltante de stock</p>
+                        </div>
+                        <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center">
+                          <p className="text-xs font-black text-gray-700 uppercase">= Sin Diferencia</p>
+                          <p className="text-2xl font-black text-gray-600">{cero.length}</p>
+                          <p className="text-[9px] text-gray-500">Conteo exacto</p>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* TABLAS POR SECCIÓN */}
+                  {Object.keys(grouped).map(cat => {
+                    const catItems = grouped[cat];
+                    const headerColor = catColorMap[cat]||'#374151';
+                    return (
+                      <div key={cat} className="mb-5">
+                        <div className="text-white text-[10px] font-black uppercase px-4 py-2 rounded-t-xl tracking-widest" style={{backgroundColor: headerColor}}>
+                          📦 {cat} — {catItems.length} ítem(s)
+                        </div>
+                        <table className="w-full text-left border border-gray-200 rounded-b-xl overflow-hidden text-xs">
+                          <thead className="bg-gray-50">
+                            <tr className="text-[9px] font-black uppercase text-gray-500 tracking-widest">
+                              <th className="py-2 px-3 border-r border-b border-gray-200">Código</th>
+                              <th className="py-2 px-3 border-r border-b border-gray-200">Descripción</th>
+                              <th className="py-2 px-3 border-r border-b border-gray-200 text-center">Unidad</th>
+                              <th className="py-2 px-3 border-r border-b border-gray-200 text-center">Stock Sistema</th>
+                              <th className="py-2 px-3 border-r border-b border-gray-200 text-center bg-orange-50">Conteo Físico</th>
+                              <th className="py-2 px-3 border-b border-gray-200 text-center">Diferencia</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {catItems.map((it,idx) => (
+                              <tr key={idx} className={idx%2===1?'bg-gray-50/50':''}>
+                                <td className="py-1.5 px-3 border-r border-gray-100 font-bold text-[10px] text-gray-600">{it.id}</td>
+                                <td className="py-1.5 px-3 border-r border-gray-100 font-black text-[10px] text-gray-900 uppercase">{it.desc}</td>
+                                <td className="py-1.5 px-3 border-r border-gray-100 text-center font-bold text-[10px] text-gray-500">{it.unit||'KG'}</td>
+                                <td className="py-1.5 px-3 border-r border-gray-100 text-center font-black text-[10px] text-blue-700">{formatNum(it.sysStock)}</td>
+                                <td className="py-1.5 px-3 border-r border-gray-100 text-center font-black text-[10px] text-gray-900 bg-orange-50/30">{formatNum(it.physCount)}</td>
+                                <td className={`py-1.5 px-3 text-center font-black text-[11px] ${(it.diff||0)>0.001?'text-green-600':(it.diff||0)<-0.001?'text-red-600':'text-gray-400'}`}>
+                                  {(it.diff||0)>0.001?'+':''}{formatNum(it.diff||0)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })}
+
+                  {/* FIRMAS */}
+                  <div className="mt-8 pt-6 border-t-2 border-gray-200 grid grid-cols-2 gap-12">
+                    <div className="text-center">
+                      <div className="border-b-2 border-gray-900 mb-2 pb-8"></div>
+                      <p className="font-black text-xs uppercase text-gray-800">{toma.realizadaPor}</p>
+                      <p className="text-[9px] text-gray-500 font-bold uppercase">Responsable del Conteo</p>
+                      <p className="text-[9px] text-gray-400 mt-1">Fecha: {toma.fecha}</p>
+                    </div>
+                    <div className="text-center">
+                      <div className="border-b-2 border-gray-900 mb-2 pb-8"></div>
+                      <p className="font-black text-xs uppercase text-gray-800">_______________________</p>
+                      <p className="text-[9px] text-gray-500 font-bold uppercase">Supervisor / Gerencia</p>
+                      <p className="text-[9px] text-gray-400 mt-1">Fecha: _______________</p>
+                    </div>
+                  </div>
+                  <p className="text-center text-[8px] text-gray-400 mt-6 font-bold uppercase tracking-widest">Documento generado por ERP G&B — SERVICIOS JIRET G&B, C.A. — RIF: J-412309374</p>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ============================================================ */}
+        {/* MODAL: EDITAR REGISTRO DE TOMA FÍSICA                        */}
+        {/* ============================================================ */}
+        {editingTomaFisica && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[99991] p-4 print:hidden">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border-t-4 border-blue-500">
+              <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+                <h3 className="font-black text-sm uppercase text-gray-900 flex items-center gap-2"><Edit size={16} className="text-blue-600"/> Editar Toma Física</h3>
+                <button onClick={()=>setEditingTomaFisica(null)} className="p-1.5 rounded-lg hover:bg-gray-100"><X size={16}/></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-700 font-bold">
+                  Ref: TF-{String(editingTomaFisica.timestamp).slice(-6)} &nbsp;|&nbsp; Procesada: {editingTomaFisica.fechaHora}
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1.5">Fecha del Conteo</label>
+                  <input type="date" value={editingTomaFisica.fecha} onChange={e=>setEditingTomaFisica({...editingTomaFisica, fecha:e.target.value})}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-sm outline-none focus:border-blue-500"/>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1.5">Realizado por</label>
+                  <input type="text" value={editingTomaFisica.realizadaPor} onChange={e=>setEditingTomaFisica({...editingTomaFisica, realizadaPor:e.target.value})}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-sm outline-none focus:border-blue-500" placeholder="Nombre del responsable"/>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1.5">Observaciones</label>
+                  <textarea value={editingTomaFisica.observaciones||''} onChange={e=>setEditingTomaFisica({...editingTomaFisica, observaciones:e.target.value})}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-sm outline-none focus:border-blue-500 resize-none" rows={3} placeholder="Notas adicionales sobre este conteo..."/>
+                </div>
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-[10px] text-yellow-800 font-bold">
+                  <AlertTriangle size={12} className="inline mr-1"/> Los conteos e inventarios ya aplicados NO se modifican al editar este registro.
+                </div>
+              </div>
+              <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
+                <button onClick={()=>setEditingTomaFisica(null)} className="flex-1 bg-gray-100 text-gray-700 font-black py-3 rounded-xl uppercase text-xs hover:bg-gray-200">Cancelar</button>
+                <button onClick={handleSaveEditTomaFisica} className="flex-1 bg-blue-600 text-white font-black py-3 rounded-xl uppercase text-xs shadow-lg hover:bg-blue-700 flex items-center justify-center gap-2"><Save size={14}/> Guardar Cambios</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {showAdminModal && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[99999] p-4 print:hidden">
