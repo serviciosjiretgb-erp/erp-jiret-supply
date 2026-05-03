@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, Factory, TrendingUp, TrendingDown, AlertTriangle, 
   ClipboardList, PlayCircle, History, FileText, Settings2, Trash2, 
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
-  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail
+  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing
 } from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
@@ -140,6 +140,9 @@ export default function App() {
   const [systemUsers, setSystemUsers] = useState([]); 
   const [settings, setSettings] = useState({}); 
   
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
+
   const [loginData, setLoginData] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
 
@@ -702,10 +705,12 @@ export default function App() {
     
     const unsubPDC = onSnapshot(getColRef('planDeCuentas'), (s) => setPlanDeCuentas(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
     const unsubAST = onSnapshot(getColRef('asientosContables'), (s) => setAsientosContables(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    const unsubNotifs = onSnapshot(getColRef('notifications'), (s) => setNotifications(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     
     return () => { 
       unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
       unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST();
+      if (typeof unsubNotifs === 'function') unsubNotifs();
     };
   }, [fbUser]);
 
@@ -1547,7 +1552,9 @@ export default function App() {
 
   const handleCreateRequirement = async (e) => {
     e.preventDefault(); const opId = editingReqId ? editingReqId : generateReqId();
-    try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', viewedByPlanta: false }, { merge: true }); setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null); setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
+    try { await setDoc(getDocRef('requirements', opId), { ...newReqForm, id: opId, timestamp: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.timestamp : Date.now(), status: editingReqId ? (requirements || []).find(r=>r.id===editingReqId)?.status : 'EN PROCESO', viewedByPlanta: false }, { merge: true }); setShowNewReqPanel(false); setNewReqForm(initialReqForm); setEditingReqId(null);
+      await pushNotif('OP_NUEVA', '📋 Nueva OP', `Ventas generó la OP #${opId.replace('OP-','')} para ${newReqForm.client||'N/A'}.`, { opId, destino:'planta', targetTab:'produccion' });
+      setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
   const startEditReq = (r) => { setEditingReqId(r.id); setNewReqForm({ fecha: r.fecha||getTodayDate(), client: r.client||'', tipoProducto: r.tipoProducto||'BOLSAS', desc: r.desc||'', ancho: r.ancho||'', fuelles: r.fuelles||'', largo: r.largo||'', micras: r.micras||'', pesoMillar: r.tipoProducto==='TERMOENCOGIBLE'?'N/A':(r.pesoMillar||''), presentacion: r.presentacion||'MILLAR', cantidad: r.cantidad||'', requestedKg: r.requestedKg||'', color: r.color||'NATURAL', tratamiento: r.tratamiento||'LISO', vendedor: r.vendedor||'' }); setShowNewReqPanel(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteReq = (id) => {
@@ -1641,6 +1648,7 @@ export default function App() {
     try {
       await addDoc(getColRef('inventoryRequisitions'), newReq);
       setPhaseForm({...phaseForm, insumos: []});
+      await pushNotif('REQ_ALMACEN', '📦 Solicitud de Planta', `Materiales requeridos para la OP #${String(selectedPhaseReqId).replace('OP-','')}. Fase: ${activePhaseTab}.`, { opId: selectedPhaseReqId, destino:'almacen', targetTab:'inventario' });
       // ── Auto-notificación por correo ──
       const emailTo = settings.emailProcura || '';
       const emailCC = settings.emailCopia || '';
@@ -1780,6 +1788,7 @@ export default function App() {
           });
         }
 
+        await pushNotif('REQ_APROBADA', '✅ Materiales Despachados', `Almacén aprobó los materiales para la OP #${String(req.opId).replace('OP-','')}.`, { opId: req.opId, destino:'planta', targetTab:'produccion' });
         setReqToApprove(null); setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada, stock descontado y materiales asignados a WIP.', type:'alert'});
     } catch(err) { setDialog({title:'Error', text:err.message, type:'alert'}); }
   };
@@ -1832,6 +1841,7 @@ export default function App() {
           timestamp: Date.now()
         };
         await setDoc(getDocRef('finishedGoodsInventory', finishedEntry.id), finishedEntry);
+        await pushNotif('OP_CERRADA', '🏁 OP Finalizada', `La OP #${reqId.replace('OP-','')} fue completada y movida a Terminados.`, { opId: reqId, destino:'ventas', targetTab:'ventas' });
         // ── Kardex ENTRADA for FG produced ──
         try {
           const fgProdQty = finishedEntry.tipoProducto==='TERMOENCOGIBLE' ? parseNum(finishedEntry.kgProducidos||0) : parseNum(finishedEntry.millares||0);
@@ -12748,6 +12758,54 @@ export default function App() {
 
   const hasPerm = (module) => { if (!appUser) return false; if (appUser.role === 'Master') return true; const p = appUser.permissions || {}; return !!p[module]; };
 
+  // ============================================================================
+  // SISTEMA DE NOTIFICACIONES
+  // ============================================================================
+  const pushNotif = async (type, title, body, meta = {}) => {
+    try {
+      await addDoc(getColRef('notifications'), {
+        type, title, body, meta, date: new Date().toLocaleString('es-VE'), timestamp: Date.now(), readBy: []
+      });
+    } catch (e) { console.warn('Notif Error:', e); }
+  };
+
+  const myNotifications = notifications.filter(n => {
+    if (!n.meta?.destino) return true; 
+    const dest = String(n.meta.destino).toLowerCase();
+    const rol = String(appUser?.role || '').toLowerCase();
+    if (rol === 'master' || rol === 'admin') return true;
+    if (rol === 'planta' && dest === 'planta') return true;
+    if ((rol === 'almacen' || rol === 'almacén') && dest === 'almacen') return true;
+    if (rol === 'ventas' && dest === 'ventas') return true;
+    return false;
+  });
+
+  const unreadCount = myNotifications.filter(n => !(n.readBy || []).includes(appUser?.username)).length;
+
+  const handleNotifClick = async (notif) => {
+    if (appUser?.username && !(notif.readBy || []).includes(appUser.username)) {
+      await updateDoc(getDocRef('notifications', notif.id), { readBy: [...(notif.readBy || []), appUser.username] });
+    }
+    setShowNotifPanel(false);
+    if (notif.meta?.targetTab) { clearAllReports(); setActiveTab(notif.meta.targetTab); }
+  };
+
+  const markAllAsRead = async () => {
+    const batch = writeBatch(db);
+    myNotifications.forEach(n => {
+      if (!(n.readBy || []).includes(appUser?.username)) { 
+        batch.update(getDocRef('notifications', n.id), { readBy: [...(n.readBy || []), appUser?.username] }); 
+      }
+    });
+    await batch.commit();
+  };
+
+  const clearAllNotifs = async () => {
+    const batch = writeBatch(db);
+    myNotifications.forEach(n => batch.delete(getDocRef('notifications', n.id)));
+    await batch.commit();
+  };
+
   return (
     <ErrorBoundary>
       <style>{`
@@ -12785,6 +12843,61 @@ export default function App() {
                  </div>
                  <div className="h-8 w-px bg-gray-800 mx-2 hidden sm:block"></div>
                  {hasPerm('configuracion') && <button onClick={() => {clearAllReports(); setActiveTab('configuracion');}} className="p-2.5 bg-gray-900 text-gray-400 rounded-xl hover:text-white hover:bg-gray-800 transition-all border border-gray-800"><Settings2 size={18}/></button>}
+                 {/* CAMPANA DE NOTIFICACIONES */}
+                 <div className="relative flex items-center mr-4">
+                   <button 
+                     onClick={() => setShowNotifPanel(!showNotifPanel)} 
+                     className={`relative p-2 text-gray-600 hover:text-orange-500 transition-colors ${unreadCount > 0 ? 'animate-pulse' : ''}`}
+                   >
+                     <Bell size={24} />
+                     {unreadCount > 0 && (
+                       <span className="absolute top-0 right-0 bg-red-500 text-white text-[9px] font-black rounded-full h-4 w-4 flex items-center justify-center border-2 border-white shadow-sm">
+                         {unreadCount > 9 ? '9+' : unreadCount}
+                       </span>
+                     )}
+                   </button>
+                   
+                   {showNotifPanel && (
+                     <div className="absolute top-full mt-3 right-0 w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 z-50 overflow-hidden flex flex-col">
+                       <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+                         <h3 className="font-black text-xs uppercase text-gray-800 flex items-center gap-2"><BellRing size={14}/> Notificaciones</h3>
+                         <div className="flex gap-3">
+                           <button onClick={markAllAsRead} className="text-[9px] font-bold text-blue-600 hover:text-blue-800">Todo Leído</button>
+                           <button onClick={clearAllNotifs} className="text-[9px] font-bold text-red-500 hover:text-red-700">Limpiar Todo</button>
+                         </div>
+                       </div>
+                       <div className="max-h-96 overflow-y-auto">
+                         {myNotifications.length === 0 ? (
+                           <div className="p-8 text-center text-gray-400 text-xs font-bold uppercase tracking-widest">Nada por aquí</div>
+                         ) : (
+                           myNotifications.map(n => {
+                             const isUnread = !(n.readBy || []).includes(appUser?.username);
+                             let stripeColor = 'bg-gray-400';
+                             if (n.type === 'OP_NUEVA') stripeColor = 'bg-blue-500';
+                             if (n.type === 'REQ_ALMACEN') stripeColor = 'bg-orange-500';
+                             if (n.type === 'REQ_APROBADA') stripeColor = 'bg-green-500';
+                             if (n.type === 'ENTREGA_PARCIAL') stripeColor = 'bg-teal-500';
+                             if (n.type === 'OP_CERRADA') stripeColor = 'bg-purple-500';
+
+                             return (
+                               <div key={n.id} onClick={() => handleNotifClick(n)} className={`p-4 border-b border-gray-50 flex gap-3 cursor-pointer hover:bg-gray-100 transition-colors relative ${isUnread ? 'bg-blue-50/20' : ''}`}>
+                                 <div className={`w-1.5 absolute left-0 top-0 bottom-0 ${stripeColor}`}></div>
+                                 <div className="flex-1 pl-2">
+                                   <div className="flex justify-between items-start mb-1">
+                                     <span className="text-[10px] font-black uppercase text-gray-800">{n.title}</span>
+                                     <span className="text-[8px] font-bold text-gray-400">{n.date}</span>
+                                   </div>
+                                   <p className="text-[11px] text-gray-600 leading-snug">{n.body}</p>
+                                 </div>
+                                 {isUnread && <div className="w-2 h-2 rounded-full bg-blue-500 mt-1 flex-shrink-0 shadow-sm"></div>}
+                               </div>
+                             );
+                           })
+                         )}
+                       </div>
+                     </div>
+                   )}
+                 </div>
                  <button onClick={() => setAppUser(null)} className="p-2.5 bg-red-500/10 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all border border-red-500/20 flex items-center gap-2 text-[10px] font-black uppercase"><LogOut size={16}/> <span className="hidden sm:inline">Salir</span></button>
               </div>
            </div>
