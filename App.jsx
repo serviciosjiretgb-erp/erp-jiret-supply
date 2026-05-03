@@ -934,17 +934,49 @@ export default function App() {
 
   const handleDeleteMovement = (m) => {
     requireAdminPassword(async () => {
-       const item = (inventory || []).find(i => i?.id === m?.itemId);
-       if (item) {
-          const isPos = String(m?.type || '').includes('ENTRADA') || String(m?.type || '').includes('POSITIVO');
-          const batch = writeBatch(db);
-          batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (isPos ? -(m?.qty || 0) : (m?.qty || 0)) });
-          batch.delete(getDocRef('inventoryMovements', m.id));
-          await batch.commit();
-          setDialog({title: 'Anulado', text: 'Stock actualizado.', type: 'alert'});
-       } else {
-          await deleteDoc(getDocRef('inventoryMovements', m.id)); setDialog({title: 'Anulado', text: 'Registro eliminado.', type: 'alert'});
-       }
+      try {
+        const batch = writeBatch(db);
+        const isEntrada = /ENTRADA|POSITIVO|INICIAL/.test(String(m?.type || ''));
+        const isSalida  = /SALIDA|NEGATIVO|AUTOCONSUMO|AVERIA|MUESTRA|PERDIDA/.test(String(m?.type || ''));
+        const qty = parseNum(m?.qty || 0);
+
+        if (m?.isFG) {
+          // Movimiento de Producto Terminado (FG) — revertir en finishedGoodsInventory
+          const fgId = String(m?.itemId || '').replace('FG::', '');
+          const fgDoc = (finishedGoodsInventory || []).find(fg => fg.id === fgId);
+          if (fgDoc) {
+            const esTermo = fgDoc.tipoProducto === 'TERMOENCOGIBLE';
+            if (isEntrada) {
+              // Entrada FG → restar
+              const newKg   = Math.max(0, parseNum(fgDoc.kgProducidos||0) - qty);
+              const newMill = Math.max(0, parseNum(fgDoc.millares||0) - qty);
+              batch.update(getDocRef('finishedGoodsInventory', fgId), esTermo ? {kgProducidos: newKg} : {millares: newMill});
+            } else if (isSalida) {
+              // Salida FG → sumar de vuelta
+              const newKg   = parseNum(fgDoc.kgProducidos||0) + qty;
+              const newMill = parseNum(fgDoc.millares||0) + qty;
+              batch.update(getDocRef('finishedGoodsInventory', fgId), esTermo ? {kgProducidos: newKg} : {millares: newMill});
+            }
+          }
+        } else {
+          // Movimiento de inventario general (MP, Consumibles, Semielaborados, etc.)
+          const item = (inventory || []).find(i => i?.id === m?.itemId);
+          if (item) {
+            // Entrada  → restar stock de vuelta
+            // Salida   → sumar stock de vuelta
+            // Ajuste+  → restar; Ajuste- → sumar
+            const delta = isEntrada ? -qty : qty;
+            const newStock = parseNum(item.stock || 0) + delta;
+            batch.update(getDocRef('inventory', item.id), { stock: Math.max(0, newStock) });
+          }
+        }
+
+        batch.delete(getDocRef('inventoryMovements', m.id));
+        await batch.commit();
+        setDialog({ title: '✅ Movimiento Anulado', text: `El stock fue revertido correctamente (${isEntrada ? '-' : '+'}${formatNum(qty)} ${m?.unit||'unid.'}).`, type: 'alert' });
+      } catch(err) {
+        setDialog({ title: 'Error', text: err.message, type: 'alert' });
+      }
     }, 'Anular Movimiento de Kardex');
   };
 
@@ -1339,12 +1371,72 @@ export default function App() {
   };
   const startEditReq = (r) => { setEditingReqId(r.id); setNewReqForm({ fecha: r.fecha||getTodayDate(), client: r.client||'', tipoProducto: r.tipoProducto||'BOLSAS', desc: r.desc||'', ancho: r.ancho||'', fuelles: r.fuelles||'', largo: r.largo||'', micras: r.micras||'', pesoMillar: r.tipoProducto==='TERMOENCOGIBLE'?'N/A':(r.pesoMillar||''), presentacion: r.presentacion||'MILLAR', cantidad: r.cantidad||'', requestedKg: r.requestedKg||'', color: r.color||'NATURAL', tratamiento: r.tratamiento||'LISO', vendedor: r.vendedor||'' }); setShowNewReqPanel(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteReq = (id) => {
-    setDialog({ 
-      title: 'Eliminar OP', 
-      text: `¿Desea eliminar la OP #${id}?`, 
-      type: 'confirm', 
-      onConfirm: async () => await deleteDoc(getDocRef('requirements', id))
-    });
+    requireAdminPassword(async () => {
+      setDialog({
+        title: 'Eliminar OP — Borrado en Cascada',
+        text: `Se eliminará la OP #${String(id).replace('OP-','').padStart(5,'0')} y TODOS sus datos relacionados: requisiciones, entradas a WIP, movimientos de inventario, FGs parciales y asientos contables. ¿Confirmar?`,
+        type: 'confirm',
+        onConfirm: async () => {
+          try {
+            const batch = writeBatch(db);
+
+            // 1. Eliminar la OP principal
+            batch.delete(getDocRef('requirements', id));
+
+            // 2. Eliminar todas las requisiciones de inventario asociadas
+            const reqsAsoc = (invRequisitions || []).filter(r => r.opId === id || r.bobinaProdId === id);
+            reqsAsoc.forEach(r => batch.delete(getDocRef('inventoryRequisitions', r.id)));
+
+            // 3. Eliminar entradas WIP asociadas
+            const wipAsoc = (wipInventory || []).filter(w => w.opId === id);
+            wipAsoc.forEach(w => batch.delete(getDocRef('wipInventory', w.id)));
+
+            // 4. Eliminar FG parciales (entregas parciales sin factura)
+            const fgsAsoc = (finishedGoodsInventory || []).filter(fg => fg.opId === id);
+            fgsAsoc.forEach(fg => batch.delete(getDocRef('finishedGoodsInventory', fg.id)));
+
+            // 5. Eliminar movimientos de inventario asociados a esta OP
+            const movsAsoc = (invMovements || []).filter(m =>
+              m.opAsignada === id ||
+              m.docRef === id ||
+              String(m.notes || '').includes(id) ||
+              String(m.reference || '').includes(id)
+            );
+            movsAsoc.forEach(m => batch.delete(getDocRef('inventoryMovements', m.id)));
+
+            // 6. Revertir el stock de los materiales que fueron descontados por las requisiciones aprobadas
+            for (const req of reqsAsoc.filter(r => r.status === 'APROBADO' || r.status === 'APROBADA')) {
+              for (const ing of (req.items || [])) {
+                const invItem = (inventory || []).find(i => i.id === ing.id);
+                if (invItem && parseNum(ing.qty) > 0) {
+                  // Sumar de vuelta lo que se descontó
+                  batch.update(getDocRef('inventory', ing.id), {
+                    stock: Math.max(0, parseNum(invItem.stock || 0) + parseNum(ing.qty))
+                  });
+                }
+              }
+            }
+
+            // 7. Eliminar asientos contables relacionados
+            const asientosAsoc = (asientosContables || []).filter(a =>
+              String(a.referencia || '').includes(id) ||
+              String(a.descripcion || '').includes(id)
+            );
+            asientosAsoc.forEach(a => batch.delete(getDocRef('asientosContables', a.id)));
+
+            await batch.commit();
+
+            setDialog({
+              title: '✅ OP Eliminada',
+              text: `OP #${String(id).replace('OP-','').padStart(5,'0')} eliminada. ${reqsAsoc.length} requisición(es), ${wipAsoc.length} WIP, ${fgsAsoc.length} FG, ${movsAsoc.length} movimiento(s) y ${asientosAsoc.length} asiento(s) borrados. Stock revertido.`,
+              type: 'alert'
+            });
+          } catch(err) {
+            setDialog({ title: 'Error en Cascada', text: err.message, type: 'alert' });
+          }
+        }
+      });
+    }, 'Eliminar OP Completa (Cascada)');
   };
 
   // ============================================================================
@@ -3055,32 +3147,39 @@ export default function App() {
 
               return (
                 <>
-                  {/* KPIs */}
+                  {/* KPIs — solo mostrar categorías con datos */}
                   {(() => {
                     const semGrp = (inventory||[]).filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0);
                     const totalSemKg = semGrp.reduce((s,i)=>s+parseNum(i.stock),0);
+                    const cols = [bolsasGrp.length>0, termosGrp.length>0, semGrp.length>0, true].filter(Boolean).length;
                     return (
-                      <div className="grid grid-cols-4 gap-4 mb-6">
-                        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
-                          <div className="text-[9px] font-black text-blue-700 uppercase mb-1">📦 Bolsas</div>
-                          <div className="font-black text-blue-600 text-lg">{formatNum(totalMillares)} Mill.</div>
-                          <div className="text-[9px] text-gray-500">{bolsasGrp.length} producto{bolsasGrp.length!==1?'s':''}</div>
-                        </div>
-                        <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
-                          <div className="text-[9px] font-black text-green-700 uppercase mb-1">🟢 Termoencogible</div>
-                          <div className="font-black text-green-600 text-lg">{formatNum(totalKgTermo)} KG</div>
-                          <div className="text-[9px] text-gray-500">{termosGrp.length} producto{termosGrp.length!==1?'s':''}</div>
-                        </div>
-                        <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 text-center">
-                          <div className="text-[9px] font-black text-indigo-700 uppercase mb-1">🔄 Semielaborados/Bobinas</div>
-                          <div className="font-black text-indigo-600 text-lg">{formatNum(totalSemKg)} KG</div>
-                          <div className="text-[9px] text-gray-500">{semGrp.length} artículo{semGrp.length!==1?'s':''}</div>
-                        </div>
+                      <div className={`grid grid-cols-${cols} gap-4 mb-6`}>
+                        {bolsasGrp.length > 0 && (
+                          <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
+                            <div className="text-[9px] font-black text-blue-700 uppercase mb-1">📦 Bolsas</div>
+                            <div className="font-black text-blue-600 text-lg">{formatNum(totalMillares)} Mill.</div>
+                            <div className="text-[9px] text-gray-500">{bolsasGrp.length} producto{bolsasGrp.length!==1?'s':''}</div>
+                          </div>
+                        )}
+                        {termosGrp.length > 0 && (
+                          <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+                            <div className="text-[9px] font-black text-green-700 uppercase mb-1">🟢 Termoencogible</div>
+                            <div className="font-black text-green-600 text-lg">{formatNum(totalKgTermo)} KG</div>
+                            <div className="text-[9px] text-gray-500">{termosGrp.length} producto{termosGrp.length!==1?'s':''}</div>
+                          </div>
+                        )}
+                        {semGrp.length > 0 && (
+                          <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 text-center">
+                            <div className="text-[9px] font-black text-indigo-700 uppercase mb-1">🔄 Semielaborados/Bobinas</div>
+                            <div className="font-black text-indigo-600 text-lg">{formatNum(totalSemKg)} KG</div>
+                            <div className="text-[9px] text-gray-500">{semGrp.length} artículo{semGrp.length!==1?'s':''}</div>
+                          </div>
+                        )}
                         <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 text-center">
                           <div className="text-[9px] font-black text-orange-700 uppercase mb-1">Valor Total</div>
                           <div className="font-black text-orange-600">${formatNum(
-                            bolsasGrp.reduce((s,g)=>s+g.totalStock*(g.totalStock>0?g.pesoTot/g.totalStock:0),0)+
-                            termosGrp.reduce((s,g)=>s+g.totalStock*(g.totalStock>0?g.pesoTot/g.totalStock:0),0)+
+                            bolsasGrp.reduce((s,g)=>s+g.pesoTot,0)+
+                            termosGrp.reduce((s,g)=>s+g.pesoTot,0)+
                             semGrp.reduce((s,i)=>s+parseNum(i.stock)*parseNum(i.cost||0),0)
                           )}</div>
                         </div>
@@ -3569,8 +3668,8 @@ export default function App() {
             {/* 1. Inventario General (MP, Consumibles, etc.) */}
             {renderTFSection('📦 Inventario General (Materia Prima / Consumibles)', 'bg-gray-700', inventory.filter(i=>i.category!=='Productos Terminados'&&i.category!=='Semielaborados'), false, false)}
 
-            {/* 1b. Semielaborados / Bobinas */}
-            {inventory.some(i=>i.category==='Semielaborados') && renderTFSection('🔄 Semielaborados / Bobinas (en proceso)', 'bg-indigo-600', inventory.filter(i=>i.category==='Semielaborados'), false, false)}
+            {/* 1b. Semielaborados / Bobinas — solo si hay stock > 0 */}
+            {inventory.some(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0) && renderTFSection('🔄 Semielaborados / Bobinas (en proceso)', 'bg-indigo-600', inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0), false, false)}
 
             {/* 2. Productos en Proceso (WIP) */}
             {renderTFSection('⚙ En Proceso (WIP) — Remanente de MP', 'bg-blue-600', wipItems, false, false)}
@@ -4420,9 +4519,14 @@ export default function App() {
         {invView === 'reporte177' && (() => {
           // Excluir "Productos Terminados" y "Semielaborados" del listado dinámico de inventory
           // porque se manejan con secciones especiales
-          const categories = [...new Set(inventory.map(i => i.category).filter(c => c !== 'Productos Terminados'))];
-          
-          if (finishedGoodsInventory.length > 0 || inventory.some(i=>i.category==='Productos Terminados')) categories.push('Productos Terminados');
+          // Solo incluir categorías que tengan al menos un ítem con stock > 0
+          const categories = [...new Set(
+            inventory
+              .filter(i => i.category !== 'Productos Terminados' && parseNum(i.stock) > 0)
+              .map(i => i.category)
+          )];
+
+          if (finishedGoodsInventory.length > 0 || inventory.some(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0)) categories.push('Productos Terminados');
 
           const startOfMonth = new Date(reportYear, reportMonth - 1, 1);
           const endOfMonth = new Date(reportYear, reportMonth, 0, 23, 59, 59, 999);
