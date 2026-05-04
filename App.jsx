@@ -132,6 +132,89 @@ const COSTO_CATEGORIES = [
   'Otros Gastos'
 ];
 
+// ============================================================================
+// CATÁLOGO DE MÓDULOS Y PERMISOS DEL SISTEMA
+// ============================================================================
+// Añade aquí cualquier nuevo módulo o submódulo. El sistema generará los checkboxes automáticamente.
+const SYSTEM_MODULES = [
+  {
+    id: 'ventas',
+    label: 'Ventas y Facturación',
+    icon: '👥',
+    submodules: [
+      { id: 'ventas_directorio', label: 'Directorio de Clientes' },
+      { id: 'ventas_ops', label: 'OPs / Requisiciones' },
+      { id: 'ventas_facturacion', label: 'Facturación' },
+      { id: 'ventas_productos_vendidos', label: 'Reporte Productos Vendidos' },
+    ]
+  },
+  {
+    id: 'produccion',
+    label: 'Producción Planta',
+    icon: '🏭',
+    submodules: [
+      { id: 'produccion_proyeccion', label: 'Proyección MP' },
+      { id: 'produccion_ordenes', label: 'Órdenes de Trabajo' },
+      { id: 'produccion_activa', label: 'Producción Activa (Fases)' },
+      { id: 'produccion_historial', label: 'Historial de OPs' },
+      { id: 'produccion_bobinas', label: 'Producción de Bobinas' },
+    ]
+  },
+  {
+    id: 'formulas',
+    label: 'Fórmulas / Recetas',
+    icon: '🧪',
+    submodules: []
+  },
+  {
+    id: 'inventario',
+    label: 'Control Inventario',
+    icon: '📦',
+    submodules: [
+      { id: 'inventario_catalogo', label: 'Catálogo General' },
+      { id: 'inventario_movimientos', label: 'Registrar Cargo/Descargo' },
+      { id: 'inventario_kardex', label: 'Kardex de Inventario' },
+      { id: 'inventario_solicitudes', label: 'Solicitudes de Planta' },
+      { id: 'inventario_requisiciones', label: 'Aprobación de Requisiciones' },
+      { id: 'inventario_toma_fisica', label: 'Toma Física' },
+      { id: 'inventario_wip', label: 'En Proceso (WIP)' },
+      { id: 'inventario_terminados', label: 'Productos Terminados' },
+      { id: 'inventario_compras', label: 'Órdenes de Compra' },
+    ]
+  },
+  {
+    id: 'simulador',
+    label: 'Simulador OP',
+    icon: '🧮',
+    submodules: []
+  },
+  {
+    id: 'costos',
+    label: 'Costos y Finanzas',
+    icon: '💰',
+    submodules: [
+      { id: 'costos_operativos', label: 'Costos Operativos' },
+      { id: 'costos_reportes', label: 'Reportes Financieros' },
+    ]
+  },
+  {
+    id: 'configuracion',
+    label: 'Configuración de Sistema',
+    icon: '⚙️',
+    submodules: []
+  }
+];
+
+// Genera el objeto de permisos por defecto (todos en false) desde SYSTEM_MODULES
+const generateDefaultPermissions = () => {
+  const perms = {};
+  SYSTEM_MODULES.forEach(mod => {
+    perms[mod.id] = false;
+    mod.submodules.forEach(sub => { perms[sub.id] = false; });
+  });
+  return perms;
+};
+
 // --- FIN CONSTANTES ---
 
 export default function App() {
@@ -174,130 +257,6 @@ export default function App() {
   const [finishedGoodsInventory, setFinishedGoodsInventory] = useState([]);
 
   // ── One-time cleanup: eliminar registros huérfanos de OP-00007 ──────────────
-  const [showMovForm, setShowMovForm] = useState(false);
-  const [movForm, setMovForm] = useState({itemId:'',qty:'',unitCost:'',docRef:'',type:'ENTRADA',notes:'',date:getTodayDate()});
-  const [dialog, setDialog] = useState(null);
-  const [clientSearchTerm, setClientSearchTerm] = useState(''); 
-  const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
-  const [invSearchTerm, setInvSearchTerm] = useState('');
-  const [kardexProductId, setKardexProductId] = useState(''); // for kardex product filter
-  const [reqToApprove, setReqToApprove] = useState(null);
-  const [showAdminModal, setShowAdminModal] = useState(false);
-  const [adminPassword, setAdminPassword] = useState('');
-  const [adminAction, setAdminAction] = useState(null);
-  const [adminActionName, setAdminActionName] = useState('');
-  const [showNewReqPanel, setShowNewReqPanel] = useState(false);
-  const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
-  const [showGeneralInvoicesReport, setShowGeneralInvoicesReport] = useState(false);
-  const [showClientReport, setShowClientReport] = useState(false);
-  const [showReqReport, setShowReqReport] = useState(false);
-  const [showSingleReqReport, setShowSingleReqReport] = useState(null);
-  const [showSingleInvoice, setShowSingleInvoice] = useState(null);
-  const [showMovementReceipt, setShowMovementReceipt] = useState(null);
-  const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
-  const [physicalCounts, setPhysicalCounts] = useState({});
-  const [tomasFisicas, setTomasFisicas] = useState([]);
-  const [showTomaHistorial, setShowTomaHistorial] = useState(false);
-  const [viewingTomaFisica, setViewingTomaFisica] = useState(null);
-  const [editingTomaFisica, setEditingTomaFisica] = useState(null);
-  const [planDeCuentas, setPlanDeCuentas] = useState([]);
-  const [asientosContables, setAsientosContables] = useState([]);
-  const [ldSearch, setLdSearch] = useState('');
-  const [ldFiltro, setLdFiltro] = useState('TODOS');
-  const [showInvImport, setShowInvImport] = useState(false);
-  const [invImportPreview, setInvImportPreview] = useState([]);
-  const [invImportLoading, setInvImportLoading] = useState(false);
-  const [erView, setErView] = useState('estado');
-  const [erMes, setErMes] = useState(new Date().getMonth() + 1);
-  const [erModoAnual, setErModoAnual] = useState(false); // true = todo el año
-  const [erMesesExtra, setErMesesExtra] = useState([]); // additional months selected
-  const [erAno, setErAno] = useState(new Date().getFullYear());
-  const [erTasa, setErTasa] = useState('');
-  const [erExpanded, setErExpanded] = useState({ ingresos: false, costo_ventas: false, costos_op: false });
-  const [varMesA, setVarMesA] = useState(new Date().toISOString().substring(0,7));
-  const [varMesB, setVarMesB] = useState(prevMonth());
-  const [showPDCImport, setShowPDCImport] = useState(false);
-  const [pdcSearchTerm, setPdcSearchTerm] = useState('');
-  const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
-  const [newUserForm, setNewUserForm] = useState(initialUserForm);
-  const [editingUserId, setEditingUserId] = useState(null);
-  const [newClientForm, setNewClientForm] = useState(initialClientForm);
-  const [showAddClientForm, setShowAddClientForm] = useState(false);
-  const [editingClientId, setEditingClientId] = useState(null);
-  const [newReqForm, setNewReqForm] = useState(initialReqForm);
-  const [editingReqId, setEditingReqId] = useState(null);
-  const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
-  const [showWorkOrder, setShowWorkOrder] = useState(null);
-  const [showPhaseReport, setShowPhaseReport] = useState(null);
-  const [showFiniquito, setShowFiniquito] = useState(null);
-  const [selectedPhaseReqId, setSelectedPhaseReqId] = useState(null);
-  const [activePhaseTab, setActivePhaseTab] = useState('extrusion');
-  const [phaseForm, setPhaseForm] = useState(initialPhaseForm);
-  const [activeLoteIndex, setActiveLoteIndex] = useState(0); // índice del lote activo dentro de la OP
-  const [showLotePanel, setShowLotePanel] = useState(false);
-  const [phaseIngId, setPhaseIngId] = useState('');
-  const [phaseIngQty, setPhaseIngQty] = useState('');
-  const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
-  const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
-  const [editingInvId, setEditingInvId] = useState(null);
-  const [showInvItemForm, setShowInvItemForm] = useState(false); // collapsible form
-  const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
-  const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
-  const [reportYear, setReportYear] = useState(new Date().getFullYear());
-  const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
-  const [opCosts, setOpCosts] = useState([]);
-  const [costFilterCategory, setCostFilterCategory] = useState('TODAS');
-  const [costFilterMonth, setCostFilterMonth] = useState('TODOS');
-  const [reportPeriod, setReportPeriod] = useState('mensual');
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
-  const [showReportType, setShowReportType] = useState(null); 
-  const [costCategories, setCostCategories] = useState(COSTO_CATEGORIES);
-  const [showNewCategoryModal, setShowNewCategoryModal] = useState(false);
-  const [newCategoryName, setNewCategoryName] = useState('');
-  const [purchaseOrders, setPurchaseOrders] = useState([]);
-  const [showPOModal, setShowPOModal] = useState(false);
-  const [formulas, setFormulas] = useState([]);
-  const [formulaFilter, setFormulaFilter] = useState('TODOS');
-  const [formulaSearch, setFormulaSearch] = useState('');
-  const [showFormulaPanel, setShowFormulaPanel] = useState(false);
-  const [editingFormulaId, setEditingFormulaId] = useState(null);
-  const [formulaForm, setFormulaForm] = useState({ categoria: '', tipoProducto: 'BOLSAS', fases: { extrusion: true, impresion: false, sellado: false }, ancho: '', fuelles: '', largo: '', micras: '', ingredientes: [] });
-  const [formulaIngId, setFormulaIngId] = useState('');
-  const [formulaIngPct, setFormulaIngPct] = useState('');
-  const [selectedPOItems, setSelectedPOItems] = useState([]);
-  const [poProvider, setPoProvider] = useState('');
-  const [poNotes, setPoNotes] = useState('');
-  const [viewingPO, setViewingPO] = useState(null);
-  const [showFiniquitoOP, setShowFiniquitoOP] = useState(null);
-  const [finiquitoMode, setFiniquitoMode] = useState('full'); // 'full' | 'resumen'
-  const [expandedOPs, setExpandedOPs] = useState({}); // {opId: true/false}
-  const [showOrdenTrabajo, setShowOrdenTrabajo] = useState(null);
-  const [prodSubMode, setProdSubMode] = useState('fase');
-  const [poAddId, setPoAddId] = useState('');
-  const [poAddQty, setPoAddQty] = useState('');
-  const [poAddCost, setPoAddCost] = useState('');
-  const [bobinaProductions, setBobinaProductions] = useState([]);
-  const [bobinaForm, setBobinaForm] = useState({ categoria:'', ancho:'', fuelles:'', largo:'', micras:'', kgProcesar:'', mermaPorc:'5', insumos:[], fecha:getTodayDate(), observaciones:'' });
-  const [showBobinaPanel, setShowBobinaPanel] = useState(false);
-  const [bobinaIngId, setBobinaIngId] = useState('');
-  const [bobinaIngQty, setBobinaIngQty] = useState('');
-  const [activeBobinaId, setActiveBobinaId] = useState(null);
-  const [showBobinaReporte, setShowBobinaReporte] = useState(null); // bobina object
-  const [bobinaPhaseForm, setBobinaPhaseForm] = useState({ date:getTodayDate(), insumos:[], producedKg:'', mermaKg:'', mermaTroquelTransp:'', mermaTroquelPigm:'', mermaTorta:'', observaciones:'', operadorExt:'', zona1:'', zona2:'', zona3:'', zona4:'', zona5:'', zona6:'', cabezalA:'', cabezalB:'', motorExt:'', ventilador:'', jalador:'', tratado:'' });
-  const [editingMinStock, setEditingMinStock] = useState(null); // {id, value}
-  const [backupFreq, setBackupFreq] = useState(() => localStorage.getItem('backupFreq') || 'manual');
-  const [backupLastRun, setBackupLastRun] = useState(() => localStorage.getItem('backupLastRun') || '');
-  const [backupTime, setBackupTime] = useState(() => localStorage.getItem('backupTime') || '08:00');
-  const [editingInvoiceId, setEditingInvoiceId] = useState(null);
-  const [showPartialModal, setShowPartialModal] = useState(null); // req
-  const [partialKg, setPartialKg] = useState('');
-  const [partialMillares, setPartialMillares] = useState('');
-  const [partialTargetFgKey, setPartialTargetFgKey] = useState(''); // group key of existing FG product
-  const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
-  const [enProcesoOpFilter, setEnProcesoOpFilter] = useState('TODAS');
-  const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
-
   useEffect(() => {
     if (sessionStorage.getItem('op007_cleanup_done') === 'done') return;
     if (!invMovements.length && !wipInventory.length) return; // esperar datos
@@ -419,58 +378,163 @@ export default function App() {
   // ── One-time data correction (runs once per session via sessionStorage flag) ──
 
   // FG corrections are applied via the Edit button in Terminados view
+  const [showMovForm, setShowMovForm] = useState(false);
+  const [movForm, setMovForm] = useState({itemId:'',qty:'',unitCost:'',docRef:'',type:'ENTRADA',notes:'',date:getTodayDate()});
 
+  const [dialog, setDialog] = useState(null);
+  const [clientSearchTerm, setClientSearchTerm] = useState(''); 
+  const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
+  const [invSearchTerm, setInvSearchTerm] = useState('');
+  const [kardexProductId, setKardexProductId] = useState(''); // for kardex product filter
+  const [reqToApprove, setReqToApprove] = useState(null);
 
   // Estados para Modal de Clave Admin
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminAction, setAdminAction] = useState(null);
+  const [adminActionName, setAdminActionName] = useState('');
 
+  const [showNewReqPanel, setShowNewReqPanel] = useState(false);
+  const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
+  const [showGeneralInvoicesReport, setShowGeneralInvoicesReport] = useState(false);
+  const [showClientReport, setShowClientReport] = useState(false);
+  const [showReqReport, setShowReqReport] = useState(false);
+  const [showSingleReqReport, setShowSingleReqReport] = useState(null);
+  const [showSingleInvoice, setShowSingleInvoice] = useState(null);
+  const [showMovementReceipt, setShowMovementReceipt] = useState(null);
+  const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
 
   // Estados para Toma Física
+  const [physicalCounts, setPhysicalCounts] = useState({});
+  const [tomasFisicas, setTomasFisicas] = useState([]);
+  const [showTomaHistorial, setShowTomaHistorial] = useState(false);
+  const [viewingTomaFisica, setViewingTomaFisica] = useState(null);
+  const [editingTomaFisica, setEditingTomaFisica] = useState(null);
 
+  const [planDeCuentas, setPlanDeCuentas] = useState([]);
+  const [asientosContables, setAsientosContables] = useState([]);
+  const [ldSearch, setLdSearch] = useState('');
+  const [ldFiltro, setLdFiltro] = useState('TODOS');
+  const [showInvImport, setShowInvImport] = useState(false);
+  const [invImportPreview, setInvImportPreview] = useState([]);
+  const [invImportLoading, setInvImportLoading] = useState(false);
+  const [erView, setErView] = useState('estado');
+  const [erMes, setErMes] = useState(new Date().getMonth() + 1);
+  const [erModoAnual, setErModoAnual] = useState(false); // true = todo el año
+  const [erMesesExtra, setErMesesExtra] = useState([]); // additional months selected
+  const [erAno, setErAno] = useState(new Date().getFullYear());
+  const [erTasa, setErTasa] = useState('');
+  const [erExpanded, setErExpanded] = useState({ ingresos: false, costo_ventas: false, costos_op: false });
   const prevMonth = () => { const d = new Date(); d.setMonth(d.getMonth()-1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
+  const [varMesA, setVarMesA] = useState(new Date().toISOString().substring(0,7));
+  const [varMesB, setVarMesB] = useState(prevMonth());
 
   // Estados Plan de Cuentas
+  const [showPDCImport, setShowPDCImport] = useState(false);
+  const [pdcSearchTerm, setPdcSearchTerm] = useState('');
   // Cuenta contable para ingresos (configurable)
+  const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
 
   // Formularios de Configuración
-  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: {
-    ventas: false,       ventas_ops: false,    ventas_facturacion: false, ventas_directorio: false,
-    produccion: false,   produccion_proyeccion: false, produccion_ordenes: false, produccion_activa: false, produccion_historial: false,
-    formulas: false,
-    inventario: false,   inventario_solicitudes: false, inventario_catalogo: false, inventario_movimientos: false, inventario_kardex: false,
-    simulador: false,
-    costos: false,       costos_operativos: false, costos_reportes: false,
-    configuracion: false
-  } };
+  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: generateDefaultPermissions() };
+  const [newUserForm, setNewUserForm] = useState(initialUserForm);
+  const [editingUserId, setEditingUserId] = useState(null);
+  const [originalUsername, setOriginalUsername] = useState(null);
 
   // Formularios de Ventas
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() };
+  const [newClientForm, setNewClientForm] = useState(initialClientForm);
+  const [showAddClientForm, setShowAddClientForm] = useState(false);
+  const [editingClientId, setEditingClientId] = useState(null);
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
+  const [newReqForm, setNewReqForm] = useState(initialReqForm);
+  const [editingReqId, setEditingReqId] = useState(null);
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '' };
+  const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
   // Formularios Producción
   const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '', mermaTroquelTransp: '', mermaTroquelPigm: '', mermaTorta: '', observaciones: '', pesoMillarReal: '', operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '', zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '', operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '', operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: '' };
+  const [showWorkOrder, setShowWorkOrder] = useState(null);
+  const [showPhaseReport, setShowPhaseReport] = useState(null);
+  const [showFiniquito, setShowFiniquito] = useState(null);
+  const [selectedPhaseReqId, setSelectedPhaseReqId] = useState(null);
+  const [activePhaseTab, setActivePhaseTab] = useState('extrusion');
+  const [phaseForm, setPhaseForm] = useState(initialPhaseForm);
   // Segmentación de lotes de producción por OP
+  const [activeLoteIndex, setActiveLoteIndex] = useState(0); // índice del lote activo dentro de la OP
+  const [showLotePanel, setShowLotePanel] = useState(false);
+  const [phaseIngId, setPhaseIngId] = useState('');
+  const [phaseIngQty, setPhaseIngQty] = useState('');
 
   // Simulador Inverso
   const initialCalcInputs = { ingredientes: [{ id: Date.now() + 1, nombre: 'MP-0240', pct: 80, costo: 0.96 }, { id: Date.now() + 2, nombre: 'MP-RECICLADO', pct: 20, costo: 1.00 }], cantidadSolicitada: '', mermaGlobalPorc: 5, tipoProducto: 'BOLSAS', ancho: '', fuelles: '', largo: '', micras: '' };
+  const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
 
   // Formularios Inventario
   const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '' };
+  const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
+  const [editingInvId, setEditingInvId] = useState(null);
+  const [showInvItemForm, setShowInvItemForm] = useState(false); // collapsible form
   const initialMovementForm = { date: getTodayDate(), itemId: '', type: 'ENTRADA', qty: '', cost: '', reference: '', notes: '', opAsignada: '' };
+  const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
+  const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
+  const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
   // Formularios Costos Operativos
   const initialOpCostForm = { date: getTodayDate(), category: 'Electricidad', description: '', amount: '', cuentaContable: '' };
+  const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
+  const [opCosts, setOpCosts] = useState([]);
+  const [costFilterCategory, setCostFilterCategory] = useState('TODAS');
+  const [costFilterMonth, setCostFilterMonth] = useState('TODOS');
 
   // Estados para Dashboard de Reportes
+  const [reportPeriod, setReportPeriod] = useState('mensual');
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
+  const [showReportType, setShowReportType] = useState(null); 
 
   // Estados para Categorías Dinámicas de Costos
+  const [costCategories, setCostCategories] = useState(COSTO_CATEGORIES);
+  const [showNewCategoryModal, setShowNewCategoryModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
 
   // Estados para Órdenes de Compra
+  const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [showPOModal, setShowPOModal] = useState(false);
   // Estados Fórmulas / Recetas
+  const [formulas, setFormulas] = useState([]);
+  const [formulaFilter, setFormulaFilter] = useState('TODOS');
+  const [formulaSearch, setFormulaSearch] = useState('');
+  const [showFormulaPanel, setShowFormulaPanel] = useState(false);
+  const [editingFormulaId, setEditingFormulaId] = useState(null);
+  const [formulaForm, setFormulaForm] = useState({ categoria: '', tipoProducto: 'BOLSAS', fases: { extrusion: true, impresion: false, sellado: false }, ancho: '', fuelles: '', largo: '', micras: '', ingredientes: [] });
+  const [formulaIngId, setFormulaIngId] = useState('');
+  const [formulaIngPct, setFormulaIngPct] = useState('');
+  const [selectedPOItems, setSelectedPOItems] = useState([]);
+  const [poProvider, setPoProvider] = useState('');
+  const [poNotes, setPoNotes] = useState('');
+  const [viewingPO, setViewingPO] = useState(null);
+  const [showFiniquitoOP, setShowFiniquitoOP] = useState(null);
+  const [finiquitoMode, setFiniquitoMode] = useState('full'); // 'full' | 'resumen'
+  const [expandedOPs, setExpandedOPs] = useState({}); // {opId: true/false}
+  const [showOrdenTrabajo, setShowOrdenTrabajo] = useState(null);
+  const [prodSubMode, setProdSubMode] = useState('fase');
   // Estado para agregar items a PO manualmente
+  const [poAddId, setPoAddId] = useState('');
+  const [poAddQty, setPoAddQty] = useState('');
+  const [poAddCost, setPoAddCost] = useState('');
 
   // ── Producción de Bobinas ──
+  const [bobinaProductions, setBobinaProductions] = useState([]);
+  const [bobinaForm, setBobinaForm] = useState({ categoria:'', ancho:'', fuelles:'', largo:'', micras:'', kgProcesar:'', mermaPorc:'5', insumos:[], fecha:getTodayDate(), observaciones:'' });
+  const [showBobinaPanel, setShowBobinaPanel] = useState(false);
+  const [bobinaIngId, setBobinaIngId] = useState('');
+  const [bobinaIngQty, setBobinaIngQty] = useState('');
+  const [activeBobinaId, setActiveBobinaId] = useState(null);
+  const [showBobinaReporte, setShowBobinaReporte] = useState(null); // bobina object
+  const [bobinaPhaseForm, setBobinaPhaseForm] = useState({ date:getTodayDate(), insumos:[], producedKg:'', mermaKg:'', mermaTroquelTransp:'', mermaTroquelPigm:'', mermaTorta:'', observaciones:'', operadorExt:'', zona1:'', zona2:'', zona3:'', zona4:'', zona5:'', zona6:'', cabezalA:'', cabezalB:'', motorExt:'', ventilador:'', jalador:'', tratado:'' });
   // ── Stock mínimo (edición admin en Proyección MP) ──
+  const [editingMinStock, setEditingMinStock] = useState(null); // {id, value}
   // ============================================================================
   const handleExportPDF = (filename, isLandscape = false) => {
     window.print();
@@ -734,6 +798,9 @@ export default function App() {
 
   // ── AUTO RESPALDO PROGRAMADO ────────────────────────────────────────────────
   // Estados de respaldo declarados aquí para que el useEffect los pueda usar sin TDZ
+  const [backupFreq, setBackupFreq] = useState(() => localStorage.getItem('backupFreq') || 'manual');
+  const [backupLastRun, setBackupLastRun] = useState(() => localStorage.getItem('backupLastRun') || '');
+  const [backupTime, setBackupTime] = useState(() => localStorage.getItem('backupTime') || '08:00');
 
   useEffect(() => {
     if (backupFreq === 'manual') return;
@@ -1024,14 +1091,33 @@ export default function App() {
   // LOGICA CONFIGURACIÓN / USUARIOS
   // ============================================================================
   const handleSaveUser = async (e) => {
-    e.preventDefault(); if (!newUserForm.username || !newUserForm.password) return setDialog({title:'Aviso', text:'Usuario y contraseña requeridos.', type:'alert'});
-    const userId = newUserForm.username.toLowerCase().trim();
-    try { await setDoc(getDocRef('users', userId), { ...newUserForm, username: userId }); setNewUserForm(initialUserForm); setEditingUserId(null); setDialog({title: 'Éxito', text: 'Usuario registrado.', type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
+    e.preventDefault();
+    if (!newUserForm.username || !newUserForm.password) return setDialog({title:'Aviso', text:'Usuario y contraseña requeridos.', type:'alert'});
+    const newUserId = newUserForm.username.toLowerCase().trim();
+    try {
+      const batch = writeBatch(db);
+      // Si estamos editando Y el nombre de usuario cambió
+      if (editingUserId && originalUsername && originalUsername !== newUserId) {
+        const existingUserDoc = (systemUsers || []).find(u => u.username === newUserId);
+        if (existingUserDoc) return setDialog({title: 'Error', text: `El usuario '${newUserId}' ya existe. Elija otro.`, type: 'alert'});
+        // Borrar documento viejo
+        batch.delete(getDocRef('users', originalUsername));
+      }
+      // Guardar documento con el ID correcto
+      batch.set(getDocRef('users', newUserId), { ...newUserForm, username: newUserId });
+      await batch.commit();
+      setNewUserForm(initialUserForm);
+      setEditingUserId(null);
+      setOriginalUsername(null);
+      setDialog({title: 'Éxito', text: (editingUserId && originalUsername !== newUserId) ? 'Usuario actualizado y renombrado.' : 'Usuario guardado.', type: 'alert'});
+    } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
   const startEditUser = (u) => {
-    const defaultPerms = initialUserForm.permissions;
+    const defaultPerms = generateDefaultPermissions();
+    // Fusionar permisos por defecto con los del usuario (asegura que módulos nuevos aparezcan en false)
     const mergedPerms = { ...defaultPerms, ...(u.permissions || {}) };
     setEditingUserId(u.username);
+    setOriginalUsername(u.username);
     setNewUserForm({ ...u, permissions: mergedPerms });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -1404,6 +1490,7 @@ export default function App() {
     setNewInvoiceForm(f);
   };
   
+  const [editingInvoiceId, setEditingInvoiceId] = useState(null);
 
   const handleCreateInvoice = async (e) => {
     e.preventDefault(); 
@@ -7166,6 +7253,10 @@ export default function App() {
 
   // ── CIERRE TOTAL DE OP → mueve a Terminados ──────────────────────────────
   // ── ENTREGA PARCIAL: mover KG a Terminados sin cerrar la OP ─────────
+  const [showPartialModal, setShowPartialModal] = useState(null); // req
+  const [partialKg, setPartialKg] = useState('');
+  const [partialMillares, setPartialMillares] = useState('');
+  const [partialTargetFgKey, setPartialTargetFgKey] = useState(''); // group key of existing FG product
 
   // ── Reversar entrega parcial ──────────────────────────────────────────
   const handleReversePartialDelivery = async (req, ep) => {
@@ -7239,6 +7330,9 @@ export default function App() {
       }
     });
   };
+  const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
+  const [enProcesoOpFilter, setEnProcesoOpFilter] = useState('TODAS');
+  const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
 
   const handlePartialDelivery = async () => {
     if (!showPartialModal) return;
@@ -12294,73 +12388,42 @@ export default function App() {
            <form onSubmit={handleSaveUser} className="space-y-4 mb-8 bg-gray-50 p-6 rounded-2xl border border-gray-100">
               <h3 className="text-sm font-black uppercase text-black mb-4">{editingUserId ? 'Modificar Usuario' : 'Nuevo Usuario'}</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Usuario (ID)</label><input type="text" required value={newUserForm.username} onChange={e=>setNewUserForm({...newUserForm, username: e.target.value.toLowerCase().trim()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500" /></div>
+                 <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Usuario (ID de acceso)</label><input type="text" required value={newUserForm.username} onChange={e=>setNewUserForm({...newUserForm, username: e.target.value.toLowerCase().trim()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs lowercase outline-none focus:border-orange-500" placeholder="ej: juanperez" /></div>
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Contraseña</label><input type="text" required value={newUserForm.password} onChange={e=>setNewUserForm({...newUserForm, password: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500" /></div>
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Nombre Completo</label><input type="text" required value={newUserForm.name} onChange={e=>setNewUserForm({...newUserForm, name: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Rol / Cargo</label><input type="text" value={newUserForm.role} onChange={e=>setNewUserForm({...newUserForm, role: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
               </div>
               <div className="mt-4">
-                 <label className="text-[10px] font-bold text-gray-500 uppercase block mb-3">Permisos de Módulos y Sub-módulos</label>
+                 <label className="text-[10px] font-bold text-gray-500 uppercase block mb-3 flex items-center gap-2"><ShieldCheck size={14} className="text-orange-500"/> Permisos de Módulos y Sub-módulos</label>
                  <div className="space-y-3">
-                   {[
-                     { key:'ventas', label:'Ventas y Facturación', icon:'👥', subs:[
-                       {key:'ventas_ops', label:'OPs / Requisiciones'},
-                       {key:'ventas_facturacion', label:'Facturación'},
-                       {key:'ventas_directorio', label:'Directorio de Clientes'},
-                     ]},
-                     { key:'produccion', label:'Producción Planta', icon:'🏭', subs:[
-                       {key:'produccion_proyeccion', label:'Proyección MP'},
-                       {key:'produccion_bobinas', label:'Prod. Bobinas (Semielaborados)'},
-                       {key:'produccion_ordenes', label:'Requisición a Almacén'},
-                       {key:'produccion_activa', label:'Producción Activa'},
-                       {key:'produccion_en_proceso', label:'Reporte en Proceso'},
-                       {key:'produccion_historial', label:'Historial / Reportes'},
-                       {key:'produccion_gestion', label:'Gestión / Eliminación de OPs'},
-                     ]},
-                     { key:'formulas', label:'Fórmulas / Recetas', icon:'🧪', subs:[] },
-                     { key:'inventario', label:'Control Inventario', icon:'📦', subs:[
-                       {key:'inventario_solicitudes', label:'Solicitudes de Planta'},
-                       {key:'inventario_catalogo', label:'Catálogo General'},
-                       {key:'inventario_wip', label:'WIP (En Proceso)'},
-                       {key:'inventario_terminados', label:'Inventario Terminados'},
-                       {key:'inventario_movimientos', label:'Entradas / Salidas'},
-                       {key:'inventario_toma_fisica', label:'Toma Física'},
-                       {key:'inventario_kardex', label:'Kardex / Art.177 LISLR'},
-                     ]},
-                     { key:'simulador', label:'Simulador OP', icon:'🧮', subs:[] },
-                     { key:'costos', label:'Costos / Reportes Financieros', icon:'💰', subs:[
-                       {key:'costos_operativos', label:'Costos Operativos'},
-                       {key:'costos_reportes', label:'Reportes Financieros / Estado de Resultado'},
-                     ]},
-                     { key:'configuracion', label:'Configuración', icon:'⚙️', subs:[] },
-                   ].map(mod => (
-                     <div key={mod.key} className="border-2 border-gray-200 rounded-xl overflow-hidden">
+                   {SYSTEM_MODULES.map(mod => (
+                     <div key={mod.id} className="border-2 border-gray-200 rounded-xl overflow-hidden">
                        {/* Módulo principal */}
-                       <label className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-all ${newUserForm.permissions[mod.key] ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 hover:bg-gray-100'}`}>
+                       <label className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-all ${newUserForm.permissions[mod.id] ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 hover:bg-gray-100'}`}>
                          <input type="checkbox"
-                           checked={!!newUserForm.permissions[mod.key]}
+                           checked={!!newUserForm.permissions[mod.id]}
                            onChange={e=>{
                              const checked = e.target.checked;
-                             const newPerms = {...newUserForm.permissions, [mod.key]: checked};
-                             // Si se quita el módulo, quitar todos sus sub-permisos
-                             if (!checked) mod.subs.forEach(s=>{ newPerms[s.key]=false; });
+                             const newPerms = {...newUserForm.permissions, [mod.id]: checked};
+                             // Al activar/desactivar módulo principal, sincronizar todos sus submódulos
+                             mod.submodules.forEach(s=>{ newPerms[s.id] = checked; });
                              setNewUserForm({...newUserForm, permissions: newPerms});
                            }}
                            className="w-4 h-4 text-orange-600 focus:ring-orange-500 border-gray-300 rounded" />
                          <span className="text-sm">{mod.icon}</span>
                          <span className="text-xs font-black uppercase text-gray-800">{mod.label}</span>
-                         {newUserForm.permissions[mod.key] && mod.subs.length > 0 && (
+                         {newUserForm.permissions[mod.id] && mod.submodules.length > 0 && (
                            <span className="ml-auto text-[9px] font-bold text-orange-600">▼ Configurar sub-módulos</span>
                          )}
                        </label>
                        {/* Sub-módulos (solo si el módulo está activo y tiene subs) */}
-                       {newUserForm.permissions[mod.key] && mod.subs.length > 0 && (
+                       {newUserForm.permissions[mod.id] && mod.submodules.length > 0 && (
                          <div className="border-t border-gray-200 px-4 py-3 bg-white grid grid-cols-2 gap-2">
-                           {mod.subs.map(sub => (
-                             <label key={sub.key} className="flex items-center gap-2 cursor-pointer hover:bg-orange-50 px-3 py-2 rounded-lg border border-gray-100 transition-all">
+                           {mod.submodules.map(sub => (
+                             <label key={sub.id} className="flex items-center gap-2 cursor-pointer hover:bg-orange-50 px-3 py-2 rounded-lg border border-gray-100 transition-all">
                                <input type="checkbox"
-                                 checked={!!newUserForm.permissions[sub.key]}
-                                 onChange={e=>setNewUserForm({...newUserForm, permissions:{...newUserForm.permissions,[sub.key]:e.target.checked}})}
+                                 checked={!!newUserForm.permissions[sub.id]}
+                                 onChange={e=>setNewUserForm({...newUserForm, permissions:{...newUserForm.permissions,[sub.id]:e.target.checked}})}
                                  className="w-3.5 h-3.5 text-orange-500 border-gray-300 rounded" />
                                <span className="text-[10px] font-bold text-gray-600 uppercase">{sub.label}</span>
                              </label>
