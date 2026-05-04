@@ -136,72 +136,86 @@ const COSTO_CATEGORIES = [
 // CATÁLOGO DE MÓDULOS Y PERMISOS DEL SISTEMA
 // ============================================================================
 // Añade aquí cualquier nuevo módulo o submódulo. El sistema generará los checkboxes automáticamente.
+// ============================================================================
+// CATÁLOGO DE MÓDULOS Y PERMISOS DEL SISTEMA (ESTRUCTURA EXACTA)
+// ============================================================================
 const SYSTEM_MODULES = [
   {
     id: 'ventas',
-    label: 'Ventas y Facturación',
+    label: '1. MÓDULO Ventas y Facturación',
     icon: '👥',
     submodules: [
-      { id: 'ventas_directorio', label: 'Directorio de Clientes' },
-      { id: 'ventas_ops', label: 'OPs / Requisiciones' },
-      { id: 'ventas_facturacion', label: 'Facturación' },
-      { id: 'ventas_productos_vendidos', label: 'Reporte Productos Vendidos' },
+      { id: 'ventas_facturacion',        label: 'Facturación' },
+      { id: 'ventas_directorio',         label: 'Directorio' },
+      { id: 'ventas_ops',                label: 'OPs' },
+      { id: 'ventas_productos_vendidos', label: 'Productos Vendidos' },
     ]
   },
   {
     id: 'produccion',
-    label: 'Producción Planta',
+    label: '2. MÓDULO Producción Planta',
     icon: '🏭',
     submodules: [
       { id: 'produccion_proyeccion', label: 'Proyección MP' },
-      { id: 'produccion_ordenes', label: 'Órdenes de Trabajo' },
-      { id: 'produccion_activa', label: 'Producción Activa (Fases)' },
-      { id: 'produccion_historial', label: 'Historial de OPs' },
-      { id: 'produccion_bobinas', label: 'Producción de Bobinas' },
+      { id: 'produccion_bobinas',    label: 'Prod. Bobinas' },
+      { id: 'produccion_requisicion',label: 'Requisición' },
+      { id: 'produccion_activa',     label: 'Producción Activa' },
+      { id: 'produccion_proceso',    label: 'Reporte en Proceso' },
+      { id: 'produccion_historial',  label: 'Historial Reportes' },
     ]
   },
   {
     id: 'formulas',
-    label: 'Fórmulas / Recetas',
+    label: '3. MÓDULO Fórmulas / Recetas',
     icon: '🧪',
     submodules: []
   },
   {
     id: 'inventario',
-    label: 'Control Inventario',
+    label: '4. MÓDULO Control Inventario',
     icon: '📦',
     submodules: [
-      { id: 'inventario_catalogo', label: 'Catálogo General' },
-      { id: 'inventario_movimientos', label: 'Registrar Cargo/Descargo' },
-      { id: 'inventario_kardex', label: 'Kardex de Inventario' },
-      { id: 'inventario_solicitudes', label: 'Solicitudes de Planta' },
-      { id: 'inventario_requisiciones', label: 'Aprobación de Requisiciones' },
-      { id: 'inventario_toma_fisica', label: 'Toma Física' },
-      { id: 'inventario_wip', label: 'En Proceso (WIP)' },
-      { id: 'inventario_terminados', label: 'Productos Terminados' },
-      { id: 'inventario_compras', label: 'Órdenes de Compra' },
+      { id: 'inv_planta',      label: 'Solicitudes de Planta' },
+      { id: 'inv_almacen',     label: 'Almacén / OC' },
+      { id: 'inv_wip',         label: 'WIP (En Proceso)' },
+      { id: 'inv_terminados',  label: 'Terminados' },
+      { id: 'inv_operaciones', label: 'Operaciones (Entradas, Salidas, TF)' },
+      { id: 'inv_kardex',      label: 'Kardex / Art. 177' },
     ]
   },
   {
     id: 'simulador',
-    label: 'Simulador OP',
+    label: '5. MÓDULO Simulador OP',
     icon: '🧮',
     submodules: []
   },
   {
     id: 'costos',
-    label: 'Costos y Finanzas',
+    label: '6. MÓDULO Costos Operativos',
     icon: '💰',
+    submodules: []
+  },
+  {
+    id: 'reportes',
+    label: '7. MÓDULO Reportes Financieros',
+    icon: '📊',
     submodules: [
-      { id: 'costos_operativos', label: 'Costos Operativos' },
-      { id: 'costos_reportes', label: 'Reportes Financieros' },
+      { id: 'rep_mermas',     label: 'Mermas (OPs + Bobinas)' },
+      { id: 'rep_bobinas',    label: 'Reporte Bobinas' },
+      { id: 'rep_mensual',    label: 'Resumen Mensual' },
+      { id: 'rep_finiquito',  label: 'Finiquito por OP' },
+      { id: 'rep_estado',     label: 'Estado Financiero' },
+      { id: 'rep_variaciones',label: 'Variaciones' },
     ]
   },
   {
     id: 'configuracion',
-    label: 'Configuración de Sistema',
+    label: '8. MÓDULO Configuración',
     icon: '⚙️',
-    submodules: []
+    submodules: [
+      { id: 'conf_usuarios',  label: 'Usuarios y Permisos' },
+      { id: 'conf_respaldo',  label: 'Respaldo' },
+    ]
   }
 ];
 
@@ -12393,46 +12407,60 @@ export default function App() {
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Nombre Completo</label><input type="text" required value={newUserForm.name} onChange={e=>setNewUserForm({...newUserForm, name: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Rol / Cargo</label><input type="text" value={newUserForm.role} onChange={e=>setNewUserForm({...newUserForm, role: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
               </div>
-              <div className="mt-4">
-                 <label className="text-[10px] font-bold text-gray-500 uppercase block mb-3 flex items-center gap-2"><ShieldCheck size={14} className="text-orange-500"/> Permisos de Módulos y Sub-módulos</label>
-                 <div className="space-y-3">
-                   {SYSTEM_MODULES.map(mod => (
-                     <div key={mod.id} className="border-2 border-gray-200 rounded-xl overflow-hidden">
-                       {/* Módulo principal */}
-                       <label className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-all ${newUserForm.permissions[mod.id] ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 hover:bg-gray-100'}`}>
-                         <input type="checkbox"
-                           checked={!!newUserForm.permissions[mod.id]}
-                           onChange={e=>{
-                             const checked = e.target.checked;
-                             const newPerms = {...newUserForm.permissions, [mod.id]: checked};
-                             // Al activar/desactivar módulo principal, sincronizar todos sus submódulos
-                             mod.submodules.forEach(s=>{ newPerms[s.id] = checked; });
-                             setNewUserForm({...newUserForm, permissions: newPerms});
-                           }}
-                           className="w-4 h-4 text-orange-600 focus:ring-orange-500 border-gray-300 rounded" />
-                         <span className="text-sm">{mod.icon}</span>
-                         <span className="text-xs font-black uppercase text-gray-800">{mod.label}</span>
-                         {newUserForm.permissions[mod.id] && mod.submodules.length > 0 && (
-                           <span className="ml-auto text-[9px] font-bold text-orange-600">▼ Configurar sub-módulos</span>
-                         )}
-                       </label>
-                       {/* Sub-módulos (solo si el módulo está activo y tiene subs) */}
-                       {newUserForm.permissions[mod.id] && mod.submodules.length > 0 && (
-                         <div className="border-t border-gray-200 px-4 py-3 bg-white grid grid-cols-2 gap-2">
-                           {mod.submodules.map(sub => (
-                             <label key={sub.id} className="flex items-center gap-2 cursor-pointer hover:bg-orange-50 px-3 py-2 rounded-lg border border-gray-100 transition-all">
-                               <input type="checkbox"
-                                 checked={!!newUserForm.permissions[sub.id]}
-                                 onChange={e=>setNewUserForm({...newUserForm, permissions:{...newUserForm.permissions,[sub.id]:e.target.checked}})}
-                                 className="w-3.5 h-3.5 text-orange-500 border-gray-300 rounded" />
-                               <span className="text-[10px] font-bold text-gray-600 uppercase">{sub.label}</span>
-                             </label>
-                           ))}
-                         </div>
-                       )}
-                     </div>
-                   ))}
-                 </div>
+              <div className="mt-6 border-t border-gray-200 pt-4">
+                <h4 className="text-sm font-black uppercase text-gray-800 mb-4 flex items-center gap-2">
+                  <ShieldCheck size={18} className="text-orange-500"/> Permisología del Usuario
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                  {SYSTEM_MODULES.map(mod => {
+                    const allSubsChecked = mod.submodules.length > 0 && mod.submodules.every(s => !!newUserForm.permissions[s.id]);
+                    const someSubsChecked = mod.submodules.some(s => !!newUserForm.permissions[s.id]);
+                    return (
+                      <div key={mod.id} className={`border-2 rounded-xl p-4 shadow-sm transition-colors ${newUserForm.permissions[mod.id] ? 'border-orange-400 bg-orange-50' : 'border-gray-200 bg-gray-50 hover:border-orange-200'}`}>
+                        {/* Checkbox del módulo principal */}
+                        <label className="flex items-start gap-2 font-black text-xs uppercase text-gray-900 cursor-pointer mb-3 pb-2 border-b border-gray-200">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 mt-0.5 text-orange-600 rounded border-gray-300 focus:ring-orange-500 flex-shrink-0"
+                            checked={!!newUserForm.permissions[mod.id]}
+                            onChange={e => {
+                              const isChecked = e.target.checked;
+                              const newPerms = { ...newUserForm.permissions, [mod.id]: isChecked };
+                              mod.submodules.forEach(sub => { newPerms[sub.id] = isChecked; });
+                              setNewUserForm({ ...newUserForm, permissions: newPerms });
+                            }}
+                          />
+                          <span className="leading-tight">{mod.icon} {mod.label}</span>
+                        </label>
+                        {/* Checkboxes de los submódulos (siempre visibles) */}
+                        {mod.submodules.length > 0 && (
+                          <div className="ml-1 flex flex-col gap-2 border-l-2 border-orange-200 pl-3">
+                            {mod.submodules.map(sub => (
+                              <label key={sub.id} className="flex items-center gap-2 text-[10px] font-bold text-gray-600 uppercase cursor-pointer hover:text-orange-600 transition-colors">
+                                <input
+                                  type="checkbox"
+                                  className="w-3.5 h-3.5 text-orange-500 rounded border-gray-300 focus:ring-orange-500 flex-shrink-0"
+                                  checked={!!newUserForm.permissions[sub.id]}
+                                  onChange={e => {
+                                    const newPerms = { ...newUserForm.permissions, [sub.id]: e.target.checked };
+                                    // Si se marcan todos los subs, activar módulo principal; si se desmarca alguno, no forzar
+                                    const allNowChecked = mod.submodules.every(s => !!newPerms[s.id]);
+                                    newPerms[mod.id] = allNowChecked;
+                                    setNewUserForm({ ...newUserForm, permissions: newPerms });
+                                  }}
+                                />
+                                <span className="leading-tight">{sub.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                        {mod.submodules.length === 0 && (
+                          <p className="text-[9px] text-gray-400 italic ml-1">Acceso de módulo completo</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
               <div className="flex justify-end pt-4"><button type="submit" className="bg-black text-white px-8 py-3 rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-gray-800 transition-all flex items-center gap-2"><UserPlus size={16}/> GUARDAR USUARIO</button></div>
            </form>
