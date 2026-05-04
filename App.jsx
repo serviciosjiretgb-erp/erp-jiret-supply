@@ -12307,7 +12307,6 @@ export default function App() {
                        {key:'ventas_ops', label:'OPs / Requisiciones'},
                        {key:'ventas_facturacion', label:'Facturación'},
                        {key:'ventas_directorio', label:'Directorio de Clientes'},
-                       {key:'ventas_productos_vendidos', label:'Productos Vendidos'},
                      ]},
                      { key:'produccion', label:'Producción Planta', icon:'🏭', subs:[
                        {key:'produccion_proyeccion', label:'Proyección MP'},
@@ -12318,34 +12317,22 @@ export default function App() {
                        {key:'produccion_historial', label:'Historial / Reportes'},
                        {key:'produccion_gestion', label:'Gestión / Eliminación de OPs'},
                      ]},
-                     { key:'formulas', label:'Fórmulas / Recetas', icon:'🧪', subs:[
-                       {key:'formulas_ver', label:'Ver Fórmulas'},
-                       {key:'formulas_editar', label:'Crear / Editar Fórmulas'},
-                     ]},
+                     { key:'formulas', label:'Fórmulas / Recetas', icon:'🧪', subs:[] },
                      { key:'inventario', label:'Control Inventario', icon:'📦', subs:[
-                       {key:'inventario_solicitudes', label:'Solicitudes de Planta (Almacén)'},
+                       {key:'inventario_solicitudes', label:'Solicitudes de Planta'},
                        {key:'inventario_catalogo', label:'Catálogo General'},
                        {key:'inventario_wip', label:'WIP (En Proceso)'},
                        {key:'inventario_terminados', label:'Inventario Terminados'},
                        {key:'inventario_movimientos', label:'Entradas / Salidas'},
-                       {key:'inventario_toma_fisica', label:'Toma Física de Inventario'},
-                       {key:'inventario_kardex', label:'Kardex / Movimientos'},
-                       {key:'inventario_reporte177', label:'Reporte Art. 177 LISLR'},
+                       {key:'inventario_toma_fisica', label:'Toma Física'},
+                       {key:'inventario_kardex', label:'Kardex / Art.177 LISLR'},
                      ]},
-                     { key:'simulador', label:'Simulador OP', icon:'🧮', subs:[
-                       {key:'simulador_ver', label:'Ver Simulador'},
-                     ]},
+                     { key:'simulador', label:'Simulador OP', icon:'🧮', subs:[] },
                      { key:'costos', label:'Costos / Reportes Financieros', icon:'💰', subs:[
                        {key:'costos_operativos', label:'Costos Operativos'},
-                       {key:'costos_reportes', label:'Reportes Financieros'},
-                       {key:'costos_estado_resultado', label:'Estado de Resultado'},
-                       {key:'costos_mermas', label:'Análisis de Mermas'},
-                       {key:'costos_rentabilidad', label:'Dashboard Rentabilidad'},
+                       {key:'costos_reportes', label:'Reportes Financieros / Estado de Resultado'},
                      ]},
-                     { key:'configuracion', label:'Configuración del Sistema', icon:'⚙️', subs:[
-                       {key:'config_usuarios', label:'Gestión de Usuarios'},
-                       {key:'config_backup', label:'Backup / Restauración'},
-                     ]},
+                     { key:'configuracion', label:'Configuración', icon:'⚙️', subs:[] },
                    ].map(mod => (
                      <div key={mod.key} className="border-2 border-gray-200 rounded-xl overflow-hidden">
                        {/* Módulo principal */}
