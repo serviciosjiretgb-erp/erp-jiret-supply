@@ -1024,22 +1024,9 @@ export default function App() {
   // LOGICA CONFIGURACIÓN / USUARIOS
   // ============================================================================
   const handleSaveUser = async (e) => {
-    e.preventDefault();
-    if (!newUserForm.username || !newUserForm.password) return setDialog({title:'Aviso', text:'Usuario y contraseña requeridos.', type:'alert'});
-    const newUserId = newUserForm.username.toLowerCase().replace(/[^a-z0-9_]/g,'').trim();
-    if (!newUserId) return setDialog({title:'Aviso', text:'ID de usuario inválido.', type:'alert'});
-    try {
-      if (editingUserId && editingUserId !== newUserId) {
-        // Username changed: create new doc, delete old one
-        await setDoc(getDocRef('users', newUserId), { ...newUserForm, username: newUserId });
-        await deleteDoc(getDocRef('users', editingUserId));
-        setDialog({title:'✅ Usuario Actualizado', text:`ID cambiado de "${editingUserId}" a "${newUserId}". La sesión anterior quedó invalidada.`, type:'alert'});
-      } else {
-        await setDoc(getDocRef('users', newUserId), { ...newUserForm, username: newUserId });
-        setDialog({title:'✅ Éxito', text:'Usuario guardado correctamente.', type:'alert'});
-      }
-      setNewUserForm(initialUserForm); setEditingUserId(null);
-    } catch(err) { setDialog({title:'Error', text:err.message, type:'alert'}); }
+    e.preventDefault(); if (!newUserForm.username || !newUserForm.password) return setDialog({title:'Aviso', text:'Usuario y contraseña requeridos.', type:'alert'});
+    const userId = newUserForm.username.toLowerCase().trim();
+    try { await setDoc(getDocRef('users', userId), { ...newUserForm, username: userId }); setNewUserForm(initialUserForm); setEditingUserId(null); setDialog({title: 'Éxito', text: 'Usuario registrado.', type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
   const startEditUser = (u) => {
     const defaultPerms = initialUserForm.permissions;
@@ -12307,16 +12294,7 @@ export default function App() {
            <form onSubmit={handleSaveUser} className="space-y-4 mb-8 bg-gray-50 p-6 rounded-2xl border border-gray-100">
               <h3 className="text-sm font-black uppercase text-black mb-4">{editingUserId ? 'Modificar Usuario' : 'Nuevo Usuario'}</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 <div>
-                   <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
-                     Usuario (ID) {editingUserId && <span className="text-orange-500 font-bold">⚠ Cambiar ID cierra la sesión activa del usuario</span>}
-                   </label>
-                   <input type="text" required value={newUserForm.username}
-                     onChange={e=>setNewUserForm({...newUserForm, username: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,'').trim()})}
-                     className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500"
-                     placeholder="ej: juan.perez" />
-                   {editingUserId && <p className="text-[9px] text-gray-400 mt-1">ID actual: <strong>{editingUserId}</strong></p>}
-                 </div>
+                 <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Usuario (ID)</label><input type="text" required value={newUserForm.username} onChange={e=>setNewUserForm({...newUserForm, username: e.target.value.toLowerCase().trim()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500" /></div>
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Contraseña</label><input type="text" required value={newUserForm.password} onChange={e=>setNewUserForm({...newUserForm, password: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500" /></div>
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Nombre Completo</label><input type="text" required value={newUserForm.name} onChange={e=>setNewUserForm({...newUserForm, name: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Rol / Cargo</label><input type="text" value={newUserForm.role} onChange={e=>setNewUserForm({...newUserForm, role: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
@@ -12361,14 +12339,12 @@ export default function App() {
                        {key:'costos_operativos', label:'Costos Operativos'},
                        {key:'costos_reportes', label:'Reportes Financieros'},
                        {key:'costos_estado_resultado', label:'Estado de Resultado'},
-                       {key:'costos_libro_diario', label:'Libro Diario / Asientos'},
                        {key:'costos_mermas', label:'Análisis de Mermas'},
                        {key:'costos_rentabilidad', label:'Dashboard Rentabilidad'},
                      ]},
                      { key:'configuracion', label:'Configuración del Sistema', icon:'⚙️', subs:[
                        {key:'config_usuarios', label:'Gestión de Usuarios'},
                        {key:'config_backup', label:'Backup / Restauración'},
-                       {key:'config_ajustes', label:'Ajustes Generales'},
                      ]},
                    ].map(mod => (
                      <div key={mod.key} className="border-2 border-gray-200 rounded-xl overflow-hidden">
@@ -13138,7 +13114,7 @@ export default function App() {
                   <div className="flex gap-0">
                     {[
                       {id:'catalogo', icon:<Box size={14}/>, label:'General', perm:'inventario_catalogo'},
-                      {id:'wip', icon:<Beaker size={14}/>, label:'WIP', perm:'inventario_wip'},
+                      {id:'wip', icon:<Beaker size={14}/>, label:'WIP', perm:'inventario_catalogo'},
                       {id:'finished', icon:<Package size={14}/>, label:'Terminados', perm:'inventario_catalogo'},
                     ].filter(t=>hasPerm('inventario')&&(hasPerm(t.perm)||appUser?.role==='Master')).map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
@@ -13152,7 +13128,7 @@ export default function App() {
                     {[
                       {id:'entradas', icon:<ArrowDownToLine size={14}/>, label:'Entradas', perm:'inventario_movimientos'},
                       {id:'salidas', icon:<ArrowUpFromLine size={14}/>, label:'Salidas', perm:'inventario_movimientos'},
-                      {id:'toma_fisica', icon:<ClipboardEdit size={14}/>, label:'Toma Física', perm:'inventario_toma_fisica'},
+                      {id:'toma_fisica', icon:<ClipboardEdit size={14}/>, label:'Toma Física', perm:'inventario_movimientos'},
                       {id:'kardex', icon:<History size={14}/>, label:'Kardex', perm:'inventario_kardex'},
                          {id:'reporte177', icon:<FileCheck size={14}/>, label:'Art.177', perm:'inventario_kardex'},
                     ].filter(t=>hasPerm('inventario')&&(hasPerm(t.perm)||appUser?.role==='Master')).map(t=>(
@@ -13169,10 +13145,10 @@ export default function App() {
               <div className="max-w-7xl mx-auto flex gap-6 px-6 overflow-x-auto">
                  {[ 
                    {id:'proyeccion', icon:<TrendingUp size={16}/>, label:'Proyección MP', perm:'produccion_proyeccion'},
-                   {id:'bobinas', icon:<Box size={16}/>, label:'Prod. Bobinas', perm:'produccion_bobinas'},
+                   {id:'bobinas', icon:<Box size={16}/>, label:'Prod. Bobinas', perm:'produccion_activa'},
                    {id:'ordenes_compra', icon:<ClipboardList size={16}/>, label:'Requisición', perm:'produccion_ordenes'},
                    {id:'activos', icon:<PlayCircle size={16}/>, label:'Producción Activa', perm:'produccion_activa'}, 
-                   {id:'en_proceso', icon:<Gauge size={16}/>, label:'Reporte en Proceso', perm:'produccion_en_proceso'},
+                   {id:'en_proceso', icon:<Gauge size={16}/>, label:'Reporte en Proceso', perm:'produccion_activa'},
                    {id:'reportes', icon:<FileText size={16}/>, label:'Historial / Reportes', perm:'produccion_historial'}
                  ].filter(t => hasPerm('produccion') && (hasPerm(t.perm) || appUser?.role==='Master')).map(t => (
                     <button key={t.id} onClick={()=>{setProdView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${prodView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
