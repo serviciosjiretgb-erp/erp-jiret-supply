@@ -1241,10 +1241,6 @@ export default function App() {
       }
       
       await batch.commit();
-      // ... (mantener el bloque de Asiento Contable que ya tienes aquí) ...
-      setNewMovementForm(initialMovementForm); setDialog({title: 'Éxito', text: `Movimiento registrado. ${newMovementForm.type === 'ENTRADA' ? 'Costo promedio actualizado.' : ''}`, type: 'alert'});
-    } catch (err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
-  };
 
       // ── Asiento contable automático ──
       const ctaInventario = getCtaInventario(item.category);
@@ -1270,8 +1266,11 @@ export default function App() {
         });
       }
 
-      setNewMovementForm(initialMovementForm); setDialog({title: 'Éxito', text: `Movimiento registrado. ${newMovementForm.type === 'ENTRADA' ? 'Costo promedio actualizado.' : ''}`, type: 'alert'});
-    } catch (err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
+      setNewMovementForm(initialMovementForm); 
+      setDialog({title: 'Éxito', text: `Movimiento registrado. ${newMovementForm.type === 'ENTRADA' ? 'Costo promedio actualizado.' : ''}`, type: 'alert'});
+    } catch (err) { 
+      setDialog({title: 'Error', text: err.message, type: 'alert'}); 
+    }
   };
 
   const handleSaveMov = async () => {
@@ -2822,23 +2821,285 @@ export default function App() {
                           <td className="py-2.5 px-3 border-r text-[9px] text-gray-500">{m.docRef||'—'} {m.notes&&<span className="text-gray-300">| {m.notes}</span>}</td>
                           <td className="py-2.5 px-3 text-center no-pdf">
                             <div className="flex gap-1 justify-center">
-                              <button onClick={()=>{
-                                const w = window.open('','_blank');
-                                w.document.write(`<html><body style="font-family:Arial;padding:24px">
-                                  <h2 style="border-bottom:3px solid #f97316;padding-bottom:8px">${isEntradas?'COMPROBANTE DE ENTRADA':'COMPROBANTE DE SALIDA'}</h2>
-                                  <p><b>Fecha:</b> ${m.date} | <b>Tipo:</b> ${m.type?.replace(/_/g,' ')}</p>
-                                  <p><b>Artículo:</b> ${m.itemId} — ${m.itemDesc||''}</p>
-                                  <p><b>Cantidad:</b> ${formatNum(m.qty)}</p>
-                                  <p><b>Costo Unitario:</b> $${formatNum(m.unitCost||0)}</p>
-                                  <p><b>Total:</b> $${formatNum(m.totalValue||0)}</p>
-                                  <p><b>Referencia:</b> ${m.docRef||'—'}</p>
-                                  <p><b>Observaciones:</b> ${m.notes||'—'}</p>
-                                  <p><b>Stock anterior:</b> ${formatNum(m.previousStock)} → <b>Stock nuevo:</b> ${formatNum(m.newStock)}</p>
-                                  <p><b>Usuario:</b> ${m.user||'—'}</p>
-                                  <script>window.print();window.close();</script>
-                                </body></html>`);
+                              if (invView === 'entradas' || invView === 'salidas') {
+      const isEntradas = invView === 'entradas';
+      const tipos = isEntradas
+        ? [{val:'ENTRADA', label:'ENTRADA (COMPRA/PRODUCCIÓN)'}, {val:'ENTRADA_DEVOLUCION', label:'ENTRADA POR DEVOLUCIÓN'}, {val:'ENTRADA_INICIAL', label:'INVENTARIO INICIAL'}]
+        : [{val:'AUTOCONSUMO', label:'AUTOCONSUMO (USO INTERNO)'}, {val:'SALIDA', label:'SALIDA A PRODUCCIÓN'}, {val:'AVERIA', label:'AVERÍA / DAÑO'}, {val:'MUESTRA', label:'MUESTRA'}, {val:'DEVOLUCION', label:'DEVOLUCIÓN A PROVEEDOR'}, {val:'PERDIDA', label:'PÉRDIDA / MERMA'}];
+      const tipoVals = tipos.map(t=>t.val);
+      const movs = (invMovements||[]).filter(m => tipoVals.includes(m.type)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+      const selectedInvItem = (inventory||[]).find(i=>i.id===movForm.itemId);
+
+      return (
+        <div className="space-y-4 animate-in fade-in">
+          {/* Form shown when button clicked */}
+          {showMovForm && (
+            <div className="max-w-2xl mx-auto">
+              <div className="flex items-center gap-3 mb-4">
+                <button onClick={()=>setShowMovForm(false)} className="text-xs font-black uppercase px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200">← Volver</button>
+                <h2 className="text-xl font-black uppercase flex items-center gap-2">
+                  {isEntradas ? <><ArrowDownToLine className="text-green-600" size={20}/> Registrar Cargo (Entrada)</> : <><ArrowUpFromLine className="text-red-500" size={20}/> Registrar Descargo (Salida)</>}
+                </h2>
+              </div>
+              <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8 space-y-5">
+                <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
+                  <p className="text-[10px] font-black text-orange-700 uppercase">Atención</p>
+                  <p className="text-[10px] font-bold text-orange-600">Las entradas actualizarán el costo promedio del catálogo y el Kardex automáticamente.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Tipo de Operación</label>
+                    <select value={movForm.type} onChange={e=>setMovForm({...movForm,type:e.target.value})} className={`w-full border-2 rounded-xl p-3 text-xs font-black uppercase outline-none bg-white ${isEntradas?'border-green-300 text-green-700 bg-green-50':'border-red-300 text-red-700 bg-red-50'}`}>
+                      {tipos.map(t=><option key={t.val} value={t.val}>{t.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Fecha</label>
+                    <input type="date" value={movForm.date} onChange={e=>setMovForm({...movForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400"/>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Ítem del Inventario</label>
+                  <select value={movForm.itemId} onChange={e=>{
+                    const val = e.target.value;
+                    const isFGG = val.startsWith('FGG::');
+                    const isFG = val.startsWith('FG::');
+                    let cost = 0;
+                    if(isFGG) {
+                      const grpKey = val.replace('FGG::','');
+                      const matchFG = (finishedGoodsInventory||[]).find(fg=>{
+                        const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                        const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                        return `${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}` === grpKey;
+                      });
+                      const esTermo=matchFG?.tipoProducto==='TERMOENCOGIBLE';
+                      cost = matchFG ? (esTermo?parseNum(matchFG.costoUnitario||0):parseNum(matchFG.costoUnitarioMillar||0)) : 0;
+                    } else if(isFG) {
+                      const fg=(finishedGoodsInventory||[]).find(f=>f.id===val.replace('FG::',''));
+                      const esTermo=fg?.tipoProducto==='TERMOENCOGIBLE';
+                      cost = fg ? (esTermo?parseNum(fg.costoUnitario||0):parseNum(fg.costoUnitarioMillar||0)) : 0;
+                    } else {
+                      const inv=(inventory||[]).find(i=>i.id===val);
+                      cost = parseNum(inv?.cost||0);
+                    }
+                    setMovForm({...movForm, itemId:val, unitCost:String(cost||0)});
+                  }} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
+                    <option value="">Seleccione...</option>
+                    <optgroup label="── Materia Prima / Consumibles ──">
+                      {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                    </optgroup>
+                    <optgroup label="── Semielaborados / Bobinas ──">
+                      {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>)}
+                    </optgroup>
+                    <optgroup label="── Productos Terminados ──">
+                      {(() => {
+                        try {
+                          const fgSelMap = {};
+                          (finishedGoodsInventory||[]).forEach(fg => {
+                            if(!fg || !fg.id) return;
+                            const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+                            const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                            const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                            const gk=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
+                            if(!fgSelMap[gk]) fgSelMap[gk]={key:gk, ids:[fg.id], label:formatFGLabel(fg)||fg.producto||fg.id, esTermo, stk:0, unit:esTermo?'KG':'Millares'};
+                            else fgSelMap[gk].ids.push(fg.id);
+                            const stk=esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
+                            fgSelMap[gk].stk+=stk;
+                          });
+                          return Object.values(fgSelMap).map(g=>(
+                            <option key={`FGG::${g.key}`} value={`FGG::${g.key}`}>{g.label} (Stock: {formatNum(g.stk)} {g.unit})</option>
+                          ));
+                        } catch(e) { return null; }
+                      })()}
+                    </optgroup>
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Cantidad</label>
+                    <input type="number" step="0.01" min="0.01" value={movForm.qty} onChange={e=>setMovForm({...movForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="0.00"/>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">
+                      {isEntradas ? 'Nuevo Costo Unitario ($) Compra' : `Costo Unitario Promedio Actual ($)`}
+                    </label>
+                    <input type="number" step="0.0001" min="0" value={isEntradas ? movForm.unitCost : formatNum(selectedInvItem?.cost||0)} readOnly={!isEntradas} onChange={e=>setMovForm({...movForm,unitCost:e.target.value})} className={`w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400 ${!isEntradas?'bg-gray-50 text-gray-500':''}`} placeholder="0.00"/>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Documento Referencia (Factura, OP, Guía)</label>
+                  <input type="text" value={movForm.docRef} onChange={e=>setMovForm({...movForm,docRef:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="EJ: FACT-001 O OP-005"/>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Observaciones o Notas</label>
+                  <input type="text" value={movForm.notes} onChange={e=>setMovForm({...movForm,notes:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="Opcional"/>
+                </div>
+                <div className="flex justify-end pt-2">
+                  <button onClick={handleSaveMov} className="bg-black text-white px-8 py-3 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2">
+                    <CheckCircle2 size={16}/> Procesar Movimiento
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Reporte / Historial — always visible */}
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden" id="pdf-content">
+            <div className={`px-8 py-5 border-b ${isEntradas?'bg-green-50':'bg-red-50'} flex justify-between items-center`}>
+              <div>
+                <h2 className={`text-xl font-black uppercase flex items-center gap-3 ${isEntradas?'text-green-900':'text-red-900'}`}>
+                  {isEntradas ? <ArrowDownToLine size={20} className="text-green-600"/> : <ArrowUpFromLine size={20} className="text-red-500"/>}
+                  {isEntradas ? 'Historial de Entradas' : 'Historial de Salidas'}
+                </h2>
+                <p className="text-[10px] font-bold text-gray-500 mt-0.5">{movs.length} registros encontrados</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={()=>{ setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',notes:'',date:getTodayDate(), type: isEntradas ? 'ENTRADA' : 'AUTOCONSUMO'}); setShowMovForm(true); }} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2">
+                  <Plus size={13}/> {isEntradas ? 'Nueva Entrada' : 'Nueva Salida'}
+                </button>
+                <button onClick={()=>handleExportPDF(isEntradas?'Reporte_Entradas':'Reporte_Salidas', false)} className="bg-white border-2 border-gray-200 text-gray-700 px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50 flex items-center gap-2">
+                  <Printer size={13}/> Imprimir
+                </button>
+              </div>
+            </div>
+            <div className="hidden pdf-header mb-4 p-8"><ReportHeader/><h1 className="text-xl font-black uppercase border-b-2 border-orange-500 pb-1">{isEntradas?'REPORTE DE ENTRADAS DE INVENTARIO':'REPORTE DE SALIDAS / EGRESOS DE INVENTARIO'}</h1></div>
+            <div className="p-4">
+              {movs.length === 0 ? (
+                <div className="py-12 text-center text-gray-400 font-bold text-xs uppercase">No hay registros de {isEntradas?'entradas':'salidas'} aún</div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-gray-200">
+                  <table className="w-full text-xs">
+                    <thead className={`text-white ${isEntradas?'bg-green-700':'bg-red-700'}`}>
+                      <tr className="uppercase font-black text-[9px] tracking-widest">
+                        <th className="py-3 px-3 border-r border-white/20 text-left">Fecha</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-left">Artículo</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-center">Tipo</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-center">Cantidad</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-right">Costo U.</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-right">Total</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-center">Stock Nuevo</th>
+                        <th className="py-3 px-3 border-r border-white/20 text-left">Referencia</th>
+                        <th className="py-3 px-3 text-center no-pdf">✕</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {movs.map(m => (
+                        <tr key={m.id||m.timestamp} className="hover:bg-gray-50">
+                          <td className="py-2.5 px-3 border-r font-bold text-gray-600">{m.date}</td>
+                          <td className="py-2.5 px-3 border-r"><span className="font-black text-orange-600 text-[10px] block">{m.itemId}</span><span className="text-[9px] text-gray-400">{m.itemDesc||''}</span></td>
+                          <td className="py-2.5 px-3 border-r text-center"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${isEntradas?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>{m.type?.replace(/_/g,' ')}</span></td>
+                          <td className="py-2.5 px-3 border-r text-center font-black">{formatNum(m.qty)}</td>
+                          <td className="py-2.5 px-3 border-r text-right font-bold">${formatNum(m.unitCost||0)}</td>
+                          <td className="py-2.5 px-3 border-r text-right font-black">${formatNum(m.totalValue||0)}</td>
+                          <td className="py-2.5 px-3 border-r text-center font-black text-blue-600">{formatNum(m.newStock)}</td>
+                          <td className="py-2.5 px-3 border-r text-[9px] text-gray-500">{m.docRef||'—'} {m.notes&&<span className="text-gray-300">| {m.notes}</span>}</td>
+                          <td className="py-2.5 px-3 text-center no-pdf">
+                            <div className="flex gap-1 justify-center">
+                              <button onClick={() => {
+                                const w = window.open('', '_blank');
+                                const nroControl = (isEntradas ? 'OEA-' : 'OSA-') + String(m.timestamp).slice(-6);
+                                const tituloDoc = isEntradas ? 'ORDEN DE ENTRADA DE ALMACÉN' : 'ORDEN DE SALIDA DE ALMACÉN';
+                                
+                                w.document.write(`
+                                  <html xmlns="http://www.w3.org/1999/xhtml">
+                                  <head>
+                                    <meta charset="utf-8"/>
+                                    <title>${tituloDoc} ${nroControl}</title>
+                                    <style>
+                                      body { font-family: Arial, sans-serif; font-size: 11px; margin: 0; padding: 30px; color: #000; }
+                                      .header { text-align: center; margin-bottom: 20px; }
+                                      .header h2 { margin: 0; font-size: 16px; font-weight: 900; }
+                                      .header p { margin: 3px 0; font-size: 11px; }
+                                      .title-box { text-align: center; font-size: 14px; font-weight: bold; margin: 20px 0; border-top: 2px solid #000; border-bottom: 2px solid #000; padding: 8px 0; background-color: #f9fafb; }
+                                      .info-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+                                      .info-table td { padding: 6px 8px; border: 1px solid #ccc; font-size: 11px; }
+                                      .detail-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+                                      .detail-table th, .detail-table td { border: 1px solid #000; padding: 8px; text-align: center; font-size: 11px; }
+                                      .detail-table th { background-color: #e5e7eb; font-weight: bold; }
+                                      .obs-box { border: 1px solid #000; padding: 10px; min-height: 50px; margin-bottom: 40px; font-size: 11px; }
+                                      .signatures { display: table; width: 100%; margin-top: 50px; }
+                                      .sig-box { display: table-cell; width: 33.33%; text-align: center; padding: 0 10px; }
+                                      .sig-line { border-top: 1px solid #000; padding-top: 5px; text-align: left; line-height: 1.6; }
+                                    </style>
+                                  </head>
+                                  <body>
+                                    <div class="header">
+                                      <h2>SERVICIOS JIRET G&B, C.A.</h2>
+                                      <p><strong>RIF: J-412309374</strong></p>
+                                    </div>
+                                    
+                                    <div class="title-box">${tituloDoc}</div>
+                                    
+                                    <table class="info-table">
+                                      <tr>
+                                        <td width="50%"><strong>N° de Control:</strong> ${nroControl}</td>
+                                        <td width="50%"><strong>Fecha de Emisión:</strong> ${m.date}</td>
+                                      </tr>
+                                      <tr>
+                                        <td><strong>Tipo de Movimiento:</strong> ${m.type?.replace(/_/g, ' ')}</td>
+                                        <td><strong>Doc. Referencia:</strong> ${m.docRef || m.reference || 'N/A'}</td>
+                                      </tr>
+                                    </table>
+
+                                    <table class="detail-table">
+                                      <thead>
+                                        <tr>
+                                          <th width="5%">Ítem</th>
+                                          <th width="15%">Código</th>
+                                          <th width="50%">Descripción del Producto</th>
+                                          <th width="15%">Cantidad</th>
+                                          <th width="15%">Unidad/Costo</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        <tr>
+                                          <td>1</td>
+                                          <td><strong>${m.itemId}</strong></td>
+                                          <td style="text-align: left;">${m.itemDesc || 'N/A'}</td>
+                                          <td style="font-weight: bold; font-size: 12px;">${formatNum(m.qty)}</td>
+                                          <td>$${formatNum(m.unitCost || m.cost || 0)}</td>
+                                        </tr>
+                                      </tbody>
+                                    </table>
+
+                                    <div class="obs-box">
+                                      <strong>OBSERVACIONES / JUSTIFICACIÓN:</strong><br/><br/>
+                                      ${m.notes || 'Sin observaciones adicionales.'}
+                                      <br/><br/>
+                                      <span style="color:#555;">Procesado en sistema por: ${m.user || 'Administrador'}</span>
+                                    </div>
+
+                                    <div class="signatures">
+                                      <div class="sig-box">
+                                        <div class="sig-line">
+                                          <strong>Solicitado por</strong><br/>
+                                          Nombre:<br/>
+                                          Dpto:
+                                        </div>
+                                      </div>
+                                      <div class="sig-box">
+                                        <div class="sig-line">
+                                          <strong>${isEntradas ? 'Recibido en' : 'Entregado por'} Almacén</strong><br/>
+                                          Nombre:<br/>
+                                          Firma:
+                                        </div>
+                                      </div>
+                                      <div class="sig-box">
+                                        <div class="sig-line">
+                                          <strong>Conformidad / Auditoría</strong><br/>
+                                          Nombre:<br/>
+                                          Fecha:
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <script>
+                                      setTimeout(() => { window.print(); window.close(); }, 300);
+                                    </script>
+                                  </body>
+                                  </html>
+                                `);
                                 w.document.close();
-                              }} className="p-1 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Imprimir"><Printer size={11}/></button>
+                              }} className="p-1 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Imprimir Formato Profesional"><Printer size={11}/></button>
                               <button onClick={()=>requireAdminPassword(async()=>{const inv=(inventory||[]).find(i=>i.id===m.itemId);if(inv) await updateDoc(getDocRef('inventory',m.itemId),{stock:m.previousStock});await deleteDoc(getDocRef('inventoryMovements',m.id));},'Eliminar y revertir stock')} className="p-1 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
                             </div>
                           </td>
@@ -2861,10 +3122,6 @@ export default function App() {
           </div>
         </div>
       );
-    }
-
-    if (invView === 'reportes_mod') {
-      return renderInventoryReports(invReportType);
     }
 
     // ── ÓRDENES DE COMPRA (desde Inventario) ──
