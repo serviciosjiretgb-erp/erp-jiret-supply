@@ -80,19 +80,22 @@ const getTodayDate = () => {
 };
 
 const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
-
-// Format finished goods label: PRODUCTO ANCHO×LARGO×MICMiC - CLIENTE
+// Format finished goods label: CATEGORIA - MEDIDA
 const formatFGLabel = (item) => {
   if (!item) return '';
-  const cat = (item.producto || item.categoria || item.desc || '').toUpperCase();
+  const cat = (item.categoria || item.producto || item.desc || '').toUpperCase().split(' - INVERSIONES')[0].replace(' | NATURAL', '');
   const ancho = parseFloat(item.ancho||0);
   const largo = parseFloat(item.largo||0);
-  const micras = parseFloat(item.micras||0);
+  
+  // Convertir a formato entero si es decimal (ej. 0.006 -> 6)
+  let micras = parseFloat(item.micras||0);
+  if (micras < 1 && micras > 0) micras = Math.round(micras * 1000);
+
   const dims = (ancho > 0 || largo > 0)
-    ? ` ${ancho||'?'}×${largo||'?'}${micras > 0 ? `×${micras.toFixed(3).replace(/\.?0+$/,'')}MIC` : ''}`
+    ? `${ancho}X${largo}X${micras}MIC`
     : '';
-  const cliente = (item.cliente || '').toUpperCase();
-  return `${cat}${dims}${cliente ? ` - ${cliente}` : ''}`.trim();
+    
+  return cat.includes(dims) ? cat : `${cat} - ${dims}`.trim();
 };
 const parseNum = (val) => {
   if (!val) return 0;
@@ -489,7 +492,18 @@ export default function App() {
   const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
   const [editingInvId, setEditingInvId] = useState(null);
   const [showInvItemForm, setShowInvItemForm] = useState(false); // collapsible form
-  const initialMovementForm = { date: getTodayDate(), itemId: '', type: 'ENTRADA', qty: '', cost: '', reference: '', notes: '', opAsignada: '' };
+  const initialMovementForm = { 
+    date: getTodayDate(), 
+    itemId: '', 
+    type: 'ENTRADA', 
+    qty: '', 
+    cost: '', 
+    reference: '', 
+    notes: '', 
+    opAsignada: '',
+    almacenOrigen: 'GENERAL', // Nuevo campo
+    almacenDestino: 'GENERAL' // Nuevo campo
+  };
   const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
@@ -1190,8 +1204,10 @@ export default function App() {
   const handleSaveMovement = async (e) => {
     if (e && e.preventDefault) e.preventDefault(); 
     const item = (inventory || []).find(i => i?.id === newMovementForm.itemId); if (!item) return;
-    const qty = parseNum(newMovementForm.qty); const isAddition = newMovementForm.type === 'ENTRADA' || newMovementForm.type === 'AJUSTE (POSITIVO)';
-    // Stock puede quedar negativo — se permite despacho
+    const qty = parseNum(newMovementForm.qty); 
+    const isAddition = newMovementForm.type === 'ENTRADA' || newMovementForm.type === 'AJUSTE (POSITIVO)';
+    const isTransfer = newMovementForm.type === 'TRASLADO';
+    
     let updatedCost = item?.cost || 0;
     const movCost = newMovementForm.cost ? parseNum(newMovementForm.cost) : updatedCost; 
     
@@ -1203,12 +1219,32 @@ export default function App() {
         }
     }
 
-    const movId = Date.now().toString();
     try {
       const batch = writeBatch(db);
-      batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: newMovementForm.date, itemId: item.id, itemName: item.desc, type: newMovementForm.type, qty, cost: movCost, totalValue: qty * movCost, reference: newMovementForm.reference.toUpperCase(), opAsignada: newMovementForm.opAsignada || '', notes: newMovementForm.notes.toUpperCase(), timestamp: Date.now(), user: appUser?.name });
-      batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (isAddition ? qty : -qty), cost: updatedCost });
+      
+      if (isTransfer) {
+        // Lógica Doble Asiento para Traslado
+        const idSalida = `TR-S-${Date.now()}`;
+        const idEntrada = `TR-E-${Date.now()}`;
+        
+        batch.set(getDocRef('inventoryMovements', idSalida), { id: idSalida, date: newMovementForm.date, itemId: item.id, itemName: item.desc, type: 'SALIDA_TRASLADO', qty, cost: movCost, totalValue: qty * movCost, reference: newMovementForm.reference.toUpperCase(), notes: `TRASLADO HACIA: ${newMovementForm.almacenDestino}`, almacen: newMovementForm.almacenOrigen, timestamp: Date.now(), user: appUser?.name });
+        
+        batch.set(getDocRef('inventoryMovements', idEntrada), { id: idEntrada, date: newMovementForm.date, itemId: item.id, itemName: item.desc, type: 'ENTRADA_TRASLADO', qty, cost: movCost, totalValue: qty * movCost, reference: newMovementForm.reference.toUpperCase(), notes: `TRASLADO DESDE: ${newMovementForm.almacenOrigen}`, almacen: newMovementForm.almacenDestino, timestamp: Date.now() + 1, user: appUser?.name });
+        
+        // Nota: Al ser traslado, el stock general global se mantiene igual (salida + entrada se anulan a nivel global), 
+        // pero quedará registrado en inventoryMovements para filtrar por el campo 'almacen'.
+      } else {
+        // Lógica Normal
+        const movId = Date.now().toString();
+        batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: newMovementForm.date, itemId: item.id, itemName: item.desc, type: newMovementForm.type, qty, cost: movCost, totalValue: qty * movCost, reference: newMovementForm.reference.toUpperCase(), opAsignada: newMovementForm.opAsignada || '', notes: newMovementForm.notes.toUpperCase(), almacen: newMovementForm.almacenDestino, timestamp: Date.now(), user: appUser?.name });
+        batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (isAddition ? qty : -qty), cost: updatedCost });
+      }
+      
       await batch.commit();
+      // ... (mantener el bloque de Asiento Contable que ya tienes aquí) ...
+      setNewMovementForm(initialMovementForm); setDialog({title: 'Éxito', text: `Movimiento registrado. ${newMovementForm.type === 'ENTRADA' ? 'Costo promedio actualizado.' : ''}`, type: 'alert'});
+    } catch (err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
+  };
 
       // ── Asiento contable automático ──
       const ctaInventario = getCtaInventario(item.category);
@@ -1741,12 +1777,14 @@ export default function App() {
     if (w > 0 && m > 0) {
       const micFmt = m < 1 && m > 0 ? Math.round(m * 1000) : m;
       if (tipo === 'BOLSAS' && l > 0) {
-        const pEst = (w + fu) * l * m; // KG por millar (resultado directo de la fórmula)
+        const pEst = (w + fu) * l * m; 
         f.pesoMillar = pEst.toFixed(2);
-        f.desc = fu > 0 ? `(${w}+${fu/2}+${fu/2})X${l}X${micFmt}MIC | ${f.color || ''}` : `${w}X${l}X${micFmt}MIC | ${f.color || ''}`;
-        // KG netos = pesoMillar(KG/millar) × cantidad(millares)
+        
+        // PATRÓN ÚNICO: CATEGORIA - MEDIDA
+        const dimensionString = fu > 0 ? `(${w}+${fu/2}+${fu/2})X${l}X${micFmt}MIC` : `${w}X${l}X${micFmt}MIC`;
+        f.desc = f.categoria && f.categoria !== '__OTRA__' ? `${f.categoria} - ${dimensionString}` : dimensionString;
+        
         const kgNetos = f.presentacion === 'KILOS' ? c : pEst * c;
-        // KG a producir incluye 5% de merma
         const kgConMerma = kgNetos > 0 ? (kgNetos / (1 - MERMA_PCT)) : 0;
         f.requestedKg = kgConMerma.toFixed(2);
       }
@@ -5011,33 +5049,49 @@ export default function App() {
 
             if (cat !== 'Productos Terminados') {
               items = inventory.filter(item => item.category === cat).map(item => {
-                const itemMovements = monthMovements.filter(m => m.itemId === item.id);
-                const entradas = itemMovements.filter(m => m.type === 'ENTRADA' || m.type === 'ENTRADA_DEVOLUCION' || m.type === 'ENTRADA_INICIAL' || m.type?.includes('AJUSTE (POSITIVO)'));
-                const salidas = itemMovements.filter(m => m.type === 'SALIDA' || m.type === 'AUTOCONSUMO' || m.type === 'AVERIA' || m.type === 'MUESTRA' || m.type === 'PERDIDA' || m.type?.includes('AJUSTE (NEGATIVO)'));
+                // NOTA IMPORTANTE: Aquí cambiamos monthMovements por invMovements global para poder ver el historial
+                const itemMovements = invMovements.filter(m => m.itemId === item.id);
+                
+                // 1. INVENTARIO INICIAL REAL (Todo el histórico ANTES del mes a reportar)
+                const historyBeforeMonth = itemMovements.filter(m => new Date(`${m.date}T00:00:00`) < startOfMonth);
+                const initEntradas = historyBeforeMonth.filter(m => m.type === 'ENTRADA' || m.type === 'ENTRADA_DEVOLUCION' || m.type === 'ENTRADA_INICIAL' || m.type?.includes('POSITIVO')).reduce((sum, m) => sum + parseNum(m.qty), 0);
+                const initSalidas = historyBeforeMonth.filter(m => m.type === 'SALIDA' || m.type === 'AUTOCONSUMO' || m.type === 'AVERIA' || m.type === 'MUESTRA' || m.type === 'PERDIDA' || m.type?.includes('NEGATIVO')).reduce((sum, m) => sum + parseNum(m.qty), 0);
+                
+                // Bloqueo estricto de negativos
+                const initialStock = Math.max(0, initEntradas - initSalidas); 
+
+                // 2. MOVIMIENTOS DEL PERIODO (Estrictamente dentro del mes)
+                const currentMonthMovs = itemMovements.filter(m => new Date(`${m.date}T00:00:00`) >= startOfMonth && new Date(`${m.date}T00:00:00`) <= endOfMonth);
+                const entradas = currentMonthMovs.filter(m => m.type === 'ENTRADA' || m.type === 'ENTRADA_DEVOLUCION' || m.type === 'ENTRADA_INICIAL' || m.type?.includes('POSITIVO'));
+                const salidas = currentMonthMovs.filter(m => m.type === 'SALIDA' || m.type === 'AUTOCONSUMO' || m.type === 'AVERIA' || m.type === 'MUESTRA' || m.type === 'PERDIDA' || m.type?.includes('NEGATIVO'));
 
                 const monthEntradasQty = entradas.reduce((sum, m) => sum + parseNum(m.qty), 0);
-                // Use item.cost as the reference cost (costo promedio)
                 const avgCost = item.cost || 0;
                 const monthEntradasTotal = monthEntradasQty * avgCost;
-                const monthEntradasProm = avgCost;
-
+                
                 const monthSalidasQty = salidas.reduce((sum, m) => sum + parseNum(m.qty), 0);
                 const monthSalidasTotal = monthSalidasQty * avgCost;
-                const monthSalidasProm = avgCost;
+                
+                const initialTotal = initialStock * avgCost;
 
-                const initialStock = item.stock + monthSalidasQty - monthEntradasQty;
-                const initialTotal = initialStock * item.cost;
-
-                const invFinalQty = item.stock;
-                const invFinalCost = item.cost;
-                const invFinalTotal = invFinalQty * invFinalCost;
+                // 3. INVENTARIO FINAL LÓGICO (Inicial + Entradas - Salidas)
+                const invFinalQty = Math.max(0, initialStock + monthEntradasQty - monthSalidasQty);
+                const invFinalTotal = invFinalQty * avgCost;
 
                 return {
-                  id: item.id, desc: item.desc, unit: item.unit, cost: item.cost, initialStock, initialTotal, monthEntradasQty, monthEntradasProm, monthEntradasTotal, monthSalidasQty, monthSalidasProm, monthSalidasTotal, invFinalQty, invFinalCost, invFinalTotal
+                  id: item.id, desc: item.desc, unit: item.unit, cost: avgCost, initialStock, initialTotal, monthEntradasQty, monthEntradasProm: avgCost, monthEntradasTotal, monthSalidasQty, monthSalidasProm: avgCost, monthSalidasTotal, invFinalQty, invFinalCost: avgCost, invFinalTotal
                 };
               });
             }
+            // ▲ FIN DEL BLOQUE SUSTITUIDO ▲
 
+            // ESTO SE QUEDA EXACTAMENTE IGUAL A COMO LO TIENES:
+            if (cat === 'Productos Terminados') {
+              const FG_REF = [
+                {pat:/embutido.*1.*kiri|kiri.*embutido.*1/i,  entQty:241.45, entCost:86.64, salQty:220.00, salCost:86.64, unit:'Millares', esTermo:false},
+                {pat:/pa[ñn]al.*kiri/i,                        entQty:168.30, entCost:78.01, salQty:65.00,  salCost:78.01, unit:'Millares', esTermo:false},
+                {pat:/termo.*pinturas|pinturas.*caribe/i,       entQty:521.40, entCost:2.71,  salQty:520.00, salCost:2.71,  unit:'KG',      esTermo:true},
+              ];
             if (cat === 'Productos Terminados') {
               const FG_REF = [
                 {pat:/embutido.*1.*kiri|kiri.*embutido.*1/i,  entQty:241.45, entCost:86.64, salQty:220.00, salCost:86.64, unit:'Millares', esTermo:false},
