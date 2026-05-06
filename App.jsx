@@ -404,6 +404,8 @@ export default function App() {
   // FG corrections are applied via the Edit button in Terminados view
   const [showMovForm, setShowMovForm] = useState(false);
   const [movForm, setMovForm] = useState({itemId:'',qty:'',unitCost:'',docRef:'',type:'ENTRADA',notes:'',date:getTodayDate()});
+  // Multi-item batch movement
+  const [movItems, setMovItems] = useState([]); // [{itemId, qty, unitCost, desc, unit}]
 
   const [dialog, setDialog] = useState(null);
   const [clientSearchTerm, setClientSearchTerm] = useState(''); 
@@ -2783,11 +2785,8 @@ export default function App() {
                 </h2>
               </div>
               <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-8 space-y-5">
-                <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
-                  <p className="text-[10px] font-black text-orange-700 uppercase">Atención</p>
-                  <p className="text-[10px] font-bold text-orange-600">Las entradas actualizarán el costo promedio del catálogo y el Kardex automáticamente.</p>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
+                {/* Header fields — comunes a todos los ítems */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Tipo de Operación</label>
                     <select value={movForm.type} onChange={e=>setMovForm({...movForm,type:e.target.value})} className={`w-full border-2 rounded-xl p-3 text-xs font-black uppercase outline-none bg-white ${isEntradas?'border-green-300 text-green-700 bg-green-50':'border-red-300 text-red-700 bg-red-50'}`}>
@@ -2798,86 +2797,197 @@ export default function App() {
                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Fecha</label>
                     <input type="date" value={movForm.date} onChange={e=>setMovForm({...movForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400"/>
                   </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Doc. Referencia</label>
+                    <input type="text" value={movForm.docRef} onChange={e=>setMovForm({...movForm,docRef:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="FACT-001 / OP-005"/>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Notas Generales</label>
+                    <input type="text" value={movForm.notes} onChange={e=>setMovForm({...movForm,notes:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="Opcional"/>
+                  </div>
                 </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Ítem del Inventario</label>
-                  <select value={movForm.itemId} onChange={e=>{
-                    const val = e.target.value;
-                    const isFGG = val.startsWith('FGG::');
-                    const isFG = val.startsWith('FG::');
-                    let cost = 0;
-                    if(isFGG) {
-                      const grpKey = val.replace('FGG::','');
-                      const matchFG = (finishedGoodsInventory||[]).find(fg=>{
-                        const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                        const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                        return `${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}` === grpKey;
-                      });
-                      const esTermo=matchFG?.tipoProducto==='TERMOENCOGIBLE';
-                      cost = matchFG ? (esTermo?parseNum(matchFG.costoUnitario||0):parseNum(matchFG.costoUnitarioMillar||0)) : 0;
-                    } else if(isFG) {
-                      const fg=(finishedGoodsInventory||[]).find(f=>f.id===val.replace('FG::',''));
-                      const esTermo=fg?.tipoProducto==='TERMOENCOGIBLE';
-                      cost = fg ? (esTermo?parseNum(fg.costoUnitario||0):parseNum(fg.costoUnitarioMillar||0)) : 0;
-                    } else {
-                      const inv=(inventory||[]).find(i=>i.id===val);
-                      cost = parseNum(inv?.cost||0);
-                    }
-                    setMovForm({...movForm, itemId:val, unitCost:String(cost||0)});
-                  }} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
-                    <option value="">Seleccione...</option>
-                    <optgroup label="── Materia Prima / Consumibles ──">
-                      {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
-                    </optgroup>
-                    <optgroup label="── Semielaborados / Bobinas ──">
-                      {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>)}
-                    </optgroup>
-                    <optgroup label="── Productos Terminados ──">
-                      {(() => {
-                        try {
-                          const fgSelMap = {};
-                          (finishedGoodsInventory||[]).forEach(fg => {
-                            if(!fg || !fg.id) return;
-                            const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+                {/* AÑADIR ÍTEM — selector individual */}
+                <div className="border-2 border-dashed border-gray-200 rounded-2xl p-4 space-y-4">
+                  <h3 className="text-[10px] font-black text-gray-600 uppercase">Añadir Ítem al Movimiento</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="md:col-span-1">
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
+                      <select value={movForm.itemId} onChange={e=>{
+                        const val = e.target.value;
+                        const isFGG = val.startsWith('FGG::');
+                        const isFG = val.startsWith('FG::');
+                        let cost = 0;
+                        if(isFGG) {
+                          const grpKey = val.replace('FGG::','');
+                          const matchFG = (finishedGoodsInventory||[]).find(fg=>{
                             const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
                             const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                            const gk=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
-                            if(!fgSelMap[gk]) fgSelMap[gk]={key:gk, ids:[fg.id], label:formatFGLabel(fg)||fg.producto||fg.id, esTermo, stk:0, unit:esTermo?'KG':'Millares'};
-                            else fgSelMap[gk].ids.push(fg.id);
-                            const stk=esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
-                            fgSelMap[gk].stk+=stk;
+                            return `${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}` === grpKey;
                           });
-                          return Object.values(fgSelMap).map(g=>(
-                            <option key={`FGG::${g.key}`} value={`FGG::${g.key}`}>{g.label} (Stock: {formatNum(g.stk)} {g.unit})</option>
-                          ));
-                        } catch(e) { return null; }
-                      })()}
-                    </optgroup>
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Cantidad</label>
-                    <input type="number" step="0.01" min="0.01" value={movForm.qty} onChange={e=>setMovForm({...movForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="0.00"/>
+                          const esTermo=matchFG?.tipoProducto==='TERMOENCOGIBLE';
+                          cost = matchFG ? (esTermo?parseNum(matchFG.costoUnitario||0):parseNum(matchFG.costoUnitarioMillar||0)) : 0;
+                        } else if(isFG) {
+                          const fg=(finishedGoodsInventory||[]).find(f=>f.id===val.replace('FG::',''));
+                          const esTermo=fg?.tipoProducto==='TERMOENCOGIBLE';
+                          cost = fg ? (esTermo?parseNum(fg.costoUnitario||0):parseNum(fg.costoUnitarioMillar||0)) : 0;
+                        } else {
+                          const inv=(inventory||[]).find(i=>i.id===val);
+                          cost = parseNum(inv?.cost||0);
+                        }
+                        setMovForm({...movForm, itemId:val, unitCost:String(cost||0)});
+                      }} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
+                        <option value="">Seleccione...</option>
+                        <optgroup label="── Materia Prima / Consumibles ──">
+                          {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                        </optgroup>
+                        <optgroup label="── Semielaborados / Bobinas ──">
+                          {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>)}
+                        </optgroup>
+                        <optgroup label="── Productos Terminados ──">
+                          {(() => {
+                            try {
+                              const fgSelMap = {};
+                              (finishedGoodsInventory||[]).forEach(fg => {
+                                if(!fg || !fg.id) return;
+                                const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+                                const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                                const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                                const gk=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
+                                if(!fgSelMap[gk]) fgSelMap[gk]={key:gk, ids:[fg.id], label:formatFGLabel(fg)||fg.producto||fg.id, esTermo, stk:0, unit:esTermo?'KG':'Millares'};
+                                else fgSelMap[gk].ids.push(fg.id);
+                                fgSelMap[gk].stk+=esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
+                              });
+                              return Object.values(fgSelMap).map(g=>(
+                                <option key={`FGG::${g.key}`} value={`FGG::${g.key}`}>{g.label} (Stock: {formatNum(g.stk)} {g.unit})</option>
+                              ));
+                            } catch(e) { return null; }
+                          })()}
+                        </optgroup>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
+                      <input type="number" step="0.01" min="0.01" value={movForm.qty} onChange={e=>setMovForm({...movForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="0.00"/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">{isEntradas?'Costo Unit. ($)':'Costo Actual ($)'}</label>
+                      <input type="number" step="0.0001" min="0" value={isEntradas ? movForm.unitCost : formatNum((inventory||[]).find(i=>i.id===movForm.itemId)?.cost||0)} readOnly={!isEntradas} onChange={e=>setMovForm({...movForm,unitCost:e.target.value})} className={`w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400 ${!isEntradas?'bg-gray-50 text-gray-400 cursor-not-allowed':''}`} placeholder="0.00"/>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">
-                      {isEntradas ? 'Nuevo Costo Unitario ($) Compra' : `Costo Unitario Promedio Actual ($)`}
-                    </label>
-                    <input type="number" step="0.0001" min="0" value={isEntradas ? movForm.unitCost : formatNum(selectedInvItem?.cost||0)} readOnly={!isEntradas} onChange={e=>setMovForm({...movForm,unitCost:e.target.value})} className={`w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400 ${!isEntradas?'bg-gray-50 text-gray-500':''}`} placeholder="0.00"/>
+                  <div className="flex justify-end">
+                    <button type="button" onClick={()=>{
+                      if(!movForm.itemId||!parseNum(movForm.qty)) return;
+                      const inv=(inventory||[]).find(i=>i.id===movForm.itemId);
+                      const isFGG=movForm.itemId.startsWith('FGG::');
+                      const desc = isFGG ? (()=>{const grpKey=movForm.itemId.replace('FGG::','');const fg=(finishedGoodsInventory||[]).find(fg=>{const pn=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');const cn=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');return `${pn}__${cn}__${fg.tipoProducto||'BOLSAS'}`===grpKey;});return fg?formatFGLabel(fg)||fg.producto||fg.id:movForm.itemId;})() : inv?.desc||movForm.itemId;
+                      const unit = isFGG ? ((finishedGoodsInventory||[]).find(fg=>{const pn=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');const cn=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');return `${pn}__${cn}__${fg.tipoProducto||'BOLSAS'}`===movForm.itemId.replace('FGG::','')})?.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millares') : inv?.unit||'und';
+                      setMovItems(prev=>[...prev, { itemId:movForm.itemId, qty:parseNum(movForm.qty), unitCost:parseNum(movForm.unitCost)||parseNum(inv?.cost||0), desc, unit }]);
+                      setMovForm(f=>({...f, itemId:'', qty:'', unitCost:''}));
+                    }} className={`px-5 py-2.5 rounded-xl font-black text-[10px] uppercase flex items-center gap-2 ${isEntradas?'bg-green-600 hover:bg-green-700':'bg-red-600 hover:bg-red-700'} text-white`}>
+                      <Plus size={13}/> Agregar al Listado
+                    </button>
                   </div>
                 </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Documento Referencia (Factura, OP, Guía)</label>
-                  <input type="text" value={movForm.docRef} onChange={e=>setMovForm({...movForm,docRef:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="EJ: FACT-001 O OP-005"/>
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Observaciones o Notas</label>
-                  <input type="text" value={movForm.notes} onChange={e=>setMovForm({...movForm,notes:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="Opcional"/>
-                </div>
-                <div className="flex justify-end pt-2">
-                  <button onClick={handleSaveMov} className="bg-black text-white px-8 py-3 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2">
-                    <CheckCircle2 size={16}/> Procesar Movimiento
+
+                {/* LISTADO DE ÍTEMS EN COLA */}
+                {movItems.length > 0 && (
+                  <div className="border-2 border-gray-200 rounded-2xl overflow-hidden">
+                    <div className="bg-gray-800 text-white px-4 py-2 flex justify-between items-center">
+                      <span className="font-black text-[10px] uppercase">{movItems.length} ítem(s) en cola para procesar</span>
+                      <button onClick={()=>setMovItems([])} className="text-gray-400 hover:text-red-400 text-[9px] font-black uppercase"><X size={12}/> Limpiar todo</button>
+                    </div>
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-100"><tr className="font-black text-[9px] uppercase text-gray-600">
+                        <th className="py-2 px-3 text-left">Artículo</th>
+                        <th className="py-2 px-3 text-center">Cantidad</th>
+                        <th className="py-2 px-3 text-center">Costo U.</th>
+                        <th className="py-2 px-3 text-center">Total</th>
+                        <th className="py-2 px-3 text-center">✕</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {movItems.map((it,i)=>(
+                          <tr key={i} className="hover:bg-gray-50">
+                            <td className="py-2 px-3 font-bold"><span className="text-orange-600 font-black">{it.itemId.replace('FGG::','')}</span> <span className="text-gray-500">{it.desc}</span></td>
+                            <td className="py-2 px-3 text-center font-black">{formatNum(it.qty)} {it.unit}</td>
+                            <td className="py-2 px-3 text-center font-bold text-gray-500">${formatNum(it.unitCost)}</td>
+                            <td className="py-2 px-3 text-center font-black text-green-700">${formatNum(it.qty*it.unitCost)}</td>
+                            <td className="py-2 px-3 text-center"><button onClick={()=>setMovItems(p=>p.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={13}/></button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-gray-50"><tr>
+                        <td colSpan="3" className="py-2 px-3 text-right font-black text-[10px] uppercase text-gray-500">Total lote:</td>
+                        <td className="py-2 px-3 text-center font-black text-green-800">${formatNum(movItems.reduce((s,it)=>s+it.qty*it.unitCost,0))}</td>
+                        <td></td>
+                      </tr></tfoot>
+                    </table>
+                  </div>
+                )}
+
+                <div className="flex justify-between items-center pt-2">
+                  <p className="text-[9px] text-gray-400 font-bold uppercase">{movItems.length === 0 ? 'Agrega al menos 1 ítem para procesar' : `${movItems.length} ítem(s) listos para registrar`}</p>
+                  <button onClick={async()=>{
+                    if(movItems.length === 0) return setDialog({title:'Aviso',text:'Agrega al menos un ítem antes de procesar.',type:'alert'});
+                    for(const it of movItems) {
+                      // Re-use existing handleSaveMov logic per item
+                      const prevForm = movForm;
+                      const tempForm = {...movForm, itemId:it.itemId, qty:String(it.qty), unitCost:String(it.unitCost)};
+                      setMovForm(tempForm);
+                      await new Promise(resolve => setTimeout(resolve, 50));
+                      // Direct save — same logic as handleSaveMov
+                      const isFGGrp = it.itemId.startsWith('FGG::');
+                      const isFGItem = it.itemId.startsWith('FG::');
+                      const qty = it.qty;
+                      const unitCostInput = it.unitCost;
+                      if(isFGGrp || isFGItem) {
+                        const grpKey = isFGGrp ? it.itemId.replace('FGG::','') : it.itemId.replace('FG::','');
+                        const isIn = movForm.type==='ENTRADA'||movForm.type==='ENTRADA_DEVOLUCION'||movForm.type==='ENTRADA_INICIAL';
+                        const fgItems = isFGGrp ? (finishedGoodsInventory||[]).filter(fg=>{
+                          const pn=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                          const cn=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                          return `${pn}__${cn}__${fg.tipoProducto||'BOLSAS'}`===grpKey;
+                        }) : [(finishedGoodsInventory||[]).find(f=>f.id===grpKey)].filter(Boolean);
+                        for(const fg of fgItems) {
+                          const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+                          const fgStock=esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
+                          const cantDeEste=fgItems.length>1?qty/fgItems.length:qty;
+                          const cost=esTermo?parseNum(fg.costoUnitario||0):parseNum(fg.costoUnitarioMillar||0);
+                          const newStk=isIn?fgStock+cantDeEste:Math.max(0,fgStock-cantDeEste);
+                          const upd=esTermo?{kgProducidos:newStk}:{millares:newStk};
+                          await updateDoc(getDocRef('finishedGoodsInventory',fg.id),upd);
+                          const movId=`MOV-${Date.now()}-${fg.id}`;
+                          await setDoc(getDocRef('inventoryMovements',movId),{
+                            id:movId,type:movForm.type,qty:cantDeEste,unitCost:cost,totalValue:cantDeEste*cost,
+                            previousStock:fgStock,newStock:newStk,docRef:movForm.docRef,
+                            notes:movForm.notes.toUpperCase(),date:movForm.date,user:appUser?.name||'Admin',
+                            timestamp:Date.now(),itemId:`FG::${fg.id}`,itemDesc:formatFGLabel(fg)||fg.producto||fg.id,isFG:true
+                          });
+                        }
+                      } else {
+                        const inv=(inventory||[]).find(i=>i.id===it.itemId);
+                        if(!inv) continue;
+                        const isAdd=movForm.type==='ENTRADA'||movForm.type==='ENTRADA_DEVOLUCION'||movForm.type==='ENTRADA_INICIAL';
+                        const newStock=isAdd?parseNum(inv.stock)+qty:Math.max(0,parseNum(inv.stock)-qty);
+                        const unitCostFinal=isAdd&&unitCostInput>0?unitCostInput:inv.cost;
+                        const updCost=isAdd&&unitCostInput>0?((parseNum(inv.stock)*parseNum(inv.cost))+(qty*unitCostInput))/(parseNum(inv.stock)+qty):inv.cost;
+                        const updateData={stock:newStock};
+                        if(isAdd&&unitCostInput>0) updateData.cost=updCost;
+                        await updateDoc(getDocRef('inventory',it.itemId),updateData);
+                        const movId2=`MOV-${Date.now()}-${it.itemId}`;
+                        await setDoc(getDocRef('inventoryMovements',movId2),{
+                          id:movId2,itemId:it.itemId,itemDesc:inv.desc,type:movForm.type,qty,
+                          unitCost:unitCostFinal,totalValue:qty*unitCostFinal,
+                          previousStock:inv.stock||0,newStock,docRef:movForm.docRef,
+                          notes:movForm.notes.toUpperCase(),date:movForm.date,user:appUser?.name||'Admin',timestamp:Date.now()
+                        });
+                      }
+                    }
+                    setMovItems([]);
+                    setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',notes:'',date:getTodayDate(),type:movForm.type});
+                    setShowMovForm(false);
+                    setDialog({title:'✅ Lote Procesado',text:`${movItems.length} movimiento(s) registrados en el Kardex.`,type:'alert'});
+                  }} disabled={movItems.length===0} className={`px-8 py-3 rounded-2xl font-black text-xs uppercase shadow-lg flex items-center gap-2 ${movItems.length===0?'bg-gray-200 text-gray-400 cursor-not-allowed':'bg-black text-white hover:bg-gray-800'}`}>
+                    <CheckCircle2 size={16}/> Procesar {movItems.length} Movimiento{movItems.length!==1?'s':''}
                   </button>
                 </div>
               </div>
@@ -3042,92 +3152,152 @@ export default function App() {
     }
 
     if (invView === 'alimentario') {
-      const selItem = alimentarioItems.find(p => p.id === alimentarioForm.productoId);
+      // Orden de Salida de Almacén — generador de documentos sin columnas de costo
+      const nroOSA = `OSA-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
+
+      const printOSA = (items, header) => {
+        if(!items||items.length===0) return setDialog({title:'Aviso',text:'Agrega al menos un artículo a la orden.',type:'alert'});
+        const w = window.open('','_blank');
+        const rows = items.map((it,i)=>`<tr>
+          <td style="padding:6px 8px;border:1px solid #000;text-align:center">${i+1}</td>
+          <td style="padding:6px 8px;border:1px solid #000;text-align:center">${it.itemId}</td>
+          <td style="padding:6px 8px;border:1px solid #000">${it.desc}</td>
+          <td style="padding:6px 8px;border:1px solid #000;text-align:center;font-weight:900">${formatNum(it.qty)}</td>
+          <td style="padding:6px 8px;border:1px solid #000;text-align:center">${it.unit||'UND'}</td>
+          <td style="padding:6px 8px;border:1px solid #000">${it.lote||'—'}</td></tr>`).join('');
+        w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>OSA</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:11px;padding:24px 32px}
+.hd{display:flex;justify-content:space-between;border-bottom:3px solid #000;padding-bottom:10px;margin-bottom:12px}
+.hd h2{font-size:15px;font-weight:900;text-transform:uppercase}
+.title{text-align:center;font-size:13px;font-weight:900;text-transform:uppercase;border:2px solid #000;padding:7px;margin-bottom:14px;background:#f9fafb}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px}
+.cell{border:1px solid #ccc;padding:5px 8px;font-size:10px}.cell b{display:block;font-size:9px;text-transform:uppercase;color:#555;margin-bottom:2px}
+table{width:100%;border-collapse:collapse;margin-bottom:16px}
+thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8px;font-size:10px}th{font-weight:900;font-size:9px;text-transform:uppercase}
+.obs{border:1px solid #000;padding:8px;min-height:36px;margin-bottom:20px;font-size:10px}.obs b{display:block;font-size:9px;text-transform:uppercase;margin-bottom:3px}
+.sigs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-top:36px}
+.sig{border-top:1px solid #000;padding-top:6px;font-size:9px;text-align:center;text-transform:uppercase;line-height:1.8}
+@media print{body{padding:16px}}</style></head><body>
+<div class="hd"><div><h2>SERVICIOS JIRET G&B, C.A.</h2><p><b>RIF:</b> J-412309374</p><p>Zona Industrial — Planta de Producción</p></div>
+<div style="text-align:right"><div style="font-size:13px;font-weight:900;color:#ea580c">${nroOSA}</div><div style="font-size:9px;margin-top:4px">Emisión: ${header.fecha}</div></div></div>
+<div class="title">ORDEN DE SALIDA DE ALMACÉN</div>
+<div class="grid">
+<div class="cell"><b>Almacén Origen</b>${header.almacenOrigen}</div>
+<div class="cell"><b>Fecha de Emisión</b>${header.fecha}</div>
+<div class="cell"><b>Destino / Uso</b>${header.destino}</div>
+<div class="cell"><b>Doc. Referencia</b>${header.docRef||'—'}</div>
+<div class="cell"><b>Procesado por</b>${header.procesadoPor}</div>
+<div class="cell"><b>N° de Control</b>${nroOSA}</div>
+</div>
+<table><thead><tr><th>#</th><th>Código</th><th>Descripción del Producto</th><th>Cantidad</th><th>U.M.</th><th>Lote / Observación</th></tr></thead>
+<tbody>${rows}</tbody></table>
+<div class="obs"><b>Observaciones:</b> ${header.destino}${header.docRef?' | Ref: '+header.docRef:''}</div>
+<div class="sigs">
+<div class="sig">Solicitado por<br/><br/>Nombre:______________<br/>Dpto:_______________<br/>Fecha:______________</div>
+<div class="sig">Entregado por (Almacenista)<br/><br/>Nombre:______________<br/>Dpto: Almacén<br/>Fecha:______________</div>
+<div class="sig">Recibido por<br/><br/>Nombre:______________<br/>Dpto:_______________<br/>Fecha:______________</div>
+</div>
+<script>window.onload=function(){window.print();}</script></body></html>`);
+        w.document.close();
+      };
+
+      const [osaItemList, setOsaItemList] = React.useState([]);
+      const [osaItemForm, setOsaItemForm] = React.useState({ itemId:'', qty:'', lote:'' });
+      const [osaHdr, setOsaHdr] = React.useState({ almacenOrigen: depositos[0]||'ALMACEN PRINCIPAL', destino:'Producción / Despacho', docRef:'', fecha:getTodayDate(), procesadoPor:appUser?.name||'' });
+
       return (
-        <div className="space-y-6 animate-in fade-in">
-          {/* HEADER */}
+        <div className="space-y-4 animate-in fade-in">
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-8 py-5 border-b border-gray-200 bg-emerald-50 flex justify-between items-center">
+            <div className="px-8 py-5 border-b bg-orange-50 flex justify-between items-center">
               <div>
-                <h2 className="text-xl font-black text-emerald-900 uppercase flex items-center gap-3"><ShoppingCart className="text-emerald-600" size={22}/> Control Alimentario / Mantenimiento</h2>
-                <p className="text-[10px] font-bold text-emerald-700 mt-0.5">Inventario independiente con Kardex automático por transacción atómica</p>
+                <h2 className="text-xl font-black text-orange-900 uppercase flex items-center gap-3"><FileText className="text-orange-600" size={22}/> Orden de Salida de Almacén (OSA)</h2>
+                <p className="text-[10px] font-bold text-orange-700 mt-0.5">Genera el documento oficial — multi-artículo — sin columna de costos</p>
               </div>
-              <div className="flex gap-2">
-                <button onClick={()=>setShowAlimentarioNewItem(v=>!v)} className="bg-white border-2 border-emerald-300 text-emerald-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-emerald-50 flex items-center gap-2"><Plus size={13}/> Nuevo Producto</button>
-                <button onClick={()=>{setAlimentarioForm(f=>({...f,fecha:getTodayDate(),solicitante:appUser?.name||''}));setShowAlimentarioForm(v=>!v);}} className="bg-emerald-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-emerald-700 flex items-center gap-2"><ArrowUpFromLine size={13}/> Nueva Orden de Salida</button>
-              </div>
+              <button onClick={()=>printOSA(osaItemList,osaHdr)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2 shadow-md disabled:opacity-40" disabled={osaItemList.length===0}><Printer size={15}/> Imprimir OSA</button>
             </div>
-
-            {/* Formulario nuevo producto */}
-            {showAlimentarioNewItem && (
-              <div className="p-6 border-b border-emerald-100 bg-emerald-50/30">
-                <h3 className="text-sm font-black uppercase text-emerald-800 mb-3">Agregar Producto al Inventario Alimentario</h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre</label><input type="text" value={alimentarioNewItem.nombre} onChange={e=>setAlimentarioNewItem(p=>({...p,nombre:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-500" placeholder="EJ: ACEITE DE MOTOR 20W50"/></div>
-                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">U.M.</label><select value={alimentarioNewItem.unidad} onChange={e=>setAlimentarioNewItem(p=>({...p,unidad:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-500 bg-white"><option value="UND">UND</option><option value="LTS">LTS</option><option value="KG">KG</option><option value="GALON">GALON</option><option value="SACO">SACO</option></select></div>
-                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Stock Inicial</label><input type="number" step="0.01" value={alimentarioNewItem.stock} onChange={e=>setAlimentarioNewItem(p=>({...p,stock:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-500" placeholder="0"/></div>
+            <div className="p-6 space-y-5">
+              {/* Encabezado */}
+              <div>
+                <h3 className="text-[10px] font-black text-gray-600 uppercase mb-3">Datos del Documento</h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
+                    <select value={osaHdr.almacenOrigen} onChange={e=>setOsaHdr(h=>({...h,almacenOrigen:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 bg-white">
+                      {depositos.map(d=><option key={d} value={d}>{d}</option>)}
+                    </select></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Destino / Uso</label>
+                    <input type="text" value={osaHdr.destino} onChange={e=>setOsaHdr(h=>({...h,destino:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400" placeholder="PRODUCCIÓN / DESPACHO / TRASLADO"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Doc. Referencia</label>
+                    <input type="text" value={osaHdr.docRef} onChange={e=>setOsaHdr(h=>({...h,docRef:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400" placeholder="EJ: OP-0021 / FACT-001"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                    <input type="date" value={osaHdr.fecha} onChange={e=>setOsaHdr(h=>({...h,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Procesado por</label>
+                    <input type="text" value={osaHdr.procesadoPor} onChange={e=>setOsaHdr(h=>({...h,procesadoPor:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400"/></div>
+                  <div className="flex items-end"><div className="w-full bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5 text-center"><p className="text-[8px] font-black text-orange-600 uppercase">N° Control</p><p className="font-black text-orange-800">{nroOSA}</p></div></div>
                 </div>
-                <div className="flex justify-end mt-3"><button onClick={handleAlimentarioNuevoItem} className="bg-emerald-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase hover:bg-emerald-700"><CheckCircle2 size={14} className="inline mr-1"/>Guardar Producto</button></div>
               </div>
-            )}
 
-            {/* Formulario Orden de Salida */}
-            {showAlimentarioForm && (
-              <div className="p-6 border-b border-orange-100 bg-orange-50/30">
-                <h3 className="text-sm font-black uppercase text-orange-800 mb-3 flex items-center gap-2"><ArrowUpFromLine size={15}/> Nueva Orden de Salida (Mantenimiento)</h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="md:col-span-2">
-                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Producto</label>
-                    <select value={alimentarioForm.productoId} onChange={e=>setAlimentarioForm(f=>({...f,productoId:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500 bg-white">
-                      <option value="">— Seleccionar producto —</option>
-                      {alimentarioItems.map(p=><option key={p.id} value={p.id}>{p.nombre} (Disp: {formatNum(p.stock)} {p.unidad||'UND'})</option>)}
-                    </select>
-                    {selItem && <p className="text-[9px] text-emerald-600 font-bold mt-1">Stock disponible: {formatNum(selItem.stock)} {selItem.unidad||'UND'}</p>}
+              {/* Agregar artículo */}
+              <div className="border-2 border-dashed border-orange-200 rounded-2xl p-4">
+                <h3 className="text-[10px] font-black text-orange-700 uppercase mb-3">Agregar Artículo a la OSA</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
+                    <select value={osaItemForm.itemId} onChange={e=>setOsaItemForm(f=>({...f,itemId:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
+                      <option value="">— Seleccionar artículo —</option>
+                      {(inventory||[]).sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                    </select></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
+                    <input type="number" step="0.01" min="0.01" value={osaItemForm.qty} onChange={e=>setOsaItemForm(f=>({...f,qty:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0.00"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Lote / Obs.</label>
+                    <input type="text" value={osaItemForm.lote} onChange={e=>setOsaItemForm(f=>({...f,lote:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="Opcional"/></div>
+                </div>
+                <div className="flex justify-end mt-3">
+                  <button onClick={()=>{
+                    if(!osaItemForm.itemId||!parseNum(osaItemForm.qty)) return;
+                    const inv=(inventory||[]).find(i=>i.id===osaItemForm.itemId);
+                    if(!inv) return;
+                    setOsaItemList(prev=>[...prev,{itemId:inv.id,desc:inv.desc,qty:parseNum(osaItemForm.qty),unit:inv.unit||'UND',lote:osaItemForm.lote}]);
+                    setOsaItemForm({itemId:'',qty:'',lote:''});
+                  }} className="bg-orange-500 text-white px-6 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-orange-600 flex items-center gap-2"><Plus size={13}/> Agregar a la Orden</button>
+                </div>
+              </div>
+
+              {/* Tabla previa */}
+              {osaItemList.length > 0 ? (
+                <div className="rounded-xl border border-gray-200 overflow-hidden">
+                  <div className="bg-gray-800 text-white px-4 py-2 flex justify-between items-center">
+                    <span className="font-black text-[10px] uppercase">{osaItemList.length} artículo(s) en la orden</span>
+                    <button onClick={()=>setOsaItemList([])} className="text-gray-400 hover:text-red-400 text-[9px] font-black uppercase flex items-center gap-1"><X size={11}/> Limpiar</button>
                   </div>
-                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label><input type="number" step="0.01" min="0.01" value={alimentarioForm.cantidad} onChange={e=>setAlimentarioForm(f=>({...f,cantidad:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0.00"/></div>
-                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label><input type="date" value={alimentarioForm.fecha} onChange={e=>setAlimentarioForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500"/></div>
-                  <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Concepto</label><input type="text" value={alimentarioForm.concepto} onChange={e=>setAlimentarioForm(f=>({...f,concepto:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500 uppercase" placeholder="EJ: ORDEN DE SALIDA MANTENIMIENTO"/></div>
-                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Solicitado por</label><input type="text" value={alimentarioForm.solicitante} onChange={e=>setAlimentarioForm(f=>({...f,solicitante:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500 uppercase" placeholder="Nombre"/></div>
-                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Registrado por</label><p className="text-xs font-black text-gray-700 mt-3">{appUser?.name||'—'}</p></div>
-                </div>
-                <div className="flex justify-end gap-3 mt-4">
-                  <button onClick={()=>setShowAlimentarioForm(false)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
-                  <button onClick={handleAlimentarioSalida} className="bg-orange-500 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-orange-600 flex items-center gap-2"><CheckCircle2 size={14}/> Registrar Salida</button>
-                </div>
-              </div>
-            )}
-
-            {/* Tabla inventario */}
-            <div className="p-6">
-              {alimentarioItems.length === 0 ? (
-                <div className="py-16 text-center text-gray-400"><ShoppingCart size={40} className="mx-auto mb-3 opacity-20"/><p className="font-black text-xs uppercase">No hay productos en el inventario alimentario</p></div>
-              ) : (
-                <div className="overflow-x-auto rounded-xl border border-gray-200">
                   <table className="w-full text-xs">
-                    <thead className="bg-emerald-700 text-white"><tr className="font-black text-[9px] uppercase">
-                      <th className="py-3 px-4 border-r border-white/20 text-left">Código</th>
-                      <th className="py-3 px-4 border-r border-white/20 text-left">Nombre</th>
-                      <th className="py-3 px-4 border-r border-white/20 text-center">U.M.</th>
-                      <th className="py-3 px-4 border-r border-white/20 text-center">Stock Actual</th>
-                      <th className="py-3 px-4 text-center">Acciones</th>
+                    <thead className="bg-gray-100"><tr className="font-black text-[9px] uppercase text-gray-600">
+                      <th className="py-2 px-3 text-center">#</th>
+                      <th className="py-2 px-3 text-center">Código</th>
+                      <th className="py-2 px-3 text-left">Descripción</th>
+                      <th className="py-2 px-3 text-center">Cantidad</th>
+                      <th className="py-2 px-3 text-center">U.M.</th>
+                      <th className="py-2 px-3 text-left">Lote</th>
+                      <th className="py-2 px-3 text-center">✕</th>
                     </tr></thead>
                     <tbody className="divide-y divide-gray-100">
-                      {alimentarioItems.map(p=>(
-                        <tr key={p.id} className="hover:bg-gray-50">
-                          <td className="py-3 px-4 border-r font-black text-emerald-600">{p.id}</td>
-                          <td className="py-3 px-4 border-r font-bold uppercase">{p.nombre}</td>
-                          <td className="py-3 px-4 border-r text-center font-bold text-gray-500">{p.unidad||'UND'}</td>
-                          <td className={`py-3 px-4 border-r text-center font-black ${parseNum(p.stock)<=0?'text-red-600':'text-blue-700'}`}>{formatNum(p.stock)}</td>
-                          <td className="py-3 px-4 text-center">
-                            <button onClick={()=>{setAlimentarioForm(f=>({...f,productoId:p.id,fecha:getTodayDate(),solicitante:appUser?.name||''}));setShowAlimentarioForm(true);}} className="px-3 py-1.5 bg-orange-100 text-orange-700 rounded-lg text-[9px] font-black uppercase hover:bg-orange-500 hover:text-white">
-                              <ArrowUpFromLine size={11} className="inline mr-1"/>Salida
-                            </button>
-                          </td>
+                      {osaItemList.map((it,i)=>(
+                        <tr key={i} className="hover:bg-orange-50">
+                          <td className="py-2.5 px-3 border-r text-center font-black text-gray-400">{i+1}</td>
+                          <td className="py-2.5 px-3 border-r text-center font-black text-orange-600">{it.itemId}</td>
+                          <td className="py-2.5 px-3 border-r font-bold uppercase text-gray-800">{it.desc}</td>
+                          <td className="py-2.5 px-3 border-r text-center font-black">{formatNum(it.qty)}</td>
+                          <td className="py-2.5 px-3 border-r text-center font-bold text-gray-500">{it.unit}</td>
+                          <td className="py-2.5 px-3 border-r text-[10px] text-gray-400">{it.lote||'—'}</td>
+                          <td className="py-2.5 px-3 text-center"><button onClick={()=>setOsaItemList(p=>p.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={13}/></button></td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  <div className="p-4 flex justify-end">
+                    <button onClick={()=>printOSA(osaItemList,osaHdr)} className="bg-black text-white px-8 py-3 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2"><Printer size={15}/> Generar e Imprimir OSA</button>
+                  </div>
                 </div>
+              ) : (
+                <div className="py-12 text-center text-gray-400"><FileText size={40} className="mx-auto mb-3 opacity-20"/><p className="font-black text-xs uppercase">Sin artículos — agrega ítems para generar la Orden de Salida</p></div>
               )}
             </div>
           </div>
@@ -4678,19 +4848,24 @@ export default function App() {
             </div>
             <div data-html2canvas-ignore="true" className="p-6 bg-gray-50/50 border-b border-gray-200 no-pdf">
                {/* Toggle button */}
-               <button type="button" onClick={()=>{setShowInvItemForm(v=>!v); if(editingInvId){setEditingInvId(null);setNewInvItemForm(initialInvItemForm);}}}
-                 className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase transition-all shadow-sm ${showInvItemForm||editingInvId?'bg-orange-500 text-white':'bg-white border-2 border-orange-200 text-orange-700 hover:bg-orange-50'}`}>
-                 {showInvItemForm||editingInvId ? <><X size={14}/> Cancelar</> : <><Plus size={14}/> {editingInvId?'Modificar Artículo':'Nuevo Artículo'}</>}
-               </button>
-               <button type="button" onClick={()=>setShowTrasladoModal(true)}
-                 className="flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase transition-all shadow-sm bg-white border-2 border-indigo-300 text-indigo-700 hover:bg-indigo-50">
-                 <ArrowRightLeft size={14}/> Traslado entre Almacenes
-               </button>
-               <select value={catalogAlmacenFilter} onChange={e=>setCatalogAlmacenFilter(e.target.value)}
-                 className="border-2 border-gray-200 rounded-xl px-3 py-2.5 text-[10px] font-black uppercase outline-none focus:border-orange-400 bg-white">
-                 <option value="TODOS">📦 Todos los almacenes</option>
-                 {depositos.map(a=><option key={a} value={a}>🏭 {a}</option>)}
-               </select>
+               <div className="flex items-center gap-2 flex-wrap">
+                 <button type="button" onClick={()=>{setShowInvItemForm(v=>!v); if(editingInvId){setEditingInvId(null);setNewInvItemForm(initialInvItemForm);}}}
+                   className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase transition-all border-2 ${showInvItemForm||editingInvId?'bg-orange-500 text-white border-orange-500':'bg-white border-orange-300 text-orange-700 hover:bg-orange-50'}`}>
+                   {showInvItemForm||editingInvId ? <><X size={13}/> Cancelar</> : <><Plus size={13}/> Nuevo Artículo</>}
+                 </button>
+                 <button type="button" onClick={()=>setShowTrasladoModal(true)}
+                   className="flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase transition-all border-2 bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-50">
+                   <ArrowRightLeft size={13}/> Traslado entre Almacenes
+                 </button>
+                 <div className="flex items-center gap-1 border-2 border-gray-200 rounded-2xl px-3 py-2 bg-white">
+                   <span className="text-[10px]">📦</span>
+                   <select value={catalogAlmacenFilter} onChange={e=>setCatalogAlmacenFilter(e.target.value)}
+                     className="text-[10px] font-black uppercase outline-none bg-transparent pr-2">
+                     <option value="TODOS">Todos los Almacenes</option>
+                     {depositos.map(a=><option key={a} value={a}>{a}</option>)}
+                   </select>
+                 </div>
+               </div>
 
                {(showInvItemForm || editingInvId) && (
                <form onSubmit={e=>{handleSaveInvItem(e);setShowInvItemForm(false);}} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6 mt-4">
@@ -5427,15 +5602,15 @@ export default function App() {
         )}
 
         {invView === 'reporte177' && (() => {
-          // Excluir "Productos Terminados" y "Semielaborados" del listado dinámico de inventory
-          // porque se manejan con secciones especiales
-          // Solo incluir categorías que tengan al menos un ítem con stock > 0
-          // PASO 5: Incluir TODAS las categorías, incluyendo las que pueden tener
-          // stock = 0 pero sí tienen movimientos en el período (Químicos, Pigmentos de Abril)
+          // FIX: declarar fechas PRIMERO antes de usarlas
+          const startOfMonth = new Date(reportYear, reportMonth - 1, 1);
+          const endOfMonth   = new Date(reportYear, reportMonth, 0, 23, 59, 59, 999);
+
+          // Categorías con stock actual
           const categoriesWithStock = [...new Set(
             inventory.filter(i => i.category !== 'Productos Terminados' && parseNum(i.stock) > 0).map(i => i.category)
           )];
-          // También incluir categorías con movimientos aunque el stock actual sea 0
+          // Categorías con movimientos en el período (aunque stock=0 — ej. Químicos/Pigmentos de Abril)
           const categoriesWithMovements = [...new Set(
             (invMovements || []).filter(m => {
               const d = new Date(`${m.date}T00:00:00`);
@@ -5447,9 +5622,6 @@ export default function App() {
           )];
           const categories = [...new Set([...categoriesWithStock, ...categoriesWithMovements])];
           if (finishedGoodsInventory.length > 0 || inventory.some(i=>i.category==='Productos Terminados')) categories.push('Productos Terminados');
-
-          const startOfMonth = new Date(reportYear, reportMonth - 1, 1);
-          const endOfMonth = new Date(reportYear, reportMonth, 0, 23, 59, 59, 999);
 
           const monthMovements = invMovements.filter(m => {
             const movDate = new Date(`${m.date}T00:00:00`);
@@ -6938,55 +7110,8 @@ export default function App() {
         const ultimaFase = fasesActivas.sellado ? 'sellado' : fasesActivas.impresion ? 'impresion' : 'extrusion';
         const esUltimaFase = activePhaseTab === ultimaFase;
 
-        if (esUltimaFase) {
-          const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
-          const millEntrada = esTermo ? 0 : parseNum(techParams.millares || 0);
-          const batchId = newBatch.id;
-          const fgId = `FG-${batchId}`;
-          const fgExists = (finishedGoodsInventory||[]).some(fg => fg.id === fgId || fg.batchId === batchId);
-          if (!fgExists) {
-            // Calcular costo TOTAL de la OP hasta este punto (todas las fases)
-            const prod = req.production || {};
-            const allOpBatches = [
-              ...(prod.extrusion?.batches||[]),
-              ...(prod.impresion?.batches||[]),
-              ...(prod.sellado?.batches||[]),
-              // Incluir también el batch actual que aún no fue guardado
-            ].filter(b => b.operator !== 'ALMACÉN (DESPACHO)');
-            const costoOpAnterior = allOpBatches.reduce((s,b) => s + parseNum(b.cost||0), 0);
-            const costoTotal = costoOpAnterior + phaseCost;
-            // $/KG = costo total / KG producidos de la última fase
-            const costoXKg = prodKg > 0 ? costoTotal / prodKg : 0;
-            // $/Millar = costo total / Millares de la última fase
-            const millBatch = parseNum(techParams.millares || 0);
-            const costoXMillar = millBatch > 0 ? costoTotal / millBatch : 0;
-
-            await setDoc(getDocRef('finishedGoodsInventory', fgId), {
-              id: fgId, opId: req.id, reqId: req.id,
-              cliente: req.client || 'N/A',
-              tipoProducto: req.tipoProducto || 'BOLSAS',
-              categoria: req.categoria || '',
-              producto: formatFGLabel(req) || req.desc || 'Producto', // auto: CATEGORIA - MEDIDA
-              ancho: req.ancho || 0, largo: req.largo || 0, micras: req.micras || 0,
-              color: req.color || 'NATURAL', tratamiento: req.tratamiento || 'LISO',
-              kgProducidos: prodKg,
-              kgProducidosOrigen: prodKg,
-              millares: millEntrada,
-              millaresOrigen: millEntrada,
-              costoUnitario: costoXKg,           // $/KG (para Termoencogible y cálculos internos)
-              costoUnitarioMillar: costoXMillar, // $/Millar (para Bolsas en catálogo)
-              costoTotalProduccion: costoTotal,  // costo total OP completo
-              fechaFinalizacion: phaseForm.date || getTodayDate(),
-              ubicacion: 'ALMACEN GENERAL',
-              status: 'LISTO PARA ENTREGA',
-              fase: activePhaseTab,
-              batchId,
-              observaciones: phaseForm.observaciones || '',
-              timestamp: Date.now()
-            });
-          }
-        }
-        // NO modificar entregasParciales aquí — solo el botón manual lo hace
+        // GUARDAR LOTE: NO agrega a Inv. Terminados.
+        // Solo "Entrega Parcial" o "Cierre OP" deben hacer eso para evitar duplicados.
       }
 
       setPhaseForm({ ...initialPhaseForm, date: getTodayDate() });
@@ -13736,7 +13861,7 @@ export default function App() {
                       {id:'catalogo', icon:<Box size={14}/>, label:'General', perm:'inventario_catalogo'},
                       {id:'wip', icon:<Beaker size={14}/>, label:'WIP', perm:'inventario_catalogo'},
                       {id:'finished', icon:<Package size={14}/>, label:'Terminados', perm:'inventario_catalogo'},
-                      {id:'alimentario', icon:<ShoppingCart size={14}/>, label:'Alimentario', perm:'inventario_catalogo'},
+                      {id:'alimentario', icon:<FileText size={14}/>, label:'Orden Salida', perm:'inventario_catalogo'},
                     ].filter(t=>hasPerm('inventario')&&(hasPerm(t.perm)||appUser?.role==='Master')).map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
@@ -13855,17 +13980,25 @@ export default function App() {
                       fgGrps[gk].stk += fg.tipoProducto==='TERMOENCOGIBLE' ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
                     });
                     const grpList = Object.values(fgGrps);
-                    if(grpList.length === 0) return null;
+                    // Siempre mostrar selector (con opción de crear nuevo)
+                    const autoName = formatFGLabel(req) || `${req.categoria||''} ${req.desc||''}`.trim();
                     return (
-                      <div>
-                        <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">📦 Sumar a producto existente</label>
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">📦 Producto destino</label>
                         <select value={partialTargetFgKey} onChange={e=>setPartialTargetFgKey(e.target.value)}
                           className="w-full border-2 border-blue-200 rounded-xl p-2 text-[10px] font-bold outline-none focus:border-blue-500 bg-white">
-                          <option value="">— Crear nuevo lote independiente —</option>
+                          <option value="">➕ Crear nuevo producto terminado</option>
                           {grpList.map(g=>(
                             <option key={g.key} value={g.key}>{g.label} ({formatNum(g.stk)} {g.unit})</option>
                           ))}
                         </select>
+                        {!partialTargetFgKey && (
+                          <div className="bg-blue-50 border border-blue-200 rounded-xl p-2">
+                            <p className="text-[8px] font-black text-blue-700 uppercase mb-1">Nombre sugerido (editable):</p>
+                            <p className="text-[10px] font-black text-blue-900">{autoName}</p>
+                            <p className="text-[8px] text-blue-500 mt-0.5">Formato: CATEGORÍA + MEDIDA — se guardará automáticamente</p>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
