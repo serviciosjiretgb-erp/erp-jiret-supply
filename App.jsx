@@ -226,14 +226,6 @@ const SYSTEM_MODULES = [
   }
 ];
 
-// Lista de almacenes / depósitos del sistema
-const ALMACENES = [
-  'ALMACEN PRINCIPAL',
-  'PLANTA',
-  'DEPOSITO 2',
-  'ALMACEN EXTERNO',
-];
-
 // Genera el objeto de permisos por defecto (todos en false) desde SYSTEM_MODULES
 const generateDefaultPermissions = () => {
   const perms = {};
@@ -251,6 +243,9 @@ export default function App() {
   const [appUser, setAppUser] = useState(null); 
   const [systemUsers, setSystemUsers] = useState([]); 
   const [settings, setSettings] = useState({}); 
+  const [depositos, setDepositos] = useState(['ALMACEN PRINCIPAL','PLANTA','DEPOSITO 2','ALMACEN EXTERNO']); // dinámico desde Firebase
+  const [showDepositoModal, setShowDepositoModal] = useState(false);
+  const [depositoForm, setDepositoForm] = useState({ nombre: '', editId: null });
   
   const [notifications, setNotifications] = useState([]);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
@@ -511,6 +506,20 @@ export default function App() {
   const [trasladoForm, setTrasladoForm] = useState(initialTrasladoForm);
   const [showTrasladoModal, setShowTrasladoModal] = useState(false);
   const [catalogAlmacenFilter, setCatalogAlmacenFilter] = useState('TODOS');
+  // Control Alimentario / Órdenes de Salida
+  const [alimentarioItems, setAlimentarioItems] = useState([]);
+  const [alimentarioMovs, setAlimentarioMovs] = useState([]);
+  const [alimentarioForm, setAlimentarioForm] = useState({ productoId: '', cantidad: '', concepto: 'Orden de Salida Mantenimiento', fecha: '', solicitante: '' });
+  const [showAlimentarioForm, setShowAlimentarioForm] = useState(false);
+  const [alimentarioNewItem, setAlimentarioNewItem] = useState({ nombre: '', unidad: 'UND', stock: '', costo: '' });
+  const [showAlimentarioNewItem, setShowAlimentarioNewItem] = useState(false);
+  // Kardex — herramienta de recálculo (Paso 6)
+  const [showKardexRecalc, setShowKardexRecalc] = useState(false);
+  const [kardexRecalcResult, setKardexRecalcResult] = useState(null);
+  // Paso 7: Corrección masiva con writeBatch
+  const [batchCorrectionText, setBatchCorrectionText] = useState('');
+  const [batchCorrectionResult, setBatchCorrectionResult] = useState(null);
+  const [showBatchTool, setShowBatchTool] = useState(false);
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
@@ -794,6 +803,17 @@ export default function App() {
   
   useEffect(() => {
     if (!fbUser) return;
+    // Control Alimentario — sincronización en tiempo real
+    const unsubAlimentario = onSnapshot(getColRef('inventario_alimentario'), (snap) => {
+      setAlimentarioItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    // Depósitos dinámicos desde Firebase
+    const unsubDepositos = onSnapshot(getColRef('depositos'), (snap) => {
+      const nombres = snap.docs.map(d => d.data().nombre).filter(Boolean).sort();
+      if (nombres.length > 0) setDepositos(nombres);
+    });
+
     const unsubUsers = onSnapshot(getColRef('users'), (s) => {
       const loadedUsers = s.docs.map(d => ({ id: d.id, ...d.data() })); setSystemUsers(loadedUsers);
       if (s.empty) {
@@ -823,7 +843,7 @@ export default function App() {
     const unsubTomas = onSnapshot(getColRef('tomasFisicas'), (s) => setTomasFisicas(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     
     return () => { 
-      unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
+      unsubAlimentario(); unsubDepositos(); unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
       unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST();
       if (typeof unsubNotifs === 'function') unsubNotifs();
       if (typeof unsubTomas === 'function') unsubTomas();
@@ -1156,6 +1176,91 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   const handleDeleteUser = (id) => { if(id === 'admin') return setDialog({title:'Acción Denegada', text:'No puedes eliminar al administrador.', type:'alert'}); setDialog({ title: 'Eliminar Usuario', text: `¿Desea eliminar el acceso a ${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('users', id))}); };
+
+  // ============================================================================
+  // GESTIÓN DE DEPÓSITOS / ALMACENES (CRUD Firebase)
+  // ============================================================================
+  const handleSaveDeposito = async () => {
+    const nombre = depositoForm.nombre.toUpperCase().trim();
+    if (!nombre) return setDialog({ title: 'Aviso', text: 'El nombre del depósito es obligatorio.', type: 'alert' });
+    try {
+      if (depositoForm.editId) {
+        await updateDoc(getDocRef('depositos', depositoForm.editId), { nombre });
+        setDialog({ title: '✅ Actualizado', text: `Depósito renombrado a "${nombre}".`, type: 'alert' });
+      } else {
+        const newId = `DEP-${Date.now()}`;
+        await setDoc(getDocRef('depositos', newId), { nombre, estado: 'activo', id: newId, timestamp: Date.now() });
+        setDialog({ title: '✅ Creado', text: `Depósito "${nombre}" creado.`, type: 'alert' });
+      }
+      setDepositoForm({ nombre: '', editId: null });
+      setShowDepositoModal(false);
+    } catch (err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
+  };
+  const handleDeleteDeposito = async (nombre) => {
+    setDialog({ title: 'Eliminar Depósito', text: `¿Eliminar el depósito "${nombre}"? Los artículos asignados a él no se borran.`, type: 'confirm',
+      onConfirm: async () => {
+        try {
+          // Buscar el doc por nombre y eliminarlo
+          const snap = await import('firebase/firestore').then(({getDocs, query, where}) =>
+            getDocs(query(getColRef('depositos'), where('nombre','==',nombre))));
+          for (const d of snap.docs) await deleteDoc(getDocRef('depositos', d.id));
+          setDialog({ title: '✅ Eliminado', text: `Depósito "${nombre}" eliminado.`, type: 'alert' });
+        } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
+      }
+    });
+  };
+
+  // ============================================================================
+  // CONTROL ALIMENTARIO — ÓRDENES DE SALIDA (con transacción atómica)
+  // ============================================================================
+  const handleAlimentarioSalida = async () => {
+    const { productoId, cantidad, concepto, fecha, solicitante } = alimentarioForm;
+    if (!productoId || !cantidad || parseNum(cantidad) <= 0)
+      return setDialog({ title: 'Aviso', text: 'Seleccione producto e ingrese cantidad válida.', type: 'alert' });
+    const cantNum = parseNum(cantidad);
+    try {
+      // runTransaction asegura atomicidad: stock y Kardex se actualizan juntos
+      const { runTransaction: runTx, serverTimestamp, collection: fbCol, doc: fbDoc } = await import('firebase/firestore');
+      const prodRef = getDocRef('inventario_alimentario', productoId);
+      await runTx(db, async (tx) => {
+        const prodSnap = await tx.get(prodRef);
+        if (!prodSnap.exists()) throw new Error('Producto no encontrado en inventario alimentario.');
+        const stockActual = parseNum(prodSnap.data().stock || 0);
+        if (stockActual < cantNum) throw new Error(`Stock insuficiente. Disponible: ${formatNum(stockActual)}`);
+        const nuevoStock = stockActual - cantNum;
+        // 1. Descuenta stock
+        tx.update(prodRef, { stock: nuevoStock });
+        // 2. Registra movimiento en sub-colección (Kardex)
+        const movRef = fbDoc(fbCol(db, `inventario_alimentario/${productoId}/movimientos`));
+        tx.set(movRef, {
+          tipo: 'SALIDA', concepto: concepto || 'Orden de Salida',
+          cantidad: cantNum, fecha: fecha || getTodayDate(),
+          solicitante: solicitante || appUser?.name || '—',
+          saldoAntes: stockActual, saldoDespues: nuevoStock,
+          user: appUser?.name || '—', timestamp: Date.now()
+        });
+      });
+      setAlimentarioForm({ productoId: '', cantidad: '', concepto: 'Orden de Salida Mantenimiento', fecha: getTodayDate(), solicitante: '' });
+      setShowAlimentarioForm(false);
+      setDialog({ title: '✅ Salida Registrada', text: `Salida de ${formatNum(cantNum)} unidades registrada con Kardex actualizado automáticamente.`, type: 'alert' });
+    } catch (err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
+  };
+
+  const handleAlimentarioNuevoItem = async () => {
+    const { nombre, unidad, stock, costo } = alimentarioNewItem;
+    if (!nombre) return setDialog({ title: 'Aviso', text: 'Ingrese el nombre del producto.', type: 'alert' });
+    try {
+      const newId = `ALI-${Date.now()}`;
+      await setDoc(getDocRef('inventario_alimentario', newId), {
+        id: newId, nombre: nombre.toUpperCase(), unidad: unidad || 'UND',
+        stock: parseNum(stock), costo: parseNum(costo),
+        timestamp: Date.now(), user: appUser?.name || 'Admin'
+      });
+      setAlimentarioNewItem({ nombre: '', unidad: 'UND', stock: '', costo: '' });
+      setShowAlimentarioNewItem(false);
+      setDialog({ title: '✅ Producto creado', text: `"${nombre.toUpperCase()}" añadido al inventario alimentario.`, type: 'alert' });
+    } catch (err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
+  };
 
   // ============================================================================
   // LÓGICA TRASLADOS ENTRE ALMACENES
@@ -2936,6 +3041,100 @@ export default function App() {
       );
     }
 
+    if (invView === 'alimentario') {
+      const selItem = alimentarioItems.find(p => p.id === alimentarioForm.productoId);
+      return (
+        <div className="space-y-6 animate-in fade-in">
+          {/* HEADER */}
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-8 py-5 border-b border-gray-200 bg-emerald-50 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-black text-emerald-900 uppercase flex items-center gap-3"><ShoppingCart className="text-emerald-600" size={22}/> Control Alimentario / Mantenimiento</h2>
+                <p className="text-[10px] font-bold text-emerald-700 mt-0.5">Inventario independiente con Kardex automático por transacción atómica</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={()=>setShowAlimentarioNewItem(v=>!v)} className="bg-white border-2 border-emerald-300 text-emerald-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-emerald-50 flex items-center gap-2"><Plus size={13}/> Nuevo Producto</button>
+                <button onClick={()=>{setAlimentarioForm(f=>({...f,fecha:getTodayDate(),solicitante:appUser?.name||''}));setShowAlimentarioForm(v=>!v);}} className="bg-emerald-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-emerald-700 flex items-center gap-2"><ArrowUpFromLine size={13}/> Nueva Orden de Salida</button>
+              </div>
+            </div>
+
+            {/* Formulario nuevo producto */}
+            {showAlimentarioNewItem && (
+              <div className="p-6 border-b border-emerald-100 bg-emerald-50/30">
+                <h3 className="text-sm font-black uppercase text-emerald-800 mb-3">Agregar Producto al Inventario Alimentario</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre</label><input type="text" value={alimentarioNewItem.nombre} onChange={e=>setAlimentarioNewItem(p=>({...p,nombre:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-500" placeholder="EJ: ACEITE DE MOTOR 20W50"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">U.M.</label><select value={alimentarioNewItem.unidad} onChange={e=>setAlimentarioNewItem(p=>({...p,unidad:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-500 bg-white"><option value="UND">UND</option><option value="LTS">LTS</option><option value="KG">KG</option><option value="GALON">GALON</option><option value="SACO">SACO</option></select></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Stock Inicial</label><input type="number" step="0.01" value={alimentarioNewItem.stock} onChange={e=>setAlimentarioNewItem(p=>({...p,stock:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-500" placeholder="0"/></div>
+                </div>
+                <div className="flex justify-end mt-3"><button onClick={handleAlimentarioNuevoItem} className="bg-emerald-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase hover:bg-emerald-700"><CheckCircle2 size={14} className="inline mr-1"/>Guardar Producto</button></div>
+              </div>
+            )}
+
+            {/* Formulario Orden de Salida */}
+            {showAlimentarioForm && (
+              <div className="p-6 border-b border-orange-100 bg-orange-50/30">
+                <h3 className="text-sm font-black uppercase text-orange-800 mb-3 flex items-center gap-2"><ArrowUpFromLine size={15}/> Nueva Orden de Salida (Mantenimiento)</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="md:col-span-2">
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Producto</label>
+                    <select value={alimentarioForm.productoId} onChange={e=>setAlimentarioForm(f=>({...f,productoId:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500 bg-white">
+                      <option value="">— Seleccionar producto —</option>
+                      {alimentarioItems.map(p=><option key={p.id} value={p.id}>{p.nombre} (Disp: {formatNum(p.stock)} {p.unidad||'UND'})</option>)}
+                    </select>
+                    {selItem && <p className="text-[9px] text-emerald-600 font-bold mt-1">Stock disponible: {formatNum(selItem.stock)} {selItem.unidad||'UND'}</p>}
+                  </div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label><input type="number" step="0.01" min="0.01" value={alimentarioForm.cantidad} onChange={e=>setAlimentarioForm(f=>({...f,cantidad:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0.00"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label><input type="date" value={alimentarioForm.fecha} onChange={e=>setAlimentarioForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                  <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Concepto</label><input type="text" value={alimentarioForm.concepto} onChange={e=>setAlimentarioForm(f=>({...f,concepto:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500 uppercase" placeholder="EJ: ORDEN DE SALIDA MANTENIMIENTO"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Solicitado por</label><input type="text" value={alimentarioForm.solicitante} onChange={e=>setAlimentarioForm(f=>({...f,solicitante:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500 uppercase" placeholder="Nombre"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Registrado por</label><p className="text-xs font-black text-gray-700 mt-3">{appUser?.name||'—'}</p></div>
+                </div>
+                <div className="flex justify-end gap-3 mt-4">
+                  <button onClick={()=>setShowAlimentarioForm(false)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
+                  <button onClick={handleAlimentarioSalida} className="bg-orange-500 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-orange-600 flex items-center gap-2"><CheckCircle2 size={14}/> Registrar Salida</button>
+                </div>
+              </div>
+            )}
+
+            {/* Tabla inventario */}
+            <div className="p-6">
+              {alimentarioItems.length === 0 ? (
+                <div className="py-16 text-center text-gray-400"><ShoppingCart size={40} className="mx-auto mb-3 opacity-20"/><p className="font-black text-xs uppercase">No hay productos en el inventario alimentario</p></div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-gray-200">
+                  <table className="w-full text-xs">
+                    <thead className="bg-emerald-700 text-white"><tr className="font-black text-[9px] uppercase">
+                      <th className="py-3 px-4 border-r border-white/20 text-left">Código</th>
+                      <th className="py-3 px-4 border-r border-white/20 text-left">Nombre</th>
+                      <th className="py-3 px-4 border-r border-white/20 text-center">U.M.</th>
+                      <th className="py-3 px-4 border-r border-white/20 text-center">Stock Actual</th>
+                      <th className="py-3 px-4 text-center">Acciones</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {alimentarioItems.map(p=>(
+                        <tr key={p.id} className="hover:bg-gray-50">
+                          <td className="py-3 px-4 border-r font-black text-emerald-600">{p.id}</td>
+                          <td className="py-3 px-4 border-r font-bold uppercase">{p.nombre}</td>
+                          <td className="py-3 px-4 border-r text-center font-bold text-gray-500">{p.unidad||'UND'}</td>
+                          <td className={`py-3 px-4 border-r text-center font-black ${parseNum(p.stock)<=0?'text-red-600':'text-blue-700'}`}>{formatNum(p.stock)}</td>
+                          <td className="py-3 px-4 text-center">
+                            <button onClick={()=>{setAlimentarioForm(f=>({...f,productoId:p.id,fecha:getTodayDate(),solicitante:appUser?.name||''}));setShowAlimentarioForm(true);}} className="px-3 py-1.5 bg-orange-100 text-orange-700 rounded-lg text-[9px] font-black uppercase hover:bg-orange-500 hover:text-white">
+                              <ArrowUpFromLine size={11} className="inline mr-1"/>Salida
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (invView === 'reportes_mod') {
       return renderInventoryReports(invReportType);
     }
@@ -4490,7 +4689,7 @@ export default function App() {
                <select value={catalogAlmacenFilter} onChange={e=>setCatalogAlmacenFilter(e.target.value)}
                  className="border-2 border-gray-200 rounded-xl px-3 py-2.5 text-[10px] font-black uppercase outline-none focus:border-orange-400 bg-white">
                  <option value="TODOS">📦 Todos los almacenes</option>
-                 {ALMACENES.map(a=><option key={a} value={a}>🏭 {a}</option>)}
+                 {depositos.map(a=><option key={a} value={a}>🏭 {a}</option>)}
                </select>
 
                {(showInvItemForm || editingInvId) && (
@@ -4541,7 +4740,7 @@ export default function App() {
                    <div className="w-1/4">
                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén / Depósito</label>
                       <select value={newInvItemForm.almacen||'ALMACEN PRINCIPAL'} onChange={e=>setNewInvItemForm({...newInvItemForm, almacen: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
-                        {ALMACENES.map(a=><option key={a} value={a}>{a}</option>)}
+                        {depositos.map(a=><option key={a} value={a}>{a}</option>)}
                       </select>
                    </div>
                    <div className="flex-1 text-right flex gap-2 justify-end">
@@ -4565,13 +4764,13 @@ export default function App() {
                       <div>
                         <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
                         <select value={trasladoForm.almacenOrigen} onChange={e=>setTrasladoForm({...trasladoForm,almacenOrigen:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                          {ALMACENES.map(a=><option key={a} value={a}>{a}</option>)}
+                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
                         </select>
                       </div>
                       <div>
                         <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Destino</label>
                         <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm({...trasladoForm,almacenDestino:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                          {ALMACENES.map(a=><option key={a} value={a}>{a}</option>)}
+                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
                         </select>
                       </div>
                     </div>
@@ -4944,6 +5143,7 @@ export default function App() {
             <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center">
               <h2 className="text-xl font-black uppercase flex items-center gap-3"><History className="text-orange-500" size={22}/> Kardex de Inventario</h2>
               <div className="flex gap-2">
+                <button onClick={()=>setShowKardexRecalc(v=>!v)} className="bg-yellow-500 text-white px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-yellow-600 flex items-center gap-2" title="Recalcular stock desde movimientos históricos"><RefreshCw size={13}/> Recalcular Kardex</button>
                 {kardexProductId && <button onClick={()=>handleExportPDF('Kardex_'+kardexProductId, true)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2"><Printer size={14}/> Imprimir</button>}
                 {kardexProductId && <button onClick={()=>requireAdminPassword(async()=>{
                   // Delete ALL FG:: movements for this product group, then keep only unique ones
@@ -4965,6 +5165,56 @@ export default function App() {
                 </button>}
               </div>
             </div>
+            {/* PANEL RECÁLCULO KARDEX — Paso 6 */}
+            {showKardexRecalc && (
+              <div className="p-6 border-b border-yellow-200 bg-yellow-50">
+                <h3 className="text-sm font-black uppercase text-yellow-800 mb-3 flex items-center gap-2"><RefreshCw size={15}/> Recalcular Stock desde Movimientos Históricos</h3>
+                <p className="text-[10px] text-yellow-700 font-bold mb-4">Selecciona un artículo y el sistema recalculará su stock sumando todas las entradas y restando todas las salidas históricas registradas en el Kardex. Útil para corregir desincronizaciones (ej. 60X82X30MIC muestra 17.97 pero el Kardex dice 8.76).</p>
+                <div className="flex gap-3 items-end flex-wrap">
+                  <div className="flex-1 min-w-48">
+                    <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Artículo a Recalcular</label>
+                    <select value={kardexProductId} onChange={e=>setKardexProductId(e.target.value)} className="w-full border-2 border-yellow-300 rounded-xl p-3 text-xs font-bold outline-none focus:border-yellow-500 bg-white">
+                      <option value="">— Seleccione —</option>
+                      {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock actual: {formatNum(i.stock)})</option>)}
+                    </select>
+                  </div>
+                  <button onClick={async()=>{
+                    if(!kardexProductId) return;
+                    const item = (inventory||[]).find(i=>i.id===kardexProductId);
+                    if(!item) return;
+                    const allMovs = (invMovements||[]).filter(m=>m.itemId===kardexProductId);
+                    let stockReal = 0;
+                    const entradaTypes = ['ENTRADA','ENTRADA_DEVOLUCION','ENTRADA_INICIAL','ENTRADA_TRASLADO','AJUSTE (POSITIVO)'];
+                    const salidaTypes = ['SALIDA','AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA','SALIDA_TRASLADO','AJUSTE (NEGATIVO)'];
+                    allMovs.forEach(m => {
+                      if(entradaTypes.includes(m.type)) stockReal += parseNum(m.qty);
+                      if(salidaTypes.some(t=>m.type?.includes(t))) stockReal -= parseNum(m.qty);
+                    });
+                    stockReal = Math.max(0, stockReal);
+                    setKardexRecalcResult({ id: kardexProductId, desc: item.desc, stockActual: item.stock, stockRecalculado: stockReal, movimientos: allMovs.length });
+                  }} className="bg-yellow-600 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase hover:bg-yellow-700 flex items-center gap-2"><RefreshCw size={13}/> Calcular</button>
+                  {kardexRecalcResult && kardexRecalcResult.id === kardexProductId && (
+                    <div className="w-full mt-3 bg-white border-2 border-yellow-300 rounded-2xl p-5 space-y-2">
+                      <p className="text-xs font-black uppercase">{kardexRecalcResult.id} — {kardexRecalcResult.desc}</p>
+                      <div className="grid grid-cols-3 gap-4 text-center">
+                        <div className="bg-red-50 border border-red-200 rounded-xl p-3"><div className="text-[9px] font-black text-red-700 uppercase">Stock en BD</div><div className="text-lg font-black text-red-600">{formatNum(kardexRecalcResult.stockActual)}</div></div>
+                        <div className="bg-green-50 border border-green-200 rounded-xl p-3"><div className="text-[9px] font-black text-green-700 uppercase">Stock Real (Kardex)</div><div className="text-lg font-black text-green-600">{formatNum(kardexRecalcResult.stockRecalculado)}</div></div>
+                        <div className={`border rounded-xl p-3 ${Math.abs(kardexRecalcResult.stockActual-kardexRecalcResult.stockRecalculado)<0.01?'bg-gray-50 border-gray-200':'bg-orange-50 border-orange-200'}`}><div className="text-[9px] font-black uppercase text-gray-600">Diferencia</div><div className="text-lg font-black">{formatNum(Math.abs(kardexRecalcResult.stockActual-kardexRecalcResult.stockRecalculado))}</div></div>
+                      </div>
+                      <p className="text-[9px] text-gray-500 font-bold">Movimientos analizados: {kardexRecalcResult.movimientos}</p>
+                      {Math.abs(kardexRecalcResult.stockActual - kardexRecalcResult.stockRecalculado) > 0.01 && (
+                        <button onClick={()=>requireAdminPassword(async()=>{
+                          await updateDoc(getDocRef('inventory', kardexRecalcResult.id), { stock: kardexRecalcResult.stockRecalculado });
+                          setDialog({title:'✅ Kardex Sincronizado', text:`Stock de ${kardexRecalcResult.id} actualizado de ${formatNum(kardexRecalcResult.stockActual)} a ${formatNum(kardexRecalcResult.stockRecalculado)}.`, type:'alert'});
+                          setKardexRecalcResult(null); setShowKardexRecalc(false);
+                        }, 'Aplicar corrección de stock desde Kardex')} className="w-full bg-orange-500 text-white py-3 rounded-2xl font-black text-xs uppercase hover:bg-orange-600 flex items-center justify-center gap-2 shadow-md"><CheckCircle2 size={14}/> Aplicar Corrección (Sobreescribir stock en BD)</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="p-6" id="pdf-content">
               <div className="hidden pdf-header mb-6"><ReportHeader/><h1 className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">KARDEX — {kardexProductId}</h1></div>
               {/* Product selector */}
@@ -5180,13 +5430,23 @@ export default function App() {
           // Excluir "Productos Terminados" y "Semielaborados" del listado dinámico de inventory
           // porque se manejan con secciones especiales
           // Solo incluir categorías que tengan al menos un ítem con stock > 0
-          const categories = [...new Set(
-            inventory
-              .filter(i => i.category !== 'Productos Terminados' && parseNum(i.stock) > 0)
-              .map(i => i.category)
+          // PASO 5: Incluir TODAS las categorías, incluyendo las que pueden tener
+          // stock = 0 pero sí tienen movimientos en el período (Químicos, Pigmentos de Abril)
+          const categoriesWithStock = [...new Set(
+            inventory.filter(i => i.category !== 'Productos Terminados' && parseNum(i.stock) > 0).map(i => i.category)
           )];
-
-          if (finishedGoodsInventory.length > 0 || inventory.some(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0)) categories.push('Productos Terminados');
+          // También incluir categorías con movimientos aunque el stock actual sea 0
+          const categoriesWithMovements = [...new Set(
+            (invMovements || []).filter(m => {
+              const d = new Date(`${m.date}T00:00:00`);
+              return d >= startOfMonth && d <= endOfMonth;
+            }).map(m => {
+              const item = inventory.find(i => i.id === m.itemId);
+              return item?.category;
+            }).filter(c => c && c !== 'Productos Terminados')
+          )];
+          const categories = [...new Set([...categoriesWithStock, ...categoriesWithMovements])];
+          if (finishedGoodsInventory.length > 0 || inventory.some(i=>i.category==='Productos Terminados')) categories.push('Productos Terminados');
 
           const startOfMonth = new Date(reportYear, reportMonth - 1, 1);
           const endOfMonth = new Date(reportYear, reportMonth, 0, 23, 59, 59, 999);
@@ -6706,7 +6966,7 @@ export default function App() {
               cliente: req.client || 'N/A',
               tipoProducto: req.tipoProducto || 'BOLSAS',
               categoria: req.categoria || '',
-              producto: req.desc || 'Producto',
+              producto: formatFGLabel(req) || req.desc || 'Producto', // auto: CATEGORIA - MEDIDA
               ancho: req.ancho || 0, largo: req.largo || 0, micras: req.micras || 0,
               color: req.color || 'NATURAL', tratamiento: req.tratamiento || 'LISO',
               kgProducidos: prodKg,
@@ -7602,7 +7862,7 @@ export default function App() {
         await setDoc(getDocRef('finishedGoodsInventory', fgId), {
           id: fgId, opId: req.id, reqId: req.id,
           cliente: req.client||'N/A', tipoProducto: req.tipoProducto||'BOLSAS',
-          categoria: req.categoria||'', producto: req.desc||'Producto',
+          categoria: req.categoria||'', producto: formatFGLabel(req)||req.desc||'Producto', // auto: CATEGORIA - MEDIDA
           ancho: req.ancho||0, largo: req.largo||0, micras: req.micras||0,
           color: req.color||'NATURAL', tratamiento: req.tratamiento||'LISO',
           kgProducidos: kgEntrega, millares: millEntrega,
@@ -7714,7 +7974,7 @@ export default function App() {
             await setDoc(getDocRef('finishedGoodsInventory', fgId), {
               id: fgId, opId: req.id, reqId: req.id,
               cliente: req.client||'N/A', tipoProducto: req.tipoProducto||'BOLSAS',
-              categoria: req.categoria||'', producto: req.desc||'Producto',
+              categoria: req.categoria||'', producto: formatFGLabel(req)||req.desc||'Producto', // auto: CATEGORIA - MEDIDA
               ancho: req.ancho||0, largo: req.largo||0, micras: req.micras||0,
               color: req.color||'NATURAL', tratamiento: req.tratamiento||'LISO',
               kgProducidos: pendienteKg, millares: esTermo ? 0 : pendienteMill,
@@ -9995,17 +10255,7 @@ export default function App() {
                                           </button>
                                         )}
 
-                                        {/* CIERRE DEFINITIVO — solo cierra ESTA fase */}
-                                        {!prod[activePhaseTab]?.isClosed && (
-                                          <button onClick={() => setDialog({
-                                            title: `Cerrar fase ${activePhaseTab.toUpperCase()}`,
-                                            text: `Se cerrara unicamente la fase de ${activePhaseTab.toUpperCase()}. Las otras fases no se ven afectadas y la OP seguira activa.`,
-                                            type: 'confirm',
-                                            onConfirm: () => handleSavePhaseDirectly(req, true)
-                                          })} className="bg-gray-800 text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-black flex items-center gap-1 shadow-md transition-all">
-                                            <CheckCircle2 size={13}/> CIERRE DEFINITIVO FASE
-                                          </button>
-                                        )}
+
                                       </div>
                                     </div>
                                   </div>
@@ -12591,6 +12841,92 @@ export default function App() {
           </div>
         </div>
 
+        {/* PASO 7: CORRECCIÓN MASIVA DE INVENTARIO */}
+        {appUser?.role === 'Master' && (
+        <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
+          <div className="flex justify-between items-center border-b pb-4 mb-6">
+            <h2 className="text-xl font-black uppercase text-black flex items-center gap-3"><RefreshCw className="text-orange-500"/> Corrección Masiva de Inventario</h2>
+            <button onClick={()=>setShowBatchTool(v=>!v)} className={`px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 ${showBatchTool?'bg-gray-200 text-gray-700':'bg-orange-500 text-white hover:bg-orange-600'}`}>{showBatchTool?<><X size={13}/> Cerrar</>:<><Edit size={13}/> Abrir Herramienta</>}</button>
+          </div>
+          {showBatchTool && (
+            <div className="space-y-4">
+              <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+                <p className="text-[10px] font-black text-orange-800 uppercase mb-1">⚠ Uso de la herramienta</p>
+                <p className="text-[10px] text-orange-700 font-bold">Pega un JSON con el formato: <code>[{"{"}"id":"MP-001","desc":"Pigmento Blanco","stock":150{"}"}]</code> — Se actualizarán los campos <b>desc</b> y <b>stock</b> de cada artículo usando writeBatch (atómico). Solo afecta artículos existentes.</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-gray-600 uppercase block mb-2">JSON de Correcciones (array de objetos con id, desc y/o stock)</label>
+                <textarea rows={8} value={batchCorrectionText} onChange={e=>setBatchCorrectionText(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-4 text-xs font-mono outline-none focus:border-orange-400 resize-y" placeholder={'[\n  {"id": "MP-001", "desc": "Pigmento Blanco", "stock": 150},\n  {"id": "MP-002", "desc": "Químico Base", "stock": 45.5}\n]'}/>
+              </div>
+              {batchCorrectionResult && (
+                <div className={`border-2 rounded-xl p-4 ${batchCorrectionResult.ok?'bg-green-50 border-green-300':'bg-red-50 border-red-300'}`}>
+                  <p className="text-xs font-black">{batchCorrectionResult.msg}</p>
+                  {batchCorrectionResult.details?.map((d,i)=><p key={i} className="text-[9px] text-gray-600 mt-1">{d}</p>)}
+                </div>
+              )}
+              <div className="flex justify-end gap-3">
+                <button onClick={()=>{setBatchCorrectionText('');setBatchCorrectionResult(null);}} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Limpiar</button>
+                <button onClick={()=>requireAdminPassword(async()=>{
+                  let correcciones;
+                  try { correcciones = JSON.parse(batchCorrectionText); }
+                  catch(e) { setBatchCorrectionResult({ok:false,msg:'JSON inválido: '+e.message}); return; }
+                  if(!Array.isArray(correcciones)||correcciones.length===0) { setBatchCorrectionResult({ok:false,msg:'El JSON debe ser un array con al menos un objeto.'}); return; }
+                  try {
+                    const fbBatch = writeBatch(db);
+                    const details = [];
+                    let count = 0;
+                    for(const item of correcciones) {
+                      if(!item.id) { details.push(`⚠ Omitido: falta "id"`); continue; }
+                      const exists = (inventory||[]).find(i=>i.id===item.id);
+                      if(!exists) { details.push(`⚠ ${item.id}: no encontrado en inventario`); continue; }
+                      const updates = {};
+                      if(item.desc !== undefined) updates.desc = String(item.desc).toUpperCase();
+                      if(item.stock !== undefined) updates.stock = parseNum(item.stock);
+                      if(item.cost !== undefined) updates.cost = parseNum(item.cost);
+                      if(Object.keys(updates).length === 0) { details.push(`⚠ ${item.id}: sin campos válidos (desc/stock/cost)`); continue; }
+                      fbBatch.update(getDocRef('inventory', item.id), updates);
+                      details.push(`✅ ${item.id}: ${JSON.stringify(updates)}`);
+                      count++;
+                    }
+                    await fbBatch.commit();
+                    setBatchCorrectionResult({ok:true, msg:`✅ ${count} artículo(s) actualizados exitosamente (writeBatch).`, details});
+                  } catch(err) { setBatchCorrectionResult({ok:false,msg:'Error: '+err.message}); }
+                }, 'Ejecutar corrección masiva de inventario')} className="bg-black text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2"><CheckCircle2 size={14}/> Ejecutar Corrección Masiva</button>
+              </div>
+            </div>
+          )}
+        </div>
+        )}
+
+        {/* GESTIÓN DE DEPÓSITOS */}
+        <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
+          <div className="flex justify-between items-center border-b pb-4 mb-6">
+            <h2 className="text-xl font-black uppercase text-black flex items-center gap-3"><Warehouse className="text-indigo-500"/> Depósitos / Almacenes</h2>
+            <button onClick={()=>{setDepositoForm({nombre:'',editId:null});setShowDepositoModal(true);}} className="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase hover:bg-indigo-700 flex items-center gap-2"><Plus size={13}/> Nuevo Depósito</button>
+          </div>
+          {showDepositoModal && (
+            <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 mb-4">
+              <h3 className="text-sm font-black uppercase text-indigo-800 mb-3">{depositoForm.editId ? 'Editar Depósito' : 'Crear Depósito'}</h3>
+              <div className="flex gap-3">
+                <input type="text" value={depositoForm.nombre} onChange={e=>setDepositoForm(f=>({...f,nombre:e.target.value.toUpperCase()}))} className="flex-1 border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-indigo-400" placeholder="EJ: DEPOSITO NORTE"/>
+                <button onClick={handleSaveDeposito} className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-indigo-700 flex items-center gap-1"><CheckCircle2 size={13}/> Guardar</button>
+                <button onClick={()=>setShowDepositoModal(false)} className="px-4 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
+              </div>
+            </div>
+          )}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {depositos.map(dep=>(
+              <div key={dep} className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex justify-between items-center">
+                <div className="flex items-center gap-2"><Warehouse size={14} className="text-indigo-500"/><span className="font-black text-[10px] uppercase">{dep}</span></div>
+                <div className="flex gap-1">
+                  <button onClick={()=>{setDepositoForm({nombre:dep,editId:dep});setShowDepositoModal(true);}} className="p-1 bg-blue-100 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={11}/></button>
+                  <button onClick={()=>handleDeleteDeposito(dep)} className="p-1 bg-red-50 text-red-400 rounded hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
            <h2 className="text-xl font-black uppercase text-black mb-6 flex items-center gap-3 border-b pb-4"><Settings2 className="text-gray-400"/> Configuración del Sistema</h2>
            <div className="space-y-6">
@@ -13400,6 +13736,7 @@ export default function App() {
                       {id:'catalogo', icon:<Box size={14}/>, label:'General', perm:'inventario_catalogo'},
                       {id:'wip', icon:<Beaker size={14}/>, label:'WIP', perm:'inventario_catalogo'},
                       {id:'finished', icon:<Package size={14}/>, label:'Terminados', perm:'inventario_catalogo'},
+                      {id:'alimentario', icon:<ShoppingCart size={14}/>, label:'Alimentario', perm:'inventario_catalogo'},
                     ].filter(t=>hasPerm('inventario')&&(hasPerm(t.perm)||appUser?.role==='Master')).map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
