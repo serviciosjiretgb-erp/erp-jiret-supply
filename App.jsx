@@ -3749,7 +3749,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           </div>
         </div>
         )}
-          </>
       );
     }
 
@@ -4020,6 +4019,7 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
             </div>
           </div>
         </div>
+        </>
       );
     }
 
@@ -4374,7 +4374,6 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
                     {trasladoForm.almacenOrigen === trasladoForm.almacenDestino && (
                       <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
                     )}
-        </>
       );
     }
 
@@ -5003,7 +5002,6 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
             </div>
           </div>
         )}
-          </>
       );
     }
 
