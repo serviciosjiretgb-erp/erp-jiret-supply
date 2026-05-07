@@ -4814,44 +4814,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             })()}
           </div>
         </div>
+      </>
       );
     }
-                  {editingFG.tipoProducto === 'TERMOENCOGIBLE' && (
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (KG)</label>
-                      <input type="number" step="0.01" value={fgEditForm.kgProducidos} onChange={e=>setFgEditForm(f=>({...f,kgProducidos:e.target.value}))}
-                        className="w-full border-2 border-green-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-green-400"/>
-                    </div>
-                  )}
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
-                      Costo/{editingFG.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millar'} ($)
-                    </label>
-                    <input type="number" step="0.01" value={editingFG.tipoProducto==='TERMOENCOGIBLE'?fgEditForm.costoUnitario:fgEditForm.costoUnitarioMillar}
-                      onChange={e=>setFgEditForm(f=>editingFG.tipoProducto==='TERMOENCOGIBLE'?{...f,costoUnitario:e.target.value}:{...f,costoUnitarioMillar:e.target.value})}
-                      className="w-full border-2 border-orange-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400"/>
-                  </div>
-                </div>
-                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
-                  <p className="text-[9px] font-black text-yellow-800 uppercase">⚠ Los cambios actualizarán todos los lotes de este producto y se reflejarán en todos los reportes e inventarios.</p>
-                </div>
-                <div className="flex justify-end gap-3 pt-2">
-                  <button onClick={()=>setEditingFG(null)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
-                  <button onClick={handleSaveFGEdit} className="bg-blue-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-blue-700 flex items-center gap-2">
-                    <CheckCircle2 size={14}/> Guardar Cambios
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
 
     if (invView === 'almacen') {
       const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'PENDIENTE');
 
       return (
-        <>
         <div className="space-y-6 animate-in fade-in">          {/* ── PANEL 1: REQUISICIONES DE PLANTA ── */}
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-5 border-b bg-yellow-50 flex justify-between items-center">
@@ -5090,7 +5060,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
           );
         })()}
-        </>
       );
     }
 
@@ -5298,8 +5267,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           </div>
         </div>
         {editingFG && (
-{/* ── MODAL EDITAR PRODUCTO TERMINADO ── */}
-        {editingFG && (
           <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-blue-500">
               <div className="flex justify-between items-center mb-6">
@@ -5321,6 +5288,34 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         className="w-full border-2 border-blue-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-blue-400"/>
                     </div>
                   )}
+                  {editingFG.tipoProducto === 'TERMOENCOGIBLE' && (
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (KG)</label>
+                      <input type="number" step="0.01" value={fgEditForm.kgProducidos} onChange={e=>setFgEditForm(f=>({...f,kgProducidos:e.target.value}))}
+                        className="w-full border-2 border-green-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-green-400"/>
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
+                      Costo/{editingFG.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millar'} ($)
+                    </label>
+                    <input type="number" step="0.01" value={editingFG.tipoProducto==='TERMOENCOGIBLE'?fgEditForm.costoUnitario:fgEditForm.costoUnitarioMillar}
+                      onChange={e=>setFgEditForm(f=>editingFG.tipoProducto==='TERMOENCOGIBLE'?{...f,costoUnitario:e.target.value}:{...f,costoUnitarioMillar:e.target.value})}
+                      className="w-full border-2 border-orange-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400"/>
+                  </div>
+                </div>
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-yellow-800 uppercase">⚠ Los cambios actualizarán todos los lotes de este producto y se reflejarán en todos los reportes e inventarios.</p>
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button onClick={()=>setEditingFG(null)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
+                  <button onClick={handleSaveFGEdit} className="bg-blue-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-blue-700 flex items-center gap-2">
+                    <CheckCircle2 size={14}/> Guardar Cambios
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
           </>
       );
@@ -6010,23 +6005,66 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Artículo a Recalcular</label>
                     <select value={kardexProductId} onChange={e=>setKardexProductId(e.target.value)} className="w-full border-2 border-yellow-300 rounded-xl p-3 text-xs font-bold outline-none focus:border-yellow-500 bg-white">
                       <option value="">— Seleccione —</option>
-                      {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock actual: {formatNum(i.stock)})</option>)}
+                      <optgroup label="── Materia Prima / Consumibles ──">
+                        {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)})</option>)}
+                      </optgroup>
+                      <optgroup label="── Rebobinados / Semielaborados ──">
+                        {(inventory||[]).filter(i=>i.category==='Semielaborados'||i.category==='Rebobinado').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>)}
+                      </optgroup>
+                      <optgroup label="── Productos Terminados ──">
+                        {(() => {
+                          const fgMap = {};
+                          (finishedGoodsInventory||[]).forEach(fg=>{
+                            const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+                            const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                            const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                            const grpKey=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
+                            if(!fgMap[grpKey]) fgMap[grpKey]={key:grpKey, label:formatFGLabel(fg)||fg.producto||fg.id, esTermo, stock:0, unit:esTermo?'KG':'Millares'};
+                            fgMap[grpKey].stock += esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
+                          });
+                          return Object.values(fgMap).map(g=>(
+                            <option key={g.key} value={`FG::${g.key}`}>{g.label} (Stock: {formatNum(g.stock)} {g.unit})</option>
+                          ));
+                        })()}
+                      </optgroup>
                     </select>
                   </div>
                   <button onClick={async()=>{
                     if(!kardexProductId) return;
-                    const item = (inventory||[]).find(i=>i.id===kardexProductId);
-                    if(!item) return;
-                    const allMovs = (invMovements||[]).filter(m=>m.itemId===kardexProductId);
-                    let stockReal = 0;
                     const entradaTypes = ['ENTRADA','ENTRADA_DEVOLUCION','ENTRADA_INICIAL','ENTRADA_TRASLADO','AJUSTE (POSITIVO)'];
                     const salidaTypes = ['SALIDA','AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA','SALIDA_TRASLADO','AJUSTE (NEGATIVO)'];
-                    allMovs.forEach(m => {
-                      if(entradaTypes.includes(m.type)) stockReal += parseNum(m.qty);
-                      if(salidaTypes.some(t=>m.type?.includes(t))) stockReal -= parseNum(m.qty);
-                    });
+                    let stockReal = 0, allMovs = [], desc = '', stockActual = 0;
+
+                    if(kardexProductId.startsWith('FG::')) {
+                      // Productos Terminados: aggregate all FG lotes
+                      const grpKey = kardexProductId.replace('FG::','');
+                      const fgItems = (finishedGoodsInventory||[]).filter(fg=>{
+                        const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+                        const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                        const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                        return `${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}` === grpKey;
+                      });
+                      const fgIds = new Set(fgItems.map(fg=>fg.id));
+                      const esTermo = fgItems[0]?.tipoProducto === 'TERMOENCOGIBLE';
+                      stockActual = fgItems.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
+                      desc = formatFGLabel(fgItems[0])||fgItems[0]?.producto||grpKey;
+                      allMovs = (invMovements||[]).filter(m=>fgIds.has((m.itemId||'').replace('FG::',''))||fgIds.has(m.opId||''));
+                      allMovs.forEach(m => {
+                        if(['ENTRADA','ENTRADA_INICIAL','ENTRADA_TRASLADO'].includes(m.type)) stockReal += parseNum(m.qty);
+                        if(['SALIDA','SALIDA_TRASLADO','ENTREGADO'].includes(m.type)) stockReal -= parseNum(m.qty);
+                      });
+                    } else {
+                      const item = (inventory||[]).find(i=>i.id===kardexProductId);
+                      if(!item) return;
+                      desc = item.desc; stockActual = item.stock;
+                      allMovs = (invMovements||[]).filter(m=>m.itemId===kardexProductId);
+                      allMovs.forEach(m => {
+                        if(entradaTypes.includes(m.type)) stockReal += parseNum(m.qty);
+                        if(salidaTypes.some(t=>m.type?.includes(t))) stockReal -= parseNum(m.qty);
+                      });
+                    }
                     stockReal = Math.max(0, stockReal);
-                    setKardexRecalcResult({ id: kardexProductId, desc: item.desc, stockActual: item.stock, stockRecalculado: stockReal, movimientos: allMovs.length });
+                    setKardexRecalcResult({ id: kardexProductId, desc, stockActual, stockRecalculado: stockReal, movimientos: allMovs.length });
                   }} className="bg-yellow-600 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase hover:bg-yellow-700 flex items-center gap-2"><RefreshCw size={13}/> Calcular</button>
                   {kardexRecalcResult && kardexRecalcResult.id === kardexProductId && (
                     <div className="w-full mt-3 bg-white border-2 border-yellow-300 rounded-2xl p-5 space-y-2">
@@ -6062,7 +6100,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       {[...(inventory||[])].filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc}</option>)}
                     </optgroup>
                     <optgroup label="── Semielaborados / Bobinas ──">
-                      {[...(inventory||[])].filter(i=>i.category==='Semielaborados').sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} ({formatNum(i.stock)} KG)</option>)}
+                      {[...(inventory||[])].filter(i=>i.category==='Semielaborados'||i.category==='Rebobinado').sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} ({formatNum(i.stock)} {i.unit||'KG'})</option>)}
                     </optgroup>
                     <optgroup label="── Productos Terminados ──">
                       {(() => {
@@ -14512,9 +14550,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
   if (!appUser) {
     return (
-      <div className="min-h-screen flex" style={{background:'#111'}}>
+      <div className="fixed inset-0 flex overflow-hidden" style={{background:'#111'}}>
         {/* ── IZQUIERDA: Video / branding ── */}
-        <div className="flex-1 relative hidden md:block">
+        <div className="absolute inset-0 hidden md:block">
           {settings?.loginVideo ? (
             <video
               ref={async el=>{
@@ -14531,7 +14569,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   el.src = settings.loginVideo;
                 }
               }}
-              autoPlay loop playsInline muted={loginVideoMuted}
+              autoPlay playsInline muted={loginVideoMuted}
+              onEnded={e=>{e.target.pause(); e.target.currentTime=e.target.duration-0.1;}}
               className="absolute inset-0 w-full h-full object-cover"
               onError={e=>{e.target.style.display='none';}}/>
           ) : settings?.loginBg ? (
@@ -14558,8 +14597,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           )}
         </div>
         {/* ── DERECHA: Panel de login limpio (blanco puro) ── */}
-        <div className="flex items-center justify-center bg-white" style={{width:'380px',minWidth:'320px'}}>
-          <div className="w-full px-10 py-12">
+        <div className="relative z-10 ml-auto flex items-center justify-center bg-white shadow-2xl" style={{width:'420px',minWidth:'340px',height:'100%'}}>
+          <div className="w-full px-10 py-0 flex flex-col justify-center min-h-full">
             <div className="text-center mb-10">
                <span className="text-2xl font-light tracking-widest text-gray-700">Supply</span>
                <div className="flex items-center justify-center -mt-1">
