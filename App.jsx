@@ -12,8 +12,7 @@ import {
   LayoutDashboard, Package, Factory, TrendingUp, TrendingDown, AlertTriangle, 
   ClipboardList, PlayCircle, History, FileText, Settings2, Trash2, 
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
-  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing
-} from 'lucide-react';
+  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing, Upload} from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
@@ -533,14 +532,14 @@ export default function App() {
   const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
 
   // Formularios Inventario
-  const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '', almacen: 'ALMACEN PRINCIPAL' };
+  const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '', almacen: 'ALMACEN ZI' };
   const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
   const [editingInvId, setEditingInvId] = useState(null);
   const [showInvItemForm, setShowInvItemForm] = useState(false); // collapsible form
   const initialMovementForm = { date: getTodayDate(), itemId: '', type: 'ENTRADA', qty: '', cost: '', reference: '', notes: '', opAsignada: '' };
   const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
   // Multialmacén — Traslados
-  const initialTrasladoForm = { date: getTodayDate(), itemId: '', almacenOrigen: 'ALMACEN PRINCIPAL', almacenDestino: 'PLANTA', qty: '', notes: '' };
+  const initialTrasladoForm = { date: getTodayDate(), itemId: '', almacenOrigen: 'ALMACEN ZI', almacenDestino: 'PLANTA', qty: '', notes: '' };
   const [trasladoForm, setTrasladoForm] = useState(initialTrasladoForm);
   const [showTrasladoModal, setShowTrasladoModal] = useState(false);
   const [catalogAlmacenFilter, setCatalogAlmacenFilter] = useState('TODOS');
@@ -564,7 +563,7 @@ export default function App() {
   // Fix 1: OSA states at component level (React hooks must be at top level)
   const [osaItemList, setOsaItemList] = useState([]);
   const [osaItemForm, setOsaItemForm] = useState({ itemId:'', qty:'', lote:'' });
-  const [osaHdr, setOsaHdr] = useState({ almacenOrigen:'ALMACEN PRINCIPAL', destino:'Producción / Despacho', docRef:'', fecha:'', procesadoPor:'' });
+  const [osaHdr, setOsaHdr] = useState({ almacenOrigen:'ALMACEN ZI', destino:'Producción / Despacho', docRef:'', fecha:'', procesadoPor:'' });
   const [osaCounter, setOsaCounter] = useState(null); // sequential OSA number from Firebase
   // Fix 3: Partial delivery new product name
   const [partialNewName, setPartialNewName] = useState('');
@@ -592,6 +591,7 @@ export default function App() {
   // Estados para Dashboard de Reportes
   const [reportPeriod, setReportPeriod] = useState('mensual');
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
+  const [selectedMonths, setSelectedMonths] = useState([]); // multi-month filter for Rentabilidad
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [showReportType, setShowReportType] = useState(null); 
 
@@ -1307,26 +1307,90 @@ export default function App() {
     try {
       const newNombre = fgEditForm.producto.toUpperCase().trim() || editingFG.producto;
       const esTermo = editingFG.tipoProducto === 'TERMOENCOGIBLE';
-      const batch = writeBatch(db);
-      // Get all lotes of this product group
       const grp = editingFG._group;
       const lotesToUpdate = grp ? grp.lotes : [editingFG];
+      const batch = writeBatch(db);
       for(const fg of lotesToUpdate) {
+        const isFirst = fg.id === lotesToUpdate[0].id;
         const upd = { producto: newNombre };
-        // Cost update applies to all lotes
-        if(fgEditForm.costoUnitarioMillar !== '') upd.costoUnitarioMillar = parseNum(fgEditForm.costoUnitarioMillar);
-        if(fgEditForm.costoUnitario !== '') upd.costoUnitario = parseNum(fgEditForm.costoUnitario);
-        // Stock update: only apply to first (reference) lote for millares/kg
-        if(fg.id === lotesToUpdate[0].id) {
-          if(!esTermo && fgEditForm.millares !== '') upd.millares = parseNum(fgEditForm.millares);
-          if(esTermo && fgEditForm.kgProducidos !== '') upd.kgProducidos = parseNum(fgEditForm.kgProducidos);
+        // Costos: aplicar a todos los lotes
+        const newCostoMillar = fgEditForm.costoUnitarioMillar !== '' ? parseNum(fgEditForm.costoUnitarioMillar) : null;
+        const newCostoKg = fgEditForm.costoUnitario !== '' ? parseNum(fgEditForm.costoUnitario) : null;
+        if(newCostoMillar !== null) upd.costoUnitarioMillar = newCostoMillar;
+        if(newCostoKg !== null) upd.costoUnitario = newCostoKg;
+        // Stock: el total nuevo va al primer lote, los demás se ponen a 0 para evitar duplicados
+        if(isFirst) {
+          if(!esTermo && fgEditForm.millares !== '') {
+            const newTotal = parseNum(fgEditForm.millares);
+            upd.millares = newTotal;
+            upd.millaresOrigen = Math.max(newTotal, parseNum(fg.millaresOrigen || 0));
+          }
+          if(esTermo && fgEditForm.kgProducidos !== '') {
+            const newTotal = parseNum(fgEditForm.kgProducidos);
+            upd.kgProducidos = newTotal;
+            upd.kgProducidosOrigen = Math.max(newTotal, parseNum(fg.kgProducidosOrigen || 0));
+          }
+        } else {
+          // Poner los demás lotes a 0 para consolidar todo en el primero
+          upd.millares = 0;
+          upd.kgProducidos = 0;
         }
         batch.update(getDocRef('finishedGoodsInventory', fg.id), upd);
       }
       await batch.commit();
       setEditingFG(null);
-      setDialog({ title: '✅ Actualizado', text: `"${newNombre}" actualizado correctamente. Todos los reportes se actualizarán.`, type: 'alert' });
+      setDialog({ title: '✅ Actualizado', text: `"${newNombre}" actualizado correctamente.`, type: 'alert' });
     } catch(err) { setDialog({ title: 'Error al guardar', text: err.message, type: 'alert' }); }
+  };
+
+
+  // ============================================================================
+  // IMPORTAR INVENTARIO CONSOLIDADO DESDE EXCEL (datos precargados)
+  // ============================================================================
+  const INVENTARIO_CONSOLIDADO_DATA = [{"almacen": "ALMACEN BQTO", "id": "SP-2110-1.8BLU", "desc": "Cinta de Embalar Azul 2\" x 110Yds x 1.8Mil", "cost": 1.28, "stock": 36.0}, {"almacen": "ALMACEN BQTO", "id": "TRED-2100-2", "desc": "Cinta de Embalar Roja 2\" x 110Yds x 2.0Mil", "cost": 1.23, "stock": 36.0}, {"almacen": "ALMACEN BQTO", "id": "TCLR-21000-2", "desc": "Cinta de Embalar Transp-2\" x 1000Mts x 2.0Mil", "cost": 6.95, "stock": 476.0}, {"almacen": "ALMACEN BQTO", "id": "TCLR-2100-2", "desc": "Cinta de Embalar Transp-2\" x 110Yds x 2.0Mil", "cost": 0.76, "stock": 900.0}, {"almacen": "ALMACEN BQTO", "id": "DISPENSER-SF", "desc": "Dispensador de Imported", "cost": 7.0, "stock": 4.0}, {"almacen": "ALMACEN BQTO", "id": "PK-6082-10", "desc": "Papel Kraft Marron 60Cm x 202Mts x 82Gms-10Kg", "cost": 23.64, "stock": 20.0}, {"almacen": "ALMACEN BQTO", "id": "PK-6066-10", "desc": "Papel Kraft Marron 60Cm x 250Mts x 66Gms - 10Kg", "cost": 22.25, "stock": 6.0}, {"almacen": "ALMACEN BQTO", "id": "PK-6050-10", "desc": "Papel Kraft Marron 60Cm x 335Mts x 50Gms-10Kg", "cost": 20.15, "stock": 50.0}, {"almacen": "ALMACEN BQTO", "id": "PSFM-4508-2.78/R", "desc": "Pre-Strecth Film Transp 45Cm x 550Mts x 8Mic x 2.7Kg B/R", "cost": 8.97, "stock": 1.0}, {"almacen": "ALMACEN BQTO", "id": "SFM-WHT-4520-2.7", "desc": "Imported Blanco-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 4.42, "stock": 18.0}, {"almacen": "ALMACEN BQTO", "id": "SFM-RED-4520-2.7", "desc": "Imported Rojo-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 8.55, "stock": 8.0}, {"almacen": "ALMACEN BQTO", "id": "SFM-CLR-4520-4", "desc": "Imported Transp 45Cm x 450Mts x 20Mic-4Kg", "cost": 2.43, "stock": 49.0}, {"almacen": "ALMACEN BQTO", "id": "OSFA-CLR-5020-16", "desc": "Imported Transp Autom 50Cm x 1600Mts x 20Mic-16Kg", "cost": 15.09, "stock": 126.0}, {"almacen": "ALMACEN C2", "id": "T-2110-1.8-FR", "desc": "Cinta de Embalar \"Fragil\" 2\" x 110Yds x 1.8Mil", "cost": 2.22, "stock": 6.0}, {"almacen": "ALMACEN C2", "id": "T-2110-2-STOP", "desc": "Cinta de Embalar \"Stop\" 2\" x 110Yds x 1.8Mil", "cost": 2.74, "stock": 30.0}, {"almacen": "ALMACEN C2", "id": "SP-2110-1.8YLW", "desc": "Cinta de Embalar Amarilla 2\" x 110Yds x 1.8Mil", "cost": 1.56, "stock": 72.0}, {"almacen": "ALMACEN C2", "id": "TYLW-245", "desc": "Cinta de Embalar Amarilla 12\"\" x 45 Mts", "cost": 0.67, "stock": 72.0}, {"almacen": "ALMACEN C2", "id": "SP-2110-1.8BLU", "desc": "Cinta de Embalar Azul 2\" x 110Yds x 1.8Mil", "cost": 1.28, "stock": 112.0}, {"almacen": "ALMACEN C2", "id": "SP-3110-1.8BLU", "desc": "Cinta de Embalar Azul 3\" x 110Yds x 1.8Mil", "cost": 1.3, "stock": 11.0}, {"almacen": "ALMACEN C2", "id": "TWHT-2100-2", "desc": "Cinta de Embalar Blanca 2\" x 110Yds x 2.0Mil", "cost": 1.25, "stock": 157.0}, {"almacen": "ALMACEN C2", "id": "TWHT-250", "desc": "Cinta de Embalar Blanca 2\"\" x 50Mts", "cost": 0.7, "stock": 44.0}, {"almacen": "ALMACEN C2", "id": "PT-2110-1.88TA", "desc": "Cinta de Embalar Marron 2\" x 110Yds x 1.88Mil", "cost": 1.27, "stock": 38.0}, {"almacen": "ALMACEN C2", "id": "TTAN-250", "desc": "Cinta de Embalar Marron 2\"\" x 50Mts", "cost": 0.62, "stock": 19.0}, {"almacen": "ALMACEN C2", "id": "TORG-2100-2", "desc": "Cinta de Embalar Naranja 2\"\" x 100Mts x 2Mil", "cost": 1.6, "stock": 501.0}, {"almacen": "ALMACEN C2", "id": "SP-2110-2-BLK", "desc": "Cinta de Embalar Negra 2\" x 110Yds x 2.0Mil", "cost": 1.25, "stock": 27.0}, {"almacen": "ALMACEN C2", "id": "TRED-2100-2", "desc": "Cinta de Embalar Roja 2\" x 110Yds x 2.0Mil", "cost": 1.23, "stock": 75.0}, {"almacen": "ALMACEN C2", "id": "TRED-245", "desc": "Cinta de Embalar Roja 2\"\" x 45Mts", "cost": 0.67, "stock": 72.0}, {"almacen": "ALMACEN C2", "id": "TCLR-21000-2", "desc": "Cinta de Embalar Transp-2\" x 1000Mts x 2.0Mil", "cost": 6.95, "stock": 40.0}, {"almacen": "ALMACEN C2", "id": "TCLR-2100-2", "desc": "Cinta de Embalar Transp-2\" x 110Yds x 2.0Mil", "cost": 0.76, "stock": 28.0}, {"almacen": "ALMACEN C2", "id": "TCLR-3100-2", "desc": "Cinta de Embalar Transp-3\" x 110Yds x 2.0Mil", "cost": 1.51, "stock": 3.0}, {"almacen": "ALMACEN C2", "id": "SP-2110-1.8GRN", "desc": "Cinta de Embalar Verde 2\" x 100Mts x 1.8Mil", "cost": 1.55, "stock": 55.0}, {"almacen": "ALMACEN C2", "id": "TGRN-245", "desc": "Cinta de Embalar Verde 2\"\" x 45Mts", "cost": 0.67, "stock": 72.0}, {"almacen": "ALMACEN C2", "id": "DISP2-100", "desc": "Dispensador de Cinta de Embalar 2\"\" x 100Mts", "cost": 3.0, "stock": 12.0}, {"almacen": "ALMACEN C2", "id": "DISPENSER-SF", "desc": "Dispensador de Imported", "cost": 7.0, "stock": 19.0}, {"almacen": "ALMACEN C2", "id": "SFM-CLR-1220-MIN", "desc": "Mini-Imported Transp 12Cm x 225Mts x 20Mic", "cost": 2.48, "stock": 7.0}, {"almacen": "ALMACEN C2", "id": "PK-6050-5", "desc": "Papel Kraft Marron 60Cm x 168Mts x 50Gms-5Kg", "cost": 15.95, "stock": 4.0}, {"almacen": "ALMACEN C2", "id": "PK-6082-10", "desc": "Papel Kraft Marron 60Cm x 202Mts x 82Gms-10Kg", "cost": 23.64, "stock": 9.0}, {"almacen": "ALMACEN C2", "id": "PK-6066-10", "desc": "Papel Kraft Marron 60Cm x 250Mts x 66Gms-10Kg", "cost": 22.25, "stock": 15.0}, {"almacen": "ALMACEN C2", "id": "PK6050-10-", "desc": "Papel Kraft Marron 60Cm x 335Mts x 50Gms-10Kg", "cost": 20.15, "stock": 18.0}, {"almacen": "ALMACEN C2", "id": "PW-SPS2225", "desc": "Poly Strapping 1/2\"\" x 3000 Mts", "cost": 71.26, "stock": 1.0}, {"almacen": "ALMACEN C2", "id": "PSFM-4508-2.7B/R", "desc": "Pre-Strecth Film Transp 45Cm x 550Mts x 8Mic x 2.7Kg B/R", "cost": 8.97, "stock": 53.0}, {"almacen": "ALMACEN C2", "id": "SFM-YLW-5020-2", "desc": "Imported Amarillo 50Cm x 225Mts x 20Mic - 2Kg", "cost": 8.23, "stock": 7.0}, {"almacen": "ALMACEN C2", "id": "SFM-BLU-4520-2.7", "desc": "Imported Azul-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 9.68, "stock": 25.0}, {"almacen": "ALMACEN C2", "id": "SFM-WHT-4520-2.7", "desc": "Imported Blanco-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 4.42, "stock": 12.0}, {"almacen": "ALMACEN C2", "id": "SFM-BLK-4520-2.7", "desc": "Imported Negro-45Cm x 330Mts x 20Mic- 2.7Kg", "cost": 8.65, "stock": 12.0}, {"almacen": "ALMACEN C2", "id": "SFA-BLK-5020-16", "desc": "Imported Negro Autom 50Cm x 1500Mts x 20Mic-16Kg", "cost": 58.42, "stock": 8.0}, {"almacen": "ALMACEN C2", "id": "SFM-RED-4520-2.7", "desc": "Imported Rojo-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 8.55, "stock": 12.0}, {"almacen": "ALMACEN C2", "id": "SFM-CLR-4520-4", "desc": "Imported Transp 45Cm x 450Mts x 20Mic-4Kg", "cost": 2.43, "stock": 22.0}, {"almacen": "ALMACEN C2", "id": "0SFA-CLR-5020-16", "desc": "Imported Transp Autom 50Cm x 1600Mts x 20Mic-16Kg", "cost": 15.09, "stock": 11.0}, {"almacen": "ALMACEN C2", "id": "SFM-SHW4510-2.7-", "desc": "Imported Transp SHW 45Cm x 520Mts x 10Mic-2.7Kg", "cost": 8.7, "stock": 3.0}, {"almacen": "ALMACEN C2", "id": "SFM-CLR-4520-2", "desc": "Imported Trsansp 45Cm x 225Mts x 20Mic- 2Kg", "cost": 5.16, "stock": 2.0}, {"almacen": "ALMACEN C2", "id": "SFM-GRN-4520-2.7", "desc": "Imported Verde-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 7.44, "stock": 21.0}, {"almacen": "ALMACEN MCY", "id": "BOL-AVES", "desc": "Bolsa de Aves C/l 60 x 82 x 30Mic x Millar", "cost": 610.0, "stock": 0.01}, {"almacen": "ALMACEN MCY", "id": "BOL-GEN", "desc": "BOLSA GENERICA 60CM X 82 X 30MIC X MILLAR", "cost": 610.0, "stock": 1.29}, {"almacen": "ALMACEN MCY", "id": "T-2110-1.8-FR", "desc": "Cinta de Embalar \"Fragil\" 2\" x 110Yds x 1.8Mil", "cost": 2.22, "stock": 1.0}, {"almacen": "ALMACEN MCY", "id": "TORG-2100-2", "desc": "Cinta de Embalar Naranja 2\"\" x 100Mts x 2Mil", "cost": 1.6, "stock": 108.0}, {"almacen": "ALMACEN MCY", "id": "TP-3100LOGO", "desc": "Cinta de Embalar Personalizada 3\"\"x 100Mts", "cost": 2.33, "stock": 6.0}, {"almacen": "ALMACEN MCY", "id": "TCLR-21000-2", "desc": "Cinta de Embalar Transp-2\" x 1000Mts x 2.0Mil", "cost": 6.95, "stock": 99.0}, {"almacen": "ALMACEN MCY", "id": "TCLR-2100-2", "desc": "Cinta de Embalar Transp2\" x 110Yds x 2.0Mil", "cost": 0.76, "stock": 1170.0}, {"almacen": "ALMACEN MCY", "id": "DISPENSER-SF", "desc": "Dispensador de Imported", "cost": 7.0, "stock": 4.0}, {"almacen": "ALMACEN MCY", "id": "FJVM-1/2", "desc": "Fleje Automatico Verde 1/2 x 1768Mts x 0.63MM", "cost": 0.0, "stock": 11.0}, {"almacen": "ALMACEN MCY", "id": "SFM-CLR1220--MIN", "desc": "Mini-Imported Transp 12Cm x 225Mts x 20Mic", "cost": 2.48, "stock": 12.0}, {"almacen": "ALMACEN MCY", "id": "PK-6082-10", "desc": "Papel Kraft Marron 60Cm x 202Mts x 82Gms-10Kg", "cost": 23.64, "stock": 10.0}, {"almacen": "ALMACEN MCY", "id": "PK-6066-10", "desc": "Papel Kraft Marron 60Cm x 250Mts x 66Gms-10Kg", "cost": 22.25, "stock": 16.0}, {"almacen": "ALMACEN MCY", "id": "PK-6050-10", "desc": "Papel Kraft Marron 60Cm x 335Mts x 50Gms-10Kg", "cost": 20.15, "stock": 22.0}, {"almacen": "ALMACEN MCY", "id": "PSFM-4508-2.7B/R", "desc": "Pre-Strecth Film Transp 45Cm x 550Mts x 8Mic x 2.7Kg B/R", "cost": 8.97, "stock": 4.0}, {"almacen": "ALMACEN MCY", "id": "SFM-BLU-4520-2.7", "desc": "Imported Azul-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 9.68, "stock": 1.0}, {"almacen": "ALMACEN MCY", "id": "SFM-WHT-4520-2.7", "desc": "Imported Blanco-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 4.42, "stock": 18.0}, {"almacen": "ALMACEN MCY", "id": "OSFA-WHT-7525-29", "desc": "Imported Blanco UV 75Cm x 1600Mts x 25Mic-29Kg", "cost": 74.37, "stock": 5.0}, {"almacen": "ALMACEN MCY", "id": "SFM-BLK-4520-2.7", "desc": "Imported Negro 45Cm x 330Mts x 20Mic- 2.7Kg", "cost": 8.65, "stock": 18.0}, {"almacen": "ALMACEN MCY", "id": "SFM-CLR-4520-4", "desc": "Imported Transp 45Cm x 450Mts x 20Mic-4Kg", "cost": 2.43, "stock": 487.0}, {"almacen": "ALMACEN MCY", "id": "OSFA-CLR-5020-16", "desc": "Imported Transp Autom 50Cm x 1600Mts x 20Mic-16Kg", "cost": 15.09, "stock": 283.0}, {"almacen": "ALMACEN MCY", "id": "SFM-SHW-4510-2.7", "desc": "Imported Transp SHW 45Cm x 520Mts x 10Mic-2.7Kg", "cost": 8.7, "stock": 66.0}, {"almacen": "ALMACEN ZI", "id": "BOL-EMB", "desc": "Bolsa Transp S/ 28 (5+5)x75x12Micx Millar", "cost": 72.91, "stock": 1.02}, {"almacen": "ALMACEN ZI", "id": "BOL-PNL", "desc": "Bolsa Transp S/l 60 (18+18)x75x4Micx Millar", "cost": 72.92, "stock": 103.3}, {"almacen": "ALMACEN ZI", "id": "BOL-MEN", "desc": "Bolsa Transp S/I 9 9x15x6Micx Millar", "cost": 3.1, "stock": 251.0}, {"almacen": "ALMACEN ZI", "id": "T-2110-1.8-FR", "desc": "Cinta de Embalar \"Fragil\" 2\" x 110Yds x 1.8Mil", "cost": 2.22, "stock": 35.0}, {"almacen": "ALMACEN ZI", "id": "T-2110-2-STOP", "desc": "Cinta de Embalar \"Stop\" 2\" x 110Yds x 1.8Mil", "cost": 2.74, "stock": 72.0}, {"almacen": "ALMACEN ZI", "id": "SP-2110-1.8YLW", "desc": "Cinta de Embalar Amarilla 2\" x 110Yds x 1.8Mil", "cost": 1.56, "stock": 215.0}, {"almacen": "ALMACEN ZI", "id": "TWHT-2100-2", "desc": "Cinta de Embalar Blanca 2\" x 110Yds x 2.0Mil", "cost": 1.25, "stock": 468.0}, {"almacen": "ALMACEN ZI", "id": "PT-2110-1.88TA", "desc": "Cinta de Embalar Marron 2\" x 110Yds x 1.88Mil", "cost": 1.27, "stock": 36.0}, {"almacen": "ALMACEN ZI", "id": "TORG-2100-2", "desc": "Cinta de Embalar Naranja 2\"\" x 100Mts x 2Mil", "cost": 1.6, "stock": 540.0}, {"almacen": "ALMACEN ZI", "id": "SP-2110-2-BLK", "desc": "Cinta de Embalar Negra 2\" x 110Yds x 2.0Mil", "cost": 1.25, "stock": 252.0}, {"almacen": "ALMACEN ZI", "id": "TP-3100LOGO", "desc": "Cinta de Embalar Personalizada 3\"\"x 100Mts", "cost": 2.33, "stock": 35.0}, {"almacen": "ALMACEN ZI", "id": "TRED-2100-2", "desc": "Cinta de Embalar Roja 2\" x 110Yds x 2.0Mil", "cost": 1.23, "stock": 215.0}, {"almacen": "ALMACEN ZI", "id": "TCLR-21000-2", "desc": "Cinta de Embalar Transp- 2\" x 1000Mts x 2.0Mil", "cost": 6.95, "stock": 1094.0}, {"almacen": "ALMACEN ZI", "id": "TCLR-2100-2", "desc": "Cinta de Embalar Transp- 2\" x 110Yds x 2.0Mil", "cost": 0.76, "stock": 5241.0}, {"almacen": "ALMACEN ZI", "id": "TCLR-3100-2", "desc": "Cinta de Embalar Transp- 3\" x 110Yds x 2.0Mil", "cost": 1.51, "stock": 48.0}, {"almacen": "ALMACEN ZI", "id": "SP-2110-1.8GRN", "desc": "Cinta de Embalar Verde 2\" x 100Mts x 1.8Mil", "cost": 1.55, "stock": 36.0}, {"almacen": "ALMACEN ZI", "id": "DISP2-100", "desc": "Dispensador de Cinta de Embalar 2\"\" x 100Mts", "cost": 3.0, "stock": 8.0}, {"almacen": "ALMACEN ZI", "id": "DISPENSER-SF", "desc": "Dispensador de Imported", "cost": 7.0, "stock": 31.0}, {"almacen": "ALMACEN ZI", "id": "FJVM-1/2", "desc": "Fleje Automatico Verde 1/2 x 1768Mts x 0.63MM", "cost": 0.0, "stock": 118.0}, {"almacen": "ALMACEN ZI", "id": "SFM-CLR-1220-MIN", "desc": "Mini-Imported Transp 12Cm x 225Mts x 20Mic", "cost": 2.48, "stock": 12.0}, {"almacen": "ALMACEN ZI", "id": "PK-6050-5", "desc": "Papel Kraft Marron 60Cm x 168Mts x 50Gms - 5Kg", "cost": 15.95, "stock": 1.0}, {"almacen": "ALMACEN ZI", "id": "PK-6082-10", "desc": "Papel Kraft Marron 60Cm x 202Mts x 82Gms-10Kg", "cost": 23.64, "stock": 45.0}, {"almacen": "ALMACEN ZI", "id": "PK-6066-10", "desc": "Papel Kraft Marron 60Cm x 250Mts x 66Gms-10Kg", "cost": 22.25, "stock": 179.0}, {"almacen": "ALMACEN ZI", "id": "PK-6050-10", "desc": "Papel Kraft Marron 60Cm x 335Mts x 50Gms-10Kg", "cost": 20.15, "stock": 2239.0}, {"almacen": "ALMACEN ZI", "id": "PSFM-4508-2.7B/R", "desc": "Pre-Strecth Film Transp 45Cm x 550Mts x 8Mic x 2.7Kg B/R", "cost": 8.97, "stock": 1104.0}, {"almacen": "ALMACEN ZI", "id": "SFM-BLU-4520-2.7", "desc": "Imported Azul-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 9.68, "stock": 80.0}, {"almacen": "ALMACEN ZI", "id": "SFM-WHT-4520-2.7", "desc": "Imported Blanco - 45Cm x 330Mts x 20Mic-2.7Kg", "cost": 4.42, "stock": 128.0}, {"almacen": "ALMACEN ZI", "id": "OSFA-WHT-7525-29", "desc": "Imported Blanco UV 75Cm x 1600Mts x 25Mic-29Kg", "cost": 74.37, "stock": 7.0}, {"almacen": "ALMACEN ZI", "id": "SFM-ORG-4520-2.7", "desc": "Imported Naranja - 45Cm x 330Mts x 20Mic - 2.7Kg", "cost": 9.66, "stock": 32.0}, {"almacen": "ALMACEN ZI", "id": "SFM-BLK-4520-2.7", "desc": "Imported Negro-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 8.65, "stock": 63.0}, {"almacen": "ALMACEN ZI", "id": "SFM-RED-4520-2.7", "desc": "Imported Rojo-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 8.55, "stock": 8.0}, {"almacen": "ALMACEN ZI", "id": "SFM-CLR-4520-4", "desc": "Imported Transp 45Cm x 450Mts x 20Mic-4Kg", "cost": 2.43, "stock": 7740.0}, {"almacen": "ALMACEN ZI", "id": "OSFA-CLR-5020-16", "desc": "Imported Transp Autom 50Cm x 1600Mts x 20Mic 16Kg", "cost": 15.09, "stock": 948.0}, {"almacen": "ALMACEN ZI", "id": "SFJUMBO-M4520", "desc": "Imported Transp Jumbo 45Cm x 20Mic-42,40 Kg", "cost": 17.74, "stock": 193.0}, {"almacen": "ALMACEN ZI", "id": "SFJUMBO-A5020", "desc": "Imported Transp Jumbo 50Cm x 20Mic-45,40 Kg", "cost": 24.97, "stock": 369.0}, {"almacen": "ALMACEN ZI", "id": "SFM-SHW-4510-2.7", "desc": "Imported Transp SHW 45Cm x 520Mts x 10Mic-2.7Kg", "cost": 8.7, "stock": 2.0}, {"almacen": "ALMACEN ZI", "id": "SFM-GRN-4520-2.7", "desc": "Imported Verde - 45Cm x 330Mts x 20Mic-2.7Kg", "cost": 7.44, "stock": 16.0}];
+
+  const handleImportConsolidatedInventory = async () => {
+    setDialog({
+      title: 'Importar Inventario Consolidado',
+      text: `¿Desea importar ${INVENTARIO_CONSOLIDADO_DATA.length} artículos desde el Excel consolidado? Los artículos NUEVOS se crearán. Los existentes se ACTUALIZARÁN su stock y costo.`,
+      type: 'confirm',
+      onConfirm: async () => {
+        try {
+          let created = 0, updated = 0, errors = 0;
+          // Process in batches of 400 (Firestore limit is 500 per batch)
+          const batchSize = 400;
+          for(let i = 0; i < INVENTARIO_CONSOLIDADO_DATA.length; i += batchSize) {
+            const chunk = INVENTARIO_CONSOLIDADO_DATA.slice(i, i + batchSize);
+            const batch = writeBatch(db);
+            for(const item of chunk) {
+              const ref = getDocRef('inventory', item.id);
+              const existing = (inventory || []).find(x => x.id === item.id && (x.almacen || 'ALMACEN ZI') === item.almacen);
+              if(existing) {
+                batch.update(ref, { stock: item.stock, cost: item.cost, almacen: item.almacen });
+                updated++;
+              } else {
+                batch.set(ref, {
+                  id: item.id,
+                  desc: item.desc,
+                  category: 'Consumibles',
+                  unit: 'UND',
+                  cost: item.cost,
+                  stock: item.stock,
+                  almacen: item.almacen,
+                  minStock: 0,
+                  timestamp: Date.now()
+                }, { merge: true });
+                created++;
+              }
+            }
+            await batch.commit();
+          }
+          setDialog({ title: '✅ Importación Completa', text: `${created} artículos creados, ${updated} actualizados.`, type: 'alert' });
+        } catch(err) {
+          setDialog({ title: 'Error en importación', text: err.message, type: 'alert' });
+        }
+      }
+    });
   };
 
   // ============================================================================
@@ -2809,6 +2873,29 @@ export default function App() {
     [opCosts, costFilterCategory, costFilterMonth]
   );
 
+
+  // ============================================================================
+  // MIGRACIÓN: Renombrar ALMACEN PRINCIPAL → ALMACEN ZI en todos los items
+  // ============================================================================
+  useEffect(() => {
+    if (!inventory.length || !appUser || sessionStorage.getItem('mig_almacen_zi_v1') === 'done') return;
+    const toMigrate = inventory.filter(i => !i.almacen || i.almacen === 'ALMACEN PRINCIPAL');
+    if (toMigrate.length === 0) { sessionStorage.setItem('mig_almacen_zi_v1', 'done'); return; }
+    (async () => {
+      try {
+        const bSize = 400;
+        for(let i = 0; i < toMigrate.length; i += bSize) {
+          const chunk = toMigrate.slice(i, i + bSize);
+          const batch = writeBatch(db);
+          chunk.forEach(item => batch.update(getDocRef('inventory', item.id), { almacen: 'ALMACEN ZI' }));
+          await batch.commit();
+        }
+        sessionStorage.setItem('mig_almacen_zi_v1', 'done');
+        console.log(`Migración completada: ${toMigrate.length} items → ALMACEN ZI`);
+      } catch(e) { console.warn('Migration error:', e); }
+    })();
+  }, [inventory.length, appUser]);
+
   // ============================================================================
   const renderHome = () => {
     const hasPerm = (module) => { if (!appUser) return false; if (appUser.role === 'Master') return true; const p = appUser.permissions || {}; return !!p[module]; };
@@ -3335,7 +3422,7 @@ export default function App() {
 <div class="info-grid">
   <div class="info-cell"><b>Tipo de Movimiento</b>${tipoMov}</div>
   <div class="info-cell"><b>Fecha de Emisión</b>${m.date}</div>
-  <div class="info-cell"><b>Almacén Origen</b>${m.almacen||'ALMACEN PRINCIPAL'}</div>
+  <div class="info-cell"><b>Almacén Origen</b>${m.almacen||'ALMACEN ZI'}</div>
   <div class="info-cell"><b>Doc. Referencia</b>${m.docRef||'—'}</div>
   <div class="info-cell"><b>Destino / Uso</b>${isEntradas?'Entrada a Almacén':'Producción / Despacho'}</div>
   <div class="info-cell"><b>Procesado por</b>${m.user||'—'}</div>
@@ -3591,7 +3678,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       // Filtros
       const filtSearch = almacenesFilter.search.toUpperCase();
       const filtItems = allItems.filter(i => {
-        const matchAlm = almacenesFilter.almacen === 'TODOS' || (i.almacen||'ALMACEN PRINCIPAL') === almacenesFilter.almacen;
+        const matchAlm = almacenesFilter.almacen === 'TODOS' || (i.almacen||'ALMACEN ZI') === almacenesFilter.almacen;
         const matchCat = almacenesFilter.cat === 'TODAS' || i.category === almacenesFilter.cat;
         const matchSearch = !filtSearch || i.id.toUpperCase().includes(filtSearch) || (i.desc||'').toUpperCase().includes(filtSearch);
         return matchAlm && matchCat && matchSearch;
@@ -3599,7 +3686,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       // Group by almacen
       const byAlmacen = {};
       filtItems.forEach(i => {
-        const a = i.almacen || 'ALMACEN PRINCIPAL';
+        const a = i.almacen || 'ALMACEN ZI';
         if (!byAlmacen[a]) byAlmacen[a] = [];
         byAlmacen[a].push(i);
       });
@@ -4721,6 +4808,60 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       );
     }
 
+            {/* ── MODAL EDITAR PRODUCTO TERMINADO ── */}
+        {editingFG && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-blue-500">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-black uppercase flex items-center gap-2 text-blue-800"><Edit size={20}/> Editar Producto Terminado</h3>
+                <button onClick={()=>setEditingFG(null)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nombre / Descripción del Producto</label>
+                  <input type="text" value={fgEditForm.producto} onChange={e=>setFgEditForm(f=>({...f,producto:e.target.value.toUpperCase()}))}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-blue-400"/>
+                  <p className="text-[8px] text-gray-400 mt-0.5">Formato sugerido: CATEGORIA - ANCHOxLARGOxMICRASMIC</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  {editingFG.tipoProducto !== 'TERMOENCOGIBLE' && (
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (Millares)</label>
+                      <input type="number" step="0.01" value={fgEditForm.millares} onChange={e=>setFgEditForm(f=>({...f,millares:e.target.value}))}
+                        className="w-full border-2 border-blue-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-blue-400"/>
+                    </div>
+                  )}
+                  {editingFG.tipoProducto === 'TERMOENCOGIBLE' && (
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (KG)</label>
+                      <input type="number" step="0.01" value={fgEditForm.kgProducidos} onChange={e=>setFgEditForm(f=>({...f,kgProducidos:e.target.value}))}
+                        className="w-full border-2 border-green-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-green-400"/>
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
+                      Costo/{editingFG.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millar'} ($)
+                    </label>
+                    <input type="number" step="0.01" value={editingFG.tipoProducto==='TERMOENCOGIBLE'?fgEditForm.costoUnitario:fgEditForm.costoUnitarioMillar}
+                      onChange={e=>setFgEditForm(f=>editingFG.tipoProducto==='TERMOENCOGIBLE'?{...f,costoUnitario:e.target.value}:{...f,costoUnitarioMillar:e.target.value})}
+                      className="w-full border-2 border-orange-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400"/>
+                  </div>
+                </div>
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-yellow-800 uppercase">⚠ Los cambios actualizarán todos los lotes de este producto y se reflejarán en todos los reportes e inventarios.</p>
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button onClick={()=>setEditingFG(null)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
+                  <button onClick={handleSaveFGEdit} className="bg-blue-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-blue-700 flex items-center gap-2">
+                    <CheckCircle2 size={14}/> Guardar Cambios
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+
     if (invView === 'almacen') {
       const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'PENDIENTE');
 
@@ -5221,14 +5362,33 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         _isFGGroup: true, _lotes: g.lotes, _totalKg: g.totalKg
       };
     });
-    const allCatalogItems = [...(inventory || []), ...fgAsCatalog];
+    // Deduplicar fgAsCatalog por id (si dos grupos generan el mismo idCorto, unirlos)
+    const fgDeduped = [];
+    const fgById = {};
+    for (const item of fgAsCatalog) {
+      if (fgById[item.id]) {
+        // Merge: sumar stocks y recalcular costo promedio ponderado
+        const prev = fgById[item.id];
+        const totalStock = (prev.stock || 0) + (item.stock || 0);
+        const totalVal = (prev.stock || 0) * (prev.cost || 0) + (item.stock || 0) * (item.cost || 0);
+        prev.stock = totalStock;
+        prev.cost = totalStock > 0 ? totalVal / totalStock : 0;
+        prev._lotes = (prev._lotes || 0) + (item._lotes || 0);
+      } else {
+        fgById[item.id] = { ...item };
+        fgDeduped.push(fgById[item.id]);
+      }
+    }
+    const allCatalogItems = [...(inventory || []), ...fgDeduped];
     // Categorías únicas — sin duplicados
     const allCatalogCats = ['TODAS', ...Array.from(new Set(allCatalogItems.map(i=>i?.category||'Otros')))]
       .sort((a,b)=>{ if(a==='TODAS')return -1; if(b==='TODAS')return 1; if(a==='Productos Terminados')return -1; if(b==='Productos Terminados')return 1; return a.localeCompare(b); });
     const filteredInventory = allCatalogItems.filter(i => {
       const matchSearch = (i?.id || '').toUpperCase().includes(searchInvUpper) || (i?.desc || '').toUpperCase().includes(searchInvUpper);
       const matchCat = catalogCatFilter === 'TODAS' || (i?.category||'Otros') === catalogCatFilter;
-      return matchSearch && matchCat;
+      const itemAlmacen = i?._isFGGroup ? 'Productos Terminados' : (i?.almacen || 'ALMACEN ZI');
+      const matchAlmacen = catalogAlmacenFilter === 'TODOS' || itemAlmacen === catalogAlmacenFilter;
+      return matchSearch && matchCat && matchAlmacen;
     });
     const filteredMovements = (invMovements || []).filter(m => (m?.itemId || '').toUpperCase().includes(searchInvUpper) || (m?.itemName || '').toUpperCase().includes(searchInvUpper) || (m?.reference || '').toUpperCase().includes(searchInvUpper));
 
@@ -5342,6 +5502,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Inventario General</h2>
                <div className="flex gap-3 flex-wrap justify-end">
+                 <button onClick={() => requireAdminPassword(handleImportConsolidatedInventory, 'Importar Inventario Consolidado Excel')} className="bg-indigo-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-indigo-700 transition-colors flex items-center gap-2">
+                   <Upload size={16}/> IMPORTAR EXCEL
+                 </button>
                  <button onClick={() => {clearAllReports(); setInvView('toma_fisica'); setPhysicalCounts({});}} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 transition-colors flex items-center gap-2">
                    <ClipboardEdit size={16}/> TOMA FÍSICA / AJUSTE
                  </button>
@@ -5393,10 +5556,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase transition-all border-2 ${showInvItemForm||editingInvId?'bg-orange-500 text-white border-orange-500':'bg-white border-orange-300 text-orange-700 hover:bg-orange-50'}`}>
                    {showInvItemForm||editingInvId ? <><X size={13}/> Cancelar</> : <><Plus size={13}/> Nuevo Artículo</>}
                  </button>
-                 <button type="button" onClick={()=>{setInvView('almacenes_mgmt');clearAllReports();}}
-                   className="flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase transition-all border-2 bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-50">
-                   <Warehouse size={13}/> Gestión de Almacenes
-                 </button>
+
                </div>
 
                {(showInvItemForm || editingInvId) && (
@@ -5458,59 +5618,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                </form>
                )}
             </div>
-            {/* ── MODAL EDITAR PRODUCTO TERMINADO ── */}
-        {editingFG && (
-          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-blue-500">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-black uppercase flex items-center gap-2 text-blue-800"><Edit size={20}/> Editar Producto Terminado</h3>
-                <button onClick={()=>setEditingFG(null)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nombre / Descripción del Producto</label>
-                  <input type="text" value={fgEditForm.producto} onChange={e=>setFgEditForm(f=>({...f,producto:e.target.value.toUpperCase()}))}
-                    className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-blue-400"/>
-                  <p className="text-[8px] text-gray-400 mt-0.5">Formato sugerido: CATEGORIA - ANCHOxLARGOxMICRASMIC</p>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  {editingFG.tipoProducto !== 'TERMOENCOGIBLE' && (
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (Millares)</label>
-                      <input type="number" step="0.01" value={fgEditForm.millares} onChange={e=>setFgEditForm(f=>({...f,millares:e.target.value}))}
-                        className="w-full border-2 border-blue-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-blue-400"/>
-                    </div>
-                  )}
-                  {editingFG.tipoProducto === 'TERMOENCOGIBLE' && (
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (KG)</label>
-                      <input type="number" step="0.01" value={fgEditForm.kgProducidos} onChange={e=>setFgEditForm(f=>({...f,kgProducidos:e.target.value}))}
-                        className="w-full border-2 border-green-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-green-400"/>
-                    </div>
-                  )}
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
-                      Costo/{editingFG.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millar'} ($)
-                    </label>
-                    <input type="number" step="0.01" value={editingFG.tipoProducto==='TERMOENCOGIBLE'?fgEditForm.costoUnitario:fgEditForm.costoUnitarioMillar}
-                      onChange={e=>setFgEditForm(f=>editingFG.tipoProducto==='TERMOENCOGIBLE'?{...f,costoUnitario:e.target.value}:{...f,costoUnitarioMillar:e.target.value})}
-                      className="w-full border-2 border-orange-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400"/>
-                  </div>
-                </div>
-                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
-                  <p className="text-[9px] font-black text-yellow-800 uppercase">⚠ Los cambios actualizarán todos los lotes de este producto y se reflejarán en todos los reportes e inventarios.</p>
-                </div>
-                <div className="flex justify-end gap-3 pt-2">
-                  <button onClick={()=>setEditingFG(null)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
-                  <button onClick={handleSaveFGEdit} className="bg-blue-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-blue-700 flex items-center gap-2">
-                    <CheckCircle2 size={14}/> Guardar Cambios
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* ── MODAL TRASLADO ENTRE ALMACENES ── */}
             {showTrasladoModal && (
               <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
@@ -5590,16 +5697,31 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  <p className="text-sm font-bold text-gray-500 uppercase mt-2">FECHA DE EMISIÓN: {getTodayDate()}</p>
                </div>
 
-               <div data-html2canvas-ignore="true" className="flex flex-wrap gap-3 mb-6 no-pdf items-center">
-                 <div className="relative flex-1 min-w-48">
-                   <Search className="absolute left-4 top-4 text-gray-400" size={18} />
-                   <input type="text" placeholder="BUSCAR INSUMO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
+               <div data-html2canvas-ignore="true" className="flex flex-col gap-3 mb-6 no-pdf">
+                 <div className="flex flex-wrap gap-3 items-center">
+                   <div className="relative flex-1 min-w-48">
+                     <Search className="absolute left-4 top-4 text-gray-400" size={18} />
+                     <input type="text" placeholder="BUSCAR INSUMO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
+                   </div>
+                   {/* Filtro por Almacén */}
+                   <div className="flex items-center gap-2">
+                     <Warehouse size={14} className="text-indigo-500"/>
+                     <select value={catalogAlmacenFilter} onChange={e=>setCatalogAlmacenFilter(e.target.value)}
+                       className="border-2 border-indigo-200 rounded-xl px-3 py-2 text-[10px] font-black uppercase outline-none focus:border-indigo-500 bg-white text-indigo-700">
+                       <option value="TODOS">TODOS LOS ALMACENES</option>
+                       {['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY','ALMACEN PRINCIPAL','PLANTA','DEPOSITO 2','ALMACEN EXTERNO','Productos Terminados',
+                         ...(depositos||[]).filter(d=>!['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY','ALMACEN PRINCIPAL','PLANTA','DEPOSITO 2','ALMACEN EXTERNO'].includes(d))
+                       ].filter((v,i,a)=>a.indexOf(v)===i).map(a=>(
+                         <option key={a} value={a}>{a}</option>
+                       ))}
+                     </select>
+                   </div>
                  </div>
                  <div className="flex flex-wrap gap-2">
                    {allCatalogCats.map(cat => (
                      <button key={cat} onClick={()=>setCatalogCatFilter(cat)}
                        className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all border-2 ${catalogCatFilter===cat ? 'bg-orange-500 text-white border-orange-500 shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-orange-300 hover:text-orange-600'}`}>
-                       {cat === 'TODAS' ? `Todas (${allCatalogItems.length})` : `${cat} (${allCatalogItems.filter(i=>(i?.category||'Otros')===cat).length})`}
+                       {cat === 'TODAS' ? `Todas (${filteredInventory.length})` : `${cat} (${filteredInventory.filter(i=>(i?.category||'Otros')===cat).length})`}
                      </button>
                    ))}
                  </div>
@@ -5667,7 +5789,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                <td className="py-2 px-2 text-right font-bold text-gray-600 text-[10px] print:text-black">${formatNum(inv?.cost)}</td>
                                <td className="py-2 px-2 text-right font-black text-blue-600 text-[10px] print:text-black">{formatNum(inv?.stock)} <span className="text-[8px] text-gray-400">{inv?.unit}</span></td>
                                <td className="py-2 px-2 text-right font-black text-green-600 text-[10px] print:text-black hidden lg:table-cell">${formatNum(totalVal)}</td>
-                               <td className="py-2 px-2 text-center text-[8px] font-bold text-indigo-600 hidden md:table-cell">{inv?.almacen||'ALMACEN PRINCIPAL'}</td>
+                               <td className="py-2 px-2 text-center text-[8px] font-bold text-indigo-600 hidden md:table-cell">{inv?._isFGGroup ? '—' : (inv?.almacen||'ALMACEN ZI')}</td>
                                <td className="py-2 px-2 text-center no-pdf print:hidden">
                                  <div className="flex gap-1 justify-center">
                                    {inv?._isFGGroup ? (
@@ -8570,6 +8692,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
   const [mermaOpFilter, setMermaOpFilter] = useState('TODAS');
   const [enProcesoOpFilter, setEnProcesoOpFilter] = useState('TODAS');
   const [catalogCatFilter, setCatalogCatFilter] = useState('TODAS');
+  const [catalogAlmacenFilter, setCatalogAlmacenFilter] = useState('TODOS');
 
   const handlePartialDelivery = async () => {
     if (!showPartialModal) return;
@@ -11463,12 +11586,15 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       months.push({ ym, label: `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`, ingresos, costosMP, costosOP, utilidad });
     }
 
+    // Soporte multi-mes: si hay meses seleccionados, agregar todos; si no, usar el mes individual
     const selMonth = selectedMonth;
-    const selIngresos = getIngresosByMonth(selMonth);
-    const selCostosMP = getCostosMPByMonth(selMonth);
-    const selCostosOP = getCostosOPByMonth(selMonth);
+    const activeMonths = selectedMonths.length > 0 ? selectedMonths : [selMonth];
+    const selIngresos = activeMonths.reduce((s, m) => s + getIngresosByMonth(m), 0);
+    const selCostosMP = activeMonths.reduce((s, m) => s + getCostosMPByMonth(m), 0);
+    const selCostosOP = activeMonths.reduce((s, m) => s + getCostosOPByMonth(m), 0);
     const selUtilidad = selIngresos - selCostosMP - selCostosOP;
-    const selInvoices = invoices.filter(i => (i.fecha||'').startsWith(selMonth));
+    const selInvoices = invoices.filter(i => activeMonths.some(m => (i.fecha||'').startsWith(m)));
+    const selPeriodLabel = selectedMonths.length > 1 ? `${selectedMonths.length} meses seleccionados` : selMonth.replace('-', '/');
     const selCompletedOPs = (requirements||[]).filter(r => r.status === 'COMPLETADO');
 
     // Mermas del mes
@@ -11540,10 +11666,47 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
 
             {['general','ingresos_vs_costos','mermas','mermas_bobinas','reporte_bobinas','super_finiquito','resumen_mensual'].includes(showReportType) && (
-              <div className="flex gap-4 items-center no-pdf">
+              <div className="flex gap-4 items-center flex-wrap no-pdf">
                 <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes de Analisis</label>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Principal (reportes individuales)</label>
                   <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500" />
+                </div>
+                <div className="flex-1 min-w-64">
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
+                    Filtro Multi-Mes — {selectedMonths.length === 0 ? 'Todos los meses' : `${selectedMonths.length} seleccionado${selectedMonths.length !== 1 ? 's' : ''}`}
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(() => {
+                      const now = new Date();
+                      const meses = [];
+                      for(let i = 11; i >= 0; i--) {
+                        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                        const ym = d.toISOString().substring(0, 7);
+                        const label = d.toLocaleDateString('es-VE', { month: 'short', year: '2-digit' }).toUpperCase();
+                        meses.push({ ym, label });
+                      }
+                      return meses.map(m => {
+                        const isSelected = selectedMonths.includes(m.ym);
+                        return (
+                          <button key={m.ym}
+                            onClick={() => setSelectedMonths(prev =>
+                              isSelected ? prev.filter(x => x !== m.ym) : [...prev, m.ym]
+                            )}
+                            className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all border-2 ${
+                              isSelected ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-600'
+                            }`}>
+                            {m.label}
+                          </button>
+                        );
+                      });
+                    })()}
+                    {selectedMonths.length > 0 && (
+                      <button onClick={() => setSelectedMonths([])}
+                        className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase bg-red-50 text-red-500 border-2 border-red-200 hover:bg-red-500 hover:text-white transition-all">
+                        ✕ Limpiar
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -11551,10 +11714,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             {showReportType === 'general' && (
               <div id="pdf-content" className="space-y-6">
                 <div className="flex justify-between items-center no-pdf">
-                  <h3 className="text-lg font-black uppercase">Reporte General — {selMonth.replace('-', '/')}</h3>
+                  <h3 className="text-lg font-black uppercase">Reporte General — {selPeriodLabel}</h3>
                   <button onClick={() => handleExportPDF('Reporte_General_Financiero', false)} className="bg-black text-white px-6 py-3 rounded-xl font-black text-xs uppercase flex items-center gap-2 shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
                 </div>
-                <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-blue-500 pb-2">REPORTE GENERAL FINANCIERO — {selMonth}</h1></div>
+                <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-blue-500 pb-2">REPORTE GENERAL FINANCIERO — {selPeriodLabel}</h1></div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {[['Ingresos', selIngresos, 'green'],['Costos MP', selCostosMP, 'orange'],['Costos OP', selCostosOP, 'red'],['Utilidad', selUtilidad, selUtilidad >= 0 ? 'blue' : 'red']].map(([label, val, color]) => (
                     <div key={label} className="bg-white border border-gray-200 rounded-2xl p-6">
