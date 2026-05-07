@@ -1344,6 +1344,84 @@ export default function App() {
   };
 
 
+
+  // ============================================================================
+  // IMPORTAR INVENTARIO DESDE ARCHIVO EXCEL/CSV SELECCIONADO POR EL USUARIO
+  // ============================================================================
+  const handleImportExcelFile = async (file) => {
+    try {
+      const text = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = e => res(e.target.result);
+        reader.onerror = rej;
+        reader.readAsText(file, 'UTF-8');
+      });
+      
+      // Parse CSV (supports comma or semicolon delimiter)
+      const lines2 = text.split(/\r?\n/).filter(l => l.trim());
+      if (lines2.length < 2) return setDialog({title:'Error', text:'El archivo está vacío o no tiene datos.', type:'alert'});
+      
+      const delimiter = lines2[0].includes(';') ? ';' : ',';
+      const headers = lines2[0].split(delimiter).map(h => h.replace(/"/g,'').trim().toLowerCase());
+      
+      // Map column indices
+      const col = (names) => {
+        for (const n of names) {
+          const idx = headers.findIndex(h => h.includes(n));
+          if (idx >= 0) return idx;
+        }
+        return -1;
+      };
+      const iAlmacen = col(['almac','warehouse','bodega']);
+      const iCodigo  = col(['cód','cod','code','id','referencia','ref']);
+      const iDesc    = col(['desc','nombre','producto','item','articulo']);
+      const iCosto   = col(['costo','cost','precio','price']);
+      const iStock   = col(['stock','cantidad','qty','existencia']);
+      
+      if (iCodigo < 0 || iDesc < 0) {
+        return setDialog({title:'Error de formato', text:`El archivo debe tener columnas: Código, Descripción, Stock, Costo, Almacén.\nEncabezados encontrados: ${headers.join(', ')}`, type:'alert'});
+      }
+      
+      const parseCell = (row, idx) => idx >= 0 ? row[idx]?.replace(/"/g,'').trim() : '';
+      const parseNum2 = (v) => { const n = parseFloat(String(v).replace(/[^0-9.-]/g,'')); return isNaN(n) ? 0 : n; };
+      
+      let created = 0, updated = 0;
+      const batchSize = 490;
+      const dataRows = lines2.slice(1).map(l => {
+        const row = l.split(delimiter);
+        return {
+          almacen: parseCell(row, iAlmacen) || 'ALMACEN ZI',
+          id: parseCell(row, iCodigo),
+          desc: parseCell(row, iDesc),
+          cost: parseNum2(parseCell(row, iCosto)),
+          stock: parseNum2(parseCell(row, iStock)),
+        };
+      }).filter(r => r.id && r.desc);
+      
+      for (let i = 0; i < dataRows.length; i += batchSize) {
+        const chunk = dataRows.slice(i, i + batchSize);
+        const batch = writeBatch(db);
+        for (const item of chunk) {
+          const docId = `${item.id}__${item.almacen.replace(/\s+/g,'-')}`;
+          const ref = getDocRef('inventory', docId);
+          const existing = (inventory || []).find(x => x.id === docId);
+          if (existing) {
+            batch.update(ref, { stock: item.stock, cost: item.cost, almacen: item.almacen });
+            updated++;
+          } else {
+            batch.set(ref, { id: docId, desc: item.desc, category: 'Consumibles', unit: 'UND',
+              cost: item.cost, stock: item.stock, almacen: item.almacen, minStock: 0, timestamp: Date.now() });
+            created++;
+          }
+        }
+        await batch.commit();
+      }
+      setDialog({title:'✅ Importación completa', text:`${created} artículos creados, ${updated} actualizados desde el archivo.`, type:'alert'});
+    } catch(err) {
+      setDialog({title:'Error al importar', text:`No se pudo leer el archivo.\n${err.message}`, type:'alert'});
+    }
+  };
+
   // ============================================================================
   // IMPORTAR INVENTARIO CONSOLIDADO DESDE EXCEL (datos precargados)
   // ============================================================================
@@ -1356,36 +1434,30 @@ export default function App() {
       type: 'confirm',
       onConfirm: async () => {
         try {
-          let created = 0, updated = 0;
-          const batchSize = 490;
+          let created = 0, updated = 0, errors = 0;
+          // Process in batches of 400 (Firestore limit is 500 per batch)
+          const batchSize = 400;
           for(let i = 0; i < INVENTARIO_CONSOLIDADO_DATA.length; i += batchSize) {
             const chunk = INVENTARIO_CONSOLIDADO_DATA.slice(i, i + batchSize);
             const batch = writeBatch(db);
             for(const item of chunk) {
-              // Composite ID: code + almacen to allow same product in multiple warehouses
-              const docId = `${item.id}__${item.almacen.replace(/\s+/g,'-')}`;
-              const ref = getDocRef('inventory', docId);
-              const existing = (inventory || []).find(x => x.id === docId);
-              // Detect category from description
-              const descUp = (item.desc || '').toUpperCase();
-              let cat = 'Consumibles';
-              if(descUp.includes('BOLSA') || descUp.includes('BOL-')) cat = 'Productos Terminados';
-              else if(descUp.includes('CINTA') || descUp.includes('PAPEL') || descUp.includes('FILM') || descUp.includes('IMPORTED') || descUp.includes('DISPENSADOR') || descUp.includes('FLEJE') || descUp.includes('STRAPPING') || descUp.includes('POLY')) cat = 'Consumibles';
+              const ref = getDocRef('inventory', item.id);
+              const existing = (inventory || []).find(x => x.id === item.id && (x.almacen || 'ALMACEN ZI') === item.almacen);
               if(existing) {
                 batch.update(ref, { stock: item.stock, cost: item.cost, almacen: item.almacen });
                 updated++;
               } else {
                 batch.set(ref, {
-                  id: docId,
+                  id: item.id,
                   desc: item.desc,
-                  category: cat,
-                  unit: descUp.includes('MILLAR') || descUp.includes('MILL') ? 'Millares' : 'UND',
+                  category: 'Consumibles',
+                  unit: 'UND',
                   cost: item.cost,
                   stock: item.stock,
                   almacen: item.almacen,
                   minStock: 0,
                   timestamp: Date.now()
-                });
+                }, { merge: true });
                 created++;
               }
             }
@@ -3676,6 +3748,10 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             </div>
           </div>
         </div>
+        )}
+          </>
+        )}
+          </>
       );
     }
 
@@ -3696,9 +3772,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
         if (!byAlmacen[a]) byAlmacen[a] = [];
         byAlmacen[a].push(i);
       });
-      const knownCats = ['Materia Prima','Pigmentos','Semielaborados','Consumibles','Herramientas','Tintas','Químicos','Seguridad Industrial','Productos Terminados','Rebobinado','Otros'];
-      const dynamicCats = [...new Set(allItems.map(i=>i.category||'Otros'))];
-      const allCats = ['TODAS', ...new Set([...knownCats, ...dynamicCats])].sort((a,b)=>a==='TODAS'?-1:b==='TODAS'?1:a.localeCompare(b));
+      const allCats = ['TODAS', ...new Set(allItems.map(i=>i.category||'Otros'))].sort((a,b)=>a==='TODAS'?-1:b==='TODAS'?1:a.localeCompare(b));
 
       const printAlmacenReport = (almacenName, items) => {
         const w = window.open('','_blank');
@@ -3733,15 +3807,39 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       };
 
       const exportAlmacenExcel = (almacenName, items) => {
-        const header = ['Código','Descripción','Categoría','U.M.','Stock','Costo Unit. ($)','Valor Total ($)','Almacén'];
-        const rows2 = items.map(i=>[i.id, i.desc, i.category||'', i.unit||'', i.stock||0, i.cost||0, (i.stock||0)*(i.cost||0), almacenName]);
-        const csv = [header, ...rows2].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-        const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+        const totalVal = items.reduce((s,i)=>s+((i.stock||0)*(i.cost||0)),0);
+        const now = new Date().toLocaleDateString('es-VE',{day:'2-digit',month:'long',year:'numeric'});
+        const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="UTF-8"><style>
+  body{font-family:Arial,sans-serif;font-size:11pt;}
+  .hl{background:#111;color:#fff;padding:12px 20px;font-size:22pt;font-weight:900;letter-spacing:2px;}
+  .hs{background:#ea580c;color:#fff;padding:5px 20px;font-size:9pt;font-weight:bold;}
+  .hi{padding:8px 20px 12px;border-bottom:3px solid #ea580c;font-size:9pt;color:#555;}
+  table{width:100%;border-collapse:collapse;margin-top:10px;}
+  th{background:#1f2937;color:#fff;padding:8px 10px;font-size:9pt;text-align:left;font-weight:900;}
+  td{padding:6px 10px;font-size:9pt;border-bottom:1px solid #e5e7eb;}
+  tr:nth-child(even) td{background:#f9fafb;}
+  .tr td{background:#1f2937;color:#fff;font-weight:900;padding:8px 10px;}
+</style></head><body>
+<div class="hl">&#9632; SUPPLY G&amp;B</div>
+<div class="hs">SISTEMA ERP — JIRET G&amp;B C.A.</div>
+<div class="hi"><b>REPORTE DE INVENTARIO: ${almacenName.toUpperCase()}</b><br/>Fecha: ${now} &nbsp;|&nbsp; Artículos: ${items.length} &nbsp;|&nbsp; Valor total: $${totalVal.toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+<table>
+<tr><th>Código</th><th>Descripción</th><th>Categoría</th><th>U.M.</th><th>Stock</th><th>Costo Unit. ($)</th><th>Valor Total ($)</th><th>Almacén</th></tr>
+${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${i.desc||''}</td><td>${i.category||'—'}</td><td style="text-align:center">${i.unit||''}</td><td style="text-align:right;font-weight:bold">${Number(i.stock||0).toFixed(2)}</td><td style="text-align:right">$${Number(i.cost||0).toFixed(2)}</td><td style="text-align:right;font-weight:bold;color:#16a34a">$${((i.stock||0)*(i.cost||0)).toFixed(2)}</td><td style="font-size:8pt;color:#6b7280">${almacenName}</td></tr>`).join('')}
+<tr class="tr"><td colspan="6" style="text-align:right;padding:8px 10px">TOTAL INVENTARIO:</td><td style="padding:8px 10px">$${totalVal.toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td></td></tr>
+</table>
+<div style="margin-top:14px;font-size:8pt;color:#9ca3af;text-align:center">© ${new Date().getFullYear()} Jiret G&amp;B C.A. — Todos los derechos reservados</div>
+</body></html>`;
+        const blob = new Blob([`\ufeff${html}`], {type:'application/vnd.ms-excel;charset=utf-8'});
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href=url; a.download=`inventario_${almacenName.replace(/\s+/g,'_')}.csv`; a.click();
+        const a = document.createElement('a');
+        a.href=url; a.download=`inventario_${almacenName.replace(/\s+/g,'_')}_${new Date().toISOString().substring(0,10)}.xls`; a.click();
+        URL.revokeObjectURL(url);
       };
 
       return (
+        <>
         <div className="space-y-6 animate-in fade-in">
           {/* HEADER + Filtros */}
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
@@ -4217,6 +4315,68 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
           </div>
         </div>
+        {/* ── MODAL TRASLADO ENTRE ALMACENES ── */}
+            {showTrasladoModal && (
+              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-indigo-500">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-lg font-black uppercase flex items-center gap-2"><ArrowRightLeft size={20} className="text-indigo-600"/> Traslado entre Almacenes</h3>
+                    <button onClick={()=>setShowTrasladoModal(false)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
+                        <select value={trasladoForm.almacenOrigen} onChange={e=>setTrasladoForm({...trasladoForm,almacenOrigen:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Destino</label>
+                        <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm({...trasladoForm,almacenDestino:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
+                      <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm({...trasladoForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                        <option value="">— Seleccionar artículo —</option>
+                        <optgroup label="── Materia Prima / Consumibles ──">
+                          {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=>(
+                            <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="── Semielaborados / Bobinas ──">
+                          {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=>(
+                            <option key={i.id} value={`SEM::${i.id}`}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="── Productos Terminados (FG) ──">
+                          {(finishedGoodsInventory||[]).filter(fg=>parseNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)>0).map(fg=>(
+                            <option key={fg.id} value={`FG::${fg.id}`}>{fg.producto||fg.id} (Stock: {formatNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)} {fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Mill.'})</option>
+                          ))}
+                        </optgroup>
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
+                        <input type="number" step="0.01" min="0.01" value={trasladoForm.qty} onChange={e=>setTrasladoForm({...trasladoForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-400" placeholder="0.00"/>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                        <input type="date" value={trasladoForm.date} onChange={e=>setTrasladoForm({...trasladoForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400"/>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones (opcional)</label>
+                      <input type="text" value={trasladoForm.notes} onChange={e=>setTrasladoForm({...trasladoForm,notes:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 uppercase" placeholder="Ej: INSUMOS PARA PRODUCCIÓN LÍNEA 2"/>
+                    </div>
+                    {trasladoForm.almacenOrigen === trasladoForm.almacenDestino && (
+                      <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
+                    )}
+        </>
       );
     }
 
@@ -4814,7 +4974,38 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             })()}
           </div>
         </div>
-      </>
+      );
+    }
+                  {editingFG.tipoProducto === 'TERMOENCOGIBLE' && (
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (KG)</label>
+                      <input type="number" step="0.01" value={fgEditForm.kgProducidos} onChange={e=>setFgEditForm(f=>({...f,kgProducidos:e.target.value}))}
+                        className="w-full border-2 border-green-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-green-400"/>
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
+                      Costo/{editingFG.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millar'} ($)
+                    </label>
+                    <input type="number" step="0.01" value={editingFG.tipoProducto==='TERMOENCOGIBLE'?fgEditForm.costoUnitario:fgEditForm.costoUnitarioMillar}
+                      onChange={e=>setFgEditForm(f=>editingFG.tipoProducto==='TERMOENCOGIBLE'?{...f,costoUnitario:e.target.value}:{...f,costoUnitarioMillar:e.target.value})}
+                      className="w-full border-2 border-orange-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400"/>
+                  </div>
+                </div>
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-yellow-800 uppercase">⚠ Los cambios actualizarán todos los lotes de este producto y se reflejarán en todos los reportes e inventarios.</p>
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button onClick={()=>setEditingFG(null)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
+                  <button onClick={handleSaveFGEdit} className="bg-blue-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-blue-700 flex items-center gap-2">
+                    <CheckCircle2 size={14}/> Guardar Cambios
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+          </>
       );
     }
 
@@ -5235,7 +5426,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
       // ── NUEVA TOMA VIEW (default) ──
       return (
-        <>
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in print:border-none print:shadow-none">
           <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-orange-50 flex justify-between items-center no-pdf">
             <div>
@@ -5269,58 +5459,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             ], false, true)}
           </div>
         </div>
-        {editingFG && (
-          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-blue-500">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-black uppercase flex items-center gap-2 text-blue-800"><Edit size={20}/> Editar Producto Terminado</h3>
-                <button onClick={()=>setEditingFG(null)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nombre / Descripción del Producto</label>
-                  <input type="text" value={fgEditForm.producto} onChange={e=>setFgEditForm(f=>({...f,producto:e.target.value.toUpperCase()}))}
-                    className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-blue-400"/>
-                  <p className="text-[8px] text-gray-400 mt-0.5">Formato sugerido: CATEGORIA - ANCHOxLARGOxMICRASMIC</p>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  {editingFG.tipoProducto !== 'TERMOENCOGIBLE' && (
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (Millares)</label>
-                      <input type="number" step="0.01" value={fgEditForm.millares} onChange={e=>setFgEditForm(f=>({...f,millares:e.target.value}))}
-                        className="w-full border-2 border-blue-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-blue-400"/>
-                    </div>
-                  )}
-                  {editingFG.tipoProducto === 'TERMOENCOGIBLE' && (
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (KG)</label>
-                      <input type="number" step="0.01" value={fgEditForm.kgProducidos} onChange={e=>setFgEditForm(f=>({...f,kgProducidos:e.target.value}))}
-                        className="w-full border-2 border-green-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-green-400"/>
-                    </div>
-                  )}
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
-                      Costo/{editingFG.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millar'} ($)
-                    </label>
-                    <input type="number" step="0.01" value={editingFG.tipoProducto==='TERMOENCOGIBLE'?fgEditForm.costoUnitario:fgEditForm.costoUnitarioMillar}
-                      onChange={e=>setFgEditForm(f=>editingFG.tipoProducto==='TERMOENCOGIBLE'?{...f,costoUnitario:e.target.value}:{...f,costoUnitarioMillar:e.target.value})}
-                      className="w-full border-2 border-orange-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400"/>
-                  </div>
-                </div>
-                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
-                  <p className="text-[9px] font-black text-yellow-800 uppercase">⚠ Los cambios actualizarán todos los lotes de este producto y se reflejarán en todos los reportes e inventarios.</p>
-                </div>
-                <div className="flex justify-end gap-3 pt-2">
-                  <button onClick={()=>setEditingFG(null)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
-                  <button onClick={handleSaveFGEdit} className="bg-blue-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-blue-700 flex items-center gap-2">
-                    <CheckCircle2 size={14}/> Guardar Cambios
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-        </>
       );
     }
 
@@ -5396,9 +5534,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       const matchSearch = (i?.id || '').toUpperCase().includes(searchInvUpper) || (i?.desc || '').toUpperCase().includes(searchInvUpper);
       const matchCat = catalogCatFilter === 'TODAS' || (i?.category||'Otros') === catalogCatFilter;
       const itemAlmacen = i?._isFGGroup ? 'Productos Terminados' : (i?.almacen || 'ALMACEN ZI');
-      const matchAlmacen = catalogAlmacenFilter === 'TODOS' || 
-        (catalogAlmacenFilter === 'Productos Terminados' && i?._isFGGroup) ||
-        (!i?._isFGGroup && itemAlmacen === catalogAlmacenFilter);
+      const matchAlmacen = catalogAlmacenFilter === 'TODOS' || itemAlmacen === catalogAlmacenFilter;
       return matchSearch && matchCat && matchAlmacen;
     });
     const filteredMovements = (invMovements || []).filter(m => (m?.itemId || '').toUpperCase().includes(searchInvUpper) || (m?.itemName || '').toUpperCase().includes(searchInvUpper) || (m?.reference || '').toUpperCase().includes(searchInvUpper));
@@ -5513,8 +5649,24 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Inventario General</h2>
                <div className="flex gap-3 flex-wrap justify-end">
-                 <button onClick={() => requireAdminPassword(handleImportConsolidatedInventory, 'Importar Inventario Consolidado Excel')} className="bg-indigo-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-indigo-700 transition-colors flex items-center gap-2">
+                 <label className="bg-indigo-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-indigo-700 transition-colors flex items-center gap-2 cursor-pointer">
                    <Upload size={16}/> IMPORTAR EXCEL
+                   <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e=>{
+                     const file = e.target.files[0]; if(!file) return;
+                     requireAdminPassword(() => handleImportExcelFile(file), 'Importar Inventario desde Excel');
+                     e.target.value='';
+                   }}/>
+                 </label>
+                 <button onClick={() => {
+                   const items = filteredInventory.filter(i=>!i._isFGGroup);
+                   const totalVal = items.reduce((s,i)=>s+((i?.stock||0)*(i?.cost||0)),0);
+                   const now = new Date().toLocaleDateString('es-VE',{day:'2-digit',month:'long',year:'numeric'});
+                   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>body{font-family:Arial;font-size:10pt}.hl{background:#111;color:#fff;padding:10px 20px;font-size:20pt;font-weight:900}.hs{background:#ea580c;color:#fff;padding:4px 20px;font-size:8pt;font-weight:bold}.hi{padding:6px 20px 10px;border-bottom:3px solid #ea580c;font-size:9pt;color:#555}table{width:100%;border-collapse:collapse}th{background:#1f2937;color:#fff;padding:7px;font-size:8pt;text-align:left}td{padding:5px 7px;font-size:8pt;border-bottom:1px solid #e5e7eb}tr:nth-child(even) td{background:#f9fafb}.tr td{background:#1f2937;color:#fff;font-weight:900}</style></head><body><div class="hl">&#9632; SUPPLY G&B</div><div class="hs">SISTEMA ERP — JIRET G&B C.A.</div><div class="hi"><b>INVENTARIO GENERAL</b><br/>Fecha: ${now} | Artículos: ${items.length} | Valor: $${totalVal.toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2})}</div><table><tr><th>Código</th><th>Descripción</th><th>Categoría</th><th>U.M.</th><th>Stock</th><th>Costo ($)</th><th>Valor Total ($)</th><th>Almacén</th></tr>${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i?.id||''}</td><td>${i?.desc||''}</td><td>${i?.category||'—'}</td><td style="text-align:center">${i?.unit||''}</td><td style="text-align:right;font-weight:bold">${Number(i?.stock||0).toFixed(2)}</td><td style="text-align:right">$${Number(i?.cost||0).toFixed(2)}</td><td style="text-align:right;color:#16a34a;font-weight:bold">$${((i?.stock||0)*(i?.cost||0)).toFixed(2)}</td><td style="font-size:7pt;color:#6b7280">${i?.almacen||'—'}</td></tr>`).join('')}<tr class="tr"><td colspan="6" style="text-align:right;padding:7px">TOTAL:</td><td style="padding:7px">$${totalVal.toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td></td></tr></table><div style="margin-top:10px;font-size:7pt;color:#9ca3af;text-align:center">© ${new Date().getFullYear()} Jiret G&B C.A.</div></body></html>`;
+                   const blob = new Blob([`\ufeff${html}`],{type:'application/vnd.ms-excel;charset=utf-8'});
+                   const url = URL.createObjectURL(blob);
+                   const a = document.createElement('a'); a.href=url; a.download=`inventario_general_${new Date().toISOString().substring(0,10)}.xls`; a.click(); URL.revokeObjectURL(url);
+                 }} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2">
+                   <Download size={16}/> EXPORTAR XLS
                  </button>
                  <button onClick={() => {clearAllReports(); setInvView('toma_fisica'); setPhysicalCounts({});}} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 transition-colors flex items-center gap-2">
                    <ClipboardEdit size={16}/> TOMA FÍSICA / AJUSTE
@@ -5628,6 +5780,16 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  </div>
                </form>
                )}
+                    <div className="flex justify-end gap-3 pt-2">
+                      <button onClick={()=>setShowTrasladoModal(false)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
+                      <button onClick={handleSaveTraslado} className="bg-indigo-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-indigo-700 flex items-center gap-2">
+                        <ArrowRightLeft size={14}/> Registrar Traslado
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div id="pdf-content" className="p-8 print:p-0 bg-white">
                <div className="hidden pdf-header mb-8">
@@ -5648,8 +5810,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                      <select value={catalogAlmacenFilter} onChange={e=>setCatalogAlmacenFilter(e.target.value)}
                        className="border-2 border-indigo-200 rounded-xl px-3 py-2 text-[10px] font-black uppercase outline-none focus:border-indigo-500 bg-white text-indigo-700">
                        <option value="TODOS">TODOS LOS ALMACENES</option>
-                       {['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY',
-                         ...(depositos||[]).filter(d=>!['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY'].includes(d))
+                       {['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY','ALMACEN PRINCIPAL','PLANTA','DEPOSITO 2','ALMACEN EXTERNO','Productos Terminados',
+                         ...(depositos||[]).filter(d=>!['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY','ALMACEN PRINCIPAL','PLANTA','DEPOSITO 2','ALMACEN EXTERNO'].includes(d))
                        ].filter((v,i,a)=>a.indexOf(v)===i).map(a=>(
                          <option key={a} value={a}>{a}</option>
                        ))}
@@ -6008,66 +6170,23 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Artículo a Recalcular</label>
                     <select value={kardexProductId} onChange={e=>setKardexProductId(e.target.value)} className="w-full border-2 border-yellow-300 rounded-xl p-3 text-xs font-bold outline-none focus:border-yellow-500 bg-white">
                       <option value="">— Seleccione —</option>
-                      <optgroup label="── Materia Prima / Consumibles ──">
-                        {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)})</option>)}
-                      </optgroup>
-                      <optgroup label="── Rebobinados / Semielaborados ──">
-                        {(inventory||[]).filter(i=>i.category==='Semielaborados'||i.category==='Rebobinado').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>)}
-                      </optgroup>
-                      <optgroup label="── Productos Terminados ──">
-                        {(() => {
-                          const fgMap = {};
-                          (finishedGoodsInventory||[]).forEach(fg=>{
-                            const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
-                            const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                            const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                            const grpKey=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
-                            if(!fgMap[grpKey]) fgMap[grpKey]={key:grpKey, label:formatFGLabel(fg)||fg.producto||fg.id, esTermo, stock:0, unit:esTermo?'KG':'Millares'};
-                            fgMap[grpKey].stock += esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
-                          });
-                          return Object.values(fgMap).map(g=>(
-                            <option key={g.key} value={`FG::${g.key}`}>{g.label} (Stock: {formatNum(g.stock)} {g.unit})</option>
-                          ));
-                        })()}
-                      </optgroup>
+                      {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock actual: {formatNum(i.stock)})</option>)}
                     </select>
                   </div>
                   <button onClick={async()=>{
                     if(!kardexProductId) return;
+                    const item = (inventory||[]).find(i=>i.id===kardexProductId);
+                    if(!item) return;
+                    const allMovs = (invMovements||[]).filter(m=>m.itemId===kardexProductId);
+                    let stockReal = 0;
                     const entradaTypes = ['ENTRADA','ENTRADA_DEVOLUCION','ENTRADA_INICIAL','ENTRADA_TRASLADO','AJUSTE (POSITIVO)'];
                     const salidaTypes = ['SALIDA','AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA','SALIDA_TRASLADO','AJUSTE (NEGATIVO)'];
-                    let stockReal = 0, allMovs = [], desc = '', stockActual = 0;
-
-                    if(kardexProductId.startsWith('FG::')) {
-                      // Productos Terminados: aggregate all FG lotes
-                      const grpKey = kardexProductId.replace('FG::','');
-                      const fgItems = (finishedGoodsInventory||[]).filter(fg=>{
-                        const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
-                        const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                        const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                        return `${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}` === grpKey;
-                      });
-                      const fgIds = new Set(fgItems.map(fg=>fg.id));
-                      const esTermo = fgItems[0]?.tipoProducto === 'TERMOENCOGIBLE';
-                      stockActual = fgItems.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
-                      desc = formatFGLabel(fgItems[0])||fgItems[0]?.producto||grpKey;
-                      allMovs = (invMovements||[]).filter(m=>fgIds.has((m.itemId||'').replace('FG::',''))||fgIds.has(m.opId||''));
-                      allMovs.forEach(m => {
-                        if(['ENTRADA','ENTRADA_INICIAL','ENTRADA_TRASLADO'].includes(m.type)) stockReal += parseNum(m.qty);
-                        if(['SALIDA','SALIDA_TRASLADO','ENTREGADO'].includes(m.type)) stockReal -= parseNum(m.qty);
-                      });
-                    } else {
-                      const item = (inventory||[]).find(i=>i.id===kardexProductId);
-                      if(!item) return;
-                      desc = item.desc; stockActual = item.stock;
-                      allMovs = (invMovements||[]).filter(m=>m.itemId===kardexProductId);
-                      allMovs.forEach(m => {
-                        if(entradaTypes.includes(m.type)) stockReal += parseNum(m.qty);
-                        if(salidaTypes.some(t=>m.type?.includes(t))) stockReal -= parseNum(m.qty);
-                      });
-                    }
+                    allMovs.forEach(m => {
+                      if(entradaTypes.includes(m.type)) stockReal += parseNum(m.qty);
+                      if(salidaTypes.some(t=>m.type?.includes(t))) stockReal -= parseNum(m.qty);
+                    });
                     stockReal = Math.max(0, stockReal);
-                    setKardexRecalcResult({ id: kardexProductId, desc, stockActual, stockRecalculado: stockReal, movimientos: allMovs.length });
+                    setKardexRecalcResult({ id: kardexProductId, desc: item.desc, stockActual: item.stock, stockRecalculado: stockReal, movimientos: allMovs.length });
                   }} className="bg-yellow-600 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase hover:bg-yellow-700 flex items-center gap-2"><RefreshCw size={13}/> Calcular</button>
                   {kardexRecalcResult && kardexRecalcResult.id === kardexProductId && (
                     <div className="w-full mt-3 bg-white border-2 border-yellow-300 rounded-2xl p-5 space-y-2">
@@ -6103,7 +6222,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       {[...(inventory||[])].filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc}</option>)}
                     </optgroup>
                     <optgroup label="── Semielaborados / Bobinas ──">
-                      {[...(inventory||[])].filter(i=>i.category==='Semielaborados'||i.category==='Rebobinado').sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} ({formatNum(i.stock)} {i.unit||'KG'})</option>)}
+                      {[...(inventory||[])].filter(i=>i.category==='Semielaborados').sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} ({formatNum(i.stock)} KG)</option>)}
                     </optgroup>
                     <optgroup label="── Productos Terminados ──">
                       {(() => {
@@ -6437,6 +6556,149 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   });
                 }
               });
+
+              // Agregar ítems de inventory con category === 'Productos Terminados'
+              const invPT = inventory.filter(item => item.category === 'Productos Terminados');
+              invPT.forEach(item => {
+                const allItemMovs2 = (invMovements||[]).filter(m=>m.itemId===item.id);
+                const histBefore2 = allItemMovs2.filter(m=>new Date(`${m.date}T00:00:00`)<startOfMonth);
+                const hEnt2 = histBefore2.filter(m=>m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL');
+                const hSal2 = histBefore2.filter(m=>m.type==='SALIDA'||m.type==='AUTOCONSUMO'||m.type==='AVERIA'||m.type==='MUESTRA'||m.type==='PERDIDA');
+                const initialStock2 = Math.max(0, hEnt2.reduce((s,m)=>s+parseNum(m.qty),0) - hSal2.reduce((s,m)=>s+parseNum(m.qty),0));
+                const periodMovs2 = allItemMovs2.filter(m=>{const d=new Date(`${m.date}T00:00:00`);return d>=startOfMonth&&d<=endOfMonth;});
+                const ent2 = periodMovs2.filter(m=>m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL');
+                const sal2 = periodMovs2.filter(m=>m.type==='SALIDA'||m.type==='AUTOCONSUMO'||m.type==='AVERIA'||m.type==='MUESTRA'||m.type==='PERDIDA');
+                const monthEntradasQty2 = ent2.reduce((s,m)=>s+parseNum(m.qty),0);
+                const monthSalidasQty2  = sal2.reduce((s,m)=>s+parseNum(m.qty),0);
+                const avgCost2 = item.cost||0;
+                const invFinalQty2 = Math.max(0, initialStock2 + monthEntradasQty2 - monthSalidasQty2);
+                if(initialStock2>0||monthEntradasQty2>0||monthSalidasQty2>0) items.push({
+                  id: item.id, desc: item.desc, unit: item.unit||'KG', cost: avgCost2,
+                  initialStock: initialStock2, initialTotal: initialStock2*avgCost2,
+                  monthEntradasQty: monthEntradasQty2, monthEntradasProm: avgCost2, monthEntradasTotal: monthEntradasQty2*avgCost2,
+                  monthSalidasQty:  monthSalidasQty2,  monthSalidasProm:  avgCost2, monthSalidasTotal:  monthSalidasQty2*avgCost2,
+                  invFinalQty: invFinalQty2, invFinalCost: avgCost2, invFinalTotal: invFinalQty2*avgCost2
+                });
+              });
+            }
+
+            return { category: cat, items };
+          });
+
+          let grandInitialTotal = 0; let grandEntradasTotal = 0; let grandSalidasTotal = 0; let grandFinalTotal = 0;
+          const tc = parseNum(settings.tasaCambio || 0); // tasa de cambio Bs/$
+          const fmtMon = (v) => tc > 0 ? `Bs ${formatNum(v * tc)}` : `$${formatNum(v)}`;
+
+          return (
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
+              <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
+                 <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Reporte General (Art. 177 LISLR)</h2>
+                 <div className="flex gap-2">
+                   <button onClick={() => handleExportExcel('reporte-177-table', 'Reporte_Inventario_177')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXPORTAR EXCEL</button>
+                   <button onClick={() => handleExportPDF('Reporte_Art_177', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
+                 </div>
+              </div>
+
+              <div className="p-8 print:p-0 bg-white" id="pdf-content">
+                 <div data-html2canvas-ignore="true" className="flex gap-4 mb-8 items-end no-pdf flex-wrap">
+                   <div>
+                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes a Reportar</label>
+                     <select value={reportMonth} onChange={e=>setReportMonth(parseInt(e.target.value))} className="w-48 border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs uppercase outline-none" size={1}>
+                       {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'].map((m,i)=>(
+                         <option key={i+1} value={i+1}>{m}</option>
+                       ))}
+                     </select>
+                   </div>
+                   <div>
+                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Año</label>
+                     <input type="number" value={reportYear} onChange={e=>setReportYear(parseInt(e.target.value))} className="w-32 border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none text-center" />
+                   </div>
+                   <div>
+                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa de Cambio (Bs/$)</label>
+                     <input type="number" step="0.01" min="0" id="tasaCambio177" defaultValue={settings.tasaCambio||''} onBlur={async e=>{await setDoc(getDocRef('settings','general'),{tasaCambio:parseNum(e.target.value)},{merge:true});}} className="w-40 border-2 border-orange-300 bg-orange-50 rounded-xl p-3 font-black text-xs outline-none text-center focus:border-orange-500" placeholder="Ej: 90.50"/>
+                     <p className="text-[8px] text-gray-400 font-bold mt-0.5">Si se ingresa, los costos se muestran en Bs</p>
+                   </div>
+                 </div>
+
+                 <div className="hidden pdf-header mb-6">
+                   <ReportHeader />
+                   <h1 className="text-xl font-black text-black uppercase border-b-2 border-orange-500 pb-1">REPORTE GENERAL DE INVENTARIO (ART. 177 LISLR)</h1>
+                   <p className="text-xs font-bold text-gray-500 uppercase mt-1">PERÍODO: {reportMonth.toString().padStart(2, '0')} / {reportYear}{settings.tasaCambio ? ` | TASA: Bs ${formatNum(settings.tasaCambio)}/$` : ''}</p>
+                 </div>
+
+                 <div className="border border-gray-300 rounded-xl overflow-hidden shadow-sm">
+                   {tc > 0 && <div className="bg-orange-50 border-b border-orange-200 px-4 py-1.5 text-[9px] font-black text-orange-800 uppercase">Tasa de Cambio: Bs {formatNum(tc)} / $ — Valores en Bolívares</div>}
+                   <table id="reporte-177-table" className="w-full text-[10px] border-collapse text-black bg-white">
+                     <thead>
+                       <tr className="bg-white">
+                         <th rowSpan="2" className="border border-gray-300 p-2 font-black uppercase text-center text-[10px] bg-white align-middle" style={{minWidth:'220px'}}>PRODUCTO / CÓDIGO</th>
+                         <th colSpan="2" className="border border-gray-300 p-1.5 text-center bg-gray-50 font-black uppercase text-[9px]">INV. INICIAL</th>
+                         <th colSpan="2" className="border border-gray-300 p-1.5 text-center bg-green-50 font-black uppercase text-[9px]">ENTRADAS</th>
+                         <th colSpan="2" className="border border-gray-300 p-1.5 text-center bg-red-50 font-black uppercase text-[9px]">SALIDAS</th>
+                         <th colSpan="2" className="border border-gray-300 p-1.5 text-center bg-blue-50 font-black uppercase text-[9px]">INV. FINAL</th>
+                       </tr>
+                       <tr className="font-black uppercase text-[9px] text-center">
+                         <th className="border border-gray-300 p-1.5 bg-gray-50">CANT.</th><th className="border border-gray-300 p-1.5 bg-gray-50">TOTAL</th>
+                         <th className="border border-gray-300 p-1.5 bg-green-50">CANT.</th><th className="border border-gray-300 p-1.5 bg-green-50">TOTAL</th>
+                         <th className="border border-gray-300 p-1.5 bg-red-50">CANT.</th><th className="border border-gray-300 p-1.5 bg-red-50">TOTAL</th>
+                         <th className="border border-gray-300 p-1.5 bg-blue-50">CANT.</th><th className="border border-gray-300 p-1.5 bg-blue-50">TOTAL</th>
+                       </tr>
+                     </thead>
+                     <tbody>
+                       {reporte177Data.map((cat, catIndex) => {
+                          const catInitialTotal = cat.items.reduce((sum, item) => sum + item.initialTotal, 0);
+                          const catEntradasTotal = cat.items.reduce((sum, item) => sum + item.monthEntradasTotal, 0);
+                          const catSalidasTotal = cat.items.reduce((sum, item) => sum + item.monthSalidasTotal, 0);
+                          const catFinalTotal = cat.items.reduce((sum, item) => sum + item.invFinalTotal, 0);
+                          grandInitialTotal += catInitialTotal;
+                          grandEntradasTotal += catEntradasTotal;
+                          grandSalidasTotal += catSalidasTotal;
+                          grandFinalTotal += catFinalTotal;
+                          return (
+                             <React.Fragment key={catIndex}>
+                                <tr><td colSpan="9" className="bg-gray-800 text-white p-2 font-black uppercase tracking-widest text-[9px]">CATEGORÍA: {cat.category}</td></tr>
+                                {cat.items.map(item => (
+                                   <tr key={item.id} className="border-b border-gray-100 hover:bg-gray-50">
+                                     <td className="p-2 border border-gray-200 font-bold text-[9px]" style={{wordBreak:'break-word'}}>
+                                       <div className="font-black text-[9px] leading-tight">{item.desc}</div>
+                                       <div className="text-[8px] text-gray-400 mt-0.5">{item.id} | {item.unit}</div>
+                                     </td>
+                                     <td className="p-1.5 border border-gray-200 text-right font-bold">{formatNum(item.initialStock)}</td>
+                                     <td className="p-1.5 border border-gray-200 text-right font-black bg-gray-50">{fmtMon(item.initialTotal)}</td>
+                                     <td className="p-1.5 border border-gray-200 text-right font-bold text-green-700">{formatNum(item.monthEntradasQty)}</td>
+                                     <td className="p-1.5 border border-gray-200 text-right font-black text-green-700 bg-green-50">{fmtMon(item.monthEntradasTotal)}</td>
+                                     <td className="p-1.5 border border-gray-200 text-right font-bold text-red-600">{formatNum(item.monthSalidasQty)}</td>
+                                     <td className="p-1.5 border border-gray-200 text-right font-black text-red-600 bg-red-50">{fmtMon(item.monthSalidasTotal)}</td>
+                                     <td className="p-1.5 border border-gray-200 text-right font-bold text-blue-700">{formatNum(item.invFinalQty)}</td>
+                                     <td className="p-1.5 border border-gray-200 text-right font-black text-blue-700 bg-blue-50">{fmtMon(item.invFinalTotal)}</td>
+                                   </tr>
+                                ))}
+                                <tr className="bg-gray-100 font-black text-[9px]">
+                                  <td className="p-2 border border-gray-200 text-right uppercase">SUBTOTAL {cat.category}</td>
+                                  <td className="border border-gray-200"></td><td className="p-1.5 border border-gray-200 text-right">{fmtMon(catInitialTotal)}</td>
+                                  <td className="border border-gray-200"></td><td className="p-1.5 border border-gray-200 text-right text-green-700">{fmtMon(catEntradasTotal)}</td>
+                                  <td className="border border-gray-200"></td><td className="p-1.5 border border-gray-200 text-right text-red-700">{fmtMon(catSalidasTotal)}</td>
+                                  <td className="border border-gray-200"></td><td className="p-1.5 border border-gray-200 text-right text-blue-700">{fmtMon(catFinalTotal)}</td>
+                                </tr>
+                             </React.Fragment>
+                          );
+                       })}
+                     </tbody>
+                     <tfoot>
+                       <tr className="bg-gray-900 text-white font-black text-[10px]">
+                         <td className="p-2.5 border border-gray-600 text-right uppercase tracking-widest">GRAN TOTAL INVENTARIO</td>
+                         <td className="border border-gray-600"></td><td className="p-2.5 border border-gray-600 text-right">{fmtMon(grandInitialTotal)}</td>
+                         <td className="border border-gray-600"></td><td className="p-2.5 border border-gray-600 text-right text-green-300">{fmtMon(grandEntradasTotal)}</td>
+                         <td className="border border-gray-600"></td><td className="p-2.5 border border-gray-600 text-right text-red-300">{fmtMon(grandSalidasTotal)}</td>
+                         <td className="border border-gray-600"></td><td className="p-2.5 border border-gray-600 text-right text-blue-300">{fmtMon(grandFinalTotal)}</td>
+                       </tr>
+                     </tfoot>
+                   </table>
+                 </div>
+              </div>
+            </div>
+          );
+        })()}
 
       </div>
     );
@@ -11424,13 +11686,15 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       months.push({ ym, label: `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`, ingresos, costosMP, costosOP, utilidad });
     }
 
+    // Soporte multi-mes: si hay meses seleccionados, agregar todos; si no, usar el mes individual
     const selMonth = selectedMonth;
-    const selIngresos = getIngresosByMonth(selMonth);
-    const selCostosMP = getCostosMPByMonth(selMonth);
-    const selCostosOP = getCostosOPByMonth(selMonth);
+    const activeMonths = selectedMonths.length > 0 ? selectedMonths : [selMonth];
+    const selIngresos = activeMonths.reduce((s, m) => s + getIngresosByMonth(m), 0);
+    const selCostosMP = activeMonths.reduce((s, m) => s + getCostosMPByMonth(m), 0);
+    const selCostosOP = activeMonths.reduce((s, m) => s + getCostosOPByMonth(m), 0);
     const selUtilidad = selIngresos - selCostosMP - selCostosOP;
-    const selInvoices = invoices.filter(i => (i.fecha||'').startsWith(selMonth));
-    const selPeriodLabel = selMonth.replace('-', '/');
+    const selInvoices = invoices.filter(i => activeMonths.some(m => (i.fecha||'').startsWith(m)));
+    const selPeriodLabel = selectedMonths.length > 1 ? `${selectedMonths.length} meses seleccionados` : selMonth.replace('-', '/');
     const selCompletedOPs = (requirements||[]).filter(r => r.status === 'COMPLETADO');
 
     // Mermas del mes
@@ -11502,10 +11766,47 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
 
             {['general','ingresos_vs_costos','mermas','mermas_bobinas','reporte_bobinas','super_finiquito','resumen_mensual'].includes(showReportType) && (
-              <div className="flex gap-4 items-center no-pdf">
+              <div className="flex gap-4 items-center flex-wrap no-pdf">
                 <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes de Análisis</label>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Principal (reportes individuales)</label>
                   <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500" />
+                </div>
+                <div className="flex-1 min-w-64">
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
+                    Filtro Multi-Mes — {selectedMonths.length === 0 ? 'Todos los meses' : `${selectedMonths.length} seleccionado${selectedMonths.length !== 1 ? 's' : ''}`}
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(() => {
+                      const now = new Date();
+                      const meses = [];
+                      for(let i = 11; i >= 0; i--) {
+                        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                        const ym = d.toISOString().substring(0, 7);
+                        const label = d.toLocaleDateString('es-VE', { month: 'short', year: '2-digit' }).toUpperCase();
+                        meses.push({ ym, label });
+                      }
+                      return meses.map(m => {
+                        const isSelected = selectedMonths.includes(m.ym);
+                        return (
+                          <button key={m.ym}
+                            onClick={() => setSelectedMonths(prev =>
+                              isSelected ? prev.filter(x => x !== m.ym) : [...prev, m.ym]
+                            )}
+                            className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all border-2 ${
+                              isSelected ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-600'
+                            }`}>
+                            {m.label}
+                          </button>
+                        );
+                      });
+                    })()}
+                    {selectedMonths.length > 0 && (
+                      <button onClick={() => setSelectedMonths([])}
+                        className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase bg-red-50 text-red-500 border-2 border-red-200 hover:bg-red-500 hover:text-white transition-all">
+                        ✕ Limpiar
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -14365,7 +14666,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 }
               }}
               autoPlay playsInline muted={loginVideoMuted}
-              onEnded={e=>{e.target.pause(); e.target.currentTime=e.target.duration-0.1;}}
+              onEnded={e=>{e.target.pause();e.target.currentTime=e.target.duration-0.01;}}
               className="absolute inset-0 w-full h-full object-cover"
               onError={e=>{e.target.style.display='none';}}/>
           ) : settings?.loginBg ? (
@@ -14392,8 +14693,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           )}
         </div>
         {/* ── DERECHA: Panel de login limpio (blanco puro) ── */}
-        <div className="relative z-10 ml-auto flex items-center justify-center bg-white shadow-2xl" style={{width:'420px',minWidth:'340px',height:'100%'}}>
-          <div className="w-full px-10 py-0 flex flex-col justify-center min-h-full">
+        <div className="relative z-10 ml-auto flex items-center justify-center bg-white shadow-2xl" style={{width:'440px',minWidth:'360px',height:'100%'}}>
+          <div className="w-full px-12 py-0 flex flex-col justify-center" style={{minHeight:'100%'}}>
             <div className="text-center mb-10">
                <span className="text-2xl font-light tracking-widest text-gray-700">Supply</span>
                <div className="flex items-center justify-center -mt-1">
@@ -14406,17 +14707,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
             <form onSubmit={handleLogin} className="space-y-5">
               <div>
-                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-2 tracking-widest">Usuario de Acceso</label>
+                 <label className="block text-xs font-black text-gray-500 uppercase mb-2 tracking-widest">Usuario de Acceso</label>
                  <div className="relative">
-                    <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={17}/>
-                    <input type="text" required value={loginData.username} onChange={e=>setLoginData({...loginData,username:e.target.value})} className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl py-4 pl-12 pr-4 text-sm font-black outline-none focus:border-orange-500 focus:bg-white transition-all" placeholder="administrador"/>
+                    <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20}/>
+                    <input type="text" required value={loginData.username} onChange={e=>setLoginData({...loginData,username:e.target.value})} className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl py-5 pl-14 pr-4 text-base font-black outline-none focus:border-orange-500 focus:bg-white transition-all" placeholder="administrador"/>
                  </div>
               </div>
               <div>
-                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-2 tracking-widest">Clave de Seguridad</label>
+                 <label className="block text-xs font-black text-gray-500 uppercase mb-2 tracking-widest">Clave de Seguridad</label>
                  <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={17}/>
-                    <input type="password" required value={loginData.password} onChange={e=>setLoginData({...loginData,password:e.target.value})} className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl py-4 pl-12 pr-4 text-sm font-black outline-none focus:border-orange-500 focus:bg-white transition-all" placeholder="••••••••••"/>
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20}/>
+                    <input type="password" required value={loginData.password} onChange={e=>setLoginData({...loginData,password:e.target.value})} className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl py-5 pl-14 pr-4 text-base font-black outline-none focus:border-orange-500 focus:bg-white transition-all" placeholder="••••••••••"/>
                  </div>
               </div>
               {loginError && <div className="bg-red-50 text-red-500 text-[10px] font-black uppercase p-3 rounded-xl text-center border border-red-100">{loginError}</div>}
@@ -14739,64 +15040,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
            {activeTab === 'formulas' && renderFormulasModule()}
            {activeTab === 'produccion' && renderProduccionModule()}
            {activeTab === 'inventario' && renderInventoryModule()}
-           {activeTab === 'inventario' && showTrasladoModal && (
-              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-indigo-500">
-                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-lg font-black uppercase flex items-center gap-2"><ArrowRightLeft size={20} className="text-indigo-600"/> Traslado entre Almacenes</h3>
-                    <button onClick={()=>setShowTrasladoModal(false)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
-                  </div>
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
-                        <select value={trasladoForm.almacenOrigen} onChange={e=>setTrasladoForm({...trasladoForm,almacenOrigen:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                          {['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY',...(depositos||[]).filter(d=>!['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY'].includes(d))].map(a=><option key={a} value={a}>{a}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Destino</label>
-                        <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm({...trasladoForm,almacenDestino:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                          {['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY','PLANTA',...(depositos||[]).filter(d=>!['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY','PLANTA'].includes(d))].map(a=><option key={a} value={a}>{a}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
-                      <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm({...trasladoForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                        <option value="">— Seleccionar artículo —</option>
-                        {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=>(
-                          <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
-                        <input type="number" step="0.01" min="0.01" value={trasladoForm.qty} onChange={e=>setTrasladoForm({...trasladoForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-400" placeholder="0.00"/>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                        <input type="date" value={trasladoForm.date} onChange={e=>setTrasladoForm({...trasladoForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400"/>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones (opcional)</label>
-                      <input type="text" value={trasladoForm.notes||''} onChange={e=>setTrasladoForm({...trasladoForm,notes:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 uppercase" placeholder="Ej: INSUMOS PARA PRODUCCIÓN"/>
-                    </div>
-                    {trasladoForm.almacenOrigen === trasladoForm.almacenDestino && (
-                      <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
-                    )}
-                    <div className="flex justify-end gap-3 pt-2">
-                      <button onClick={()=>setShowTrasladoModal(false)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
-                      <button onClick={handleSaveTraslado} className="bg-indigo-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-indigo-700 flex items-center gap-2">
-                        <ArrowRightLeft size={14}/> Registrar Traslado
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-           )}
            {activeTab === 'simulador' && renderSimuladorModule()}
            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
            {activeTab === 'configuracion' && renderConfiguracionModule()}
