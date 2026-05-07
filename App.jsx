@@ -6438,62 +6438,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 }
               });
 
-         {/* Modal de Validación de Administrador */}
-      {showAdminModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100] p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-red-500">
-            <div className="flex flex-col items-center mb-6">
-              <div className="bg-red-100 p-4 rounded-full mb-4">
-                <Lock className="text-red-600" size={32} />
-              </div>
-              <h2 className="text-2xl font-black text-gray-800 uppercase tracking-tighter text-center">
-                Acceso Restringido
-              </h2>
-              <p className="text-gray-500 text-sm font-bold text-center mt-2">
-                Se requiere autorización de administrador para realizar esta acción.
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-[10px] font-black text-gray-400 uppercase block mb-1 ml-1">
-                  Contraseña Maestra
-                </label>
-                <input
-                  type="password"
-                  value={adminPassword}
-                  onChange={(e) => setAdminPassword(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleAdminValidation()}
-                  placeholder="••••••••"
-                  className="w-full border-2 border-gray-300 rounded-xl p-4 text-center text-lg font-black tracking-widest focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none transition-all"
-                  autoFocus
-                />
-                <p className="text-xs text-gray-400 text-center mt-2 font-bold">
-                  Use la misma clave del usuario administrador del sistema
-                </p>
-              </div>
-              
-              <div className="flex gap-3">
-                <button
-                  onClick={cancelAdminModal}
-                  className="flex-1 bg-gray-200 text-gray-700 font-black py-4 rounded-xl uppercase text-xs tracking-widest hover:bg-gray-300 transition-all"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleAdminValidation}
-                  className="flex-1 bg-red-500 text-white font-black py-4 rounded-xl shadow-lg uppercase text-xs tracking-widest hover:bg-red-600 transition-all flex items-center justify-center gap-2"
-                >
-                  <ShieldCheck size={16} />
-                  Validar
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+      </div>
+    );
+  };
 
   const renderVentasModule = () => {
     // Usar valores memoizados del componente principal
