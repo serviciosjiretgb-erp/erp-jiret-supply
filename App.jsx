@@ -6491,13 +6491,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
           </div>
         </div>
-      )} {/* <--- Aquí se cierra el modal condicional */}
-    </div> {/* <--- Aquí se cierra el div principal de la App */}
+      )}
+    </div>
   );
-}
-
-export default App; // <--- Asegúrate de que esto esté al final
-
 
   const renderVentasModule = () => {
     // Usar valores memoizados del componente principal
