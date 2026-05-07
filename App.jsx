@@ -157,7 +157,7 @@ const getSafeDate = (ts) => {
 // ============================================================================
 // CONSTANTE DE SEGURIDAD - CLAVE ADMIN
 // ============================================================================
-const ADMIN_PASSWORD = '1234';
+const ADMIN_PASSWORD = 'Supply2026.Admin';
 
 // ============================================================================
 // CATEGORÍAS DE COSTOS OPERATIVOS
@@ -3614,6 +3614,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       // States are at component level (osaItemList, osaItemForm, osaHdr)
 
       return (
+        <>
         <div className="space-y-4 animate-in fade-in">
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-5 border-b bg-orange-50 flex justify-between items-center">
@@ -3749,6 +3750,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           </div>
         </div>
         )}
+        </>
       );
     }
 
@@ -5002,6 +5004,7 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
             </div>
           </div>
         )}
+          </>
       );
     }
 
