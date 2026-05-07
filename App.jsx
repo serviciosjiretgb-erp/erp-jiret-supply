@@ -5000,7 +5000,6 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
             </div>
           </div>
         )}
-          </>
       );
     }
 
