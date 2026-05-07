@@ -532,6 +532,7 @@ export default function App() {
   const [osaItemList, setOsaItemList] = useState([]);
   const [osaItemForm, setOsaItemForm] = useState({ itemId:'', qty:'', lote:'' });
   const [osaHdr, setOsaHdr] = useState({ almacenOrigen:'ALMACEN PRINCIPAL', destino:'Producción / Despacho', docRef:'', fecha:'', procesadoPor:'' });
+  const [osaCounter, setOsaCounter] = useState(null); // sequential OSA number from Firebase
   // Fix 3: Partial delivery new product name
   const [partialNewName, setPartialNewName] = useState('');
   // Login video mute control
@@ -833,6 +834,13 @@ export default function App() {
     // Fix 5: Live clock
     setCurrentTime(new Date());
     const clockInterval = setInterval(() => setCurrentTime(new Date()), 1000);
+    // Fix 6: Load OSA counter from Firebase
+    getDocRef('settings', 'osaCounter') && import('firebase/firestore').then(({getDoc}) =>
+      getDoc(getDocRef('settings','osaCounter')).then(d => {
+        if(d.exists()) setOsaCounter(d.data().current||1);
+        else setOsaCounter(1);
+      }).catch(()=>setOsaCounter(1))
+    );
 
     // Fix 1: Initialize osaHdr with today date and user
     setOsaHdr(h => ({ ...h, fecha: getTodayDate() }));
@@ -1270,30 +1278,28 @@ export default function App() {
   const handleSaveFGEdit = async () => {
     if(!editingFG) return;
     try {
-      const updates = { producto: fgEditForm.producto.toUpperCase().trim() || editingFG.producto };
-      if(fgEditForm.millares !== '') updates.millares = parseNum(fgEditForm.millares);
-      if(fgEditForm.kgProducidos !== '') updates.kgProducidos = parseNum(fgEditForm.kgProducidos);
-      if(fgEditForm.costoUnitarioMillar !== '') updates.costoUnitarioMillar = parseNum(fgEditForm.costoUnitarioMillar);
-      if(fgEditForm.costoUnitario !== '') updates.costoUnitario = parseNum(fgEditForm.costoUnitario);
-
-      // Update all FG docs with same product name (all lotes of this product)
-      const sameProductFGs = (finishedGoodsInventory||[]).filter(fg =>
-        fg.producto === editingFG.producto || fg.id === editingFG.id
-      );
+      const newNombre = fgEditForm.producto.toUpperCase().trim() || editingFG.producto;
+      const esTermo = editingFG.tipoProducto === 'TERMOENCOGIBLE';
       const batch = writeBatch(db);
-      for(const fg of sameProductFGs) {
-        const fgUpdates = { ...updates };
-        if(fg.id !== editingFG.id) {
-          // For other lotes of same product, only update name and cost
-          delete fgUpdates.millares;
-          delete fgUpdates.kgProducidos;
+      // Get all lotes of this product group
+      const grp = editingFG._group;
+      const lotesToUpdate = grp ? grp.lotes : [editingFG];
+      for(const fg of lotesToUpdate) {
+        const upd = { producto: newNombre };
+        // Cost update applies to all lotes
+        if(fgEditForm.costoUnitarioMillar !== '') upd.costoUnitarioMillar = parseNum(fgEditForm.costoUnitarioMillar);
+        if(fgEditForm.costoUnitario !== '') upd.costoUnitario = parseNum(fgEditForm.costoUnitario);
+        // Stock update: only apply to first (reference) lote for millares/kg
+        if(fg.id === lotesToUpdate[0].id) {
+          if(!esTermo && fgEditForm.millares !== '') upd.millares = parseNum(fgEditForm.millares);
+          if(esTermo && fgEditForm.kgProducidos !== '') upd.kgProducidos = parseNum(fgEditForm.kgProducidos);
         }
-        batch.update(getDocRef('finishedGoodsInventory', fg.id), fgUpdates);
+        batch.update(getDocRef('finishedGoodsInventory', fg.id), upd);
       }
       await batch.commit();
       setEditingFG(null);
-      setDialog({ title: '✅ Actualizado', text: 'Producto terminado actualizado. Todos los reportes reflejarán los cambios.', type: 'alert' });
-    } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
+      setDialog({ title: '✅ Actualizado', text: `"${newNombre}" actualizado correctamente. Todos los reportes se actualizarán.`, type: 'alert' });
+    } catch(err) { setDialog({ title: 'Error al guardar', text: err.message, type: 'alert' }); }
   };
 
   // ============================================================================
@@ -3293,7 +3299,8 @@ export default function App() {
 
     if (invView === 'alimentario') {
       // Orden de Salida de Almacén — generador de documentos sin columnas de costo
-      const nroOSA = `OSA-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
+      const currentOsaNum = osaCounter || 1;
+      const nroOSA = `OSA-${new Date().getFullYear()}-${String(currentOsaNum).padStart(5,'0')}`;
 
       const printOSA = (items, header) => {
         if(!items||items.length===0) return setDialog({title:'Aviso',text:'Agrega al menos un artículo a la orden.',type:'alert'});
@@ -3351,7 +3358,16 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 <h2 className="text-xl font-black text-orange-900 uppercase flex items-center gap-3"><FileText className="text-orange-600" size={22}/> Orden de Salida de Almacén (OSA)</h2>
                 <p className="text-[10px] font-bold text-orange-700 mt-0.5">Genera el documento oficial — multi-artículo — sin columna de costos</p>
               </div>
-              <button onClick={()=>printOSA(osaItemList,osaHdr)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2 shadow-md disabled:opacity-40" disabled={osaItemList.length===0}><Printer size={15}/> Imprimir OSA</button>
+              <button onClick={async()=>{
+                printOSA(osaItemList,osaHdr);
+                // Increment counter in Firebase and state
+                const next = currentOsaNum + 1;
+                setOsaCounter(next);
+                await setDoc(getDocRef('settings','osaCounter'), { current: next }, { merge: true });
+                // Reset list and header for next OSA
+                setOsaItemList([]);
+                setOsaHdr(h=>({...h,docRef:'',fecha:getTodayDate()}));
+              }} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2 shadow-md disabled:opacity-40" disabled={osaItemList.length===0}><Printer size={15}/> Imprimir & Confirmar OSA</button>
             </div>
             <div className="p-6 space-y-5">
               {/* Encabezado */}
@@ -3381,7 +3397,15 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
                     <select value={osaItemForm.itemId} onChange={e=>setOsaItemForm(f=>({...f,itemId:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
                       <option value="">— Seleccionar artículo —</option>
-                      {(inventory||[]).sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                      <optgroup label="── Materia Prima / Consumibles ──">
+                        {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                      </optgroup>
+                      <optgroup label="── Semielaborados / Bobinas ──">
+                        {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=><option key={i.id} value={`SEM::${i.id}`}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>)}
+                      </optgroup>
+                      <optgroup label="── Productos Terminados ──">
+                        {(finishedGoodsInventory||[]).filter(fg=>parseNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)>0).map(fg=><option key={fg.id} value={`FG::${fg.id}`}>{fg.producto||fg.id} ({formatNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)} {fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Mill.'})</option>)}
+                      </optgroup>
                     </select></div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
                     <input type="number" step="0.01" min="0.01" value={osaItemForm.qty} onChange={e=>setOsaItemForm(f=>({...f,qty:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0.00"/></div>
@@ -3391,9 +3415,23 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 <div className="flex justify-end mt-3">
                   <button onClick={()=>{
                     if(!osaItemForm.itemId||!parseNum(osaItemForm.qty)) return;
-                    const inv=(inventory||[]).find(i=>i.id===osaItemForm.itemId);
-                    if(!inv) return;
-                    setOsaItemList(prev=>[...prev,{itemId:inv.id,desc:inv.desc,qty:parseNum(osaItemForm.qty),unit:inv.unit||'UND',lote:osaItemForm.lote}]);
+                    const isFG = osaItemForm.itemId.startsWith('FG::');
+                    const isSEM = osaItemForm.itemId.startsWith('SEM::');
+                    let itemId, desc, unit;
+                    if(isFG) {
+                      const fg = (finishedGoodsInventory||[]).find(f=>f.id===osaItemForm.itemId.replace('FG::',''));
+                      if(!fg) return;
+                      itemId = fg.id; desc = fg.producto||fg.id; unit = fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Mill.';
+                    } else if(isSEM) {
+                      const inv2 = (inventory||[]).find(i=>i.id===osaItemForm.itemId.replace('SEM::',''));
+                      if(!inv2) return;
+                      itemId = inv2.id; desc = inv2.desc; unit = 'KG';
+                    } else {
+                      const inv3 = (inventory||[]).find(i=>i.id===osaItemForm.itemId);
+                      if(!inv3) return;
+                      itemId = inv3.id; desc = inv3.desc; unit = inv3.unit||'UND';
+                    }
+                    setOsaItemList(prev=>[...prev,{itemId,desc,qty:parseNum(osaItemForm.qty),unit,lote:osaItemForm.lote}]);
                     setOsaItemForm({itemId:'',qty:'',lote:''});
                   }} className="bg-orange-500 text-white px-6 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-orange-600 flex items-center gap-2"><Plus size={13}/> Agregar a la Orden</button>
                 </div>
@@ -3431,7 +3469,14 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     </tbody>
                   </table>
                   <div className="p-4 flex justify-end">
-                    <button onClick={()=>printOSA(osaItemList,osaHdr)} className="bg-black text-white px-8 py-3 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2"><Printer size={15}/> Generar e Imprimir OSA</button>
+                    <button onClick={async()=>{
+                      printOSA(osaItemList,osaHdr);
+                      const next = currentOsaNum + 1;
+                      setOsaCounter(next);
+                      await setDoc(getDocRef('settings','osaCounter'), { current: next }, { merge: true });
+                      setOsaItemList([]);
+                      setOsaHdr(h=>({...h,docRef:'',fecha:getTodayDate()}));
+                    }} className="bg-black text-white px-8 py-3 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2"><Printer size={15}/> Generar e Imprimir OSA</button>
                   </div>
                 </div>
               ) : (
@@ -3513,6 +3558,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 <p className="text-[10px] font-bold text-indigo-700 mt-0.5">Vista, filtros, reportes PDF y Excel por almacén</p>
               </div>
               <div className="flex gap-2 flex-wrap">
+                <button onClick={()=>setShowTrasladoModal(true)} className="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-indigo-700 flex items-center gap-2"><ArrowRightLeft size={13}/> Traslado</button>
                 <button onClick={()=>printAlmacenReport(almacenesFilter.almacen==='TODOS'?'TODOS LOS ALMACENES':almacenesFilter.almacen, filtItems)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2"><Printer size={13}/> PDF</button>
                 <button onClick={()=>exportAlmacenExcel(almacenesFilter.almacen==='TODOS'?'TODOS':almacenesFilter.almacen, filtItems)} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-green-700 flex items-center gap-2"><Download size={13}/> Excel/CSV</button>
               </div>
@@ -3622,6 +3668,67 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 </table>
               </div>
             )}
+
+            {/* HISTORIAL DE TRASLADOS + REVERSAR */}
+            <div className="p-6 border-t border-gray-200">
+              <h3 className="font-black text-sm uppercase text-indigo-800 mb-4 flex items-center gap-2"><ArrowRightLeft size={16}/> Historial de Traslados ({(invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO').length} registros)</h3>
+              {(() => {
+                const traslados = (invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO').sort((a,b)=>(b.timestamp||0)-(a.timestamp||0)).slice(0,20);
+                if(!traslados.length) return <p className="text-xs text-gray-400 font-bold uppercase py-4 text-center">Sin traslados registrados</p>;
+                return (
+                  <div className="overflow-x-auto rounded-xl border border-gray-200">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-800 text-white"><tr className="font-black text-[9px] uppercase">
+                        <th className="py-2 px-3 border-r border-white/20">Fecha</th>
+                        <th className="py-2 px-3 border-r border-white/20">Artículo</th>
+                        <th className="py-2 px-3 border-r border-white/20 text-center">Qty</th>
+                        <th className="py-2 px-3 border-r border-white/20 text-center">De</th>
+                        <th className="py-2 px-3 border-r border-white/20 text-center">A</th>
+                        <th className="py-2 px-3 text-center">Reversar</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {traslados.map(m=>{
+                          // Find matching ENTRADA_TRASLADO
+                          const entMovId = `TENT-${(m.timestamp||0)+1}`;
+                          const de = m.almacen || '—';
+                          const a = m.almacenDestino || (m.notes||'').split('→')[1]?.trim() || '—';
+                          return (
+                            <tr key={m.id} className="hover:bg-indigo-50">
+                              <td className="py-2 px-3 border-r font-bold">{m.date}</td>
+                              <td className="py-2 px-3 border-r font-black text-orange-600">{m.itemId}</td>
+                              <td className="py-2 px-3 border-r text-center font-black">{formatNum(m.qty)}</td>
+                              <td className="py-2 px-3 border-r text-center text-[9px] font-bold text-red-600">{de}</td>
+                              <td className="py-2 px-3 border-r text-center text-[9px] font-bold text-green-600">{a}</td>
+                              <td className="py-2 px-3 text-center">
+                                <button onClick={()=>setDialog({title:'Reversar Traslado',text:`¿Reversar traslado de ${formatNum(m.qty)} de "${de}" a "${a}"? El stock volverá al almacén de origen.`,type:'confirm',onConfirm:async()=>{
+                                  try {
+                                    // Find the item and update its almacen back
+                                    const item = (inventory||[]).find(i=>i.id===m.itemId);
+                                    if(item) {
+                                      await updateDoc(getDocRef('inventory',item.id),{almacen:de});
+                                    }
+                                    // Delete both movements
+                                    const batch = writeBatch(db);
+                                    batch.delete(getDocRef('inventoryMovements',m.id));
+                                    // Try to delete the matching ENTRADA_TRASLADO
+                                    const relatedEnts = (invMovements||[]).filter(mv=>mv.type==='ENTRADA_TRASLADO'&&mv.timestamp===(m.timestamp||0)+1);
+                                    relatedEnts.forEach(e=>batch.delete(getDocRef('inventoryMovements',e.id)));
+                                    await batch.commit();
+                                    setDialog({title:'✅ Reversado',text:'Traslado reversado. El stock volvió al almacén origen.',type:'alert'});
+                                  } catch(err){setDialog({title:'Error',text:err.message,type:'alert'});}
+                                }})} className="px-2 py-1 bg-red-100 text-red-600 rounded-lg text-[8px] font-black uppercase hover:bg-red-500 hover:text-white">
+                                  Reversar
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         </div>
       );
@@ -5188,18 +5295,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase transition-all border-2 ${showInvItemForm||editingInvId?'bg-orange-500 text-white border-orange-500':'bg-white border-orange-300 text-orange-700 hover:bg-orange-50'}`}>
                    {showInvItemForm||editingInvId ? <><X size={13}/> Cancelar</> : <><Plus size={13}/> Nuevo Artículo</>}
                  </button>
-                 <button type="button" onClick={()=>setShowTrasladoModal(true)}
+                 <button type="button" onClick={()=>{setInvView('almacenes_mgmt');clearAllReports();}}
                    className="flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase transition-all border-2 bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-50">
-                   <ArrowRightLeft size={13}/> Traslado entre Almacenes
+                   <Warehouse size={13}/> Gestión de Almacenes
                  </button>
-                 <div className="flex items-center gap-1 border-2 border-gray-200 rounded-2xl px-3 py-2 bg-white">
-                   <span className="text-[10px]">📦</span>
-                   <select value={catalogAlmacenFilter} onChange={e=>setCatalogAlmacenFilter(e.target.value)}
-                     className="text-[10px] font-black uppercase outline-none bg-transparent pr-2">
-                     <option value="TODOS">Todos los Almacenes</option>
-                     {depositos.map(a=><option key={a} value={a}>{a}</option>)}
-                   </select>
-                 </div>
                </div>
 
                {(showInvItemForm || editingInvId) && (
@@ -5341,9 +5440,21 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
                       <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm({...trasladoForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
                         <option value="">— Seleccionar artículo —</option>
-                        {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=>(
-                          <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>
-                        ))}
+                        <optgroup label="── Materia Prima / Consumibles ──">
+                          {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=>(
+                            <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="── Semielaborados / Bobinas ──">
+                          {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=>(
+                            <option key={i.id} value={`SEM::${i.id}`}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="── Productos Terminados (FG) ──">
+                          {(finishedGoodsInventory||[]).filter(fg=>parseNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)>0).map(fg=>(
+                            <option key={fg.id} value={`FG::${fg.id}`}>{fg.producto||fg.id} (Stock: {formatNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)} {fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Mill.'})</option>
+                          ))}
+                        </optgroup>
                       </select>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
@@ -6079,50 +6190,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             }
 
             if (cat === 'Productos Terminados') {
-              const FG_REF = [
-                {pat:/embutido.*1.*kiri|kiri.*embutido.*1/i,  entQty:241.45, entCost:86.64, salQty:220.00, salCost:86.64, unit:'Millares', esTermo:false},
-                {pat:/pa[ñn]al.*kiri/i,                        entQty:168.30, entCost:78.01, salQty:65.00,  salCost:78.01, unit:'Millares', esTermo:false},
-                {pat:/termo.*pinturas|pinturas.*caribe/i,       entQty:521.40, entCost:2.71,  salQty:520.00, salCost:2.71,  unit:'KG',      esTermo:true},
-              ];
-
-              // Build unique FG groups for final stock
-              const catGrps = {};
-              finishedGoodsInventory.forEach(item => {
-                const esTermo = item.tipoProducto==='TERMOENCOGIBLE';
-                const prodNorm = (item.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                const cliNorm = (item.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                const grpKey = `${prodNorm}__${cliNorm}__${item.tipoProducto||'BOLSAS'}`;
-                if(!catGrps[grpKey]) catGrps[grpKey] = {grpKey, items:[], esTermo, desc: formatFGLabel(item)||`${item.producto} - ${item.cliente}`, unit: esTermo?'KG':'Millares', cost: 0};
-                catGrps[grpKey].items.push(item);
-                const cu = esTermo ? parseNum(item.costoUnitario||0) : parseNum(item.costoUnitarioMillar||0);
-                if(cu > catGrps[grpKey].cost) catGrps[grpKey].cost = cu;
-              });
-
-              items = Object.values(catGrps).map(grp => {
-                const {items: fgItems2, esTermo, desc, unit, cost} = grp;
-                // Find reference data for this group
-                const ref = FG_REF.find(r=>r.pat.test(desc));
-                // Current stock from Firebase (what's actually in inventory NOW)
-                const totalCurrentStock = fgItems2.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
-
-                const monthEntradasQty = ref ? ref.entQty : 0;
-                const monthEntradasCost = ref ? ref.entCost : cost;
-                const monthSalidasQty = ref ? ref.salQty : 0;
-                const monthSalidasCost = ref ? ref.salCost : cost;
-                // INV INICIAL = 0 (no hay stock inicial)
-                const initialStock = 0;
-                // INV FINAL = ENTRADAS - SALIDAS (solo lo que queda)
-                const invFinalQty = Math.max(0, monthEntradasQty - monthSalidasQty);
-                const invFinalCost = ref ? ref.entCost : cost;
-                return {
-                  id: grp.grpKey, desc, unit, cost: monthEntradasCost,
-                  initialStock, initialTotal: initialStock * monthEntradasCost,
-                  monthEntradasQty, monthEntradasProm: monthEntradasCost, monthEntradasTotal: monthEntradasQty * monthEntradasCost,
-                  monthSalidasQty, monthSalidasProm: monthSalidasCost, monthSalidasTotal: monthSalidasQty * monthSalidasCost,
-                  invFinalQty, invFinalCost, invFinalTotal: invFinalQty * invFinalCost
-                };
-              }).filter(g => g.monthEntradasQty > 0 || g.monthSalidasQty > 0 || g.invFinalQty > 0 || g.initialStock > 0);
-
+              items = []; // Will be populated by directFGItems below
               // Include ALL finishedGoodsInventory items with stock > 0 directly
               // (they may not have invMovements entries if created via partial delivery or fix7)
               const directFGItems = [];
@@ -6142,22 +6210,22 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 fgByDesc[key].salesQty += periodSales.reduce((s,m)=>s+parseNum(m.qty),0);
               });
               Object.entries(fgByDesc).forEach(([key, g]) => {
-                // invFinalQty = current stock (stk) already represents what's left after sales
-                // initialStock = invFinalQty + salesPeriod (since no initial entries recorded)
-                const initialStock = g.stk + g.salesQty;
-                // Only add if not already captured in the movement-based groups above
-                const alreadyCaptured = items.some(it => (it.desc||'').toUpperCase().trim() === key || (it.id||'').toUpperCase().trim() === key);
-                if(!alreadyCaptured && (g.stk > 0 || g.salesQty > 0)) {
+                // For FG items: current stock IS the final inventory
+                // If no sales this period: show as ENTRADA in the period (production entry)
+                // If there are sales: initialStock = finalStock + salesPeriod
+                const initialStock = 0; // FG items don't have "initial" — they're produced
+                const entradasQty = g.stk + g.salesQty; // total produced = final + sold
+                if(g.stk > 0 || g.salesQty > 0) {
                   items.push({
-                    id: key.substring(0,15),
+                    id: key.substring(0,20),
                     desc: g.desc,
                     unit: g.unit,
                     cost: g.cost,
                     initialStock,
-                    initialTotal: initialStock * g.cost,
-                    monthEntradasQty: 0,
+                    initialTotal: 0,
+                    monthEntradasQty: entradasQty,
                     monthEntradasProm: g.cost,
-                    monthEntradasTotal: 0,
+                    monthEntradasTotal: entradasQty * g.cost,
                     monthSalidasQty: g.salesQty,
                     monthSalidasProm: g.cost,
                     monthSalidasTotal: g.salesQty * g.cost,
@@ -13602,18 +13670,35 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    <p className="text-xs text-gray-500 font-bold mb-4">Sube un video MP4 (máx ~5MB recomendado). Se reproducirá en loop con botón de mute en la pantalla de acceso.</p>
                    <input type="file" accept="video/mp4,video/*" onChange={async e=>{
                      const file = e.target.files?.[0]; if(!file) return;
-                     setDialog({title:'⏳ Subiendo Video...', text:`Subiendo "${file.name}" (${(file.size/1024/1024).toFixed(1)}MB) a Firebase Storage. Espere...`, type:'alert'});
+                     setDialog({title:'⏳ Procesando Video...', text:`Cargando "${file.name}" (${(file.size/1024/1024).toFixed(1)}MB)...`, type:'alert'});
                      try {
-                       // Upload to Firebase Storage (no limit de tamaño de Firestore)
-                       const path = `login-videos/login_video_${Date.now()}.mp4`;
-                       const sRef = storageRef(storage, path);
-                       await uploadBytes(sRef, file, { contentType: file.type || 'video/mp4' });
-                       const downloadURL = await getDownloadURL(sRef);
-                       await setDoc(getDocRef('settings','general'), { loginVideo: downloadURL }, { merge: true });
-                       setDialog({title:'✅ Video Cargado',text:`Video de bienvenida subido correctamente. Se reproducirá en la pantalla de login con audio desactivado por defecto (🔇). Haga clic en el ícono para activar sonido.`,type:'alert'});
-                     } catch(err) { setDialog({title:'Error al subir video',text:`${err.message}. Verifique que Firebase Storage esté habilitado en su proyecto.`,type:'alert'}); }
+                       // Try Firebase Storage first; fall back to IndexedDB if unavailable
+                       let videoSrc = null;
+                       try {
+                         const path = `login-videos/video_${Date.now()}.mp4`;
+                         const sRef = storageRef(storage, path);
+                         await uploadBytes(sRef, file, { contentType: file.type || 'video/mp4' });
+                         videoSrc = await getDownloadURL(sRef);
+                       } catch(storageErr) {
+                         console.warn('Storage failed, using IndexedDB:', storageErr.message);
+                         // Fallback: convert to ObjectURL stored in IndexedDB
+                         await new Promise((res,rej)=>{
+                           const req = indexedDB.open('erp_video_db', 1);
+                           req.onupgradeneeded = e => e.target.result.createObjectStore('videos');
+                           req.onsuccess = e => {
+                             const tx = e.target.result.transaction('videos','readwrite');
+                             tx.objectStore('videos').put(file, 'loginVideo');
+                             tx.oncomplete = res; tx.onerror = rej;
+                           };
+                           req.onerror = rej;
+                         });
+                         videoSrc = 'indexeddb://loginVideo'; // marker
+                       }
+                       await setDoc(getDocRef('settings','general'), { loginVideo: videoSrc }, { merge: true });
+                       setDialog({title:'✅ Video Cargado',text:'Video de bienvenida guardado. Se reproducirá en loop en la pantalla de login.',type:'alert'});
+                     } catch(err) { setDialog({title:'Error',text:err.message,type:'alert'}); }
                    }} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-black file:bg-orange-50 file:text-orange-700 hover:file:bg-orange-100"/>
-                   <p className="text-[9px] text-gray-400 font-bold mt-1">El video se sube a Firebase Storage — sin límite de tamaño. Cualquier formato MP4 es compatible.</p>
+                   <p className="text-[9px] text-gray-400 font-bold mt-1">Compatible con Firebase Storage y modo local. Sin límite de tamaño efectivo.</p>
                    {settings.loginVideo && (
                      <div className="mt-3 flex items-center gap-4">
                        <video src={settings.loginVideo} className="rounded-xl border border-gray-200 max-h-32" controls/>
@@ -14207,7 +14292,22 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         {/* ── IZQUIERDA: Video / branding ── */}
         <div className="flex-1 relative hidden md:block">
           {settings?.loginVideo ? (
-            <video src={settings.loginVideo} autoPlay loop playsInline muted={loginVideoMuted}
+            <video
+              ref={async el=>{
+                if(!el||!settings.loginVideo) return;
+                if(settings.loginVideo.startsWith('indexeddb://')) {
+                  // Load from IndexedDB
+                  try {
+                    const db2 = await new Promise((res,rej)=>{const r=indexedDB.open('erp_video_db',1);r.onsuccess=e=>res(e.target.result);r.onerror=rej;});
+                    const tx = db2.transaction('videos','readonly');
+                    const blob = await new Promise((res,rej)=>{const r=tx.objectStore('videos').get('loginVideo');r.onsuccess=e=>res(e.target.result);r.onerror=rej;});
+                    if(blob) el.src = URL.createObjectURL(blob);
+                  } catch(e) { el.style.display='none'; }
+                } else {
+                  el.src = settings.loginVideo;
+                }
+              }}
+              autoPlay loop playsInline muted={loginVideoMuted}
               className="absolute inset-0 w-full h-full object-cover"
               onError={e=>{e.target.style.display='none';}}/>
           ) : settings?.loginBg ? (
