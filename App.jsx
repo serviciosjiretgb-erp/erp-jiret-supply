@@ -3750,8 +3750,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
         </div>
         )}
           </>
-        )}
-          </>
       );
     }
 
