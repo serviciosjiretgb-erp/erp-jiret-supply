@@ -4079,16 +4079,13 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones (opcional)</label>
                       <input type="text" value={trasladoForm.notes} onChange={e=>setTrasladoForm({...trasladoForm,notes:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 uppercase" placeholder="Ej: INSUMOS PARA PRODUCCIÓN LÍNEA 2"/>
                     </div>
-                    {trasladoForm.almacenOrigen === trasladoForm.almacenDestino && (
-                      <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
-                    )}
-        </>
-      );
-    }
-
-    if (invView === 'reportes_mod') {
-      return renderInventoryReports(invReportType);
-    }
+                    {transferenciaForm.origen === transferenciaForm.destino && transferenciaForm.origen !== '' && (
+                <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
+              )}
+            </div>
+          </>
+        );
+      }
 
     // ── ÓRDENES DE COMPRA (desde Inventario) ──
     if (invView === 'inv_ordenes_compra') {
