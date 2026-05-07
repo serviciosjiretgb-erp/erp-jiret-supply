@@ -9,6 +9,7 @@ import {
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch } from "firebase/firestore";
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
 // ============================================================================
 // ESCUDO DE ERRORES EXTREMO
@@ -68,6 +69,7 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+const storage = getStorage(app);
 const auth = getAuth(app);
 const db = getFirestore(app, "us-central"); 
 
@@ -519,6 +521,9 @@ export default function App() {
   // Kardex — herramienta de recálculo (Paso 6)
   const [showKardexRecalc, setShowKardexRecalc] = useState(false);
   const [kardexRecalcResult, setKardexRecalcResult] = useState(null);
+  // FG Edit modal
+  const [editingFG, setEditingFG] = useState(null); // fg object being edited
+  const [fgEditForm, setFgEditForm] = useState({ producto:'', millares:'', kgProducidos:'', costoUnitarioMillar:'', costoUnitario:'' });
   // Paso 7: Corrección masiva con writeBatch
   const [batchCorrectionText, setBatchCorrectionText] = useState('');
   const [batchCorrectionResult, setBatchCorrectionResult] = useState(null);
@@ -530,7 +535,7 @@ export default function App() {
   // Fix 3: Partial delivery new product name
   const [partialNewName, setPartialNewName] = useState('');
   // Login video mute control
-  const [loginVideoMuted, setLoginVideoMuted] = useState(true);
+  const [loginVideoMuted, setLoginVideoMuted] = useState(false); // audio ON by default (user can mute)
   // Fix 5: Live clock
   const [currentTime, setCurrentTime] = useState(new Date());
   // Fix 6: Calculator
@@ -1258,6 +1263,38 @@ export default function App() {
     };
     runFix7();
   }, [appUser, finishedGoodsInventory.length]);
+
+  // ============================================================================
+  // FG PRODUCT EDIT HANDLER
+  // ============================================================================
+  const handleSaveFGEdit = async () => {
+    if(!editingFG) return;
+    try {
+      const updates = { producto: fgEditForm.producto.toUpperCase().trim() || editingFG.producto };
+      if(fgEditForm.millares !== '') updates.millares = parseNum(fgEditForm.millares);
+      if(fgEditForm.kgProducidos !== '') updates.kgProducidos = parseNum(fgEditForm.kgProducidos);
+      if(fgEditForm.costoUnitarioMillar !== '') updates.costoUnitarioMillar = parseNum(fgEditForm.costoUnitarioMillar);
+      if(fgEditForm.costoUnitario !== '') updates.costoUnitario = parseNum(fgEditForm.costoUnitario);
+
+      // Update all FG docs with same product name (all lotes of this product)
+      const sameProductFGs = (finishedGoodsInventory||[]).filter(fg =>
+        fg.producto === editingFG.producto || fg.id === editingFG.id
+      );
+      const batch = writeBatch(db);
+      for(const fg of sameProductFGs) {
+        const fgUpdates = { ...updates };
+        if(fg.id !== editingFG.id) {
+          // For other lotes of same product, only update name and cost
+          delete fgUpdates.millares;
+          delete fgUpdates.kgProducidos;
+        }
+        batch.update(getDocRef('finishedGoodsInventory', fg.id), fgUpdates);
+      }
+      await batch.commit();
+      setEditingFG(null);
+      setDialog({ title: '✅ Actualizado', text: 'Producto terminado actualizado. Todos los reportes reflejarán los cambios.', type: 'alert' });
+    } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
+  };
 
   // ============================================================================
   // GESTIÓN DE DEPÓSITOS / ALMACENES (CRUD Firebase)
@@ -4303,6 +4340,19 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                   <div className={`font-black text-xl ${esTermo?'text-green-600':'text-blue-600'}`}>{formatNum(g.totalStock)}</div>
                                   <div className="text-[9px] font-bold text-gray-400 uppercase">{unit}</div>
                                   {!esTermo && g.totalKg > 0 && <div className="text-[9px] text-gray-400">{formatNum(g.totalKg)} KG</div>}
+                                  <button onClick={()=>{
+                                    const firstLote = g.lotes[0];
+                                    setEditingFG({...firstLote, _group: g});
+                                    setFgEditForm({
+                                      producto: formatFGLabel(firstLote)||firstLote.producto||'',
+                                      millares: String(g.totalStock),
+                                      kgProducidos: String(g.totalKg||0),
+                                      costoUnitarioMillar: String(firstLote.costoUnitarioMillar||firstLote.costoUnitario||0),
+                                      costoUnitario: String(firstLote.costoUnitario||firstLote.costoUnitarioMillar||0)
+                                    });
+                                  }} className="mt-1 px-2 py-1 bg-blue-100 text-blue-600 rounded-lg text-[8px] font-black uppercase hover:bg-blue-500 hover:text-white transition-all flex items-center gap-0.5 mx-auto w-fit">
+                                    <Edit size={9}/> Editar
+                                  </button>
                                 </td>
                               </tr>
                             );
@@ -5211,7 +5261,60 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                </form>
                )}
             </div>
-            {/* ── MODAL TRASLADO ENTRE ALMACENES ── */}
+            {/* ── MODAL EDITAR PRODUCTO TERMINADO ── */}
+        {editingFG && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-blue-500">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-black uppercase flex items-center gap-2 text-blue-800"><Edit size={20}/> Editar Producto Terminado</h3>
+                <button onClick={()=>setEditingFG(null)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nombre / Descripción del Producto</label>
+                  <input type="text" value={fgEditForm.producto} onChange={e=>setFgEditForm(f=>({...f,producto:e.target.value.toUpperCase()}))}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-blue-400"/>
+                  <p className="text-[8px] text-gray-400 mt-0.5">Formato sugerido: CATEGORIA - ANCHOxLARGOxMICRASMIC</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  {editingFG.tipoProducto !== 'TERMOENCOGIBLE' && (
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (Millares)</label>
+                      <input type="number" step="0.01" value={fgEditForm.millares} onChange={e=>setFgEditForm(f=>({...f,millares:e.target.value}))}
+                        className="w-full border-2 border-blue-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-blue-400"/>
+                    </div>
+                  )}
+                  {editingFG.tipoProducto === 'TERMOENCOGIBLE' && (
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (KG)</label>
+                      <input type="number" step="0.01" value={fgEditForm.kgProducidos} onChange={e=>setFgEditForm(f=>({...f,kgProducidos:e.target.value}))}
+                        className="w-full border-2 border-green-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-green-400"/>
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
+                      Costo/{editingFG.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millar'} ($)
+                    </label>
+                    <input type="number" step="0.01" value={editingFG.tipoProducto==='TERMOENCOGIBLE'?fgEditForm.costoUnitario:fgEditForm.costoUnitarioMillar}
+                      onChange={e=>setFgEditForm(f=>editingFG.tipoProducto==='TERMOENCOGIBLE'?{...f,costoUnitario:e.target.value}:{...f,costoUnitarioMillar:e.target.value})}
+                      className="w-full border-2 border-orange-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400"/>
+                  </div>
+                </div>
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-yellow-800 uppercase">⚠ Los cambios actualizarán todos los lotes de este producto y se reflejarán en todos los reportes e inventarios.</p>
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button onClick={()=>setEditingFG(null)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
+                  <button onClick={handleSaveFGEdit} className="bg-blue-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-blue-700 flex items-center gap-2">
+                    <CheckCircle2 size={14}/> Guardar Cambios
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── MODAL TRASLADO ENTRE ALMACENES ── */}
             {showTrasladoModal && (
               <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
                 <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-indigo-500">
@@ -6018,7 +6121,52 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   monthSalidasQty, monthSalidasProm: monthSalidasCost, monthSalidasTotal: monthSalidasQty * monthSalidasCost,
                   invFinalQty, invFinalCost, invFinalTotal: invFinalQty * invFinalCost
                 };
-              }).filter(g => g.monthEntradasQty > 0 || g.monthSalidasQty > 0 || g.invFinalQty > 0);
+              }).filter(g => g.monthEntradasQty > 0 || g.monthSalidasQty > 0 || g.invFinalQty > 0 || g.initialStock > 0);
+
+              // Include ALL finishedGoodsInventory items with stock > 0 directly
+              // (they may not have invMovements entries if created via partial delivery or fix7)
+              const directFGItems = [];
+              const fgByDesc = {};
+              (finishedGoodsInventory||[]).forEach(fg => {
+                const desc = fg.producto || '';
+                const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+                const stk = esTermo ? parseNum(fg.kgProducidos||0) : parseNum(fg.millares||0);
+                const cost = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+                if(stk <= 0 && cost <= 0) return;
+                const key = desc.toUpperCase().trim();
+                if(!fgByDesc[key]) fgByDesc[key] = { desc, unit: esTermo?'KG':'Millares', stk:0, cost, salesQty:0 };
+                fgByDesc[key].stk += stk;
+                // Sales in period
+                const fgMovs = (invMovements||[]).filter(m => m.itemId===`FG::${fg.id}` && m.type==='SALIDA');
+                const periodSales = fgMovs.filter(m=>{const d=new Date(`${m.date}T00:00:00`);return d>=startOfMonth&&d<=endOfMonth;});
+                fgByDesc[key].salesQty += periodSales.reduce((s,m)=>s+parseNum(m.qty),0);
+              });
+              Object.entries(fgByDesc).forEach(([key, g]) => {
+                // invFinalQty = current stock (stk) already represents what's left after sales
+                // initialStock = invFinalQty + salesPeriod (since no initial entries recorded)
+                const initialStock = g.stk + g.salesQty;
+                // Only add if not already captured in the movement-based groups above
+                const alreadyCaptured = items.some(it => (it.desc||'').toUpperCase().trim() === key || (it.id||'').toUpperCase().trim() === key);
+                if(!alreadyCaptured && (g.stk > 0 || g.salesQty > 0)) {
+                  items.push({
+                    id: key.substring(0,15),
+                    desc: g.desc,
+                    unit: g.unit,
+                    cost: g.cost,
+                    initialStock,
+                    initialTotal: initialStock * g.cost,
+                    monthEntradasQty: 0,
+                    monthEntradasProm: g.cost,
+                    monthEntradasTotal: 0,
+                    monthSalidasQty: g.salesQty,
+                    monthSalidasProm: g.cost,
+                    monthSalidasTotal: g.salesQty * g.cost,
+                    invFinalQty: g.stk,
+                    invFinalCost: g.cost,
+                    invFinalTotal: g.stk * g.cost
+                  });
+                }
+              });
 
               // Agregar ítems de inventory con category === 'Productos Terminados'
               const invPT = inventory.filter(item => item.category === 'Productos Terminados');
@@ -6066,8 +6214,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  <div data-html2canvas-ignore="true" className="flex gap-4 mb-8 items-end no-pdf flex-wrap">
                    <div>
                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes a Reportar</label>
-                     <select value={reportMonth} onChange={e=>setReportMonth(parseInt(e.target.value))} className="w-48 border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs uppercase outline-none">
-                       <option value="1">Enero</option><option value="2">Febrero</option><option value="3">Marzo</option><option value="4">Abril</option><option value="5">Mayo</option><option value="6">Junio</option><option value="7">Julio</option><option value="8">Agosto</option><option value="9">Septiembre</option><option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
+                     <select value={reportMonth} onChange={e=>setReportMonth(parseInt(e.target.value))} className="w-48 border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs uppercase outline-none" size={1}>
+                       {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'].map((m,i)=>(
+                         <option key={i+1} value={i+1}>{m}</option>
+                       ))}
                      </select>
                    </div>
                    <div>
@@ -8177,6 +8327,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
   // ── CIERRE TOTAL DE OP → mueve a Terminados ──────────────────────────────
   // ── ENTREGA PARCIAL: mover KG a Terminados sin cerrar la OP ─────────
   const [showPartialModal, setShowPartialModal] = useState(null); // req
+  const [partialFecha, setPartialFecha] = useState(''); // date for partial delivery
   const [partialKg, setPartialKg] = useState('');
   const [partialMillares, setPartialMillares] = useState('');
   const [partialTargetFgKey, setPartialTargetFgKey] = useState(''); // group key of existing FG product
@@ -8303,6 +8454,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         // Crear nuevo lote FG
         fgId = `FG-${Date.now()}`;
         const fgNombre = partialNewName.trim() || formatFGLabel(req) || req.desc || 'Producto';
+        // FIX 5e: Store the fgId on the OP so CIERRE OP uses the same product
+        await updateDoc(getDocRef('inventoryRequisitions', req.id), { partialFgId: fgId, partialFgNombre: fgNombre });
         await setDoc(getDocRef('finishedGoodsInventory', fgId), {
           id: fgId, opId: req.id, reqId: req.id,
           cliente: req.client||'N/A', tipoProducto: req.tipoProducto||'BOLSAS',
@@ -8311,7 +8464,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           color: req.color||'NATURAL', tratamiento: req.tratamiento||'LISO',
           kgProducidos: kgEntrega, millares: millEntrega,
           costoUnitario: costoUnitWIP, costoTotal: costoUnitWIP*kgEntrega,
-          fechaFinalizacion: getTodayDate(), ubicacion: 'ALMACEN GENERAL',
+          fechaFinalizacion: partialFecha || getTodayDate(), ubicacion: 'ALMACEN GENERAL',
           status: 'LISTO PARA ENTREGA', esEntregaParcial: true,
           observaciones: `ENTREGA PARCIAL — ${esTermo?formatNum(kgEntrega)+' KG':formatNum(millEntrega)+' Mill. / '+formatNum(kgEntrega)+' KG'}`,
           timestamp: Date.now()
@@ -8324,7 +8477,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         type: 'ENTRADA', qty: esTermo ? kgEntrega : millEntrega,
         unitCost: costoUnitWIP, totalValue: kgEntrega * costoUnitWIP,
         previousStock: 0, newStock: esTermo ? kgEntrega : millEntrega,
-        docRef: req.id, notes: `ENTREGA PARCIAL OP ${req.id}`,
+        docRef: req.id, notes: `ENTREGA PARCIAL OP ${req.id}`, date: partialFecha || getTodayDate(),
         date: getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now(), isFG: true
       });
 
@@ -8360,7 +8513,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         }]
       });
 
-      setShowPartialModal(null); setPartialKg(''); setPartialMillares(''); setPartialTargetFgKey(''); setPartialNewName('');
+      setShowPartialModal(null); setPartialKg(''); setPartialMillares(''); setPartialTargetFgKey(''); setPartialNewName(''); setPartialFecha('');
       setDialog({ title: '✅ Entrega Parcial Registrada',
         text: `${esTermo?formatNum(kgEntrega)+' KG':formatNum(millEntrega)+' Mill.'} sumados al Inventario de Productos Terminados. La OP sigue abierta.`,
         type: 'alert' });
@@ -13447,17 +13600,20 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  <div className="mt-6 border-t border-gray-100 pt-5">
                    <h3 className="text-sm font-black uppercase text-black mb-2">Video de Bienvenida (Login)</h3>
                    <p className="text-xs text-gray-500 font-bold mb-4">Sube un video MP4 (máx ~5MB recomendado). Se reproducirá en loop con botón de mute en la pantalla de acceso.</p>
-                   <input type="file" accept="video/mp4,video/*" onChange={e=>{
+                   <input type="file" accept="video/mp4,video/*" onChange={async e=>{
                      const file = e.target.files?.[0]; if(!file) return;
-                     const reader = new FileReader();
-                     reader.onload = async (ev) => {
-                       try {
-                         await setDoc(getDocRef('settings','general'), { loginVideo: ev.target.result }, { merge: true });
-                         setDialog({title:'✅ Video Cargado',text:'Video de bienvenida actualizado. Se verá en la próxima sesión.',type:'alert'});
-                       } catch(err) { setDialog({title:'Error',text:'Video muy pesado o error de red. Intenta con un archivo más pequeño.',type:'alert'}); }
-                     };
-                     reader.readAsDataURL(file);
+                     setDialog({title:'⏳ Subiendo Video...', text:`Subiendo "${file.name}" (${(file.size/1024/1024).toFixed(1)}MB) a Firebase Storage. Espere...`, type:'alert'});
+                     try {
+                       // Upload to Firebase Storage (no limit de tamaño de Firestore)
+                       const path = `login-videos/login_video_${Date.now()}.mp4`;
+                       const sRef = storageRef(storage, path);
+                       await uploadBytes(sRef, file, { contentType: file.type || 'video/mp4' });
+                       const downloadURL = await getDownloadURL(sRef);
+                       await setDoc(getDocRef('settings','general'), { loginVideo: downloadURL }, { merge: true });
+                       setDialog({title:'✅ Video Cargado',text:`Video de bienvenida subido correctamente. Se reproducirá en la pantalla de login con audio desactivado por defecto (🔇). Haga clic en el ícono para activar sonido.`,type:'alert'});
+                     } catch(err) { setDialog({title:'Error al subir video',text:`${err.message}. Verifique que Firebase Storage esté habilitado en su proyecto.`,type:'alert'}); }
                    }} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-black file:bg-orange-50 file:text-orange-700 hover:file:bg-orange-100"/>
+                   <p className="text-[9px] text-gray-400 font-bold mt-1">El video se sube a Firebase Storage — sin límite de tamaño. Cualquier formato MP4 es compatible.</p>
                    {settings.loginVideo && (
                      <div className="mt-3 flex items-center gap-4">
                        <video src={settings.loginVideo} className="rounded-xl border border-gray-200 max-h-32" controls/>
@@ -14197,7 +14353,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               </div>
               <div className="flex items-center gap-3">
                  {/* Fix 5: Live clock — compact */}
-                 <div className="hidden lg:flex items-center gap-2 border border-gray-800 rounded-xl px-3 py-1.5 bg-gray-900 select-none">
+                 <div className="hidden lg:flex items-center gap-2 border border-gray-800 rounded-xl px-4 py-2 bg-gray-900 select-none mx-2">
                    <span className="text-orange-500 opacity-60" style={{fontSize:'10px'}}>⏱</span>
                    <div>
                      <p className="text-[11px] font-black text-orange-400 tabular-nums leading-none tracking-wider">{currentTime.toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</p>
@@ -14476,7 +14632,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               <div className="bg-white p-6 rounded-[1.5rem] shadow-2xl max-w-sm w-full border-t-8 border-blue-500">
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="text-sm font-black uppercase text-blue-800">Entrega Parcial</h3>
-                  <button onClick={()=>{ setShowPartialModal(null); setPartialTargetFgKey(''); }} className="text-gray-400 hover:text-red-500"><X size={18}/></button>
+                  <button onClick={()=>{ setShowPartialModal(null); setPartialTargetFgKey(''); setPartialFecha(''); }} className="text-gray-400 hover:text-red-500"><X size={18}/></button>
+                </div>
+                <div className="mb-3">
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha de Entrega</label>
+                  <input type="date" value={partialFecha||getTodayDate()} onChange={e=>setPartialFecha(e.target.value)}
+                    className="w-full border-2 border-blue-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-500"/>
                 </div>
                 {/* Info compacta */}
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3 text-[10px]">
