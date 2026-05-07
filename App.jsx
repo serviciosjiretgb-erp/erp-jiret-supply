@@ -846,7 +846,7 @@ export default function App() {
     const unsubUsers = onSnapshot(getColRef('users'), (s) => {
       const loadedUsers = s.docs.map(d => ({ id: d.id, ...d.data() })); setSystemUsers(loadedUsers);
       if (s.empty) {
-         setDoc(getDocRef('users', 'admin'), { username: 'admin', password: '1234', name: 'Administrador General', role: 'Master', permissions: { ventas: true, ventas_ops: true, ventas_facturacion: true, ventas_directorio: true, produccion: true, produccion_proyeccion: true, produccion_ordenes: true, produccion_activa: true, produccion_historial: true, formulas: true, inventario: true, inventario_solicitudes: true, inventario_catalogo: true, inventario_movimientos: true, inventario_kardex: true, simulador: true, costos: true, costos_operativos: true, costos_reportes: true, configuracion: true } });
+         setDoc(getDocRef('users', 'admin'), { username: 'admin', password: '1234', name: 'Administrador General', role: 'Master', permissions: { ventas: true, ventas_ops: true, ventas_facturacion: true, ventas_directorio: true, produccion: true, produccion_proyeccion: true, produccion_ordenes: true, produccion_activa: true, produccion_historial: true, formulas: true, inventario: true, inventario_solicitudes: true, inventario_catalogo: true, inventario_movimientos: true, inventario_kardex: true, simulador: true, costos: true, costos_operativos: true, costos_reportes: true, configuracion: true }, _seeded: true });
          setDoc(getDocRef('users', 'planta'), { username: 'planta', password: '1234', name: 'Supervisor de Planta', role: 'Planta', permissions: { ventas: false, ventas_ops: false, ventas_facturacion: false, ventas_directorio: false, produccion: true, produccion_proyeccion: true, produccion_ordenes: false, produccion_activa: true, produccion_historial: true, formulas: true, inventario: true, inventario_solicitudes: true, inventario_catalogo: false, inventario_movimientos: false, inventario_kardex: false, simulador: false, costos: false, costos_operativos: false, costos_reportes: false, configuracion: false } });
       }
     });
@@ -1214,30 +1214,47 @@ export default function App() {
     if (!appUser || appUser.role !== 'Master' || !finishedGoodsInventory.length) return;
     const runFix7 = async () => {
       try {
-        const batch = writeBatch(db);
-        let changed = false;
+        let batchOps = [];
+        const flush = async () => {
+          if (!batchOps.length) return;
+          const b = writeBatch(db);
+          batchOps.forEach(op => op.type === 'delete' ? b.delete(op.ref) : b.update(op.ref, op.data));
+          await b.commit(); batchOps = [];
+        };
         for (const fg of finishedGoodsInventory) {
-          const prod = (fg.producto||'').toUpperCase();
-          const desc = (fg.desc||'').toUpperCase();
-          // 1. Eliminar entradas duplicadas "9X14X6MIC - 9X14X6MIC BOLSAS" (millares=0, kgProducidos=0)
-          if ((prod.includes('9X14X6MIC') && prod.includes('9X14X6MIC')) &&
-              parseNum(fg.millares||0)===0 && parseNum(fg.kgProducidos||0)===0) {
-            batch.delete(getDocRef('finishedGoodsInventory', fg.id));
-            changed = true; continue;
+          const prod = (fg.producto || '').toUpperCase();
+          // 1. Eliminar TODOS los registros con 9X14X6MIC en el nombre
+          if (prod.includes('9X14X6MIC')) {
+            batchOps.push({ type: 'delete', ref: getDocRef('finishedGoodsInventory', fg.id) });
+            if (batchOps.length >= 400) await flush();
+            continue;
           }
-          // 2. Corregir 60X82X30MIC → "60X82X30MIC - AFS GRIS 60X82X30MIC", 8.76 Millares, $287.21/Mill.
-          if (prod.includes('60X82X30MIC') && !prod.includes('AFS GRIS')) {
-            batch.update(getDocRef('finishedGoodsInventory', fg.id), {
-              producto: '60X82X30MIC - AFS GRIS 60X82X30MIC',
+          // 2. Corregir 60X82X30MIC → nombre limpio, stock real 8.76, costo $287.21/Mill.
+          if (prod.includes('60X82X30MIC') && !fg._fix7Applied) {
+            batchOps.push({ type: 'update', ref: getDocRef('finishedGoodsInventory', fg.id), data: {
+              producto: 'AFS GRIS 60X82X30MIC',
               millares: 8.76,
+              kgProducidos: 0,
               costoUnitarioMillar: 287.21,
+              costoUnitario: 287.21,
+              tipoProducto: 'BOLSAS',
               _fix7Applied: true
-            });
-            changed = true; continue;
+            }});
+            if (batchOps.length >= 400) await flush();
           }
         }
-        if (changed) await batch.commit();
-      } catch(e) { /* silent — no critical */ }
+        await flush();
+        // 3. Eliminar movimientos de Kardex con nombre corrupto del 60X82
+        const badMovs = (invMovements||[]).filter(m => {
+          const d = (m.itemDesc||'').toUpperCase();
+          return d.includes('60X82X30MIC') && (d.includes('60X82X30MIC - AFS') || d.includes('AFS GRIS 60X82X30MIC - 60X82'));
+        });
+        if (badMovs.length > 0) {
+          const bm = writeBatch(db);
+          badMovs.forEach(m => bm.delete(getDocRef('inventoryMovements', m.id)));
+          await bm.commit();
+        }
+      } catch(e) { console.warn('Fix7:', e.message); }
     };
     runFix7();
   }, [appUser, finishedGoodsInventory.length]);
@@ -1250,7 +1267,20 @@ export default function App() {
     if (!nombre) return setDialog({ title: 'Aviso', text: 'El nombre del depósito es obligatorio.', type: 'alert' });
     try {
       if (depositoForm.editId) {
-        await updateDoc(getDocRef('depositos', depositoForm.editId), { nombre });
+        // FIX 3: Find the actual Firestore document by its nombre field (editId = old name)
+        // Query the depositos collection for the document with the old name
+        const { getDocs, query, where } = await import('firebase/firestore');
+        const snap = await getDocs(query(getColRef('depositos'), where('nombre', '==', depositoForm.editId)));
+        if (snap.empty) {
+          // Document doesn't exist yet — create it with the new name (migration from hardcoded array)
+          const newId = `DEP-${Date.now()}`;
+          await setDoc(getDocRef('depositos', newId), { nombre, estado: 'activo', id: newId, timestamp: Date.now() });
+        } else {
+          // Update existing doc
+          for (const docSnap of snap.docs) {
+            await import('firebase/firestore').then(({updateDoc}) => updateDoc(docSnap.ref, { nombre }));
+          }
+        }
         setDialog({ title: '✅ Actualizado', text: `Depósito renombrado a "${nombre}".`, type: 'alert' });
       } else {
         const newId = `DEP-${Date.now()}`;
@@ -6316,6 +6346,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 const km = (invMovements||[]).find(m=>m.itemId===`FG::${it.fgId}`&&m.type==='SALIDA'&&(m.docRef||'').includes(inv.documento||inv.id)&&parseNum(m.unitCost||0)>0);
                 if(km) costoU = parseNum(km.unitCost||0);
               }
+              // FIX 5: Buscar en cualquier movimiento del FG
+              if(costoU <= 0) {
+                const km2 = (invMovements||[]).find(m=>m.itemId===`FG::${it.fgId}`&&m.type==='SALIDA'&&parseNum(m.unitCost||0)>0);
+                if(km2) costoU = parseNum(km2.unitCost||0);
+              }
+              // Último recurso: costo actual del FG
+              if(costoU <= 0 && fg) costoU = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
               soldItems.push({
                 factura: inv.documento||inv.id,
                 fecha: inv.fecha,
@@ -12477,6 +12514,18 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           );
           if(kardexMov) costoUnit = parseNum(kardexMov.unitCost||0);
         }
+        // FIX 5: Para facturas antiguas sin costo, buscar en CUALQUIER movimiento SALIDA del FG
+        if(costoUnit <= 0) {
+          const anyKardex = (invMovements||[]).find(m=>
+            m.itemId===`FG::${it.fgId}` && m.type==='SALIDA' && parseNum(m.unitCost||0)>0
+          );
+          if(anyKardex) costoUnit = parseNum(anyKardex.unitCost||0);
+        }
+        // Último recurso: usar costoUnitarioMillar/costoUnitario actual del FG (puede ser incorrecto si cambió)
+        if(costoUnit <= 0 && fg) {
+          const esTermo2 = fg.tipoProducto==='TERMOENCOGIBLE';
+          costoUnit = esTermo2 ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+        }
         if(costoUnit <= 0) return; // sin costo — no incluir
         const costoTotal2 = cant * costoUnit;
         totalCostoProd += costoTotal2;
@@ -13261,6 +13310,46 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           </div>
         </div>
 
+        {/* RECÁLCULO COSTOS HISTÓRICOS: Parchea facturas antiguas con costoUnit=0 */}
+        {appUser?.role === 'Master' && (
+        <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
+          <div className="flex justify-between items-center border-b pb-4 mb-6">
+            <div>
+              <h2 className="text-xl font-black uppercase text-black flex items-center gap-3"><RefreshCw className="text-blue-500"/> Recalcular Costos de Ventas Históricas</h2>
+              <p className="text-xs text-gray-500 font-bold mt-1">Parchea facturas antiguas que tienen costoUnit=0 buscando el costo en el Kardex de movimientos.</p>
+            </div>
+          </div>
+          <button onClick={async()=>{
+            let patched = 0;
+            for(const inv of (invoices||[])) {
+              if(!(inv.itemsFacturados||[]).length) continue;
+              const newItems = inv.itemsFacturados.map(it => {
+                if(parseNum(it.costoUnit||0) > 0) return it;
+                // Buscar en Kardex
+                const km = (invMovements||[]).find(m=>
+                  m.itemId===`FG::${it.fgId}` && m.type==='SALIDA' && parseNum(m.unitCost||0)>0
+                );
+                if(km) { patched++; return {...it, costoUnit: parseNum(km.unitCost), costoTotal: parseNum(it.cantidad)*parseNum(km.unitCost) }; }
+                // Buscar en FG actual
+                const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
+                if(fg) {
+                  const esTermo = it.esTermo??fg.tipoProducto==='TERMOENCOGIBLE';
+                  const cu = esTermo?parseNum(fg.costoUnitario||0):parseNum(fg.costoUnitarioMillar||0);
+                  if(cu>0) { patched++; return {...it, costoUnit:cu, costoTotal:parseNum(it.cantidad)*cu}; }
+                }
+                return it;
+              });
+              if(newItems.some((it,i)=>it.costoUnit!==(inv.itemsFacturados[i]?.costoUnit||0))) {
+                await updateDoc(getDocRef('maquilaInvoices',inv.id||inv.documento),{itemsFacturados:newItems});
+              }
+            }
+            setDialog({title:'✅ Completado', text:`${patched} item(s) de factura actualizados con costos históricos.`, type:'alert'});
+          }} className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-black text-xs uppercase shadow hover:bg-blue-700 flex items-center gap-2">
+            <RefreshCw size={14}/> Recalcular Costos Históricos
+          </button>
+        </div>
+        )}
+
         {/* PASO 7: CORRECCIÓN MASIVA DE INVENTARIO */}
         {appUser?.role === 'Master' && (
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
@@ -13459,7 +13548,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {(systemUsers || []).map(u => (
+                  {[...new Map((systemUsers||[]).map(u=>[u.username,u])).values()].map(u => (
                     <tr key={u.id} className="hover:bg-gray-50">
                       <td className="py-3 px-4 font-black">{u.username}<br/><span className="text-[10px] text-gray-500 font-bold">{u.name}</span></td>
                       <td className="py-3 px-4 font-bold text-xs uppercase">{u.role}</td>
@@ -13964,10 +14053,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           {settings?.loginVideo ? (
             <video src={settings.loginVideo} autoPlay loop playsInline muted={loginVideoMuted}
               className="absolute inset-0 w-full h-full object-cover"
-              onError={e=>e.target.style.display='none'}/>
+              onError={e=>{e.target.style.display='none';}}/>
+          ) : settings?.loginBg ? (
+            <img src={settings.loginBg} className="absolute inset-0 w-full h-full object-cover" alt="bg"/>
           ) : (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
-              <Factory size={100} className="text-orange-500 opacity-20"/>
+            <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-gray-800 to-black flex flex-col items-center justify-center gap-4">
+              <div className="text-orange-500 opacity-30"><Factory size={120}/></div>
+              <p className="text-white/20 font-black text-xs uppercase tracking-widest">Sin video — Configura uno en Configuración</p>
             </div>
           )}
           {/* Overlay izquierdo */}
@@ -14104,25 +14196,53 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  </div>
               </div>
               <div className="flex items-center gap-3">
-                 {/* Fix 5: Live clock */}
-                 <div className="text-center hidden lg:block border border-gray-800 rounded-xl px-3 py-1.5 bg-gray-900">
-                   <p className="text-[12px] font-black text-orange-400 tabular-nums leading-none">{currentTime.toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</p>
-                   <p className="text-[8px] text-gray-500 mt-0.5 capitalize">{currentTime.toLocaleDateString('es-VE',{weekday:'short',day:'2-digit',month:'short',year:'numeric'})}</p>
+                 {/* Fix 5: Live clock — compact */}
+                 <div className="hidden lg:flex items-center gap-2 border border-gray-800 rounded-xl px-3 py-1.5 bg-gray-900 select-none">
+                   <span className="text-orange-500 opacity-60" style={{fontSize:'10px'}}>⏱</span>
+                   <div>
+                     <p className="text-[11px] font-black text-orange-400 tabular-nums leading-none tracking-wider">{currentTime.toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</p>
+                     <p className="text-[8px] text-gray-500 capitalize leading-none mt-0.5">{currentTime.toLocaleDateString('es-VE',{weekday:'short',day:'2-digit',month:'short',year:'numeric'})}</p>
+                   </div>
                  </div>
-                 {/* Fix 6: Calculator */}
+                 {/* Fix 6: Calculator with keyboard */}
                  <div className="relative">
-                   <button onClick={()=>setShowCalc(v=>!v)} title="Calculadora" className={`p-2 rounded-xl transition-all border ${showCalc?'bg-orange-500 text-white border-orange-500':'bg-gray-900 text-gray-400 hover:text-white border-gray-800'}`}>
+                   <button onClick={()=>setShowCalc(v=>!v)} title="Calculadora (atajos de teclado disponibles)" className={`p-2 rounded-xl transition-all border ${showCalc?'bg-orange-500 text-white border-orange-500':'bg-gray-900 text-gray-400 hover:text-white border-gray-800'}`}>
                      <Calculator size={18}/>
                    </button>
                    {showCalc && (
-                     <div className="absolute right-0 top-12 z-[999] bg-gray-900 rounded-2xl shadow-2xl border border-gray-700 p-3 w-60">
+                     <div
+                       className="absolute right-0 top-12 z-[999] bg-gray-900 rounded-2xl shadow-2xl border border-gray-700 p-3 w-64"
+                       tabIndex={0}
+                       onKeyDown={e=>{
+                         e.preventDefault();
+                         const k=e.key;
+                         if(k>='0'&&k<='9'){
+                           if(calcNewNum){setCalcDisplay(k);setCalcNewNum(false);}
+                           else setCalcDisplay(d=>d==='0'?k:d.length<15?d+k:d);
+                         } else if(k==='.'){
+                           if(calcNewNum){setCalcDisplay('0.');setCalcNewNum(false);}
+                           else if(!calcDisplay.includes('.'))setCalcDisplay(d=>d+'.');
+                         } else if(['+','-','*','/'].includes(k)){
+                           setCalcPrev(parseFloat(calcDisplay));setCalcOp(k);setCalcNewNum(true);
+                         } else if(k==='Enter'||k==='='){
+                           if(calcPrev!==null&&calcOp){
+                             try{const r=eval(`${calcPrev}${calcOp}${parseFloat(calcDisplay)}`);setCalcDisplay(String(parseFloat(r.toFixed(8))));}catch(e){}
+                             setCalcPrev(null);setCalcOp(null);setCalcNewNum(true);
+                           }
+                         } else if(k==='Backspace'){
+                           setCalcDisplay(d=>d.length>1?d.slice(0,-1):'0');
+                         } else if(k==='Escape'){setCalcDisplay('0');setCalcPrev(null);setCalcOp(null);setCalcNewNum(true);}
+                       }}
+                       ref={el=>el&&showCalc&&el.focus()}
+                     >
                        <div className="flex justify-between items-center mb-2">
-                         <span className="text-[9px] font-black text-gray-500 uppercase">Calculadora</span>
-                         <button onClick={()=>setShowCalc(false)} className="text-gray-600 hover:text-white"><X size={14}/></button>
+                         <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Calculadora</span>
+                         <span className="text-[8px] text-gray-600 font-bold hidden lg:block">← teclado activo</span>
+                         <button onClick={()=>setShowCalc(false)} className="text-gray-600 hover:text-red-400"><X size={14}/></button>
                        </div>
-                       <div className="bg-black rounded-xl p-3 mb-2 text-right min-h-[56px]">
-                         <p className="text-[9px] text-gray-500 h-3">{calcPrev!==null?`${calcPrev} ${calcOp==='/'?'÷':calcOp==='*'?'×':calcOp}`:''}</p>
-                         <p className="text-2xl font-black text-white tabular-nums truncate">{calcDisplay}</p>
+                       <div className="bg-black rounded-xl p-3 mb-2 text-right min-h-[60px] select-all cursor-text">
+                         <p className="text-[9px] text-gray-500 h-4 tabular-nums">{calcPrev!==null?`${calcPrev} ${calcOp==='/'?'÷':calcOp==='*'?'×':calcOp}`:' '}</p>
+                         <p className="text-3xl font-black text-white tabular-nums truncate tracking-wider">{calcDisplay}</p>
                        </div>
                        {[
                          [{l:'C',v:'C',cls:'bg-red-700'},{l:'±',v:'±',cls:'bg-gray-700'},{l:'%',v:'%',cls:'bg-gray-700'},{l:'÷',v:'/',cls:'bg-orange-500'}],
