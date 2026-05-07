@@ -6438,152 +6438,65 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 }
               });
 
-              // Agregar ítems de inventory con category === 'Productos Terminados'
-              const invPT = inventory.filter(item => item.category === 'Productos Terminados');
-              invPT.forEach(item => {
-                const allItemMovs2 = (invMovements||[]).filter(m=>m.itemId===item.id);
-                const histBefore2 = allItemMovs2.filter(m=>new Date(`${m.date}T00:00:00`)<startOfMonth);
-                const hEnt2 = histBefore2.filter(m=>m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL');
-                const hSal2 = histBefore2.filter(m=>m.type==='SALIDA'||m.type==='AUTOCONSUMO'||m.type==='AVERIA'||m.type==='MUESTRA'||m.type==='PERDIDA');
-                const initialStock2 = Math.max(0, hEnt2.reduce((s,m)=>s+parseNum(m.qty),0) - hSal2.reduce((s,m)=>s+parseNum(m.qty),0));
-                const periodMovs2 = allItemMovs2.filter(m=>{const d=new Date(`${m.date}T00:00:00`);return d>=startOfMonth&&d<=endOfMonth;});
-                const ent2 = periodMovs2.filter(m=>m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL');
-                const sal2 = periodMovs2.filter(m=>m.type==='SALIDA'||m.type==='AUTOCONSUMO'||m.type==='AVERIA'||m.type==='MUESTRA'||m.type==='PERDIDA');
-                const monthEntradasQty2 = ent2.reduce((s,m)=>s+parseNum(m.qty),0);
-                const monthSalidasQty2  = sal2.reduce((s,m)=>s+parseNum(m.qty),0);
-                const avgCost2 = item.cost||0;
-                const invFinalQty2 = Math.max(0, initialStock2 + monthEntradasQty2 - monthSalidasQty2);
-                if(initialStock2>0||monthEntradasQty2>0||monthSalidasQty2>0) items.push({
-                  id: item.id, desc: item.desc, unit: item.unit||'KG', cost: avgCost2,
-                  initialStock: initialStock2, initialTotal: initialStock2*avgCost2,
-                  monthEntradasQty: monthEntradasQty2, monthEntradasProm: avgCost2, monthEntradasTotal: monthEntradasQty2*avgCost2,
-                  monthSalidasQty:  monthSalidasQty2,  monthSalidasProm:  avgCost2, monthSalidasTotal:  monthSalidasQty2*avgCost2,
-                  invFinalQty: invFinalQty2, invFinalCost: avgCost2, invFinalTotal: invFinalQty2*avgCost2
-                });
-              });
-            }
-
-            return { category: cat, items };
-          });
-
-          let grandInitialTotal = 0; let grandEntradasTotal = 0; let grandSalidasTotal = 0; let grandFinalTotal = 0;
-          const tc = parseNum(settings.tasaCambio || 0); // tasa de cambio Bs/$
-          const fmtMon = (v) => tc > 0 ? `Bs ${formatNum(v * tc)}` : `$${formatNum(v)}`;
-
-          return (
-            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
-              <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-                 <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Reporte General (Art. 177 LISLR)</h2>
-                 <div className="flex gap-2">
-                   <button onClick={() => handleExportExcel('reporte-177-table', 'Reporte_Inventario_177')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXPORTAR EXCEL</button>
-                   <button onClick={() => handleExportPDF('Reporte_Art_177', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
-                 </div>
+         {/* Modal de Validación de Administrador */}
+      {showAdminModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-red-500">
+            <div className="flex flex-col items-center mb-6">
+              <div className="bg-red-100 p-4 rounded-full mb-4">
+                <Lock className="text-red-600" size={32} />
               </div>
+              <h2 className="text-2xl font-black text-gray-800 uppercase tracking-tighter text-center">
+                Acceso Restringido
+              </h2>
+              <p className="text-gray-500 text-sm font-bold text-center mt-2">
+                Se requiere autorización de administrador para realizar esta acción.
+              </p>
+            </div>
 
-              <div className="p-8 print:p-0 bg-white" id="pdf-content">
-                 <div data-html2canvas-ignore="true" className="flex gap-4 mb-8 items-end no-pdf flex-wrap">
-                   <div>
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes a Reportar</label>
-                     <select value={reportMonth} onChange={e=>setReportMonth(parseInt(e.target.value))} className="w-48 border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs uppercase outline-none" size={1}>
-                       {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'].map((m,i)=>(
-                         <option key={i+1} value={i+1}>{m}</option>
-                       ))}
-                     </select>
-                   </div>
-                   <div>
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Año</label>
-                     <input type="number" value={reportYear} onChange={e=>setReportYear(parseInt(e.target.value))} className="w-32 border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none text-center" />
-                   </div>
-                   <div>
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa de Cambio (Bs/$)</label>
-                     <input type="number" step="0.01" min="0" id="tasaCambio177" defaultValue={settings.tasaCambio||''} onBlur={async e=>{await setDoc(getDocRef('settings','general'),{tasaCambio:parseNum(e.target.value)},{merge:true});}} className="w-40 border-2 border-orange-300 bg-orange-50 rounded-xl p-3 font-black text-xs outline-none text-center focus:border-orange-500" placeholder="Ej: 90.50"/>
-                     <p className="text-[8px] text-gray-400 font-bold mt-0.5">Si se ingresa, los costos se muestran en Bs</p>
-                   </div>
-                 </div>
-
-                 <div className="hidden pdf-header mb-6">
-                   <ReportHeader />
-                   <h1 className="text-xl font-black text-black uppercase border-b-2 border-orange-500 pb-1">REPORTE GENERAL DE INVENTARIO (ART. 177 LISLR)</h1>
-                   <p className="text-xs font-bold text-gray-500 uppercase mt-1">PERÍODO: {reportMonth.toString().padStart(2, '0')} / {reportYear}{settings.tasaCambio ? ` | TASA: Bs ${formatNum(settings.tasaCambio)}/$` : ''}</p>
-                 </div>
-
-                 <div className="border border-gray-300 rounded-xl overflow-hidden shadow-sm">
-                   {tc > 0 && <div className="bg-orange-50 border-b border-orange-200 px-4 py-1.5 text-[9px] font-black text-orange-800 uppercase">Tasa de Cambio: Bs {formatNum(tc)} / $ — Valores en Bolívares</div>}
-                   <table id="reporte-177-table" className="w-full text-[10px] border-collapse text-black bg-white">
-                     <thead>
-                       <tr className="bg-white">
-                         <th rowSpan="2" className="border border-gray-300 p-2 font-black uppercase text-center text-[10px] bg-white align-middle" style={{minWidth:'220px'}}>PRODUCTO / CÓDIGO</th>
-                         <th colSpan="2" className="border border-gray-300 p-1.5 text-center bg-gray-50 font-black uppercase text-[9px]">INV. INICIAL</th>
-                         <th colSpan="2" className="border border-gray-300 p-1.5 text-center bg-green-50 font-black uppercase text-[9px]">ENTRADAS</th>
-                         <th colSpan="2" className="border border-gray-300 p-1.5 text-center bg-red-50 font-black uppercase text-[9px]">SALIDAS</th>
-                         <th colSpan="2" className="border border-gray-300 p-1.5 text-center bg-blue-50 font-black uppercase text-[9px]">INV. FINAL</th>
-                       </tr>
-                       <tr className="font-black uppercase text-[9px] text-center">
-                         <th className="border border-gray-300 p-1.5 bg-gray-50">CANT.</th><th className="border border-gray-300 p-1.5 bg-gray-50">TOTAL</th>
-                         <th className="border border-gray-300 p-1.5 bg-green-50">CANT.</th><th className="border border-gray-300 p-1.5 bg-green-50">TOTAL</th>
-                         <th className="border border-gray-300 p-1.5 bg-red-50">CANT.</th><th className="border border-gray-300 p-1.5 bg-red-50">TOTAL</th>
-                         <th className="border border-gray-300 p-1.5 bg-blue-50">CANT.</th><th className="border border-gray-300 p-1.5 bg-blue-50">TOTAL</th>
-                       </tr>
-                     </thead>
-                     <tbody>
-                       {reporte177Data.map((cat, catIndex) => {
-                          const catInitialTotal = cat.items.reduce((sum, item) => sum + item.initialTotal, 0);
-                          const catEntradasTotal = cat.items.reduce((sum, item) => sum + item.monthEntradasTotal, 0);
-                          const catSalidasTotal = cat.items.reduce((sum, item) => sum + item.monthSalidasTotal, 0);
-                          const catFinalTotal = cat.items.reduce((sum, item) => sum + item.invFinalTotal, 0);
-                          grandInitialTotal += catInitialTotal;
-                          grandEntradasTotal += catEntradasTotal;
-                          grandSalidasTotal += catSalidasTotal;
-                          grandFinalTotal += catFinalTotal;
-                          return (
-                             <React.Fragment key={catIndex}>
-                                <tr><td colSpan="9" className="bg-gray-800 text-white p-2 font-black uppercase tracking-widest text-[9px]">CATEGORÍA: {cat.category}</td></tr>
-                                {cat.items.map(item => (
-                                   <tr key={item.id} className="border-b border-gray-100 hover:bg-gray-50">
-                                     <td className="p-2 border border-gray-200 font-bold text-[9px]" style={{wordBreak:'break-word'}}>
-                                       <div className="font-black text-[9px] leading-tight">{item.desc}</div>
-                                       <div className="text-[8px] text-gray-400 mt-0.5">{item.id} | {item.unit}</div>
-                                     </td>
-                                     <td className="p-1.5 border border-gray-200 text-right font-bold">{formatNum(item.initialStock)}</td>
-                                     <td className="p-1.5 border border-gray-200 text-right font-black bg-gray-50">{fmtMon(item.initialTotal)}</td>
-                                     <td className="p-1.5 border border-gray-200 text-right font-bold text-green-700">{formatNum(item.monthEntradasQty)}</td>
-                                     <td className="p-1.5 border border-gray-200 text-right font-black text-green-700 bg-green-50">{fmtMon(item.monthEntradasTotal)}</td>
-                                     <td className="p-1.5 border border-gray-200 text-right font-bold text-red-600">{formatNum(item.monthSalidasQty)}</td>
-                                     <td className="p-1.5 border border-gray-200 text-right font-black text-red-600 bg-red-50">{fmtMon(item.monthSalidasTotal)}</td>
-                                     <td className="p-1.5 border border-gray-200 text-right font-bold text-blue-700">{formatNum(item.invFinalQty)}</td>
-                                     <td className="p-1.5 border border-gray-200 text-right font-black text-blue-700 bg-blue-50">{fmtMon(item.invFinalTotal)}</td>
-                                   </tr>
-                                ))}
-                                <tr className="bg-gray-100 font-black text-[9px]">
-                                  <td className="p-2 border border-gray-200 text-right uppercase">SUBTOTAL {cat.category}</td>
-                                  <td className="border border-gray-200"></td><td className="p-1.5 border border-gray-200 text-right">{fmtMon(catInitialTotal)}</td>
-                                  <td className="border border-gray-200"></td><td className="p-1.5 border border-gray-200 text-right text-green-700">{fmtMon(catEntradasTotal)}</td>
-                                  <td className="border border-gray-200"></td><td className="p-1.5 border border-gray-200 text-right text-red-700">{fmtMon(catSalidasTotal)}</td>
-                                  <td className="border border-gray-200"></td><td className="p-1.5 border border-gray-200 text-right text-blue-700">{fmtMon(catFinalTotal)}</td>
-                                </tr>
-                             </React.Fragment>
-                          );
-                       })}
-                     </tbody>
-                     <tfoot>
-                       <tr className="bg-gray-900 text-white font-black text-[10px]">
-                         <td className="p-2.5 border border-gray-600 text-right uppercase tracking-widest">GRAN TOTAL INVENTARIO</td>
-                         <td className="border border-gray-600"></td><td className="p-2.5 border border-gray-600 text-right">{fmtMon(grandInitialTotal)}</td>
-                         <td className="border border-gray-600"></td><td className="p-2.5 border border-gray-600 text-right text-green-300">{fmtMon(grandEntradasTotal)}</td>
-                         <td className="border border-gray-600"></td><td className="p-2.5 border border-gray-600 text-right text-red-300">{fmtMon(grandSalidasTotal)}</td>
-                         <td className="border border-gray-600"></td><td className="p-2.5 border border-gray-600 text-right text-blue-300">{fmtMon(grandFinalTotal)}</td>
-                       </tr>
-                     </tfoot>
-                   </table>
-                 </div>
+            <div className="space-y-4">
+              <div>
+                <label className="text-[10px] font-black text-gray-400 uppercase block mb-1 ml-1">
+                  Contraseña Maestra
+                </label>
+                <input
+                  type="password"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleAdminValidation()}
+                  placeholder="••••••••"
+                  className="w-full border-2 border-gray-300 rounded-xl p-4 text-center text-lg font-black tracking-widest focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none transition-all"
+                  autoFocus
+                />
+                <p className="text-xs text-gray-400 text-center mt-2 font-bold">
+                  Use la misma clave del usuario administrador del sistema
+                </p>
+              </div>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={cancelAdminModal}
+                  className="flex-1 bg-gray-200 text-gray-700 font-black py-4 rounded-xl uppercase text-xs tracking-widest hover:bg-gray-300 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleAdminValidation}
+                  className="flex-1 bg-red-500 text-white font-black py-4 rounded-xl shadow-lg uppercase text-xs tracking-widest hover:bg-red-600 transition-all flex items-center justify-center gap-2"
+                >
+                  <ShieldCheck size={16} />
+                  Validar
+                </button>
               </div>
             </div>
-          );
-        })()}
+          </div>
+        </div>
+      )} {/* <--- Aquí se cierra el modal condicional */}
+    </div> {/* <--- Aquí se cierra el div principal de la App */}
+  );
+}
 
-      </div>
-    );
-  };
+export default App; // <--- Asegúrate de que esto esté al final
 
 
   const renderVentasModule = () => {
