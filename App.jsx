@@ -3838,7 +3838,6 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
       };
 
       return (
-        <>
         <div className="space-y-6 animate-in fade-in">
           {/* HEADER + Filtros */}
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
@@ -4020,67 +4019,17 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
               })()}
             </div>
           </div>
-        </div>
-        {/* ── MODAL TRASLADO ENTRE ALMACENES ── */}
-            {showTrasladoModal && (
-              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-indigo-500">
-                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-lg font-black uppercase flex items-center gap-2"><ArrowRightLeft size={20} className="text-indigo-600"/> Traslado entre Almacenes</h3>
-                    <button onClick={()=>setShowTrasladoModal(false)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
-                  </div>
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
-                        <select value={trasladoForm.almacenOrigen} onChange={e=>setTrasladoForm({...trasladoForm,almacenOrigen:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Destino</label>
-                        <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm({...trasladoForm,almacenDestino:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
-                      <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm({...trasladoForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                        <option value="">— Seleccionar artículo —</option>
-                        <optgroup label="── Materia Prima / Consumibles ──">
-                          {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=>(
-                            <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>
-                          ))}
-                        </optgroup>
-                        <optgroup label="── Semielaborados / Bobinas ──">
-                          {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=>(
-                            <option key={i.id} value={`SEM::${i.id}`}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>
-                          ))}
-                        </optgroup>
-                        <optgroup label="── Productos Terminados (FG) ──">
-                          {(finishedGoodsInventory||[]).filter(fg=>parseNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)>0).map(fg=>(
-                            <option key={fg.id} value={`FG::${fg.id}`}>{fg.producto||fg.id} (Stock: {formatNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)} {fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Mill.'})</option>
-                          ))}
-                        </optgroup>
-                      </select>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
-                        <input type="number" step="0.01" min="0.01" value={trasladoForm.qty} onChange={e=>setTrasladoForm({...trasladoForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-400" placeholder="0.00"/>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                        <input type="date" value={trasladoForm.date} onChange={e=>setTrasladoForm({...trasladoForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400"/>
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones (opcional)</label>
-                      <input type="text" value={trasladoForm.notes} onChange={e=>setTrasladoForm({...trasladoForm,notes:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 uppercase" placeholder="Ej: INSUMOS PARA PRODUCCIÓN LÍNEA 2"/>
-                    {transferenciaForm.origen === transferenciaForm.destino && transferenciaForm.origen !== '' && (
-                <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
-              )}
+                <div className="flex justify-end gap-3 pt-2">
+                  <button onClick={()=>setShowTrasladoModal(false)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
+                  <button onClick={handleSaveTraslado} className="bg-indigo-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-indigo-700 flex items-center gap-2">
+                    <ArrowRightLeft size={14}/> Registrar Traslado
+                  </button>
+                </div>
+              </div>
             </div>
-          </>
+          </div>
+        )}
+            </div>
         );
       }
 
@@ -15032,6 +14981,56 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
            {activeTab === 'formulas' && renderFormulasModule()}
            {activeTab === 'produccion' && renderProduccionModule()}
            {activeTab === 'inventario' && renderInventoryModule()}
+           {activeTab === 'inventario' && showTrasladoModal && (
+              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+        {showTrasladoModal && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-indigo-500">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-black uppercase flex items-center gap-2"><ArrowRightLeft size={20} className="text-indigo-600"/> Traslado entre Almacenes</h3>
+                <button onClick={()=>setShowTrasladoModal(false)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
+              </div>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
+                    <select value={trasladoForm.almacenOrigen} onChange={e=>setTrasladoForm({...trasladoForm,almacenOrigen:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                      {(depositos||[]).map(a=><option key={a} value={a}>{a}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Destino</label>
+                    <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm({...trasladoForm,almacenDestino:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                      {(depositos||[]).map(a=><option key={a} value={a}>{a}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
+                  <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm({...trasladoForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                    <option value="">— Seleccionar artículo —</option>
+                    {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=>(
+                      <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
+                    <input type="number" step="0.01" min="0.01" value={trasladoForm.qty} onChange={e=>setTrasladoForm({...trasladoForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-400" placeholder="0.00"/>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                    <input type="date" value={trasladoForm.date} onChange={e=>setTrasladoForm({...trasladoForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400"/>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones (opcional)</label>
+                  <input type="text" value={trasladoForm.notes||''} onChange={e=>setTrasladoForm({...trasladoForm,notes:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 uppercase" placeholder="Ej: INSUMOS PARA PRODUCCIÓN"/>
+                </div>
+                {trasladoForm.almacenOrigen===trasladoForm.almacenDestino&&trasladoForm.almacenOrigen!==''&&(
+                  <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
+           )}
            {activeTab === 'simulador' && renderSimuladorModule()}
            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
            {activeTab === 'configuracion' && renderConfiguracionModule()}
