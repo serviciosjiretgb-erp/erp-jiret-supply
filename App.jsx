@@ -1356,30 +1356,36 @@ export default function App() {
       type: 'confirm',
       onConfirm: async () => {
         try {
-          let created = 0, updated = 0, errors = 0;
-          // Process in batches of 400 (Firestore limit is 500 per batch)
-          const batchSize = 400;
+          let created = 0, updated = 0;
+          const batchSize = 490;
           for(let i = 0; i < INVENTARIO_CONSOLIDADO_DATA.length; i += batchSize) {
             const chunk = INVENTARIO_CONSOLIDADO_DATA.slice(i, i + batchSize);
             const batch = writeBatch(db);
             for(const item of chunk) {
-              const ref = getDocRef('inventory', item.id);
-              const existing = (inventory || []).find(x => x.id === item.id && (x.almacen || 'ALMACEN ZI') === item.almacen);
+              // Composite ID: code + almacen to allow same product in multiple warehouses
+              const docId = `${item.id}__${item.almacen.replace(/\s+/g,'-')}`;
+              const ref = getDocRef('inventory', docId);
+              const existing = (inventory || []).find(x => x.id === docId);
+              // Detect category from description
+              const descUp = (item.desc || '').toUpperCase();
+              let cat = 'Consumibles';
+              if(descUp.includes('BOLSA') || descUp.includes('BOL-')) cat = 'Productos Terminados';
+              else if(descUp.includes('CINTA') || descUp.includes('PAPEL') || descUp.includes('FILM') || descUp.includes('IMPORTED') || descUp.includes('DISPENSADOR') || descUp.includes('FLEJE') || descUp.includes('STRAPPING') || descUp.includes('POLY')) cat = 'Consumibles';
               if(existing) {
                 batch.update(ref, { stock: item.stock, cost: item.cost, almacen: item.almacen });
                 updated++;
               } else {
                 batch.set(ref, {
-                  id: item.id,
+                  id: docId,
                   desc: item.desc,
-                  category: 'Consumibles',
-                  unit: 'UND',
+                  category: cat,
+                  unit: descUp.includes('MILLAR') || descUp.includes('MILL') ? 'Millares' : 'UND',
                   cost: item.cost,
                   stock: item.stock,
                   almacen: item.almacen,
                   minStock: 0,
                   timestamp: Date.now()
-                }, { merge: true });
+                });
                 created++;
               }
             }
@@ -3690,7 +3696,9 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
         if (!byAlmacen[a]) byAlmacen[a] = [];
         byAlmacen[a].push(i);
       });
-      const allCats = ['TODAS', ...new Set(allItems.map(i=>i.category||'Otros'))].sort((a,b)=>a==='TODAS'?-1:b==='TODAS'?1:a.localeCompare(b));
+      const knownCats = ['Materia Prima','Pigmentos','Semielaborados','Consumibles','Herramientas','Tintas','Químicos','Seguridad Industrial','Productos Terminados','Rebobinado','Otros'];
+      const dynamicCats = [...new Set(allItems.map(i=>i.category||'Otros'))];
+      const allCats = ['TODAS', ...new Set([...knownCats, ...dynamicCats])].sort((a,b)=>a==='TODAS'?-1:b==='TODAS'?1:a.localeCompare(b));
 
       const printAlmacenReport = (almacenName, items) => {
         const w = window.open('','_blank');
@@ -4238,6 +4246,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         const colorH = esTermo ? 'bg-green-700' : 'bg-blue-700';
         if (items.length === 0) return <div className="text-center py-6 text-gray-400 text-xs font-bold uppercase">Sin registros</div>;
         return (
+          <>
           <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none mb-2">
             <table className="w-full text-left text-xs">
               <thead className={`${colorH} text-white border-b-2`}>
@@ -4807,30 +4816,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         </div>
       );
     }
-
-            {/* ── MODAL EDITAR PRODUCTO TERMINADO ── */}
-        {editingFG && (
-          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-blue-500">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-black uppercase flex items-center gap-2 text-blue-800"><Edit size={20}/> Editar Producto Terminado</h3>
-                <button onClick={()=>setEditingFG(null)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nombre / Descripción del Producto</label>
-                  <input type="text" value={fgEditForm.producto} onChange={e=>setFgEditForm(f=>({...f,producto:e.target.value.toUpperCase()}))}
-                    className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-blue-400"/>
-                  <p className="text-[8px] text-gray-400 mt-0.5">Formato sugerido: CATEGORIA - ANCHOxLARGOxMICRASMIC</p>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  {editingFG.tipoProducto !== 'TERMOENCOGIBLE' && (
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (Millares)</label>
-                      <input type="number" step="0.01" value={fgEditForm.millares} onChange={e=>setFgEditForm(f=>({...f,millares:e.target.value}))}
-                        className="w-full border-2 border-blue-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-blue-400"/>
-                    </div>
-                  )}
                   {editingFG.tipoProducto === 'TERMOENCOGIBLE' && (
                     <div>
                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (KG)</label>
@@ -5312,6 +5297,32 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             ], false, true)}
           </div>
         </div>
+        {editingFG && (
+{/* ── MODAL EDITAR PRODUCTO TERMINADO ── */}
+        {editingFG && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-blue-500">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-black uppercase flex items-center gap-2 text-blue-800"><Edit size={20}/> Editar Producto Terminado</h3>
+                <button onClick={()=>setEditingFG(null)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nombre / Descripción del Producto</label>
+                  <input type="text" value={fgEditForm.producto} onChange={e=>setFgEditForm(f=>({...f,producto:e.target.value.toUpperCase()}))}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-blue-400"/>
+                  <p className="text-[8px] text-gray-400 mt-0.5">Formato sugerido: CATEGORIA - ANCHOxLARGOxMICRASMIC</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  {editingFG.tipoProducto !== 'TERMOENCOGIBLE' && (
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (Millares)</label>
+                      <input type="number" step="0.01" value={fgEditForm.millares} onChange={e=>setFgEditForm(f=>({...f,millares:e.target.value}))}
+                        className="w-full border-2 border-blue-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-blue-400"/>
+                    </div>
+                  )}
+        )}
+          </>
       );
     }
 
@@ -5387,7 +5398,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       const matchSearch = (i?.id || '').toUpperCase().includes(searchInvUpper) || (i?.desc || '').toUpperCase().includes(searchInvUpper);
       const matchCat = catalogCatFilter === 'TODAS' || (i?.category||'Otros') === catalogCatFilter;
       const itemAlmacen = i?._isFGGroup ? 'Productos Terminados' : (i?.almacen || 'ALMACEN ZI');
-      const matchAlmacen = catalogAlmacenFilter === 'TODOS' || itemAlmacen === catalogAlmacenFilter;
+      const matchAlmacen = catalogAlmacenFilter === 'TODOS' || 
+        (catalogAlmacenFilter === 'Productos Terminados' && i?._isFGGroup) ||
+        (!i?._isFGGroup && itemAlmacen === catalogAlmacenFilter);
       return matchSearch && matchCat && matchAlmacen;
     });
     const filteredMovements = (invMovements || []).filter(m => (m?.itemId || '').toUpperCase().includes(searchInvUpper) || (m?.itemName || '').toUpperCase().includes(searchInvUpper) || (m?.reference || '').toUpperCase().includes(searchInvUpper));
@@ -5617,78 +5630,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  </div>
                </form>
                )}
-            </div>
-        {/* ── MODAL TRASLADO ENTRE ALMACENES ── */}
-            {showTrasladoModal && (
-              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-indigo-500">
-                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-lg font-black uppercase flex items-center gap-2"><ArrowRightLeft size={20} className="text-indigo-600"/> Traslado entre Almacenes</h3>
-                    <button onClick={()=>setShowTrasladoModal(false)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
-                  </div>
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
-                        <select value={trasladoForm.almacenOrigen} onChange={e=>setTrasladoForm({...trasladoForm,almacenOrigen:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Destino</label>
-                        <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm({...trasladoForm,almacenDestino:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
-                      <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm({...trasladoForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                        <option value="">— Seleccionar artículo —</option>
-                        <optgroup label="── Materia Prima / Consumibles ──">
-                          {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=>(
-                            <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>
-                          ))}
-                        </optgroup>
-                        <optgroup label="── Semielaborados / Bobinas ──">
-                          {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=>(
-                            <option key={i.id} value={`SEM::${i.id}`}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>
-                          ))}
-                        </optgroup>
-                        <optgroup label="── Productos Terminados (FG) ──">
-                          {(finishedGoodsInventory||[]).filter(fg=>parseNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)>0).map(fg=>(
-                            <option key={fg.id} value={`FG::${fg.id}`}>{fg.producto||fg.id} (Stock: {formatNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)} {fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Mill.'})</option>
-                          ))}
-                        </optgroup>
-                      </select>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
-                        <input type="number" step="0.01" min="0.01" value={trasladoForm.qty} onChange={e=>setTrasladoForm({...trasladoForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-400" placeholder="0.00"/>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                        <input type="date" value={trasladoForm.date} onChange={e=>setTrasladoForm({...trasladoForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400"/>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones (opcional)</label>
-                      <input type="text" value={trasladoForm.notes} onChange={e=>setTrasladoForm({...trasladoForm,notes:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 uppercase" placeholder="Ej: INSUMOS PARA PRODUCCIÓN LÍNEA 2"/>
-                    </div>
-                    {trasladoForm.almacenOrigen === trasladoForm.almacenDestino && (
-                      <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
-                    )}
-                    <div className="flex justify-end gap-3 pt-2">
-                      <button onClick={()=>setShowTrasladoModal(false)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
-                      <button onClick={handleSaveTraslado} className="bg-indigo-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-indigo-700 flex items-center gap-2">
-                        <ArrowRightLeft size={14}/> Registrar Traslado
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
 
             <div id="pdf-content" className="p-8 print:p-0 bg-white">
                <div className="hidden pdf-header mb-8">
@@ -5709,8 +5650,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                      <select value={catalogAlmacenFilter} onChange={e=>setCatalogAlmacenFilter(e.target.value)}
                        className="border-2 border-indigo-200 rounded-xl px-3 py-2 text-[10px] font-black uppercase outline-none focus:border-indigo-500 bg-white text-indigo-700">
                        <option value="TODOS">TODOS LOS ALMACENES</option>
-                       {['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY','ALMACEN PRINCIPAL','PLANTA','DEPOSITO 2','ALMACEN EXTERNO','Productos Terminados',
-                         ...(depositos||[]).filter(d=>!['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY','ALMACEN PRINCIPAL','PLANTA','DEPOSITO 2','ALMACEN EXTERNO'].includes(d))
+                       {['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY',
+                         ...(depositos||[]).filter(d=>!['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY'].includes(d))
                        ].filter((v,i,a)=>a.indexOf(v)===i).map(a=>(
                          <option key={a} value={a}>{a}</option>
                        ))}
@@ -6602,6 +6543,71 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       </div>
     );
   };
+
+  // (TrasladoModal moved to main JSX return)
+  // const TrasladoModal — see main return section
+  const _unused_trl = null; const _x = () => (
+{/* ── MODAL TRASLADO ENTRE ALMACENES ── */}
+            
+              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-indigo-500">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-lg font-black uppercase flex items-center gap-2"><ArrowRightLeft size={20} className="text-indigo-600"/> Traslado entre Almacenes</h3>
+                    <button onClick={()=>setShowTrasladoModal(false)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
+                        <select value={trasladoForm.almacenOrigen} onChange={e=>setTrasladoForm({...trasladoForm,almacenOrigen:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Destino</label>
+                        <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm({...trasladoForm,almacenDestino:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
+                      <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm({...trasladoForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                        <option value="">— Seleccionar artículo —</option>
+                        <optgroup label="── Materia Prima / Consumibles ──">
+                          {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=>(
+                            <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="── Semielaborados / Bobinas ──">
+                          {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=>(
+                            <option key={i.id} value={`SEM::${i.id}`}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="── Productos Terminados (FG) ──">
+                          {(finishedGoodsInventory||[]).filter(fg=>parseNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)>0).map(fg=>(
+                            <option key={fg.id} value={`FG::${fg.id}`}>{fg.producto||fg.id} (Stock: {formatNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)} {fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Mill.'})</option>
+                          ))}
+                        </optgroup>
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
+                        <input type="number" step="0.01" min="0.01" value={trasladoForm.qty} onChange={e=>setTrasladoForm({...trasladoForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-400" placeholder="0.00"/>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                        <input type="date" value={trasladoForm.date} onChange={e=>setTrasladoForm({...trasladoForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400"/>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones (opcional)</label>
+                      <input type="text" value={trasladoForm.notes} onChange={e=>setTrasladoForm({...trasladoForm,notes:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 uppercase" placeholder="Ej: INSUMOS PARA PRODUCCIÓN LÍNEA 2"/>
+                    </div>
+                    {trasladoForm.almacenOrigen === trasladoForm.almacenDestino && (
+                      <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
+  );
 
   const renderVentasModule = () => {
     // Usar valores memoizados del componente principal
@@ -11585,15 +11591,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       months.push({ ym, label: `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`, ingresos, costosMP, costosOP, utilidad });
     }
 
-    // Soporte multi-mes: si hay meses seleccionados, agregar todos; si no, usar el mes individual
     const selMonth = selectedMonth;
-    const activeMonths = selectedMonths.length > 0 ? selectedMonths : [selMonth];
-    const selIngresos = activeMonths.reduce((s, m) => s + getIngresosByMonth(m), 0);
-    const selCostosMP = activeMonths.reduce((s, m) => s + getCostosMPByMonth(m), 0);
-    const selCostosOP = activeMonths.reduce((s, m) => s + getCostosOPByMonth(m), 0);
+    const selIngresos = getIngresosByMonth(selMonth);
+    const selCostosMP = getCostosMPByMonth(selMonth);
+    const selCostosOP = getCostosOPByMonth(selMonth);
     const selUtilidad = selIngresos - selCostosMP - selCostosOP;
-    const selInvoices = invoices.filter(i => activeMonths.some(m => (i.fecha||'').startsWith(m)));
-    const selPeriodLabel = selectedMonths.length > 1 ? `${selectedMonths.length} meses seleccionados` : selMonth.replace('-', '/');
+    const selInvoices = invoices.filter(i => (i.fecha||'').startsWith(selMonth));
+    const selPeriodLabel = selMonth.replace('-', '/');
     const selCompletedOPs = (requirements||[]).filter(r => r.status === 'COMPLETADO');
 
     // Mermas del mes
@@ -11665,47 +11669,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
 
             {['general','ingresos_vs_costos','mermas','mermas_bobinas','reporte_bobinas','super_finiquito','resumen_mensual'].includes(showReportType) && (
-              <div className="flex gap-4 items-center flex-wrap no-pdf">
+              <div className="flex gap-4 items-center no-pdf">
                 <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Principal (reportes individuales)</label>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes de Análisis</label>
                   <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500" />
-                </div>
-                <div className="flex-1 min-w-64">
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
-                    Filtro Multi-Mes — {selectedMonths.length === 0 ? 'Todos los meses' : `${selectedMonths.length} seleccionado${selectedMonths.length !== 1 ? 's' : ''}`}
-                  </label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(() => {
-                      const now = new Date();
-                      const meses = [];
-                      for(let i = 11; i >= 0; i--) {
-                        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                        const ym = d.toISOString().substring(0, 7);
-                        const label = d.toLocaleDateString('es-VE', { month: 'short', year: '2-digit' }).toUpperCase();
-                        meses.push({ ym, label });
-                      }
-                      return meses.map(m => {
-                        const isSelected = selectedMonths.includes(m.ym);
-                        return (
-                          <button key={m.ym}
-                            onClick={() => setSelectedMonths(prev =>
-                              isSelected ? prev.filter(x => x !== m.ym) : [...prev, m.ym]
-                            )}
-                            className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all border-2 ${
-                              isSelected ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-600'
-                            }`}>
-                            {m.label}
-                          </button>
-                        );
-                      });
-                    })()}
-                    {selectedMonths.length > 0 && (
-                      <button onClick={() => setSelectedMonths([])}
-                        className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase bg-red-50 text-red-500 border-2 border-red-200 hover:bg-red-500 hover:text-white transition-all">
-                        ✕ Limpiar
-                      </button>
-                    )}
-                  </div>
                 </div>
               </div>
             )}
@@ -14938,6 +14905,64 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
            {activeTab === 'formulas' && renderFormulasModule()}
            {activeTab === 'produccion' && renderProduccionModule()}
            {activeTab === 'inventario' && renderInventoryModule()}
+           {activeTab === 'inventario' && showTrasladoModal && (
+              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-indigo-500">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-lg font-black uppercase flex items-center gap-2"><ArrowRightLeft size={20} className="text-indigo-600"/> Traslado entre Almacenes</h3>
+                    <button onClick={()=>setShowTrasladoModal(false)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
+                        <select value={trasladoForm.almacenOrigen} onChange={e=>setTrasladoForm({...trasladoForm,almacenOrigen:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                          {['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY',...(depositos||[]).filter(d=>!['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY'].includes(d))].map(a=><option key={a} value={a}>{a}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Destino</label>
+                        <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm({...trasladoForm,almacenDestino:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                          {['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY','PLANTA',...(depositos||[]).filter(d=>!['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY','PLANTA'].includes(d))].map(a=><option key={a} value={a}>{a}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
+                      <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm({...trasladoForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                        <option value="">— Seleccionar artículo —</option>
+                        {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=>(
+                          <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
+                        <input type="number" step="0.01" min="0.01" value={trasladoForm.qty} onChange={e=>setTrasladoForm({...trasladoForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-400" placeholder="0.00"/>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                        <input type="date" value={trasladoForm.date} onChange={e=>setTrasladoForm({...trasladoForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400"/>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones (opcional)</label>
+                      <input type="text" value={trasladoForm.notes||''} onChange={e=>setTrasladoForm({...trasladoForm,notes:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 uppercase" placeholder="Ej: INSUMOS PARA PRODUCCIÓN"/>
+                    </div>
+                    {trasladoForm.almacenOrigen === trasladoForm.almacenDestino && (
+                      <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
+                    )}
+                    <div className="flex justify-end gap-3 pt-2">
+                      <button onClick={()=>setShowTrasladoModal(false)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
+                      <button onClick={handleSaveTraslado} className="bg-indigo-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-indigo-700 flex items-center gap-2">
+                        <ArrowRightLeft size={14}/> Registrar Traslado
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+           )}
            {activeTab === 'simulador' && renderSimuladorModule()}
            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
            {activeTab === 'configuracion' && renderConfiguracionModule()}
