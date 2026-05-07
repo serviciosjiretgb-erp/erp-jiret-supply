@@ -4822,6 +4822,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'PENDIENTE');
 
       return (
+        <>
         <div className="space-y-6 animate-in fade-in">          {/* ── PANEL 1: REQUISICIONES DE PLANTA ── */}
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-5 border-b bg-yellow-50 flex justify-between items-center">
@@ -5060,6 +5061,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
           );
         })()}
+        </>
       );
     }
 
