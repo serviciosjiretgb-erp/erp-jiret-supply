@@ -2743,6 +2743,16 @@ export default function App() {
   );
 
   // ============================================================================
+  // hasPerm memoizado — debe estar antes de cualquier return condicional
+  // ============================================================================
+  const hasPerm = useCallback((module) => {
+    if (!appUser) return false;
+    if (appUser.role === 'Master') return true;
+    const p = appUser.permissions || {};
+    return !!p[module];
+  }, [appUser]);
+
+  // ============================================================================
   // DATOS DERIVADOS MEMOIZADOS — Se recalculan solo cuando cambian sus dependencias
   // ============================================================================
   const lowStockItems = useMemo(() =>
@@ -14456,7 +14466,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     );
   }
 
-  const hasPerm = useCallback((module) => { if (!appUser) return false; if (appUser.role === 'Master') return true; const p = appUser.permissions || {}; return !!p[module]; }, [appUser]);
+  const hasPerm = (module) => { if (!appUser) return false; if (appUser.role === 'Master') return true; const p = appUser.permissions || {}; return !!p[module]; };
 
   // ============================================================================
   // SISTEMA DE NOTIFICACIONES
