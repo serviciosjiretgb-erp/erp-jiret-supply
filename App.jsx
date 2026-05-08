@@ -760,7 +760,7 @@ export default function App() {
 
     // ── PRODUCTOS TERMINADOS ──
     const termItems = [
-      ...(finishedGoodsInventory||[]).filter(fg=>parseNum(fg.kgProducidos)>0||parseNum(fg.millares)>0),
+      ...(finishedGoodsInventory||[]),  // Todos los PT, sin filtro de stock
     ];
     if(termItems.length>0){
       html += sectionHeader('✅ PRODUCTOS TERMINADOS','#065f46');
@@ -1136,7 +1136,7 @@ export default function App() {
           for (const [pfId, val] of Object.entries(physicalCounts)) {
             if (!pfId.startsWith('FG-TF-') || val === undefined || val === '') continue;
             const grpKey = pfId.replace('FG-TF-','');
-            const fgDocs = (finishedGoodsInventory||[]).filter(fg => { const key = `${fg.categoria||fg.producto||''}__${fg.cliente||''}__${fg.tipoProducto}`; return key === grpKey && (parseNum(fg.kgProducidos)>0||parseNum(fg.millares)>0); });
+            const fgDocs = (finishedGoodsInventory||[]).filter(fg => { const key = `${fg.categoria||fg.producto||''}__${fg.cliente||''}__${fg.tipoProducto}`; return key === grpKey; });
             if (!fgDocs.length) continue;
             const esTermo = fgDocs[0].tipoProducto === 'TERMOENCOGIBLE';
             const sysStock = fgDocs.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
@@ -1521,56 +1521,32 @@ export default function App() {
   // ============================================================================
   // LOGICA INVENTARIO Y COSTO PROMEDIO
   // ============================================================================
-  // Recalcula totalStock y avgCost en el documento raíz del producto
-  const recalcInventorySummary = async (baseId) => {
-    try {
-      // Sumar todos los almacenes de este producto (mismo baseId)
-      const wareItems = (inventory||[]).filter(i => {
-        const parts = i.id.split('___');
-        return parts.length === 2 ? parts[0] === baseId : i.id === baseId;
-      });
-      const totalStock = wareItems.reduce((s,i) => s + parseNum(i.stock||0), 0);
-      const totalVal   = wareItems.reduce((s,i) => s + parseNum(i.stock||0)*parseNum(i.cost||0), 0);
-      const avgCost    = totalStock > 0 ? totalVal / totalStock : (wareItems[0]?.cost || 0);
-      // Update or create summary doc
-      await setDoc(getDocRef('inventory', baseId), {
-        id: baseId,
-        desc: wareItems[0]?.desc || baseId,
-        category: wareItems[0]?.category || 'Consumibles',
-        unit: wareItems[0]?.unit || 'UND',
-        totalStock,
-        avgCost,
-        cost: avgCost,   // alias for backward compat
-        stock: totalStock,
-        _isSummary: true,
-        timestamp: Date.now()
-      }, { merge: true });
-    } catch(e) { console.warn('recalcInventorySummary error:', e); }
-  };
-
   const handleSaveInvItem = async (e) => {
-    e.preventDefault(); 
+    e.preventDefault();
     if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
-    const baseId   = newInvItemForm.id.toUpperCase().trim();
-    const almacen  = (newInvItemForm.almacen || 'ALMACEN ZI').trim();
-    // Composite ID: CODE___ALMACEN (3 underscores to avoid collisions)
-    const docId    = baseId + '___' + almacen.replace(/\s+/g,'-');
-    const existingItem = (inventory||[]).find(i=>i.id===docId) || (inventory||[]).find(i=>i.id===baseId);
+    const itemId  = newInvItemForm.id.toUpperCase().trim();
+    const almacen = (newInvItemForm.almacen || 'ALMACEN ZI').trim();
+    // Each warehouse entry uses itemId + almacen suffix to avoid overwriting
+    // e.g. DISPENSER-SF in ALMACEN BQTO → Firestore doc: DISPENSER-SF___ALMACEN-BQTO
+    // DISPENSER-SF in ALMACEN ZI  → Firestore doc: DISPENSER-SF___ALMACEN-ZI
+    // The ID displayed to users is always itemId (clean code without suffix)
+    const docId   = itemId + '___' + almacen.replace(/\s+/g, '-');
+    const existingItem = (inventory||[]).find(i => i.id === docId || i.id === itemId);
     const newCost  = parseNum(newInvItemForm.cost);
     const newStock = parseNum(newInvItemForm.stock);
     let finalCost  = newCost;
-    const prevStock= existingItem?.stock || 0;
-    const prevCost = existingItem?.cost  || 0;
-    if(existingItem && editingInvId) {
-      const stockDiff = newStock - prevStock;
-      if(stockDiff > 0 && newCost > 0) {
-        finalCost = ((prevStock * prevCost) + (stockDiff * newCost)) / newStock;
-      } else {
-        finalCost = newCost || prevCost;
-      }
+    const prevStock = existingItem?.stock || 0;
+    const prevCost  = existingItem?.cost  || 0;
+    if (existingItem && editingInvId) {
+      const diff = newStock - prevStock;
+      finalCost = diff > 0 && newCost > 0
+        ? ((prevStock * prevCost) + (diff * newCost)) / newStock
+        : newCost || prevCost;
     }
     const itemData = {
-      id: docId, baseId, almacen,
+      id: docId,
+      displayId: itemId,   // clean code for display
+      almacen,
       desc: newInvItemForm.desc.toUpperCase(),
       category: newInvItemForm.category || 'Materia Prima',
       unit: newInvItemForm.unit || 'kg',
@@ -1578,28 +1554,25 @@ export default function App() {
       stock: newStock,
       timestamp: Date.now()
     };
-    try { 
+    try {
+      // merge:true ensures other warehouses' docs are NOT touched
       await setDoc(getDocRef('inventory', docId), itemData, { merge: true });
-      // Recalculate summary doc for this product
-      await recalcInventorySummary(baseId);
-      
-      // Kardex movement
-      if(existingItem && editingInvId) {
-        const stockDiff = newStock - prevStock;
-        if(Math.abs(stockDiff) > 0.001) {
+      if (existingItem && editingInvId) {
+        const diff = newStock - prevStock;
+        if (Math.abs(diff) > 0.001) {
           await addDoc(getColRef('inventoryMovements'), {
-            itemId: docId, itemDesc: itemData.desc,
-            type: stockDiff > 0 ? 'ENTRADA' : 'SALIDA',
-            qty: Math.abs(stockDiff), unitCost: finalCost,
-            totalValue: Math.abs(stockDiff) * finalCost,
-            previousStock: prevStock, newStock, almacen,
-            docRef: 'AJUSTE MANUAL', notes: 'Edición en Inventario General',
-            date: getTodayDate(), user: appUser?.name||'Admin', timestamp: Date.now()
+            itemId: docId, itemDesc: itemData.desc, almacen,
+            type: diff > 0 ? 'ENTRADA' : 'SALIDA',
+            qty: Math.abs(diff), unitCost: finalCost,
+            totalValue: Math.abs(diff) * finalCost,
+            previousStock: prevStock, newStock,
+            docRef: 'AJUSTE MANUAL', notes: 'Edición Inventario General',
+            date: getTodayDate(), user: appUser?.name || 'Admin', timestamp: Date.now()
           });
         }
       }
-      setNewInvItemForm(initialInvItemForm); setEditingInvId(null); 
-      setDialog({ title: '✅ Éxito', text: `Artículo guardado en ${almacen}. Los demás almacenes no fueron afectados.`, type: 'alert' }); 
+      setNewInvItemForm(initialInvItemForm); setEditingInvId(null);
+      setDialog({ title: '✅ Éxito', text: `${itemId} guardado en ${almacen}. Los demás almacenes no fueron modificados.`, type: 'alert' });
     } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
   const startEditInvItem = (item) => { setEditingInvId(item.id); setNewInvItemForm({ id: item.id, desc: item.desc, category: item.category || 'Materia Prima', cost: item.cost || '', stock: item.stock || '', unit: item.unit || 'kg' }); setShowInvItemForm(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
@@ -3627,7 +3600,18 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=><option key={i.id} value={`SEM::${i.id}`}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>)}
                       </optgroup>
                       <optgroup label="── Productos Terminados ──">
-                        {(finishedGoodsInventory||[]).filter(fg=>parseNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)>0).map(fg=><option key={fg.id} value={`FG::${fg.id}`}>{fg.producto||fg.id} ({formatNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)} {fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Mill.'})</option>)}
+                        {(finishedGoodsInventory||[])
+                          .sort((a,b)=>(a.producto||'').localeCompare(b.producto||''))
+                          .map(fg => {
+                            const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
+                            const stk = parseNum(esTermo?fg.kgProducidos:fg.millares);
+                            return (
+                              <option key={fg.id} value={'FG::'+fg.id}>
+                                {(fg.producto||fg.id||'').toUpperCase()}{fg.cliente?' ['+fg.cliente+']':''} — {formatNum(stk)} {esTermo?'KG':'Mill.'}
+                              </option>
+                            );
+                          })
+                        }
                       </optgroup>
                     </select></div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
@@ -3783,7 +3767,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               <div className="flex gap-2 flex-wrap">
                 <button onClick={()=>setShowTrasladoModal(true)} className="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-indigo-700 flex items-center gap-2"><ArrowRightLeft size={13}/> Traslado</button>
                 <button onClick={()=>printAlmacenReport(almacenesFilter.almacen==='TODOS'?'TODOS LOS ALMACENES':almacenesFilter.almacen, filtItems)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2"><Printer size={13}/> PDF</button>
-                <button onClick={()=>exportAlmacenExcel(almacenesFilter.almacen==='TODOS'?'TODOS':almacenesFilter.almacen, filtItems)} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-green-700 flex items-center gap-2"><Download size={13}/> Excel/CSV</button>
+                <button onClick={()=>exportAlmacenExcel(almacenesFilter.almacen==='TODOS'?'TODOS':almacenesFilter.almacen, filtItems)} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-green-700 flex items-center gap-2"><Download size={13}/> Exportar Excel</button>
               </div>
             </div>
             {/* Filtros */}
@@ -3799,7 +3783,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               <select value={almacenesFilter.cat} onChange={e=>setAlmacenesFilter(f=>({...f,cat:e.target.value}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-white">
                 {allCats.map(c=><option key={c} value={c}>{c}</option>)}
               </select>
-              <span className="text-[10px] font-black text-gray-500 uppercase ml-auto">{filtItems.length} artículo(s) — Valor: ${formatNum(filtItems.reduce((s,i)=>s+(i.stock||0)*(i.cost||0),0))}</span>
+              <span className="text-[10px] font-black text-gray-500 uppercase ml-auto">
+                {filtItems.length} artículo(s) — Stock total: {formatNum(filtItems.reduce((s,i)=>s+parseNum(i.stock||0),0))} — Valor: ${formatNum(filtItems.reduce((s,i)=>s+parseNum(i.stock||0)*parseNum(i.cost||0),0))}
+              </span>
             </div>
 
             {/* Tarjetas por almacén o tabla general */}
@@ -5421,28 +5407,66 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     // Categorías únicas — sin duplicados
     const allCatalogCats = ['TODAS', ...Array.from(new Set(allCatalogItems.map(i=>i?.category||'Otros')))]
       .sort((a,b)=>{ if(a==='TODAS')return -1; if(b==='TODAS')return 1; if(a==='Productos Terminados')return -1; if(b==='Productos Terminados')return 1; return a.localeCompare(b); });
-    const filteredInventory = allCatalogItems.filter(i => {
-      const matchSearch = (i?.id || '').toUpperCase().includes(searchInvUpper) || (i?.desc || '').toUpperCase().includes(searchInvUpper);
-      const matchCat = catalogCatFilter === 'TODAS' || (i?.category||'Otros') === catalogCatFilter;
-      if (!matchSearch || !matchCat) return false;
-      if (i?._isFGGroup) {
-        return catalogAlmacenFilter === 'TODOS' || catalogAlmacenFilter === 'Productos Terminados';
-      }
-      const itemAlmacen = i?.almacen || 'ALMACEN ZI';
+    // Agrupar items por displayId (o id limpio sin ___) para Inventario General
+    const getCleanId = (i) => i?.displayId || (i?.id||'').split('___')[0];
+    const getCleanDesc = (i) => i?.desc || '';
+
+    const filteredInventory = (() => {
       if (catalogAlmacenFilter === 'TODOS') {
-        // Con filtro TODOS: mostrar docs de resumen (_isSummary) para productos multi-almacén
-        // y docs normales para productos de un solo almacén
-        // Ocultar docs de almacén específico cuando ya existe un doc de resumen
-        const baseId = i?.baseId;
-        if (baseId && !i?._isSummary) return false; // tiene baseId pero no es resumen → ocultar
-        return true;
+        // TODOS: agrupar por código limpio, sumar stock y calcular costo promedio
+        const groups = {};
+        for (const i of allCatalogItems) {
+          if (i?._isFGGroup) {
+            const key = 'FG__' + (i.id||'');
+            if (!groups[key]) groups[key] = { ...i, _grouped: true };
+            continue;
+          }
+          const cleanId = getCleanId(i);
+          const matchSearch = cleanId.toUpperCase().includes(searchInvUpper) || getCleanDesc(i).toUpperCase().includes(searchInvUpper);
+          const matchCat = catalogCatFilter === 'TODAS' || (i?.category||'Otros') === catalogCatFilter;
+          if (!matchSearch || !matchCat) continue;
+          if (!groups[cleanId]) {
+            groups[cleanId] = {
+              ...i,
+              id: cleanId,          // show clean ID (DISPENSER-SF not DISPENSER-SF___ALMACEN-BQTO)
+              stock: 0,
+              _totalStock: 0,
+              _warehouseBreakdown: [],
+              _grouped: true
+            };
+          }
+          const stk = parseNum(i.stock||0);
+          const cst = parseNum(i.cost||0);
+          const prev = groups[cleanId];
+          const prevTotal = prev._totalStock || 0;
+          const prevVal = prevTotal * parseNum(prev.cost||0);
+          groups[cleanId]._totalStock = prevTotal + stk;
+          groups[cleanId].stock = prevTotal + stk;
+          groups[cleanId].cost = (prevTotal + stk) > 0 ? (prevVal + stk*cst)/(prevTotal+stk) : cst;
+          groups[cleanId]._warehouseBreakdown.push({ almacen: i.almacen||'ALMACEN ZI', stock: stk, cost: cst });
+        }
+        // Add FG groups
+        for (const i of allCatalogItems) {
+          if (!i?._isFGGroup) continue;
+          const matchSearch = (i?.id||'').toUpperCase().includes(searchInvUpper)||(i?.desc||'').toUpperCase().includes(searchInvUpper);
+          const matchCat = catalogCatFilter === 'TODAS' || catalogCatFilter === 'Productos Terminados';
+          if (matchSearch && matchCat) {
+            const key = 'FG__' + (i.id||'');
+            groups[key] = i;
+          }
+        }
+        return Object.values(groups);
       } else {
-        // Almacén específico: mostrar solo docs de ese almacén
-        const baseId = i?.baseId;
-        if (baseId) return itemAlmacen === catalogAlmacenFilter && !i?._isSummary;
-        return itemAlmacen === catalogAlmacenFilter;
+        // Almacén específico: filtrar por almacen field
+        return allCatalogItems.filter(i => {
+          const matchSearch = getCleanId(i).toUpperCase().includes(searchInvUpper)||(i?.desc||'').toUpperCase().includes(searchInvUpper);
+          const matchCat = catalogCatFilter==='TODAS'||(i?.category||'Otros')===catalogCatFilter;
+          if (!matchSearch || !matchCat) return false;
+          if (i?._isFGGroup) return catalogAlmacenFilter === 'Productos Terminados';
+          return (i?.almacen||'ALMACEN ZI') === catalogAlmacenFilter;
+        });
       }
-    });
+    })();
     const filteredMovements = (invMovements || []).filter(m => (m?.itemId || '').toUpperCase().includes(searchInvUpper) || (m?.itemName || '').toUpperCase().includes(searchInvUpper) || (m?.reference || '').toUpperCase().includes(searchInvUpper));
 
     return (
@@ -5857,16 +5881,18 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase text-white ${colClass}`}>{(inv?.category||'').substring(0,6)}</span>
                                </td>
                                <td className="py-2 px-2 text-right font-bold text-gray-600 text-[10px] print:text-black">
-                                 ${formatNum(inv?._isSummary ? inv.avgCost : inv?.cost)}
-                                 {inv?._isSummary && <span className="text-[8px] text-orange-400 ml-0.5">prom</span>}
+                                 ${formatNum(inv?.cost)}
+                                 {inv?._warehouseBreakdown?.length > 1 && <span className="text-[8px] text-orange-400 ml-0.5">prom</span>}
                                </td>
                                <td className="py-2 px-2 text-right font-black text-blue-600 text-[10px] print:text-black">
-                                 {formatNum(inv?._isSummary ? inv.totalStock : inv?.stock)} <span className="text-[8px] text-gray-400">{inv?.unit}</span>
-                                 {inv?._isSummary && (() => {
-                                   const wh = (inventory||[]).filter(w=>w.baseId===inv.baseId&&!w._isSummary);
-                                   if(!wh.length) return null;
-                                   return <div className="text-[8px] text-gray-400 font-normal">{wh.map(w=><span key={w.id} className="block">{(w.almacen||'').replace('ALMACEN ','')}: {formatNum(w.stock)}</span>)}</div>;
-                                 })()}
+                                 {formatNum(inv?.stock)} <span className="text-[8px] text-gray-400">{inv?.unit}</span>
+                                 {inv?._warehouseBreakdown?.length > 1 && (
+                                   <div className="text-[8px] text-gray-400 font-normal">
+                                     {inv._warehouseBreakdown.map((w,wi)=>(
+                                       <span key={wi} className="block">{(w.almacen||'').replace('ALMACEN ','')}: {formatNum(w.stock)}</span>
+                                     ))}
+                                   </div>
+                                 )}
                                </td>
                                <td className="py-2 px-2 text-right font-black text-green-600 text-[10px] print:text-black hidden lg:table-cell">${formatNum(totalVal)}</td>
                                <td className="py-2 px-2 text-center text-[8px] font-bold text-indigo-600 hidden md:table-cell">{inv?._isFGGroup ? '—' : (inv?.almacen||'ALMACEN ZI')}</td>
@@ -6500,7 +6526,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
                 const stk = esTermo ? parseNum(fg.kgProducidos||0) : parseNum(fg.millares||0);
                 const cost = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-                if(stk <= 0 && cost <= 0) return;
+                // Mostrar todos los PT en Kardex (sin filtro de stock)
                 const key = desc.toUpperCase().trim();
                 if(!fgByDesc[key]) fgByDesc[key] = { desc, unit: esTermo?'KG':'Millares', stk:0, cost, salesQty:0 };
                 fgByDesc[key].stk += stk;
