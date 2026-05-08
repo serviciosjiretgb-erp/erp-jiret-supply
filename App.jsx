@@ -310,6 +310,7 @@ export default function App() {
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [invRequisitions, setInvRequisitions] = useState([]);
+  const [reqFilter, setReqFilter] = useState('');
 
   // Estados para nuevos inventarios WIP y Finished Goods
   const [wipInventory, setWipInventory] = useState([]);
@@ -564,6 +565,7 @@ export default function App() {
   // Fix 1: OSA states at component level (React hooks must be at top level)
   const [osaItemList, setOsaItemList] = useState([]);
   const [osaItemForm, setOsaItemForm] = useState({ itemId:'', qty:'', lote:'' });
+  const [osaSearch, setOsaSearch] = useState('');
   const [osaHdr, setOsaHdr] = useState({ almacenOrigen:'ALMACEN ZI', destino:'Producción / Despacho', docRef:'', fecha:'', procesadoPor:'' });
   const [osaCounter, setOsaCounter] = useState(null); // sequential OSA number from Firebase
   // Fix 3: Partial delivery new product name
@@ -3608,13 +3610,22 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               {/* Agregar artículo */}
               <div className="border-2 border-dashed border-orange-200 rounded-2xl p-4">
                 <h3 className="text-[10px] font-black text-orange-700 uppercase mb-3">Agregar Artículo a la OSA</h3>
+                <div className="mb-2">
+                  <input type="text" placeholder="🔍 Buscar por código o descripción..." value={osaSearch||''} onChange={e=>setOsaSearch(e.target.value.toUpperCase())}
+                    className="w-full border-2 border-orange-200 bg-orange-50 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-500 focus:bg-white transition-colors uppercase"/>
+                </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
                     <select value={osaItemForm.itemId} onChange={e=>setOsaItemForm(f=>({...f,itemId:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
                       <option value="">— Seleccionar artículo —</option>
                       <optgroup label="── Materia Prima / Consumibles ──">
                         {(inventory||[])
-                          .filter(i=>i.category!=='Semielaborados')
+                          .filter(i=>{
+                            if(i.category==='Semielaborados') return false;
+                            if(!osaSearch) return true;
+                            const cid=(i.displayId||(i.id||'').split('___')[0]).toUpperCase();
+                            return cid.includes(osaSearch)||(i.desc||'').toUpperCase().includes(osaSearch);
+                          })
                           .sort((a,b)=>(a.displayId||a.id||'').localeCompare(b.displayId||b.id||''))
                           .map(i=>{
                             const cid=i.displayId||(i.id||'').split('___')[0];
@@ -3740,9 +3751,15 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
         const matchCat = almacenesFilter.cat === 'TODAS' || i.category === almacenesFilter.cat;
         const matchSearch = !filtSearch || cleanId.toUpperCase().includes(filtSearch) || (i.desc||'').toUpperCase().includes(filtSearch);
         if (!matchAlm || !matchCat || !matchSearch) continue;
-        const key = almacenesFilter.almacen === 'TODOS' ? cleanId : cleanId + '|' + alm;
+        // Con búsqueda activa: mostrar separado por almacén para ver dónde está el producto
+        const key = (almacenesFilter.almacen === 'TODOS' && filtSearch)
+          ? cleanId + '|' + alm  // busqueda: separar por almacén
+          : almacenesFilter.almacen === 'TODOS'
+            ? cleanId             // sin búsqueda: agrupar por código
+            : cleanId + '|' + alm;
         if (!_invGroups[key]) {
-          _invGroups[key] = { ...i, id: cleanId, displayId: cleanId, stock: 0, _wb: [] };
+          _invGroups[key] = { ...i, id: cleanId, displayId: cleanId, almacen: alm, stock: 0, _wb: [],
+            _showAlmacen: almacenesFilter.almacen === 'TODOS' && !!filtSearch };
         }
         const stk = parseNum(i.stock||0);
         const cst = parseNum(i.cost||0);
@@ -3814,8 +3831,40 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               </div>
               <div className="flex gap-2 flex-wrap">
                 <button onClick={()=>setShowTrasladoModal(true)} className="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-indigo-700 flex items-center gap-2"><ArrowRightLeft size={13}/> Traslado</button>
+                <button onClick={()=>{
+                  const almLabel=almacenesFilter.almacen==='TODOS'?'TODOS LOS ALMACENES':almacenesFilter.almacen;
+                  const now=new Date().toLocaleDateString('es-VE',{day:'2-digit',month:'long',year:'numeric'});
+                  const byAlm={};
+                  filtItems.forEach(i=>{const a=i.almacen||'ALMACEN ZI';if(!byAlm[a])byAlm[a]=[];byAlm[a].push(i);});
+                  let html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>';
+                  html+='body{font-family:Arial;font-size:10pt}h2,h3,p{text-align:center;margin:3px 0}table{width:100%;border-collapse:collapse;margin-top:10px}';
+                  html+='th{background:#1a1a1a;color:#fff;padding:7px;font-size:9pt;text-align:left}td{padding:5px 7px;font-size:9pt;border-bottom:1px solid #e5e7eb}';
+                  html+='.almh td{background:#ea580c;color:#fff;font-weight:900;padding:6px 7px}.subtot td{background:#f3f4f6;font-weight:bold}.tot td{background:#000;color:#fff;font-weight:900}';
+                  html+='</style></head><body>';
+                  html+='<h2>SERVICIOS JIRET G&amp;B, C.A.</h2><h3>RIF: J-412309374</h3>';
+                  html+='<p>Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9, Maracaibo.</p>';
+                  html+='<h3>GESTIÓN DE ALMACENES — '+almLabel+'</h3><p>Fecha: '+now+'</p>';
+                  html+='<table><thead><tr><th>Código</th><th>Descripción</th><th>Categoría</th><th>U.M.</th><th>Stock</th><th>Costo Unit. ($)</th><th>Valor Total ($)</th></tr></thead><tbody>';
+                  let gS=0,gV=0;
+                  Object.entries(byAlm).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([alm,items])=>{
+                    const aS=items.reduce((s,i)=>s+parseNum(i.stock||0),0);
+                    const aV=items.reduce((s,i)=>s+parseNum(i.stock||0)*parseNum(i.cost||0),0);
+                    html+='<tr class="almh"><td colspan="5">'+alm+' — '+items.length+' artículos</td><td style="text-align:right">'+formatNum(aS)+'</td><td style="text-align:right">$'+formatNum(aV)+'</td></tr>';
+                    items.sort((a,b)=>(a.id||'').localeCompare(b.id||'')).forEach(i=>{
+                      const v=parseNum(i.stock||0)*parseNum(i.cost||0);
+                      html+='<tr><td style="font-weight:900;color:#ea580c">'+String(i.id||'')+'</td><td>'+String(i.desc||'')+'</td><td>'+String(i.category||'')+'</td><td style="text-align:center">'+String(i.unit||'')+'</td><td style="text-align:right;font-weight:bold">'+formatNum(i.stock||0)+'</td><td style="text-align:right">$'+formatNum(i.cost||0)+'</td><td style="text-align:right;color:#16a34a;font-weight:bold">$'+formatNum(v)+'</td></tr>';
+                    });
+                    html+='<tr class="subtot"><td colspan="4" style="text-align:right">Subtotal '+alm+':</td><td style="text-align:right">'+formatNum(aS)+'</td><td></td><td style="text-align:right">$'+formatNum(aV)+'</td></tr>';
+                    gS+=aS; gV+=aV;
+                  });
+                  html+='</tbody><tfoot><tr class="tot"><td colspan="4" style="text-align:right;padding:7px">TOTAL:</td><td style="padding:7px">'+formatNum(gS)+'</td><td></td><td style="padding:7px">$'+formatNum(gV)+'</td></tr></tfoot></table>';
+                  html+='<p style="margin-top:10px;font-size:8pt;text-align:center">Generado por Supply G&amp;B ERP — '+getTodayDate()+'</p></body></html>';
+                  const blob=new Blob(['﻿'+html],{type:'application/vnd.ms-excel;charset=utf-8'});
+                  const url=URL.createObjectURL(blob);
+                  const a=document.createElement('a');a.href=url;a.download='Almacenes_'+almacenesFilter.almacen.replace(/ /g,'_')+'_'+getTodayDate()+'.xls';a.click();URL.revokeObjectURL(url);
+                }} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-green-700 flex items-center gap-2"><Download size={13}/> Exportar XLS</button>
                 <button onClick={()=>printAlmacenReport(almacenesFilter.almacen==='TODOS'?'TODOS LOS ALMACENES':almacenesFilter.almacen, filtItems)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2"><Printer size={13}/> PDF</button>
-                <button onClick={()=>exportAlmacenExcel(almacenesFilter.almacen==='TODOS'?'TODOS':almacenesFilter.almacen, filtItems)} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-green-700 flex items-center gap-2"><Download size={13}/> Exportar Excel</button>
+                
               </div>
             </div>
             {/* Filtros */}
@@ -3850,7 +3899,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         <div className="flex items-center gap-3">
                           <span className="font-black text-indigo-200">Valor: ${formatNum(depVal)}</span>
                           <button onClick={()=>printAlmacenReport(dep,depItems)} className="bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Printer size={11}/> PDF</button>
-                          <button onClick={()=>exportAlmacenExcel(dep,depItems)} className="bg-green-500 hover:bg-green-400 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={11}/> Excel</button>
+                          
                         </div>
                       </div>
                       <div className="overflow-x-auto">
@@ -5527,6 +5576,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  <Plus size={14}/> Nueva Requisición (Almacén)
                </button>
              </div>
+             <div className="p-6 pb-0 no-pdf">
+               <div className="flex gap-3 items-center">
+                 <div className="relative flex-1 max-w-xs">
+                   <Search className="absolute left-3 top-3 text-gray-400" size={14}/>
+                   <input type="text" placeholder="Filtrar por OP o producto..." value={reqFilter}
+                     onChange={e=>setReqFilter(e.target.value.toUpperCase())}
+                     className="w-full pl-9 pr-4 py-2.5 border-2 border-gray-100 bg-gray-50 rounded-xl text-xs font-bold uppercase outline-none focus:border-orange-400 focus:bg-white"/>
+                 </div>
+                 {reqFilter && <button onClick={()=>setReqFilter('')} className="text-xs font-black text-gray-400 hover:text-red-500 px-2">✕ Limpiar</button>}
+               </div>
+             </div>
              <div className="p-8">
                <div className="overflow-x-auto rounded-xl border border-gray-200">
                  <table className="w-full text-left text-sm whitespace-nowrap">
@@ -5540,7 +5600,16 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-gray-100 text-black">
-                     {(invRequisitions || []).map(r => (
+                     {(invRequisitions || []).filter(r => {
+                       if (!reqFilter) return true;
+                       const opMatch = String(r.opId||'').toUpperCase().includes(reqFilter);
+                       const prodMatch = (r.items||[]).some(it => {
+                         const invIt = (inventory||[]).find(inv=>inv.id===it.id);
+                         return (invIt?.desc||it.id||'').toUpperCase().includes(reqFilter);
+                       });
+                       const phaseMatch = (r.phase||'').toUpperCase().includes(reqFilter);
+                       return opMatch || prodMatch || phaseMatch;
+                     }).map(r => (
                        <tr key={r.id} className="hover:bg-gray-50">
                          <td className="py-4 px-4 font-black border-r text-orange-600 text-lg">
                            {String(r.opId).replace('OP-', '').padStart(5, '0')}<br/>
@@ -14103,10 +14172,21 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  <input type="file" accept="image/*" onChange={handleBgUpload} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-black file:bg-gray-100 file:text-black hover:file:bg-gray-200" />
                  {settings.loginBg && <img src={settings.loginBg} alt="Background Preview" className="mt-4 rounded-xl border border-gray-200 max-h-48 object-cover shadow-sm" />}
                  <div className="mt-6 border-t border-gray-100 pt-5">
-                   <h3 className="text-sm font-black uppercase text-black mb-2">Video de Bienvenida (Login)</h3>
+                   <h3 className="text-sm font-black uppercase text-black mb-2">Video o Imagen de Bienvenida (Login)</h3>
                    <p className="text-xs text-gray-500 font-bold mb-4">Sube un video MP4 (máx ~5MB recomendado). Se reproducirá en loop con botón de mute en la pantalla de acceso.</p>
-                   <input type="file" accept="video/mp4,video/*" onChange={async e=>{
+                   <p className="text-[9px] text-blue-600 font-bold bg-blue-50 rounded-lg px-3 py-2 mb-2">💡 Para que todos los usuarios vean el video, debe guardarse en Firebase Storage. Si no tienes configurado Storage, sube una imagen JPG/PNG que todos verán.</p>
+                   <input type="file" accept="video/mp4,video/*,image/jpeg,image/png,image/webp" onChange={async e=>{
                      const file = e.target.files?.[0]; if(!file) return;
+                     if(file.type.startsWith('image/')) {
+                       setDialog({title:'⏳ Procesando Imagen...', text:'Comprimiendo y guardando...', type:'alert'});
+                       compressImage(file, async (base64)=>{
+                         try {
+                           await setDoc(getDocRef('settings','general'), { loginBg: base64, loginVideo: '' }, { merge: true });
+                           setDialog({title:'✅ Imagen Guardada',text:'Imagen de bienvenida guardada. Visible para TODOS los usuarios.',type:'alert'});
+                         } catch(err) { setDialog({title:'Error',text:err.message,type:'alert'}); }
+                       });
+                       return;
+                     }
                      setDialog({title:'⏳ Procesando Video...', text:`Cargando "${file.name}" (${(file.size/1024/1024).toFixed(1)}MB)...`, type:'alert'});
                      try {
                        // Try Firebase Storage first; fall back to IndexedDB if unavailable
@@ -15046,17 +15126,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
               <div className="max-w-7xl mx-auto flex items-stretch overflow-x-auto">
                 {/* GROUP 1: SOLICITUDES */}
-                <div className="flex flex-col border-r border-gray-200">
+                {([{id:'requisiciones',perm:'inventario_solicitudes'},{id:'almacen',perm:'inventario_solicitudes'}].some(t=>hasPerm(t.perm)||appUser?.role==='Master')) && <div className="flex flex-col border-r border-gray-200">
                   <div className="text-[8px] font-black text-orange-500 uppercase tracking-widest px-4 pt-2 pb-0.5">Solicitudes</div>
                   <div className="flex gap-0">
                     {[
                       {id:'requisiciones', icon:<ClipboardList size={14}/>, label:'Planta', perm:'inventario_solicitudes'},
                       {id:'almacen', icon:<Warehouse size={14}/>, label:'Almacén/OC', perm:'inventario_solicitudes'},
-                    ].filter(t=>hasPerm('inventario')&&(hasPerm(t.perm)||appUser?.role==='Master')).map(t=>(
+                    ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
                   </div>
-                </div>
+                </div>}
                 {/* GROUP 2: INVENTARIOS */}
                 <div className="flex flex-col border-r border-gray-200">
                   <div className="text-[8px] font-black text-blue-500 uppercase tracking-widest px-4 pt-2 pb-0.5">Inventarios</div>
@@ -15067,7 +15147,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       {id:'finished', icon:<Package size={14}/>, label:'Terminados', perm:'inventario_catalogo'},
                       {id:'alimentario', icon:<FileText size={14}/>, label:'Orden Salida', perm:'inventario_catalogo'},
                       {id:'almacenes_mgmt', icon:<Warehouse size={14}/>, label:'Almacenes', perm:'inventario_catalogo'},
-                    ].filter(t=>hasPerm('inventario')&&(hasPerm(t.perm)||appUser?.role==='Master')).map(t=>(
+                    ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
                   </div>
@@ -15082,7 +15162,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       {id:'toma_fisica', icon:<ClipboardEdit size={14}/>, label:'Toma Física', perm:'inventario_movimientos'},
                       {id:'kardex', icon:<History size={14}/>, label:'Kardex', perm:'inventario_kardex'},
                          {id:'reporte177', icon:<FileCheck size={14}/>, label:'Art.177', perm:'inventario_kardex'},
-                    ].filter(t=>hasPerm('inventario')&&(hasPerm(t.perm)||appUser?.role==='Master')).map(t=>(
+                    ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();setShowMovForm(false);if(t.id==='entradas')setMovForm(f=>({...f,type:'ENTRADA'}));if(t.id==='salidas')setMovForm(f=>({...f,type:'AUTOCONSUMO'}));}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
                   </div>
