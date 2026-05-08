@@ -1344,84 +1344,6 @@ export default function App() {
   };
 
 
-
-  // ============================================================================
-  // IMPORTAR INVENTARIO DESDE ARCHIVO EXCEL/CSV SELECCIONADO POR EL USUARIO
-  // ============================================================================
-  const handleImportExcelFile = async (file) => {
-    try {
-      const text = await new Promise((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = e => res(e.target.result);
-        reader.onerror = rej;
-        reader.readAsText(file, 'UTF-8');
-      });
-      
-      // Parse CSV (supports comma or semicolon delimiter)
-      const lines2 = text.split(/\r?\n/).filter(l => l.trim());
-      if (lines2.length < 2) return setDialog({title:'Error', text:'El archivo está vacío o no tiene datos.', type:'alert'});
-      
-      const delimiter = lines2[0].includes(';') ? ';' : ',';
-      const headers = lines2[0].split(delimiter).map(h => h.replace(/"/g,'').trim().toLowerCase());
-      
-      // Map column indices
-      const col = (names) => {
-        for (const n of names) {
-          const idx = headers.findIndex(h => h.includes(n));
-          if (idx >= 0) return idx;
-        }
-        return -1;
-      };
-      const iAlmacen = col(['almac','warehouse','bodega']);
-      const iCodigo  = col(['cód','cod','code','id','referencia','ref']);
-      const iDesc    = col(['desc','nombre','producto','item','articulo']);
-      const iCosto   = col(['costo','cost','precio','price']);
-      const iStock   = col(['stock','cantidad','qty','existencia']);
-      
-      if (iCodigo < 0 || iDesc < 0) {
-        return setDialog({title:'Error de formato', text:`El archivo debe tener columnas: Código, Descripción, Stock, Costo, Almacén.\nEncabezados encontrados: ${headers.join(', ')}`, type:'alert'});
-      }
-      
-      const parseCell = (row, idx) => idx >= 0 ? row[idx]?.replace(/"/g,'').trim() : '';
-      const parseNum2 = (v) => { const n = parseFloat(String(v).replace(/[^0-9.-]/g,'')); return isNaN(n) ? 0 : n; };
-      
-      let created = 0, updated = 0;
-      const batchSize = 490;
-      const dataRows = lines2.slice(1).map(l => {
-        const row = l.split(delimiter);
-        return {
-          almacen: parseCell(row, iAlmacen) || 'ALMACEN ZI',
-          id: parseCell(row, iCodigo),
-          desc: parseCell(row, iDesc),
-          cost: parseNum2(parseCell(row, iCosto)),
-          stock: parseNum2(parseCell(row, iStock)),
-        };
-      }).filter(r => r.id && r.desc);
-      
-      for (let i = 0; i < dataRows.length; i += batchSize) {
-        const chunk = dataRows.slice(i, i + batchSize);
-        const batch = writeBatch(db);
-        for (const item of chunk) {
-          const docId = `${item.id}__${item.almacen.replace(/\s+/g,'-')}`;
-          const ref = getDocRef('inventory', docId);
-          const existing = (inventory || []).find(x => x.id === docId);
-          if (existing) {
-            batch.update(ref, { stock: item.stock, cost: item.cost, almacen: item.almacen });
-            updated++;
-          } else {
-            batch.set(ref, { id: docId, desc: item.desc, category: 'Consumibles', unit: 'UND',
-              cost: item.cost, stock: item.stock, almacen: item.almacen, minStock: 0, timestamp: Date.now() });
-            created++;
-          }
-        }
-        await batch.commit();
-      }
-      setDialog({title:'✅ Importación completa', text:`${created} artículos creados, ${updated} actualizados desde el archivo.`, type:'alert'});
-    } catch(err) {
-      setDialog({title:'Error al importar', text:`No se pudo leer el archivo.\n${err.message}`, type:'alert'});
-    }
-  };
-
   // ============================================================================
   // IMPORTAR INVENTARIO CONSOLIDADO DESDE EXCEL (datos precargados)
   // ============================================================================
@@ -1599,19 +1521,47 @@ export default function App() {
   // ============================================================================
   // LOGICA INVENTARIO Y COSTO PROMEDIO
   // ============================================================================
+  // Recalcula totalStock y avgCost en el documento raíz del producto
+  const recalcInventorySummary = async (baseId) => {
+    try {
+      // Sumar todos los almacenes de este producto (mismo baseId)
+      const wareItems = (inventory||[]).filter(i => {
+        const parts = i.id.split('___');
+        return parts.length === 2 ? parts[0] === baseId : i.id === baseId;
+      });
+      const totalStock = wareItems.reduce((s,i) => s + parseNum(i.stock||0), 0);
+      const totalVal   = wareItems.reduce((s,i) => s + parseNum(i.stock||0)*parseNum(i.cost||0), 0);
+      const avgCost    = totalStock > 0 ? totalVal / totalStock : (wareItems[0]?.cost || 0);
+      // Update or create summary doc
+      await setDoc(getDocRef('inventory', baseId), {
+        id: baseId,
+        desc: wareItems[0]?.desc || baseId,
+        category: wareItems[0]?.category || 'Consumibles',
+        unit: wareItems[0]?.unit || 'UND',
+        totalStock,
+        avgCost,
+        cost: avgCost,   // alias for backward compat
+        stock: totalStock,
+        _isSummary: true,
+        timestamp: Date.now()
+      }, { merge: true });
+    } catch(e) { console.warn('recalcInventorySummary error:', e); }
+  };
+
   const handleSaveInvItem = async (e) => {
     e.preventDefault(); 
     if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
-    const existingItem = (inventory||[]).find(i=>i.id===newInvItemForm.id.toUpperCase());
-    const newCost = parseNum(newInvItemForm.cost);
+    const baseId   = newInvItemForm.id.toUpperCase().trim();
+    const almacen  = (newInvItemForm.almacen || 'ALMACEN ZI').trim();
+    // Composite ID: CODE___ALMACEN (3 underscores to avoid collisions)
+    const docId    = baseId + '___' + almacen.replace(/\s+/g,'-');
+    const existingItem = (inventory||[]).find(i=>i.id===docId) || (inventory||[]).find(i=>i.id===baseId);
+    const newCost  = parseNum(newInvItemForm.cost);
     const newStock = parseNum(newInvItemForm.stock);
-    
-    // If existing item and stock/cost changed, calculate weighted average
-    let finalCost = newCost;
-    let prevStock = existingItem?.stock || 0;
-    let prevCost = existingItem?.cost || 0;
+    let finalCost  = newCost;
+    const prevStock= existingItem?.stock || 0;
+    const prevCost = existingItem?.cost  || 0;
     if(existingItem && editingInvId) {
-      // On edit: keep weighted average only if stock increased
       const stockDiff = newStock - prevStock;
       if(stockDiff > 0 && newCost > 0) {
         finalCost = ((prevStock * prevCost) + (stockDiff * newCost)) / newStock;
@@ -1619,29 +1569,37 @@ export default function App() {
         finalCost = newCost || prevCost;
       }
     }
-    
-    const itemData = { ...newInvItemForm, id: newInvItemForm.id.toUpperCase(), desc: newInvItemForm.desc.toUpperCase(), cost: finalCost, stock: newStock, timestamp: Date.now() };
+    const itemData = {
+      id: docId, baseId, almacen,
+      desc: newInvItemForm.desc.toUpperCase(),
+      category: newInvItemForm.category || 'Materia Prima',
+      unit: newInvItemForm.unit || 'kg',
+      cost: finalCost,
+      stock: newStock,
+      timestamp: Date.now()
+    };
     try { 
-      await setDoc(getDocRef('inventory', itemData.id), itemData, { merge: true }); 
+      await setDoc(getDocRef('inventory', docId), itemData, { merge: true });
+      // Recalculate summary doc for this product
+      await recalcInventorySummary(baseId);
       
-      // Register kardex movement if stock changed
+      // Kardex movement
       if(existingItem && editingInvId) {
         const stockDiff = newStock - prevStock;
         if(Math.abs(stockDiff) > 0.001) {
           await addDoc(getColRef('inventoryMovements'), {
-            itemId: itemData.id, itemDesc: itemData.desc,
+            itemId: docId, itemDesc: itemData.desc,
             type: stockDiff > 0 ? 'ENTRADA' : 'SALIDA',
             qty: Math.abs(stockDiff), unitCost: finalCost,
             totalValue: Math.abs(stockDiff) * finalCost,
-            previousStock: prevStock, newStock,
+            previousStock: prevStock, newStock, almacen,
             docRef: 'AJUSTE MANUAL', notes: 'Edición en Inventario General',
             date: getTodayDate(), user: appUser?.name||'Admin', timestamp: Date.now()
           });
         }
       }
-      
       setNewInvItemForm(initialInvItemForm); setEditingInvId(null); 
-      setDialog({ title: '✅ Éxito', text: `Artículo guardado. ${existingItem?'Stock actualizado en Inventario General.':'Nuevo artículo creado.'}`, type: 'alert' }); 
+      setDialog({ title: '✅ Éxito', text: `Artículo guardado en ${almacen}. Los demás almacenes no fueron afectados.`, type: 'alert' }); 
     } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
   const startEditInvItem = (item) => { setEditingInvId(item.id); setNewInvItemForm({ id: item.id, desc: item.desc, category: item.category || 'Materia Prima', cost: item.cost || '', stock: item.stock || '', unit: item.unit || 'kg' }); setShowInvItemForm(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
@@ -1767,6 +1725,8 @@ export default function App() {
       const updateData = {stock: newStock};
       if(isEntradas && unitCostFinal > 0) updateData.cost = newCost;
       await updateDoc(getDocRef('inventory', movForm.itemId), updateData);
+      // If this is a warehouse-specific doc (has baseId), recalc summary
+      if(inv.baseId) await recalcInventorySummary(inv.baseId);
       setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',type:isEntradas?'ENTRADA':'AUTOCONSUMO',notes:'',date:getTodayDate()});
       setShowMovForm(false);
       setDialog({title:'✅ Movimiento Procesado',text:`Nuevo stock: ${formatNum(newStock)} ${inv.unit}`,type:'alert'});
@@ -3614,7 +3574,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       // States are at component level (osaItemList, osaItemForm, osaHdr)
 
       return (
-        <>
         <div className="space-y-4 animate-in fade-in">
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-5 border-b bg-orange-50 flex justify-between items-center">
@@ -3749,8 +3708,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             </div>
           </div>
         </div>
-        )}
-        </>
       );
     }
 
@@ -3806,35 +3763,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       };
 
       const exportAlmacenExcel = (almacenName, items) => {
-        const totalVal = items.reduce((s,i)=>s+((i.stock||0)*(i.cost||0)),0);
-        const now = new Date().toLocaleDateString('es-VE',{day:'2-digit',month:'long',year:'numeric'});
-        const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="UTF-8"><style>
-  body{font-family:Arial,sans-serif;font-size:11pt;}
-  .hl{background:#111;color:#fff;padding:12px 20px;font-size:22pt;font-weight:900;letter-spacing:2px;}
-  .hs{background:#ea580c;color:#fff;padding:5px 20px;font-size:9pt;font-weight:bold;}
-  .hi{padding:8px 20px 12px;border-bottom:3px solid #ea580c;font-size:9pt;color:#555;}
-  table{width:100%;border-collapse:collapse;margin-top:10px;}
-  th{background:#1f2937;color:#fff;padding:8px 10px;font-size:9pt;text-align:left;font-weight:900;}
-  td{padding:6px 10px;font-size:9pt;border-bottom:1px solid #e5e7eb;}
-  tr:nth-child(even) td{background:#f9fafb;}
-  .tr td{background:#1f2937;color:#fff;font-weight:900;padding:8px 10px;}
-</style></head><body>
-<div class="hl">&#9632; SUPPLY G&amp;B</div>
-<div class="hs">SISTEMA ERP — JIRET G&amp;B C.A.</div>
-<div class="hi"><b>REPORTE DE INVENTARIO: ${almacenName.toUpperCase()}</b><br/>Fecha: ${now} &nbsp;|&nbsp; Artículos: ${items.length} &nbsp;|&nbsp; Valor total: $${totalVal.toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
-<table>
-<tr><th>Código</th><th>Descripción</th><th>Categoría</th><th>U.M.</th><th>Stock</th><th>Costo Unit. ($)</th><th>Valor Total ($)</th><th>Almacén</th></tr>
-${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${i.desc||''}</td><td>${i.category||'—'}</td><td style="text-align:center">${i.unit||''}</td><td style="text-align:right;font-weight:bold">${Number(i.stock||0).toFixed(2)}</td><td style="text-align:right">$${Number(i.cost||0).toFixed(2)}</td><td style="text-align:right;font-weight:bold;color:#16a34a">$${((i.stock||0)*(i.cost||0)).toFixed(2)}</td><td style="font-size:8pt;color:#6b7280">${almacenName}</td></tr>`).join('')}
-<tr class="tr"><td colspan="6" style="text-align:right;padding:8px 10px">TOTAL INVENTARIO:</td><td style="padding:8px 10px">$${totalVal.toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td></td></tr>
-</table>
-<div style="margin-top:14px;font-size:8pt;color:#9ca3af;text-align:center">© ${new Date().getFullYear()} Jiret G&amp;B C.A. — Todos los derechos reservados</div>
-</body></html>`;
-        const blob = new Blob([`\ufeff${html}`], {type:'application/vnd.ms-excel;charset=utf-8'});
+        const header = ['Código','Descripción','Categoría','U.M.','Stock','Costo Unit. ($)','Valor Total ($)','Almacén'];
+        const rows2 = items.map(i=>[i.id, i.desc, i.category||'', i.unit||'', i.stock||0, i.cost||0, (i.stock||0)*(i.cost||0), almacenName]);
+        const csv = [header, ...rows2].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+        const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href=url; a.download=`inventario_${almacenName.replace(/\s+/g,'_')}_${new Date().toISOString().substring(0,10)}.xls`; a.click();
-        URL.revokeObjectURL(url);
+        const a = document.createElement('a'); a.href=url; a.download=`inventario_${almacenName.replace(/\s+/g,'_')}.csv`; a.click();
       };
 
       return (
@@ -4019,19 +3953,13 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
               })()}
             </div>
           </div>
-                <div className="flex justify-end gap-3 pt-2">
-                  <button onClick={()=>setShowTrasladoModal(false)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
-                  <button onClick={handleSaveTraslado} className="bg-indigo-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-indigo-700 flex items-center gap-2">
-                    <ArrowRightLeft size={14}/> Registrar Traslado
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-            </div>
-        );
-      }
+        </div>
+      );
+    }
+
+    if (invView === 'reportes_mod') {
+      return renderInventoryReports(invReportType);
+    }
 
     // ── ÓRDENES DE COMPRA (desde Inventario) ──
     if (invView === 'inv_ordenes_compra') {
@@ -4318,6 +4246,7 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
               Las <span className="text-red-700 font-black">SALIDAS</span> son consumos de materiales en las fases de produccion.
             </div>
           </div>
+        </div>
       );
     }
 
@@ -4347,7 +4276,6 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
         const colorH = esTermo ? 'bg-green-700' : 'bg-blue-700';
         if (items.length === 0) return <div className="text-center py-6 text-gray-400 text-xs font-bold uppercase">Sin registros</div>;
         return (
-          <>
           <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none mb-2">
             <table className="w-full text-left text-xs">
               <thead className={`${colorH} text-white border-b-2`}>
@@ -4917,6 +4845,30 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
         </div>
       );
     }
+
+            {/* ── MODAL EDITAR PRODUCTO TERMINADO ── */}
+        {editingFG && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-blue-500">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-black uppercase flex items-center gap-2 text-blue-800"><Edit size={20}/> Editar Producto Terminado</h3>
+                <button onClick={()=>setEditingFG(null)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nombre / Descripción del Producto</label>
+                  <input type="text" value={fgEditForm.producto} onChange={e=>setFgEditForm(f=>({...f,producto:e.target.value.toUpperCase()}))}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-blue-400"/>
+                  <p className="text-[8px] text-gray-400 mt-0.5">Formato sugerido: CATEGORIA - ANCHOxLARGOxMICRASMIC</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  {editingFG.tipoProducto !== 'TERMOENCOGIBLE' && (
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (Millares)</label>
+                      <input type="number" step="0.01" value={fgEditForm.millares} onChange={e=>setFgEditForm(f=>({...f,millares:e.target.value}))}
+                        className="w-full border-2 border-blue-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-blue-400"/>
+                    </div>
+                  )}
                   {editingFG.tipoProducto === 'TERMOENCOGIBLE' && (
                     <div>
                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (KG)</label>
@@ -4946,9 +4898,7 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
             </div>
           </div>
         )}
-          </>
-      );
-    }
+
 
     if (invView === 'almacen') {
       const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'PENDIENTE');
@@ -5474,9 +5424,24 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
     const filteredInventory = allCatalogItems.filter(i => {
       const matchSearch = (i?.id || '').toUpperCase().includes(searchInvUpper) || (i?.desc || '').toUpperCase().includes(searchInvUpper);
       const matchCat = catalogCatFilter === 'TODAS' || (i?.category||'Otros') === catalogCatFilter;
-      const itemAlmacen = i?._isFGGroup ? 'Productos Terminados' : (i?.almacen || 'ALMACEN ZI');
-      const matchAlmacen = catalogAlmacenFilter === 'TODOS' || itemAlmacen === catalogAlmacenFilter;
-      return matchSearch && matchCat && matchAlmacen;
+      if (!matchSearch || !matchCat) return false;
+      if (i?._isFGGroup) {
+        return catalogAlmacenFilter === 'TODOS' || catalogAlmacenFilter === 'Productos Terminados';
+      }
+      const itemAlmacen = i?.almacen || 'ALMACEN ZI';
+      if (catalogAlmacenFilter === 'TODOS') {
+        // Con filtro TODOS: mostrar docs de resumen (_isSummary) para productos multi-almacén
+        // y docs normales para productos de un solo almacén
+        // Ocultar docs de almacén específico cuando ya existe un doc de resumen
+        const baseId = i?.baseId;
+        if (baseId && !i?._isSummary) return false; // tiene baseId pero no es resumen → ocultar
+        return true;
+      } else {
+        // Almacén específico: mostrar solo docs de ese almacén
+        const baseId = i?.baseId;
+        if (baseId) return itemAlmacen === catalogAlmacenFilter && !i?._isSummary;
+        return itemAlmacen === catalogAlmacenFilter;
+      }
     });
     const filteredMovements = (invMovements || []).filter(m => (m?.itemId || '').toUpperCase().includes(searchInvUpper) || (m?.itemName || '').toUpperCase().includes(searchInvUpper) || (m?.reference || '').toUpperCase().includes(searchInvUpper));
 
@@ -5590,24 +5555,8 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Inventario General</h2>
                <div className="flex gap-3 flex-wrap justify-end">
-                 <label className="bg-indigo-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-indigo-700 transition-colors flex items-center gap-2 cursor-pointer">
+                 <button onClick={() => requireAdminPassword(handleImportConsolidatedInventory, 'Importar Inventario Consolidado Excel')} className="bg-indigo-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-indigo-700 transition-colors flex items-center gap-2">
                    <Upload size={16}/> IMPORTAR EXCEL
-                   <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e=>{
-                     const file = e.target.files[0]; if(!file) return;
-                     requireAdminPassword(() => handleImportExcelFile(file), 'Importar Inventario desde Excel');
-                     e.target.value='';
-                   }}/>
-                 </label>
-                 <button onClick={() => {
-                   const items = filteredInventory.filter(i=>!i._isFGGroup);
-                   const totalVal = items.reduce((s,i)=>s+((i?.stock||0)*(i?.cost||0)),0);
-                   const now = new Date().toLocaleDateString('es-VE',{day:'2-digit',month:'long',year:'numeric'});
-                   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>body{font-family:Arial;font-size:10pt}.hl{background:#111;color:#fff;padding:10px 20px;font-size:20pt;font-weight:900}.hs{background:#ea580c;color:#fff;padding:4px 20px;font-size:8pt;font-weight:bold}.hi{padding:6px 20px 10px;border-bottom:3px solid #ea580c;font-size:9pt;color:#555}table{width:100%;border-collapse:collapse}th{background:#1f2937;color:#fff;padding:7px;font-size:8pt;text-align:left}td{padding:5px 7px;font-size:8pt;border-bottom:1px solid #e5e7eb}tr:nth-child(even) td{background:#f9fafb}.tr td{background:#1f2937;color:#fff;font-weight:900}</style></head><body><div class="hl">&#9632; SUPPLY G&B</div><div class="hs">SISTEMA ERP — JIRET G&B C.A.</div><div class="hi"><b>INVENTARIO GENERAL</b><br/>Fecha: ${now} | Artículos: ${items.length} | Valor: $${totalVal.toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2})}</div><table><tr><th>Código</th><th>Descripción</th><th>Categoría</th><th>U.M.</th><th>Stock</th><th>Costo ($)</th><th>Valor Total ($)</th><th>Almacén</th></tr>${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i?.id||''}</td><td>${i?.desc||''}</td><td>${i?.category||'—'}</td><td style="text-align:center">${i?.unit||''}</td><td style="text-align:right;font-weight:bold">${Number(i?.stock||0).toFixed(2)}</td><td style="text-align:right">$${Number(i?.cost||0).toFixed(2)}</td><td style="text-align:right;color:#16a34a;font-weight:bold">$${((i?.stock||0)*(i?.cost||0)).toFixed(2)}</td><td style="font-size:7pt;color:#6b7280">${i?.almacen||'—'}</td></tr>`).join('')}<tr class="tr"><td colspan="6" style="text-align:right;padding:7px">TOTAL:</td><td style="padding:7px">$${totalVal.toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td></td></tr></table><div style="margin-top:10px;font-size:7pt;color:#9ca3af;text-align:center">© ${new Date().getFullYear()} Jiret G&B C.A.</div></body></html>`;
-                   const blob = new Blob([`\ufeff${html}`],{type:'application/vnd.ms-excel;charset=utf-8'});
-                   const url = URL.createObjectURL(blob);
-                   const a = document.createElement('a'); a.href=url; a.download=`inventario_general_${new Date().toISOString().substring(0,10)}.xls`; a.click(); URL.revokeObjectURL(url);
-                 }} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2">
-                   <Download size={16}/> EXPORTAR XLS
                  </button>
                  <button onClick={() => {clearAllReports(); setInvView('toma_fisica'); setPhysicalCounts({});}} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 transition-colors flex items-center gap-2">
                    <ClipboardEdit size={16}/> TOMA FÍSICA / AJUSTE
@@ -5721,6 +5670,85 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
                  </div>
                </form>
                )}
+            </div>
+        {/* ── MODAL TRASLADO ENTRE ALMACENES ── */}
+            {showTrasladoModal && (
+              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-indigo-500">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-lg font-black uppercase flex items-center gap-2"><ArrowRightLeft size={20} className="text-indigo-600"/> Traslado entre Almacenes</h3>
+                    <button onClick={()=>setShowTrasladoModal(false)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
+                        <select value={trasladoForm.almacenOrigen} onChange={e=>setTrasladoForm({...trasladoForm,almacenOrigen:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Destino</label>
+                        <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm({...trasladoForm,almacenDestino:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
+                      <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm({...trasladoForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                        <option value="">— Seleccionar artículo —</option>
+                        <optgroup label="── Materia Prima / Consumibles ──">
+                          {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=>(
+                            <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="── Semielaborados / Bobinas ──">
+                          {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=>(
+                            <option key={i.id} value={`SEM::${i.id}`}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="── Productos Terminados (FG) ──">
+                          {(finishedGoodsInventory||[])
+                            .filter(fg => {
+                              // Mostrar TODOS los PT — sin filtro de stock>0
+                              // Solo excluir si stock es estrictamente negativo (inconsistencia de datos)
+                              const stk = parseNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares);
+                              return stk >= 0;
+                            })
+                            .sort((a,b)=>(a.producto||'').localeCompare(b.producto||''))
+                            .map(fg=>{
+                              const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
+                              const stk = parseNum(esTermo?fg.kgProducidos:fg.millares);
+                              const unit = esTermo?'KG':'Mill.';
+                              const label = (fg.producto||fg.id||'').toUpperCase().trim();
+                              return (
+                                <option key={fg.id} value={'FG::'+fg.id}>
+                                  {label} {fg.cliente?'['+fg.cliente+']':''} — {formatNum(stk)} {unit}
+                                </option>
+                              );
+                            })
+                          }
+                        </optgroup>
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
+                        <input type="number" step="0.01" min="0.01" value={trasladoForm.qty} onChange={e=>setTrasladoForm({...trasladoForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-400" placeholder="0.00"/>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                        <input type="date" value={trasladoForm.date} onChange={e=>setTrasladoForm({...trasladoForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400"/>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones (opcional)</label>
+                      <input type="text" value={trasladoForm.notes} onChange={e=>setTrasladoForm({...trasladoForm,notes:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 uppercase" placeholder="Ej: INSUMOS PARA PRODUCCIÓN LÍNEA 2"/>
+                    </div>
+                    {trasladoForm.almacenOrigen === trasladoForm.almacenDestino && (
+                      <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
+                    )}
                     <div className="flex justify-end gap-3 pt-2">
                       <button onClick={()=>setShowTrasladoModal(false)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
                       <button onClick={handleSaveTraslado} className="bg-indigo-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-indigo-700 flex items-center gap-2">
@@ -5828,8 +5856,18 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
                                <td className="py-2 px-2 text-center hidden md:table-cell">
                                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase text-white ${colClass}`}>{(inv?.category||'').substring(0,6)}</span>
                                </td>
-                               <td className="py-2 px-2 text-right font-bold text-gray-600 text-[10px] print:text-black">${formatNum(inv?.cost)}</td>
-                               <td className="py-2 px-2 text-right font-black text-blue-600 text-[10px] print:text-black">{formatNum(inv?.stock)} <span className="text-[8px] text-gray-400">{inv?.unit}</span></td>
+                               <td className="py-2 px-2 text-right font-bold text-gray-600 text-[10px] print:text-black">
+                                 ${formatNum(inv?._isSummary ? inv.avgCost : inv?.cost)}
+                                 {inv?._isSummary && <span className="text-[8px] text-orange-400 ml-0.5">prom</span>}
+                               </td>
+                               <td className="py-2 px-2 text-right font-black text-blue-600 text-[10px] print:text-black">
+                                 {formatNum(inv?._isSummary ? inv.totalStock : inv?.stock)} <span className="text-[8px] text-gray-400">{inv?.unit}</span>
+                                 {inv?._isSummary && (() => {
+                                   const wh = (inventory||[]).filter(w=>w.baseId===inv.baseId&&!w._isSummary);
+                                   if(!wh.length) return null;
+                                   return <div className="text-[8px] text-gray-400 font-normal">{wh.map(w=><span key={w.id} className="block">{(w.almacen||'').replace('ALMACEN ','')}: {formatNum(w.stock)}</span>)}</div>;
+                                 })()}
+                               </td>
                                <td className="py-2 px-2 text-right font-black text-green-600 text-[10px] print:text-black hidden lg:table-cell">${formatNum(totalVal)}</td>
                                <td className="py-2 px-2 text-center text-[8px] font-bold text-indigo-600 hidden md:table-cell">{inv?._isFGGroup ? '—' : (inv?.almacen||'ALMACEN ZI')}</td>
                                <td className="py-2 px-2 text-center no-pdf print:hidden">
@@ -14587,9 +14625,9 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
 
   if (!appUser) {
     return (
-      <div className="fixed inset-0 flex overflow-hidden" style={{background:'#111'}}>
+      <div className="min-h-screen flex" style={{background:'#111'}}>
         {/* ── IZQUIERDA: Video / branding ── */}
-        <div className="absolute inset-0 hidden md:block">
+        <div className="flex-1 relative hidden md:block">
           {settings?.loginVideo ? (
             <video
               ref={async el=>{
@@ -14606,8 +14644,7 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
                   el.src = settings.loginVideo;
                 }
               }}
-              autoPlay playsInline muted={loginVideoMuted}
-              onEnded={e=>{e.target.pause();e.target.currentTime=e.target.duration-0.01;}}
+              autoPlay loop playsInline muted={loginVideoMuted}
               className="absolute inset-0 w-full h-full object-cover"
               onError={e=>{e.target.style.display='none';}}/>
           ) : settings?.loginBg ? (
@@ -14634,8 +14671,8 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
           )}
         </div>
         {/* ── DERECHA: Panel de login limpio (blanco puro) ── */}
-        <div className="relative z-10 ml-auto flex items-center justify-center bg-white shadow-2xl" style={{width:'440px',minWidth:'360px',height:'100%'}}>
-          <div className="w-full px-12 py-0 flex flex-col justify-center" style={{minHeight:'100%'}}>
+        <div className="flex items-center justify-center bg-white" style={{width:'380px',minWidth:'320px'}}>
+          <div className="w-full px-10 py-12">
             <div className="text-center mb-10">
                <span className="text-2xl font-light tracking-widest text-gray-700">Supply</span>
                <div className="flex items-center justify-center -mt-1">
@@ -14648,17 +14685,17 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
             </div>
             <form onSubmit={handleLogin} className="space-y-5">
               <div>
-                 <label className="block text-xs font-black text-gray-500 uppercase mb-2 tracking-widest">Usuario de Acceso</label>
+                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-2 tracking-widest">Usuario de Acceso</label>
                  <div className="relative">
-                    <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20}/>
-                    <input type="text" required value={loginData.username} onChange={e=>setLoginData({...loginData,username:e.target.value})} className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl py-5 pl-14 pr-4 text-base font-black outline-none focus:border-orange-500 focus:bg-white transition-all" placeholder="administrador"/>
+                    <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={17}/>
+                    <input type="text" required value={loginData.username} onChange={e=>setLoginData({...loginData,username:e.target.value})} className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl py-4 pl-12 pr-4 text-sm font-black outline-none focus:border-orange-500 focus:bg-white transition-all" placeholder="administrador"/>
                  </div>
               </div>
               <div>
-                 <label className="block text-xs font-black text-gray-500 uppercase mb-2 tracking-widest">Clave de Seguridad</label>
+                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-2 tracking-widest">Clave de Seguridad</label>
                  <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20}/>
-                    <input type="password" required value={loginData.password} onChange={e=>setLoginData({...loginData,password:e.target.value})} className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl py-5 pl-14 pr-4 text-base font-black outline-none focus:border-orange-500 focus:bg-white transition-all" placeholder="••••••••••"/>
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={17}/>
+                    <input type="password" required value={loginData.password} onChange={e=>setLoginData({...loginData,password:e.target.value})} className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl py-4 pl-12 pr-4 text-sm font-black outline-none focus:border-orange-500 focus:bg-white transition-all" placeholder="••••••••••"/>
                  </div>
               </div>
               {loginError && <div className="bg-red-50 text-red-500 text-[10px] font-black uppercase p-3 rounded-xl text-center border border-red-100">{loginError}</div>}
@@ -14981,56 +15018,6 @@ ${items.map(i=>`<tr><td style="font-weight:900;color:#ea580c">${i.id}</td><td>${
            {activeTab === 'formulas' && renderFormulasModule()}
            {activeTab === 'produccion' && renderProduccionModule()}
            {activeTab === 'inventario' && renderInventoryModule()}
-           {activeTab === 'inventario' && showTrasladoModal && (
-              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-        {showTrasladoModal && (
-          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-indigo-500">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-black uppercase flex items-center gap-2"><ArrowRightLeft size={20} className="text-indigo-600"/> Traslado entre Almacenes</h3>
-                <button onClick={()=>setShowTrasladoModal(false)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
-              </div>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
-                    <select value={trasladoForm.almacenOrigen} onChange={e=>setTrasladoForm({...trasladoForm,almacenOrigen:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                      {(depositos||[]).map(a=><option key={a} value={a}>{a}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Destino</label>
-                    <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm({...trasladoForm,almacenDestino:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                      {(depositos||[]).map(a=><option key={a} value={a}>{a}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
-                  <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm({...trasladoForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                    <option value="">— Seleccionar artículo —</option>
-                    {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=>(
-                      <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
-                    <input type="number" step="0.01" min="0.01" value={trasladoForm.qty} onChange={e=>setTrasladoForm({...trasladoForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-400" placeholder="0.00"/>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                    <input type="date" value={trasladoForm.date} onChange={e=>setTrasladoForm({...trasladoForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400"/>
-                  </div>
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones (opcional)</label>
-                  <input type="text" value={trasladoForm.notes||''} onChange={e=>setTrasladoForm({...trasladoForm,notes:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 uppercase" placeholder="Ej: INSUMOS PARA PRODUCCIÓN"/>
-                </div>
-                {trasladoForm.almacenOrigen===trasladoForm.almacenDestino&&trasladoForm.almacenOrigen!==''&&(
-                  <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
-           )}
            {activeTab === 'simulador' && renderSimuladorModule()}
            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
            {activeTab === 'configuracion' && renderConfiguracionModule()}
