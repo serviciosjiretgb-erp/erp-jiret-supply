@@ -543,7 +543,6 @@ export default function App() {
   const [trasladoForm, setTrasladoForm] = useState(initialTrasladoForm);
   const [showTrasladoModal, setShowTrasladoModal] = useState(false);
   const [trasladoSearch, setTrasladoSearch] = useState('');
-  const [trasladoSearch, setTrasladoSearch] = useState('');
   const [catalogAlmacenFilter, setCatalogAlmacenFilter] = useState('TODOS');
   // Control Alimentario / Órdenes de Salida
   const [alimentarioItems, setAlimentarioItems] = useState([]);
