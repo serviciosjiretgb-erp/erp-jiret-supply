@@ -760,7 +760,25 @@ export default function App() {
 
     // ── PRODUCTOS TERMINADOS ──
     const termItems = [
-      ...(finishedGoodsInventory||[]),  // Todos los PT, sin filtro de stock
+      ...(finishedGoodsInventory||[]),  // Todos los PT
+      // Items de inventario general con stock > 0 (aparecen como inventario inicial)
+      ...(()=>{
+        const seen = new Set();
+        return (inventory||[]).filter(i=>{
+          const cid = i.displayId||(i.id||'').split('___')[0];
+          if(seen.has(cid)||parseNum(i.stock||0)<=0) return false;
+          seen.add(cid); return true;
+        }).map(i=>({
+          ...i,
+          _fromInventory:true,
+          id:'INV::'+( i.displayId||(i.id||'').split('___')[0]),
+          producto: i.displayId||(i.id||'').split('___')[0],
+          tipoProducto:'INVENTARIO_GENERAL',
+          millares: 0,
+          kgProducidos: parseNum(i.stock||0),
+          costoUnitario: parseNum(i.cost||0),
+        }));
+      })(),
     ];
     if(termItems.length>0){
       html += sectionHeader('✅ PRODUCTOS TERMINADOS','#065f46');
@@ -3594,10 +3612,23 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     <select value={osaItemForm.itemId} onChange={e=>setOsaItemForm(f=>({...f,itemId:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
                       <option value="">— Seleccionar artículo —</option>
                       <optgroup label="── Materia Prima / Consumibles ──">
-                        {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                        {(inventory||[])
+                          .filter(i=>i.category!=='Semielaborados')
+                          .sort((a,b)=>(a.displayId||a.id||'').localeCompare(b.displayId||b.id||''))
+                          .map(i=>{
+                            const cid=i.displayId||(i.id||'').split('___')[0];
+                            const a=i.almacen?` [${i.almacen.replace('ALMACEN ','')}]`:'';
+                            return <option key={i.id} value={i.id}>{cid}{a} — {i.desc} ({formatNum(i.stock)} {i.unit})</option>;
+                          })}
                       </optgroup>
                       <optgroup label="── Semielaborados / Bobinas ──">
-                        {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=><option key={i.id} value={`SEM::${i.id}`}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>)}
+                        {(inventory||[])
+                          .filter(i=>i.category==='Semielaborados')
+                          .sort((a,b)=>(a.id||'').localeCompare(b.id||''))
+                          .map(i=>{
+                            const a=i.almacen?` [${i.almacen.replace('ALMACEN ','')}]`:'';
+                            return <option key={i.id} value={`SEM::${i.id}`}>{i.id}{a} — {i.desc} ({formatNum(i.stock)} KG)</option>;
+                          })}
                       </optgroup>
                       <optgroup label="── Productos Terminados ──">
                         {(finishedGoodsInventory||[])
@@ -3699,12 +3730,28 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       const allItems = inventory || [];
       // Filtros
       const filtSearch = almacenesFilter.search.toUpperCase();
-      const filtItems = allItems.filter(i => {
-        const matchAlm = almacenesFilter.almacen === 'TODOS' || (i.almacen||'ALMACEN ZI') === almacenesFilter.almacen;
+      // Agrupar por cleanId para evitar IDs compuestos en el export
+      const _invGroups = {};
+      for (const i of allItems) {
+        const cleanId = i.displayId || (i.id||'').split('___')[0];
+        const alm = i.almacen || 'ALMACEN ZI';
+        const matchAlm = almacenesFilter.almacen === 'TODOS' || alm === almacenesFilter.almacen;
         const matchCat = almacenesFilter.cat === 'TODAS' || i.category === almacenesFilter.cat;
-        const matchSearch = !filtSearch || i.id.toUpperCase().includes(filtSearch) || (i.desc||'').toUpperCase().includes(filtSearch);
-        return matchAlm && matchCat && matchSearch;
-      });
+        const matchSearch = !filtSearch || cleanId.toUpperCase().includes(filtSearch) || (i.desc||'').toUpperCase().includes(filtSearch);
+        if (!matchAlm || !matchCat || !matchSearch) continue;
+        const key = almacenesFilter.almacen === 'TODOS' ? cleanId : cleanId + '|' + alm;
+        if (!_invGroups[key]) {
+          _invGroups[key] = { ...i, id: cleanId, displayId: cleanId, stock: 0, _wb: [] };
+        }
+        const stk = parseNum(i.stock||0);
+        const cst = parseNum(i.cost||0);
+        const prev = _invGroups[key];
+        const prevVal = prev.stock * parseNum(prev.cost||0);
+        _invGroups[key].stock = prev.stock + stk;
+        _invGroups[key].cost = (prev.stock+stk)>0 ? (prevVal+stk*cst)/(prev.stock+stk) : cst;
+        _invGroups[key]._wb.push({ almacen: alm, stock: stk });
+      }
+      const filtItems = Object.values(_invGroups);
       // Group by almacen
       const byAlmacen = {};
       filtItems.forEach(i => {
@@ -5723,14 +5770,23 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm({...trasladoForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
                         <option value="">— Seleccionar artículo —</option>
                         <optgroup label="── Materia Prima / Consumibles ──">
-                          {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=>(
-                            <option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>
-                          ))}
+                          {(inventory||[])
+                            .filter(i=>i.category!=='Semielaborados')
+                            .sort((a,b)=>(a.displayId||a.id||'').localeCompare(b.displayId||b.id||''))
+                            .map(i=>{
+                              const cid=i.displayId||(i.id||'').split('___')[0];
+                              const a=i.almacen?` [${i.almacen.replace('ALMACEN ','')}]`:'';
+                              return <option key={i.id} value={i.id}>{cid}{a} — {i.desc} ({formatNum(i.stock)} {i.unit})</option>;
+                            })}
                         </optgroup>
                         <optgroup label="── Semielaborados / Bobinas ──">
-                          {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=>(
-                            <option key={i.id} value={`SEM::${i.id}`}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>
-                          ))}
+                          {(inventory||[])
+                            .filter(i=>i.category==='Semielaborados')
+                            .sort((a,b)=>(a.id||'').localeCompare(b.id||''))
+                            .map(i=>{
+                              const a=i.almacen?` [${i.almacen.replace('ALMACEN ','')}]`:'';
+                              return <option key={i.id} value={`SEM::${i.id}`}>{i.id}{a} — {i.desc} ({formatNum(i.stock)} KG)</option>;
+                            })}
                         </optgroup>
                         <optgroup label="── Productos Terminados (FG) ──">
                           {(finishedGoodsInventory||[])
