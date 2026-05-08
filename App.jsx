@@ -542,6 +542,8 @@ export default function App() {
   const initialTrasladoForm = { date: getTodayDate(), itemId: '', almacenOrigen: 'ALMACEN ZI', almacenDestino: 'PLANTA', qty: '', notes: '' };
   const [trasladoForm, setTrasladoForm] = useState(initialTrasladoForm);
   const [showTrasladoModal, setShowTrasladoModal] = useState(false);
+  const [trasladoSearch, setTrasladoSearch] = useState('');
+  const [trasladoSearch, setTrasladoSearch] = useState('');
   const [catalogAlmacenFilter, setCatalogAlmacenFilter] = useState('TODOS');
   // Control Alimentario / Órdenes de Salida
   const [alimentarioItems, setAlimentarioItems] = useState([]);
@@ -1531,7 +1533,7 @@ export default function App() {
       // Stock total del item no cambia (solo cambia la ubicación)
       await batch.commit();
       setTrasladoForm(initialTrasladoForm);
-      setShowTrasladoModal(false);
+      setShowTrasladoModal(false); setTrasladoSearch('');
       setDialog({ title: '✅ Traslado Registrado', text: `${formatNum(cantQty)} ${item.unit} de ${item.id} trasladados de ${almacenOrigen} a ${almacenDestino}.`, type: 'alert' });
     } catch (err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
@@ -5592,7 +5594,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  <form onSubmit={submitApproveRequisition}>
                     <table className="w-full text-left text-sm mb-8 border-collapse">
                        <thead className="bg-gray-100 text-[10px] font-black uppercase text-gray-500 tracking-widest border-b-2 border-gray-200">
-                          <tr><th className="p-3">Insumo / Descripción</th><th className="p-3 text-center">Disp. Almacén</th><th className="p-3 text-center">Cant. Aprobada (Descargo)</th></tr>
+                          <tr><th className="p-3">Insumo / Descripción</th><th className="p-3 text-center">Cant. Aprobada (Descargo)</th></tr>
                        </thead>
                        <tbody className="divide-y divide-gray-100">
                           {reqToApprove.items.map((it, idx) => {
@@ -5641,7 +5643,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>body{font-family:Arial;font-size:11px;}h2,h3,p{text-align:center;margin:4px 0;}table{border-collapse:collapse;width:100%;margin-top:14px;}th,td{border:1px solid #000;padding:6px 8px;}th{background:#1a1a1a;color:#fff;text-align:center;font-weight:bold;}tr.catHeader td{background:#ea580c;color:#fff;font-weight:bold;}.subtot td{background:#f3f4f6;font-weight:bold;}.grandtot td{background:#000;color:#fff;font-weight:bold;font-size:12px;}</style></head><body>`;
                    html += `<h2>${empresa}</h2><h3>RIF: ${rif}</h3><p>${dir}</p>`;
                    html += `<h3>INVENTARIO GENERAL — ${catLabel}</h3><p>Fecha: ${getTodayDate()}</p>`;
-                   html += `<table><thead><tr><th>Código</th><th>Descripción</th><th>Categoría</th><th>U.M.</th><th>Costo Unit. ($)</th><th>Stock Actual</th><th>Valor Total ($)</th></tr></thead><tbody>`;
+                   html += `<table><thead><tr><th>Código</th><th>Descripción</th><th>Categoría</th><th>U.M.</th><th>Costo Unit. ($)</th><th>Stock Actual</th><th>Valor Total ($)</th><th>Almacén</th></tr></thead><tbody>`;
                    const grouped = {};
                    filteredInventory.forEach(i => { const c = i?.category||'Otros'; if(!grouped[c]) grouped[c]=[]; grouped[c].push(i); });
                    const catOrder = ['Materia Prima','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
@@ -5651,17 +5653,21 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                      const items=grouped[cat];
                      const catStock=items.reduce((s,i)=>s+parseNum(i?.stock),0);
                      const catVal=items.reduce((s,i)=>s+(parseNum(i?.cost)*parseNum(i?.stock)),0);
-                     html+=`<tr class="catHeader"><td colspan="5">${cat.toUpperCase()} — ${items.length} artículos</td><td style="text-align:right">${formatNum(catStock)}</td><td style="text-align:right">$${formatNum(catVal)}</td></tr>`;
-                     items.forEach(inv=>{
+                     html+=`<tr class="catHeader"><td colspan="6">${cat.toUpperCase()} — ${items.length} artículos</td><td style="text-align:right">${formatNum(catStock)}</td><td style="text-align:right">$${formatNum(catVal)}</td></tr>`;
+                     items.sort((a,b)=>(a.displayId||a.id||'').localeCompare(b.displayId||b.id||'')).forEach(inv=>{
                        const val=parseNum(inv?.cost)*parseNum(inv?.stock);
-                       html+=`<tr><td>${inv?.id}</td><td>${inv?.desc}</td><td>${inv?.category}</td><td style="text-align:center">${inv?.unit||'KG'}</td><td style="text-align:right">$${formatNum(inv?.cost)}</td><td style="text-align:right">${formatNum(inv?.stock)}</td><td style="text-align:right">$${formatNum(val)}</td></tr>`;
+                       const cid=inv?.displayId||(inv?.id||'').split('___')[0];
+                       const almLabel = inv?._wb?.length>1
+                         ? inv._wb.map(w=>(w.almacen||'').replace('ALMACEN ','')+':'+formatNum(w.stock)).join(' | ')
+                         : (inv?.almacen||'—').replace('ALMACEN ','');
+                       html+=`<tr><td style="font-weight:900;color:#ea580c">${cid}</td><td>${inv?.desc||''}</td><td>${inv?.category}</td><td style="text-align:center">${inv?.unit||'UND'}</td><td style="text-align:right">$${formatNum(inv?.cost)}</td><td style="text-align:right">${formatNum(inv?.stock)}</td><td style="text-align:right">$${formatNum(val)}</td><td style="text-align:center;font-size:9px;color:#6b7280">${almLabel}</td></tr>`;
                      });
-                     html+=`<tr class="subtot"><td colspan="4" style="text-align:right">Subtotal ${cat}:</td><td></td><td style="text-align:right">${formatNum(catStock)}</td><td style="text-align:right">$${formatNum(catVal)}</td></tr>`;
+                     html+=`<tr class="subtot"><td colspan="5" style="text-align:right">Subtotal ${cat}:</td><td style="text-align:right">${formatNum(catStock)}</td><td style="text-align:right">$${formatNum(catVal)}</td></tr>`;
                      grandStock+=catStock; grandVal+=catVal;
                    });
-                   html+=`</tbody><tfoot><tr class="grandtot"><td colspan="5" style="text-align:right">TOTAL INVENTARIO:</td><td style="text-align:right">${formatNum(grandStock)}</td><td style="text-align:right">$${formatNum(grandVal)}</td></tr></tfoot></table>`;
+                   html+=`</tbody><tfoot><tr class="grandtot"><td colspan="6" style="text-align:right">TOTAL INVENTARIO:</td><td style="text-align:right">${formatNum(grandStock)}</td><td style="text-align:right">$${formatNum(grandVal)}</td></tr></tfoot></table>`;
                    html+=`<p style="margin-top:14px;font-size:9px;text-align:center">Generado por Supply G&B ERP — ${getTodayDate()}</p></body></html>`;
-                   const blob=new Blob([html],{type:'application/vnd.ms-excel'});
+                   const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});
                    const url=URL.createObjectURL(blob);
                    const a=document.createElement('a');a.href=url;a.download=`Catalogo_${catalogCatFilter}_${getTodayDate()}.xls`;
                    document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
@@ -5767,11 +5773,24 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     </div>
                     <div>
                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
+                      <input
+                        type="text"
+                        placeholder="🔍 Buscar por código o descripción..."
+                        value={trasladoSearch||''}
+                        onChange={e=>setTrasladoSearch(e.target.value.toUpperCase())}
+                        className="w-full border-2 border-indigo-200 bg-indigo-50 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-500 focus:bg-white mb-2 uppercase transition-colors"
+                      />
                       <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm({...trasladoForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
                         <option value="">— Seleccionar artículo —</option>
                         <optgroup label="── Materia Prima / Consumibles ──">
                           {(inventory||[])
                             .filter(i=>i.category!=='Semielaborados')
+                            .filter(i=>{
+                              if(!trasladoSearch) return true;
+                              const s=trasladoSearch.toUpperCase();
+                              const cid=(i.displayId||(i.id||'').split('___')[0]).toUpperCase();
+                              return cid.includes(s)||(i.desc||'').toUpperCase().includes(s);
+                            })
                             .sort((a,b)=>(a.displayId||a.id||'').localeCompare(b.displayId||b.id||''))
                             .map(i=>{
                               const cid=i.displayId||(i.id||'').split('___')[0];
@@ -5791,10 +5810,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         <optgroup label="── Productos Terminados (FG) ──">
                           {(finishedGoodsInventory||[])
                             .filter(fg => {
-                              // Mostrar TODOS los PT — sin filtro de stock>0
-                              // Solo excluir si stock es estrictamente negativo (inconsistencia de datos)
                               const stk = parseNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares);
-                              return stk >= 0;
+                              if(stk < 0) return false;
+                              if(!trasladoSearch) return true;
+                              return (fg.producto||fg.id||'').toUpperCase().includes(trasladoSearch)||(fg.cliente||'').toUpperCase().includes(trasladoSearch);
                             })
                             .sort((a,b)=>(a.producto||'').localeCompare(b.producto||''))
                             .map(fg=>{
@@ -5886,7 +5905,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                        <th className="py-4 px-4 text-center">Costo Unit. ($)</th>
                        <th className="py-4 px-4 text-right">Stock Actual</th>
                        <th className="py-4 px-4 text-right">Valor Total ($)</th>
-                       <th className="py-4 px-4 text-center hidden md:table-cell">Almacén</th>
+
                        <th className="py-4 px-4 text-center no-pdf print:hidden">Acciones</th>
                      </tr>
                    </thead>
@@ -5951,7 +5970,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                  )}
                                </td>
                                <td className="py-2 px-2 text-right font-black text-green-600 text-[10px] print:text-black hidden lg:table-cell">${formatNum(totalVal)}</td>
-                               <td className="py-2 px-2 text-center text-[8px] font-bold text-indigo-600 hidden md:table-cell">{inv?._isFGGroup ? '—' : (inv?.almacen||'ALMACEN ZI')}</td>
+
                                <td className="py-2 px-2 text-center no-pdf print:hidden">
                                  <div className="flex gap-1 justify-center">
                                    {inv?._isFGGroup ? (
