@@ -581,6 +581,8 @@ export default function App() {
   // Issue 8: Almacenes sub-module
   const [almacenesView, setAlmacenesView] = useState('lista');
   const [almacenesFilter, setAlmacenesFilter] = useState({ almacen:'TODOS', cat:'TODAS', search:'' });
+  const [editingAlmacenItem, setEditingAlmacenItem] = useState(null); // {id, desc, stock, cost, almacen, unit}
+  const [almacenEditForm, setAlmacenEditForm] = useState({ stock: '', cost: '' });
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
@@ -1366,6 +1368,43 @@ export default function App() {
 
 
   // ============================================================================
+  // HANDLER: EDITAR STOCK/COSTO DE PRODUCTO EN ALMACÉN ESPECÍFICO
+  // Actualiza directamente el documento Firebase del almacén y registra movimiento
+  // ============================================================================
+  const handleSaveAlmacenItem = async () => {
+    if (!editingAlmacenItem) return;
+    const newStock = parseNum(almacenEditForm.stock);
+    const newCost  = parseNum(almacenEditForm.cost);
+    const prevStock = parseNum(editingAlmacenItem.stock || 0);
+    const prevCost  = parseNum(editingAlmacenItem.cost  || 0);
+    try {
+      const updates = { timestamp: Date.now() };
+      if (almacenEditForm.stock !== '') updates.stock = newStock;
+      if (almacenEditForm.cost  !== '') updates.cost  = newCost;
+      await updateDoc(getDocRef('inventory', editingAlmacenItem.id), updates);
+      // Registrar movimiento si el stock cambió
+      const diff = newStock - prevStock;
+      if (almacenEditForm.stock !== '' && Math.abs(diff) > 0.001) {
+        await addDoc(getColRef('inventoryMovements'), {
+          itemId: editingAlmacenItem.id,
+          itemDesc: editingAlmacenItem.desc,
+          almacen: editingAlmacenItem.almacen || 'ALMACEN ZI',
+          type: diff > 0 ? 'ENTRADA' : 'SALIDA',
+          qty: Math.abs(diff),
+          unitCost: newCost || prevCost,
+          totalValue: Math.abs(diff) * (newCost || prevCost),
+          previousStock: prevStock, newStock,
+          docRef: 'AJUSTE MANUAL ALMACÉN',
+          notes: `Edición directa en Gestión de Almacenes — ${editingAlmacenItem.almacen || ''}`,
+          date: getTodayDate(), user: appUser?.name || 'Admin', timestamp: Date.now()
+        });
+      }
+      setEditingAlmacenItem(null);
+      setDialog({ title: '✅ Actualizado', text: `${editingAlmacenItem.displayId || editingAlmacenItem.id.split('___')[0]} actualizado en ${editingAlmacenItem.almacen || ''}. Todos los reportes e inventarios reflejarán el cambio.`, type: 'alert' });
+    } catch (err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
+  };
+
+  // ============================================================================
   // IMPORTAR INVENTARIO CONSOLIDADO DESDE EXCEL (datos precargados)
   // ============================================================================
   const INVENTARIO_CONSOLIDADO_DATA = [{"almacen": "ALMACEN BQTO", "id": "SP-2110-1.8BLU", "desc": "Cinta de Embalar Azul 2\" x 110Yds x 1.8Mil", "cost": 1.28, "stock": 36.0}, {"almacen": "ALMACEN BQTO", "id": "TRED-2100-2", "desc": "Cinta de Embalar Roja 2\" x 110Yds x 2.0Mil", "cost": 1.23, "stock": 36.0}, {"almacen": "ALMACEN BQTO", "id": "TCLR-21000-2", "desc": "Cinta de Embalar Transp-2\" x 1000Mts x 2.0Mil", "cost": 6.95, "stock": 476.0}, {"almacen": "ALMACEN BQTO", "id": "TCLR-2100-2", "desc": "Cinta de Embalar Transp-2\" x 110Yds x 2.0Mil", "cost": 0.76, "stock": 900.0}, {"almacen": "ALMACEN BQTO", "id": "DISPENSER-SF", "desc": "Dispensador de Imported", "cost": 7.0, "stock": 4.0}, {"almacen": "ALMACEN BQTO", "id": "PK-6082-10", "desc": "Papel Kraft Marron 60Cm x 202Mts x 82Gms-10Kg", "cost": 23.64, "stock": 20.0}, {"almacen": "ALMACEN BQTO", "id": "PK-6066-10", "desc": "Papel Kraft Marron 60Cm x 250Mts x 66Gms - 10Kg", "cost": 22.25, "stock": 6.0}, {"almacen": "ALMACEN BQTO", "id": "PK-6050-10", "desc": "Papel Kraft Marron 60Cm x 335Mts x 50Gms-10Kg", "cost": 20.15, "stock": 50.0}, {"almacen": "ALMACEN BQTO", "id": "PSFM-4508-2.78/R", "desc": "Pre-Strecth Film Transp 45Cm x 550Mts x 8Mic x 2.7Kg B/R", "cost": 8.97, "stock": 1.0}, {"almacen": "ALMACEN BQTO", "id": "SFM-WHT-4520-2.7", "desc": "Imported Blanco-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 4.42, "stock": 18.0}, {"almacen": "ALMACEN BQTO", "id": "SFM-RED-4520-2.7", "desc": "Imported Rojo-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 8.55, "stock": 8.0}, {"almacen": "ALMACEN BQTO", "id": "SFM-CLR-4520-4", "desc": "Imported Transp 45Cm x 450Mts x 20Mic-4Kg", "cost": 2.43, "stock": 49.0}, {"almacen": "ALMACEN BQTO", "id": "OSFA-CLR-5020-16", "desc": "Imported Transp Autom 50Cm x 1600Mts x 20Mic-16Kg", "cost": 15.09, "stock": 126.0}, {"almacen": "ALMACEN C2", "id": "T-2110-1.8-FR", "desc": "Cinta de Embalar \"Fragil\" 2\" x 110Yds x 1.8Mil", "cost": 2.22, "stock": 6.0}, {"almacen": "ALMACEN C2", "id": "T-2110-2-STOP", "desc": "Cinta de Embalar \"Stop\" 2\" x 110Yds x 1.8Mil", "cost": 2.74, "stock": 30.0}, {"almacen": "ALMACEN C2", "id": "SP-2110-1.8YLW", "desc": "Cinta de Embalar Amarilla 2\" x 110Yds x 1.8Mil", "cost": 1.56, "stock": 72.0}, {"almacen": "ALMACEN C2", "id": "TYLW-245", "desc": "Cinta de Embalar Amarilla 12\"\" x 45 Mts", "cost": 0.67, "stock": 72.0}, {"almacen": "ALMACEN C2", "id": "SP-2110-1.8BLU", "desc": "Cinta de Embalar Azul 2\" x 110Yds x 1.8Mil", "cost": 1.28, "stock": 112.0}, {"almacen": "ALMACEN C2", "id": "SP-3110-1.8BLU", "desc": "Cinta de Embalar Azul 3\" x 110Yds x 1.8Mil", "cost": 1.3, "stock": 11.0}, {"almacen": "ALMACEN C2", "id": "TWHT-2100-2", "desc": "Cinta de Embalar Blanca 2\" x 110Yds x 2.0Mil", "cost": 1.25, "stock": 157.0}, {"almacen": "ALMACEN C2", "id": "TWHT-250", "desc": "Cinta de Embalar Blanca 2\"\" x 50Mts", "cost": 0.7, "stock": 44.0}, {"almacen": "ALMACEN C2", "id": "PT-2110-1.88TA", "desc": "Cinta de Embalar Marron 2\" x 110Yds x 1.88Mil", "cost": 1.27, "stock": 38.0}, {"almacen": "ALMACEN C2", "id": "TTAN-250", "desc": "Cinta de Embalar Marron 2\"\" x 50Mts", "cost": 0.62, "stock": 19.0}, {"almacen": "ALMACEN C2", "id": "TORG-2100-2", "desc": "Cinta de Embalar Naranja 2\"\" x 100Mts x 2Mil", "cost": 1.6, "stock": 501.0}, {"almacen": "ALMACEN C2", "id": "SP-2110-2-BLK", "desc": "Cinta de Embalar Negra 2\" x 110Yds x 2.0Mil", "cost": 1.25, "stock": 27.0}, {"almacen": "ALMACEN C2", "id": "TRED-2100-2", "desc": "Cinta de Embalar Roja 2\" x 110Yds x 2.0Mil", "cost": 1.23, "stock": 75.0}, {"almacen": "ALMACEN C2", "id": "TRED-245", "desc": "Cinta de Embalar Roja 2\"\" x 45Mts", "cost": 0.67, "stock": 72.0}, {"almacen": "ALMACEN C2", "id": "TCLR-21000-2", "desc": "Cinta de Embalar Transp-2\" x 1000Mts x 2.0Mil", "cost": 6.95, "stock": 40.0}, {"almacen": "ALMACEN C2", "id": "TCLR-2100-2", "desc": "Cinta de Embalar Transp-2\" x 110Yds x 2.0Mil", "cost": 0.76, "stock": 28.0}, {"almacen": "ALMACEN C2", "id": "TCLR-3100-2", "desc": "Cinta de Embalar Transp-3\" x 110Yds x 2.0Mil", "cost": 1.51, "stock": 3.0}, {"almacen": "ALMACEN C2", "id": "SP-2110-1.8GRN", "desc": "Cinta de Embalar Verde 2\" x 100Mts x 1.8Mil", "cost": 1.55, "stock": 55.0}, {"almacen": "ALMACEN C2", "id": "TGRN-245", "desc": "Cinta de Embalar Verde 2\"\" x 45Mts", "cost": 0.67, "stock": 72.0}, {"almacen": "ALMACEN C2", "id": "DISP2-100", "desc": "Dispensador de Cinta de Embalar 2\"\" x 100Mts", "cost": 3.0, "stock": 12.0}, {"almacen": "ALMACEN C2", "id": "DISPENSER-SF", "desc": "Dispensador de Imported", "cost": 7.0, "stock": 19.0}, {"almacen": "ALMACEN C2", "id": "SFM-CLR-1220-MIN", "desc": "Mini-Imported Transp 12Cm x 225Mts x 20Mic", "cost": 2.48, "stock": 7.0}, {"almacen": "ALMACEN C2", "id": "PK-6050-5", "desc": "Papel Kraft Marron 60Cm x 168Mts x 50Gms-5Kg", "cost": 15.95, "stock": 4.0}, {"almacen": "ALMACEN C2", "id": "PK-6082-10", "desc": "Papel Kraft Marron 60Cm x 202Mts x 82Gms-10Kg", "cost": 23.64, "stock": 9.0}, {"almacen": "ALMACEN C2", "id": "PK-6066-10", "desc": "Papel Kraft Marron 60Cm x 250Mts x 66Gms-10Kg", "cost": 22.25, "stock": 15.0}, {"almacen": "ALMACEN C2", "id": "PK6050-10-", "desc": "Papel Kraft Marron 60Cm x 335Mts x 50Gms-10Kg", "cost": 20.15, "stock": 18.0}, {"almacen": "ALMACEN C2", "id": "PW-SPS2225", "desc": "Poly Strapping 1/2\"\" x 3000 Mts", "cost": 71.26, "stock": 1.0}, {"almacen": "ALMACEN C2", "id": "PSFM-4508-2.7B/R", "desc": "Pre-Strecth Film Transp 45Cm x 550Mts x 8Mic x 2.7Kg B/R", "cost": 8.97, "stock": 53.0}, {"almacen": "ALMACEN C2", "id": "SFM-YLW-5020-2", "desc": "Imported Amarillo 50Cm x 225Mts x 20Mic - 2Kg", "cost": 8.23, "stock": 7.0}, {"almacen": "ALMACEN C2", "id": "SFM-BLU-4520-2.7", "desc": "Imported Azul-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 9.68, "stock": 25.0}, {"almacen": "ALMACEN C2", "id": "SFM-WHT-4520-2.7", "desc": "Imported Blanco-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 4.42, "stock": 12.0}, {"almacen": "ALMACEN C2", "id": "SFM-BLK-4520-2.7", "desc": "Imported Negro-45Cm x 330Mts x 20Mic- 2.7Kg", "cost": 8.65, "stock": 12.0}, {"almacen": "ALMACEN C2", "id": "SFA-BLK-5020-16", "desc": "Imported Negro Autom 50Cm x 1500Mts x 20Mic-16Kg", "cost": 58.42, "stock": 8.0}, {"almacen": "ALMACEN C2", "id": "SFM-RED-4520-2.7", "desc": "Imported Rojo-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 8.55, "stock": 12.0}, {"almacen": "ALMACEN C2", "id": "SFM-CLR-4520-4", "desc": "Imported Transp 45Cm x 450Mts x 20Mic-4Kg", "cost": 2.43, "stock": 22.0}, {"almacen": "ALMACEN C2", "id": "0SFA-CLR-5020-16", "desc": "Imported Transp Autom 50Cm x 1600Mts x 20Mic-16Kg", "cost": 15.09, "stock": 11.0}, {"almacen": "ALMACEN C2", "id": "SFM-SHW4510-2.7-", "desc": "Imported Transp SHW 45Cm x 520Mts x 10Mic-2.7Kg", "cost": 8.7, "stock": 3.0}, {"almacen": "ALMACEN C2", "id": "SFM-CLR-4520-2", "desc": "Imported Trsansp 45Cm x 225Mts x 20Mic- 2Kg", "cost": 5.16, "stock": 2.0}, {"almacen": "ALMACEN C2", "id": "SFM-GRN-4520-2.7", "desc": "Imported Verde-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 7.44, "stock": 21.0}, {"almacen": "ALMACEN MCY", "id": "BOL-AVES", "desc": "Bolsa de Aves C/l 60 x 82 x 30Mic x Millar", "cost": 610.0, "stock": 0.01}, {"almacen": "ALMACEN MCY", "id": "BOL-GEN", "desc": "BOLSA GENERICA 60CM X 82 X 30MIC X MILLAR", "cost": 610.0, "stock": 1.29}, {"almacen": "ALMACEN MCY", "id": "T-2110-1.8-FR", "desc": "Cinta de Embalar \"Fragil\" 2\" x 110Yds x 1.8Mil", "cost": 2.22, "stock": 1.0}, {"almacen": "ALMACEN MCY", "id": "TORG-2100-2", "desc": "Cinta de Embalar Naranja 2\"\" x 100Mts x 2Mil", "cost": 1.6, "stock": 108.0}, {"almacen": "ALMACEN MCY", "id": "TP-3100LOGO", "desc": "Cinta de Embalar Personalizada 3\"\"x 100Mts", "cost": 2.33, "stock": 6.0}, {"almacen": "ALMACEN MCY", "id": "TCLR-21000-2", "desc": "Cinta de Embalar Transp-2\" x 1000Mts x 2.0Mil", "cost": 6.95, "stock": 99.0}, {"almacen": "ALMACEN MCY", "id": "TCLR-2100-2", "desc": "Cinta de Embalar Transp2\" x 110Yds x 2.0Mil", "cost": 0.76, "stock": 1170.0}, {"almacen": "ALMACEN MCY", "id": "DISPENSER-SF", "desc": "Dispensador de Imported", "cost": 7.0, "stock": 4.0}, {"almacen": "ALMACEN MCY", "id": "FJVM-1/2", "desc": "Fleje Automatico Verde 1/2 x 1768Mts x 0.63MM", "cost": 0.0, "stock": 11.0}, {"almacen": "ALMACEN MCY", "id": "SFM-CLR1220--MIN", "desc": "Mini-Imported Transp 12Cm x 225Mts x 20Mic", "cost": 2.48, "stock": 12.0}, {"almacen": "ALMACEN MCY", "id": "PK-6082-10", "desc": "Papel Kraft Marron 60Cm x 202Mts x 82Gms-10Kg", "cost": 23.64, "stock": 10.0}, {"almacen": "ALMACEN MCY", "id": "PK-6066-10", "desc": "Papel Kraft Marron 60Cm x 250Mts x 66Gms-10Kg", "cost": 22.25, "stock": 16.0}, {"almacen": "ALMACEN MCY", "id": "PK-6050-10", "desc": "Papel Kraft Marron 60Cm x 335Mts x 50Gms-10Kg", "cost": 20.15, "stock": 22.0}, {"almacen": "ALMACEN MCY", "id": "PSFM-4508-2.7B/R", "desc": "Pre-Strecth Film Transp 45Cm x 550Mts x 8Mic x 2.7Kg B/R", "cost": 8.97, "stock": 4.0}, {"almacen": "ALMACEN MCY", "id": "SFM-BLU-4520-2.7", "desc": "Imported Azul-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 9.68, "stock": 1.0}, {"almacen": "ALMACEN MCY", "id": "SFM-WHT-4520-2.7", "desc": "Imported Blanco-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 4.42, "stock": 18.0}, {"almacen": "ALMACEN MCY", "id": "OSFA-WHT-7525-29", "desc": "Imported Blanco UV 75Cm x 1600Mts x 25Mic-29Kg", "cost": 74.37, "stock": 5.0}, {"almacen": "ALMACEN MCY", "id": "SFM-BLK-4520-2.7", "desc": "Imported Negro 45Cm x 330Mts x 20Mic- 2.7Kg", "cost": 8.65, "stock": 18.0}, {"almacen": "ALMACEN MCY", "id": "SFM-CLR-4520-4", "desc": "Imported Transp 45Cm x 450Mts x 20Mic-4Kg", "cost": 2.43, "stock": 487.0}, {"almacen": "ALMACEN MCY", "id": "OSFA-CLR-5020-16", "desc": "Imported Transp Autom 50Cm x 1600Mts x 20Mic-16Kg", "cost": 15.09, "stock": 283.0}, {"almacen": "ALMACEN MCY", "id": "SFM-SHW-4510-2.7", "desc": "Imported Transp SHW 45Cm x 520Mts x 10Mic-2.7Kg", "cost": 8.7, "stock": 66.0}, {"almacen": "ALMACEN ZI", "id": "BOL-EMB", "desc": "Bolsa Transp S/ 28 (5+5)x75x12Micx Millar", "cost": 72.91, "stock": 1.02}, {"almacen": "ALMACEN ZI", "id": "BOL-PNL", "desc": "Bolsa Transp S/l 60 (18+18)x75x4Micx Millar", "cost": 72.92, "stock": 103.3}, {"almacen": "ALMACEN ZI", "id": "BOL-MEN", "desc": "Bolsa Transp S/I 9 9x15x6Micx Millar", "cost": 3.1, "stock": 251.0}, {"almacen": "ALMACEN ZI", "id": "T-2110-1.8-FR", "desc": "Cinta de Embalar \"Fragil\" 2\" x 110Yds x 1.8Mil", "cost": 2.22, "stock": 35.0}, {"almacen": "ALMACEN ZI", "id": "T-2110-2-STOP", "desc": "Cinta de Embalar \"Stop\" 2\" x 110Yds x 1.8Mil", "cost": 2.74, "stock": 72.0}, {"almacen": "ALMACEN ZI", "id": "SP-2110-1.8YLW", "desc": "Cinta de Embalar Amarilla 2\" x 110Yds x 1.8Mil", "cost": 1.56, "stock": 215.0}, {"almacen": "ALMACEN ZI", "id": "TWHT-2100-2", "desc": "Cinta de Embalar Blanca 2\" x 110Yds x 2.0Mil", "cost": 1.25, "stock": 468.0}, {"almacen": "ALMACEN ZI", "id": "PT-2110-1.88TA", "desc": "Cinta de Embalar Marron 2\" x 110Yds x 1.88Mil", "cost": 1.27, "stock": 36.0}, {"almacen": "ALMACEN ZI", "id": "TORG-2100-2", "desc": "Cinta de Embalar Naranja 2\"\" x 100Mts x 2Mil", "cost": 1.6, "stock": 540.0}, {"almacen": "ALMACEN ZI", "id": "SP-2110-2-BLK", "desc": "Cinta de Embalar Negra 2\" x 110Yds x 2.0Mil", "cost": 1.25, "stock": 252.0}, {"almacen": "ALMACEN ZI", "id": "TP-3100LOGO", "desc": "Cinta de Embalar Personalizada 3\"\"x 100Mts", "cost": 2.33, "stock": 35.0}, {"almacen": "ALMACEN ZI", "id": "TRED-2100-2", "desc": "Cinta de Embalar Roja 2\" x 110Yds x 2.0Mil", "cost": 1.23, "stock": 215.0}, {"almacen": "ALMACEN ZI", "id": "TCLR-21000-2", "desc": "Cinta de Embalar Transp- 2\" x 1000Mts x 2.0Mil", "cost": 6.95, "stock": 1094.0}, {"almacen": "ALMACEN ZI", "id": "TCLR-2100-2", "desc": "Cinta de Embalar Transp- 2\" x 110Yds x 2.0Mil", "cost": 0.76, "stock": 5241.0}, {"almacen": "ALMACEN ZI", "id": "TCLR-3100-2", "desc": "Cinta de Embalar Transp- 3\" x 110Yds x 2.0Mil", "cost": 1.51, "stock": 48.0}, {"almacen": "ALMACEN ZI", "id": "SP-2110-1.8GRN", "desc": "Cinta de Embalar Verde 2\" x 100Mts x 1.8Mil", "cost": 1.55, "stock": 36.0}, {"almacen": "ALMACEN ZI", "id": "DISP2-100", "desc": "Dispensador de Cinta de Embalar 2\"\" x 100Mts", "cost": 3.0, "stock": 8.0}, {"almacen": "ALMACEN ZI", "id": "DISPENSER-SF", "desc": "Dispensador de Imported", "cost": 7.0, "stock": 31.0}, {"almacen": "ALMACEN ZI", "id": "FJVM-1/2", "desc": "Fleje Automatico Verde 1/2 x 1768Mts x 0.63MM", "cost": 0.0, "stock": 118.0}, {"almacen": "ALMACEN ZI", "id": "SFM-CLR-1220-MIN", "desc": "Mini-Imported Transp 12Cm x 225Mts x 20Mic", "cost": 2.48, "stock": 12.0}, {"almacen": "ALMACEN ZI", "id": "PK-6050-5", "desc": "Papel Kraft Marron 60Cm x 168Mts x 50Gms - 5Kg", "cost": 15.95, "stock": 1.0}, {"almacen": "ALMACEN ZI", "id": "PK-6082-10", "desc": "Papel Kraft Marron 60Cm x 202Mts x 82Gms-10Kg", "cost": 23.64, "stock": 45.0}, {"almacen": "ALMACEN ZI", "id": "PK-6066-10", "desc": "Papel Kraft Marron 60Cm x 250Mts x 66Gms-10Kg", "cost": 22.25, "stock": 179.0}, {"almacen": "ALMACEN ZI", "id": "PK-6050-10", "desc": "Papel Kraft Marron 60Cm x 335Mts x 50Gms-10Kg", "cost": 20.15, "stock": 2239.0}, {"almacen": "ALMACEN ZI", "id": "PSFM-4508-2.7B/R", "desc": "Pre-Strecth Film Transp 45Cm x 550Mts x 8Mic x 2.7Kg B/R", "cost": 8.97, "stock": 1104.0}, {"almacen": "ALMACEN ZI", "id": "SFM-BLU-4520-2.7", "desc": "Imported Azul-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 9.68, "stock": 80.0}, {"almacen": "ALMACEN ZI", "id": "SFM-WHT-4520-2.7", "desc": "Imported Blanco - 45Cm x 330Mts x 20Mic-2.7Kg", "cost": 4.42, "stock": 128.0}, {"almacen": "ALMACEN ZI", "id": "OSFA-WHT-7525-29", "desc": "Imported Blanco UV 75Cm x 1600Mts x 25Mic-29Kg", "cost": 74.37, "stock": 7.0}, {"almacen": "ALMACEN ZI", "id": "SFM-ORG-4520-2.7", "desc": "Imported Naranja - 45Cm x 330Mts x 20Mic - 2.7Kg", "cost": 9.66, "stock": 32.0}, {"almacen": "ALMACEN ZI", "id": "SFM-BLK-4520-2.7", "desc": "Imported Negro-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 8.65, "stock": 63.0}, {"almacen": "ALMACEN ZI", "id": "SFM-RED-4520-2.7", "desc": "Imported Rojo-45Cm x 330Mts x 20Mic-2.7Kg", "cost": 8.55, "stock": 8.0}, {"almacen": "ALMACEN ZI", "id": "SFM-CLR-4520-4", "desc": "Imported Transp 45Cm x 450Mts x 20Mic-4Kg", "cost": 2.43, "stock": 7740.0}, {"almacen": "ALMACEN ZI", "id": "OSFA-CLR-5020-16", "desc": "Imported Transp Autom 50Cm x 1600Mts x 20Mic 16Kg", "cost": 15.09, "stock": 948.0}, {"almacen": "ALMACEN ZI", "id": "SFJUMBO-M4520", "desc": "Imported Transp Jumbo 45Cm x 20Mic-42,40 Kg", "cost": 17.74, "stock": 193.0}, {"almacen": "ALMACEN ZI", "id": "SFJUMBO-A5020", "desc": "Imported Transp Jumbo 50Cm x 20Mic-45,40 Kg", "cost": 24.97, "stock": 369.0}, {"almacen": "ALMACEN ZI", "id": "SFM-SHW-4510-2.7", "desc": "Imported Transp SHW 45Cm x 520Mts x 10Mic-2.7Kg", "cost": 8.7, "stock": 2.0}, {"almacen": "ALMACEN ZI", "id": "SFM-GRN-4520-2.7", "desc": "Imported Verde - 45Cm x 330Mts x 20Mic-2.7Kg", "cost": 7.44, "stock": 16.0}];
@@ -1547,12 +1586,12 @@ export default function App() {
     if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
     const itemId  = newInvItemForm.id.toUpperCase().trim();
     const almacen = (newInvItemForm.almacen || 'ALMACEN ZI').trim();
-    // Each warehouse entry uses itemId + almacen suffix to avoid overwriting
-    // e.g. DISPENSER-SF in ALMACEN BQTO → Firestore doc: DISPENSER-SF___ALMACEN-BQTO
-    // DISPENSER-SF in ALMACEN ZI  → Firestore doc: DISPENSER-SF___ALMACEN-ZI
-    // The ID displayed to users is always itemId (clean code without suffix)
-    const docId   = itemId + '___' + almacen.replace(/\s+/g, '-');
-    const existingItem = (inventory||[]).find(i => i.id === docId || i.id === itemId);
+    // When EDITING use the stored real Firestore docId (editingInvId) to avoid creating duplicate docs.
+    // When CREATING compute docId from itemId + almacen.
+    const docId = editingInvId && (inventory||[]).find(i => i.id === editingInvId)
+      ? editingInvId
+      : itemId + '___' + almacen.replace(/\s+/g, '-');
+    const existingItem = (inventory||[]).find(i => i.id === docId);
     const newCost  = parseNum(newInvItemForm.cost);
     const newStock = parseNum(newInvItemForm.stock);
     let finalCost  = newCost;
@@ -1596,7 +1635,28 @@ export default function App() {
       setDialog({ title: '✅ Éxito', text: `${itemId} guardado en ${almacen}. Los demás almacenes no fueron modificados.`, type: 'alert' });
     } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
-  const startEditInvItem = (item) => { setEditingInvId(item.id); setNewInvItemForm({ id: item.id, desc: item.desc, category: item.category || 'Materia Prima', cost: item.cost || '', stock: item.stock || '', unit: item.unit || 'kg' }); setShowInvItemForm(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const startEditInvItem = (mergedItem) => {
+    // mergedItem.id may be a clean display ID (e.g. 'MP-001') when the catalog is in TODOS mode.
+    // We need to find the actual Firestore document to get the real docId and almacen.
+    const cleanId = mergedItem.displayId || mergedItem.id.split('___')[0] || mergedItem.id;
+    const warehouseItems = (inventory || []).filter(i => {
+      const cid = i.displayId || i.id.split('___')[0];
+      return cid === cleanId || i.id === mergedItem.id;
+    });
+    const actualItem = warehouseItems.length > 0 ? warehouseItems[0] : mergedItem;
+    setEditingInvId(actualItem.id); // REAL Firestore docId (e.g. 'MP-001___ALMACEN-ZI')
+    setNewInvItemForm({
+      id: cleanId,  // clean display ID
+      desc: actualItem.desc,
+      category: actualItem.category || 'Materia Prima',
+      cost: actualItem.cost || '',
+      stock: actualItem.stock || '',
+      unit: actualItem.unit || 'kg',
+      almacen: actualItem.almacen || 'ALMACEN ZI'
+    });
+    setShowInvItemForm(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const handleSaveMovement = async (e) => {
     if (e && e.preventDefault) e.preventDefault(); 
@@ -2931,15 +2991,50 @@ export default function App() {
   // ============================================================================
   const renderHome = () => {
     const hasPerm = (module) => { if (!appUser) return false; if (appUser.role === 'Master') return true; const p = appUser.permissions || {}; return !!p[module]; };
+    // Returns true if the module-level perm is set OR any submodule perm is set
+    const hasAnyPerm = (modId) => {
+      if (hasPerm(modId)) return true;
+      const mod = SYSTEM_MODULES.find(m => m.id === modId);
+      if (!mod) return false;
+      return mod.submodules.some(s => hasPerm(s.id));
+    };
+
+    // For inventory: navigate to the first permitted tab
+    const getFirstInvView = () => {
+      if (hasPerm('inv_planta')) return 'requisiciones';
+      if (hasPerm('inv_almacen')) return 'almacen';
+      if (hasPerm('inv_wip')) return 'wip';
+      if (hasPerm('inv_terminados')) return 'finished';
+      if (hasPerm('inv_operaciones')) return 'entradas';
+      if (hasPerm('inv_kardex')) return 'kardex';
+      return 'catalogo'; // fallback for master or full access
+    };
+    const getFirstVentasView = () => {
+      if (hasPerm('ventas_facturacion')) return 'facturacion';
+      if (hasPerm('ventas_directorio')) return 'clientes';
+      if (hasPerm('ventas_ops')) return 'requisiciones';
+      if (hasPerm('ventas_productos_vendidos')) return 'productos_vendidos';
+      return 'facturacion';
+    };
+    const getFirstProdView = () => {
+      if (hasPerm('produccion_proyeccion')) return 'proyeccion';
+      if (hasPerm('produccion_bobinas')) return 'bobinas';
+      if (hasPerm('produccion_requisicion')) return 'ordenes_compra';
+      if (hasPerm('produccion_activa')) return 'activos';
+      if (hasPerm('produccion_proceso')) return 'en_proceso';
+      if (hasPerm('produccion_historial')) return 'reportes';
+      return 'proyeccion';
+    };
+
     const moduleCards = [
-      hasPerm('ventas') && { tab:'ventas', view:()=>setVentasView('facturacion'), icon:<Users size={36}/>, title:'Ventas y Facturación', desc:'Directorio, OP y Facturación', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
-      hasPerm('produccion') && { tab:'produccion', view:()=>setProdView('proyeccion'), icon:<Factory size={36}/>, title:'Producción Planta', desc:'Control de Fases y Reportes', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
-      hasPerm('formulas') && { tab:'formulas', icon:<Beaker size={36}/>, title:'Fórmulas / Recetas', desc:'Recetas por categoría y fases', color:'border-purple-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-purple-500' },
-      hasPerm('inventario') && { tab:'inventario', view:()=>setInvView('requisiciones'), icon:<Package size={36}/>, title:'Control Inventario', desc:'Solicitudes de Planta, Catálogo, Movimientos y Kardex', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
-      hasPerm('simulador') && { tab:'simulador', icon:<Calculator size={36}/>, title:'Simulador OP', desc:'Calculadora Inversa de Producción y Mermas', color:'border-orange-400', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-orange-500' },
-      hasPerm('costos_operativos') && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
-      hasPerm('costos_reportes') && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos, Estado de Resultado y Libro Diario', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
-      hasPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={36}/>, title:'Configuración', desc:'Usuarios, Permisos y Respaldo', color:'border-gray-400', bg:'bg-white', textColor:'text-gray-800', descColor:'text-gray-400', iconColor:'text-gray-500' },
+      hasAnyPerm('ventas') && { tab:'ventas', view:()=>setVentasView(hasPerm('ventas')?'facturacion':getFirstVentasView()), icon:<Users size={36}/>, title:'Ventas y Facturación', desc:'Directorio, OP y Facturación', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
+      hasAnyPerm('produccion') && { tab:'produccion', view:()=>setProdView(hasPerm('produccion')?'proyeccion':getFirstProdView()), icon:<Factory size={36}/>, title:'Producción Planta', desc:'Control de Fases y Reportes', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
+      hasAnyPerm('formulas') && { tab:'formulas', icon:<Beaker size={36}/>, title:'Fórmulas / Recetas', desc:'Recetas por categoría y fases', color:'border-purple-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-purple-500' },
+      hasAnyPerm('inventario') && { tab:'inventario', view:()=>setInvView(hasPerm('inventario')?'requisiciones':getFirstInvView()), icon:<Package size={36}/>, title:'Control Inventario', desc:'Solicitudes de Planta, Catálogo, Movimientos y Kardex', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
+      hasAnyPerm('simulador') && { tab:'simulador', icon:<Calculator size={36}/>, title:'Simulador OP', desc:'Calculadora Inversa de Producción y Mermas', color:'border-orange-400', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-orange-500' },
+      (hasPerm('costos') || hasPerm('costos_operativos')) && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
+      (hasPerm('costos') || hasPerm('costos_reportes')) && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos, Estado de Resultado y Libro Diario', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
+      hasAnyPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={36}/>, title:'Configuración', desc:'Usuarios, Permisos y Respaldo', color:'border-gray-400', bg:'bg-white', textColor:'text-gray-800', descColor:'text-gray-400', iconColor:'text-gray-500' },
     ].filter(Boolean);
 
     return (
@@ -3912,6 +4007,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             <th className="py-2 px-4 text-right">Stock</th>
                             <th className="py-2 px-4 text-right">Costo U. ($)</th>
                             <th className="py-2 px-4 text-right">Valor ($)</th>
+                            <th className="py-2 px-4 text-center">Editar</th>
                           </tr></thead>
                           <tbody className="divide-y divide-gray-100">
                             {depItems.map(i=>(
@@ -3923,6 +4019,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 <td className="py-2 px-4 text-right font-black text-blue-700">{formatNum(i.stock)}</td>
                                 <td className="py-2 px-4 text-right font-bold text-gray-500">${formatNum(i.cost||0)}</td>
                                 <td className="py-2 px-4 text-right font-black text-green-700">${formatNum((i.stock||0)*(i.cost||0))}</td>
+                                <td className="py-2 px-4 text-center">
+                                  <button onClick={()=>requireAdminPassword(()=>{setEditingAlmacenItem(i);setAlmacenEditForm({stock:String(i.stock||''),cost:String(i.cost||'')});},'Editar producto en almacén')} className="p-1 bg-orange-100 text-orange-600 rounded hover:bg-orange-500 hover:text-white"><Edit size={11}/></button>
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -3943,11 +4042,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <th className="py-3 px-4 text-center border-r border-white/20">U.M.</th>
                     <th className="py-3 px-4 text-right border-r border-white/20">Stock Actual</th>
                     <th className="py-3 px-4 text-right border-r border-white/20">Costo Unit. ($)</th>
-                    <th className="py-3 px-4 text-right">Valor Total ($)</th>
+                    <th className="py-3 px-4 text-right border-r border-white/20">Valor Total ($)</th>
+                    <th className="py-3 px-4 text-center">Editar</th>
                   </tr></thead>
                   <tbody className="divide-y divide-gray-100">
                     {filtItems.length===0
-                      ? <tr><td colSpan="7" className="py-10 text-center text-gray-400 font-bold text-xs uppercase">Sin artículos en este almacén</td></tr>
+                      ? <tr><td colSpan="8" className="py-10 text-center text-gray-400 font-bold text-xs uppercase">Sin artículos en este almacén</td></tr>
                       : filtItems.map(i=>(
                           <tr key={i.id} className="hover:bg-indigo-50">
                             <td className="py-2.5 px-4 font-black text-orange-600 text-[10px]">{i.id}</td>
@@ -3957,6 +4057,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             <td className="py-2.5 px-4 text-right font-black text-blue-700">{formatNum(i.stock)}</td>
                             <td className="py-2.5 px-4 text-right font-bold text-gray-500">${formatNum(i.cost||0)}</td>
                             <td className="py-2.5 px-4 text-right font-black text-green-700">${formatNum((i.stock||0)*(i.cost||0))}</td>
+                            <td className="py-2.5 px-4 text-center">
+                              <button onClick={()=>requireAdminPassword(()=>{setEditingAlmacenItem(i);setAlmacenEditForm({stock:String(i.stock||''),cost:String(i.cost||'')});},'Editar stock/costo en almacén')} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white flex items-center gap-1 text-[8px] font-black uppercase"><Edit size={10}/> Editar</button>
+                            </td>
                           </tr>
                         ))
                     }
@@ -4928,59 +5031,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         </div>
       );
     }
-
-            {/* ── MODAL EDITAR PRODUCTO TERMINADO ── */}
-        {editingFG && (
-          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-blue-500">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-black uppercase flex items-center gap-2 text-blue-800"><Edit size={20}/> Editar Producto Terminado</h3>
-                <button onClick={()=>setEditingFG(null)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nombre / Descripción del Producto</label>
-                  <input type="text" value={fgEditForm.producto} onChange={e=>setFgEditForm(f=>({...f,producto:e.target.value.toUpperCase()}))}
-                    className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-blue-400"/>
-                  <p className="text-[8px] text-gray-400 mt-0.5">Formato sugerido: CATEGORIA - ANCHOxLARGOxMICRASMIC</p>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  {editingFG.tipoProducto !== 'TERMOENCOGIBLE' && (
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (Millares)</label>
-                      <input type="number" step="0.01" value={fgEditForm.millares} onChange={e=>setFgEditForm(f=>({...f,millares:e.target.value}))}
-                        className="w-full border-2 border-blue-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-blue-400"/>
-                    </div>
-                  )}
-                  {editingFG.tipoProducto === 'TERMOENCOGIBLE' && (
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (KG)</label>
-                      <input type="number" step="0.01" value={fgEditForm.kgProducidos} onChange={e=>setFgEditForm(f=>({...f,kgProducidos:e.target.value}))}
-                        className="w-full border-2 border-green-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-green-400"/>
-                    </div>
-                  )}
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
-                      Costo/{editingFG.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millar'} ($)
-                    </label>
-                    <input type="number" step="0.01" value={editingFG.tipoProducto==='TERMOENCOGIBLE'?fgEditForm.costoUnitario:fgEditForm.costoUnitarioMillar}
-                      onChange={e=>setFgEditForm(f=>editingFG.tipoProducto==='TERMOENCOGIBLE'?{...f,costoUnitario:e.target.value}:{...f,costoUnitarioMillar:e.target.value})}
-                      className="w-full border-2 border-orange-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400"/>
-                  </div>
-                </div>
-                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
-                  <p className="text-[9px] font-black text-yellow-800 uppercase">⚠ Los cambios actualizarán todos los lotes de este producto y se reflejarán en todos los reportes e inventarios.</p>
-                </div>
-                <div className="flex justify-end gap-3 pt-2">
-                  <button onClick={()=>setEditingFG(null)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
-                  <button onClick={handleSaveFGEdit} className="bg-blue-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-blue-700 flex items-center gap-2">
-                    <CheckCircle2 size={14}/> Guardar Cambios
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
 
     if (invView === 'almacen') {
@@ -6049,7 +6099,20 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                    ) : (
                                      <>
                                        <button onClick={()=>requireAdminPassword(()=>startEditInvItem(inv),'Editar artículo del catálogo')} className="p-1 bg-orange-100 text-orange-600 rounded hover:bg-orange-500 hover:text-white"><Edit size={11}/></button>
-                                       <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('inventory',inv.id));setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});},'Eliminar artículo de catálogo')} className="p-1 bg-red-50 text-red-400 rounded hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
+                                       <button onClick={()=>requireAdminPassword(async()=>{
+                                         // Delete all warehouse-specific docs for this item
+                                         const cleanId2 = inv.displayId || inv.id.split('___')[0] || inv.id;
+                                         const realDocs = (inventory||[]).filter(i=>{
+                                           const cid = i.displayId||(i.id||'').split('___')[0];
+                                           return cid===cleanId2||i.id===cleanId2;
+                                         });
+                                         if(realDocs.length>0){
+                                           for(const d of realDocs) await deleteDoc(getDocRef('inventory',d.id));
+                                         } else {
+                                           await deleteDoc(getDocRef('inventory',inv.id));
+                                         }
+                                         setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});
+                                       },'Eliminar artículo de catálogo')} className="p-1 bg-red-50 text-red-400 rounded hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
                                      </>
                                    )}
                                  </div>
@@ -15111,11 +15174,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
               <div className="max-w-7xl mx-auto flex gap-6 px-6 overflow-x-auto">
                  {[ 
-                   {id:'facturacion', icon:<Receipt size={16}/>, label:'Facturación'}, 
-                   {id:'clientes', icon:<Users size={16}/>, label:'Directorio'}, 
-                   {id:'requisiciones', icon:<FileText size={16}/>, label:'OPs'},
-                   {id:'productos_vendidos', icon:<Package size={16}/>, label:'Productos Vendidos'},
-                 ].map(t => (
+                   {id:'facturacion',        icon:<Receipt size={16}/>,  label:'Facturación',       perm:'ventas_facturacion'}, 
+                   {id:'clientes',           icon:<Users size={16}/>,    label:'Directorio',        perm:'ventas_directorio'}, 
+                   {id:'requisiciones',      icon:<FileText size={16}/>, label:'OPs',               perm:'ventas_ops'},
+                   {id:'productos_vendidos', icon:<Package size={16}/>,  label:'Productos Vendidos',perm:'ventas_productos_vendidos'},
+                 ].filter(t=>hasPerm(t.perm)||hasPerm('ventas')||appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
               </div>
@@ -15125,48 +15188,48 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         {activeTab === 'inventario' && (
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
               <div className="max-w-7xl mx-auto flex items-stretch overflow-x-auto">
-                {/* GROUP 1: SOLICITUDES */}
-                {([{id:'requisiciones',perm:'inventario_solicitudes'},{id:'almacen',perm:'inventario_solicitudes'}].some(t=>hasPerm(t.perm)||appUser?.role==='Master')) && <div className="flex flex-col border-r border-gray-200">
+                {/* GROUP 1: SOLICITUDES — perms: inv_planta, inv_almacen */}
+                {([{id:'requisiciones',perm:'inv_planta'},{id:'almacen',perm:'inv_almacen'}].some(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master')) && <div className="flex flex-col border-r border-gray-200">
                   <div className="text-[8px] font-black text-orange-500 uppercase tracking-widest px-4 pt-2 pb-0.5">Solicitudes</div>
                   <div className="flex gap-0">
                     {[
-                      {id:'requisiciones', icon:<ClipboardList size={14}/>, label:'Planta', perm:'inventario_solicitudes'},
-                      {id:'almacen', icon:<Warehouse size={14}/>, label:'Almacén/OC', perm:'inventario_solicitudes'},
-                    ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t=>(
+                      {id:'requisiciones', icon:<ClipboardList size={14}/>, label:'Planta', perm:'inv_planta'},
+                      {id:'almacen', icon:<Warehouse size={14}/>, label:'Almacén/OC', perm:'inv_almacen'},
+                    ].filter(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master').map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
                   </div>
                 </div>}
-                {/* GROUP 2: INVENTARIOS */}
-                <div className="flex flex-col border-r border-gray-200">
+                {/* GROUP 2: INVENTARIOS — perms: inv_wip, inv_terminados, inv_almacen */}
+                {([{perm:'inv_wip'},{perm:'inv_terminados'},{perm:'inv_almacen'},{perm:'inventario'}].some(t=>hasPerm(t.perm)||appUser?.role==='Master')) && <div className="flex flex-col border-r border-gray-200">
                   <div className="text-[8px] font-black text-blue-500 uppercase tracking-widest px-4 pt-2 pb-0.5">Inventarios</div>
                   <div className="flex gap-0">
                     {[
-                      {id:'catalogo', icon:<Box size={14}/>, label:'General', perm:'inventario_catalogo'},
-                      {id:'wip', icon:<Beaker size={14}/>, label:'WIP', perm:'inventario_catalogo'},
-                      {id:'finished', icon:<Package size={14}/>, label:'Terminados', perm:'inventario_catalogo'},
-                      {id:'alimentario', icon:<FileText size={14}/>, label:'Orden Salida', perm:'inventario_catalogo'},
-                      {id:'almacenes_mgmt', icon:<Warehouse size={14}/>, label:'Almacenes', perm:'inventario_catalogo'},
-                    ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t=>(
+                      {id:'catalogo',       icon:<Box size={14}/>,       label:'General',      perm:'inv_almacen'},
+                      {id:'wip',            icon:<Beaker size={14}/>,    label:'WIP',          perm:'inv_wip'},
+                      {id:'finished',       icon:<Package size={14}/>,   label:'Terminados',   perm:'inv_terminados'},
+                      {id:'alimentario',    icon:<FileText size={14}/>,  label:'Orden Salida', perm:'inv_operaciones'},
+                      {id:'almacenes_mgmt', icon:<Warehouse size={14}/>, label:'Almacenes',    perm:'inv_almacen'},
+                    ].filter(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master').map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
                   </div>
-                </div>
-                {/* GROUP 3: OPERACIONES */}
-                <div className="flex flex-col">
+                </div>}
+                {/* GROUP 3: OPERACIONES — perms: inv_operaciones, inv_kardex */}
+                {([{perm:'inv_operaciones'},{perm:'inv_kardex'}].some(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master')) && <div className="flex flex-col">
                   <div className="text-[8px] font-black text-green-600 uppercase tracking-widest px-4 pt-2 pb-0.5">Operaciones de Inventario</div>
                   <div className="flex gap-0">
                     {[
-                      {id:'entradas', icon:<ArrowDownToLine size={14}/>, label:'Entradas', perm:'inventario_movimientos'},
-                      {id:'salidas', icon:<ArrowUpFromLine size={14}/>, label:'Salidas', perm:'inventario_movimientos'},
-                      {id:'toma_fisica', icon:<ClipboardEdit size={14}/>, label:'Toma Física', perm:'inventario_movimientos'},
-                      {id:'kardex', icon:<History size={14}/>, label:'Kardex', perm:'inventario_kardex'},
-                         {id:'reporte177', icon:<FileCheck size={14}/>, label:'Art.177', perm:'inventario_kardex'},
-                    ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t=>(
+                      {id:'entradas',    icon:<ArrowDownToLine size={14}/>,  label:'Entradas',    perm:'inv_operaciones'},
+                      {id:'salidas',     icon:<ArrowUpFromLine size={14}/>,  label:'Salidas',     perm:'inv_operaciones'},
+                      {id:'toma_fisica', icon:<ClipboardEdit size={14}/>,    label:'Toma Física', perm:'inv_operaciones'},
+                      {id:'kardex',      icon:<History size={14}/>,          label:'Kardex',      perm:'inv_kardex'},
+                      {id:'reporte177',  icon:<FileCheck size={14}/>,        label:'Art.177',     perm:'inv_kardex'},
+                    ].filter(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master').map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();setShowMovForm(false);if(t.id==='entradas')setMovForm(f=>({...f,type:'ENTRADA'}));if(t.id==='salidas')setMovForm(f=>({...f,type:'AUTOCONSUMO'}));}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
                   </div>
-                </div>
+                </div>}
               </div>
            </div>
         )}
@@ -15175,13 +15238,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
               <div className="max-w-7xl mx-auto flex gap-6 px-6 overflow-x-auto">
                  {[ 
-                   {id:'proyeccion', icon:<TrendingUp size={16}/>, label:'Proyección MP', perm:'produccion_proyeccion'},
-                   {id:'bobinas', icon:<Box size={16}/>, label:'Prod. Bobinas', perm:'produccion_activa'},
-                   {id:'ordenes_compra', icon:<ClipboardList size={16}/>, label:'Requisición', perm:'produccion_ordenes'},
-                   {id:'activos', icon:<PlayCircle size={16}/>, label:'Producción Activa', perm:'produccion_activa'}, 
-                   {id:'en_proceso', icon:<Gauge size={16}/>, label:'Reporte en Proceso', perm:'produccion_activa'},
-                   {id:'reportes', icon:<FileText size={16}/>, label:'Historial / Reportes', perm:'produccion_historial'}
-                 ].filter(t => hasPerm('produccion') && (hasPerm(t.perm) || appUser?.role==='Master')).map(t => (
+                   {id:'proyeccion',    icon:<TrendingUp size={16}/>,     label:'Proyección MP',      perm:'produccion_proyeccion'},
+                   {id:'bobinas',       icon:<Box size={16}/>,            label:'Prod. Bobinas',      perm:'produccion_bobinas'},
+                   {id:'ordenes_compra',icon:<ClipboardList size={16}/>,  label:'Requisición',        perm:'produccion_requisicion'},
+                   {id:'activos',       icon:<PlayCircle size={16}/>,     label:'Producción Activa',  perm:'produccion_activa'}, 
+                   {id:'en_proceso',    icon:<Gauge size={16}/>,          label:'Reporte en Proceso', perm:'produccion_proceso'},
+                   {id:'reportes',      icon:<FileText size={16}/>,       label:'Historial / Reportes',perm:'produccion_historial'}
+                 ].filter(t => hasPerm(t.perm) || hasPerm('produccion') || appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setProdView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${prodView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
               </div>
@@ -15525,6 +15588,111 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
                 <button onClick={()=>setEditingTomaFisica(null)} className="flex-1 bg-gray-100 text-gray-700 font-black py-3 rounded-xl uppercase text-xs hover:bg-gray-200">Cancelar</button>
                 <button onClick={handleSaveEditTomaFisica} className="flex-1 bg-blue-600 text-white font-black py-3 rounded-xl uppercase text-xs shadow-lg hover:bg-blue-700 flex items-center justify-center gap-2"><Save size={14}/> Guardar Cambios</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── MODAL EDITAR STOCK/COSTO EN ALMACÉN ── */}
+        {editingAlmacenItem && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99990] p-4 print:hidden">
+            <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border-t-4 border-indigo-500">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-base font-black uppercase flex items-center gap-2 text-indigo-800"><Warehouse size={18}/> Editar Producto en Almacén</h3>
+                <button onClick={()=>setEditingAlmacenItem(null)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
+              </div>
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 mb-5">
+                <p className="font-black text-xs text-indigo-800 uppercase">{editingAlmacenItem.displayId || editingAlmacenItem.id.split('___')[0]}</p>
+                <p className="text-[10px] font-bold text-indigo-600 mt-0.5">{editingAlmacenItem.desc}</p>
+                <p className="text-[10px] font-bold text-indigo-500 mt-0.5">Almacén: {editingAlmacenItem.almacen || '—'} | Actual: {formatNum(editingAlmacenItem.stock)} {editingAlmacenItem.unit} @ ${formatNum(editingAlmacenItem.cost || 0)}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4 mb-5">
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Nueva Existencia ({editingAlmacenItem.unit || 'UND'})</label>
+                  <input type="number" step="0.001" value={almacenEditForm.stock}
+                    onChange={e=>setAlmacenEditForm(f=>({...f,stock:e.target.value}))}
+                    className="w-full border-2 border-blue-200 rounded-xl p-3 text-sm font-black text-center outline-none focus:border-blue-500 bg-blue-50"
+                    placeholder={formatNum(editingAlmacenItem.stock)}/>
+                  <p className="text-[8px] text-gray-400 mt-0.5 text-center">Reemplaza el stock actual</p>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Costo Unitario ($)</label>
+                  <input type="number" step="0.01" value={almacenEditForm.cost}
+                    onChange={e=>setAlmacenEditForm(f=>({...f,cost:e.target.value}))}
+                    className="w-full border-2 border-orange-200 rounded-xl p-3 text-sm font-black text-center outline-none focus:border-orange-500 bg-orange-50"
+                    placeholder={formatNum(editingAlmacenItem.cost || 0)}/>
+                  <p className="text-[8px] text-gray-400 mt-0.5 text-center">Actualiza Inventario General y Art. 177</p>
+                </div>
+              </div>
+              {(almacenEditForm.stock !== '' || almacenEditForm.cost !== '') && (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-3 mb-4 text-xs font-bold text-green-800">
+                  {almacenEditForm.stock !== '' && (
+                    <p>Stock: {formatNum(editingAlmacenItem.stock)} → <span className="font-black text-green-700">{formatNum(parseNum(almacenEditForm.stock))} {editingAlmacenItem.unit}</span> ({parseNum(almacenEditForm.stock) > parseNum(editingAlmacenItem.stock) ? '+' : ''}{formatNum(parseNum(almacenEditForm.stock) - parseNum(editingAlmacenItem.stock))} {editingAlmacenItem.unit})</p>
+                  )}
+                  {almacenEditForm.cost !== '' && (
+                    <p className="mt-0.5">Costo: ${formatNum(editingAlmacenItem.cost)} → <span className="font-black">${formatNum(parseNum(almacenEditForm.cost))}</span></p>
+                  )}
+                </div>
+              )}
+              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-5">
+                <p className="text-[9px] font-black text-yellow-800 uppercase">⚠ El cambio actualizará: Inventario General, Almacén General, Art. 177, Entradas/Salidas y demás reportes.</p>
+              </div>
+              <div className="flex gap-3">
+                <button onClick={()=>setEditingAlmacenItem(null)} className="flex-1 bg-gray-100 text-gray-700 font-black py-3 rounded-xl uppercase text-xs hover:bg-gray-200">Cancelar</button>
+                <button onClick={handleSaveAlmacenItem} className="flex-1 bg-indigo-600 text-white font-black py-3 rounded-2xl uppercase text-xs shadow-lg hover:bg-indigo-700 flex items-center justify-center gap-2"><Save size={14}/> Guardar Cambios</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── MODAL EDITAR PRODUCTO TERMINADO (movido aquí para renderizar siempre) ── */}
+        {editingFG && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99990] p-4 print:hidden">
+            <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-blue-500">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-black uppercase flex items-center gap-2 text-blue-800"><Edit size={20}/> Editar Producto Terminado</h3>
+                <button onClick={()=>setEditingFG(null)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Nombre / Descripción del Producto</label>
+                  <input type="text" value={fgEditForm.producto} onChange={e=>setFgEditForm(f=>({...f,producto:e.target.value.toUpperCase()}))}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold uppercase outline-none focus:border-blue-400"/>
+                  <p className="text-[8px] text-gray-400 mt-0.5">Formato sugerido: CATEGORIA - ANCHOxLARGOxMICRASMIC</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  {editingFG.tipoProducto !== 'TERMOENCOGIBLE' && (
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (Millares)</label>
+                      <input type="number" step="0.01" value={fgEditForm.millares} onChange={e=>setFgEditForm(f=>({...f,millares:e.target.value}))}
+                        className="w-full border-2 border-blue-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-blue-400"/>
+                    </div>
+                  )}
+                  {editingFG.tipoProducto === 'TERMOENCOGIBLE' && (
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Existencia (KG)</label>
+                      <input type="number" step="0.01" value={fgEditForm.kgProducidos} onChange={e=>setFgEditForm(f=>({...f,kgProducidos:e.target.value}))}
+                        className="w-full border-2 border-green-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-green-400"/>
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
+                      Costo/{editingFG.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millar'} ($)
+                    </label>
+                    <input type="number" step="0.01" value={editingFG.tipoProducto==='TERMOENCOGIBLE'?fgEditForm.costoUnitario:fgEditForm.costoUnitarioMillar}
+                      onChange={e=>setFgEditForm(f=>editingFG.tipoProducto==='TERMOENCOGIBLE'?{...f,costoUnitario:e.target.value}:{...f,costoUnitarioMillar:e.target.value})}
+                      className="w-full border-2 border-orange-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-orange-400"/>
+                  </div>
+                </div>
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-yellow-800 uppercase">⚠ Al guardar se actualizarán TODOS los lotes del producto. El stock se REEMPLAZARÁ (no se suma) con el valor ingresado.</p>
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button onClick={()=>setEditingFG(null)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
+                  <button onClick={handleSaveFGEdit} className="bg-blue-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-blue-700 flex items-center gap-2">
+                    <CheckCircle2 size={14}/> Guardar Cambios
+                  </button>
+                </div>
               </div>
             </div>
           </div>
