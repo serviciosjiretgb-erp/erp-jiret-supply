@@ -105,8 +105,11 @@ const storage = getStorage(app);
 const auth = getAuth(app);
 const db = getFirestore(app, "us-central"); 
 
-const getColRef = (colName) => collection(db, colName); 
-const getDocRef = (colName, docId) => doc(db, colName, String(docId));
+// ── SANDBOX / DEMO MODE — module-level flag (no React re-render needed) ──
+let _sandboxMode = false;
+const activateSandbox = (v) => { _sandboxMode = v; };
+const getColRef = (colName) => collection(db, _sandboxMode ? `sandbox_${colName}` : colName);
+const getDocRef = (colName, docId) => doc(db, _sandboxMode ? `sandbox_${colName}` : colName, String(docId));
 
 const getTodayDate = () => {
   const d = new Date();
@@ -581,8 +584,11 @@ export default function App() {
   // Issue 8: Almacenes sub-module
   const [almacenesView, setAlmacenesView] = useState('lista');
   const [almacenesFilter, setAlmacenesFilter] = useState({ almacen:'TODOS', cat:'TODAS', search:'' });
-  const [editingAlmacenItem, setEditingAlmacenItem] = useState(null); // {id, desc, stock, cost, almacen, unit}
-  const [almacenEditForm, setAlmacenEditForm] = useState({ stock: '', cost: '' });
+  const [editingAlmacenItem, setEditingAlmacenItem] = useState(null);
+  const [almacenEditForm, setAlmacenEditForm] = useState({ stock: '', cost: '', applyToAll: false });
+  // SANDBOX / DEMO MODE
+  const [sandboxMode, setSandboxMode] = useState(false);
+  const toggleSandbox = (v) => { activateSandbox(v); setSandboxMode(v); };
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
 
@@ -1371,17 +1377,72 @@ export default function App() {
   // HANDLER: EDITAR STOCK/COSTO DE PRODUCTO EN ALMACÉN ESPECÍFICO
   // Actualiza directamente el documento Firebase del almacén y registra movimiento
   // ============================================================================
+  // ============================================================================
+  // SINCRONIZAR COSTOS — equipara el costo promedio de cada producto en todos sus almacenes
+  // ============================================================================
+  const handleSyncAllCosts = async () => {
+    setDialog({ title: 'Sincronizar Costos', text: '¿Desea actualizar el costo unitario de TODOS los productos en todos los almacenes para que coincidan con el costo promedio ponderado mostrado en Inventario General? Esta acción es irreversible.', type: 'confirm', onConfirm: async () => {
+      try {
+        // Group all inventory docs by cleanId, compute weighted average
+        const groups = {};
+        for (const i of (inventory||[])) {
+          const cleanId = i.displayId || (i.id||'').split('___')[0];
+          if (!groups[cleanId]) groups[cleanId] = { totalVal: 0, totalStock: 0, docs: [] };
+          const stk = parseNum(i.stock||0);
+          const cst = parseNum(i.cost||0);
+          groups[cleanId].totalVal += stk * cst;
+          groups[cleanId].totalStock += stk;
+          groups[cleanId].docs.push(i);
+        }
+        // Update all docs with the weighted average cost
+        const batchSize = 400;
+        let ops = [];
+        for (const [cleanId, g] of Object.entries(groups)) {
+          if (g.docs.length <= 1) continue; // single warehouse: already consistent
+          const avgCost = g.totalStock > 0 ? g.totalVal / g.totalStock : (g.docs[0]?.cost || 0);
+          for (const doc of g.docs) {
+            const docCost = parseNum(doc.cost||0);
+            if (Math.abs(docCost - avgCost) > 0.001) ops.push({ id: doc.id, cost: avgCost });
+          }
+        }
+        // Write in batches
+        let count = 0;
+        for (let i = 0; i < ops.length; i += batchSize) {
+          const chunk = ops.slice(i, i + batchSize);
+          const b = writeBatch(db);
+          chunk.forEach(op => b.update(getDocRef('inventory', op.id), { cost: op.cost }));
+          await b.commit();
+          count += chunk.length;
+        }
+        setDialog({ title: '✅ Costos Sincronizados', text: `${count} documento(s) de almacén actualizados. Todos los almacenes ahora usan el costo promedio ponderado de Inventario General.`, type: 'alert' });
+      } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
+    }});
+  };
+
   const handleSaveAlmacenItem = async () => {
     if (!editingAlmacenItem) return;
     const newStock = parseNum(almacenEditForm.stock);
     const newCost  = parseNum(almacenEditForm.cost);
     const prevStock = parseNum(editingAlmacenItem.stock || 0);
     const prevCost  = parseNum(editingAlmacenItem.cost  || 0);
+    const applyToAll = almacenEditForm.applyToAll;
     try {
       const updates = { timestamp: Date.now() };
       if (almacenEditForm.stock !== '') updates.stock = newStock;
       if (almacenEditForm.cost  !== '') updates.cost  = newCost;
-      await updateDoc(getDocRef('inventory', editingAlmacenItem.id), updates);
+      // If applyToAll: find all warehouse docs with same cleanId and update cost in all
+      if (applyToAll && almacenEditForm.cost !== '') {
+        const cleanId = editingAlmacenItem.displayId || editingAlmacenItem.id.split('___')[0];
+        const allWarehouseDocs = (inventory||[]).filter(i => {
+          const cid = i.displayId || i.id.split('___')[0];
+          return cid === cleanId;
+        });
+        const b = writeBatch(db);
+        allWarehouseDocs.forEach(d => b.update(getDocRef('inventory', d.id), { cost: newCost, timestamp: Date.now() }));
+        await b.commit();
+      } else {
+        await updateDoc(getDocRef('inventory', editingAlmacenItem.id), updates);
+      }
       // Registrar movimiento si el stock cambió
       const diff = newStock - prevStock;
       if (almacenEditForm.stock !== '' && Math.abs(diff) > 0.001) {
@@ -2925,7 +2986,7 @@ export default function App() {
   );
 
   const activeRequirements = useMemo(() =>
-    (requirements || []).filter(r => r.status !== 'COMPLETADO'),
+    (requirements || []).filter(r => r.status !== 'COMPLETADO' && r.status !== 'ANULADA'),
     [requirements]
   );
 
@@ -3958,6 +4019,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   const url=URL.createObjectURL(blob);
                   const a=document.createElement('a');a.href=url;a.download='Almacenes_'+almacenesFilter.almacen.replace(/ /g,'_')+'_'+getTodayDate()+'.xls';a.click();URL.revokeObjectURL(url);
                 }} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-green-700 flex items-center gap-2"><Download size={13}/> Exportar XLS</button>
+                <button onClick={()=>requireAdminPassword(handleSyncAllCosts, 'Sincronizar costos de todos los almacenes')} className="bg-teal-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-teal-700 flex items-center gap-2 shadow-md" title="Igualar el costo de cada producto en todos sus almacenes al promedio ponderado de Inventario General"><RefreshCw size={13}/> Sincronizar Costos</button>
                 <button onClick={()=>printAlmacenReport(almacenesFilter.almacen==='TODOS'?'TODOS LOS ALMACENES':almacenesFilter.almacen, filtItems)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2"><Printer size={13}/> PDF</button>
                 
               </div>
@@ -7542,7 +7604,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   </form>
                 </div>
              )}
-             <div className="p-8 overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black w-1/2">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{(requirements || []).map(r=>(<tr key={r?.id} className="hover:bg-gray-50 group transition-all"><td className="py-5 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r?.fecha}</span></td><td className="py-5 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.desc}</span></td><td className="py-5 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div>
+             <div className="p-8 overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black w-1/2">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{(requirements || []).map(r=>(<tr key={r?.id} className={`hover:bg-gray-50 group transition-all ${r?.status==='ANULADA'?'opacity-40 bg-red-50/20':''}`}><td className="py-5 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r?.fecha}</span></td><td className="py-5 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.desc}</span></td><td className="py-5 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div>
           </div>
         )}
       </div>
@@ -14739,12 +14801,32 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       <div><span className="text-[9px] text-gray-500 font-black uppercase block">Cliente</span><span className="font-black">{selectedOP.client}</span></div>
                       <div><span className="text-[9px] text-gray-500 font-black uppercase block">Producto</span><span className="font-black">{selectedOP.desc}</span></div>
                       <div><span className="text-[9px] text-gray-500 font-black uppercase block">Estado</span>
-                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${selectedOP.status==='COMPLETADO'?'bg-blue-100 text-blue-700':selectedOP.status==='EN PROCESO'?'bg-orange-100 text-orange-700':'bg-gray-100 text-gray-700'}`}>{selectedOP.status}</span>
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${selectedOP.status==='COMPLETADO'?'bg-blue-100 text-blue-700':selectedOP.status==='EN PROCESO'?'bg-orange-100 text-orange-700':selectedOP.status==='ANULADA'?'bg-red-100 text-red-700 line-through':'bg-gray-100 text-gray-700'}`}>{selectedOP.status}</span>
                       </div>
                     </div>
 
                     {/* Opciones de eliminación */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                      {/* ── ANULAR OP (conserva el número) ── */}
+                      <button onClick={() => {
+                        const motivoInput = prompt('Motivo de anulación (opcional):') || 'ANULADA POR ADMINISTRADOR';
+                        requireAdminPassword(async () => {
+                          await updateDoc(getDocRef('requirements', selectedOP.id), {
+                            status: 'ANULADA',
+                            motivoAnulacion: motivoInput.toUpperCase(),
+                            fechaAnulacion: getTodayDate(),
+                            anuladaPor: appUser?.name || 'Admin'
+                          });
+                          setSelectedOpId('');
+                          setDialog({ title: '✅ OP Anulada', text: `OP #${String(selectedOP.id).replace('OP-','').padStart(5,'0')} marcada como ANULADA. El número se conserva en el correlativo para mantener el orden numérico.`, type: 'alert' });
+                        }, 'Anular OP (conserva número correlativo)');
+                      }}
+                        className="bg-purple-600 text-white p-4 rounded-xl font-black text-xs uppercase hover:bg-purple-700 flex flex-col items-center gap-2 text-center transition-all border-2 border-purple-400">
+                        <X size={20}/>
+                        <span>Anular OP</span>
+                        <span className="text-[9px] font-bold opacity-80">Conserva el N° correlativo</span>
+                      </button>
+
                       {/* Eliminar fases de producción */}
                       <button onClick={() => requireAdminPassword(async () => {
                         await updateDoc(getDocRef('requirements', selectedOP.id), { production: {}, status: 'PENDIENTE', fechaReapertura: getTodayDate() });
@@ -14860,6 +14942,102 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               </div>
             );
           })()}
+        </div>
+
+        {/* ── MÓDULO DEMO / SANDBOX ── */}
+        <div className={`rounded-3xl shadow-sm border-2 p-8 ${sandboxMode ? 'border-purple-400 bg-purple-50' : 'border-gray-200 bg-white'}`}>
+          <div className="flex justify-between items-center border-b pb-4 mb-6">
+            <div>
+              <h2 className={`text-xl font-black uppercase flex items-center gap-3 ${sandboxMode ? 'text-purple-700' : 'text-black'}`}>
+                <Beaker className={sandboxMode ? 'text-purple-500' : 'text-gray-400'} size={24}/> Modo Sandbox / Demo
+              </h2>
+              <p className="text-xs font-bold text-gray-500 mt-1">Entorno de pruebas aislado — todas las operaciones van a colecciones separadas (sandbox_*) sin afectar datos reales.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              {sandboxMode && (
+                <span className="bg-purple-600 text-white px-4 py-2 rounded-xl font-black text-xs uppercase animate-pulse flex items-center gap-2">
+                  <Beaker size={14}/> MODO DEMO ACTIVO
+                </span>
+              )}
+              <button
+                onClick={() => {
+                  const msg = sandboxMode
+                    ? '¿Desactivar el modo Demo? Volverás a trabajar con los datos reales del sistema.'
+                    : '⚠️ ¿Activar el Modo Sandbox/Demo? Todas las acciones (crear OPs, movimientos, etc.) irán a colecciones separadas (sandbox_*) y NO afectarán los datos reales.';
+                  setDialog({ title: sandboxMode ? 'Salir del Modo Demo' : 'Activar Modo Demo', text: msg, type: 'confirm', onConfirm: () => { toggleSandbox(!sandboxMode); setDialog({ title: sandboxMode ? '✅ Modo Demo desactivado' : '🧪 Modo Demo Activado', text: sandboxMode ? 'De vuelta al sistema real.' : 'Ahora estás en el entorno de pruebas. Los datos reales están protegidos.', type: 'alert' }); }});
+                }}
+                className={`px-6 py-3 rounded-2xl font-black text-xs uppercase shadow-md flex items-center gap-2 transition-all ${sandboxMode ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-purple-600 text-white hover:bg-purple-700'}`}
+              >
+                {sandboxMode ? <><X size={14}/> Salir del Demo</> : <><Beaker size={14}/> Activar Demo</>}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-4">
+              <h3 className="text-sm font-black uppercase text-gray-700">¿Cómo funciona?</h3>
+              <div className="space-y-2 text-xs font-bold text-gray-600">
+                <div className="flex items-start gap-2 bg-gray-50 rounded-xl p-3"><span className="text-purple-500 font-black text-base">🔒</span><div><p className="font-black text-gray-800">Datos reales protegidos</p><p>En modo Demo, todas las lecturas y escrituras van a colecciones <code className="bg-purple-100 text-purple-700 px-1 rounded">sandbox_*</code> separadas.</p></div></div>
+                <div className="flex items-start gap-2 bg-gray-50 rounded-xl p-3"><span className="text-purple-500 font-black text-base">🧪</span><div><p className="font-black text-gray-800">Prueba libremente</p><p>Crea OPs, registra inventario, haz facturas. Nada afecta el sistema real.</p></div></div>
+                <div className="flex items-start gap-2 bg-gray-50 rounded-xl p-3"><span className="text-purple-500 font-black text-base">🗑</span><div><p className="font-black text-gray-800">Limpieza sencilla</p><p>Con el botón "Limpiar Sandbox" se eliminan todos los datos de prueba de una sola vez.</p></div></div>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <h3 className="text-sm font-black uppercase text-gray-700">Herramientas</h3>
+              {sandboxMode && (
+                <div className="bg-purple-100 border-2 border-purple-300 rounded-2xl p-4 text-center">
+                  <p className="font-black text-purple-800 text-sm uppercase mb-1">⚠️ MODO SANDBOX ACTIVO</p>
+                  <p className="text-xs font-bold text-purple-700">Trabajando en colecciones: <code>sandbox_inventory</code>, <code>sandbox_requirements</code>, etc.</p>
+                </div>
+              )}
+              <button
+                onClick={() => {
+                  if (!sandboxMode) return setDialog({ title: 'Aviso', text: 'Activa el Modo Sandbox primero para cargar datos de prueba.', type: 'alert' });
+                  setDialog({ title: 'Cargar Datos Demo', text: 'Se cargará un juego de datos de ejemplo en el sandbox: 5 OPs, inventario de muestra, clientes de prueba. ¿Continuar?', type: 'confirm', onConfirm: async () => {
+                    try {
+                      const b = writeBatch(db);
+                      // Sample inventory
+                      ['MP-0240','MP-RECICL','PIG-BLANCO'].forEach((id, i) => {
+                        b.set(getDocRef('inventory', id+'___DEMO'), { id: id+'___DEMO', displayId: id, desc: `Material Demo ${id}`, category: 'Materia Prima', unit: 'KG', cost: 1.5 + i*0.5, stock: 100 + i*50, almacen: 'ALMACEN DEMO', timestamp: Date.now() });
+                      });
+                      // Sample OP
+                      b.set(getDocRef('requirements', 'OP-DEMO-001'), { id: 'OP-DEMO-001', client: 'CLIENTE DEMO', desc: 'BOLSA DEMO 30X40X6MIC', ancho: 30, largo: 40, micras: 0.006, tipoProducto: 'BOLSAS', cantidad: 50, requestedKg: 25, fecha: getTodayDate(), status: 'EN PROCESO', timestamp: Date.now() });
+                      await b.commit();
+                      setDialog({ title: '✅ Datos Demo Cargados', text: 'Se cargaron artículos de inventario y una OP de ejemplo en el Sandbox. Navega por el sistema para probar.', type: 'alert' });
+                    } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
+                  }});
+                }}
+                className={`w-full py-3 rounded-2xl font-black text-xs uppercase flex items-center justify-center gap-2 ${sandboxMode ? 'bg-purple-600 text-white hover:bg-purple-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+              >
+                <Download size={14}/> Cargar Datos de Ejemplo
+              </button>
+              <button
+                onClick={() => {
+                  if (!sandboxMode) return setDialog({ title: 'Aviso', text: 'Activa el Modo Sandbox primero.', type: 'alert' });
+                  setDialog({ title: '🗑 Limpiar Sandbox', text: 'Se eliminarán TODOS los datos del sandbox (inventory, requirements, movements, etc. con prefijo sandbox_). Esta acción es irreversible. ¿Confirmar?', type: 'confirm', onConfirm: async () => {
+                    try {
+                      const colsToClean = ['inventory','requirements','maquilaInvoices','inventoryMovements','finishedGoodsInventory','wipInventory','inventoryRequisitions','operatingCosts','purchaseOrders','clientes'];
+                      let total = 0;
+                      for (const col of colsToClean) {
+                        const {getDocs} = await import('firebase/firestore');
+                        const snap = await getDocs(getColRef(col)); // getColRef already prepends sandbox_
+                        if (!snap.empty) {
+                          const b = writeBatch(db);
+                          snap.docs.forEach(d => b.delete(d.ref));
+                          await b.commit();
+                          total += snap.docs.length;
+                        }
+                      }
+                      setDialog({ title: '✅ Sandbox Limpiado', text: `${total} documento(s) eliminados del entorno sandbox.`, type: 'alert' });
+                    } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
+                  }});
+                }}
+                className={`w-full py-3 rounded-2xl font-black text-xs uppercase flex items-center justify-center gap-2 ${sandboxMode ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+              >
+                <Trash2 size={14}/> Limpiar Sandbox
+              </button>
+            </div>
+          </div>
         </div>
 
       </div>
@@ -15252,6 +15430,19 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         )}
 
         <main className="flex-1 p-4 md:p-8 max-w-[1400px] mx-auto w-full print:p-0 print:m-0 print:max-w-none print:w-full bg-transparent print:bg-white">
+           {/* ── SANDBOX BANNER — visible only in demo mode ── */}
+           {sandboxMode && (
+             <div className="mb-6 bg-purple-600 text-white rounded-2xl p-4 flex items-center justify-between shadow-lg print:hidden animate-pulse">
+               <div className="flex items-center gap-3">
+                 <Beaker size={20} className="text-purple-200 flex-shrink-0"/>
+                 <div>
+                   <p className="font-black text-sm uppercase">🧪 MODO SANDBOX ACTIVO — Los datos reales están protegidos</p>
+                   <p className="text-[10px] font-bold text-purple-200 mt-0.5">Todas las operaciones van a colecciones de prueba (sandbox_*). Ninguna acción afecta el sistema real.</p>
+                 </div>
+               </div>
+               <button onClick={()=>toggleSandbox(false)} className="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-xl font-black text-xs uppercase flex items-center gap-2 whitespace-nowrap"><X size={13}/> Salir Demo</button>
+             </div>
+           )}
            {/* ── MEMBRETE GLOBAL — visible solo al imprimir ── */}
            <div className="hidden print:block print:mb-6">
              <ReportHeader />
@@ -15624,6 +15815,16 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   <p className="text-[8px] text-gray-400 mt-0.5 text-center">Actualiza Inventario General y Art. 177</p>
                 </div>
               </div>
+              {/* Apply to all warehouses */}
+              <label className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 cursor-pointer hover:bg-blue-100 transition-colors">
+                <input type="checkbox" checked={almacenEditForm.applyToAll||false}
+                  onChange={e=>setAlmacenEditForm(f=>({...f,applyToAll:e.target.checked}))}
+                  className="w-4 h-4 text-blue-600 rounded"/>
+                <div>
+                  <p className="text-xs font-black text-blue-800 uppercase">Aplicar costo a TODOS los almacenes</p>
+                  <p className="text-[9px] font-bold text-blue-600">Sincroniza el mismo costo en ALMACEN BQTO, C2, ZI, MCY, etc.</p>
+                </div>
+              </label>
               {(almacenEditForm.stock !== '' || almacenEditForm.cost !== '') && (
                 <div className="bg-green-50 border border-green-200 rounded-xl p-3 mb-4 text-xs font-bold text-green-800">
                   {almacenEditForm.stock !== '' && (
