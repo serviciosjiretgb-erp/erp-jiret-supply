@@ -1257,7 +1257,9 @@ export default function App() {
         batch.delete(getDocRef('users', originalUsername));
       }
       // Guardar documento con el ID correcto
-      batch.set(getDocRef('users', newUserId), { ...newUserForm, username: newUserId });
+      // IMPORTANTE: excluir el campo 'id' del objeto guardado para evitar conflictos
+      const { id: _skipId, ...formToSave } = newUserForm;
+      batch.set(getDocRef('users', newUserId), { ...formToSave, username: newUserId });
       await batch.commit();
       setNewUserForm(initialUserForm);
       setEditingUserId(null);
@@ -1274,7 +1276,38 @@ export default function App() {
     setNewUserForm({ ...u, permissions: mergedPerms });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
-  const handleDeleteUser = (id) => { if(id === 'admin') return setDialog({title:'Acción Denegada', text:'No puedes eliminar al administrador.', type:'alert'}); setDialog({ title: 'Eliminar Usuario', text: `¿Desea eliminar el acceso a ${id}?`, type: 'confirm', onConfirm: async () => await deleteDoc(getDocRef('users', id))}); };
+  const handleDeleteUser = (usernameOrId) => {
+    // Buscar el usuario real en la lista (por username o por id)
+    const targetUser = (systemUsers || []).find(u => u.username === usernameOrId || u.id === usernameOrId);
+    const targetUsername = targetUser?.username || usernameOrId;
+    const targetDocId = targetUser?.id || targetUser?.username || usernameOrId;
+
+    // No puede eliminar su propio usuario
+    if (targetUsername === appUser?.username) {
+      return setDialog({ title: 'Acción Denegada', text: 'No puedes eliminar tu propio usuario activo.', type: 'alert' });
+    }
+    // No puede eliminar el único administrador Master
+    const masterUsers = (systemUsers || []).filter(u => u.role === 'Master');
+    if ((targetUser?.role === 'Master') && masterUsers.length <= 1) {
+      return setDialog({ title: 'Acción Denegada', text: 'No puedes eliminar el único administrador del sistema. Primero crea otro usuario Master.', type: 'alert' });
+    }
+    if (!targetUser) {
+      return setDialog({ title: 'Error', text: `Usuario "${usernameOrId}" no encontrado.`, type: 'alert' });
+    }
+    setDialog({
+      title: 'Eliminar Usuario',
+      text: `¿Desea eliminar el acceso de "${targetUser.name || targetUsername}" (usuario: ${targetUsername})?`,
+      type: 'confirm',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(getDocRef('users', targetDocId));
+          setDialog({ title: '✅ Eliminado', text: `Usuario "${targetUsername}" eliminado correctamente.`, type: 'alert' });
+        } catch(err) {
+          setDialog({ title: 'Error', text: err.message, type: 'alert' });
+        }
+      }
+    });
+  };
 
   // ============================================================================
   // FIX 7: Corrección de datos de Productos Terminados (one-time, idempotent)
@@ -1426,30 +1459,46 @@ export default function App() {
     const prevStock = parseNum(editingAlmacenItem.stock || 0);
     const prevCost  = parseNum(editingAlmacenItem.cost  || 0);
     const applyToAll = almacenEditForm.applyToAll;
+
+    // ── CRÍTICO: el editingAlmacenItem.id es el cleanId (ej. 'SP-2110-1.8BLU') NO el docId real.
+    // Buscamos el documento Firebase real usando cleanId + almacen.
+    const cleanIdEdit = editingAlmacenItem.displayId || (editingAlmacenItem.id||'').split('___')[0];
+    const almacenEdit = editingAlmacenItem.almacen || 'ALMACEN ZI';
+    const realFirebaseDoc = (inventory||[]).find(i => {
+      const cid = i.displayId || (i.id||'').split('___')[0];
+      return cid === cleanIdEdit && (i.almacen || 'ALMACEN ZI') === almacenEdit;
+    });
+    const realDocId = realFirebaseDoc?.id || (cleanIdEdit + '___' + almacenEdit.replace(/\s+/g, '-'));
+
     try {
       const updates = { timestamp: Date.now() };
       if (almacenEditForm.stock !== '') updates.stock = newStock;
       if (almacenEditForm.cost  !== '') updates.cost  = newCost;
-      // If applyToAll: find all warehouse docs with same cleanId and update cost in all
+      // If applyToAll: update cost (and stock for this warehouse) across all warehouses
       if (applyToAll && almacenEditForm.cost !== '') {
-        const cleanId = editingAlmacenItem.displayId || editingAlmacenItem.id.split('___')[0];
         const allWarehouseDocs = (inventory||[]).filter(i => {
-          const cid = i.displayId || i.id.split('___')[0];
-          return cid === cleanId;
+          const cid = i.displayId || (i.id||'').split('___')[0];
+          return cid === cleanIdEdit;
         });
         const b = writeBatch(db);
-        allWarehouseDocs.forEach(d => b.update(getDocRef('inventory', d.id), { cost: newCost, timestamp: Date.now() }));
+        allWarehouseDocs.forEach(d => {
+          const upd = { cost: newCost, timestamp: Date.now() };
+          // Solo actualizar stock en el almacén específico que se editó
+          if (d.id === realDocId && almacenEditForm.stock !== '') upd.stock = newStock;
+          b.update(getDocRef('inventory', d.id), upd);
+        });
         await b.commit();
       } else {
-        await updateDoc(getDocRef('inventory', editingAlmacenItem.id), updates);
+        // Actualizar solo el documento del almacén específico usando el ID real
+        await updateDoc(getDocRef('inventory', realDocId), updates);
       }
       // Registrar movimiento si el stock cambió
       const diff = newStock - prevStock;
       if (almacenEditForm.stock !== '' && Math.abs(diff) > 0.001) {
         await addDoc(getColRef('inventoryMovements'), {
-          itemId: editingAlmacenItem.id,
+          itemId: realDocId,
           itemDesc: editingAlmacenItem.desc,
-          almacen: editingAlmacenItem.almacen || 'ALMACEN ZI',
+          almacen: almacenEdit,
           type: diff > 0 ? 'ENTRADA' : 'SALIDA',
           qty: Math.abs(diff),
           unitCost: newCost || prevCost,
@@ -1461,7 +1510,7 @@ export default function App() {
         });
       }
       setEditingAlmacenItem(null);
-      setDialog({ title: '✅ Actualizado', text: `${editingAlmacenItem.displayId || editingAlmacenItem.id.split('___')[0]} actualizado en ${editingAlmacenItem.almacen || ''}. Todos los reportes e inventarios reflejarán el cambio.`, type: 'alert' });
+      setDialog({ title: '✅ Actualizado', text: `${cleanIdEdit} actualizado en ${almacenEdit}${applyToAll?' (y todos los demás almacenes)':''}. Todos los reportes e inventarios reflejarán el cambio.`, type: 'alert' });
     } catch (err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
 
@@ -14363,15 +14412,20 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Rol / Cargo</label><input type="text" value={newUserForm.role} onChange={e=>setNewUserForm({...newUserForm, role: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
               </div>
               <div className="mt-6 border-t border-gray-200 pt-4">
-                <h4 className="text-sm font-black uppercase text-gray-800 mb-4 flex items-center gap-2">
+                <h4 className="text-sm font-black uppercase text-gray-800 mb-2 flex items-center gap-2">
                   <ShieldCheck size={18} className="text-orange-500"/> Permisología del Usuario
                 </h4>
+                <p className="text-[10px] font-bold text-gray-500 mb-4 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+                  💡 <strong>Para dar acceso parcial</strong>: marca SOLO los submódulos deseados sin marcar el módulo padre. 
+                  El usuario verá la tarjeta del módulo en el Panel Principal y SÓLO las secciones marcadas.
+                </p>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                   {SYSTEM_MODULES.map(mod => {
                     const allSubsChecked = mod.submodules.length > 0 && mod.submodules.every(s => !!newUserForm.permissions[s.id]);
                     const someSubsChecked = mod.submodules.some(s => !!newUserForm.permissions[s.id]);
+                    const modActive = !!newUserForm.permissions[mod.id] || someSubsChecked;
                     return (
-                      <div key={mod.id} className={`border-2 rounded-xl p-4 shadow-sm transition-colors ${newUserForm.permissions[mod.id] ? 'border-orange-400 bg-orange-50' : 'border-gray-200 bg-gray-50 hover:border-orange-200'}`}>
+                      <div key={mod.id} className={`border-2 rounded-xl p-4 shadow-sm transition-colors ${modActive ? 'border-orange-400 bg-orange-50' : 'border-gray-200 bg-gray-50 hover:border-orange-200'}`}>
                         {/* Checkbox del módulo principal */}
                         <label className="flex items-start gap-2 font-black text-xs uppercase text-gray-900 cursor-pointer mb-3 pb-2 border-b border-gray-200">
                           <input
@@ -14381,24 +14435,32 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             onChange={e => {
                               const isChecked = e.target.checked;
                               const newPerms = { ...newUserForm.permissions, [mod.id]: isChecked };
+                              // Al marcar módulo padre: marcar todos los submódulos
+                              // Al desmarcar módulo padre: desmarcar todos los submódulos
                               mod.submodules.forEach(sub => { newPerms[sub.id] = isChecked; });
                               setNewUserForm({ ...newUserForm, permissions: newPerms });
                             }}
                           />
-                          <span className="leading-tight">{mod.icon} {mod.label}</span>
+                          <div className="leading-tight flex-1">
+                            <span>{mod.icon} {mod.label}</span>
+                            {someSubsChecked && !newUserForm.permissions[mod.id] && (
+                              <span className="ml-1 bg-blue-100 text-blue-700 text-[7px] px-1 py-0.5 rounded font-black">PARCIAL</span>
+                            )}
+                          </div>
                         </label>
-                        {/* Checkboxes de los submódulos (siempre visibles) */}
-                        {mod.submodules.length > 0 && (
+                        {/* Checkboxes de los submódulos */}
+                        {mod.submodules.length > 0 ? (
                           <div className="ml-1 flex flex-col gap-2 border-l-2 border-orange-200 pl-3">
                             {mod.submodules.map(sub => (
-                              <label key={sub.id} className="flex items-center gap-2 text-[10px] font-bold text-gray-600 uppercase cursor-pointer hover:text-orange-600 transition-colors">
+                              <label key={sub.id} className={`flex items-center gap-2 text-[10px] font-bold uppercase cursor-pointer transition-colors ${newUserForm.permissions[sub.id] ? 'text-orange-700' : 'text-gray-500 hover:text-orange-600'}`}>
                                 <input
                                   type="checkbox"
                                   className="w-3.5 h-3.5 text-orange-500 rounded border-gray-300 focus:ring-orange-500 flex-shrink-0"
                                   checked={!!newUserForm.permissions[sub.id]}
                                   onChange={e => {
                                     const newPerms = { ...newUserForm.permissions, [sub.id]: e.target.checked };
-                                    // Si se marcan todos los subs, activar módulo principal; si se desmarca alguno, no forzar
+                                    // Si se marcan TODOS los subs → activar módulo padre automáticamente
+                                    // Si se desmarca alguno → desactivar módulo padre (queda en modo parcial)
                                     const allNowChecked = mod.submodules.every(s => !!newPerms[s.id]);
                                     newPerms[mod.id] = allNowChecked;
                                     setNewUserForm({ ...newUserForm, permissions: newPerms });
@@ -14408,9 +14470,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               </label>
                             ))}
                           </div>
-                        )}
-                        {mod.submodules.length === 0 && (
-                          <p className="text-[9px] text-gray-400 italic ml-1">Acceso de módulo completo</p>
+                        ) : (
+                          <p className="text-[9px] text-gray-400 italic ml-1">Sin submódulos — acceso completo al módulo</p>
                         )}
                       </div>
                     );
@@ -14436,19 +14497,41 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       <td className="py-3 px-4 font-black">{u.username}<br/><span className="text-[10px] text-gray-500 font-bold">{u.name}</span></td>
                       <td className="py-3 px-4 font-bold text-xs uppercase">{u.role}</td>
                       <td className="py-3 px-4">
-                        <div className="flex gap-1 flex-wrap max-w-[250px]">
-                          {['ventas','produccion','formulas','inventario','simulador','costos','configuracion'].filter(k=>u.permissions?.[k]).map(k=>(
-                            <span key={k} className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded text-[8px] font-black uppercase">{k}</span>
-                          ))}
-                          {Object.keys(u.permissions||{}).filter(k=>k.includes('_')&&u.permissions[k]).length > 0 && (
-                            <span className="text-[8px] text-gray-400 font-bold">+{Object.keys(u.permissions||{}).filter(k=>k.includes('_')&&u.permissions[k]).length} sub</span>
+                        <div className="flex gap-1 flex-wrap max-w-[280px]">
+                          {u.role === 'Master' ? (
+                            <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[8px] font-black uppercase">✅ Acceso Total</span>
+                          ) : (
+                            <>
+                              {/* Mostrar módulos activos */}
+                              {SYSTEM_MODULES.map(mod => {
+                                const modOn = !!(u.permissions||{})[mod.id];
+                                const subOns = mod.submodules.filter(s => !!(u.permissions||{})[s.id]);
+                                if (!modOn && subOns.length === 0) return null;
+                                return (
+                                  <div key={mod.id} className="mb-0.5">
+                                    {modOn ? (
+                                      <span className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded text-[8px] font-black uppercase">{mod.icon} {mod.label.replace(/^\d+\.\sMÓDULO\s/i,'')}</span>
+                                    ) : (
+                                      <div className="flex flex-wrap gap-0.5">
+                                        {subOns.map(s => (
+                                          <span key={s.id} className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[7px] font-black uppercase">{s.label}</span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              {Object.values(u.permissions||{}).every(v => !v) && (
+                                <span className="text-[8px] text-gray-400 font-bold italic">Sin permisos</span>
+                              )}
+                            </>
                           )}
                         </div>
                       </td>
                       <td className="py-3 px-4 text-center">
                         <div className="flex justify-center gap-2">
                           <button onClick={()=>startEditUser(u)} className="p-2 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-100"><Edit size={14}/></button>
-                          <button onClick={()=>handleDeleteUser(u.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-100"><Trash2 size={14}/></button>
+                          <button onClick={()=>handleDeleteUser(u.username || u.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-100"><Trash2 size={14}/></button>
                         </div>
                       </td>
                     </tr>
