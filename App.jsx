@@ -160,7 +160,7 @@ const getSafeDate = (ts) => {
 // ============================================================================
 // CONSTANTE DE SEGURIDAD - CLAVE ADMIN
 // ============================================================================
-const ADMIN_PASSWORD = 'Supply2026.Admin';
+const ADMIN_PASSWORD = '1234';
 
 // ============================================================================
 // CATEGORÍAS DE COSTOS OPERATIVOS
@@ -1441,11 +1441,15 @@ export default function App() {
         for (let i = 0; i < ops.length; i += batchSize) {
           const chunk = ops.slice(i, i + batchSize);
           const b = writeBatch(db);
-          chunk.forEach(op => b.update(getDocRef('inventory', op.id), { cost: op.cost }));
+          chunk.forEach(op => b.set(getDocRef('inventory', op.id), { cost: op.cost }, { merge: true }));
           await b.commit();
           count += chunk.length;
         }
-        setDialog({ title: '✅ Costos Sincronizados', text: `${count} documento(s) de almacén actualizados. Todos los almacenes ahora usan el costo promedio ponderado de Inventario General.`, type: 'alert' });
+        if (count === 0) {
+          setDialog({ title: 'ℹ️ Sin cambios', text: 'Todos los almacenes ya tienen el mismo costo. No hubo nada que actualizar.', type: 'alert' });
+        } else {
+          setDialog({ title: '✅ Costos Igualados', text: `${count} documento(s) actualizados. Todos los almacenes ahora usan el mismo costo por producto.`, type: 'alert' });
+        }
       } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
     }});
   };
@@ -1484,14 +1488,14 @@ export default function App() {
         const b = writeBatch(db);
         allWarehouseDocs.forEach(d => {
           const upd = { cost: newCost, timestamp: Date.now() };
-          // Solo actualizar stock en el almacén específico que se editó
           if (d.id === realDocId && almacenEditForm.stock !== '') upd.stock = newStock;
-          b.update(getDocRef('inventory', d.id), upd);
+          b.set(getDocRef('inventory', d.id), upd, { merge: true });
         });
         await b.commit();
       } else {
         // Actualizar solo el documento del almacén específico usando el ID real
-        await updateDoc(getDocRef('inventory', realDocId), updates);
+        // Use setDoc with merge:true so it works even if doc doesn't exist
+        await setDoc(getDocRef('inventory', realDocId), updates, { merge: true });
       }
       // Registrar movimiento si el stock cambió
       const diff = newStock - prevStock;
@@ -3798,20 +3802,17 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               </div>
               <button onClick={async()=>{
                 printOSA(osaItemList,osaHdr);
-                // Increment counter in Firebase and state
                 const next = currentOsaNum + 1;
                 setOsaCounter(next);
                 await setDoc(getDocRef('settings','osaCounter'), { current: next }, { merge: true });
-                // Save OSA to history
                 await addDoc(getColRef('inventoryRequisitions'), {
                   type: 'OSA', docType: 'OSA', nroOSA, 
-                  ...osaHdr, items: osaItemList,
+                  ...osaHdr, items: [...osaItemList],
                   status: 'PROCESADA', timestamp: Date.now(), user: appUser?.name||'Admin'
                 });
-                // Reset list and header for next OSA
-                setOsaItemList([]);
-                setOsaHdr(h=>({...h,docRef:'',fecha:getTodayDate()}));
+                setDialog({title:'✅ OSA Generada', text:`${nroOSA} registrada en historial. Para crear una nueva OSA usa el botón "Limpiar".`, type:'alert'});
               }} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2 shadow-md disabled:opacity-40" disabled={osaItemList.length===0}><Printer size={15}/> Imprimir & Confirmar OSA</button>
+              {osaItemList.length > 0 && <button onClick={()=>setDialog({title:'Limpiar OSA',text:'¿Vaciar la lista de artículos para comenzar una nueva OSA?',type:'confirm',onConfirm:()=>{setOsaItemList([]);setOsaHdr(h=>({...h,docRef:'',destino:'',fecha:getTodayDate()}));}})} className="bg-red-100 text-red-700 px-4 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-red-200 flex items-center gap-1"><X size={13}/> Limpiar</button>}
             </div>
             <div className="p-6 space-y-5">
               {/* Encabezado */}
@@ -3953,11 +3954,10 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                       await setDoc(getDocRef('settings','osaCounter'), { current: next }, { merge: true });
                       await addDoc(getColRef('inventoryRequisitions'), {
                         type: 'OSA', docType: 'OSA', nroOSA,
-                        ...osaHdr, items: osaItemList,
+                        ...osaHdr, items: [...osaItemList],
                         status: 'PROCESADA', timestamp: Date.now(), user: appUser?.name||'Admin'
                       });
-                      setOsaItemList([]);
-                      setOsaHdr(h=>({...h,docRef:'',fecha:getTodayDate()}));
+                      setDialog({title:'✅ OSA Generada', text:`${nroOSA} registrada. Para nueva OSA limpia los artículos con el botón ✕.`, type:'alert'});
                     }} className="bg-black text-white px-8 py-3 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2"><Printer size={15}/> Generar e Imprimir OSA</button>
                   </div>
                 </div>
@@ -3999,12 +3999,16 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         <td className="py-2.5 px-4 border-r text-center font-black">{(osa.items||[]).length}</td>
                         <td className="py-2.5 px-4 border-r text-center text-[10px] font-bold">{osa.user || osa.procesadoPor || '—'}</td>
                         <td className="py-2.5 px-4 text-center">
-                          <button onClick={()=>{
-                            const hdr = { almacenOrigen: osa.almacenOrigen||'ALMACÉN', destino: osa.destino||'—', fecha: osa.fecha||getTodayDate(), docRef: osa.docRef||'', procesadoPor: osa.user||osa.procesadoPor||'—' };
-                            printOSA(osa.items||[], hdr);
-                          }} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white flex items-center gap-1 text-[8px] font-black uppercase mx-auto">
-                            <Printer size={10}/> PDF
-                          </button>
+                          <div className="flex gap-1 justify-center">
+                            <button onClick={()=>{
+                              const hdr = { almacenOrigen: osa.almacenOrigen||'ALMACÉN', destino: osa.destino||'—', fecha: osa.fecha||getTodayDate(), docRef: osa.docRef||'', procesadoPor: osa.user||osa.procesadoPor||'—' };
+                              printOSA(osa.items||[], hdr);
+                            }} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white flex items-center gap-1 text-[8px] font-black uppercase" title="Reimprimir PDF">
+                              <Printer size={10}/>
+                            </button>
+                            <button onClick={()=>requireAdminPassword(()=>setDialog({title:'Eliminar OSA',text:`¿Eliminar ${osa.nroOSA||osa.id}? Esta acción no revierte el inventario.`,type:'confirm',onConfirm:async()=>{await deleteDoc(getDocRef('inventoryRequisitions',osa.id));setDialog({title:'Eliminada',text:`${osa.nroOSA} eliminada del historial.`,type:'alert'});}}), 'Eliminar OSA del historial')}
+                              className="p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white" title="Eliminar del historial"><Trash2 size={10}/></button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -4619,21 +4623,19 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     }
 
     if (invView === 'finished') {
-      // FIX 2: also include items from `inventory` with category='Productos Terminados'
-      // These are products created directly via Inventario General (imported goods)
-      // Convert them to FG-compatible format for display
-      const invPTItems = (inventory||[]).filter(i => i.category === 'Productos Terminados' && parseNum(i.stock) > 0).map(i => ({
-        id: i.id, opId: 'IMPORTADO', cliente: 'STOCK IMPORTADO',
-        tipoProducto: (i.unit||'').toUpperCase().includes('KG') ? 'TERMOENCOGIBLE' : 'BOLSAS',
-        producto: i.desc, categoria: i.category, status: 'LISTO PARA ENTREGA',
-        millares: (i.unit||'').toUpperCase().includes('KG') ? 0 : parseNum(i.stock),
-        kgProducidos: (i.unit||'').toUpperCase().includes('KG') ? parseNum(i.stock) : 0,
+      // FIX 3: inventory PT items are now shown within bolsas/termos via allFG merge
+      // Include inventory PT items converted to FG format
+      const invPTForView = (inventory||[]).filter(i => i.category === 'Productos Terminados' && parseNum(i.stock) > 0).map(i => ({
+        id: `INV-PT-${i.displayId||(i.id||'').split('___')[0]||i.id}`, opId: 'IMPORTADO', cliente: 'IMPORTADO',
+        tipoProducto: (i.unit||'').toUpperCase()==='KG' ? 'TERMOENCOGIBLE' : 'BOLSAS',
+        producto: i.desc, categoria: 'Productos Terminados', status: 'LISTO PARA ENTREGA',
+        millares: (i.unit||'').toUpperCase()==='KG' ? 0 : parseNum(i.stock),
+        kgProducidos: (i.unit||'').toUpperCase()==='KG' ? parseNum(i.stock) : 0,
         costoUnitario: parseNum(i.cost||0), costoUnitarioMillar: parseNum(i.cost||0),
-        ubicacion: i.almacen || 'ALMACEN GENERAL', _fromInventory: true, _invDocId: i.id,
+        ubicacion: i.almacen || 'ALMACEN GENERAL', _fromInventory: true,
         timestamp: i.timestamp || Date.now()
       }));
-      // Merge with finishedGoodsInventory (avoid showing duplicates if same product exists in both)
-      const allFG = [...(finishedGoodsInventory||[]), ...invPTItems];
+      const allFG = [...(finishedGoodsInventory||[]), ...invPTForView];
       const bolsas = allFG.filter(i => i.tipoProducto !== 'TERMOENCOGIBLE');
       const termos = allFG.filter(i => i.tipoProducto === 'TERMOENCOGIBLE');
       const filterItems = (list) => list.filter(i =>
@@ -5136,45 +5138,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       {renderGrpTable(termosGrp, true)}
                     </div>
                   )}
-                  {/* Ítems de Inventario General con categoría "Productos Terminados" */}
-                  {(() => {
-                    const invPT = (inventory||[]).filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0);
-                    if(!invPT.length) return null;
-                    return (
-                      <div className="mb-6">
-                        <h3 className="text-sm font-black uppercase text-orange-700 mb-3 flex items-center gap-2"><span className="bg-orange-100 px-3 py-1 rounded-lg">📋 INVENTARIO DE PRODUCTOS TERMINADOS — IMPORTADOS</span></h3>
-                        <div className="overflow-x-auto rounded-xl border border-gray-200">
-                          <table className="w-full text-left text-xs">
-                            <thead className="bg-orange-700 text-white">
-                              <tr className="uppercase font-black text-[9px] tracking-widest">
-                                <th className="py-3 px-4 border-r border-white/20">Código / Descripción</th>
-                                <th className="py-3 px-4 border-r border-white/20 text-center">Unidad</th>
-                                <th className="py-3 px-4 border-r border-white/20 text-center">Costo Unit.</th>
-                                <th className="py-3 px-4 text-center">Stock</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                              {invPT.map((item,idx)=>(
-                                <tr key={item.id} className={idx%2===0?'bg-white':'bg-gray-50/50'}>
-                                  <td className="py-3 px-4 border-r">
-                                    <div className="font-black text-[11px] text-gray-900 uppercase">{item.desc}</div>
-                                    <div className="text-[9px] text-gray-400 font-bold">{item.id}</div>
-                                  </td>
-                                  <td className="py-3 px-4 border-r text-center font-bold text-gray-500 text-[10px]">{item.unit||'KG'}</td>
-                                  <td className="py-3 px-4 border-r text-center font-black text-orange-600">${formatNum(item.cost)}</td>
-                                  <td className="py-3 px-4 text-center">
-                                    <div className="font-black text-xl text-orange-600">{formatNum(item.stock)}</div>
-                                    <div className="text-[9px] font-bold text-gray-400 uppercase">{item.unit||'KG'}</div>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  {groups.length === 0 && inventory.filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0).length===0 && inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0).length===0 && finishedGoodsInventory.filter(fg=>(parseNum(fg.kgProducidos)||parseNum(fg.millares))>0).length===0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>}
+                  {/* FIX 3: inventory PT items are now included in allFG → shown in bolsas/termos tables above */}
+                  {groups.length === 0 && (finishedGoodsInventory||[]).filter(fg=>(parseNum(fg.kgProducidos)||parseNum(fg.millares))>0).length===0 && invPTForView.length===0 && inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0).length===0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>}
 
                   {/* ── Semielaborados / Bobinas (de Inventario General) ── */}
                   {(() => {
@@ -5704,7 +5669,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     };
     const fgGroups = {};
     // FIX: include ALL FG items with any stock (kgProducidos OR millares > 0)
-    // Also include items with fgId starting with FG- (custom code from Entrega Parcial)
     (finishedGoodsInventory||[]).forEach(fg => {
       if (parseNum(fg.kgProducidos) <= 0 && parseNum(fg.millares) <= 0) return;
       const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
@@ -5719,9 +5683,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       const cu = g.totalStock > 0 ? g.pesoTot / g.totalStock : 0;
       const catSlug = (g.categoria||g.producto||'SIN').replace(/[\s_\-\/\|]/g,'').substring(0,14).toUpperCase();
       const idCorto = `FG-${catSlug}-${g.ancho||0}x${g.largo||0}x${g.micras||0}`;
-      // Descripción: EMBUTIDO 1 - KIRI | INVERSIONES AVICOLAS, C.A | 28×75CM 0.012MIC
-      const micDec = g.micras ? `${(parseNum(g.micras)/1000).toFixed(3)}MIC` : '';
-      const dimPart = g.ancho ? `${g.ancho}×${g.largo}CM ${micDec}` : micDec;
       const descFmt = formatFGLabel(g);
       return {
         id: idCorto,
@@ -5738,7 +5699,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     const fgById = {};
     for (const item of fgAsCatalog) {
       if (fgById[item.id]) {
-        // Merge: sumar stocks y recalcular costo promedio ponderado
         const prev = fgById[item.id];
         const totalStock = (prev.stock || 0) + (item.stock || 0);
         const totalVal = (prev.stock || 0) * (prev.cost || 0) + (item.stock || 0) * (item.cost || 0);
@@ -5750,7 +5710,34 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         fgDeduped.push(fgById[item.id]);
       }
     }
-    const allCatalogItems = [...(inventory || []), ...fgDeduped];
+    // FIX 3: ALSO add inventory items with category='Productos Terminados' to fgDeduped
+    // so they appear UNIFIED in the Inventario de Productos Terminados section
+    // (and do NOT appear separately as "TERMINADOS — IMPORTADOS" anymore)
+    const invPT = (inventory||[]).filter(i => i.category === 'Productos Terminados' && parseNum(i.stock) > 0);
+    invPT.forEach(i => {
+      const cleanId = i.displayId || (i.id||'').split('___')[0];
+      const esTermo = (i.unit||'').toUpperCase().includes('KG');
+      const fgId = `INV-PT-${cleanId}`;
+      if (fgById[fgId]) {
+        const prev = fgById[fgId];
+        const totalStock = (prev.stock||0) + parseNum(i.stock);
+        const totalVal = (prev.stock||0)*(prev.cost||0) + parseNum(i.stock)*parseNum(i.cost||0);
+        prev.stock = totalStock;
+        prev.cost = totalStock > 0 ? totalVal/totalStock : parseNum(i.cost||0);
+      } else {
+        const newItem = {
+          id: fgId, desc: i.desc, category: 'Productos Terminados',
+          unit: i.unit||'UND', stock: parseNum(i.stock), cost: parseNum(i.cost||0),
+          _isFGGroup: true, _lotes: 1, _totalKg: parseNum(i.stock),
+          _fromInventory: true, _invIds: [i.id]
+        };
+        fgById[fgId] = newItem;
+        fgDeduped.push(newItem);
+      }
+    });
+    // Filter inventory to NOT show PT items separately (they're now in fgDeduped)
+    const inventoryWithoutPT = (inventory||[]).filter(i => i.category !== 'Productos Terminados');
+    const allCatalogItems = [...inventoryWithoutPT, ...fgDeduped];
     // Categorías únicas — sin duplicados
     const allCatalogCats = ['TODAS', ...Array.from(new Set(allCatalogItems.map(i=>i?.category||'Otros')))]
       .sort((a,b)=>{ if(a==='TODAS')return -1; if(b==='TODAS')return 1; if(a==='Productos Terminados')return -1; if(b==='Productos Terminados')return 1; return a.localeCompare(b); });
@@ -13005,7 +12992,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             {/* ── ESTADO FINANCIERO ── */}
             {showReportType === 'estado_financiero' && (
               <div className="space-y-4">
-                <div className="flex flex-wrap gap-4 items-start bg-gray-50 p-4 rounded-2xl border border-gray-200">
+                <div className="flex flex-wrap gap-4 items-start bg-gray-50 p-4 rounded-2xl border border-gray-200 no-pdf print:hidden">
                   <div className="bg-white border-2 border-gray-200 rounded-2xl p-4 shadow-sm min-w-52">
                     <div className="flex items-center justify-between mb-3">
                       <button onClick={()=>setErAno(v=>v-1)} className="p-1 hover:bg-gray-100 rounded-lg font-black text-gray-600 text-lg leading-none">&#8249;</button>
@@ -13020,9 +13007,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         </button>
                       ))}
                     </div>
-                    <div className="flex justify-between pt-2 border-t border-gray-100">
-                      <span className="text-[9px] font-bold text-gray-500">{['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][erMes-1]} {erAno}</span>
-                      <button onClick={()=>{setErMes(new Date().getMonth()+1);setErAno(new Date().getFullYear());}} className="text-[9px] font-black text-orange-600 uppercase hover:underline">Este mes</button>
+                    <div className="flex justify-between pt-2 border-t border-gray-100 gap-1">
+                      <button onClick={()=>{setErMes(new Date().getMonth()+1);setErAno(new Date().getFullYear());}} className="text-[9px] font-black text-gray-500 uppercase hover:underline">Este mes</button>
+                      <button onClick={()=>setErMesesExtra(prev=>prev.includes('ALL')?[]:['ALL'])}
+                        className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${erMesesExtra.includes('ALL')?'bg-green-600 text-white':'text-green-700 hover:bg-green-50'}`}>
+                        {erMesesExtra.includes('ALL')?'✓ TODOS':'TODOS'}
+                      </button>
                     </div>
                   </div>
                   <div className="flex flex-col gap-3">
@@ -15749,7 +15739,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 {dialog.type === 'confirm' ? (
                    <div className="flex gap-3">
                       <button onClick={() => setDialog(null)} className="flex-1 bg-gray-200 text-gray-800 font-black py-4 rounded-xl uppercase text-[10px] tracking-widest hover:bg-gray-300 transition-all">Cancelar</button>
-                      <button onClick={() => { dialog.onConfirm(); setDialog(null); }} className="flex-1 bg-black text-white font-black py-4 rounded-xl uppercase text-[10px] tracking-widest shadow-lg hover:bg-gray-800 transition-all flex justify-center items-center gap-2"><CheckCircle2 size={16}/> Confirmar</button>
+                      <button onClick={async () => { setDialog(null); try { await dialog.onConfirm(); } catch(e) { setDialog({title:'Error',text:e.message,type:'alert'}); } }} className="flex-1 bg-black text-white font-black py-4 rounded-xl uppercase text-[10px] tracking-widest shadow-lg hover:bg-gray-800 transition-all flex justify-center items-center gap-2"><CheckCircle2 size={16}/> Confirmar</button>
                    </div>
                 ) : (
                    <button onClick={() => setDialog(null)} className="w-full bg-black text-white font-black py-4 rounded-xl uppercase text-[10px] tracking-widest shadow-lg hover:bg-gray-800 transition-all">Aceptar</button>
