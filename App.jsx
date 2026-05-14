@@ -3947,7 +3947,9 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       const allItems = inventory || [];
       // Filtros
       const filtSearch = almacenesFilter.search.toUpperCase();
-      // Agrupar por cleanId para evitar IDs compuestos en el export
+      // ── FIX: SIEMPRE usar cleanId|almacen como clave para no perder filas ──
+      // Antes: en TODOS sin búsqueda se agrupaba por cleanId sólo → byAlmacen perdía
+      // productos cuyo último almacén procesado no coincidía con el mostrado.
       const _invGroups = {};
       for (const i of allItems) {
         const cleanId = i.displayId || (i.id||'').split('___')[0];
@@ -3956,15 +3958,11 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
         const matchCat = almacenesFilter.cat === 'TODAS' || i.category === almacenesFilter.cat;
         const matchSearch = !filtSearch || cleanId.toUpperCase().includes(filtSearch) || (i.desc||'').toUpperCase().includes(filtSearch);
         if (!matchAlm || !matchCat || !matchSearch) continue;
-        // Con búsqueda activa: mostrar separado por almacén para ver dónde está el producto
-        const key = (almacenesFilter.almacen === 'TODOS' && filtSearch)
-          ? cleanId + '|' + alm  // busqueda: separar por almacén
-          : almacenesFilter.almacen === 'TODOS'
-            ? cleanId             // sin búsqueda: agrupar por código
-            : cleanId + '|' + alm;
+        // Clave SIEMPRE por cleanId + almacen → cada producto-almacén es fila independiente
+        const key = cleanId + '|' + alm;
         if (!_invGroups[key]) {
-          _invGroups[key] = { ...i, id: cleanId, displayId: cleanId, almacen: alm, stock: 0, _wb: [],
-            _showAlmacen: almacenesFilter.almacen === 'TODOS' && !!filtSearch };
+          // Guardar el ID real de Firestore en _realId para edición/escritura
+          _invGroups[key] = { ...i, id: cleanId, _realId: i.id, displayId: cleanId, almacen: alm, stock: 0, _wb: [] };
         }
         const stk = parseNum(i.stock||0);
         const cst = parseNum(i.cost||0);
@@ -4068,7 +4066,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   const url=URL.createObjectURL(blob);
                   const a=document.createElement('a');a.href=url;a.download='Almacenes_'+almacenesFilter.almacen.replace(/ /g,'_')+'_'+getTodayDate()+'.xls';a.click();URL.revokeObjectURL(url);
                 }} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-green-700 flex items-center gap-2"><Download size={13}/> Exportar XLS</button>
-                <button onClick={()=>requireAdminPassword(handleSyncAllCosts, 'Sincronizar costos de todos los almacenes')} className="bg-teal-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-teal-700 flex items-center gap-2 shadow-md" title="Igualar el costo de cada producto en todos sus almacenes al promedio ponderado de Inventario General"><RefreshCw size={13}/> Sincronizar Costos</button>
                 <button onClick={()=>printAlmacenReport(almacenesFilter.almacen==='TODOS'?'TODOS LOS ALMACENES':almacenesFilter.almacen, filtItems)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2"><Printer size={13}/> PDF</button>
                 
               </div>
@@ -6460,26 +6457,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center">
               <h2 className="text-xl font-black uppercase flex items-center gap-3"><History className="text-orange-500" size={22}/> Kardex de Inventario</h2>
               <div className="flex gap-2">
-                <button onClick={()=>setShowKardexRecalc(v=>!v)} className="bg-yellow-500 text-white px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-yellow-600 flex items-center gap-2" title="Recalcular stock desde movimientos históricos"><RefreshCw size={13}/> Recalcular Kardex</button>
+
                 {kardexProductId && <button onClick={()=>handleExportPDF('Kardex_'+kardexProductId, true)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2"><Printer size={14}/> Imprimir</button>}
-                {kardexProductId && <button onClick={()=>requireAdminPassword(async()=>{
-                  // Delete ALL FG:: movements for this product group, then keep only unique ones
-                  const isFGK = kardexProductId.startsWith('FG::');
-                  const grpKeyK = isFGK ? kardexProductId.replace('FG::','') : kardexProductId;
-                  const fgIdsK = new Set((finishedGoodsInventory||[]).filter(fg=>{
-                    const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                    const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                    return `${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}` === grpKeyK || fg.id === grpKeyK;
-                  }).map(fg=>fg.id));
-                  const movsToDelete = (invMovements||[]).filter(m=>{
-                    const mid = m.itemId?.replace('FG::','');
-                    return fgIdsK.has(mid);
-                  });
-                  for(const m of movsToDelete) { try{ await deleteDoc(getDocRef('inventoryMovements',m.id)); }catch(e){} }
-                  setDialog({title:'✅',text:`${movsToDelete.length} movimientos eliminados del Kardex.`,type:'alert'});
-                },'Limpiar movimientos duplicados del Kardex')} className="bg-red-50 text-red-500 border border-red-200 px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-red-500 hover:text-white">
-                  🗑 Limpiar Kardex
-                </button>}
               </div>
             </div>
             {/* PANEL RECÁLCULO KARDEX — Paso 6 */}
@@ -9159,24 +9138,44 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       }
 
       if (!fgId) {
-        // Crear nuevo lote FG
-        fgId = `FG-${Date.now()}`;
-        const fgNombre = partialNewName.trim() || formatFGLabel(req) || req.desc || 'Producto';
-        // FIX 5e: Store the fgId on the OP so CIERRE OP uses the same product
-        await updateDoc(getDocRef('inventoryRequisitions', req.id), { partialFgId: fgId, partialFgNombre: fgNombre });
-        await setDoc(getDocRef('finishedGoodsInventory', fgId), {
-          id: fgId, opId: req.id, reqId: req.id,
-          cliente: req.client||'N/A', tipoProducto: req.tipoProducto||'BOLSAS',
-          categoria: req.categoria||'', producto: fgNombre, // auto: CATEGORIA - MEDIDA
-          ancho: req.ancho||0, largo: req.largo||0, micras: req.micras||0,
-          color: req.color||'NATURAL', tratamiento: req.tratamiento||'LISO',
-          kgProducidos: kgEntrega, millares: millEntrega,
-          costoUnitario: costoUnitWIP, costoTotal: costoUnitWIP*kgEntrega,
-          fechaFinalizacion: partialFecha || getTodayDate(), ubicacion: 'ALMACEN GENERAL',
-          status: 'LISTO PARA ENTREGA', esEntregaParcial: true,
-          observaciones: `ENTREGA PARCIAL — ${esTermo?formatNum(kgEntrega)+' KG':formatNum(millEntrega)+' Mill. / '+formatNum(kgEntrega)+' KG'}`,
-          timestamp: Date.now()
-        });
+        // Crear nuevo lote FG — código: FG-{NOMBRE DEL PRODUCTO}
+        const fgNombre = (partialNewName.trim() || formatFGLabel(req) || req.desc || 'Producto').toUpperCase().trim();
+        // Generar código limpio: FG-CHUPETA-KIRI-9X14X6MIC (sin espacios ni chars especiales)
+        const fgCodeSlug = fgNombre.replace(/[^A-Z0-9\-\.]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+        // Verificar si ya existe un FG con este código para evitar duplicados (sumar si existe)
+        const existingFgByCode = (finishedGoodsInventory||[]).find(fg => fg.id === `FG-${fgCodeSlug}`);
+        if (existingFgByCode) {
+          // Sumar al existente en lugar de crear uno nuevo
+          const prevKg   = parseNum(existingFgByCode.kgProducidos||0);
+          const prevMill = parseNum(existingFgByCode.millares||0);
+          const prevCost = parseNum(existingFgByCode.costoUnitario||0);
+          const newKg    = prevKg + kgEntrega;
+          const newMill  = prevMill + millEntrega;
+          const avgCost  = newKg > 0 ? ((prevKg*prevCost)+(kgEntrega*costoUnitWIP))/newKg : costoUnitWIP;
+          await updateDoc(getDocRef('finishedGoodsInventory', existingFgByCode.id), {
+            kgProducidos: newKg, millares: newMill, costoUnitario: avgCost, costoTotal: avgCost*newKg
+          });
+          fgId = existingFgByCode.id;
+        } else {
+          fgId = `FG-${fgCodeSlug}`;
+        }
+        // Store the fgId on the OP so CIERRE OP uses the same product
+        await updateDoc(getDocRef('requirements', req.id), { partialFgId: fgId, partialFgNombre: fgNombre });
+          if (!existingFgByCode) {
+            await setDoc(getDocRef('finishedGoodsInventory', fgId), {
+              id: fgId, opId: req.id, reqId: req.id,
+              cliente: req.client||'N/A', tipoProducto: req.tipoProducto||'BOLSAS',
+              categoria: req.categoria||'', producto: fgNombre,
+              ancho: req.ancho||0, largo: req.largo||0, micras: req.micras||0,
+              color: req.color||'NATURAL', tratamiento: req.tratamiento||'LISO',
+              kgProducidos: kgEntrega, millares: millEntrega,
+              costoUnitario: costoUnitWIP, costoTotal: costoUnitWIP*kgEntrega,
+              fechaFinalizacion: partialFecha || getTodayDate(), ubicacion: 'ALMACEN GENERAL',
+              status: 'LISTO PARA ENTREGA', esEntregaParcial: true,
+              observaciones: `ENTREGA PARCIAL — ${esTermo?formatNum(kgEntrega)+' KG':formatNum(millEntrega)+' Mill. / '+formatNum(kgEntrega)+' KG'}`,
+              timestamp: Date.now()
+            });
+          }
       }
 
       // Kardex del FG (en movimientos de inventario como FG::id)
@@ -15625,7 +15624,19 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             <input type="text" value={partialNewName||autoName} onChange={e=>setPartialNewName(e.target.value.toUpperCase())}
                               className="w-full border-2 border-blue-300 rounded-xl p-2 text-[10px] font-black uppercase outline-none focus:border-blue-500 bg-white"
                               placeholder={autoName}/>
-                            <p className="text-[8px] text-blue-500">Formato: CATEGORÍA - ANCHOxLARGOxMICRASMIC</p>
+                            {/* Preview del código que se generará */}
+                            {(() => {
+                              const nombre = (partialNewName||autoName||'').toUpperCase().trim();
+                              const slug = nombre.replace(/[^A-Z0-9\-\.]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'');
+                              const previewCode = slug ? `FG-${slug}` : '—';
+                              return (
+                                <div className="flex items-center gap-1 mt-1">
+                                  <p className="text-[8px] text-blue-500 font-bold">Código a crear:</p>
+                                  <span className="text-[8px] font-black text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">{previewCode}</span>
+                                </div>
+                              );
+                            })()}
+                            <p className="text-[8px] text-blue-500 mt-0.5">Formato: CATEGORÍA - ANCHOxLARGOxMICRASMIC</p>
                           </div>
                         )}
                       </div>
