@@ -158,9 +158,9 @@ const getSafeDate = (ts) => {
 };
 
 // ============================================================================
-// CONSTANTE DE SEGURIDAD - CLAVE ADMIN
+// CONSTANTE DE SEGURIDAD - CLAVE administrador
 // ============================================================================
-const ADMIN_PASSWORD = '1234';
+const administrador_PASSWORD = 'Supply2026.Admin';
 
 // ============================================================================
 // CATEGORÍAS DE COSTOS OPERATIVOS
@@ -363,7 +363,7 @@ export default function App() {
 
   // ── One-time: set correct final stocks in Firebase ────────────────────────
   useEffect(() => {
-    if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v9') === 'done') return;
+    if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v10') === 'done') return;
     const run = async () => {
       // 1. Eliminar TODOS los documentos FG con (28+5+5) en producto/descripción (stock 0 o positivo)
       const phantomFGs = finishedGoodsInventory.filter(fg =>
@@ -425,15 +425,7 @@ export default function App() {
         for (const dup of panalDocs.slice(1)) { try { await updateDoc(getDocRef('finishedGoodsInventory', dup.id), {millares:0}); } catch(e){} }
       }
 
-      // 5. Termo Pinturas Caribe = 1.40 KG
-      const termoDocs = finishedGoodsInventory.filter(fg => /termo.*pinturas|pinturas.*caribe/i.test(`${fg.producto||''} ${fg.cliente||''}`));
-      if (termoDocs.length > 0) {
-        termoDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-        try { await updateDoc(getDocRef('finishedGoodsInventory', termoDocs[0].id), {kgProducidos:1.40,costoUnitario:2.71}); } catch(e){}
-        for (const dup of termoDocs.slice(1)) { try { await updateDoc(getDocRef('finishedGoodsInventory', dup.id), {kgProducidos:0}); } catch(e){} }
-      }
-
-      sessionStorage.setItem('fg_stock_v9','done');
+      sessionStorage.setItem('fg_stock_v10','done');
     };
     run();
   }, [finishedGoodsInventory, inventory]);
@@ -585,7 +577,7 @@ export default function App() {
   const [almacenesView, setAlmacenesView] = useState('lista');
   const [almacenesFilter, setAlmacenesFilter] = useState({ almacen:'TODOS', cat:'TODAS', search:'' });
   const [editingAlmacenItem, setEditingAlmacenItem] = useState(null);
-  const [almacenEditForm, setAlmacenEditForm] = useState({ stock: '', cost: '', applyToAll: false });
+  const [almacenEditForm, setAlmacenEditForm] = useState({ stock: '', cost: '', applyToAll: true });
   // SANDBOX / DEMO MODE
   const [sandboxMode, setSandboxMode] = useState(false);
   const toggleSandbox = (v) => { activateSandbox(v); setSandboxMode(v); };
@@ -603,6 +595,10 @@ export default function App() {
   const [reportPeriod, setReportPeriod] = useState('mensual');
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
   const [selectedMonths, setSelectedMonths] = useState([]); // multi-month filter for Rentabilidad
+  const [pvClienteFilter, setPvClienteFilter] = useState('TODOS');
+  const [pvProductoFilter, setPvProductoFilter] = useState('TODOS');
+  const [prodActivoSearch, setProdActivoSearch] = useState('');
+  const [historialSearch, setHistorialSearch] = useState('');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [showReportType, setShowReportType] = useState(null); 
 
@@ -1727,6 +1723,19 @@ export default function App() {
     try {
       // merge:true ensures other warehouses' docs are NOT touched
       await setDoc(getDocRef('inventory', docId), itemData, { merge: true });
+      // FIX 10: Auto-propagate cost to ALL warehouses so Inventario General
+      // weighted avg == each warehouse's individual cost
+      if (finalCost > 0 && existingItem && editingInvId) {
+        const otherWarehouseDocs = (inventory||[]).filter(i => {
+          const cid = i.displayId || (i.id||'').split('___')[0];
+          return cid === itemId && i.id !== docId;
+        });
+        if (otherWarehouseDocs.length > 0) {
+          const b = writeBatch(db);
+          otherWarehouseDocs.forEach(d => b.update(getDocRef('inventory', d.id), { cost: finalCost, timestamp: Date.now() }));
+          await b.commit();
+        }
+      }
       if (existingItem && editingInvId) {
         const diff = newStock - prevStock;
         if (Math.abs(diff) > 0.001) {
@@ -1742,7 +1751,7 @@ export default function App() {
         }
       }
       setNewInvItemForm(initialInvItemForm); setEditingInvId(null);
-      setDialog({ title: '✅ Éxito', text: `${itemId} guardado en ${almacen}. Los demás almacenes no fueron modificados.`, type: 'alert' });
+      setDialog({ title: '✅ Éxito', text: `${itemId} guardado. Costo actualizado en todos los almacenes.`, type: 'alert' });
     } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
   const startEditInvItem = (mergedItem) => {
@@ -3771,6 +3780,8 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       };
 
       // States are at component level (osaItemList, osaItemForm, osaHdr)
+      // ── OSA History: all approved invRequisitions with type OSA ──
+      const osaHistory = (invRequisitions||[]).filter(r => r.type === 'OSA' || r.docType === 'OSA' || (r.nroOSA && r.nroOSA.startsWith('OSA-'))).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
 
       return (
         <div className="space-y-4 animate-in fade-in">
@@ -3786,6 +3797,12 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 const next = currentOsaNum + 1;
                 setOsaCounter(next);
                 await setDoc(getDocRef('settings','osaCounter'), { current: next }, { merge: true });
+                // Save OSA to history
+                await addDoc(getColRef('inventoryRequisitions'), {
+                  type: 'OSA', docType: 'OSA', nroOSA, 
+                  ...osaHdr, items: osaItemList,
+                  status: 'PROCESADA', timestamp: Date.now(), user: appUser?.name||'Admin'
+                });
                 // Reset list and header for next OSA
                 setOsaItemList([]);
                 setOsaHdr(h=>({...h,docRef:'',fecha:getTodayDate()}));
@@ -3929,6 +3946,11 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                       const next = currentOsaNum + 1;
                       setOsaCounter(next);
                       await setDoc(getDocRef('settings','osaCounter'), { current: next }, { merge: true });
+                      await addDoc(getColRef('inventoryRequisitions'), {
+                        type: 'OSA', docType: 'OSA', nroOSA,
+                        ...osaHdr, items: osaItemList,
+                        status: 'PROCESADA', timestamp: Date.now(), user: appUser?.name||'Admin'
+                      });
                       setOsaItemList([]);
                       setOsaHdr(h=>({...h,docRef:'',fecha:getTodayDate()}));
                     }} className="bg-black text-white px-8 py-3 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2"><Printer size={15}/> Generar e Imprimir OSA</button>
@@ -3939,6 +3961,53 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               )}
             </div>
           </div>
+
+          {/* ── HISTORIAL DE ÓRDENES DE SALIDA PROCESADAS ── */}
+          {osaHistory.length > 0 && (
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="px-8 py-5 border-b bg-gray-50 flex justify-between items-center">
+                <div>
+                  <h3 className="text-base font-black uppercase flex items-center gap-3 text-gray-800"><FileCheck size={18} className="text-orange-500"/> Historial de Órdenes de Salida Procesadas</h3>
+                  <p className="text-[10px] font-bold text-gray-500 mt-0.5">{osaHistory.length} OSA procesadas</p>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-100">
+                    <tr className="uppercase font-black text-[9px] text-gray-600">
+                      <th className="py-2.5 px-4 text-left border-r">N° OSA</th>
+                      <th className="py-2.5 px-4 text-left border-r">Fecha</th>
+                      <th className="py-2.5 px-4 text-left border-r">Destino</th>
+                      <th className="py-2.5 px-4 text-left border-r">Doc. Ref.</th>
+                      <th className="py-2.5 px-4 text-center border-r">Items</th>
+                      <th className="py-2.5 px-4 text-center border-r">Procesado por</th>
+                      <th className="py-2.5 px-4 text-center">Reimprimir</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {osaHistory.map((osa, i) => (
+                      <tr key={osa.id} className="hover:bg-orange-50/30">
+                        <td className="py-2.5 px-4 border-r font-black text-orange-600">{osa.nroOSA || osa.id}</td>
+                        <td className="py-2.5 px-4 border-r font-bold text-gray-600">{osa.fecha || osa.dispatchDate || '—'}</td>
+                        <td className="py-2.5 px-4 border-r font-bold uppercase text-[10px]">{osa.destino || '—'}</td>
+                        <td className="py-2.5 px-4 border-r text-[10px] text-gray-500">{osa.docRef || '—'}</td>
+                        <td className="py-2.5 px-4 border-r text-center font-black">{(osa.items||[]).length}</td>
+                        <td className="py-2.5 px-4 border-r text-center text-[10px] font-bold">{osa.user || osa.procesadoPor || '—'}</td>
+                        <td className="py-2.5 px-4 text-center">
+                          <button onClick={()=>{
+                            const hdr = { almacenOrigen: osa.almacenOrigen||'ALMACÉN', destino: osa.destino||'—', fecha: osa.fecha||getTodayDate(), docRef: osa.docRef||'', procesadoPor: osa.user||osa.procesadoPor||'—' };
+                            printOSA(osa.items||[], hdr);
+                          }} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white flex items-center gap-1 text-[8px] font-black uppercase mx-auto">
+                            <Printer size={10}/> PDF
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -5053,7 +5122,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     if(!invPT.length) return null;
                     return (
                       <div className="mb-6">
-                        <h3 className="text-sm font-black uppercase text-orange-700 mb-3 flex items-center gap-2"><span className="bg-orange-100 px-3 py-1 rounded-lg">📋 TERMINADOS (INVENTARIO GENERAL)</span></h3>
+                        <h3 className="text-sm font-black uppercase text-orange-700 mb-3 flex items-center gap-2"><span className="bg-orange-100 px-3 py-1 rounded-lg">📋 INVENTARIO DE PRODUCTOS TERMINADOS — IMPORTADOS</span></h3>
                         <div className="overflow-x-auto rounded-xl border border-gray-200">
                           <table className="w-full text-left text-xs">
                             <thead className="bg-orange-700 text-white">
@@ -5614,7 +5683,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       return millTot > 0 ? costoTotal / millTot : 0;
     };
     const fgGroups = {};
-    (finishedGoodsInventory||[]).filter(fg=>parseNum(fg.kgProducidos)>0||parseNum(fg.millares)>0).forEach(fg => {
+    // FIX: include ALL FG items with any stock (kgProducidos OR millares > 0)
+    // Also include items with fgId starting with FG- (custom code from Entrega Parcial)
+    (finishedGoodsInventory||[]).forEach(fg => {
+      if (parseNum(fg.kgProducidos) <= 0 && parseNum(fg.millares) <= 0) return;
       const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
       const key = `${fg.categoria||fg.producto||''}__${fg.cliente||''}__${fg.tipoProducto}`;
       if (!fgGroups[key]) fgGroups[key] = {key,esTermo,categoria:fg.categoria||fg.producto||'',cliente:fg.cliente||'',tipoProducto:fg.tipoProducto,producto:fg.producto||'',ancho:fg.ancho,largo:fg.largo,micras:fg.micras,totalStock:0,totalKg:0,pesoTot:0,lotes:0};
@@ -5854,6 +5926,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Inventario General</h2>
                <div className="flex gap-3 flex-wrap justify-end">
+                 <button onClick={() => requireAdminPassword(handleSyncAllCosts, 'Igualar costos de todos los almacenes al promedio de Inventario General')} className="bg-teal-600 text-white px-4 py-2.5 rounded-2xl text-[9px] font-black uppercase shadow-sm hover:bg-teal-700 transition-colors flex items-center gap-1.5" title="Iguala el costo de cada producto en todos sus almacenes">
+                   <RefreshCw size={13}/> Igualar Costos
+                 </button>
                  <button onClick={() => requireAdminPassword(handleImportConsolidatedInventory, 'Importar Inventario Consolidado Excel')} className="bg-indigo-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-indigo-700 transition-colors flex items-center gap-2">
                    <Upload size={16}/> IMPORTAR EXCEL
                  </button>
@@ -6727,9 +6802,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           const startOfMonth = new Date(reportYear, reportMonth - 1, 1);
           const endOfMonth   = new Date(reportYear, reportMonth, 0, 23, 59, 59, 999);
 
-          // Categorías con stock actual
+          // Categorías con stock actual — incluir TODOS los items (también en stock 0 con movimientos)
           const categoriesWithStock = [...new Set(
-            inventory.filter(i => i.category !== 'Productos Terminados' && parseNum(i.stock) > 0).map(i => i.category)
+            inventory.filter(i => i.category !== 'Productos Terminados').map(i => i.category)
           )];
           // Categorías con movimientos en el período (aunque stock=0 — ej. Químicos/Pigmentos de Abril)
           const categoriesWithMovements = [...new Set(
@@ -6753,10 +6828,22 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             let items = [];
 
             if (cat !== 'Productos Terminados') {
-              items = inventory.filter(item => item.category === cat).map(item => {
+              // FIX Art.177: use deduplicated items by cleanId (sum across warehouses)
+              const itemsByCleanId = {};
+              inventory.filter(item => item.category === cat).forEach(item => {
+                const cleanId = item.displayId || (item.id||'').split('___')[0];
+                if (!itemsByCleanId[cleanId]) {
+                  itemsByCleanId[cleanId] = { ...item, id: cleanId, _allIds: [], stock: 0 };
+                }
+                itemsByCleanId[cleanId]._allIds.push(item.id);
+                itemsByCleanId[cleanId].stock = parseNum(itemsByCleanId[cleanId].stock||0) + parseNum(item.stock||0);
+              });
+              items = Object.values(itemsByCleanId).map(item => {
                 // === LÓGICA CORRECTA ART. 177 ===
-                // 1. Historial COMPLETO del item
-                const allItemMovs = (invMovements || []).filter(m => m.itemId === item.id);
+                // 1. Historial COMPLETO del item (all warehouse docs for this product)
+                const allItemMovs = (invMovements || []).filter(m => 
+                  (item._allIds||[item.id]).includes(m.itemId) || m.itemId === item.id
+                );
 
                 // 2. Movimientos ANTES del mes (para Inv. Inicial)
                 const histBefore = allItemMovs.filter(m => new Date(`${m.date}T00:00:00`) < startOfMonth);
@@ -7207,14 +7294,44 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             });
           });
           const sorted = soldItems.sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
+          // ── Unique lists for filters ──
+          const pvClientes = ['TODOS', ...Array.from(new Set(sorted.map(s=>s.cliente))).sort()];
+          const pvProductos = ['TODOS', ...Array.from(new Set(sorted.map(s=>s.producto))).sort()];
+          const [pvFiltCliente, pvSetCliente] = [pvClienteFilter, setPvClienteFilter];
+          const [pvFiltProducto, pvSetProducto] = [pvProductoFilter, setPvProductoFilter];
+          const pvFiltered = sorted.filter(s =>
+            (pvFiltCliente === 'TODOS' || s.cliente === pvFiltCliente) &&
+            (pvFiltProducto === 'TODOS' || s.producto === pvFiltProducto)
+          );
           return (
             <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden" id="pdf-content">
-              <div className="px-8 py-5 border-b bg-green-50 flex justify-between items-center no-pdf">
+              <div className="px-8 py-5 border-b bg-green-50 flex justify-between items-center flex-wrap gap-3 no-pdf">
                 <div>
                   <h2 className="text-xl font-black text-green-900 uppercase flex items-center gap-3"><Package className="text-green-600" size={22}/> Productos Vendidos</h2>
-                  <p className="text-[10px] font-bold text-green-700 mt-0.5">Detalle de productos despachados por factura</p>
+                  <p className="text-[10px] font-bold text-green-700 mt-0.5">{pvFiltered.length} de {sorted.length} líneas</p>
                 </div>
-                <button onClick={()=>handleExportPDF('Productos_Vendidos',true)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2"><Printer size={13}/> Imprimir</button>
+                <div className="flex gap-3 items-center flex-wrap">
+                  {/* Filter by client */}
+                  <div>
+                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Cliente</label>
+                    <select value={pvFiltCliente} onChange={e=>pvSetCliente(e.target.value)}
+                      className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black uppercase outline-none focus:border-green-400 bg-white min-w-36">
+                      {pvClientes.map(c=><option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  {/* Filter by product */}
+                  <div>
+                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Producto</label>
+                    <select value={pvFiltProducto} onChange={e=>pvSetProducto(e.target.value)}
+                      className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black uppercase outline-none focus:border-green-400 bg-white min-w-44">
+                      {pvProductos.map(p=><option key={p} value={p}>{p.length>40?p.substring(0,40)+'…':p}</option>)}
+                    </select>
+                  </div>
+                  {(pvFiltCliente !== 'TODOS' || pvFiltProducto !== 'TODOS') && (
+                    <button onClick={()=>{pvSetCliente('TODOS');pvSetProducto('TODOS');}} className="text-[9px] font-black text-red-500 uppercase hover:underline mt-4">✕ Limpiar</button>
+                  )}
+                  <button onClick={()=>handleExportPDF('Productos_Vendidos',true)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 mt-4"><Printer size={13}/> Imprimir</button>
+                </div>
               </div>
               <div className="hidden pdf-header p-8 mb-4"><ReportHeader/><h1 className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">REPORTE DE PRODUCTOS VENDIDOS</h1></div>
               <div className="overflow-x-auto">
@@ -7232,9 +7349,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {sorted.length === 0 ? (
-                      <tr><td colSpan="9" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas registradas. Asegúrese que las facturas tienen un producto FG asignado.</td></tr>
-                    ) : sorted.map((s,i) => (
+                    {pvFiltered.length === 0 ? (
+                      <tr><td colSpan="8" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas para los filtros seleccionados.</td></tr>
+                    ) : pvFiltered.map((s,i) => (
                       <tr key={i} className="hover:bg-gray-50">
                         <td className="py-3 px-4 border-r font-black text-orange-600">{s.factura}</td>
                         <td className="py-3 px-4 border-r text-center font-bold text-gray-600">{s.fecha}</td>
@@ -7247,13 +7364,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       </tr>
                     ))}
                   </tbody>
-                  {sorted.length > 0 && (
+                  {pvFiltered.length > 0 && (
                     <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-black">
                       <tr>
-                        <td colSpan="5" className="py-3 px-4 text-[10px] uppercase text-gray-500">Total: {sorted.length} líneas</td>
-                        <td className="py-3 px-4 text-right">{formatNum(sorted.reduce((s,r)=>s+r.cantidad,0))}</td>
+                        <td colSpan="5" className="py-3 px-4 text-[10px] uppercase text-gray-500">Total filtrado: {pvFiltered.length} líneas</td>
+                        <td className="py-3 px-4 text-right">{formatNum(pvFiltered.reduce((s,r)=>s+r.cantidad,0))}</td>
                         <td></td>
-                        <td className="py-3 px-4 text-right text-orange-600">${formatNum(sorted.reduce((s,r)=>s+r.cantidad*r.costoUnd,0))}</td>
+                        <td className="py-3 px-4 text-right text-orange-600">${formatNum(pvFiltered.reduce((s,r)=>s+r.cantidad*r.costoUnd,0))}</td>
                       </tr>
                     </tfoot>
                   )}
@@ -7345,12 +7462,24 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           {(() => {
                             // Construir grupos igual que inventario terminados
                             const invGrps = {};
+                            // FIX: include ALL FG items (kgProducidos OR millares > 0)
+                            // including FG-{slug} items from Entrega Parcial
                             (finishedGoodsInventory||[])
                               .filter(fg => parseNum(fg.kgProducidos) > 0 || parseNum(fg.millares) > 0)
                               .forEach(fg => {
                                 const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-                                const key = `${fg.categoria||fg.producto||''}__${fg.cliente||''}__${fg.tipoProducto}`;
-                                if (!invGrps[key]) invGrps[key] = {key,esTermo,categoria:fg.categoria||fg.producto||'',cliente:fg.cliente||'',tipoProducto:fg.tipoProducto,producto:fg.producto||'',ancho:fg.ancho,largo:fg.largo,micras:fg.micras,totalStock:0,lotes:[]};
+                                // Use producto as part of key so FG-{slug} items don't collide
+                                const cat = fg.categoria || fg.producto || fg.id || '';
+                                const cli = fg.cliente || '';
+                                const key = `${cat}__${cli}__${fg.tipoProducto||'BOLSAS'}`;
+                                if (!invGrps[key]) invGrps[key] = {
+                                  key, esTermo,
+                                  categoria: cat, cliente: cli,
+                                  tipoProducto: fg.tipoProducto||'BOLSAS',
+                                  producto: fg.producto || cat,
+                                  ancho: fg.ancho, largo: fg.largo, micras: fg.micras,
+                                  totalStock: 0, lotes: []
+                                };
                                 const g = invGrps[key];
                                 const stock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
                                 g.totalStock += stock; g.lotes.push(fg);
@@ -10896,26 +11025,41 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
     if (prodView === 'activos') {
       const activeReqs = (requirements||[]).filter(r => r.status === 'EN PROCESO' || r.status === 'PENDIENTE' || !r.status);
+      const activoFiltered = prodActivoSearch.trim()
+        ? activeReqs.filter(r => {
+            const q = prodActivoSearch.toUpperCase();
+            return (r.id||'').toUpperCase().includes(q) || (r.client||'').toUpperCase().includes(q) || (r.desc||'').toUpperCase().includes(q);
+          })
+        : activeReqs;
       return (
         <div className="space-y-6 animate-in fade-in">
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-8 py-6 border-b border-gray-200 bg-green-50 flex justify-between items-center">
+            <div className="px-8 py-6 border-b border-gray-200 bg-green-50 flex justify-between items-center flex-wrap gap-3">
               <div>
                 <h2 className="text-xl font-black text-green-800 uppercase flex items-center gap-3"><PlayCircle className="text-green-600" size={24}/> Producción Activa</h2>
                 <p className="text-[10px] font-bold text-green-600 mt-1 uppercase">Órdenes de producción — generadas desde Ventas</p>
               </div>
-              <div className="bg-green-100 text-green-700 px-4 py-2 rounded-xl font-black text-xs uppercase">{activeReqs.length} ACTIVAS</div>
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+                  <input type="text" value={prodActivoSearch} onChange={e=>setProdActivoSearch(e.target.value)}
+                    placeholder="Buscar OP, cliente, producto..."
+                    className="border-2 border-gray-200 rounded-xl pl-9 pr-4 py-2.5 text-xs font-bold outline-none focus:border-green-400 w-56"/>
+                  {prodActivoSearch && <button onClick={()=>setProdActivoSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500"><X size={12}/></button>}
+                </div>
+                <div className="bg-green-100 text-green-700 px-4 py-2 rounded-xl font-black text-xs uppercase">{activoFiltered.length}/{activeReqs.length} OPs</div>
+              </div>
             </div>
             <div className="p-6">
-              {activeReqs.length === 0 ? (
+              {activoFiltered.length === 0 ? (
                 <div className="text-center py-16 text-gray-400">
                   <PlayCircle size={48} className="mx-auto mb-4 opacity-30"/>
-                  <p className="font-black text-xs uppercase">No hay órdenes activas</p>
+                  <p className="font-black text-xs uppercase">{prodActivoSearch ? 'Sin resultados para la búsqueda' : 'No hay órdenes activas'}</p>
                   <p className="text-xs mt-2">Las OPs se crean desde Ventas → Requisiciones</p>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {activeReqs.map(req => {
+                  {activoFiltered.map(req => {
                     const prod = req.production || {};
                     const phaseStatus = (phase) => {
                       if (prod[phase]?.isClosed) return { icon: '✓', cls: 'border-green-300 bg-green-50 text-green-700' };
@@ -11904,20 +12048,35 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
     if (prodView === 'reportes') {
       const completedReqs = (requirements||[]).filter(r => r.status === 'COMPLETADO');
+      const histFiltered = historialSearch.trim()
+        ? completedReqs.filter(r => {
+            const q = historialSearch.toUpperCase();
+            return (r.id||'').toUpperCase().includes(q) || (r.client||'').toUpperCase().includes(q) || (r.desc||'').toUpperCase().includes(q);
+          })
+        : completedReqs;
       return (
         <div className="space-y-6 animate-in fade-in">
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
+            <div className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center flex-wrap gap-3">
               <div>
                 <h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><History className="text-gray-500" size={24}/> Historial de Producción / Reportes</h2>
-                <p className="text-[10px] font-bold text-gray-500 mt-1 uppercase">{completedReqs.length} órdenes completadas</p>
+                <p className="text-[10px] font-bold text-gray-500 mt-1 uppercase">{histFiltered.length}/{completedReqs.length} órdenes completadas</p>
               </div>
-              <button onClick={() => handleExportPDF('Historial_Produccion', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+                  <input type="text" value={historialSearch} onChange={e=>setHistorialSearch(e.target.value)}
+                    placeholder="Buscar OP, cliente, producto..."
+                    className="border-2 border-gray-200 rounded-xl pl-9 pr-4 py-2.5 text-xs font-bold outline-none focus:border-gray-400 w-56"/>
+                  {historialSearch && <button onClick={()=>setHistorialSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500"><X size={12}/></button>}
+                </div>
+                <button onClick={() => handleExportPDF('Historial_Produccion', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
+              </div>
             </div>
             <div className="p-6" id="pdf-content">
               <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-orange-500 pb-2">HISTORIAL DE PRODUCCIÓN</h1></div>
-              {completedReqs.length === 0 ? (
-                <div className="text-center py-16 text-gray-400"><History size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">No hay producción finalizada</p></div>
+              {histFiltered.length === 0 ? (
+                <div className="text-center py-16 text-gray-400"><History size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">{historialSearch ? 'Sin resultados' : 'No hay producción finalizada'}</p></div>
               ) : (
                 <div className="overflow-x-auto rounded-xl border border-gray-200">
                   <table className="w-full text-xs text-left">
@@ -11933,7 +12092,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {completedReqs.map(req => {
+                      {histFiltered.map(req => {
                         const prod = req.production || {};
                         const fr = b => b.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b.producedKg)>0;
                         const sB=(prod.sellado?.batches||[]).filter(fr);
@@ -12092,43 +12251,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes Principal (reportes individuales)</label>
                   <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-blue-500" />
                 </div>
-                <div className="flex-1 min-w-64">
-                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
-                    Filtro Multi-Mes — {selectedMonths.length === 0 ? 'Todos los meses' : `${selectedMonths.length} seleccionado${selectedMonths.length !== 1 ? 's' : ''}`}
-                  </label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(() => {
-                      const now = new Date();
-                      const meses = [];
-                      for(let i = 11; i >= 0; i--) {
-                        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                        const ym = d.toISOString().substring(0, 7);
-                        const label = d.toLocaleDateString('es-VE', { month: 'short', year: '2-digit' }).toUpperCase();
-                        meses.push({ ym, label });
-                      }
-                      return meses.map(m => {
-                        const isSelected = selectedMonths.includes(m.ym);
-                        return (
-                          <button key={m.ym}
-                            onClick={() => setSelectedMonths(prev =>
-                              isSelected ? prev.filter(x => x !== m.ym) : [...prev, m.ym]
-                            )}
-                            className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all border-2 ${
-                              isSelected ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-600'
-                            }`}>
-                            {m.label}
-                          </button>
-                        );
-                      });
-                    })()}
-                    {selectedMonths.length > 0 && (
-                      <button onClick={() => setSelectedMonths([])}
-                        className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase bg-red-50 text-red-500 border-2 border-red-200 hover:bg-red-500 hover:text-white transition-all">
-                        ✕ Limpiar
-                      </button>
-                    )}
-                  </div>
-                </div>
+
               </div>
             )}
 
@@ -13490,6 +13613,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     
     // Build list of year-months to aggregate
     const getAggregateYMs = () => {
+      if(erMesesExtra.includes('ALL')) {
+        // General: all unique year-months from invoices and costs
+        const allYMs = new Set();
+        (invoices||[]).forEach(inv => { if(inv.fecha) allYMs.add(inv.fecha.substring(0,7)); });
+        (opCosts||[]).forEach(c => { if(c.fecha||c.month) allYMs.add((c.fecha||c.month||'').substring(0,7)); });
+        return allYMs.size > 0 ? [...allYMs] : [ymA];
+      }
       if(erModoAnual) return Array.from({length:12},(_,i)=>`${erAno}-${String(i+1).padStart(2,'0')}`);
       if(erMesesExtra.length > 0) return [ymA, ...erMesesExtra];
       return [ymA];
@@ -13598,13 +13728,20 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       <button onClick={()=>{setErMes(new Date().getMonth()+1);setErModoAnual(false);setErMesesExtra([]);}} className="text-[9px] font-black text-gray-500 uppercase hover:underline">Este mes</button>
                     </div>
                   </div>
+                  {/* Botón General (todos los datos sin filtro de mes) */}
+                  <div className="pt-2 border-t border-gray-100 mt-1">
+                    <button onClick={()=>{setErModoAnual(false);setErMesesExtra(['ALL']);}} 
+                      className={`w-full text-[9px] font-black uppercase px-2 py-1.5 rounded-lg transition-all ${erMesesExtra.includes('ALL')?'bg-green-600 text-white':'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200'}`}>
+                      {erMesesExtra.includes('ALL') ? '✓ GENERAL (TODO EL PERÍODO)' : 'GENERAL (sin filtro de mes)'}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex flex-col gap-3">
                   <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Período activo</label>
                     <div className="bg-orange-50 border border-orange-200 rounded-xl px-3 py-2">
                       <p className="font-black text-orange-700 text-xs">
-                        {erModoAnual ? `Año completo ${erAno}` : erMesesExtra.length > 0 ? `${['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][erMes-1]} + ${erMesesExtra.length} más (${erAno})` : `${['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][erMes-1]} ${erAno}`}
+                        {erMesesExtra.includes('ALL') ? 'GENERAL — Todo el período' : erModoAnual ? `Año completo ${erAno}` : erMesesExtra.length > 0 ? `${['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][erMes-1]} + ${erMesesExtra.length} más (${erAno})` : `${['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][erMes-1]} ${erAno}`}
                       </p>
                     </div>
                   </div>
