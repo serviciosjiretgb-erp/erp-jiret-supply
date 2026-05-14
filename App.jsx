@@ -158,9 +158,9 @@ const getSafeDate = (ts) => {
 };
 
 // ============================================================================
-// CONSTANTE DE SEGURIDAD - CLAVE administrador
+// CONSTANTE DE SEGURIDAD - CLAVE ADMIN
 // ============================================================================
-const administrador_PASSWORD = 'Supply2026.Admin';
+const ADMIN_PASSWORD = 'Supply2026.Admin';
 
 // ============================================================================
 // CATEGORÍAS DE COSTOS OPERATIVOS
@@ -225,7 +225,7 @@ const SYSTEM_MODULES = [
       { id: 'inv_wip',         label: 'WIP (En Proceso)' },
       { id: 'inv_terminados',  label: 'Terminados' },
       { id: 'inv_operaciones', label: 'Operaciones (Entradas, Salidas, TF)' },
-      { id: 'inv_kardex',      label: 'Kardex / Art. 177' },
+      { id: 'inv_kardex',      label: 'Kardex / Mov. Unidades' },
     ]
   },
   {
@@ -599,6 +599,8 @@ export default function App() {
   const [pvProductoFilter, setPvProductoFilter] = useState('TODOS');
   const [prodActivoSearch, setProdActivoSearch] = useState('');
   const [historialSearch, setHistorialSearch] = useState('');
+  const [opsSearch, setOpsSearch] = useState('');
+  const [opsStatusFilter, setOpsStatusFilter] = useState('TODOS');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [showReportType, setShowReportType] = useState(null); 
 
@@ -1456,15 +1458,18 @@ export default function App() {
     const prevCost  = parseNum(editingAlmacenItem.cost  || 0);
     const applyToAll = almacenEditForm.applyToAll;
 
-    // ── CRÍTICO: el editingAlmacenItem.id es el cleanId (ej. 'SP-2110-1.8BLU') NO el docId real.
-    // Buscamos el documento Firebase real usando cleanId + almacen.
+    // ── CRÍTICO: usar _realId si está disponible (set durante el agrupamiento)
+    // Si no, buscar el doc real por cleanId + almacen
     const cleanIdEdit = editingAlmacenItem.displayId || (editingAlmacenItem.id||'').split('___')[0];
     const almacenEdit = editingAlmacenItem.almacen || 'ALMACEN ZI';
-    const realFirebaseDoc = (inventory||[]).find(i => {
-      const cid = i.displayId || (i.id||'').split('___')[0];
-      return cid === cleanIdEdit && (i.almacen || 'ALMACEN ZI') === almacenEdit;
-    });
-    const realDocId = realFirebaseDoc?.id || (cleanIdEdit + '___' + almacenEdit.replace(/\s+/g, '-'));
+    // _realId is the actual Firebase document ID set during almacenes grouping
+    const realDocId = editingAlmacenItem._realId || (() => {
+      const realFirebaseDoc = (inventory||[]).find(i => {
+        const cid = i.displayId || (i.id||'').split('___')[0];
+        return cid === cleanIdEdit && (i.almacen || 'ALMACEN ZI') === almacenEdit;
+      });
+      return realFirebaseDoc?.id || (cleanIdEdit + '___' + almacenEdit.replace(/\s+/g, '-'));
+    })();
 
     try {
       const updates = { timestamp: Date.now() };
@@ -4614,8 +4619,23 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     }
 
     if (invView === 'finished') {
-      const bolsas = finishedGoodsInventory.filter(i => i.tipoProducto !== 'TERMOENCOGIBLE');
-      const termos = finishedGoodsInventory.filter(i => i.tipoProducto === 'TERMOENCOGIBLE');
+      // FIX 2: also include items from `inventory` with category='Productos Terminados'
+      // These are products created directly via Inventario General (imported goods)
+      // Convert them to FG-compatible format for display
+      const invPTItems = (inventory||[]).filter(i => i.category === 'Productos Terminados' && parseNum(i.stock) > 0).map(i => ({
+        id: i.id, opId: 'IMPORTADO', cliente: 'STOCK IMPORTADO',
+        tipoProducto: (i.unit||'').toUpperCase().includes('KG') ? 'TERMOENCOGIBLE' : 'BOLSAS',
+        producto: i.desc, categoria: i.category, status: 'LISTO PARA ENTREGA',
+        millares: (i.unit||'').toUpperCase().includes('KG') ? 0 : parseNum(i.stock),
+        kgProducidos: (i.unit||'').toUpperCase().includes('KG') ? parseNum(i.stock) : 0,
+        costoUnitario: parseNum(i.cost||0), costoUnitarioMillar: parseNum(i.cost||0),
+        ubicacion: i.almacen || 'ALMACEN GENERAL', _fromInventory: true, _invDocId: i.id,
+        timestamp: i.timestamp || Date.now()
+      }));
+      // Merge with finishedGoodsInventory (avoid showing duplicates if same product exists in both)
+      const allFG = [...(finishedGoodsInventory||[]), ...invPTItems];
+      const bolsas = allFG.filter(i => i.tipoProducto !== 'TERMOENCOGIBLE');
+      const termos = allFG.filter(i => i.tipoProducto === 'TERMOENCOGIBLE');
       const filterItems = (list) => list.filter(i =>
         !fgSearch ||
         (i.opId||'').toUpperCase().includes(fgSearch.toUpperCase()) ||
@@ -4629,8 +4649,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       const totalEntradaMill = bolsas.reduce((s, i) => s + parseNum(i.millaresOrigen || i.millares), 0);
       const totalStockMill   = bolsas.reduce((s, i) => s + (i.status === 'ENTREGADO' ? 0 : parseNum(i.millares)), 0);
       const totalSalidaMill  = Math.max(0, totalEntradaMill - totalStockMill);
-      const totalEntradaKg   = finishedGoodsInventory.reduce((s, i) => s + parseNum(i.kgProducidosOrigen || i.kgProducidos), 0);
-      const totalStockKg     = finishedGoodsInventory.reduce((s, i) => s + (i.status === 'ENTREGADO' ? 0 : parseNum(i.kgProducidos)), 0);
+      const totalEntradaKg   = allFG.reduce((s, i) => s + parseNum(i.kgProducidosOrigen || i.kgProducidos), 0);
+      const totalStockKg     = allFG.reduce((s, i) => s + (i.status === 'ENTREGADO' ? 0 : parseNum(i.kgProducidos)), 0);
       const totalSalidaKg    = Math.max(0, totalEntradaKg - totalStockKg);
 
       const renderFGTable = (items, tipo) => {
@@ -5154,7 +5174,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       </div>
                     );
                   })()}
-                  {groups.length === 0 && inventory.filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0).length===0 && inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0).length===0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>}
+                  {groups.length === 0 && inventory.filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0).length===0 && inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0).length===0 && finishedGoodsInventory.filter(fg=>(parseNum(fg.kgProducidos)||parseNum(fg.millares))>0).length===0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>}
 
                   {/* ── Semielaborados / Bobinas (de Inventario General) ── */}
                   {(() => {
@@ -6895,7 +6915,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   monthSalidasQty,  monthSalidasProm: avgCost,  monthSalidasTotal: monthSalidasQty * avgCost,
                   invFinalQty, invFinalCost: avgCost, invFinalTotal: invFinalQty * avgCost
                 };
-              }).filter(item => item.initialStock > 0 || item.monthEntradasQty > 0 || item.monthSalidasQty > 0);
+              }).filter(item => (item.initialStock||0) > 0 || item.monthEntradasQty > 0 || item.monthSalidasQty > 0 || (item.invFinalQty||0) > 0);
             }
 
             if (cat === 'Productos Terminados') {
@@ -6980,10 +7000,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           return (
             <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
               <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
-                 <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Reporte General (Art. 177 LISLR)</h2>
+                 <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> Movimiento por Unidades</h2>
                  <div className="flex gap-2">
                    <button onClick={() => handleExportExcel('reporte-177-table', 'Reporte_Inventario_177')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"><Download size={16}/> EXPORTAR EXCEL</button>
-                   <button onClick={() => handleExportPDF('Reporte_Art_177', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
+                   <button onClick={() => handleExportPDF('Movimiento_por_Unidades', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
                  </div>
               </div>
 
@@ -7010,7 +7030,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
                  <div className="hidden pdf-header mb-6">
                    <ReportHeader />
-                   <h1 className="text-xl font-black text-black uppercase border-b-2 border-orange-500 pb-1">REPORTE GENERAL DE INVENTARIO (ART. 177 LISLR)</h1>
+                   <h1 className="text-xl font-black text-black uppercase border-b-2 border-orange-500 pb-1">MOVIMIENTO POR UNIDADES — INVENTARIO</h1>
                    <p className="text-xs font-bold text-gray-500 uppercase mt-1">PERÍODO: {reportMonth.toString().padStart(2, '0')} / {reportYear}{settings.tasaCambio ? ` | TASA: Bs ${formatNum(settings.tasaCambio)}/$` : ''}</p>
                  </div>
 
@@ -7654,7 +7674,25 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         )}
         {ventasView === 'requisiciones' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
-             <div className="px-8 py-6 border-b bg-white flex justify-between items-center"><h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> REQUISICIONES OP</h2><div className="flex gap-2"><button onClick={()=>setShowReqReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors">REPORTE GENERAL</button><button onClick={()=>{setShowNewReqPanel(!showNewReqPanel);setNewReqForm(initialReqForm);setEditingReqId(null);}} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-all">{showNewReqPanel ? 'CANCELAR' : 'NUEVA SOLICITUD'}</button></div></div>
+             <div className="px-8 py-5 border-b bg-white flex flex-wrap gap-3 justify-between items-center">
+               <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> REQUISICIONES OP</h2>
+               <div className="flex gap-2 items-center flex-wrap">
+                 <div className="relative">
+                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+                   <input type="text" value={opsSearch} onChange={e=>setOpsSearch(e.target.value)} placeholder="Buscar OP, cliente, producto..." className="border-2 border-gray-200 rounded-xl pl-9 pr-8 py-2.5 text-xs font-bold outline-none focus:border-orange-400 w-56"/>
+                   {opsSearch && <button onClick={()=>setOpsSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500"><X size={12}/></button>}
+                 </div>
+                 <select value={opsStatusFilter} onChange={e=>setOpsStatusFilter(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-black uppercase outline-none focus:border-orange-400 bg-white">
+                   <option value="TODOS">Todos los estados</option>
+                   <option value="PENDIENTE">Pendiente</option>
+                   <option value="EN PROCESO">En Proceso</option>
+                   <option value="COMPLETADO">Completado</option>
+                   <option value="ANULADA">Anulada</option>
+                 </select>
+                 <button onClick={()=>setShowReqReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50">REPORTE GENERAL</button>
+                 <button onClick={()=>{setShowNewReqPanel(!showNewReqPanel);setNewReqForm(initialReqForm);setEditingReqId(null);}} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800">{showNewReqPanel ? 'CANCELAR' : 'NUEVA OP'}</button>
+               </div>
+             </div>
              {showNewReqPanel && (
                 <div className="p-8 bg-gray-50/50 border-b">
                   <form onSubmit={handleCreateRequirement} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
@@ -7761,7 +7799,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   </form>
                 </div>
              )}
-             <div className="p-8 overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black w-1/2">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{(requirements || []).map(r=>(<tr key={r?.id} className={`hover:bg-gray-50 group transition-all ${r?.status==='ANULADA'?'opacity-40 bg-red-50/20':''}`}><td className="py-5 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r?.fecha}</span></td><td className="py-5 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.desc}</span></td><td className="py-5 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table></div>
+             <div className="p-8 overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black w-1/2">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead>
+             <tbody className="divide-y divide-gray-100">{(()=>{
+               const opsFiltered = (requirements||[]).filter(r=>{
+                 const matchStatus = opsStatusFilter==='TODOS'||r?.status===opsStatusFilter||(!r?.status&&opsStatusFilter==='PENDIENTE');
+                 if(!matchStatus) return false;
+                 if(!opsSearch.trim()) return true;
+                 const q=opsSearch.toUpperCase();
+                 return (r?.id||'').toUpperCase().includes(q)||(r?.client||'').toUpperCase().includes(q)||(r?.desc||'').toUpperCase().includes(q)||(r?.categoria||'').toUpperCase().includes(q);
+               });
+               if(opsFiltered.length===0) return <tr><td colSpan="4" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin resultados</td></tr>;
+               return opsFiltered.map(r=>(<tr key={r?.id} className={`hover:bg-gray-50 group transition-all ${r?.status==='ANULADA'?'opacity-40 bg-red-50/20':''}`}><td className="py-5 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r?.fecha}</span></td><td className="py-5 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.desc}</span></td><td className="py-5 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>));})()}</tbody></table></div>
           </div>
         )}
       </div>
@@ -12957,22 +13005,33 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             {/* ── ESTADO FINANCIERO ── */}
             {showReportType === 'estado_financiero' && (
               <div className="space-y-4">
-                <div className="flex flex-wrap gap-4 items-end bg-gray-50 p-4 rounded-2xl border border-gray-200">
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes</label>
-                    <select value={erMes} onChange={e=>setErMes(parseInt(e.target.value))} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none bg-white">
-                      {MONTH_NAMES_ES.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
-                    </select>
+                <div className="flex flex-wrap gap-4 items-start bg-gray-50 p-4 rounded-2xl border border-gray-200">
+                  <div className="bg-white border-2 border-gray-200 rounded-2xl p-4 shadow-sm min-w-52">
+                    <div className="flex items-center justify-between mb-3">
+                      <button onClick={()=>setErAno(v=>v-1)} className="p-1 hover:bg-gray-100 rounded-lg font-black text-gray-600 text-lg leading-none">&#8249;</button>
+                      <span className="font-black text-sm">{erAno}</span>
+                      <button onClick={()=>setErAno(v=>v+1)} className="p-1 hover:bg-gray-100 rounded-lg font-black text-gray-600 text-lg leading-none">&#8250;</button>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1 mb-3">
+                      {['ene.','feb.','mar.','abr.','may.','jun.','jul.','ago.','sept.','oct.','nov.','dic.'].map((m,i)=>(
+                        <button key={i} onClick={()=>setErMes(i+1)}
+                          className={`py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${erMes===i+1?'bg-orange-500 text-white shadow':'hover:bg-gray-100 text-gray-600'}`}>
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex justify-between pt-2 border-t border-gray-100">
+                      <span className="text-[9px] font-bold text-gray-500">{['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][erMes-1]} {erAno}</span>
+                      <button onClick={()=>{setErMes(new Date().getMonth()+1);setErAno(new Date().getFullYear());}} className="text-[9px] font-black text-orange-600 uppercase hover:underline">Este mes</button>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Año</label>
-                    <input type="number" value={erAno} onChange={e=>setErAno(parseInt(e.target.value))} className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-24 text-center" />
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$</label>
+                      <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-28 text-center" />
+                    </div>
+                    <button onClick={()=>handleExportPDF('Estado_Resultado_Integral', false)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir</button>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$</label>
-                    <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-28 text-center" />
-                  </div>
-                  <button onClick={()=>handleExportPDF('Estado_Resultado_Integral', false)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir</button>
                 </div>
                 <div id="pdf-content" className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
                   <div className="hidden pdf-header p-6 border-b-2 border-gray-300">
@@ -15621,7 +15680,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       {id:'salidas',     icon:<ArrowUpFromLine size={14}/>,  label:'Salidas',     perm:'inv_operaciones'},
                       {id:'toma_fisica', icon:<ClipboardEdit size={14}/>,    label:'Toma Física', perm:'inv_operaciones'},
                       {id:'kardex',      icon:<History size={14}/>,          label:'Kardex',      perm:'inv_kardex'},
-                      {id:'reporte177',  icon:<FileCheck size={14}/>,        label:'Art.177',     perm:'inv_kardex'},
+                      {id:'reporte177',  icon:<FileCheck size={14}/>,        label:'Mov. Unidades',     perm:'inv_kardex'},
                     ].filter(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master').map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();setShowMovForm(false);if(t.id==='entradas')setMovForm(f=>({...f,type:'ENTRADA'}));if(t.id==='salidas')setMovForm(f=>({...f,type:'AUTOCONSUMO'}));}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
