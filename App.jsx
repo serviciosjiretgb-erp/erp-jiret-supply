@@ -12136,6 +12136,39 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     const bs = (usd) => formatNum(usd * tasa);
     const pctOf = (val, base) => base !== 0 ? ((val/base)*100).toFixed(2)+'%' : '0.00%';
 
+    // ── ESTADO FINANCIERO: compute efaData outside JSX to avoid esbuild regex parse error ──
+    const efaGetYMs = () => {
+      if (erMesesExtra.includes('ALL')) {
+        const yms = new Set();
+        (invoices||[]).forEach(inv => { if (inv.fecha) yms.add(inv.fecha.substring(0,7)); });
+        (opCosts||[]).forEach(c => { if (c.fecha||c.month) yms.add((c.fecha||c.month||'').substring(0,7)); });
+        return yms.size > 0 ? [...yms] : [ymA];
+      }
+      return [ymA];
+    };
+    const efaYMs = efaGetYMs();
+    const efaData = (() => {
+      if (efaYMs.length === 1) return calcEstadoData(efaYMs[0]);
+      const res = efaYMs.map(ym => calcEstadoData(ym));
+      const costosPorCuenta = {};
+      res.forEach(r => Object.entries(r.costosPorCuenta||{}).forEach(([k,v]) => {
+        if (!costosPorCuenta[k]) costosPorCuenta[k] = { ...v, total: 0, movs: [] };
+        costosPorCuenta[k].total += v.total;
+        costosPorCuenta[k].movs.push(...v.movs);
+      }));
+      return {
+        totalIngresos: res.reduce((s,r) => s+r.totalIngresos, 0),
+        totalCostoProd: res.reduce((s,r) => s+r.totalCostoProd, 0),
+        totalCostosOp: res.reduce((s,r) => s+r.totalCostosOp, 0),
+        totalCostos: res.reduce((s,r) => s+r.totalCostos, 0),
+        resultado: res.reduce((s,r) => s+r.resultado, 0),
+        cogsRows: res.flatMap(r => r.cogsRows||[]),
+        costosPorCuenta,
+        facturasperiodo: res.flatMap(r => r.facturasperiodo||[]),
+      };
+    })();
+    const efaLabel = erMesesExtra.includes('ALL') ? 'PERÍODO COMPLETO' : `${MONTH_NAMES_ES[erMes-1]} ${erAno}`;
+
     const REPORT_CARDS = [
       { id: 'mermas', icon: <AlertTriangle size={26}/>, label: 'Mermas', desc: 'OPs + Bobinas — Pérdidas y desperdicios', color: 'orange' },
       { id: 'reporte_bobinas', icon: <Box size={26}/>, label: 'Reporte Bobinas', desc: 'Reporte de producción de semielaborados', color: 'indigo' },
@@ -12918,7 +12951,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       ))}
                     </div>
                     <div className="flex justify-between pt-2 border-t border-gray-100 gap-1">
-                      <button onClick={()=>{setErMes(new Date().getMonth()+1);setErAno(new Date().getFullYear());}} className="text-[9px] font-black text-gray-500 uppercase hover:underline">Este mes</button>
+                      <button onClick={()=>{setErMes(new Date().getMonth()+1);setErAno(new Date().getFullYear());setErMesesExtra([]);}} className="text-[9px] font-black text-gray-500 uppercase hover:underline">Este mes</button>
                       <button onClick={()=>setErMesesExtra(prev=>prev.includes('ALL')?[]:['ALL'])}
                         className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${erMesesExtra.includes('ALL')?'bg-green-600 text-white':'text-green-700 hover:bg-green-50'}`}>
                         {erMesesExtra.includes('ALL')?'✓ TODOS':'TODOS'}
@@ -12927,35 +12960,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   </div>
                   <div className="flex flex-col gap-3">
                     <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$</label>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Período: {efaLabel}</label>
                       <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-28 text-center" />
+                      <label className="text-[9px] font-bold text-gray-400 block mt-0.5">Tasa Bs/$</label>
                     </div>
                     <button onClick={()=>handleExportPDF('Estado_Resultado_Integral', false)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir</button>
                   </div>
                 </div>
-                {(() => {
-                  // Compute data respecting TODOS/multi-month mode
-                  const efaGetYMs = () => {
-                    if(erMesesExtra.includes('ALL')) {
-                      const yms = new Set();
-                      (invoices||[]).forEach(inv=>{ if(inv.fecha) yms.add(inv.fecha.substring(0,7)); });
-                      (opCosts||[]).forEach(c=>{ if(c.fecha||c.month) yms.add((c.fecha||c.month||'').substring(0,7)); });
-                      return yms.size > 0 ? [...yms] : [ymA];
-                    }
-                    return [ymA];
-                  };
-                  const efaYMs = efaGetYMs();
-                  const efaData = efaYMs.length === 1 ? calcEstadoData(efaYMs[0]) : (() => {
-                    const res = efaYMs.map(ym=>calcEstadoData(ym));
-                    const costosPorCuenta = {};
-                    res.forEach(r=>Object.entries(r.costosPorCuenta||{}).forEach(([k,v])=>{
-                      if(!costosPorCuenta[k]) costosPorCuenta[k]={...v,total:0,movs:[]};
-                      costosPorCuenta[k].total+=v.total; costosPorCuenta[k].movs.push(...v.movs);
-                    }));
-                    return { totalIngresos:res.reduce((s,r)=>s+r.totalIngresos,0), totalCostoProd:res.reduce((s,r)=>s+r.totalCostoProd,0), totalCostosOp:res.reduce((s,r)=>s+r.totalCostosOp,0), totalCostos:res.reduce((s,r)=>s+r.totalCostos,0), resultado:res.reduce((s,r)=>s+r.resultado,0), cogsRows:res.flatMap(r=>r.cogsRows||[]), costosPorCuenta, facturasperiodo:res.flatMap(r=>r.facturasperiodo||[]) };
-                  })();
-                  const efaLabel = erMesesExtra.includes('ALL') ? 'PERÍODO COMPLETO' : `${MONTH_NAMES_ES[erMes-1]} ${erAno}`;
-                  return (
                 <div id="pdf-content" className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
                   <div className="hidden pdf-header p-6 border-b-2 border-gray-300">
                     <ReportHeader />
@@ -13121,8 +13132,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   </table>
                 </div>
               </div>
-                  );
-                })()}
             )}
 
             {/* ── VARIACIONES ── */}
