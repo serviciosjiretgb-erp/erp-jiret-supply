@@ -513,6 +513,7 @@ export default function App() {
   const toggleSandbox = (v) => { activateSandbox(v); setSandboxMode(v); };
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
+  const [report177AllPeriods, setReport177AllPeriods] = useState(false); // TODOS mode
 
   // Formularios Costos Operativos
   const initialOpCostForm = { date: getTodayDate(), category: 'Electricidad', description: '', amount: '', cuentaContable: '' };
@@ -1361,12 +1362,13 @@ export default function App() {
         for (const [cleanId, g] of Object.entries(groups)) {
           if (g.docs.length <= 1) continue; // single warehouse: already consistent
           // FIX 8: Use the cost from the most recently updated document (direct substitution)
-          const sortedByTime = [...g.docs].sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
-          const refCost = parseNum(sortedByTime[0]?.cost||0);
-          if (refCost <= 0) continue;
+          // FIX 2: Use weighted average = the cost Inventario General shows
+          // This way after sync, Gestión de Almacenes matches exactly Inventario General
+          const avgCost = g.totalStock > 0 ? g.totalVal / g.totalStock : (g.docs[0]?.cost || 0);
+          if (avgCost <= 0) continue;
           for (const doc of g.docs) {
             const docCost = parseNum(doc.cost||0);
-            if (Math.abs(docCost - refCost) > 0.001) ops.push({ id: doc.id, cost: refCost });
+            if (Math.abs(docCost - avgCost) > 0.001) ops.push({ id: doc.id, cost: avgCost });
           }
         }
         // Write in batches
@@ -4944,6 +4946,39 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   g.pesoTot += stock * cu; g.lotes.push(fg); g.opIds.add(fg.opId);
                 });
 
+              // FIX 1: Also add inventory items with category='Productos Terminados'
+              (inventory||[]).filter(i => i.category === 'Productos Terminados' && parseNum(i.stock) > 0).forEach(i => {
+                const cleanId = i.displayId || (i.id||'').split('___')[0];
+                // Deduplicate by cleanId across warehouses (sum stock for same product)
+                const esTermo = (i.unit||'').toUpperCase() === 'KG';
+                const key = `PT-INV-${cleanId}`;
+                if (!fgGrps[key]) fgGrps[key] = {
+                  key, esTermo,
+                  categoria: 'Productos Terminados',
+                  cliente: 'IMPORTADO',
+                  tipoProducto: esTermo ? 'TERMOENCOGIBLE' : 'BOLSAS',
+                  producto: i.desc || cleanId,
+                  ancho: 0, largo: 0, micras: 0, color: '',
+                  totalStock: 0, totalKg: 0, pesoTot: 0, lotes: [], opIds: new Set(),
+                  _fromInventory: true
+                };
+                const g = fgGrps[key];
+                const stk = parseNum(i.stock||0);
+                const cu = parseNum(i.cost||0);
+                g.totalStock += stk;
+                g.totalKg += stk;
+                g.pesoTot += stk * cu;
+                g.lotes.push({
+                  id: cleanId + '_inv', opId: 'IMPORTADO', cliente: 'IMPORTADO',
+                  tipoProducto: esTermo ? 'TERMOENCOGIBLE' : 'BOLSAS',
+                  producto: i.desc || cleanId,
+                  millares: esTermo ? 0 : stk, kgProducidos: esTermo ? stk : 0,
+                  costoUnitario: cu, costoUnitarioMillar: cu,
+                  status: 'LISTO PARA ENTREGA', _fromInventory: true
+                });
+                g.opIds.add('IMPORTADO');
+              });
+
               const groups = Object.values(fgGrps);
               const bolsasGrp = groups.filter(g => !g.esTermo);
               const termosGrp = groups.filter(g => g.esTermo);
@@ -6717,13 +6752,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           // FIX: declarar fechas PRIMERO antes de usarlas
           const startOfMonth = new Date(reportYear, reportMonth - 1, 1);
           const endOfMonth   = new Date(reportYear, reportMonth, 0, 23, 59, 59, 999);
+          // FIX 3: TODOS mode — no date filtering
+          const allPeriodsMode = report177AllPeriods;
 
-          // Categorías con stock actual — incluir TODOS los items (también en stock 0 con movimientos)
+          // Categorías con stock actual — incluir TODOS los items
           const categoriesWithStock = [...new Set(
             inventory.filter(i => i.category !== 'Productos Terminados').map(i => i.category)
           )];
-          // Categorías con movimientos en el período (aunque stock=0 — ej. Químicos/Pigmentos de Abril)
-          const categoriesWithMovements = [...new Set(
+          const categoriesWithMovements = allPeriodsMode ? [] : [...new Set(
             (invMovements || []).filter(m => {
               const d = new Date(`${m.date}T00:00:00`);
               return d >= startOfMonth && d <= endOfMonth;
@@ -6735,7 +6771,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           const categories = [...new Set([...categoriesWithStock, ...categoriesWithMovements])];
           if (finishedGoodsInventory.length > 0 || inventory.some(i=>i.category==='Productos Terminados')) categories.push('Productos Terminados');
 
-          const monthMovements = invMovements.filter(m => {
+          const monthMovements = allPeriodsMode ? (invMovements||[]) : invMovements.filter(m => {
             const movDate = new Date(`${m.date}T00:00:00`);
             return movDate >= startOfMonth && movDate <= endOfMonth;
           });
@@ -6929,8 +6965,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                        ))}
                      </div>
                      <div className="flex justify-between pt-2 border-t border-gray-100 mt-2">
-                       <span className="text-[9px] font-bold text-gray-500">{['Enero','Feb','Mar','Abr','Mayo','Jun','Jul','Ago','Sept','Oct','Nov','Dic'][reportMonth-1]} {reportYear}</span>
-                       <button onClick={()=>{setReportMonth(new Date().getMonth()+1);setReportYear(new Date().getFullYear());}} className="text-[9px] font-black text-orange-600 uppercase hover:underline">Este mes</button>
+                       <span className="text-[9px] font-bold text-gray-500">{report177AllPeriods ? 'TODOS' : ['Enero','Feb','Mar','Abr','Mayo','Jun','Jul','Ago','Sept','Oct','Nov','Dic'][reportMonth-1]+' '+reportYear}</span>
+                       <button onClick={()=>{setReportMonth(new Date().getMonth()+1);setReportYear(new Date().getFullYear());setReport177AllPeriods(false);}} className="text-[9px] font-black text-orange-600 uppercase hover:underline">Este mes</button>
+                     </div>
+                     <div className="pt-1">
+                       <button onClick={()=>setReport177AllPeriods(v=>!v)}
+                         className={`w-full text-[9px] font-black uppercase py-1 rounded-lg transition-all ${report177AllPeriods?'bg-green-600 text-white':'bg-green-50 text-green-700 hover:bg-green-100'}`}>
+                         {report177AllPeriods ? '✓ TODOS' : 'TODOS'}
+                       </button>
                      </div>
                    </div>
                    <div>
