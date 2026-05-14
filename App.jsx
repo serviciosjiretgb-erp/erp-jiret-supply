@@ -1360,10 +1360,13 @@ export default function App() {
         let ops = [];
         for (const [cleanId, g] of Object.entries(groups)) {
           if (g.docs.length <= 1) continue; // single warehouse: already consistent
-          const avgCost = g.totalStock > 0 ? g.totalVal / g.totalStock : (g.docs[0]?.cost || 0);
+          // FIX 8: Use the cost from the most recently updated document (direct substitution)
+          const sortedByTime = [...g.docs].sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
+          const refCost = parseNum(sortedByTime[0]?.cost||0);
+          if (refCost <= 0) continue;
           for (const doc of g.docs) {
             const docCost = parseNum(doc.cost||0);
-            if (Math.abs(docCost - avgCost) > 0.001) ops.push({ id: doc.id, cost: avgCost });
+            if (Math.abs(docCost - refCost) > 0.001) ops.push({ id: doc.id, cost: refCost });
           }
         }
         // Write in batches
@@ -1389,65 +1392,59 @@ export default function App() {
     const newStock = parseNum(almacenEditForm.stock);
     const newCost  = parseNum(almacenEditForm.cost);
     const prevStock = parseNum(editingAlmacenItem.stock || 0);
-    const prevCost  = parseNum(editingAlmacenItem.cost  || 0);
-    const applyToAll = almacenEditForm.applyToAll;
-
-    // ── CRÍTICO: usar _realId si está disponible (set durante el agrupamiento)
-    // Si no, buscar el doc real por cleanId + almacen
     const cleanIdEdit = editingAlmacenItem.displayId || (editingAlmacenItem.id||'').split('___')[0];
     const almacenEdit = editingAlmacenItem.almacen || 'ALMACEN ZI';
-    // _realId is the actual Firebase document ID set during almacenes grouping
+    // Use _realId (set during grouping) — this is the actual Firebase document ID
     const realDocId = editingAlmacenItem._realId || (() => {
-      const realFirebaseDoc = (inventory||[]).find(i => {
+      const found = (inventory||[]).find(i => {
         const cid = i.displayId || (i.id||'').split('___')[0];
         return cid === cleanIdEdit && (i.almacen || 'ALMACEN ZI') === almacenEdit;
       });
-      return realFirebaseDoc?.id || (cleanIdEdit + '___' + almacenEdit.replace(/\s+/g, '-'));
+      return found?.id || (cleanIdEdit + '___' + almacenEdit.replace(/\s+/g, '-'));
     })();
-
     try {
-      const updates = { timestamp: Date.now() };
-      if (almacenEditForm.stock !== '') updates.stock = newStock;
-      if (almacenEditForm.cost  !== '') updates.cost  = newCost;
-      // If applyToAll: update cost (and stock for this warehouse) across all warehouses
-      if (applyToAll && almacenEditForm.cost !== '') {
-        const allWarehouseDocs = (inventory||[]).filter(i => {
-          const cid = i.displayId || (i.id||'').split('___')[0];
-          return cid === cleanIdEdit;
-        });
-        const b = writeBatch(db);
-        allWarehouseDocs.forEach(d => {
+      const hasCostChange = almacenEditForm.cost !== '';
+      const hasStockChange = almacenEditForm.stock !== '';
+      if (!hasCostChange && !hasStockChange) return;
+      // FIX 8: Cost = DIRECT SUBSTITUTION to ALL warehouses (no averaging, no division)
+      // Stock = only the specific warehouse being edited
+      if (hasCostChange) {
+        const allDocs = (inventory||[]).filter(i => (i.displayId || (i.id||'').split('___')[0]) === cleanIdEdit);
+        if (allDocs.length > 0) {
+          const b = writeBatch(db);
+          allDocs.forEach(d => {
+            const upd = { cost: newCost, timestamp: Date.now() };
+            if (d.id === realDocId && hasStockChange) upd.stock = newStock;
+            b.set(getDocRef('inventory', d.id), upd, { merge: true });
+          });
+          await b.commit();
+        } else {
+          // No existing docs — create/update the specific warehouse doc
           const upd = { cost: newCost, timestamp: Date.now() };
-          if (d.id === realDocId && almacenEditForm.stock !== '') upd.stock = newStock;
-          b.set(getDocRef('inventory', d.id), upd, { merge: true });
-        });
-        await b.commit();
+          if (hasStockChange) upd.stock = newStock;
+          await setDoc(getDocRef('inventory', realDocId), upd, { merge: true });
+        }
       } else {
-        // Actualizar solo el documento del almacén específico usando el ID real
-        // Use setDoc with merge:true so it works even if doc doesn't exist
-        await setDoc(getDocRef('inventory', realDocId), updates, { merge: true });
+        // Only stock — update just this warehouse
+        await setDoc(getDocRef('inventory', realDocId), { stock: newStock, timestamp: Date.now() }, { merge: true });
       }
-      // Registrar movimiento si el stock cambió
-      const diff = newStock - prevStock;
-      if (almacenEditForm.stock !== '' && Math.abs(diff) > 0.001) {
+      // Kardex entry for stock change
+      const diff = hasStockChange ? newStock - prevStock : 0;
+      if (Math.abs(diff) > 0.001) {
         await addDoc(getColRef('inventoryMovements'), {
-          itemId: realDocId,
-          itemDesc: editingAlmacenItem.desc,
-          almacen: almacenEdit,
-          type: diff > 0 ? 'ENTRADA' : 'SALIDA',
-          qty: Math.abs(diff),
-          unitCost: newCost || prevCost,
-          totalValue: Math.abs(diff) * (newCost || prevCost),
+          itemId: realDocId, itemDesc: editingAlmacenItem.desc, almacen: almacenEdit,
+          type: diff > 0 ? 'ENTRADA' : 'SALIDA', qty: Math.abs(diff),
+          unitCost: hasCostChange ? newCost : parseNum(editingAlmacenItem.cost||0),
+          totalValue: Math.abs(diff) * (hasCostChange ? newCost : parseNum(editingAlmacenItem.cost||0)),
           previousStock: prevStock, newStock,
-          docRef: 'AJUSTE MANUAL ALMACÉN',
-          notes: `Edición directa en Gestión de Almacenes — ${editingAlmacenItem.almacen || ''}`,
+          docRef: 'AJUSTE MANUAL ALMACÉN', notes: `Gestión de Almacenes — ${almacenEdit}`,
           date: getTodayDate(), user: appUser?.name || 'Admin', timestamp: Date.now()
         });
       }
       setEditingAlmacenItem(null);
-      setDialog({ title: '✅ Actualizado', text: `${cleanIdEdit} actualizado en ${almacenEdit}${applyToAll?' (y todos los demás almacenes)':''}. Todos los reportes e inventarios reflejarán el cambio.`, type: 'alert' });
+      setDialog({ title: '✅ Actualizado', text: `${cleanIdEdit}: ${hasCostChange?`costo $${formatNum(newCost)} aplicado en TODOS los almacenes. `:''}${hasStockChange?`stock ${formatNum(newStock)} en ${almacenEdit}.`:''}`, type: 'alert' });
     } catch (err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
-  };
+  };;
 
   // ============================================================================
   // IMPORTAR INVENTARIO CONSOLIDADO DESDE EXCEL (datos precargados)
@@ -3743,6 +3740,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 setDialog({title:'✅ OSA Generada', text:`${nroOSA} registrada en historial. Para crear una nueva OSA usa el botón "Limpiar".`, type:'alert'});
               }} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2 shadow-md disabled:opacity-40" disabled={osaItemList.length===0}><Printer size={15}/> Imprimir & Confirmar OSA</button>
               {osaItemList.length > 0 && <button onClick={()=>setDialog({title:'Limpiar OSA',text:'¿Vaciar la lista de artículos para comenzar una nueva OSA?',type:'confirm',onConfirm:()=>{setOsaItemList([]);setOsaHdr(h=>({...h,docRef:'',destino:'',fecha:getTodayDate()}));}})} className="bg-red-100 text-red-700 px-4 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-red-200 flex items-center gap-1"><X size={13}/> Limpiar</button>}
+              <button onClick={()=>requireAdminPassword(async()=>{await setDoc(getDocRef('settings','osaCounter'),{current:0},{merge:true});setOsaCounter(1);setDialog({title:'✅ Numeración Reiniciada',text:'La próxima OSA será OSA-2026-00001.',type:'alert'});},'Reiniciar numeración de OSA')} className="bg-gray-100 text-gray-600 px-3 py-3 rounded-2xl text-[9px] font-black uppercase hover:bg-gray-200 flex items-center gap-1" title="Reiniciar numeración a 00001"><RefreshCw size={12}/> Reset #</button>
             </div>
             <div className="p-6 space-y-5">
               {/* Encabezado */}
@@ -3930,10 +3928,10 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         <td className="py-2.5 px-4 border-r text-center text-[10px] font-bold">{osa.user || osa.procesadoPor || '—'}</td>
                         <td className="py-2.5 px-4 text-center">
                           <div className="flex gap-1 justify-center">
-                            <button onClick={()=>requireAdminPassword(()=>{
+                            <button onClick={()=>{
                               const hdr = { almacenOrigen: osa.almacenOrigen||'ALMACÉN', destino: osa.destino||'—', fecha: osa.fecha||getTodayDate(), docRef: osa.docRef||'', procesadoPor: osa.user||osa.procesadoPor||'—' };
                               printOSA(osa.items||[], hdr);
-                            }, 'Reimprimir OSA — requiere clave admin')} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white" title="Reimprimir PDF (requiere clave admin)"><Printer size={10}/></button>
+                            }} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white" title="Reimprimir PDF"><Printer size={10}/></button>
                             <button onClick={()=>requireAdminPassword(()=>{
                               // Load OSA into form for editing
                               setOsaItemList([...(osa.items||[])]);
@@ -4961,7 +4959,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <table className="w-full text-left text-xs">
                       <thead className={`${colorH} text-white`}>
                         <tr className="uppercase font-black text-[9px] tracking-widest">
-                          <th className="py-3 px-4 border-r border-white/20">Categoría / Producto — Cliente — Dimensiones</th>
+                          <th className="py-3 px-4 border-r border-white/20">Productos Terminados</th>
                           <th className="py-3 px-4 border-r border-white/20 text-center">Lotes / OPs</th>
                           <th className="py-3 px-4 border-r border-white/20 text-center">Costo Unit.</th>
                           <th className="py-3 px-4 text-center">{unit} en Stock</th>
@@ -6088,7 +6086,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  <div className="flex flex-wrap gap-3 items-center">
                    <div className="relative flex-1 min-w-48">
                      <Search className="absolute left-4 top-4 text-gray-400" size={18} />
-                     <input type="text" placeholder="BUSCAR INSUMO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
+                     <input type="text" placeholder="BUSCAR INSUMO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-10 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
+                     {invSearchTerm && <button onClick={()=>setInvSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500"><X size={16}/></button>}
                    </div>
                    {/* Filtro por Almacén */}
                    <div className="flex items-center gap-2">
@@ -6817,16 +6816,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
             if (cat === 'Productos Terminados') {
               items = []; // Will be populated by directFGItems below
-              // Include ALL finishedGoodsInventory items with stock > 0 directly
-              // (they may not have invMovements entries if created via partial delivery or fix7)
               const directFGItems = [];
               const fgByDesc = {};
+              // Include finishedGoodsInventory items
               (finishedGoodsInventory||[]).forEach(fg => {
                 const desc = fg.producto || '';
                 const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
                 const stk = esTermo ? parseNum(fg.kgProducidos||0) : parseNum(fg.millares||0);
                 const cost = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-                // Mostrar todos los PT en Kardex (sin filtro de stock)
                 const key = desc.toUpperCase().trim();
                 if(!fgByDesc[key]) fgByDesc[key] = { desc, unit: esTermo?'KG':'Millares', stk:0, cost, salesQty:0 };
                 fgByDesc[key].stk += stk;
@@ -6834,6 +6831,16 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 const fgMovs = (invMovements||[]).filter(m => m.itemId===`FG::${fg.id}` && m.type==='SALIDA');
                 const periodSales = fgMovs.filter(m=>{const d=new Date(`${m.date}T00:00:00`);return d>=startOfMonth&&d<=endOfMonth;});
                 fgByDesc[key].salesQty += periodSales.reduce((s,m)=>s+parseNum(m.qty),0);
+              });
+              // Also include inventory items with category='Productos Terminados' (imported goods)
+              (inventory||[]).filter(i => i.category === 'Productos Terminados').forEach(i => {
+                const cleanId = i.displayId || (i.id||'').split('___')[0];
+                const desc = i.desc || cleanId;
+                const stk = parseNum(i.stock||0);
+                const cost = parseNum(i.cost||0);
+                const key = desc.toUpperCase().trim();
+                if(!fgByDesc[key]) fgByDesc[key] = { desc, unit: i.unit||'UND', stk:0, cost, salesQty:0 };
+                fgByDesc[key].stk += stk;
               });
               Object.entries(fgByDesc).forEach(([key, g]) => {
                 // For FG items: current stock IS the final inventory
@@ -6905,18 +6912,26 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               </div>
 
               <div className="p-8 print:p-0 bg-white" id="pdf-content">
-                 <div data-html2canvas-ignore="true" className="flex gap-4 mb-8 items-end no-pdf flex-wrap">
-                   <div>
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Mes a Reportar</label>
-                     <select value={reportMonth} onChange={e=>setReportMonth(parseInt(e.target.value))} className="w-48 border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs uppercase outline-none" size={1}>
-                       {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'].map((m,i)=>(
-                         <option key={i+1} value={i+1}>{m}</option>
+                 <div data-html2canvas-ignore="true" className="flex gap-4 mb-8 items-start no-pdf flex-wrap">
+                   {/* Calendar-style month/year picker */}
+                   <div className="bg-white border-2 border-gray-200 rounded-2xl p-4 shadow-sm">
+                     <div className="flex items-center justify-between mb-3">
+                       <button onClick={()=>setReportYear(v=>v-1)} className="p-1 hover:bg-gray-100 rounded-lg font-black text-gray-600 text-lg leading-none">&#8249;</button>
+                       <span className="font-black text-sm">{reportYear}</span>
+                       <button onClick={()=>setReportYear(v=>v+1)} className="p-1 hover:bg-gray-100 rounded-lg font-black text-gray-600 text-lg leading-none">&#8250;</button>
+                     </div>
+                     <div className="grid grid-cols-4 gap-1">
+                       {['ene.','feb.','mar.','abr.','may.','jun.','jul.','ago.','sept.','oct.','nov.','dic.'].map((m,i)=>(
+                         <button key={i} onClick={()=>setReportMonth(i+1)}
+                           className={`py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${reportMonth===i+1?'bg-orange-500 text-white shadow':'hover:bg-gray-100 text-gray-600'}`}>
+                           {m}
+                         </button>
                        ))}
-                     </select>
-                   </div>
-                   <div>
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Año</label>
-                     <input type="number" value={reportYear} onChange={e=>setReportYear(parseInt(e.target.value))} className="w-32 border-2 border-gray-200 bg-white rounded-xl p-3 font-black text-xs outline-none text-center" />
+                     </div>
+                     <div className="flex justify-between pt-2 border-t border-gray-100 mt-2">
+                       <span className="text-[9px] font-bold text-gray-500">{['Enero','Feb','Mar','Abr','Mayo','Jun','Jul','Ago','Sept','Oct','Nov','Dic'][reportMonth-1]} {reportYear}</span>
+                       <button onClick={()=>{setReportMonth(new Date().getMonth()+1);setReportYear(new Date().getFullYear());}} className="text-[9px] font-black text-orange-600 uppercase hover:underline">Este mes</button>
+                     </div>
                    </div>
                    <div>
                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa de Cambio (Bs/$)</label>
@@ -12181,8 +12196,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     return (
       <div className="space-y-6 animate-in fade-in">
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-          {/* Membrete / Letterhead */}
-          <div className="px-8 py-6 border-b border-gray-200">
+          {/* Membrete / Letterhead — no-pdf: hidden in print (pdf-header handles the header) */}
+          <div className="px-8 py-6 border-b border-gray-200 no-pdf">
             <div className="flex items-start justify-between mb-5 pb-5 border-b-2 border-orange-500">
               <div className="flex flex-col items-start">
                 <span className="text-xl font-light tracking-widest text-gray-600">Supply</span>
