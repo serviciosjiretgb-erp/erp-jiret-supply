@@ -361,78 +361,8 @@ export default function App() {
     run();
   }, [invMovements, wipInventory, finishedGoodsInventory, invRequisitions]);
 
-  // ── One-time: set correct final stocks in Firebase ────────────────────────
-  useEffect(() => {
-    if (!finishedGoodsInventory.length || sessionStorage.getItem('fg_stock_v10') === 'done') return;
-    const run = async () => {
-      // 1. Eliminar TODOS los documentos FG con (28+5+5) en producto/descripción (stock 0 o positivo)
-      const phantomFGs = finishedGoodsInventory.filter(fg =>
-        /\(28\+5\+5\)/i.test(`${fg.producto||''} ${fg.cliente||''} ${fg.categoria||''}`) ||
-        parseNum(fg.millares) === 122  // era el stock erróneo original
-      );
-      for (const fg of phantomFGs) {
-        try { await deleteDoc(getDocRef('finishedGoodsInventory', fg.id)); } catch(e){}
-      }
-
-      // 2. Eliminar ítems Semielaborados con stock <= 0 (residuos de producciones de prueba)
-      const semItems = (inventory||[]).filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)<=0.001);
-      for(const si of semItems){
-        try { await deleteDoc(getDocRef('inventory', si.id)); } catch(e){}
-      }
-
-      // 3. Asegurar EMBUTIDO 1 KIRI = 21.45 Millares
-      const embutidoDocs = finishedGoodsInventory.filter(fg =>
-        /embutido.*1.*kiri|kiri.*embutido.*1/i.test(`${fg.producto||''} ${fg.cliente||''}`) &&
-        !(/\(28\+5\+5\)/i.test(`${fg.producto||''}`))
-      );
-      if (embutidoDocs.length > 0) {
-        embutidoDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-        const keeper = embutidoDocs[0];
-        try {
-          await updateDoc(getDocRef('finishedGoodsInventory', keeper.id), {
-            millares: 21.45, kgProducidos: 5.07,
-            costoUnitario: 86.64, costoUnitarioMillar: 86.64
-          });
-        } catch(e){}
-        // Cero los demás duplicados
-        for (const dup of embutidoDocs.slice(1)) {
-          try { await updateDoc(getDocRef('finishedGoodsInventory', dup.id), {millares:0,kgProducidos:0}); } catch(e){}
-        }
-      } else {
-        // No existe ningún doc: crear
-        const newFgId = `FG-EMBUTIDO1KIRI-RESTORE`;
-        try {
-          await setDoc(getDocRef('finishedGoodsInventory', newFgId), {
-            id: newFgId, opId: 'RESTAURADO', reqId: '',
-            cliente: 'INVERSIONES AVICOLAS, C.A', tipoProducto: 'BOLSAS',
-            categoria: 'EMBUTIDO 1 - KIRI', producto: 'EMBUTIDO 1 - KIRI 28×75×0.012MIC',
-            ancho: 28, largo: 75, micras: 0.012, color: 'NATURAL', tratamiento: 'LISO',
-            kgProducidos: 5.07, millares: 21.45,
-            costoUnitario: 86.64, costoUnitarioMillar: 86.64,
-            fechaFinalizacion: '2026-03-01', ubicacion: 'ALMACEN GENERAL',
-            status: 'LISTO PARA ENTREGA',
-            observaciones: 'STOCK RESTAURADO — 21.45 Millares según Reporte 177',
-            timestamp: Date.now()
-          });
-        } catch(e){}
-      }
-
-      // 4. Pañal Kiri = 103.30 Millares
-      const panalDocs = finishedGoodsInventory.filter(fg => /pa[ñn]al.*kiri/i.test(`${fg.producto||''} ${fg.cliente||''}`));
-      if (panalDocs.length > 0) {
-        panalDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-        try { await updateDoc(getDocRef('finishedGoodsInventory', panalDocs[0].id), {millares:103.30,costoUnitario:78.01,costoUnitarioMillar:78.01}); } catch(e){}
-        for (const dup of panalDocs.slice(1)) { try { await updateDoc(getDocRef('finishedGoodsInventory', dup.id), {millares:0}); } catch(e){} }
-      }
-
-      sessionStorage.setItem('fg_stock_v10','done');
-    };
-    run();
-  }, [finishedGoodsInventory, inventory]);
-
-  // ── One-time data correction (runs once per session via sessionStorage flag) ──
-
-  // FG corrections are applied via the Edit button in Terminados view
+    // ── One-time auto-correction useEffects REMOVED ──
+// FG corrections are applied via the Edit button in Terminados view
   const [showMovForm, setShowMovForm] = useState(false);
   const [movForm, setMovForm] = useState(() => ({itemId:'',qty:'',unitCost:'',docRef:'',type:'ENTRADA',notes:'',date:getTodayDate()}));
   // Multi-item batch movement
@@ -4000,14 +3930,18 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         <td className="py-2.5 px-4 border-r text-center text-[10px] font-bold">{osa.user || osa.procesadoPor || '—'}</td>
                         <td className="py-2.5 px-4 text-center">
                           <div className="flex gap-1 justify-center">
-                            <button onClick={()=>{
+                            <button onClick={()=>requireAdminPassword(()=>{
                               const hdr = { almacenOrigen: osa.almacenOrigen||'ALMACÉN', destino: osa.destino||'—', fecha: osa.fecha||getTodayDate(), docRef: osa.docRef||'', procesadoPor: osa.user||osa.procesadoPor||'—' };
                               printOSA(osa.items||[], hdr);
-                            }} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white flex items-center gap-1 text-[8px] font-black uppercase" title="Reimprimir PDF">
-                              <Printer size={10}/>
-                            </button>
-                            <button onClick={()=>requireAdminPassword(()=>setDialog({title:'Eliminar OSA',text:`¿Eliminar ${osa.nroOSA||osa.id}? Esta acción no revierte el inventario.`,type:'confirm',onConfirm:async()=>{await deleteDoc(getDocRef('inventoryRequisitions',osa.id));setDialog({title:'Eliminada',text:`${osa.nroOSA} eliminada del historial.`,type:'alert'});}}), 'Eliminar OSA del historial')}
-                              className="p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white" title="Eliminar del historial"><Trash2 size={10}/></button>
+                            }, 'Reimprimir OSA — requiere clave admin')} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white" title="Reimprimir PDF (requiere clave admin)"><Printer size={10}/></button>
+                            <button onClick={()=>requireAdminPassword(()=>{
+                              // Load OSA into form for editing
+                              setOsaItemList([...(osa.items||[])]);
+                              setOsaHdr({ almacenOrigen: osa.almacenOrigen||depositos[0]||'ALMACEN ZI', destino: osa.destino||'', fecha: osa.fecha||getTodayDate(), docRef: osa.docRef||'', procesadoPor: osa.user||appUser?.name||'Admin' });
+                              setDialog({title:'OSA Cargada para Editar', text:`${osa.nroOSA} cargada en el formulario. Modifica y vuelve a imprimir para actualizar.`, type:'alert'});
+                            }, 'Editar OSA — requiere clave admin')} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Editar (requiere clave admin)"><Edit size={10}/></button>
+                            <button onClick={()=>requireAdminPassword(()=>setDialog({title:'Eliminar OSA',text:`¿Eliminar ${osa.nroOSA||osa.id}? Esta acción no revierte el inventario.`,type:'confirm',onConfirm:async()=>{await deleteDoc(getDocRef('inventoryRequisitions',osa.id));setDialog({title:'Eliminada',text:`${osa.nroOSA} eliminada del historial.`,type:'alert'});}}), 'Eliminar OSA — requiere clave admin')}
+                              className="p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white" title="Eliminar del historial (requiere clave admin)"><Trash2 size={10}/></button>
                           </div>
                         </td>
                       </tr>
@@ -4698,8 +4632,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       <td className="py-3 px-3 border-r print:border-black">
                         <div className="font-bold uppercase text-[10px]">{item.producto}</div>
                         <div className="text-[9px] text-gray-500 mt-0.5">
-                          <div>{item.ancho}cm×{item.largo}cm | {item.micras}mic | {item.color}</div>
-                          {item.categoria && <div className="text-orange-600 font-bold">{item.categoria}</div>}
+                          <div>{item.ancho?`${item.ancho}cm×${item.largo}cm | ${item.micras}mic | ${item.color}`:'Importado'}</div>
+                          {item.categoria && <div className="text-orange-600 font-bold">{item._fromInventory ? 'Productos Terminados' : item.categoria}</div>}
                         </div>
                       </td>
                       <td className="py-3 px-3 border-r print:border-black text-center">
@@ -5710,34 +5644,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         fgDeduped.push(fgById[item.id]);
       }
     }
-    // FIX 3: ALSO add inventory items with category='Productos Terminados' to fgDeduped
-    // so they appear UNIFIED in the Inventario de Productos Terminados section
-    // (and do NOT appear separately as "TERMINADOS — IMPORTADOS" anymore)
-    const invPT = (inventory||[]).filter(i => i.category === 'Productos Terminados' && parseNum(i.stock) > 0);
-    invPT.forEach(i => {
-      const cleanId = i.displayId || (i.id||'').split('___')[0];
-      const esTermo = (i.unit||'').toUpperCase().includes('KG');
-      const fgId = `INV-PT-${cleanId}`;
-      if (fgById[fgId]) {
-        const prev = fgById[fgId];
-        const totalStock = (prev.stock||0) + parseNum(i.stock);
-        const totalVal = (prev.stock||0)*(prev.cost||0) + parseNum(i.stock)*parseNum(i.cost||0);
-        prev.stock = totalStock;
-        prev.cost = totalStock > 0 ? totalVal/totalStock : parseNum(i.cost||0);
-      } else {
-        const newItem = {
-          id: fgId, desc: i.desc, category: 'Productos Terminados',
-          unit: i.unit||'UND', stock: parseNum(i.stock), cost: parseNum(i.cost||0),
-          _isFGGroup: true, _lotes: 1, _totalKg: parseNum(i.stock),
-          _fromInventory: true, _invIds: [i.id]
-        };
-        fgById[fgId] = newItem;
-        fgDeduped.push(newItem);
-      }
-    });
-    // Filter inventory to NOT show PT items separately (they're now in fgDeduped)
-    const inventoryWithoutPT = (inventory||[]).filter(i => i.category !== 'Productos Terminados');
-    const allCatalogItems = [...inventoryWithoutPT, ...fgDeduped];
+    // FIX: Show ALL inventory items in Inventario General
+    // PT items appear in their own category "Productos Terminados"
+    // AND also in the finished view
+    const allCatalogItems = [...(inventory || []), ...fgDeduped];
     // Categorías únicas — sin duplicados
     const allCatalogCats = ['TODAS', ...Array.from(new Set(allCatalogItems.map(i=>i?.category||'Otros')))]
       .sort((a,b)=>{ if(a==='TODAS')return -1; if(b==='TODAS')return 1; if(a==='Productos Terminados')return -1; if(b==='Productos Terminados')return 1; return a.localeCompare(b); });
@@ -6003,7 +5913,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                    <div>
                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Código ID</label>
-                     <input type="text" required disabled={!!editingInvId} value={newInvItemForm.id} onChange={e=>setNewInvItemForm({...newInvItemForm, id: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="EJ: MP-001" />
+                     <input type="text" required value={newInvItemForm.id} onChange={e=>setNewInvItemForm({...newInvItemForm, id: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors" placeholder="EJ: MP-001" />
                    </div>
                    <div className="md:col-span-2">
                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Descripción</label>
@@ -12256,9 +12166,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 {settings.empresaTelefono && <p className="text-[10px] text-gray-500">Tel: {settings.empresaTelefono}</p>}
               </div>
             </div>
-            <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3"><BarChart3 className="text-blue-600" size={28}/> Reportes Financieros / Rentabilidad</h2>
-            <p className="text-xs font-bold text-gray-500 uppercase mt-1">Dashboard de Ingresos, Costos y Utilidad</p>
-            <div className="mt-3 flex flex-wrap gap-2 text-[9px]">
+            <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3 no-pdf"><BarChart3 className="text-blue-600" size={28}/> Reportes Financieros / Rentabilidad</h2>
+            <p className="text-xs font-bold text-gray-500 uppercase mt-1 no-pdf">Dashboard de Ingresos, Costos y Utilidad</p>
+            <div className="mt-3 flex flex-wrap gap-2 text-[9px] no-pdf">
               {REPORT_CARDS.map(card=>(
                 <span key={card.id} className="font-black text-gray-500 uppercase border border-gray-200 px-2 py-1 rounded-lg">▸ {card.label}</span>
               ))}
@@ -13023,27 +12933,50 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <button onClick={()=>handleExportPDF('Estado_Resultado_Integral', false)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir</button>
                   </div>
                 </div>
+                {(() => {
+                  // Compute data respecting TODOS/multi-month mode
+                  const efaGetYMs = () => {
+                    if(erMesesExtra.includes('ALL')) {
+                      const yms = new Set();
+                      (invoices||[]).forEach(inv=>{ if(inv.fecha) yms.add(inv.fecha.substring(0,7)); });
+                      (opCosts||[]).forEach(c=>{ if(c.fecha||c.month) yms.add((c.fecha||c.month||'').substring(0,7)); });
+                      return yms.size > 0 ? [...yms] : [ymA];
+                    }
+                    return [ymA];
+                  };
+                  const efaYMs = efaGetYMs();
+                  const efaData = efaYMs.length === 1 ? calcEstadoData(efaYMs[0]) : (() => {
+                    const res = efaYMs.map(ym=>calcEstadoData(ym));
+                    const costosPorCuenta = {};
+                    res.forEach(r=>Object.entries(r.costosPorCuenta||{}).forEach(([k,v])=>{
+                      if(!costosPorCuenta[k]) costosPorCuenta[k]={...v,total:0,movs:[]};
+                      costosPorCuenta[k].total+=v.total; costosPorCuenta[k].movs.push(...v.movs);
+                    }));
+                    return { totalIngresos:res.reduce((s,r)=>s+r.totalIngresos,0), totalCostoProd:res.reduce((s,r)=>s+r.totalCostoProd,0), totalCostosOp:res.reduce((s,r)=>s+r.totalCostosOp,0), totalCostos:res.reduce((s,r)=>s+r.totalCostos,0), resultado:res.reduce((s,r)=>s+r.resultado,0), cogsRows:res.flatMap(r=>r.cogsRows||[]), costosPorCuenta, facturasperiodo:res.flatMap(r=>r.facturasperiodo||[]) };
+                  })();
+                  const efaLabel = erMesesExtra.includes('ALL') ? 'PERÍODO COMPLETO' : `${MONTH_NAMES_ES[erMes-1]} ${erAno}`;
+                  return (
                 <div id="pdf-content" className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
                   <div className="hidden pdf-header p-6 border-b-2 border-gray-300">
                     <ReportHeader />
                     <h1 className="text-2xl font-black text-center uppercase border-b-4 border-orange-500 pb-2 mt-4">ESTADO DE RESULTADO INTEGRAL</h1>
-                    <p className="text-xs text-center font-bold text-gray-500 mt-1">PERIODO: {MONTH_NAMES_ES[erMes-1]} {erAno}{tasa>1?` | TASA: ${formatNum(tasa)} Bs/$`:''}</p>
+                    <p className="text-xs text-center font-bold text-gray-500 mt-1">PERIODO: {efaLabel}{tasa>1?` | TASA: ${formatNum(tasa)} Bs/$`:''}</p>
                   </div>
                   <div className="grid grid-cols-3 gap-0 border-b-2 border-gray-200">
                     <div className="p-5 border-r border-gray-200 text-center">
                       <div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Ingresos</div>
-                      <div className="font-black text-xl text-green-600">${formatNum(dataA.totalIngresos)}</div>
-                      {tasa>1&&<div className="text-[9px] text-green-500 font-bold">Bs. {bs(dataA.totalIngresos)}</div>}
+                      <div className="font-black text-xl text-green-600">${formatNum(efaData.totalIngresos)}</div>
+                      {tasa>1&&<div className="text-[9px] text-green-500 font-bold">Bs. {bs(efaData.totalIngresos)}</div>}
                     </div>
                     <div className="p-5 border-r border-gray-200 text-center">
                       <div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Costos</div>
-                      <div className="font-black text-xl text-red-600">${formatNum(dataA.totalCostos)}</div>
-                      {tasa>1&&<div className="text-[9px] text-red-500 font-bold">Bs. {bs(dataA.totalCostos)}</div>}
+                      <div className="font-black text-xl text-red-600">${formatNum(efaData.totalCostos)}</div>
+                      {tasa>1&&<div className="text-[9px] text-red-500 font-bold">Bs. {bs(efaData.totalCostos)}</div>}
                     </div>
-                    <div className={`p-5 text-center ${dataA.resultado>=0?'bg-green-50':'bg-red-50'}`}>
+                    <div className={`p-5 text-center ${efaData.resultado>=0?'bg-green-50':'bg-red-50'}`}>
                       <div className="text-[9px] font-black text-gray-400 uppercase mb-1">Resultado del Ejercicio</div>
-                      <div className={`font-black text-2xl ${dataA.resultado>=0?'text-green-700':'text-red-700'}`}>${formatNum(dataA.resultado)}</div>
-                      {tasa>1&&<div className={`text-xs font-black ${dataA.resultado>=0?'text-green-600':'text-red-600'}`}>Bs. {bs(dataA.resultado)}</div>}
+                      <div className={`font-black text-2xl ${efaData.resultado>=0?'text-green-700':'text-red-700'}`}>${formatNum(efaData.resultado)}</div>
+                      {tasa>1&&<div className={`text-xs font-black ${efaData.resultado>=0?'text-green-600':'text-red-600'}`}>Bs. {bs(efaData.resultado)}</div>}
                     </div>
                   </div>
                   <table className="w-full text-xs border-collapse">
@@ -13066,10 +12999,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           INGRESOS POR MAQUILA
                           <span className="ml-3 text-[9px] text-orange-400">{erExpanded.ingresos?'contraer':'expandir facturas'}</span>
                         </td>
-                        <td className="py-1.5 px-3 text-right font-black text-orange-700">{formatNum(dataA.totalIngresos)}</td>
-                        {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-orange-600">{bs(dataA.totalIngresos)}</td>}
+                        <td className="py-1.5 px-3 text-right font-black text-orange-700">{formatNum(efaData.totalIngresos)}</td>
+                        {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-orange-600">{bs(efaData.totalIngresos)}</td>}
                       </tr>
-                      {erExpanded.ingresos && (dataA.facturasperiodo.length>0 ? dataA.facturasperiodo.map((inv,i)=>(
+                      {erExpanded.ingresos && (efaData.facturasperiodo.length>0 ? efaData.facturasperiodo.map((inv,i)=>(
                         <tr key={i} className="border-b border-orange-50 hover:bg-orange-50/40">
                           <td className="py-1.5 px-4 pl-20 text-[10px] font-bold text-gray-700">
                             <span className="text-orange-500 font-black mr-2">{inv.documento}</span>
@@ -13078,15 +13011,15 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           </td>
                           <td className="py-1.5 px-3 text-center text-[9px] text-gray-400">USD</td>
                           <td className="py-1.5 px-3 text-right font-black text-orange-600">{formatNum(inv.montoBase)}</td>
-                          <td className="py-1.5 px-3 text-center text-[9px]">{pctOf(parseNum(inv.montoBase),dataA.totalIngresos)}</td>
+                          <td className="py-1.5 px-3 text-center text-[9px]">{pctOf(parseNum(inv.montoBase),efaData.totalIngresos)}</td>
                           {tasa>1&&<td className="py-1.5 px-3 text-right text-[9px]">{bs(parseNum(inv.montoBase))}</td>}
                         </tr>
                       )) : <tr><td colSpan={tasa>1?5:4} className="py-1.5 px-4 pl-20 text-[10px] text-gray-400 italic">Sin ingresos en este periodo</td></tr>)}
                       <tr className="bg-orange-100">
                         <td className="py-2.5 px-4 text-[10px] uppercase pl-8 text-orange-800 font-black" colSpan={2}>Total INGRESOS</td>
-                        <td className="py-2.5 px-3 text-right font-black text-orange-700">{formatNum(dataA.totalIngresos)}</td>
+                        <td className="py-2.5 px-3 text-right font-black text-orange-700">{formatNum(efaData.totalIngresos)}</td>
                         <td className="py-2.5 px-3 text-center text-[9px] font-black">100.00%</td>
-                        {tasa>1&&<td className="py-2.5 px-3 text-right font-black text-orange-700">{bs(dataA.totalIngresos)}</td>}
+                        {tasa>1&&<td className="py-2.5 px-3 text-right font-black text-orange-700">{bs(efaData.totalIngresos)}</td>}
                       </tr>
 
                       <tr><td colSpan={tasa>1?5:4} className="py-2"></td></tr>
@@ -13102,10 +13035,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           COSTO DE PRODUCCIÓN VENDIDA
                           <span className="ml-3 text-[9px] text-gray-400">{erExpanded.costo_ventas?'contraer':'expandir detalle'}</span>
                         </td>
-                        <td className="py-1.5 px-3 text-right font-black">${formatNum(dataA.totalCostoProd)}</td>
-                        {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-gray-600">{bs(dataA.totalCostoProd)}</td>}
+                        <td className="py-1.5 px-3 text-right font-black">${formatNum(efaData.totalCostoProd)}</td>
+                        {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-gray-600">{bs(efaData.totalCostoProd)}</td>}
                       </tr>
-                      {erExpanded.costo_ventas && (dataA.cogsRows||[]).length>0 && <>
+                      {erExpanded.costo_ventas && (efaData.cogsRows||[]).length>0 && <>
                         <tr className="bg-gray-100 text-gray-600 text-[9px] font-black uppercase">
                           <td className="py-1 px-4 pl-14">OP / Producto / Cliente</td>
                           <td className="py-1 px-3 text-center">Unid.</td>
@@ -13113,7 +13046,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           <td className="py-1 px-3 text-right">Total $</td>
                           {tasa>1&&<td className="py-1 px-3 text-right">Bs</td>}
                         </tr>
-                        {(dataA.cogsRows||[]).map((row,i)=>(
+                        {(efaData.cogsRows||[]).map((row,i)=>(
                           <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
                             <td className="py-1.5 px-4 pl-14">
                               <div className="font-black text-[10px] text-orange-600">OP-{row.opNum}{row.factura&&` · ${row.factura}`}</div>
@@ -13127,17 +13060,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           </tr>
                         ))}
                       </>}
-                      {erExpanded.costo_ventas && (dataA.cogsRows||[]).length===0 &&
+                      {erExpanded.costo_ventas && (efaData.cogsRows||[]).length===0 &&
                         <tr><td colSpan={tasa>1?5:4} className="py-1.5 px-4 pl-14 text-[10px] text-gray-400 italic">Sin ventas de producción</td></tr>}
                       <tr className="bg-gray-100 border-b border-gray-300">
                         <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total COSTO DE VENTAS</td>
-                        <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalCostoProd)}</td>
-                        <td className="py-2 px-3 text-center text-[9px] font-black">{pctOf(dataA.totalCostoProd,dataA.totalIngresos)}</td>
-                        {tasa>1&&<td className="py-2 px-3 text-right font-black">{bs(dataA.totalCostoProd)}</td>}
+                        <td className="py-2 px-3 text-right font-black">{formatNum(efaData.totalCostoProd)}</td>
+                        <td className="py-2 px-3 text-center text-[9px] font-black">{pctOf(efaData.totalCostoProd,efaData.totalIngresos)}</td>
+                        {tasa>1&&<td className="py-2 px-3 text-right font-black">{bs(efaData.totalCostoProd)}</td>}
                       </tr>
 
                       {/* Costos Operativos — colapsable */}
-                      {Object.values(dataA.costosPorCuenta).length > 0 && (
+                      {Object.values(efaData.costosPorCuenta).length > 0 && (
                         <>
                           <tr className="bg-gray-200 cursor-pointer hover:bg-gray-300 select-none"
                             onClick={()=>setErExpanded(p=>({...p,costos_op:!p.costos_op}))}>
@@ -13146,10 +13079,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               OTROS COSTOS OPERATIVOS
                               <span className="ml-3 text-[9px] text-gray-400">{erExpanded.costos_op?'contraer':'expandir detalle'}</span>
                             </td>
-                            <td className="py-1.5 px-3 text-right font-black">${formatNum(dataA.totalCostosOp)}</td>
-                            {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-gray-600">{bs(dataA.totalCostosOp)}</td>}
+                            <td className="py-1.5 px-3 text-right font-black">${formatNum(efaData.totalCostosOp)}</td>
+                            {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-gray-600">{bs(efaData.totalCostosOp)}</td>}
                           </tr>
-                          {erExpanded.costos_op && Object.values(dataA.costosPorCuenta).map((c,i)=>(
+                          {erExpanded.costos_op && Object.values(efaData.costosPorCuenta).map((c,i)=>(
                             <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
                               <td className="py-2 px-4 font-bold text-[10px] pl-14">
                                 {c.codigo&&<span className="text-orange-600 font-black mr-2">{c.codigo}</span>}
@@ -13157,15 +13090,15 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               </td>
                               <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
                               <td className="py-2 px-3 text-right font-black">{formatNum(c.total)}</td>
-                              <td className="py-2 px-3 text-center text-[9px]">{pctOf(c.total,dataA.totalIngresos)}</td>
+                              <td className="py-2 px-3 text-center text-[9px]">{pctOf(c.total,efaData.totalIngresos)}</td>
                               {tasa>1&&<td className="py-2 px-3 text-right font-bold text-gray-600">{bs(c.total)}</td>}
                             </tr>
                           ))}
                           <tr className="bg-gray-100 border-b border-gray-300">
                             <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total OTROS COSTOS OPERATIVOS</td>
-                            <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalCostosOp)}</td>
-                            <td className="py-2 px-3 text-center text-[9px] font-black">{pctOf(dataA.totalCostosOp,dataA.totalIngresos)}</td>
-                            {tasa>1&&<td className="py-2 px-3 text-right font-black">{bs(dataA.totalCostosOp)}</td>}
+                            <td className="py-2 px-3 text-right font-black">{formatNum(efaData.totalCostosOp)}</td>
+                            <td className="py-2 px-3 text-center text-[9px] font-black">{pctOf(efaData.totalCostosOp,efaData.totalIngresos)}</td>
+                            {tasa>1&&<td className="py-2 px-3 text-right font-black">{bs(efaData.totalCostosOp)}</td>}
                           </tr>
                         </>
                       )}
@@ -13173,21 +13106,23 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       {/* Total Costos + Resultado */}
                       <tr className="bg-gray-700 text-white">
                         <td className="py-3 px-4 text-sm uppercase font-black" colSpan={2}>Total COSTOS</td>
-                        <td className="py-3 px-3 text-right font-black text-lg">{formatNum(dataA.totalCostos)}</td>
-                        <td className="py-3 px-3 text-center text-[9px] font-black">{pctOf(dataA.totalCostos,dataA.totalIngresos)}</td>
-                        {tasa>1&&<td className="py-3 px-3 text-right font-black text-lg">{bs(dataA.totalCostos)}</td>}
+                        <td className="py-3 px-3 text-right font-black text-lg">{formatNum(efaData.totalCostos)}</td>
+                        <td className="py-3 px-3 text-center text-[9px] font-black">{pctOf(efaData.totalCostos,efaData.totalIngresos)}</td>
+                        {tasa>1&&<td className="py-3 px-3 text-right font-black text-lg">{bs(efaData.totalCostos)}</td>}
                       </tr>
                       <tr><td colSpan={tasa>1?5:4} className="py-1"></td></tr>
-                      <tr className={dataA.resultado>=0?'bg-green-600 text-white':'bg-red-600 text-white'}>
+                      <tr className={efaData.resultado>=0?'bg-green-600 text-white':'bg-red-600 text-white'}>
                         <td className="py-3 px-4 font-black text-sm uppercase" colSpan={2}>RESULTADO DEL EJERCICIO</td>
-                        <td className="py-3 px-3 text-right font-black text-xl">${formatNum(dataA.resultado)}</td>
-                        <td className="py-3 px-3 text-center font-black">{pctOf(dataA.resultado,dataA.totalIngresos)}</td>
-                        {tasa>1&&<td className="py-3 px-3 text-right font-black text-xl">{bs(dataA.resultado)}</td>}
+                        <td className="py-3 px-3 text-right font-black text-xl">${formatNum(efaData.resultado)}</td>
+                        <td className="py-3 px-3 text-center font-black">{pctOf(efaData.resultado,efaData.totalIngresos)}</td>
+                        {tasa>1&&<td className="py-3 px-3 text-right font-black text-xl">{bs(efaData.resultado)}</td>}
                       </tr>
                     </tbody>
                   </table>
                 </div>
               </div>
+                  );
+                })()}
             )}
 
             {/* ── VARIACIONES ── */}
