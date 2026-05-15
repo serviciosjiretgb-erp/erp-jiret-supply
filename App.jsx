@@ -458,7 +458,7 @@ export default function App() {
   const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
 
   // Formularios Inventario
-  const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '', almacen: 'ALMACEN ZI' };
+  const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '', almacen: 'ALMACEN ZI', stockPerAlmacen: {} };
   const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
   const [editingInvId, setEditingInvId] = useState(null);
   const [showInvItemForm, setShowInvItemForm] = useState(false); // collapsible form
@@ -1629,67 +1629,102 @@ export default function App() {
     e.preventDefault();
     if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
     const itemId  = newInvItemForm.id.toUpperCase().trim();
-    const almacen = (newInvItemForm.almacen || 'ALMACEN ZI').trim();
-    // When EDITING use the stored real Firestore docId (editingInvId) to avoid creating duplicate docs.
-    // When CREATING compute docId from itemId + almacen.
-    const docId = editingInvId && (inventory||[]).find(i => i.id === editingInvId)
-      ? editingInvId
-      : itemId + '___' + almacen.replace(/\s+/g, '-');
-    const existingItem = (inventory||[]).find(i => i.id === docId);
-    const newCost  = parseNum(newInvItemForm.cost);
-    const newStock = parseNum(newInvItemForm.stock);
-    let finalCost  = newCost;
-    const prevStock = existingItem?.stock || 0;
-    const prevCost  = existingItem?.cost  || 0;
-    if (existingItem && editingInvId) {
-      const diff = newStock - prevStock;
-      finalCost = diff > 0 && newCost > 0
-        ? ((prevStock * prevCost) + (diff * newCost)) / newStock
-        : newCost || prevCost;
-    }
-    const itemData = {
-      id: docId,
-      displayId: itemId,   // clean code for display
-      almacen,
-      desc: newInvItemForm.desc.toUpperCase(),
-      category: newInvItemForm.category || 'Materia Prima',
-      unit: newInvItemForm.unit || 'kg',
-      cost: finalCost,
-      stock: newStock,
-      timestamp: Date.now()
-    };
+    const newCost = parseNum(newInvItemForm.cost);
+    const stockPerAlmacen = newInvItemForm.stockPerAlmacen || {};
+    const hasPerWarehouse = Object.values(stockPerAlmacen).some(v => parseNum(v) > 0);
+
     try {
-      // merge:true ensures other warehouses' docs are NOT touched
-      await setDoc(getDocRef('inventory', docId), itemData, { merge: true });
-      // FIX 10: Auto-propagate cost to ALL warehouses so Inventario General
-      // weighted avg == each warehouse's individual cost
-      if (finalCost > 0 && existingItem && editingInvId) {
-        const otherWarehouseDocs = (inventory||[]).filter(i => {
-          const cid = i.displayId || (i.id||'').split('___')[0];
-          return cid === itemId && i.id !== docId;
-        });
-        if (otherWarehouseDocs.length > 0) {
-          const b = writeBatch(db);
-          otherWarehouseDocs.forEach(d => b.update(getDocRef('inventory', d.id), { cost: finalCost, timestamp: Date.now() }));
-          await b.commit();
+      if (!editingInvId && hasPerWarehouse) {
+        // ── NEW ITEM with per-warehouse stocks ──
+        // Create ONE Firebase doc per warehouse with stock for that warehouse
+        // All docs share the SAME cost (no division)
+        const b = writeBatch(db);
+        let docsCreated = 0;
+        for (const alm of depositos) {
+          const stk = parseNum(stockPerAlmacen[alm] || 0);
+          if (stk <= 0) continue; // skip warehouses with 0 stock
+          const docId = itemId + '___' + alm.replace(/\s+/g, '-');
+          b.set(getDocRef('inventory', docId), {
+            id: docId, displayId: itemId, almacen: alm,
+            desc: newInvItemForm.desc.toUpperCase(),
+            category: newInvItemForm.category || 'Materia Prima',
+            unit: newInvItemForm.unit || 'kg',
+            cost: newCost, // SAME cost for all warehouses — NOT divided
+            stock: stk,
+            timestamp: Date.now()
+          });
+          docsCreated++;
         }
-      }
-      if (existingItem && editingInvId) {
-        const diff = newStock - prevStock;
-        if (Math.abs(diff) > 0.001) {
+        await b.commit();
+        // Record kardex entries
+        for (const alm of depositos) {
+          const stk = parseNum(stockPerAlmacen[alm] || 0);
+          if (stk <= 0) continue;
+          const docId = itemId + '___' + alm.replace(/\s+/g, '-');
           await addDoc(getColRef('inventoryMovements'), {
-            itemId: docId, itemDesc: itemData.desc, almacen,
-            type: diff > 0 ? 'ENTRADA' : 'SALIDA',
-            qty: Math.abs(diff), unitCost: finalCost,
-            totalValue: Math.abs(diff) * finalCost,
-            previousStock: prevStock, newStock,
-            docRef: 'AJUSTE MANUAL', notes: 'Edición Inventario General',
+            itemId: docId, itemDesc: newInvItemForm.desc.toUpperCase(), almacen: alm,
+            type: 'ENTRADA_INICIAL', qty: stk, unitCost: newCost, totalValue: stk * newCost,
+            previousStock: 0, newStock: stk,
+            docRef: 'INVENTARIO INICIAL', notes: 'Carga inicial multi-almacén',
             date: getTodayDate(), user: appUser?.name || 'Admin', timestamp: Date.now()
           });
         }
+        setNewInvItemForm(initialInvItemForm); setEditingInvId(null);
+        setDialog({ title: '✅ Guardado', text: `${itemId} creado en ${docsCreated} almacén(es) con costo $${formatNum(newCost)}.`, type: 'alert' });
+      } else {
+        // ── SINGLE warehouse save (editing or no per-warehouse stocks) ──
+        const almacen = (newInvItemForm.almacen || 'ALMACEN ZI').trim();
+        const docId = editingInvId && (inventory||[]).find(i => i.id === editingInvId)
+          ? editingInvId
+          : itemId + '___' + almacen.replace(/\s+/g, '-');
+        const existingItem = (inventory||[]).find(i => i.id === docId);
+        const newStock = parseNum(newInvItemForm.stock);
+        let finalCost = newCost;
+        const prevStock = existingItem?.stock || 0;
+        const prevCost  = existingItem?.cost  || 0;
+        if (existingItem && editingInvId) {
+          const diff = newStock - prevStock;
+          finalCost = diff > 0 && newCost > 0
+            ? ((prevStock * prevCost) + (diff * newCost)) / newStock
+            : newCost || prevCost;
+        }
+        const itemData = {
+          id: docId, displayId: itemId, almacen,
+          desc: newInvItemForm.desc.toUpperCase(),
+          category: newInvItemForm.category || 'Materia Prima',
+          unit: newInvItemForm.unit || 'kg',
+          cost: finalCost, stock: newStock, timestamp: Date.now()
+        };
+        await setDoc(getDocRef('inventory', docId), itemData, { merge: true });
+        // Propagate cost to other warehouses
+        if (finalCost > 0) {
+          const otherDocs = (inventory||[]).filter(i => {
+            const cid = i.displayId || (i.id||'').split('___')[0];
+            return cid === itemId && i.id !== docId;
+          });
+          if (otherDocs.length > 0) {
+            const b = writeBatch(db);
+            otherDocs.forEach(d => b.update(getDocRef('inventory', d.id), { cost: finalCost, timestamp: Date.now() }));
+            await b.commit();
+          }
+        }
+        if (existingItem && editingInvId) {
+          const diff = newStock - prevStock;
+          if (Math.abs(diff) > 0.001) {
+            await addDoc(getColRef('inventoryMovements'), {
+              itemId: docId, itemDesc: itemData.desc, almacen,
+              type: diff > 0 ? 'ENTRADA' : 'SALIDA',
+              qty: Math.abs(diff), unitCost: finalCost,
+              totalValue: Math.abs(diff) * finalCost,
+              previousStock: prevStock, newStock,
+              docRef: 'AJUSTE MANUAL', notes: 'Edición Inventario General',
+              date: getTodayDate(), user: appUser?.name || 'Admin', timestamp: Date.now()
+            });
+          }
+        }
+        setNewInvItemForm(initialInvItemForm); setEditingInvId(null);
+        setDialog({ title: '✅ Guardado', text: `${itemId} actualizado. Costo $${formatNum(finalCost)} en todos los almacenes.`, type: 'alert' });
       }
-      setNewInvItemForm(initialInvItemForm); setEditingInvId(null);
-      setDialog({ title: '✅ Éxito', text: `${itemId} guardado. Costo actualizado en todos los almacenes.`, type: 'alert' });
     } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
   const startEditInvItem = (mergedItem) => {
@@ -4986,18 +5021,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               const totalKgTermo = termosGrp.reduce((s,g)=>s+g.totalStock, 0);
 
               const renderGrpTable = (grps, esTermo) => {
-                const unit = esTermo ? 'KG' : 'Millares';
                 const colorH = esTermo ? 'bg-green-700' : 'bg-blue-700';
-                if (!grps.length) return <div className="text-center py-6 text-gray-400 text-xs font-bold uppercase">Sin registros</div>;
+                if (!grps.length) return <div className="text-center py-4 text-gray-400 text-xs font-bold uppercase">Sin registros</div>;
                 return (
                   <div className="overflow-x-auto rounded-xl border border-gray-200 mb-2">
                     <table className="w-full text-left text-xs">
                       <thead className={`${colorH} text-white`}>
                         <tr className="uppercase font-black text-[9px] tracking-widest">
-                          <th className="py-3 px-4 border-r border-white/20">Productos Terminados</th>
-                          <th className="py-3 px-4 border-r border-white/20 text-center">Lotes / OPs</th>
-                          <th className="py-3 px-4 border-r border-white/20 text-center">Costo Unit.</th>
-                          <th className="py-3 px-4 text-center">{unit} en Stock</th>
+                          <th className="py-2 px-3 border-r border-white/20">Producto</th>
+                          <th className="py-2 px-3 border-r border-white/20 text-center">OP / Lotes</th>
+                          <th className="py-2 px-3 border-r border-white/20 text-center">Costo Unit.</th>
+                          <th className="py-2 px-3 text-center">Stock</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -5005,45 +5039,61 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           .filter(g => !fgSearch || (g.categoria+g.cliente+g.producto).toUpperCase().includes(fgSearch.toUpperCase()))
                           .map((g, idx) => {
                             const cu = g.totalStock > 0 ? g.pesoTot / g.totalStock : 0;
+                            // Determine actual unit — use the group's own unit if set, otherwise default
+                            const actualUnit = g._fromInventory
+                              ? (g.lotes[0]?.unit || (esTermo ? 'KG' : 'Millares'))
+                              : (esTermo ? 'KG' : 'Millares');
                             return (
                               <tr key={g.key} className={`hover:bg-gray-50 ${idx%2===0?'bg-white':'bg-gray-50/50'}`}>
-                                <td className="py-3 px-4 border-r">
-                                  <div className="font-black text-[11px] text-gray-900 uppercase">{formatFGLabel(g)}</div>
-                                  <div className="text-[9px] text-gray-400 font-bold">{g.tipoProducto}</div>
+                                <td className="py-2 px-3 border-r">
+                                  <div className="font-black text-[10px] text-gray-900 uppercase leading-tight">{g._fromInventory ? (g.producto || g.categoria) : formatFGLabel(g)}</div>
+                                  <div className="text-[8px] text-gray-400 font-bold mt-0.5">{g._fromInventory ? 'IMPORTADO' : g.tipoProducto}</div>
                                 </td>
-                                <td className="py-3 px-4 border-r text-center">
-                                  <span className="bg-orange-100 text-orange-700 font-black text-[9px] px-2 py-0.5 rounded-full">{g.lotes.length} lote{g.lotes.length!==1?'s':''}</span>
-                                  <div className="text-[8px] text-gray-400 mt-0.5">{Array.from(g.opIds).join(', ')}</div>
+                                <td className="py-2 px-3 border-r text-center">
+                                  {g._fromInventory ? (
+                                    <span className="bg-gray-100 text-gray-600 font-black text-[8px] px-1.5 py-0.5 rounded-full">STOCK INV.</span>
+                                  ) : (
+                                    <>
+                                      <span className="bg-orange-100 text-orange-700 font-black text-[8px] px-1.5 py-0.5 rounded-full">{g.lotes.length} lote{g.lotes.length!==1?'s':''}</span>
+                                      <div className="text-[7px] text-gray-400 mt-0.5 truncate max-w-20">{Array.from(g.opIds).slice(0,2).join(', ')}{g.opIds.size > 2 ? '…':''}</div>
+                                    </>
+                                  )}
                                 </td>
-                                <td className="py-3 px-4 border-r text-center font-black text-orange-600">
-                                  ${formatNum(cu)}<span className="text-[8px] font-bold text-gray-400">/{unit==='KG'?'KG':'Mill.'}</span>
+                                <td className="py-2 px-3 border-r text-center font-black text-orange-600 text-[10px]">
+                                  ${formatNum(cu)}<span className="text-[7px] font-bold text-gray-400">/{actualUnit==='KG'?'KG':'Mill.'}</span>
                                 </td>
-                                <td className="py-3 px-4 text-center">
-                                  <div className={`font-black text-xl ${esTermo?'text-green-600':'text-blue-600'}`}>{formatNum(g.totalStock)}</div>
-                                  <div className="text-[9px] font-bold text-gray-400 uppercase">{unit}</div>
-                                  {!esTermo && g.totalKg > 0 && <div className="text-[9px] text-gray-400">{formatNum(g.totalKg)} KG</div>}
-                                  <button onClick={()=>{
-                                    const firstLote = g.lotes[0];
-                                    setEditingFG({...firstLote, _group: g});
-                                    setFgEditForm({
-                                      producto: formatFGLabel(firstLote)||firstLote.producto||'',
-                                      millares: String(g.totalStock),
-                                      kgProducidos: String(g.totalKg||0),
-                                      costoUnitarioMillar: String(firstLote.costoUnitarioMillar||firstLote.costoUnitario||0),
-                                      costoUnitario: String(firstLote.costoUnitario||firstLote.costoUnitarioMillar||0)
-                                    });
-                                  }} className="mt-1 px-2 py-1 bg-blue-100 text-blue-600 rounded-lg text-[8px] font-black uppercase hover:bg-blue-500 hover:text-white transition-all flex items-center gap-0.5 mx-auto w-fit">
-                                    <Edit size={9}/> Editar
-                                  </button>
+                                <td className="py-2 px-3 text-center">
+                                  <div className="flex items-center justify-center gap-1">
+                                    <div>
+                                      <div className={`font-black text-lg leading-tight ${esTermo?'text-green-600':'text-blue-600'}`}>{formatNum(g.totalStock)}</div>
+                                      <div className="text-[8px] font-bold text-gray-400 uppercase">{actualUnit}</div>
+                                      {!esTermo && !g._fromInventory && g.totalKg > 0 && <div className="text-[7px] text-gray-400">{formatNum(g.totalKg)} KG</div>}
+                                    </div>
+                                    {!g._fromInventory && (
+                                      <button onClick={()=>{
+                                        const firstLote = g.lotes[0];
+                                        setEditingFG({...firstLote, _group: g});
+                                        setFgEditForm({
+                                          producto: formatFGLabel(firstLote)||firstLote.producto||'',
+                                          millares: String(g.totalStock),
+                                          kgProducidos: String(g.totalKg||0),
+                                          costoUnitarioMillar: String(firstLote.costoUnitarioMillar||firstLote.costoUnitario||0),
+                                          costoUnitario: String(firstLote.costoUnitario||firstLote.costoUnitarioMillar||0)
+                                        });
+                                      }} className="ml-1 p-1 bg-blue-100 text-blue-600 rounded text-[7px] font-black uppercase hover:bg-blue-500 hover:text-white transition-all">
+                                        <Edit size={9}/>
+                                      </button>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             );
                           })}
                       </tbody>
-                      <tfoot className={`${esTermo?'bg-green-50 text-green-800':'bg-blue-50 text-blue-800'} border-t-2`}>
+                      <tfoot className={`${esTermo?'bg-green-50 text-green-800':'bg-blue-50 text-blue-800'} border-t`}>
                         <tr className="font-black text-[10px] uppercase">
-                          <td colSpan="3" className="py-2 px-4 text-right">Total {esTermo?'Termoencogible':'Bolsas'}:</td>
-                          <td className="py-2 px-4 text-center text-lg">{formatNum(grps.reduce((s,g)=>s+g.totalStock,0))} {unit}</td>
+                          <td colSpan="3" className="py-1.5 px-3 text-right">Total:</td>
+                          <td className="py-1.5 px-3 text-center">{formatNum(grps.reduce((s,g)=>s+g.totalStock,0))} {esTermo?'KG':'Millares'}</td>
                         </tr>
                       </tfoot>
                     </table>
@@ -5980,20 +6030,41 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                      </div>
                    </div>
                  </div>
-                 <div className="flex items-center gap-4 pt-4 border-t border-gray-100">
-                   <div className="w-1/4">
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Carga Inicial (Stock)</label>
-                      <input type="number" step="0.01" required value={newInvItemForm.stock} onChange={e=>setNewInvItemForm({...newInvItemForm, stock: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs outline-none transition-colors text-center text-blue-600" />
+                 {/* Per-warehouse stock section */}
+                 <div className="pt-4 border-t border-gray-100">
+                   <div className="flex items-center justify-between mb-3">
+                     <label className="text-[11px] font-black text-gray-700 uppercase flex items-center gap-2">
+                       <Warehouse size={14} className="text-indigo-500"/> Existencia por Almacén
+                     </label>
+                     <span className="text-[9px] font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded">
+                       Total: {formatNum(depositos.reduce((s,a)=>s+parseNum((newInvItemForm.stockPerAlmacen||{})[a]||0),0))} {newInvItemForm.unit}
+                     </span>
                    </div>
-                   <div className="w-1/4">
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén / Depósito</label>
-                      <select value={newInvItemForm.almacen||'ALMACEN PRINCIPAL'} onChange={e=>setNewInvItemForm({...newInvItemForm, almacen: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
-                        {depositos.map(a=><option key={a} value={a}>{a}</option>)}
-                      </select>
+                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                     {depositos.map(alm => (
+                       <div key={alm}>
+                         <label className="text-[9px] font-black text-gray-500 uppercase block mb-1 truncate">{alm.replace('ALMACEN ','ALM. ')}</label>
+                         <input
+                           type="number" step="0.001" min="0"
+                           value={(newInvItemForm.stockPerAlmacen||{})[alm]||''}
+                           onChange={e => setNewInvItemForm(prev => ({
+                             ...prev,
+                             stockPerAlmacen: { ...(prev.stockPerAlmacen||{}), [alm]: e.target.value },
+                             // Keep stock as sum for compatibility
+                             stock: String(depositos.reduce((s,a2) => s + parseNum(a2===alm ? e.target.value : (prev.stockPerAlmacen||{})[a2]||0), 0))
+                           }))}
+                           className="w-full border-2 border-indigo-200 bg-indigo-50 focus:bg-white focus:border-indigo-500 rounded-xl p-2.5 font-black text-xs outline-none transition-colors text-center text-blue-600"
+                           placeholder="0"
+                         />
+                       </div>
+                     ))}
                    </div>
-                   <div className="flex-1 text-right flex gap-2 justify-end">
-                      {editingInvId && <button type="button" onClick={() => {setEditingInvId(null); setNewInvItemForm(initialInvItemForm); setShowInvItemForm(false);}} className="bg-gray-200 text-gray-700 px-6 py-4 rounded-2xl font-black text-[10px] uppercase hover:bg-gray-300 transition-all">CANCELAR</button>}
-                      <button type="submit" className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all">GUARDAR EN INVENTARIO</button>
+                   <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2 mb-4 text-[10px] font-bold text-blue-700">
+                     💡 Cada almacén crea un documento separado en Firebase con el mismo costo unitario. El stock no se divide.
+                   </div>
+                   <div className="flex gap-2 justify-end">
+                     {editingInvId && <button type="button" onClick={() => {setEditingInvId(null); setNewInvItemForm(initialInvItemForm); setShowInvItemForm(false);}} className="bg-gray-200 text-gray-700 px-6 py-4 rounded-2xl font-black text-[10px] uppercase hover:bg-gray-300 transition-all">CANCELAR</button>}
+                     <button type="submit" className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-gray-800 transition-all">GUARDAR EN INVENTARIO</button>
                    </div>
                  </div>
                </form>
