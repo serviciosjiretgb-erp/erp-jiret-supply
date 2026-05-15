@@ -1636,39 +1636,42 @@ export default function App() {
 
     try {
       if (hasPerWarehouse) {
-        // ── MULTI-WAREHOUSE SAVE (new item OR edit) ──
-        // One doc per warehouse, SAME cost, each warehouse's own stock
-        const isEdit = editingInvId && editingInvId !== 'MULTI_EDIT' ? false : (editingInvId === 'MULTI_EDIT');
+        // ── MULTI-WAREHOUSE SAVE ──
+        // REGLA: newCost (lo que el usuario ingresó) va EXACTO a TODOS los almacenes.
+        // Sin cálculos, sin promedios. Stock solo en el almacén específico ingresado.
+        const isNewItem = !editingInvId || editingInvId === null;
         const b = writeBatch(db);
         let docsAffected = 0;
+        const almacenesConStock = [];
         for (const alm of depositos) {
-          const stk = parseNum(stockPerAlmacen[alm] ?? '');
           const docId = itemId + '___' + alm.replace(/\s+/g, '-');
-          if (stockPerAlmacen[alm] === undefined || stockPerAlmacen[alm] === '') {
-            // No value entered for this warehouse — only update cost if doc exists
-            const existingDoc = (inventory||[]).find(i => i.id === docId);
-            if (existingDoc && newCost > 0) {
-              b.set(getDocRef('inventory', docId), { cost: newCost, timestamp: Date.now() }, { merge: true });
-              docsAffected++;
-            }
-            continue;
+          const hasStockEntry = stockPerAlmacen[alm] !== undefined && stockPerAlmacen[alm] !== '';
+          const stk = hasStockEntry ? parseNum(stockPerAlmacen[alm]) : null;
+          const existingDoc = (inventory||[]).find(i => i.id === docId);
+          if (hasStockEntry) {
+            // Update this warehouse with the entered stock + EXACT cost
+            b.set(getDocRef('inventory', docId), {
+              id: docId, displayId: itemId, almacen: alm,
+              desc: newInvItemForm.desc.toUpperCase(),
+              category: newInvItemForm.category || 'Materia Prima',
+              unit: newInvItemForm.unit || 'kg',
+              cost: newCost,  // EXACT cost — never modified
+              stock: stk,
+              timestamp: Date.now()
+            }, { merge: true });
+            if (stk > 0) almacenesConStock.push({ alm, stk, docId });
+            docsAffected++;
+          } else if (existingDoc && newCost > 0) {
+            // No stock entered for this warehouse — just update the cost
+            b.set(getDocRef('inventory', docId), { cost: newCost, timestamp: Date.now() }, { merge: true });
+            docsAffected++;
           }
-          b.set(getDocRef('inventory', docId), {
-            id: docId, displayId: itemId, almacen: alm,
-            desc: newInvItemForm.desc.toUpperCase(),
-            category: newInvItemForm.category || 'Materia Prima',
-            unit: newInvItemForm.unit || 'kg',
-            cost: newCost, stock: stk, timestamp: Date.now()
-          }, { merge: true }); // merge:true preserves other fields
-          docsAffected++;
         }
         await b.commit();
-        // Kardex entries for stock changes (new creation only — edits tracked separately)
-        if (!isEdit) {
-          for (const alm of depositos) {
-            const stk = parseNum(stockPerAlmacen[alm] || 0);
+        // Kardex entries only for new items (not for edits)
+        if (isNewItem && almacenesConStock.length > 0) {
+          for (const { alm, stk, docId } of almacenesConStock) {
             if (stk <= 0) continue;
-            const docId = itemId + '___' + alm.replace(/\s+/g, '-');
             await addDoc(getColRef('inventoryMovements'), {
               itemId: docId, itemDesc: newInvItemForm.desc.toUpperCase(), almacen: alm,
               type: 'ENTRADA_INICIAL', qty: stk, unitCost: newCost, totalValue: stk * newCost,
@@ -1679,60 +1682,46 @@ export default function App() {
           }
         }
         setNewInvItemForm(initialInvItemForm); setEditingInvId(null);
-        setDialog({ title: '✅ Guardado', text: `${itemId} actualizado en ${docsAffected} almacén(es). Costo $${formatNum(newCost)} igual en todos.`, type: 'alert' });
+        setDialog({
+          title: '✅ Guardado',
+          text: `${itemId}: costo $${formatNum(newCost)} guardado en ${docsAffected} almacén(es). El promedio ponderado solo cambia al hacer Entradas con costos diferentes.`,
+          type: 'alert'
+        });
       } else {
         // ── SINGLE warehouse save (editing or no per-warehouse stocks) ──
         const almacen = (newInvItemForm.almacen || 'ALMACEN ZI').trim();
         const docId = editingInvId && (inventory||[]).find(i => i.id === editingInvId)
           ? editingInvId
           : itemId + '___' + almacen.replace(/\s+/g, '-');
+        // REGLA SIMPLE: el costo ingresado = el costo guardado. Sin promedios.
         const existingItem = (inventory||[]).find(i => i.id === docId);
         const newStock = parseNum(newInvItemForm.stock);
-        let finalCost = newCost;
         const prevStock = existingItem?.stock || 0;
-        const prevCost  = existingItem?.cost  || 0;
-        if (existingItem && editingInvId) {
-          const diff = newStock - prevStock;
-          finalCost = diff > 0 && newCost > 0
-            ? ((prevStock * prevCost) + (diff * newCost)) / newStock
-            : newCost || prevCost;
-        }
+        // Cost = EXACTLY what user typed. No calculation, no averaging.
+        const costToSave = newCost > 0 ? newCost : parseNum(existingItem?.cost || 0);
         const itemData = {
           id: docId, displayId: itemId, almacen,
           desc: newInvItemForm.desc.toUpperCase(),
           category: newInvItemForm.category || 'Materia Prima',
           unit: newInvItemForm.unit || 'kg',
-          cost: finalCost, stock: newStock, timestamp: Date.now()
+          cost: costToSave, stock: newStock, timestamp: Date.now()
         };
         await setDoc(getDocRef('inventory', docId), itemData, { merge: true });
-        // Propagate cost to other warehouses
-        if (finalCost > 0) {
-          const otherDocs = (inventory||[]).filter(i => {
-            const cid = i.displayId || (i.id||'').split('___')[0];
-            return cid === itemId && i.id !== docId;
+        // Kardex only for stock changes
+        const diff = newStock - prevStock;
+        if (existingItem && Math.abs(diff) > 0.001) {
+          await addDoc(getColRef('inventoryMovements'), {
+            itemId: docId, itemDesc: itemData.desc, almacen,
+            type: diff > 0 ? 'ENTRADA' : 'SALIDA',
+            qty: Math.abs(diff), unitCost: costToSave,
+            totalValue: Math.abs(diff) * costToSave,
+            previousStock: prevStock, newStock,
+            docRef: 'AJUSTE MANUAL', notes: 'Edición Inventario General',
+            date: getTodayDate(), user: appUser?.name || 'Admin', timestamp: Date.now()
           });
-          if (otherDocs.length > 0) {
-            const b = writeBatch(db);
-            otherDocs.forEach(d => b.update(getDocRef('inventory', d.id), { cost: finalCost, timestamp: Date.now() }));
-            await b.commit();
-          }
-        }
-        if (existingItem && editingInvId) {
-          const diff = newStock - prevStock;
-          if (Math.abs(diff) > 0.001) {
-            await addDoc(getColRef('inventoryMovements'), {
-              itemId: docId, itemDesc: itemData.desc, almacen,
-              type: diff > 0 ? 'ENTRADA' : 'SALIDA',
-              qty: Math.abs(diff), unitCost: finalCost,
-              totalValue: Math.abs(diff) * finalCost,
-              previousStock: prevStock, newStock,
-              docRef: 'AJUSTE MANUAL', notes: 'Edición Inventario General',
-              date: getTodayDate(), user: appUser?.name || 'Admin', timestamp: Date.now()
-            });
-          }
         }
         setNewInvItemForm(initialInvItemForm); setEditingInvId(null);
-        setDialog({ title: '✅ Guardado', text: `${itemId} actualizado. Costo $${formatNum(finalCost)} en todos los almacenes.`, type: 'alert' });
+        setDialog({ title: '✅ Guardado', text: `${itemId} guardado con costo $${formatNum(costToSave)}.`, type: 'alert' });
       }
     } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
@@ -1755,16 +1744,16 @@ export default function App() {
       }
     });
     // Use MULTI_EDIT flag — no single editingInvId, each warehouse is saved individually
-    // Compute weighted-average cost (same as what Inventario General shows)
-    const totalWaVal = warehouseItems.reduce((s,i) => s + parseNum(i.stock||0) * parseNum(i.cost||0), 0);
+    // Show the actual cost from the first warehouse doc (NOT a computed average)
+    // The user sees the real stored cost and can update it — that cost saves to ALL warehouses
     const totalWaStk = warehouseItems.reduce((s,i) => s + parseNum(i.stock||0), 0);
-    const displayCost = totalWaStk > 0 ? totalWaVal / totalWaStk : parseNum(actualItem.cost||0);
+    const actualCost = parseNum(actualItem.cost || 0); // Real cost from Firebase
     setEditingInvId(warehouseItems.length > 1 ? 'MULTI_EDIT' : (actualItem.id || cleanId));
     setNewInvItemForm({
       id: cleanId,
       desc: actualItem.desc,
       category: actualItem.category || 'Materia Prima',
-      cost: String(displayCost || actualItem.cost || ''),
+      cost: String(actualCost || ''),  // REAL cost, not an average
       stock: String(totalWaStk || actualItem.stock || ''),
       unit: actualItem.unit || 'kg',
       almacen: actualItem.almacen || 'ALMACEN ZI',
@@ -5962,9 +5951,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Inventario General</h2>
                <div className="flex gap-3 flex-wrap justify-end">
-                 <button onClick={() => requireAdminPassword(handleSyncAllCosts, 'Igualar costos de todos los almacenes al promedio de Inventario General')} className="bg-teal-600 text-white px-4 py-2.5 rounded-2xl text-[9px] font-black uppercase shadow-sm hover:bg-teal-700 transition-colors flex items-center gap-1.5" title="Iguala el costo de cada producto en todos sus almacenes">
-                   <RefreshCw size={13}/> Igualar Costos
-                 </button>
+
                  <button onClick={() => requireAdminPassword(handleImportConsolidatedInventory, 'Importar Inventario Consolidado Excel')} className="bg-indigo-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-indigo-700 transition-colors flex items-center gap-2">
                    <Upload size={16}/> IMPORTAR EXCEL
                  </button>
@@ -16282,7 +16269,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 </div>
               )}
               <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-5">
-                <p className="text-[9px] font-black text-yellow-800 uppercase">⚠ El cambio actualizará: Inventario General, Almacén General, Art. 177, Entradas/Salidas y demás reportes.</p>
+                <p className="text-[9px] font-black text-yellow-800 uppercase">⚠ El costo ingresado se guarda EXACTO en todos los almacenes. El promedio ponderado solo se calcula automáticamente al registrar Entradas con costos diferentes.</p>
               </div>
               <div className="flex gap-3">
                 <button onClick={()=>setEditingAlmacenItem(null)} className="flex-1 bg-gray-100 text-gray-700 font-black py-3 rounded-xl uppercase text-xs hover:bg-gray-200">Cancelar</button>
