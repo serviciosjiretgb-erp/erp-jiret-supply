@@ -1634,43 +1634,51 @@ export default function App() {
     const hasPerWarehouse = Object.values(stockPerAlmacen).some(v => parseNum(v) > 0);
 
     try {
-      if (!editingInvId && hasPerWarehouse) {
-        // ── NEW ITEM with per-warehouse stocks ──
-        // Create ONE Firebase doc per warehouse with stock for that warehouse
-        // All docs share the SAME cost (no division)
+      if (hasPerWarehouse) {
+        // ── MULTI-WAREHOUSE SAVE (new item OR edit) ──
+        // One doc per warehouse, SAME cost, each warehouse's own stock
+        const isEdit = editingInvId && editingInvId !== 'MULTI_EDIT' ? false : (editingInvId === 'MULTI_EDIT');
         const b = writeBatch(db);
-        let docsCreated = 0;
+        let docsAffected = 0;
         for (const alm of depositos) {
-          const stk = parseNum(stockPerAlmacen[alm] || 0);
-          if (stk <= 0) continue; // skip warehouses with 0 stock
+          const stk = parseNum(stockPerAlmacen[alm] ?? '');
           const docId = itemId + '___' + alm.replace(/\s+/g, '-');
+          if (stockPerAlmacen[alm] === undefined || stockPerAlmacen[alm] === '') {
+            // No value entered for this warehouse — only update cost if doc exists
+            const existingDoc = (inventory||[]).find(i => i.id === docId);
+            if (existingDoc && newCost > 0) {
+              b.set(getDocRef('inventory', docId), { cost: newCost, timestamp: Date.now() }, { merge: true });
+              docsAffected++;
+            }
+            continue;
+          }
           b.set(getDocRef('inventory', docId), {
             id: docId, displayId: itemId, almacen: alm,
             desc: newInvItemForm.desc.toUpperCase(),
             category: newInvItemForm.category || 'Materia Prima',
             unit: newInvItemForm.unit || 'kg',
-            cost: newCost, // SAME cost for all warehouses — NOT divided
-            stock: stk,
-            timestamp: Date.now()
-          });
-          docsCreated++;
+            cost: newCost, stock: stk, timestamp: Date.now()
+          }, { merge: true }); // merge:true preserves other fields
+          docsAffected++;
         }
         await b.commit();
-        // Record kardex entries
-        for (const alm of depositos) {
-          const stk = parseNum(stockPerAlmacen[alm] || 0);
-          if (stk <= 0) continue;
-          const docId = itemId + '___' + alm.replace(/\s+/g, '-');
-          await addDoc(getColRef('inventoryMovements'), {
-            itemId: docId, itemDesc: newInvItemForm.desc.toUpperCase(), almacen: alm,
-            type: 'ENTRADA_INICIAL', qty: stk, unitCost: newCost, totalValue: stk * newCost,
-            previousStock: 0, newStock: stk,
-            docRef: 'INVENTARIO INICIAL', notes: 'Carga inicial multi-almacén',
-            date: getTodayDate(), user: appUser?.name || 'Admin', timestamp: Date.now()
-          });
+        // Kardex entries for stock changes (new creation only — edits tracked separately)
+        if (!isEdit) {
+          for (const alm of depositos) {
+            const stk = parseNum(stockPerAlmacen[alm] || 0);
+            if (stk <= 0) continue;
+            const docId = itemId + '___' + alm.replace(/\s+/g, '-');
+            await addDoc(getColRef('inventoryMovements'), {
+              itemId: docId, itemDesc: newInvItemForm.desc.toUpperCase(), almacen: alm,
+              type: 'ENTRADA_INICIAL', qty: stk, unitCost: newCost, totalValue: stk * newCost,
+              previousStock: 0, newStock: stk,
+              docRef: 'INVENTARIO INICIAL', notes: 'Carga inicial multi-almacén',
+              date: getTodayDate(), user: appUser?.name || 'Admin', timestamp: Date.now()
+            });
+          }
         }
         setNewInvItemForm(initialInvItemForm); setEditingInvId(null);
-        setDialog({ title: '✅ Guardado', text: `${itemId} creado en ${docsCreated} almacén(es) con costo $${formatNum(newCost)}.`, type: 'alert' });
+        setDialog({ title: '✅ Guardado', text: `${itemId} actualizado en ${docsAffected} almacén(es). Costo $${formatNum(newCost)} igual en todos.`, type: 'alert' });
       } else {
         // ── SINGLE warehouse save (editing or no per-warehouse stocks) ──
         const almacen = (newInvItemForm.almacen || 'ALMACEN ZI').trim();
@@ -1728,23 +1736,34 @@ export default function App() {
     } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
   const startEditInvItem = (mergedItem) => {
-    // mergedItem.id may be a clean display ID (e.g. 'MP-001') when the catalog is in TODOS mode.
-    // We need to find the actual Firestore document to get the real docId and almacen.
     const cleanId = mergedItem.displayId || mergedItem.id.split('___')[0] || mergedItem.id;
+    // Find ALL warehouse docs for this product
     const warehouseItems = (inventory || []).filter(i => {
-      const cid = i.displayId || i.id.split('___')[0];
-      return cid === cleanId || i.id === mergedItem.id;
+      const cid = i.displayId || (i.id||'').split('___')[0];
+      return cid === cleanId;
     });
     const actualItem = warehouseItems.length > 0 ? warehouseItems[0] : mergedItem;
-    setEditingInvId(actualItem.id); // REAL Firestore docId (e.g. 'MP-001___ALMACEN-ZI')
+    // Pre-fill stockPerAlmacen with current stocks from each warehouse
+    const stockPerAlmacen = {};
+    warehouseItems.forEach(i => {
+      const alm = i.almacen || 'ALMACEN ZI';
+      if (stockPerAlmacen[alm] !== undefined) {
+        stockPerAlmacen[alm] = String(parseNum(stockPerAlmacen[alm]) + parseNum(i.stock||0));
+      } else {
+        stockPerAlmacen[alm] = String(i.stock || '');
+      }
+    });
+    // Use MULTI_EDIT flag — no single editingInvId, each warehouse is saved individually
+    setEditingInvId(warehouseItems.length > 1 ? 'MULTI_EDIT' : (actualItem.id || cleanId));
     setNewInvItemForm({
-      id: cleanId,  // clean display ID
+      id: cleanId,
       desc: actualItem.desc,
       category: actualItem.category || 'Materia Prima',
       cost: actualItem.cost || '',
-      stock: actualItem.stock || '',
+      stock: String(warehouseItems.reduce((s,i)=>s+parseNum(i.stock||0),0) || actualItem.stock || ''),
       unit: actualItem.unit || 'kg',
-      almacen: actualItem.almacen || 'ALMACEN ZI'
+      almacen: actualItem.almacen || 'ALMACEN ZI',
+      stockPerAlmacen,  // ← pre-filled per-warehouse stocks
     });
     setShowInvItemForm(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -4594,16 +4613,25 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     if (invView === 'finished') {
       // FIX 3: inventory PT items are now shown within bolsas/termos via allFG merge
       // Include inventory PT items converted to FG format
-      const invPTForView = (inventory||[]).filter(i => i.category === 'Productos Terminados' && parseNum(i.stock) > 0).map(i => ({
-        id: `INV-PT-${i.displayId||(i.id||'').split('___')[0]||i.id}`, opId: 'IMPORTADO', cliente: 'IMPORTADO',
-        tipoProducto: (i.unit||'').toUpperCase()==='KG' ? 'TERMOENCOGIBLE' : 'BOLSAS',
-        producto: i.desc, categoria: 'Productos Terminados', status: 'LISTO PARA ENTREGA',
-        millares: (i.unit||'').toUpperCase()==='KG' ? 0 : parseNum(i.stock),
-        kgProducidos: (i.unit||'').toUpperCase()==='KG' ? parseNum(i.stock) : 0,
-        costoUnitario: parseNum(i.cost||0), costoUnitarioMillar: parseNum(i.cost||0),
-        ubicacion: i.almacen || 'ALMACEN GENERAL', _fromInventory: true,
-        timestamp: i.timestamp || Date.now()
-      }));
+      const invPTForView = (inventory||[]).filter(i => i.category === 'Productos Terminados' && parseNum(i.stock) > 0).map(i => {
+        const unitUp = (i.unit||'').toUpperCase();
+        const isKG = unitUp === 'KG';
+        const isMillares = unitUp === 'MILLARES' || unitUp === 'MILLAR';
+        // Only KG = Termoencogible, only 'MILLARES' = Bolsas en Millares
+        // Everything else (UND, und, etc.) = also Bolsas but unit is the real one
+        const tipoProducto = isKG ? 'TERMOENCOGIBLE' : 'BOLSAS';
+        return {
+          id: `INV-PT-${i.displayId||(i.id||'').split('___')[0]||i.id}`, opId: 'IMPORTADO', cliente: 'IMPORTADO',
+          tipoProducto,
+          producto: i.desc, categoria: 'Productos Terminados', status: 'LISTO PARA ENTREGA',
+          unit: i.unit || 'und', // ← PASS THE REAL UNIT
+          millares: isKG ? 0 : parseNum(i.stock),
+          kgProducidos: isKG ? parseNum(i.stock) : 0,
+          costoUnitario: parseNum(i.cost||0), costoUnitarioMillar: parseNum(i.cost||0),
+          ubicacion: i.almacen || 'ALMACEN GENERAL', _fromInventory: true,
+          timestamp: i.timestamp || Date.now()
+        };
+      });
       const allFG = [...(finishedGoodsInventory||[]), ...invPTForView];
       const bolsas = allFG.filter(i => i.tipoProducto !== 'TERMOENCOGIBLE');
       const termos = allFG.filter(i => i.tipoProducto === 'TERMOENCOGIBLE');
@@ -4987,12 +5015,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 // Deduplicate by cleanId across warehouses (sum stock for same product)
                 const esTermo = (i.unit||'').toUpperCase() === 'KG';
                 const key = `PT-INV-${cleanId}`;
+                const realUnit = i.unit || 'und';
                 if (!fgGrps[key]) fgGrps[key] = {
                   key, esTermo,
                   categoria: 'Productos Terminados',
                   cliente: 'IMPORTADO',
                   tipoProducto: esTermo ? 'TERMOENCOGIBLE' : 'BOLSAS',
                   producto: i.desc || cleanId,
+                  unit: realUnit, // ← STORE REAL UNIT
                   ancho: 0, largo: 0, micras: 0, color: '',
                   totalStock: 0, totalKg: 0, pesoTot: 0, lotes: [], opIds: new Set(),
                   _fromInventory: true
@@ -5006,6 +5036,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 g.lotes.push({
                   id: cleanId + '_inv', opId: 'IMPORTADO', cliente: 'IMPORTADO',
                   tipoProducto: esTermo ? 'TERMOENCOGIBLE' : 'BOLSAS',
+                  unit: realUnit, // ← STORE REAL UNIT
                   producto: i.desc || cleanId,
                   millares: esTermo ? 0 : stk, kgProducidos: esTermo ? stk : 0,
                   costoUnitario: cu, costoUnitarioMillar: cu,
