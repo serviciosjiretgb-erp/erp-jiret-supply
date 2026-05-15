@@ -160,7 +160,7 @@ const getSafeDate = (ts) => {
 // ============================================================================
 // CONSTANTE DE SEGURIDAD - CLAVE ADMIN
 // ============================================================================
-const ADMIN_PASSWORD = '1234';
+const ADMIN_PASSWORD = 'Supply2026.Admin';
 
 // ============================================================================
 // CATEGORÍAS DE COSTOS OPERATIVOS
@@ -4021,15 +4021,19 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
         // Clave SIEMPRE por cleanId + almacen → cada producto-almacén es fila independiente
         const key = cleanId + '|' + alm;
         if (!_invGroups[key]) {
-          // Guardar el ID real de Firestore en _realId para edición/escritura
-          _invGroups[key] = { ...i, id: cleanId, _realId: i.id, displayId: cleanId, almacen: alm, stock: 0, _wb: [] };
+          // CORRECCIÓN KARDEX (según análisis): el costo unitario es inmutable.
+          // Se extrae directamente del doc de Firebase y NO se recalcula.
+          // El "Valor Total" = existencia × costo_fijo (nunca costo/n_almacenes)
+          _invGroups[key] = { ...i, id: cleanId, _realId: i.id, displayId: cleanId, almacen: alm, stock: 0, cost: parseNum(i.cost||0), _wb: [] };
         }
         const stk = parseNum(i.stock||0);
-        const cst = parseNum(i.cost||0);
-        const prev = _invGroups[key];
-        const prevVal = prev.stock * parseNum(prev.cost||0);
-        _invGroups[key].stock = prev.stock + stk;
-        _invGroups[key].cost = (prev.stock+stk)>0 ? (prevVal+stk*cst)/(prev.stock+stk) : cst;
+        // El costo base permanece inmutable: si dos docs del mismo alm existen (duplicado),
+        // se usa el costo del doc más reciente (mayor timestamp).
+        if ((i.timestamp||0) > (_invGroups[key]._latestTs||0)) {
+          _invGroups[key].cost = parseNum(i.cost||0); // ← COSTO FIJO, nunca dividido
+          _invGroups[key]._latestTs = i.timestamp||0;
+        }
+        _invGroups[key].stock = (_invGroups[key].stock||0) + stk;
         _invGroups[key]._wb.push({ almacen: alm, stock: stk });
       }
       const filtItems = Object.values(_invGroups);
