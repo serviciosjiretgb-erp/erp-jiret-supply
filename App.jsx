@@ -527,6 +527,7 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
   const [selectedMonths, setSelectedMonths] = useState([]); // multi-month filter for Rentabilidad
   const [pvClienteFilter, setPvClienteFilter] = useState('TODOS');
+  const [selectedInvItems, setSelectedInvItems] = useState(new Set()); // bulk delete
   const [pvProductoFilter, setPvProductoFilter] = useState('TODOS');
   const [prodActivoSearch, setProdActivoSearch] = useState('');
   const [historialSearch, setHistorialSearch] = useState('');
@@ -1754,16 +1755,20 @@ export default function App() {
       }
     });
     // Use MULTI_EDIT flag — no single editingInvId, each warehouse is saved individually
+    // Compute weighted-average cost (same as what Inventario General shows)
+    const totalWaVal = warehouseItems.reduce((s,i) => s + parseNum(i.stock||0) * parseNum(i.cost||0), 0);
+    const totalWaStk = warehouseItems.reduce((s,i) => s + parseNum(i.stock||0), 0);
+    const displayCost = totalWaStk > 0 ? totalWaVal / totalWaStk : parseNum(actualItem.cost||0);
     setEditingInvId(warehouseItems.length > 1 ? 'MULTI_EDIT' : (actualItem.id || cleanId));
     setNewInvItemForm({
       id: cleanId,
       desc: actualItem.desc,
       category: actualItem.category || 'Materia Prima',
-      cost: actualItem.cost || '',
-      stock: String(warehouseItems.reduce((s,i)=>s+parseNum(i.stock||0),0) || actualItem.stock || ''),
+      cost: String(displayCost || actualItem.cost || ''),
+      stock: String(totalWaStk || actualItem.stock || ''),
       unit: actualItem.unit || 'kg',
       almacen: actualItem.almacen || 'ALMACEN ZI',
-      stockPerAlmacen,  // ← pre-filled per-warehouse stocks
+      stockPerAlmacen,
     });
     setShowInvItemForm(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -5091,7 +5096,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                   )}
                                 </td>
                                 <td className="py-2 px-3 border-r text-center font-black text-orange-600 text-[10px]">
-                                  ${formatNum(cu)}<span className="text-[7px] font-bold text-gray-400">/{actualUnit==='KG'?'KG':'Mill.'}</span>
+                                  ${formatNum(cu)}<span className="text-[7px] font-bold text-gray-400">/{actualUnit||'und'}</span>
                                 </td>
                                 <td className="py-2 px-3 text-center">
                                   <div className="flex items-center justify-center gap-1">
@@ -6249,18 +6254,64 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    ))}
                  </div>
                </div>
+               {selectedInvItems.size > 0 && (
+                 <div className="mb-3 bg-orange-50 border-2 border-orange-300 rounded-2xl px-5 py-3 flex items-center justify-between gap-3 no-pdf">
+                   <div className="flex items-center gap-3">
+                     <span className="font-black text-orange-700 text-sm">{selectedInvItems.size} artículo{selectedInvItems.size!==1?'s':''} seleccionado{selectedInvItems.size!==1?'s':''}</span>
+                     <button onClick={()=>setSelectedInvItems(new Set())} className="text-[10px] font-black text-gray-500 uppercase hover:underline">Limpiar selección</button>
+                   </div>
+                   <button onClick={()=>requireAdminPassword(()=>{
+                     setDialog({
+                       title: `Eliminar ${selectedInvItems.size} artículo(s)`,
+                       text: `¿Deseas eliminar permanentemente los ${selectedInvItems.size} artículo(s) seleccionados? Se eliminarán TODOS sus documentos de almacén en Firebase. Esta acción es irreversible.`,
+                       type: 'confirm',
+                       onConfirm: async () => {
+                         try {
+                           const b = writeBatch(db);
+                           let count = 0;
+                           for (const itemId of selectedInvItems) {
+                             // Find all warehouse docs for this cleanId
+                             const cleanId = itemId.split('___')[0];
+                             const docs = (inventory||[]).filter(i => (i.displayId||(i.id||'').split('___')[0]) === cleanId);
+                             if(docs.length > 0) {
+                               docs.forEach(d => { b.delete(getDocRef('inventory', d.id)); count++; });
+                             } else {
+                               b.delete(getDocRef('inventory', itemId)); count++;
+                             }
+                           }
+                           await b.commit();
+                           setSelectedInvItems(new Set());
+                           setDialog({title:'✅ Eliminados', text:`${count} documento(s) eliminados correctamente.`, type:'alert'});
+                         } catch(err){ setDialog({title:'Error',text:err.message,type:'alert'}); }
+                       }
+                     });
+                   }, `Eliminar ${selectedInvItems.size} artículo(s) seleccionados`)}
+                     className="bg-red-600 text-white px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase shadow-md hover:bg-red-700 flex items-center gap-2">
+                     <Trash2 size={13}/> Eliminar seleccionados
+                   </button>
+                 </div>
+               )}
                <div className="rounded-xl print:border print:border-black print:rounded-none">
                   <table className="w-full text-left">
                    <thead className="bg-gray-100 border-b-2 border-gray-200 print:border-black">
                      <tr className="uppercase font-black text-gray-800 text-[10px] tracking-widest print:text-black">
-                       <th className="py-4 px-4">Código</th>
-                       <th className="py-4 px-4">Descripción</th>
-                       <th className="py-4 px-4 text-center">Categoría</th>
-                       <th className="py-4 px-4 text-center">Costo Unit. ($)</th>
-                       <th className="py-4 px-4 text-right">Stock Actual</th>
-                       <th className="py-4 px-4 text-right">Valor Total ($)</th>
-
-                       <th className="py-4 px-4 text-center no-pdf print:hidden">Acciones</th>
+                       <th className="py-3 px-2 text-center no-pdf print:hidden w-8">
+                         <input type="checkbox" className="w-3.5 h-3.5 rounded"
+                           checked={filteredInventory.filter(i=>!i._isFGGroup).length > 0 && filteredInventory.filter(i=>!i._isFGGroup).every(i=>selectedInvItems.has(i.id))}
+                           onChange={e=>{
+                             const ids = filteredInventory.filter(i=>!i._isFGGroup).map(i=>i.id);
+                             setSelectedInvItems(e.target.checked ? new Set(ids) : new Set());
+                           }}
+                           title="Seleccionar todos"
+                         />
+                       </th>
+                       <th className="py-3 px-2">Código</th>
+                       <th className="py-3 px-2">Descripción</th>
+                       <th className="py-3 px-2 text-center">Categoría</th>
+                       <th className="py-3 px-2 text-center">Costo Unit. ($)</th>
+                       <th className="py-3 px-2 text-right">Stock Actual</th>
+                       <th className="py-3 px-2 text-right">Valor Total ($)</th>
+                       <th className="py-3 px-2 text-center no-pdf print:hidden">Acciones</th>
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-gray-100 print:divide-black">
@@ -6291,19 +6342,30 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                          const colClass = catColors[cat] || 'bg-gray-600';
                          rows.push(
                            <tr key={`cat-${cat}`} className={`${colClass} text-white`}>
-                             <td colSpan="4" className="py-2 px-4 font-black text-[10px] uppercase tracking-widest">
+                             <td className="py-2 px-2 print:hidden"></td>
+                             <td colSpan="3" className="py-2 px-2 font-black text-[10px] uppercase tracking-widest">
                                📂 {cat} — {items.length} artículo{items.length!==1?'s':''}
                              </td>
-                             <td className="py-2 px-4 text-right font-black text-[10px]">{formatNum(catTotalStock)}</td>
-                             <td className="py-2 px-4 text-right font-black text-[10px]">${formatNum(catTotalVal)}</td>
-                             <td className="py-2 px-4 print:hidden hidden md:table-cell"></td>
-                             <td className="py-2 px-4 print:hidden"></td>
+                             <td className="py-2 px-2 text-right font-black text-[10px]">{formatNum(catTotalStock)}</td>
+                             <td className="py-2 px-2 text-right font-black text-[10px]">${formatNum(catTotalVal)}</td>
+                             <td className="py-2 px-2 print:hidden hidden md:table-cell"></td>
+                             <td className="py-2 px-2 print:hidden"></td>
                            </tr>
                          );
                          items.forEach(inv => {
                            const totalVal = parseNum(inv?.cost) * parseNum(inv?.stock);
                            rows.push(
-                             <tr key={inv?.id} className="hover:bg-gray-50 transition-colors group">
+                             <tr key={inv?.id} className={`hover:bg-gray-50 transition-colors group ${selectedInvItems.has(inv?.id)?'bg-orange-50/50':''}`}>
+                               <td className="py-2 px-2 text-center no-pdf print:hidden">
+                                 {!inv?._isFGGroup && <input type="checkbox" className="w-3.5 h-3.5 rounded text-orange-500 cursor-pointer"
+                                   checked={selectedInvItems.has(inv?.id)}
+                                   onChange={e=>{
+                                     const next = new Set(selectedInvItems);
+                                     if(e.target.checked) next.add(inv?.id); else next.delete(inv?.id);
+                                     setSelectedInvItems(next);
+                                   }}
+                                 />}
+                               </td>
                                <td className="py-2 px-2 font-black text-orange-600 text-[10px] print:text-black">{inv?.id}</td>
                                <td className="py-2 px-2 font-black uppercase text-[10px] text-black">{inv?.desc}</td>
                                <td className="py-2 px-2 text-center hidden md:table-cell">
@@ -6359,9 +6421,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                          // Category subtotal row
                          rows.push(
                            <tr key={`subtot-${cat}`} className="bg-gray-50 border-t-2 border-gray-200">
-                             <td colSpan="4" className="py-2 px-4 text-right text-[10px] font-black uppercase text-gray-500">Subtotal {cat}:</td>
-                             <td className="py-2 px-4 text-right font-black text-blue-700 text-[10px]">{formatNum(catTotalStock)}</td>
-                             <td className="py-2 px-4 text-right font-black text-green-700 text-[10px]">${formatNum(catTotalVal)}</td>
+                             <td className="py-2 px-2 print:hidden"></td>
+                             <td colSpan="3" className="py-2 px-2 text-right text-[10px] font-black uppercase text-gray-500">Subtotal {cat}:</td>
+                             <td className="py-2 px-2 text-right font-black text-blue-700 text-[10px]">{formatNum(catTotalStock)}</td>
+                             <td className="py-2 px-2 text-right font-black text-green-700 text-[10px]">${formatNum(catTotalVal)}</td>
                              <td className="print:hidden hidden md:table-cell"></td>
                              <td className="print:hidden"></td>
                            </tr>
