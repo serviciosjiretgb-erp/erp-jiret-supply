@@ -160,7 +160,7 @@ const getSafeDate = (ts) => {
 // ============================================================================
 // CONSTANTE DE SEGURIDAD - CLAVE ADMIN
 // ============================================================================
-const ADMIN_PASSWORD = 'Supply2026.Admin';
+const ADMIN_PASSWORD = '1234';
 
 // ============================================================================
 // CATEGORÍAS DE COSTOS OPERATIVOS
@@ -364,7 +364,7 @@ export default function App() {
     // ── One-time auto-correction useEffects REMOVED ──
 // FG corrections are applied via the Edit button in Terminados view
   const [showMovForm, setShowMovForm] = useState(false);
-  const [movForm, setMovForm] = useState(() => ({itemId:'',qty:'',unitCost:'',docRef:'',type:'ENTRADA',notes:'',date:getTodayDate()}));
+  const [movForm, setMovForm] = useState(() => ({itemId:'',qty:'',unitCost:'',docRef:'',type:'ENTRADA',notes:'',date:getTodayDate(),almacenMov:''}));
   // Multi-item batch movement
   const [movItems, setMovItems] = useState([]); // [{itemId, qty, unitCost, desc, unit}]
 
@@ -533,6 +533,7 @@ export default function App() {
   const [historialSearch, setHistorialSearch] = useState('');
   const [opsSearch, setOpsSearch] = useState('');
   const [opsStatusFilter, setOpsStatusFilter] = useState('TODOS');
+  const [movSearchTerm, setMovSearchTerm] = useState('');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [showReportType, setShowReportType] = useState(null); 
 
@@ -805,10 +806,38 @@ export default function App() {
   }, []);
 
   // INICIO DE SESIÓN
-  const handleLogin = (e) => {
+  const [_sessionId] = useState(() => Math.random().toString(36).substring(2)+Date.now());
+  const handleLogin = async (e) => {
     e.preventDefault(); const user = loginData.username.toLowerCase().trim(); const pass = loginData.password.trim();
     const foundUser = systemUsers.find(u => u.username === user && u.password === pass);
-    if (foundUser) { setAppUser(foundUser); setLoginError(''); } else { setLoginError('Credenciales incorrectas. Intente nuevamente.'); }
+    if (!foundUser) return setLoginError('Credenciales incorrectas. Intente nuevamente.');
+    // Session lock: check if already active on another device (except Master)
+    if (foundUser.role !== 'Master') {
+      try {
+        const { getDoc: gd } = await import('firebase/firestore');
+        const sessDoc = await gd(getDocRef('activeSessions', foundUser.username));
+        if (sessDoc.exists()) {
+          const sess = sessDoc.data();
+          if (sess.sessionId && sess.sessionId !== _sessionId && (Date.now() - (sess.lastPing||0)) < 90000) {
+            return setLoginError(`⚠ El usuario "${foundUser.username}" ya está activo en otro dispositivo. Cierre primero esa sesión.`);
+          }
+        }
+        await setDoc(getDocRef('activeSessions', foundUser.username), {
+          sessionId: _sessionId, username: foundUser.username, name: foundUser.name,
+          role: foundUser.role, loginAt: Date.now(), lastPing: Date.now()
+        });
+      } catch(e) { /* session check failed gracefully */ }
+    }
+    // Log login activity
+    try {
+      await addDoc(getColRef('userActivity'), {
+        username: foundUser.username, name: foundUser.name, action: 'LOGIN',
+        module: 'Sistema', details: 'Inicio de sesión',
+        timestamp: Date.now(), date: getTodayDate()
+      });
+    } catch(e) {}
+    setAppUser({ ...foundUser, _sessionId });
+    setLoginError('');
   };
   const handleBgUpload = (e) => {
     const file = e.target.files[0];
@@ -1818,6 +1847,7 @@ export default function App() {
     if(!movForm.itemId || !parseNum(movForm.qty)) return setDialog({title:'Aviso',text:'Complete artículo y cantidad.',type:'alert'});
     // Determinar si es entrada o salida desde el tipo del formulario
     const isEntradas = movForm.type==='ENTRADA'||movForm.type==='ENTRADA_DEVOLUCION'||movForm.type==='ENTRADA_INICIAL';
+    const almacenSeleccionado = movForm.almacenMov || 'ALMACEN ZI';
     const isFGGrp = movForm.itemId.startsWith('FGG::');
     const isFGItem = movForm.itemId.startsWith('FG::');
     const qty = parseNum(movForm.qty);
@@ -1870,25 +1900,40 @@ export default function App() {
       return;
     }
 
-    // MP / Consumibles normal item
-    const inv = (inventory||[]).find(i=>i.id===movForm.itemId);
-    if(!inv) return;
+    // MP / Consumibles — find the specific warehouse doc
+    // If almacenSeleccionado is set, find that warehouse's doc specifically
+    const allDocsForItem = (inventory||[]).filter(i => {
+      const cid = i.displayId || (i.id||'').split('___')[0];
+      return cid === movForm.itemId || i.id === movForm.itemId;
+    });
+    const inv = allDocsForItem.find(i => (i.almacen||'ALMACEN ZI') === almacenSeleccionado)
+               || allDocsForItem[0]
+               || (inventory||[]).find(i=>i.id===movForm.itemId);
+    if(!inv) return setDialog({title:'Error',text:`Artículo "${movForm.itemId}" no encontrado en ${almacenSeleccionado}.`,type:'alert'});
+    const docIdToUpdate = inv.id; // real Firebase doc ID
     const unitCostFinal = unitCostInput || inv.cost || 0;
-    const newStock = isEntradas ? (inv.stock||0) + qty : Math.max(0,(inv.stock||0) - qty);
-    const newCost = isEntradas && unitCostFinal > 0
-      ? (((inv.stock||0)*parseNum(inv.cost||0)) + (qty*unitCostFinal)) / ((inv.stock||0) + qty)
-      : inv.cost;
-    const mov = {itemId:movForm.itemId, itemDesc:inv.desc, type:movForm.type, qty, unitCost: unitCostFinal, totalValue: qty * unitCostFinal, previousStock:inv.stock||0, newStock, docRef: movForm.docRef, notes:movForm.notes.toUpperCase(), date:movForm.date, user:appUser?.name||'Admin', timestamp:Date.now()};
+    const prevStock = parseNum(inv.stock||0);
+    const newStock = isEntradas ? prevStock + qty : Math.max(0, prevStock - qty);
+    // Cost: WACC only on ENTRADA (incoming stock at different cost)
+    const newCost = isEntradas && unitCostFinal > 0 && prevStock + qty > 0
+      ? ((prevStock * parseNum(inv.cost||0)) + (qty * unitCostFinal)) / (prevStock + qty)
+      : parseNum(inv.cost||0);
+    const mov = {
+      itemId: docIdToUpdate, itemDesc: inv.desc,
+      almacen: almacenSeleccionado,
+      type: movForm.type, qty, unitCost: unitCostFinal, totalValue: qty * unitCostFinal,
+      previousStock: prevStock, newStock, docRef: movForm.docRef,
+      notes: movForm.notes.toUpperCase(), date: movForm.date,
+      user: appUser?.name||'Admin', timestamp: Date.now()
+    };
     try {
       await addDoc(getColRef('inventoryMovements'), mov);
-      const updateData = {stock: newStock};
+      const updateData = {stock: newStock, almacen: almacenSeleccionado};
       if(isEntradas && unitCostFinal > 0) updateData.cost = newCost;
-      await updateDoc(getDocRef('inventory', movForm.itemId), updateData);
-      // If this is a warehouse-specific doc (has baseId), recalc summary
-      if(inv.baseId) await recalcInventorySummary(inv.baseId);
-      setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',type:isEntradas?'ENTRADA':'AUTOCONSUMO',notes:'',date:getTodayDate()});
+      await setDoc(getDocRef('inventory', docIdToUpdate), updateData, {merge: true});
+      setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',type:isEntradas?'ENTRADA':'AUTOCONSUMO',notes:'',date:getTodayDate(),almacenMov:movForm.almacenMov});
       setShowMovForm(false);
-      setDialog({title:'✅ Movimiento Procesado',text:`Nuevo stock: ${formatNum(newStock)} ${inv.unit}`,type:'alert'});
+      setDialog({title:'✅ Movimiento Procesado',text:`${isEntradas?'Entrada':'Salida'} de ${formatNum(qty)} ${inv.unit} en ${almacenSeleccionado}. Nuevo stock: ${formatNum(newStock)} ${inv.unit}`,type:'alert'});
     } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
   
@@ -3137,8 +3182,8 @@ export default function App() {
       hasAnyPerm('formulas') && { tab:'formulas', icon:<Beaker size={36}/>, title:'Fórmulas / Recetas', desc:'Recetas por categoría y fases', color:'border-purple-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-purple-500' },
       hasAnyPerm('inventario') && { tab:'inventario', view:()=>setInvView(hasPerm('inventario')?'requisiciones':getFirstInvView()), icon:<Package size={36}/>, title:'Control Inventario', desc:'Solicitudes de Planta, Catálogo, Movimientos y Kardex', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
       hasAnyPerm('simulador') && { tab:'simulador', icon:<Calculator size={36}/>, title:'Simulador OP', desc:'Calculadora Inversa de Producción y Mermas', color:'border-orange-400', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-orange-500' },
-      (hasPerm('costos') || hasPerm('costos_operativos')) && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
-      (hasPerm('costos') || hasPerm('costos_reportes')) && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos, Estado de Resultado y Libro Diario', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
+      (hasPerm('costos') || hasPerm('costos_operativos')) && !hasPerm('ventas') && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
+      (hasPerm('costos') || hasPerm('costos_reportes')) && !hasPerm('ventas') && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos, Estado de Resultado y Libro Diario', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
       hasAnyPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={36}/>, title:'Configuración', desc:'Usuarios, Permisos y Respaldo', color:'border-gray-400', bg:'bg-white', textColor:'text-gray-800', descColor:'text-gray-400', iconColor:'text-gray-500' },
     ].filter(Boolean);
 
@@ -3372,6 +3417,27 @@ export default function App() {
                 {/* AÑADIR ÍTEM — selector individual */}
                 <div className="border-2 border-dashed border-gray-200 rounded-2xl p-4 space-y-4">
                   <h3 className="text-[10px] font-black text-gray-600 uppercase">Añadir Ítem al Movimiento</h3>
+                  {/* Search + Almacen row */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar Artículo</label>
+                      <div className="relative">
+                        <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
+                        <input type="text" value={movSearchTerm||''} onChange={e=>setMovSearchTerm(e.target.value)}
+                          placeholder="Código o descripción..."
+                          className="w-full border-2 border-gray-200 rounded-xl pl-7 pr-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                        {movSearchTerm && <button onClick={()=>setMovSearchTerm('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500"><X size={11}/></button>}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Almacén {isEntradas?'Destino':'Origen'} *</label>
+                      <select value={movForm.almacenMov||''} onChange={e=>setMovForm({...movForm, almacenMov:e.target.value})}
+                        className="w-full border-2 border-orange-300 bg-orange-50 rounded-xl p-2 text-xs font-black uppercase outline-none focus:border-orange-500">
+                        <option value="">-- Seleccionar almacén --</option>
+                        {depositos.map(a=><option key={a} value={a}>{a}</option>)}
+                      </select>
+                    </div>
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div className="md:col-span-1">
                       <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
@@ -3380,6 +3446,7 @@ export default function App() {
                         const isFGG = val.startsWith('FGG::');
                         const isFG = val.startsWith('FG::');
                         let cost = 0;
+                        let autoAlmacen = movForm.almacenMov;
                         if(isFGG) {
                           const grpKey = val.replace('FGG::','');
                           const matchFG = (finishedGoodsInventory||[]).find(fg=>{
@@ -3396,36 +3463,37 @@ export default function App() {
                         } else {
                           const inv=(inventory||[]).find(i=>i.id===val);
                           cost = parseNum(inv?.cost||0);
+                          if(!autoAlmacen && inv?.almacen) autoAlmacen = inv.almacen;
                         }
-                        setMovForm({...movForm, itemId:val, unitCost:String(cost||0)});
+                        setMovForm({...movForm, itemId:val, unitCost:String(cost||0), almacenMov:autoAlmacen});
                       }} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
                         <option value="">Seleccione...</option>
-                        <optgroup label="── Materia Prima / Consumibles ──">
-                          {(inventory||[]).filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
-                        </optgroup>
-                        <optgroup label="── Semielaborados / Bobinas ──">
-                          {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} KG)</option>)}
-                        </optgroup>
-                        <optgroup label="── Productos Terminados ──">
-                          {(() => {
-                            try {
-                              const fgSelMap = {};
-                              (finishedGoodsInventory||[]).forEach(fg => {
-                                if(!fg || !fg.id) return;
-                                const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
-                                const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                                const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                                const gk=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
-                                if(!fgSelMap[gk]) fgSelMap[gk]={key:gk, ids:[fg.id], label:formatFGLabel(fg)||fg.producto||fg.id, esTermo, stk:0, unit:esTermo?'KG':'Millares'};
-                                else fgSelMap[gk].ids.push(fg.id);
-                                fgSelMap[gk].stk+=esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
-                              });
-                              return Object.values(fgSelMap).map(g=>(
-                                <option key={`FGG::${g.key}`} value={`FGG::${g.key}`}>{g.label} (Stock: {formatNum(g.stk)} {g.unit})</option>
-                              ));
-                            } catch(e) { return null; }
-                          })()}
-                        </optgroup>
+                        {/* All inventory items — filtered by search */}
+                        {(()=>{
+                          const searchU = (movSearchTerm||'').toUpperCase();
+                          const almFilter = movForm.almacenMov;
+                          const invMap = {};
+                          (inventory||[]).filter(i => {
+                            if(almFilter && (i.almacen||'ALMACEN ZI') !== almFilter) return false;
+                            if(searchU && !`${i.id} ${i.desc}`.toUpperCase().includes(searchU)) return false;
+                            return true;
+                          }).forEach(i => {
+                            const cid = i.displayId || (i.id||'').split('___')[0];
+                            if(!invMap[cid]) invMap[cid] = { ...i, id: cid, _docId: i.id, totalStock: 0 };
+                            invMap[cid].totalStock += parseNum(i.stock||0);
+                          });
+                          const cats = {};
+                          Object.values(invMap).forEach(i => {
+                            const cat = i.category||'Otros';
+                            if(!cats[cat]) cats[cat] = [];
+                            cats[cat].push(i);
+                          });
+                          return Object.entries(cats).map(([cat, items])=>(
+                            <optgroup key={cat} label={`── ${cat} ──`}>
+                              {items.map(i=><option key={i._docId} value={i._docId}>{i.id} — {i.desc} (Stock: {formatNum(i.totalStock)} {i.unit})</option>)}
+                            </optgroup>
+                          ));
+                        })()}
                       </select>
                     </div>
                     <div>
@@ -15630,7 +15698,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     {hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
                     {hasPerm('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
                     {hasPerm('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario</button>}
-                    {(hasPerm('costos_operativos')||hasPerm('costos_reportes')) && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
+                    {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
                  </div>
               </div>
               <div className="flex items-center gap-3">
@@ -15768,7 +15836,19 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                      </div>
                    )}
                  </div>
-                 <button onClick={() => setAppUser(null)} className="p-2.5 bg-red-500/10 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all border border-red-500/20 flex items-center gap-2 text-[10px] font-black uppercase"><LogOut size={16}/> <span className="hidden sm:inline">Salir</span></button>
+                 <button onClick={async () => {
+                   if (appUser?.role !== 'Master') {
+                     try {
+                       await deleteDoc(getDocRef('activeSessions', appUser.username));
+                       await addDoc(getColRef('userActivity'), {
+                         username: appUser.username, name: appUser.name, action: 'LOGOUT',
+                         module: 'Sistema', details: 'Cierre de sesión manual',
+                         timestamp: Date.now(), date: getTodayDate()
+                       });
+                     } catch(e) {}
+                   }
+                   setAppUser(null);
+                 }} className="p-2.5 bg-red-500/10 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all border border-red-500/20 flex items-center gap-2 text-[10px] font-black uppercase"><LogOut size={16}/> <span className="hidden sm:inline">Salir</span></button>
               </div>
            </div>
         </nav>
