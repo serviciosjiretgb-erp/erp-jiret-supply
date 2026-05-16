@@ -495,6 +495,7 @@ export default function App() {
   const [osaCounter, setOsaCounter] = useState(null); // sequential OSA number from Firebase
   // Fix 3: Partial delivery new product name
   const [partialNewName, setPartialNewName] = useState('');
+  const [partialFgSearch, setPartialFgSearch] = useState('');
   // Login video mute control
   const [loginVideoMuted, setLoginVideoMuted] = useState(false); // audio ON by default (user can mute)
   // Fix 6: Calculator
@@ -5113,8 +5114,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   g.pesoTot += stock * cu; g.lotes.push(fg); g.opIds.add(fg.opId);
                 });
 
-              // FIX 1: Also add inventory items with category='Productos Terminados'
-              (inventory||[]).filter(i => i.category === 'Productos Terminados' && parseNum(i.stock) > 0).forEach(i => {
+              // FIX 3: Also add inventory items with category='Productos Terminados' — ALL items including stock=0
+              (inventory||[]).filter(i => i.category === 'Productos Terminados').forEach(i => {
                 const cleanId = i.displayId || (i.id||'').split('___')[0];
                 // Deduplicate by cleanId across warehouses (sum stock for same product)
                 const esTermo = (i.unit||'').toUpperCase() === 'KG';
@@ -9511,6 +9512,31 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       let snapshotPrevKg = null;   // para poder reversar exactamente
       let snapshotPrevMill = null;
       if (partialTargetFgKey) {
+        // Handle INV-PT-* keys (inventory items with category=Productos Terminados)
+        if (partialTargetFgKey.startsWith('INV-PT-')) {
+          const cleanId = partialTargetFgKey.replace('INV-PT-', '');
+          // Find all inventory docs for this product across warehouses
+          const invDocs = (inventory||[]).filter(i => {
+            const cid = i.displayId || (i.id||'').split('___')[0];
+            return cid === cleanId;
+          });
+          if (invDocs.length > 0) {
+            // Update stock across all warehouses proportionally (add to first warehouse that has stock)
+            const targetDoc = invDocs.sort((a,b)=>parseNum(b.stock||0)-parseNum(a.stock||0))[0];
+            const prevStock = parseNum(targetDoc.stock||0);
+            const addQty = esTermo ? kgEntrega : millEntrega;
+            await setDoc(getDocRef('inventory', targetDoc.id), { stock: prevStock + addQty, timestamp: Date.now() }, { merge: true });
+            await addDoc(getColRef('inventoryMovements'), {
+              itemId: targetDoc.id, itemDesc: targetDoc.desc, almacen: targetDoc.almacen||'ALMACEN GENERAL',
+              type: 'ENTRADA', qty: addQty, unitCost: costoUnitWIP, totalValue: addQty * costoUnitWIP,
+              previousStock: prevStock, newStock: prevStock + addQty,
+              docRef: req.id, notes: `ENTREGA PARCIAL OP ${req.id}`,
+              date: partialFecha || getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now()
+            });
+            fgId = targetDoc.id;
+          }
+        }
+        if (!fgId) {
         const targetFGs = (finishedGoodsInventory||[]).filter(fg=>{
           const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
           const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
@@ -9529,11 +9555,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           });
           fgId = targetFG.id;
         }
+        } // end else (non-INV-PT key lookup)
       }
 
       if (!fgId) {
         // Crear nuevo lote FG — código: FG-{NOMBRE DEL PRODUCTO}
-        const fgNombre = (partialNewName.trim() || formatFGLabel(req) || req.desc || 'Producto').toUpperCase().trim();
+        // FIX: remove SEARCH: prefix if accidentally stored
+        const cleanPartialName = partialNewName.startsWith('SEARCH:') ? '' : partialNewName;
+        const fgNombre = (cleanPartialName.trim() || formatFGLabel(req) || req.desc || 'Producto').toUpperCase().trim();
         // Generar código limpio: FG-CHUPETA-KIRI-9X14X6MIC (sin espacios ni chars especiales)
         const fgCodeSlug = fgNombre.replace(/[^A-Z0-9\-\.]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
         // Verificar si ya existe un FG con este código para evitar duplicados (sumar si existe)
@@ -16111,7 +16140,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               <div className="bg-white p-6 rounded-[1.5rem] shadow-2xl max-w-sm w-full border-t-8 border-blue-500">
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="text-sm font-black uppercase text-blue-800">Entrega Parcial</h3>
-                  <button onClick={()=>{ setShowPartialModal(null); setPartialTargetFgKey(''); setPartialFecha(''); }} className="text-gray-400 hover:text-red-500"><X size={18}/></button>
+                  <button onClick={()=>{ setShowPartialModal(null); setPartialTargetFgKey(''); setPartialFecha(''); setPartialFgSearch(''); }} className="text-gray-400 hover:text-red-500"><X size={18}/></button>
                 </div>
                 <div className="mb-3">
                   <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha de Entrega</label>
@@ -16155,16 +16184,16 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">📦 Producto destino</label>
                         <div className="relative mb-1">
                           <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
-                          <input type="text" id="partialSearchInput" placeholder="Buscar producto..." autoComplete="off"
-                            className="w-full border-2 border-gray-200 rounded-xl pl-6 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-blue-400"
-                            onChange={e=>{const v=e.target.value;document.querySelectorAll('#partialGrpSelect option').forEach(o=>{o.style.display=!v||o.text.toUpperCase().includes(v.toUpperCase())||o.value===''?'':'none';});}}
-                          />
+                          <input type="text" value={partialFgSearch} onChange={e=>setPartialFgSearch(e.target.value)}
+                            placeholder="Buscar producto terminado..." autoComplete="off"
+                            className="w-full border-2 border-gray-200 rounded-xl pl-6 pr-7 py-1.5 text-[10px] font-bold outline-none focus:border-blue-400"/>
+                          {partialFgSearch && <button onClick={()=>setPartialFgSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500"><X size={10}/></button>}
                         </div>
-                        <select id="partialGrpSelect" value={partialTargetFgKey} onChange={e=>setPartialTargetFgKey(e.target.value)}
-                          size={Math.min(6, grpList.length+1)}
+                        <select value={partialTargetFgKey} onChange={e=>setPartialTargetFgKey(e.target.value)}
+                          size={Math.min(7, (grpList.filter(g=>!partialFgSearch||g.label.toUpperCase().includes(partialFgSearch.toUpperCase())).length)+1)}
                           className="w-full border-2 border-blue-200 rounded-xl p-1 text-[10px] font-bold outline-none focus:border-blue-500 bg-white">
                           <option value="">➕ Crear nuevo producto terminado</option>
-                          {grpList.map(g=>(
+                          {grpList.filter(g=>!partialFgSearch||g.label.toUpperCase().includes(partialFgSearch.toUpperCase())).map(g=>(
                             <option key={g.key} value={g.key}>{g.label} ({formatNum(g.stk)} {g.unit})</option>
                           ))}
                         </select>
