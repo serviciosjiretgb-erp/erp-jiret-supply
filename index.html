@@ -2,7 +2,6 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-
     <!-- ── PWA ESSENTIAL ── -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -13,50 +12,28 @@
     <meta name="theme-color" content="#000000" />
     <meta name="msapplication-TileColor" content="#f97316" />
     <meta name="description" content="Sistema ERP para Servicios Jiret G&amp;B — Inventario, Ventas, Producción" />
-
     <!-- ── ICONS ── -->
     <link rel="icon" type="image/png" href="/icon-192.png" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png" />
     <link rel="apple-touch-icon" sizes="512x512" href="/icon-512.png" />
-
     <!-- ── MANIFEST ── -->
     <link rel="manifest" href="/manifest.json" />
-
-    <!-- ── SPLASH SCREENS iOS (optional) ── -->
-    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-
     <!-- ── OPEN GRAPH ── -->
     <meta property="og:title" content="G&amp;B Supply ERP" />
     <meta property="og:description" content="Sistema ERP para Servicios Jiret G&amp;B" />
     <meta property="og:type" content="website" />
-
     <title>G&amp;B Supply — ERP</title>
-
     <style>
-      /* Prevent pull-to-refresh and overscroll on mobile */
-      html, body {
-        overscroll-behavior: none;
-        -webkit-overflow-scrolling: touch;
-      }
-      /* Safe area for notched phones (iPhone X+) */
-      body {
-        padding-bottom: env(safe-area-inset-bottom);
-      }
-      /* PWA install prompt animation */
-      @keyframes slideUp {
-        from { transform: translateY(100%); opacity: 0; }
-        to   { transform: translateY(0);   opacity: 1; }
-      }
-      #pwa-install-prompt {
-        animation: slideUp 0.3s ease-out;
-      }
+      html, body { overscroll-behavior: none; -webkit-overflow-scrolling: touch; }
+      body { padding-bottom: env(safe-area-inset-bottom); }
+      @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+      #pwa-install-prompt { animation: slideUp 0.3s ease-out; }
     </style>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
-
     <!-- ── SERVICE WORKER REGISTRATION ── -->
     <script>
       if ('serviceWorker' in navigator) {
@@ -65,15 +42,11 @@
             .register('/sw.js', { scope: '/' })
             .then((reg) => {
               console.log('[PWA] Service Worker registrado:', reg.scope);
-
-              // Check for updates every 30 minutes
               setInterval(() => reg.update(), 30 * 60 * 1000);
-
               reg.addEventListener('updatefound', () => {
                 const newSW = reg.installing;
                 newSW.addEventListener('statechange', () => {
                   if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
-                    // Nueva versión disponible — mostrar aviso
                     if (window.__showUpdateBanner) window.__showUpdateBanner();
                   }
                 });
@@ -82,17 +55,13 @@
             .catch((err) => console.error('[PWA] Error registrando SW:', err));
         });
       }
-
-      // ── PWA INSTALL PROMPT ──
       let deferredPrompt = null;
       window.addEventListener('beforeinstallprompt', (e) => {
         e.preventDefault();
         deferredPrompt = e;
-        // Expose to React app
         window.__pwaInstallPrompt = deferredPrompt;
         window.dispatchEvent(new Event('pwa-install-available'));
       });
-
       window.addEventListener('appinstalled', () => {
         console.log('[PWA] App instalada exitosamente');
         deferredPrompt = null;
