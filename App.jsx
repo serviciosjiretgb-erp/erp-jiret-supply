@@ -19,6 +19,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+import ReactDOM from 'react-dom/client';
 
 // ============================================================================
 // ESCUDO DE ERRORES EXTREMO
@@ -16842,3 +16843,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     </ErrorBoundary>
   );
 }
+
+
+// Bootstrap — monta la aplicación en #root
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
