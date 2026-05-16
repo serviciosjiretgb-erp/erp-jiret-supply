@@ -9,59 +9,40 @@
     <meta name="apple-mobile-web-app-title" content="G&amp;B ERP" />
     <meta name="application-name" content="G&amp;B ERP" />
     <meta name="theme-color" content="#000000" />
-    <meta name="msapplication-TileColor" content="#f97316" />
-    <meta name="description" content="Sistema ERP para Servicios Jiret G&amp;B — Inventario, Ventas, Producción" />
     <link rel="icon" type="image/png" href="/icon-192.png" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
-    <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png" />
-    <link rel="apple-touch-icon" sizes="512x512" href="/icon-512.png" />
     <link rel="manifest" href="/manifest.json" />
-    <meta property="og:title" content="G&amp;B Supply ERP" />
-    <meta property="og:description" content="Sistema ERP para Servicios Jiret G&amp;B" />
-    <meta property="og:type" content="website" />
     <title>G&amp;B Supply — ERP</title>
     <style>
       html, body { overscroll-behavior: none; -webkit-overflow-scrolling: touch; }
       body { padding-bottom: env(safe-area-inset-bottom); }
-      @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-      #pwa-install-prompt { animation: slideUp 0.3s ease-out; }
     </style>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/App.jsx"></script>
+    <script type="module" src="/src/main.jsx"></script>
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker
-            .register('/sw.js', { scope: '/' })
-            .then((reg) => {
-              console.log('[PWA] Service Worker registrado:', reg.scope);
+          navigator.serviceWorker.register('/sw.js', { scope: '/' })
+            .then(reg => {
               setInterval(() => reg.update(), 30 * 60 * 1000);
               reg.addEventListener('updatefound', () => {
-                const newSW = reg.installing;
-                newSW.addEventListener('statechange', () => {
-                  if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+                const sw = reg.installing;
+                sw.addEventListener('statechange', () => {
+                  if (sw.state === 'installed' && navigator.serviceWorker.controller)
                     if (window.__showUpdateBanner) window.__showUpdateBanner();
-                  }
                 });
               });
-            })
-            .catch((err) => console.error('[PWA] Error registrando SW:', err));
+            }).catch(e => console.error('[PWA]', e));
         });
       }
-      let deferredPrompt = null;
-      window.addEventListener('beforeinstallprompt', (e) => {
+      window.addEventListener('beforeinstallprompt', e => {
         e.preventDefault();
-        deferredPrompt = e;
-        window.__pwaInstallPrompt = deferredPrompt;
+        window.__pwaInstallPrompt = e;
         window.dispatchEvent(new Event('pwa-install-available'));
       });
-      window.addEventListener('appinstalled', () => {
-        console.log('[PWA] App instalada exitosamente');
-        deferredPrompt = null;
-        window.__pwaInstallPrompt = null;
-      });
+      window.addEventListener('appinstalled', () => { window.__pwaInstallPrompt = null; });
     </script>
   </body>
 </html>
