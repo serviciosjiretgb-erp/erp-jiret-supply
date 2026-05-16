@@ -12,7 +12,8 @@ import {
   LayoutDashboard, Package, Factory, TrendingUp, TrendingDown, AlertTriangle, 
   ClipboardList, PlayCircle, History, FileText, Settings2, Trash2, 
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
-  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing, Upload} from 'lucide-react';
+  ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing, Upload,
+  Menu, ChevronLeft, Smartphone, Wifi, WifiOff} from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
@@ -539,6 +540,14 @@ export default function App() {
   const [activitySearch, setActivitySearch] = useState('');
   const [activityDateFrom, setActivityDateFrom] = useState('');
   const [activityDateTo, setActivityDateTo] = useState('');
+  // Universal date/product filters for inventory sections
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterProduct, setFilterProduct] = useState('');
+  const [osaFilterDate, setOsaFilterDate] = useState('');
+  const [osaFilterNum, setOsaFilterNum] = useState('');
+  const [kardexDateFrom, setKardexDateFrom] = useState('');
+  const [kardexDateTo, setKardexDateTo] = useState('');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [showReportType, setShowReportType] = useState(null); 
 
@@ -812,6 +821,33 @@ export default function App() {
 
   // INICIO DE SESIÓN
   const [_sessionId] = useState(() => Math.random().toString(36).substring(2)+Date.now());
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [pwaInstallAvailable, setPwaInstallAvailable] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [showUpdateBanner, setShowUpdateBanner] = useState(false);
+
+  // PWA install prompt + online status listeners
+  useEffect(() => {
+    const onInstall = () => setPwaInstallAvailable(true);
+    const onOnline  = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('pwa-install-available', onInstall);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    window.__showUpdateBanner = () => setShowUpdateBanner(true);
+    return () => {
+      window.removeEventListener('pwa-install-available', onInstall);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
+
+  const handlePWAInstall = async () => {
+    if (!window.__pwaInstallPrompt) return;
+    window.__pwaInstallPrompt.prompt();
+    const result = await window.__pwaInstallPrompt.userChoice;
+    if (result.outcome === 'accepted') setPwaInstallAvailable(false);
+  };
   // Heartbeat: update lastPing every 30 seconds to keep session alive
   useEffect(() => {
     if (!appUser || appUser.role === 'Master') return;
@@ -3203,8 +3239,8 @@ export default function App() {
       hasAnyPerm('formulas') && { tab:'formulas', icon:<Beaker size={36}/>, title:'Fórmulas / Recetas', desc:'Recetas por categoría y fases', color:'border-purple-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-purple-500' },
       hasAnyPerm('inventario') && { tab:'inventario', view:()=>setInvView(hasPerm('inventario')?'requisiciones':getFirstInvView()), icon:<Package size={36}/>, title:'Control Inventario', desc:'Solicitudes de Planta, Catálogo, Movimientos y Kardex', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
       hasAnyPerm('simulador') && { tab:'simulador', icon:<Calculator size={36}/>, title:'Simulador OP', desc:'Calculadora Inversa de Producción y Mermas', color:'border-orange-400', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-orange-500' },
-      (hasPerm('costos') || hasPerm('costos_operativos')) && !hasPerm('ventas') && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
-      (hasPerm('costos') || hasPerm('costos_reportes')) && !hasPerm('ventas') && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos, Estado de Resultado y Libro Diario', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
+      (hasPerm('costos') || hasPerm('costos_operativos')) && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
+      (hasPerm('costos') || hasPerm('costos_reportes')) && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos, Estado de Resultado y Libro Diario', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
       hasAnyPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={36}/>, title:'Configuración', desc:'Usuarios, Permisos y Respaldo', color:'border-gray-400', bg:'bg-white', textColor:'text-gray-800', descColor:'text-gray-400', iconColor:'text-gray-500' },
     ].filter(Boolean);
 
@@ -3666,19 +3702,35 @@ export default function App() {
 
           {/* Reporte / Historial — always visible */}
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden" id="pdf-content">
-            <div className={`px-8 py-5 border-b ${isEntradas?'bg-green-50':'bg-red-50'} flex justify-between items-center`}>
+            <div className={`px-8 py-5 border-b ${isEntradas?'bg-green-50':'bg-red-50'} flex flex-wrap justify-between items-center gap-3`}>
               <div>
                 <h2 className={`text-xl font-black uppercase flex items-center gap-3 ${isEntradas?'text-green-900':'text-red-900'}`}>
                   {isEntradas ? <ArrowDownToLine size={20} className="text-green-600"/> : <ArrowUpFromLine size={20} className="text-red-500"/>}
                   {isEntradas ? 'Historial de Entradas' : 'Historial de Salidas'}
                 </h2>
-                <p className="text-[10px] font-bold text-gray-500 mt-0.5">{movs.length} registros encontrados</p>
+                <p className="text-[10px] font-bold text-gray-500 mt-0.5">{movs.filter(m=>{
+                  if(filterProduct && !(m.itemDesc||'').toUpperCase().includes(filterProduct.toUpperCase()) && !(m.itemId||'').toUpperCase().includes(filterProduct.toUpperCase())) return false;
+                  if(filterDateFrom && (m.date||'') < filterDateFrom) return false;
+                  if(filterDateTo && (m.date||'') > filterDateTo) return false;
+                  return true;
+                }).length} de {movs.length} registros</p>
               </div>
-              <div className="flex gap-2">
-                <button onClick={()=>{ setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',notes:'',date:getTodayDate(), type: isEntradas ? 'ENTRADA' : 'AUTOCONSUMO'}); setShowMovForm(true); }} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2">
+              <div className="flex flex-wrap gap-2 items-center no-pdf">
+                <div className="relative">
+                  <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
+                  <input type="text" value={filterProduct} onChange={e=>setFilterProduct(e.target.value)} placeholder="Producto..."
+                    className="border-2 border-gray-200 rounded-xl pl-7 pr-7 py-2 text-[10px] font-bold outline-none focus:border-orange-400 w-36"/>
+                  {filterProduct && <button onClick={()=>setFilterProduct('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500"><X size={10}/></button>}
+                </div>
+                <input type="date" value={filterDateFrom} onChange={e=>setFilterDateFrom(e.target.value)} title="Desde"
+                  className="border-2 border-gray-200 rounded-xl px-2 py-2 text-[10px] font-bold outline-none focus:border-orange-400"/>
+                <input type="date" value={filterDateTo} onChange={e=>setFilterDateTo(e.target.value)} title="Hasta"
+                  className="border-2 border-gray-200 rounded-xl px-2 py-2 text-[10px] font-bold outline-none focus:border-orange-400"/>
+                {(filterProduct||filterDateFrom||filterDateTo) && <button onClick={()=>{setFilterProduct('');setFilterDateFrom('');setFilterDateTo('');}} className="text-[9px] font-black text-red-500 uppercase hover:underline">✕ Limpiar</button>}
+                <button onClick={()=>{ setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',notes:'',date:getTodayDate(), type: isEntradas ? 'ENTRADA' : 'AUTOCONSUMO'}); setShowMovForm(true); }} className="bg-black text-white px-4 py-2 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2">
                   <Plus size={13}/> {isEntradas ? 'Nueva Entrada' : 'Nueva Salida'}
                 </button>
-                <button onClick={()=>handleExportPDF(isEntradas?'Reporte_Entradas':'Reporte_Salidas', false)} className="bg-white border-2 border-gray-200 text-gray-700 px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50 flex items-center gap-2">
+                <button onClick={()=>handleExportPDF(isEntradas?'Reporte_Entradas':'Reporte_Salidas', false)} className="bg-white border-2 border-gray-200 text-gray-700 px-4 py-2 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50 flex items-center gap-2">
                   <Printer size={13}/> Imprimir
                 </button>
               </div>
@@ -3704,7 +3756,12 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {movs.map(m => (
+                      {movs.filter(m=>{
+                        if(filterProduct && !(m.itemDesc||'').toUpperCase().includes(filterProduct.toUpperCase()) && !(m.itemId||'').toUpperCase().includes(filterProduct.toUpperCase())) return false;
+                        if(filterDateFrom && (m.date||'') < filterDateFrom) return false;
+                        if(filterDateTo && (m.date||'') > filterDateTo) return false;
+                        return true;
+                      }).map(m => (
                         <tr key={m.id||m.timestamp} className="hover:bg-gray-50">
                           <td className="py-2.5 px-3 border-r font-bold text-gray-600">{m.date}</td>
                           <td className="py-2.5 px-3 border-r"><span className="font-black text-orange-600 text-[10px] block">{m.itemId}</span><span className="text-[9px] text-gray-400">{m.itemDesc||''}</span></td>
@@ -3875,6 +3932,11 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       // States are at component level (osaItemList, osaItemForm, osaHdr)
       // ── OSA History: all approved invRequisitions with type OSA ──
       const osaHistory = (invRequisitions||[]).filter(r => r.type === 'OSA' || r.docType === 'OSA' || (r.nroOSA && r.nroOSA.startsWith('OSA-'))).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+      const osaFiltered = osaHistory.filter(osa=>{
+        if(osaFilterNum) { const q=osaFilterNum.toUpperCase(); if(!(osa.nroOSA||'').toUpperCase().includes(q)&&!(osa.destino||'').toUpperCase().includes(q)) return false; }
+        if(osaFilterDate && (osa.fecha||osa.dispatchDate||'') !== osaFilterDate) return false;
+        return true;
+      });
 
       return (
         <div className="space-y-4 animate-in fade-in">
@@ -4055,10 +4117,21 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           {/* ── HISTORIAL DE ÓRDENES DE SALIDA PROCESADAS ── */}
           {osaHistory.length > 0 && (
             <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-              <div className="px-8 py-5 border-b bg-gray-50 flex justify-between items-center">
+              <div className="px-8 py-5 border-b bg-gray-50 flex flex-wrap justify-between items-center gap-3">
                 <div>
                   <h3 className="text-base font-black uppercase flex items-center gap-3 text-gray-800"><FileCheck size={18} className="text-orange-500"/> Historial de Órdenes de Salida Procesadas</h3>
-                  <p className="text-[10px] font-bold text-gray-500 mt-0.5">{osaHistory.length} OSA procesadas</p>
+                  <p className="text-[10px] font-bold text-gray-500 mt-0.5">{osaFiltered.length} de {osaHistory.length} OSA</p>
+                </div>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <div className="relative">
+                    <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
+                    <input type="text" value={osaFilterNum} onChange={e=>setOsaFilterNum(e.target.value)}
+                      placeholder="N° OSA / Destino..." className="border-2 border-gray-200 rounded-xl pl-7 pr-3 py-2 text-[10px] font-bold outline-none focus:border-orange-400 w-40"/>
+                    {osaFilterNum && <button onClick={()=>setOsaFilterNum('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500"><X size={10}/></button>}
+                  </div>
+                  <input type="date" value={osaFilterDate} onChange={e=>setOsaFilterDate(e.target.value)}
+                    className="border-2 border-gray-200 rounded-xl px-2 py-2 text-[10px] font-bold outline-none focus:border-orange-400" title="Filtrar por fecha"/>
+                  {(osaFilterNum||osaFilterDate) && <button onClick={()=>{setOsaFilterNum('');setOsaFilterDate('');}} className="text-[9px] font-black text-red-500 uppercase hover:underline">✕</button>}
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -4075,7 +4148,11 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {osaHistory.map((osa, i) => (
+                    {osaHistory.filter(osa=>{
+                      if(osaFilterNum) { const q=osaFilterNum.toUpperCase(); if(!(osa.nroOSA||'').toUpperCase().includes(q)&&!(osa.destino||'').toUpperCase().includes(q)) return false; }
+                      if(osaFilterDate && (osa.fecha||osa.dispatchDate||'') !== osaFilterDate) return false;
+                      return true;
+                    }).map((osa, i) => (
                       <tr key={osa.id} className="hover:bg-orange-50/30">
                         <td className="py-2.5 px-4 border-r font-black text-orange-600">{osa.nroOSA || osa.id}</td>
                         <td className="py-2.5 px-4 border-r font-bold text-gray-600">{osa.fecha || osa.dispatchDate || '—'}</td>
@@ -6815,22 +6892,33 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <optgroup label="── Semielaborados / Bobinas ──">
                       {[...(inventory||[])].filter(i=>i.category==='Semielaborados').sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} ({formatNum(i.stock)} KG)</option>)}
                     </optgroup>
-                    <optgroup label="── Productos Terminados ──">
+                    <optgroup label="── Productos Terminados (FG Producción) ──">
                       {(() => {
-                        // Build unique products (same as Art.177 grouping)
                         const kardexFGMap = {};
                         (finishedGoodsInventory||[]).forEach(fg=>{
                           const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
-                          const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                          const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                          const prodNorm=(fg.producto||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+                          const cliNorm=(fg.cliente||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
                           const grpKey=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
                           if(!kardexFGMap[grpKey]) kardexFGMap[grpKey]={key:grpKey, label:formatFGLabel(fg)||fg.producto||fg.id, ids:[fg.id], esTermo, stock:0, unit:esTermo?'KG':'Millares'};
-                          const stk=esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
-                          kardexFGMap[grpKey].stock+=stk;
+                          kardexFGMap[grpKey].stock += esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
                           if(!kardexFGMap[grpKey].ids.includes(fg.id)) kardexFGMap[grpKey].ids.push(fg.id);
                         });
-                        return Object.values(kardexFGMap).map(g=>(
-                          <option key={g.key} value={`FG::${g.key}`}>{g.label} (Stock: {formatNum(g.stock)} {g.unit})</option>
+                        return Object.values(kardexFGMap).sort((a,b)=>a.label.localeCompare(b.label)).map(g=>(
+                          <option key={g.key} value={`FG::${g.key}`}>{g.label} ({formatNum(g.stock)} {g.unit})</option>
+                        ));
+                      })()}
+                    </optgroup>
+                    <optgroup label="── Productos Terminados (Importados / Inventario) ──">
+                      {(() => {
+                        const ptMap = {};
+                        (inventory||[]).filter(i=>i.category==='Productos Terminados').forEach(i=>{
+                          const cid = i.displayId||(i.id||'').split('___')[0];
+                          if(!ptMap[cid]) ptMap[cid]={id:cid, desc:i.desc||cid, stock:0, unit:i.unit||'und'};
+                          ptMap[cid].stock += parseNum(i.stock||0);
+                        });
+                        return Object.values(ptMap).sort((a,b)=>a.desc.localeCompare(b.desc)).map(g=>(
+                          <option key={g.id} value={`INV-PT::${g.id}`}>{g.id} — {g.desc} ({formatNum(g.stock)} {g.unit})</option>
                         ));
                       })()}
                     </optgroup>
@@ -6843,6 +6931,15 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <input type="text" placeholder="Buscar artículo..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-3 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400"/>
                   </div>
                 </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label>
+                  <input type="date" value={kardexDateFrom} onChange={e=>setKardexDateFrom(e.target.value)} className="border-2 border-gray-200 rounded-xl px-2 py-3 text-xs font-bold outline-none focus:border-orange-400"/>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label>
+                  <input type="date" value={kardexDateTo} onChange={e=>setKardexDateTo(e.target.value)} className="border-2 border-gray-200 rounded-xl px-2 py-3 text-xs font-bold outline-none focus:border-orange-400"/>
+                </div>
+                {(kardexDateFrom||kardexDateTo) && <button onClick={()=>{setKardexDateFrom('');setKardexDateTo('');}} className="mt-5 text-[9px] font-black text-red-500 uppercase hover:underline self-end">✕ Limpiar fechas</button>}
               </div>
               {/* Search results dropdown */}
               {invSearchTerm && !kardexProductId && (
@@ -6905,7 +7002,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   return true;
                 });
                 let runBalance = 0;
-                const rows = dedupMovs.map(m => {
+                const rows = dedupMovs
+                  .filter(m => {
+                    if(kardexDateFrom && (m.date||'') < kardexDateFrom) return false;
+                    if(kardexDateTo && (m.date||'') > kardexDateTo) return false;
+                    return true;
+                  })
+                  .map(m => {
                   const isIn = m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL';
                   if(isIn) runBalance += parseNum(m.qty);
                   else runBalance -= parseNum(m.qty);
@@ -15822,9 +15925,102 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           body { background: white !important; }
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         }
+      /* ── MOBILE RESPONSIVE OVERRIDES ── */
+      @media (max-width: 768px) {
+        /* Tables: force horizontal scroll on all tables */
+        table { min-width: 500px; }
+        .overflow-x-auto { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        /* Cards: full width, no horizontal overflow */
+        .rounded-3xl, .rounded-2xl { border-radius: 16px !important; }
+        /* Modals: full screen on mobile */
+        .fixed.inset-0 > div { 
+          width: 100% !important; 
+          max-width: 100% !important; 
+          border-radius: 20px 20px 0 0 !important;
+          position: fixed !important;
+          bottom: 0 !important;
+          left: 0 !important;
+          right: 0 !important;
+          max-height: 90svh !important;
+          overflow-y: auto !important;
+        }
+        /* Grids: collapse to 1 column on small screens */
+        .grid-cols-2, .grid-cols-3, .grid-cols-4 { grid-template-columns: repeat(2, 1fr) !important; }
+        /* Home panel cards: 2 columns on mobile */
+        /* Text adjustments */
+        .text-3xl { font-size: 1.25rem !important; }
+        .text-2xl { font-size: 1.1rem !important; }
+        /* Nav sub-tabs: horizontal scroll */
+        .overflow-x-auto.flex { display: flex !important; }
+        /* Input groups: stack vertically */
+        .flex-wrap { flex-wrap: wrap !important; }
+        /* Buttons in table headers: show icon only */
+        /* Print button text hidden on mobile */
+      }
+      @media (max-width: 480px) {
+        /* Single column grid on very small screens */
+        .grid-cols-2.mobile-1col { grid-template-columns: 1fr !important; }
+        /* Reduce padding in cards */
+        .px-8 { padding-left: 1rem !important; padding-right: 1rem !important; }
+        .py-6 { padding-top: 0.75rem !important; padding-bottom: 0.75rem !important; }
+      }
       `}</style>
       <div className="min-h-screen bg-gray-100 flex flex-col font-sans">
-        <nav className="bg-black text-white px-6 py-4 shadow-xl print:hidden sticky top-0 z-40 border-b-4 border-orange-500">
+        {/* ── BOTTOM MOBILE NAV (hidden on desktop) ── */}
+        {appUser && (
+          <div className="fixed bottom-0 left-0 right-0 z-[999] md:hidden bg-black border-t border-white/10 print:hidden"
+            style={{paddingBottom:'env(safe-area-inset-bottom)'}}>
+            <div className="flex items-center justify-around px-1 py-2">
+              {[
+                {tab:'home', icon:<Home size={20}/>, label:'Inicio'},
+                hasPerm('inventario') && {tab:'inventario', icon:<Package size={20}/>, label:'Inventario', badge: pendingRequisitions.length},
+                hasPerm('ventas') && {tab:'ventas', icon:<Receipt size={20}/>, label:'Ventas'},
+                hasPerm('produccion') && {tab:'produccion', icon:<Factory size={20}/>, label:'Producción'},
+                {tab:'_menu', icon:<Menu size={20}/>, label:'Más'},
+              ].filter(Boolean).map((item) => {
+                if (item.tab === '_menu') return (
+                  <button key="menu" onClick={()=>setMobileMenuOpen(v=>!v)}
+                    className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl transition-all ${mobileMenuOpen?'text-orange-500':'text-gray-500'}`}>
+                    <Menu size={20}/><span className="text-[8px] font-black uppercase">Más</span>
+                  </button>
+                );
+                return (
+                  <button key={item.tab} onClick={()=>{clearAllReports();setActiveTab(item.tab);setMobileMenuOpen(false);}}
+                    className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl transition-all relative ${activeTab===item.tab?'text-orange-500':'text-gray-500'}`}>
+                    {item.icon}
+                    <span className="text-[8px] font-black uppercase">{item.label}</span>
+                    {item.badge > 0 && <span className="absolute -top-0.5 right-0 bg-yellow-500 text-black text-[7px] font-black rounded-full w-3.5 h-3.5 flex items-center justify-center">{item.badge}</span>}
+                  </button>
+                );
+              })}
+            </div>
+            {mobileMenuOpen && (
+              <div className="px-4 pb-3 pt-2 border-t border-white/10 grid grid-cols-4 gap-2">
+                {[
+                  hasPerm('formulas') && {tab:'formulas', icon:<Beaker size={18}/>, label:'Fórmulas'},
+                  hasPerm('simulador') && {tab:'simulador', icon:<Calculator size={18}/>, label:'Simulador'},
+                  (hasPerm('costos')||hasPerm('costos_operativos')) && {tab:'costos_operativos', icon:<DollarSign size={18}/>, label:'Costos Op.'},
+                  (hasPerm('costos')||hasPerm('costos_reportes')) && {tab:'costos', icon:<BarChart3 size={18}/>, label:'Financiero'},
+                  hasPerm('configuracion') && {tab:'configuracion', icon:<Settings2 size={18}/>, label:'Config'},
+                  pwaInstallAvailable && {tab:'_install', icon:<Smartphone size={18}/>, label:'Instalar'},
+                ].filter(Boolean).map((item) => {
+                  if(item.tab==='_install') return (
+                    <button key="install" onClick={handlePWAInstall} className="flex flex-col items-center gap-1 bg-orange-500/10 border border-orange-500/30 rounded-xl p-2 text-orange-400">
+                      <Smartphone size={18}/><span className="text-[8px] font-black uppercase">Instalar</span>
+                    </button>
+                  );
+                  return (
+                    <button key={item.tab} onClick={()=>{clearAllReports();setActiveTab(item.tab);setMobileMenuOpen(false);}}
+                      className={`flex flex-col items-center gap-1 rounded-xl p-2 transition-all ${activeTab===item.tab?'bg-orange-500/20 text-orange-500':'bg-white/5 text-gray-400'}`}>
+                      {item.icon}<span className="text-[8px] font-black uppercase">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+        <nav className="bg-black text-white px-4 sm:px-6 py-4 shadow-xl print:hidden sticky top-0 z-40 border-b-4 border-orange-500">
            <div className="flex justify-between items-center max-w-7xl mx-auto">
               <div className="flex items-center gap-6">
                  <div className="flex items-center cursor-pointer" onClick={() => {clearAllReports(); setActiveTab('home');}}>
@@ -15975,6 +16171,15 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                      </div>
                    )}
                  </div>
+                 {/* PWA install button — desktop only */}
+                 {pwaInstallAvailable && (
+                   <button onClick={handlePWAInstall} className="hidden md:flex p-2 bg-orange-500/10 text-orange-400 rounded-xl hover:bg-orange-500/20 transition-all items-center gap-1 text-[9px] font-black uppercase border border-orange-500/20" title="Instalar como App">
+                     <Smartphone size={13}/> <span className="hidden lg:inline">Instalar</span>
+                   </button>
+                 )}
+                 {/* Online indicator */}
+                 {!isOnline && <div className="flex items-center gap-1 text-red-400 text-[9px] font-black"><WifiOff size={12}/> <span className="hidden sm:inline">Sin red</span></div>}
+
                  <button onClick={async () => {
                    if (appUser?.role !== 'Master') {
                      try {
@@ -15994,7 +16199,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
         {activeTab === 'ventas' && (
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
-              <div className="max-w-7xl mx-auto flex gap-6 px-6 overflow-x-auto">
+              <div className="max-w-7xl mx-auto flex gap-4 px-4 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  {[ 
                    {id:'facturacion',        icon:<Receipt size={16}/>,  label:'Facturación',       perm:'ventas_facturacion'}, 
                    {id:'clientes',           icon:<Users size={16}/>,    label:'Directorio',        perm:'ventas_directorio'}, 
@@ -16009,7 +16214,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
         {activeTab === 'inventario' && (
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
-              <div className="max-w-7xl mx-auto flex items-stretch overflow-x-auto">
+              <div className="max-w-7xl mx-auto flex items-stretch overflow-x-auto scrollbar-none" style={{scrollbarWidth:'none', msOverflowStyle:'none'}}>
                 {/* GROUP 1: SOLICITUDES — perms: inv_planta, inv_almacen */}
                 {([{id:'requisiciones',perm:'inv_planta'},{id:'almacen',perm:'inv_almacen'}].some(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master')) && <div className="flex flex-col border-r border-gray-200">
                   <div className="text-[8px] font-black text-orange-500 uppercase tracking-widest px-4 pt-2 pb-0.5">Solicitudes</div>
@@ -16058,7 +16263,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
         {activeTab === 'produccion' && (
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
-              <div className="max-w-7xl mx-auto flex gap-6 px-6 overflow-x-auto">
+              <div className="max-w-7xl mx-auto flex gap-4 px-4 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  {[ 
                    {id:'proyeccion',    icon:<TrendingUp size={16}/>,     label:'Proyección MP',      perm:'produccion_proyeccion'},
                    {id:'bobinas',       icon:<Box size={16}/>,            label:'Prod. Bobinas',      perm:'produccion_bobinas'},
@@ -16073,7 +16278,23 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
            </div>
         )}
 
-        <main className="flex-1 p-4 md:p-8 max-w-[1400px] mx-auto w-full print:p-0 print:m-0 print:max-w-none print:w-full bg-transparent print:bg-white">
+        <main className="flex-1 p-2 sm:p-4 md:p-8 max-w-[1400px] mx-auto w-full print:p-0 print:m-0 print:max-w-none print:w-full bg-transparent print:bg-white pb-28 md:pb-8 overflow-x-hidden">
+           {/* ── OFFLINE BANNER ── */}
+           {!isOnline && (
+             <div className="mb-3 bg-gray-800 text-white rounded-2xl p-3 flex items-center gap-3 no-pdf">
+               <WifiOff size={16} className="text-red-400 flex-shrink-0"/>
+               <p className="text-xs font-black">Sin conexión — Los datos en pantalla son del caché local. Los cambios se sincronizarán al reconectarte.</p>
+             </div>
+           )}
+
+           {/* ── UPDATE BANNER ── */}
+           {showUpdateBanner && (
+             <div className="mb-3 bg-blue-600 text-white rounded-2xl p-3 flex items-center justify-between gap-3 no-pdf">
+               <p className="text-xs font-black">🆕 Nueva versión disponible</p>
+               <button onClick={()=>window.location.reload()} className="bg-white text-blue-700 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase">Actualizar</button>
+             </div>
+           )}
+
            {/* ── SANDBOX BANNER — visible only in demo mode ── */}
            {sandboxMode && (
              <div className="mb-6 bg-purple-600 text-white rounded-2xl p-4 flex items-center justify-between shadow-lg print:hidden animate-pulse">
@@ -16105,8 +16326,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         </main>
 
         {dialog && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[99999] p-4 print:hidden animate-in fade-in">
-             <div className="bg-white p-10 rounded-[2rem] shadow-2xl max-w-sm w-full text-center border-t-8 border-orange-500 transform animate-in zoom-in-95">
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center z-[99999] p-0 sm:p-4 print:hidden animate-in fade-in">
+             <div className="bg-white p-6 sm:p-10 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl max-w-full sm:max-w-sm w-full text-center border-t-8 border-orange-500 transform">
                 <div className="bg-orange-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
                    {dialog.type === 'alert' ? <AlertTriangle size={40} className="text-orange-500" /> : <CheckCircle size={40} className="text-blue-500" />}
                 </div>
@@ -16136,7 +16357,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           const yaMillares = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0);
           const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
           return (
-            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[99999] p-4 print:hidden">
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center z-[99999] p-0 sm:p-4 print:hidden">
               <div className="bg-white p-6 rounded-[1.5rem] shadow-2xl max-w-sm w-full border-t-8 border-blue-500">
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="text-sm font-black uppercase text-blue-800">Entrega Parcial</h3>
@@ -16521,8 +16742,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
         {/* ── MODAL EDITAR PRODUCTO TERMINADO (movido aquí para renderizar siempre) ── */}
         {editingFG && (
-          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99990] p-4 print:hidden">
-            <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-blue-500">
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99990] p-0 sm:p-4 print:hidden">
+            <div className="bg-white rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 max-w-full sm:max-w-lg w-full shadow-2xl border-t-4 border-blue-500">
               <div className="flex justify-between items-center mb-6">
                 <h3 className="text-lg font-black uppercase flex items-center gap-2 text-blue-800"><Edit size={20}/> Editar Producto Terminado</h3>
                 <button onClick={()=>setEditingFG(null)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
@@ -16573,8 +16794,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         )}
 
         {showAdminModal && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[99999] p-4 print:hidden">
-            <div className="bg-white p-10 rounded-[2rem] shadow-2xl max-w-sm w-full text-center border-t-8 border-red-500 transform animate-in zoom-in-95">
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center z-[99999] p-0 sm:p-4 print:hidden">
+            <div className="bg-white p-6 sm:p-10 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl max-w-full sm:max-w-sm w-full text-center border-t-8 border-red-500 transform animate-in">
               <div className="bg-red-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
                 <ShieldCheck size={40} className="text-red-500" />
               </div>
