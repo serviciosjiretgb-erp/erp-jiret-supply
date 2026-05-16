@@ -534,6 +534,10 @@ export default function App() {
   const [opsSearch, setOpsSearch] = useState('');
   const [opsStatusFilter, setOpsStatusFilter] = useState('TODOS');
   const [movSearchTerm, setMovSearchTerm] = useState('');
+  const [userActivityLog, setUserActivityLog] = useState([]);
+  const [activitySearch, setActivitySearch] = useState('');
+  const [activityDateFrom, setActivityDateFrom] = useState('');
+  const [activityDateTo, setActivityDateTo] = useState('');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [showReportType, setShowReportType] = useState(null); 
 
@@ -807,6 +811,21 @@ export default function App() {
 
   // INICIO DE SESIÓN
   const [_sessionId] = useState(() => Math.random().toString(36).substring(2)+Date.now());
+  // Heartbeat: update lastPing every 30 seconds to keep session alive
+  useEffect(() => {
+    if (!appUser || appUser.role === 'Master') return;
+    const pingFn = () => {
+      setDoc(getDocRef('activeSessions', appUser.username), { lastPing: Date.now() }, { merge: true }).catch(()=>{});
+    };
+    pingFn();
+    const interval = setInterval(pingFn, 30000);
+    const cleanup = async () => {
+      clearInterval(interval);
+      try { await deleteDoc(getDocRef('activeSessions', appUser.username)); } catch(e){}
+    };
+    window.addEventListener('beforeunload', cleanup);
+    return () => { clearInterval(interval); window.removeEventListener('beforeunload', cleanup); };
+  }, [appUser]);
   const handleLogin = async (e) => {
     e.preventDefault(); const user = loginData.username.toLowerCase().trim(); const pass = loginData.password.trim();
     const foundUser = systemUsers.find(u => u.username === user && u.password === pass);
@@ -889,6 +908,7 @@ export default function App() {
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubOpCosts = onSnapshot(getColRef('operatingCosts'), (s) => setOpCosts(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    const unsubActivity = onSnapshot(collection(db, 'userActivity'), (s) => setUserActivityLog(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubPOs = onSnapshot(getColRef('purchaseOrders'), (s) => setPurchaseOrders(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubWIP = onSnapshot(getColRef('wipInventory'), (s) => setWipInventory(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubFinished = onSnapshot(getColRef('finishedGoodsInventory'), (s) => setFinishedGoodsInventory(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
@@ -3474,6 +3494,7 @@ export default function App() {
                           const almFilter = movForm.almacenMov;
                           const invMap = {};
                           (inventory||[]).filter(i => {
+                            // If almacen filter set, show items from that warehouse OR items that have no almacen
                             if(almFilter && (i.almacen||'ALMACEN ZI') !== almFilter) return false;
                             if(searchU && !`${i.id} ${i.desc}`.toUpperCase().includes(searchU)) return false;
                             return true;
@@ -3482,6 +3503,23 @@ export default function App() {
                             if(!invMap[cid]) invMap[cid] = { ...i, id: cid, _docId: i.id, totalStock: 0 };
                             invMap[cid].totalStock += parseNum(i.stock||0);
                           });
+                          // If no almacen filter, also add FG items from finishedGoodsInventory
+                          if(!almFilter) {
+                            const fgMap = {};
+                            (finishedGoodsInventory||[]).filter(fg=>(parseNum(fg.kgProducidos)||parseNum(fg.millares))>0).forEach(fg=>{
+                              const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
+                              const label = formatFGLabel(fg)||fg.producto||fg.id;
+                              const key = `FGG::${fg.id}`;
+                              if(!searchU||label.toUpperCase().includes(searchU)) {
+                                if(!fgMap[label]) fgMap[label] = {id:label, _docId:key, category:'Productos Terminados', desc:label, unit:esTermo?'KG':'Millares', totalStock:0};
+                                fgMap[label].totalStock += esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
+                              }
+                            });
+                            Object.values(fgMap).forEach(f=>{
+                              if(!invMap[f.id]) invMap[f.id] = f;
+                              else invMap[f.id].totalStock += f.totalStock;
+                            });
+                          }
                           const cats = {};
                           Object.values(invMap).forEach(i => {
                             const cat = i.category||'Otros';
@@ -5320,10 +5358,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               <div>
                 <h2 className="text-lg font-black text-yellow-900 uppercase flex items-center gap-3">
                   <AlertTriangle className="text-yellow-600" size={20}/> Requisiciones de Planta
+                  {pendingReqs.length > 0 && <span className="animate-pulse flex items-center gap-1 bg-yellow-400 text-black text-[9px] px-2 py-0.5 rounded-full font-black"><BellRing size={11}/> {pendingReqs.length} nuevas</span>}
                 </h2>
                 <p className="text-[10px] font-bold text-yellow-700 mt-0.5">Solicitudes enviadas desde producción — pendientes de procesar</p>
               </div>
-              <span className={`px-4 py-1.5 rounded-full text-[10px] font-black ${pendingReqs.length>0?'bg-yellow-500 text-white':'bg-gray-200 text-gray-600'}`}>
+              <span className={`px-4 py-1.5 rounded-full text-[10px] font-black ${pendingReqs.length>0?'bg-yellow-500 text-white animate-pulse':'bg-gray-200 text-gray-600'}`}>
                 {pendingReqs.length} PENDIENTE{pendingReqs.length!==1?'S':''}
               </span>
             </div>
@@ -14661,9 +14700,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         </div>
         )}
 
-        {/* PASO 7: CORRECCIÓN MASIVA DE INVENTARIO */}
-        {appUser?.role === 'Master' && (
-        <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
+        {/* PASO 7: Corrección masiva eliminada (ya no necesaria) */}
+        {false && (
+        <div>
           <div className="flex justify-between items-center border-b pb-4 mb-6">
             <h2 className="text-xl font-black uppercase text-black flex items-center gap-3"><RefreshCw className="text-orange-500"/> Corrección Masiva de Inventario</h2>
             <button onClick={()=>setShowBatchTool(v=>!v)} className={`px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 ${showBatchTool?'bg-gray-200 text-gray-700':'bg-orange-500 text-white hover:bg-orange-600'}`}>{showBatchTool?<><X size={13}/> Cerrar</>:<><Edit size={13}/> Abrir Herramienta</>}</button>
@@ -15533,6 +15572,77 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           </div>
         </div>
 
+        {/* ── ACTIVIDAD DE USUARIOS ── */}
+        {appUser?.role === 'Master' && (() => {
+          const [actSearch, setActSearch] = [activitySearch, setActivitySearch];
+          const [actDateFrom, setActDateFrom] = [activityDateFrom, setActivityDateFrom];
+          const [actDateTo, setActDateTo] = [activityDateTo, setActivityDateTo];
+          const filtActs = (userActivityLog||[]).filter(a => {
+            if(actSearch && !(a.username||'').toUpperCase().includes(actSearch.toUpperCase()) && !(a.action||'').toUpperCase().includes(actSearch.toUpperCase())) return false;
+            if(actDateFrom && a.date < actDateFrom) return false;
+            if(actDateTo && a.date > actDateTo) return false;
+            return true;
+          }).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+          return (
+            <div className="rounded-3xl shadow-sm border-2 border-gray-200 bg-white p-8">
+              <div className="flex justify-between items-center border-b pb-4 mb-5">
+                <h2 className="text-xl font-black uppercase flex items-center gap-3 text-black"><Eye className="text-orange-500" size={22}/> Registro de Actividad de Usuarios</h2>
+                <button onClick={()=>handleExportPDF('Actividad_Usuarios',true)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={13}/> PDF</button>
+              </div>
+              {/* Filters */}
+              <div className="flex flex-wrap gap-3 mb-4">
+                <div className="relative">
+                  <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
+                  <input type="text" value={actSearch} onChange={e=>setActivitySearch(e.target.value)} placeholder="Buscar usuario o acción..."
+                    className="border-2 border-gray-200 rounded-xl pl-7 pr-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-48"/>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-[9px] font-black text-gray-500 uppercase">Desde:</label>
+                  <input type="date" value={actDateFrom} onChange={e=>setActivityDateFrom(e.target.value)} className="border-2 border-gray-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-[9px] font-black text-gray-500 uppercase">Hasta:</label>
+                  <input type="date" value={actDateTo} onChange={e=>setActivityDateTo(e.target.value)} className="border-2 border-gray-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                </div>
+                {(actSearch||actDateFrom||actDateTo) && <button onClick={()=>{setActivitySearch('');setActivityDateFrom('');setActivityDateTo('');}} className="text-[9px] font-black text-red-500 uppercase hover:underline">✕ Limpiar</button>}
+                <span className="ml-auto text-[9px] font-bold text-gray-500">{filtActs.length} registros</span>
+              </div>
+              {/* Table */}
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
+                <table className="w-full text-xs" id="pdf-content">
+                  <div className="hidden pdf-header p-4 mb-2"><ReportHeader/><h1 className="text-lg font-black uppercase border-b-4 border-orange-500 pb-1">REGISTRO DE ACTIVIDAD DE USUARIOS</h1></div>
+                  <thead className="bg-gray-800 text-white">
+                    <tr className="uppercase font-black text-[9px]">
+                      <th className="py-2.5 px-4 text-left">Fecha / Hora</th>
+                      <th className="py-2.5 px-4 text-left">Usuario</th>
+                      <th className="py-2.5 px-4 text-center">Acción</th>
+                      <th className="py-2.5 px-4 text-left">Módulo</th>
+                      <th className="py-2.5 px-4 text-left">Detalle</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filtActs.length === 0 ? (
+                      <tr><td colSpan="5" className="py-8 text-center text-gray-400 font-bold uppercase text-[10px]">Sin registros para los filtros seleccionados</td></tr>
+                    ) : filtActs.slice(0, 200).map((a, i) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        <td className="py-2 px-4 font-bold text-gray-500 text-[9px] whitespace-nowrap">
+                          {a.date} {a.timestamp ? new Date(a.timestamp).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'}) : ''}
+                        </td>
+                        <td className="py-2 px-4 font-black text-orange-600 text-[10px]">{a.username} <span className="text-gray-400 font-bold">({a.name||'—'})</span></td>
+                        <td className="py-2 px-4 text-center">
+                          <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${a.action==='LOGIN'?'bg-green-100 text-green-700':a.action==='LOGOUT'?'bg-gray-100 text-gray-600':'bg-blue-100 text-blue-700'}`}>{a.action}</span>
+                        </td>
+                        <td className="py-2 px-4 text-[10px] font-bold">{a.module||'—'}</td>
+                        <td className="py-2 px-4 text-[10px] text-gray-500">{a.details||'—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
+
       </div>
     );
   };
@@ -15697,7 +15807,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     {hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
                     {hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
                     {hasPerm('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
-                    {hasPerm('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario</button>}
+                    {hasPerm('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
                     {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
                  </div>
               </div>
@@ -16020,6 +16130,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 <div className="space-y-3 mb-3">
                   {/* Selector de producto destino — compacto */}
                   {(() => {
+                    // FIX 1: Include ALL finished goods AND inventory PT items
                     const fgGrps = {};
                     (finishedGoodsInventory||[]).forEach(fg=>{
                       const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
@@ -16028,14 +16139,30 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       if(!fgGrps[gk]) fgGrps[gk]={key:gk, label:formatFGLabel(fg)||fg.producto||fg.id, esTermo:fg.tipoProducto==='TERMOENCOGIBLE', stk:0, unit:fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millares'};
                       fgGrps[gk].stk += fg.tipoProducto==='TERMOENCOGIBLE' ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
                     });
-                    const grpList = Object.values(fgGrps);
-                    // Siempre mostrar selector (con opción de crear nuevo)
+                    // Add inventory items with category='Productos Terminados'
+                    (inventory||[]).filter(i=>i.category==='Productos Terminados').forEach(i=>{
+                      const cleanId = i.displayId||(i.id||'').split('___')[0];
+                      const gk = `INV-PT-${cleanId}`;
+                      if(!fgGrps[gk]) fgGrps[gk]={key:gk, label:i.desc||cleanId, esTermo:(i.unit||'').toUpperCase()==='KG', stk:0, unit:i.unit||'und', _isInvPT:true, _invCleanId:cleanId};
+                      fgGrps[gk].stk += parseNum(i.stock||0);
+                    });
+                    const grpList = Object.values(fgGrps).sort((a,b)=>(a.label||'').localeCompare(b.label||''));
                     const autoName = formatFGLabel(req) || `${req.categoria||''} ${req.desc||''}`.trim();
+                    const [partialSearch, setPartialSearch] = [partialNewName.startsWith('SEARCH:') ? partialNewName.slice(7) : '', v => setPartialNewName('SEARCH:'+v)];
+
                     return (
                       <div className="space-y-2">
                         <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">📦 Producto destino</label>
-                        <select value={partialTargetFgKey} onChange={e=>setPartialTargetFgKey(e.target.value)}
-                          className="w-full border-2 border-blue-200 rounded-xl p-2 text-[10px] font-bold outline-none focus:border-blue-500 bg-white">
+                        <div className="relative mb-1">
+                          <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
+                          <input type="text" id="partialSearchInput" placeholder="Buscar producto..." autoComplete="off"
+                            className="w-full border-2 border-gray-200 rounded-xl pl-6 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-blue-400"
+                            onChange={e=>{const v=e.target.value;document.querySelectorAll('#partialGrpSelect option').forEach(o=>{o.style.display=!v||o.text.toUpperCase().includes(v.toUpperCase())||o.value===''?'':'none';});}}
+                          />
+                        </div>
+                        <select id="partialGrpSelect" value={partialTargetFgKey} onChange={e=>setPartialTargetFgKey(e.target.value)}
+                          size={Math.min(6, grpList.length+1)}
+                          className="w-full border-2 border-blue-200 rounded-xl p-1 text-[10px] font-bold outline-none focus:border-blue-500 bg-white">
                           <option value="">➕ Crear nuevo producto terminado</option>
                           {grpList.map(g=>(
                             <option key={g.key} value={g.key}>{g.label} ({formatNum(g.stk)} {g.unit})</option>
