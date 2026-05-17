@@ -124,22 +124,33 @@ const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigit
 // Video de login: se carga desde Firebase settings.loginVideo
 const formatFGLabel = (item) => {
   if (!item) return '';
-  // Categoría: eliminar nombre de cliente, sufijo NATURAL, dimensiones duplicadas
+  // Si el producto tiene texto personalizado que ya incluye dimensiones, úsalo directamente
+  // pero limpia duplicados como "EMBUTIDOS 2 KIRI - 53X83X12MIC - 53X83X12MIC"
   let cat = (item.producto || item.categoria || item.desc || '').toUpperCase();
-  // Quitar todo lo que venga después de " - INVERSIONES" o " | NATURAL"
-  cat = cat.split(' - INVERSIONES')[0].split(' | NATURAL')[0].split(' - NATURAL')[0].trim();
+
+  // Quitar info del cliente que pueda estar pegada
+  cat = cat.split(' - INVERSIONES')[0]
+           .split(' | NATURAL')[0]
+           .split(' - NATURAL')[0]
+           .trim();
 
   const ancho = parseFloat(item.ancho || 0);
   const largo = parseFloat(item.largo || 0);
   let micras = parseFloat(item.micras || 0);
-  // Convertir decimal a entero (ej. 0.006 → 6)
   if (micras > 0 && micras < 1) micras = Math.round(micras * 1000);
 
-  const dims = (ancho > 0 || largo > 0)
-    ? `${ancho}X${largo}X${micras}MIC`
-    : '';
+  const dims = (ancho > 0 || largo > 0) ? `${ancho}X${largo}X${micras}MIC` : '';
 
-  return dims ? `${cat} - ${dims}` : cat;
+  if (!dims) return cat;
+
+  // Si la categoría ya termina con las mismas dimensiones, no las dupliques
+  if (cat.endsWith(dims) || cat.includes(` - ${dims}`) || cat.includes(`-${dims}`)) {
+    // Remover duplicado al final si existe
+    const withoutDup = cat.replace(new RegExp(`(\\s*-\\s*${dims.replace(/\//g,'\\/')})+$`), '').trim();
+    return `${withoutDup} - ${dims}`;
+  }
+
+  return `${cat} - ${dims}`;
 };
 const parseNum = (val) => {
   if (!val) return 0;
@@ -1391,13 +1402,12 @@ export default function App() {
       const batch = writeBatch(db);
       for(const fg of lotesToUpdate) {
         const isFirst = fg.id === lotesToUpdate[0].id;
-        const upd = { producto: newNombre };
-        // Costos: aplicar a todos los lotes
+        // FIX: save both producto AND categoria so description persists correctly
+        const upd = { producto: newNombre, categoria: newNombre };
         const newCostoMillar = fgEditForm.costoUnitarioMillar !== '' ? parseNum(fgEditForm.costoUnitarioMillar) : null;
         const newCostoKg = fgEditForm.costoUnitario !== '' ? parseNum(fgEditForm.costoUnitario) : null;
         if(newCostoMillar !== null) upd.costoUnitarioMillar = newCostoMillar;
         if(newCostoKg !== null) upd.costoUnitario = newCostoKg;
-        // Stock: el total nuevo va al primer lote, los demás se ponen a 0 para evitar duplicados
         if(isFirst) {
           if(!esTermo && fgEditForm.millares !== '') {
             const newTotal = parseNum(fgEditForm.millares);
@@ -1410,7 +1420,6 @@ export default function App() {
             upd.kgProducidosOrigen = Math.max(newTotal, parseNum(fg.kgProducidosOrigen || 0));
           }
         } else {
-          // Poner los demás lotes a 0 para consolidar todo en el primero
           upd.millares = 0;
           upd.kgProducidos = 0;
         }
@@ -1418,7 +1427,7 @@ export default function App() {
       }
       await batch.commit();
       setEditingFG(null);
-      setDialog({ title: '✅ Actualizado', text: `"${newNombre}" actualizado correctamente.`, type: 'alert' });
+      setDialog({ title: '✅ Actualizado', text: `"${newNombre}" guardado correctamente en todos los lotes.`, type: 'alert' });
     } catch(err) { setDialog({ title: 'Error al guardar', text: err.message, type: 'alert' }); }
   };
 
