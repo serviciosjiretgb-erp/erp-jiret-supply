@@ -7,7 +7,9 @@
 //   4. Lazy useState initializers para formularios con getTodayDate()
 //   5. generateProjectionData convertido a valor memoizado + wrapper de compatibilidad
 // ============================================================================
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
+// Expose recharts globally for dynamic access inside renderKPIModule
+if (typeof window !== 'undefined') window.Recharts = { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area };
 import ReactDOM from 'react-dom/client';
 import { 
   LayoutDashboard, Package, Factory, TrendingUp, TrendingDown, AlertTriangle, 
@@ -549,7 +551,7 @@ export default function App() {
   const [opsStatusFilter, setOpsStatusFilter] = useState('TODOS');
   const [movSearchTerm, setMovSearchTerm] = useState('');
   const [userActivityLog, setUserActivityLog] = useState([]);
-  const [activitySearch, setActivitySearch] = useState('');
+  const [kpiMonths, setKpiMonths] = useState(6);
   const [activityDateFrom, setActivityDateFrom] = useState('');
   const [activityDateTo, setActivityDateTo] = useState('');
   // Universal date/product filters for inventory sections
@@ -3250,6 +3252,7 @@ export default function App() {
       hasAnyPerm('inventario') && { tab:'inventario', view:()=>setInvView(hasPerm('inventario')?'requisiciones':getFirstInvView()), icon:<Package size={36}/>, title:'Control Inventario', desc:'Solicitudes de Planta, Catálogo, Movimientos y Kardex', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
       hasAnyPerm('simulador') && { tab:'simulador', icon:<Calculator size={36}/>, title:'Simulador OP', desc:'Calculadora Inversa de Producción y Mermas', color:'border-orange-400', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-orange-500' },
       (hasPerm('costos') || hasPerm('costos_operativos')) && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
+      (hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && { tab:'kpi', icon:<BarChart3 size={36}/>, title:'Dashboard KPI', desc:'Indicadores de ventas, producción, inventario y mermas', color:'border-purple-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-purple-600' },
       (hasPerm('costos') || hasPerm('costos_reportes')) && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos, Estado de Resultado y Libro Diario', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
       hasAnyPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={36}/>, title:'Configuración', desc:'Usuarios, Permisos y Respaldo', color:'border-gray-400', bg:'bg-white', textColor:'text-gray-800', descColor:'text-gray-400', iconColor:'text-gray-500' },
     ].filter(Boolean);
@@ -5635,15 +5638,52 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-3 mb-3">
                   <h4 className="text-[10px] font-black uppercase text-orange-800 mb-2">Agregar Producto / Insumo</h4>
                   <div className="flex gap-2 items-end mb-2">
-                    <div className="flex-1"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Producto (MP / Consumibles)</label>
+                    <div className="flex-1">
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Producto (MP / Consumibles)</label>
                       <select value={poAddId} onChange={e=>setPoAddId(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-500 bg-white">
                         <option value="">Seleccione...</option>
-                        {mpItems2.map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
+                        {mpItems2.map(i=>{
+                          const stk = parseNum(i.stock||0);
+                          const flag = stk <= 0 ? '🔴' : stk < 100 ? '🟡' : '🟢';
+                          return <option key={i.id} value={i.id}>{flag} {i.id} — {i.desc} · Stock: {formatNum(stk)} {i.unit}</option>;
+                        })}
                       </select>
                     </div>
-                    <div className="w-28"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label><input type="number" step="0.01" min="0.01" value={poAddQty} onChange={e=>setPoAddQty(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0.00"/></div>
+                    <div className="w-32">
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad a Solicitar</label>
+                      <input type="number" step="0.01" min="0.01" value={poAddQty} onChange={e=>setPoAddQty(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0.00"/>
+                    </div>
                     <button onClick={()=>{if(!poAddId||!parseNum(poAddQty))return;const inv=mpItems2.find(i=>i.id===poAddId);if(inv){setSelectedPOItems(p=>[...p,{productCode:inv.id,productName:inv.desc,currentStock:inv.stock,suggestedQty:parseNum(poAddQty),unitCost:inv.cost||0}]);setPoAddId('');setPoAddQty('');}}} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center gap-1 whitespace-nowrap"><Plus size={13}/> Agregar</button>
                   </div>
+                  {/* Stock info card when a product is selected */}
+                  {poAddId && (() => {
+                    const inv = mpItems2.find(i=>i.id===poAddId);
+                    if (!inv) return null;
+                    const stk = parseNum(inv.stock||0);
+                    const stkColor = stk <= 0 ? 'bg-red-50 border-red-300 text-red-700' : stk < 200 ? 'bg-yellow-50 border-yellow-300 text-yellow-800' : 'bg-green-50 border-green-300 text-green-800';
+                    return (
+                      <div className={`mb-3 rounded-xl border-2 ${stkColor} p-3 flex items-center justify-between gap-4`}>
+                        <div>
+                          <div className="text-[9px] font-black uppercase opacity-70 mb-0.5">Stock disponible en almacenes</div>
+                          <div className="text-2xl font-black">{formatNum(stk)} <span className="text-sm font-bold">{inv.unit}</span></div>
+                        </div>
+                        {stk > 0 && (
+                          <button
+                            onClick={()=>setPoAddQty(String(0))}
+                            title="Solo solicitar lo que falta"
+                            className="text-right">
+                            <div className="text-[9px] font-black uppercase opacity-70 mb-1">Sugerir diferencia</div>
+                            <div className="bg-white rounded-lg px-3 py-1 font-black text-sm border-2 border-current hover:opacity-80">
+                              {parseNum(poAddQty) > 0
+                                ? formatNum(Math.max(0, parseNum(poAddQty) - stk)) + ' ' + inv.unit
+                                : 'Ingresa cantidad total primero'}
+                            </div>
+                          </button>
+                        )}
+                        {stk <= 0 && <div className="text-[10px] font-black uppercase">⚠ Sin stock — solicitar todo</div>}
+                      </div>
+                    );
+                  })()}
                   {critItems2.filter(c=>!selectedPOItems.find(s=>s.productCode===c.id)).length > 0 && (
                     <div><p className="text-[8px] font-black text-orange-700 uppercase mb-1">Items críticos:</p>
                       <div className="flex flex-wrap gap-1">
@@ -14726,6 +14766,230 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     }, 'Importar Inventario Inicial');
   };
 
+  const renderKPIModule = () => {
+    // ── Data derivations ──
+    const kpiPeriod = kpiMonths || 6;
+    const now = new Date();
+    const months = Array.from({length: kpiPeriod}, (_,i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - (kpiPeriod-1-i), 1);
+      return { label: ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()] + ' ' + String(d.getFullYear()).slice(2), ym: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` };
+    });
+
+    // Ventas por mes
+    const ventasByMonth = months.map(m => {
+      const total = (invoices||[]).filter(inv => (inv.fecha||'').startsWith(m.ym)).reduce((s,inv) => s + parseNum(inv.totalUSD||inv.total||0), 0);
+      const qty = (invoices||[]).filter(inv => (inv.fecha||'').startsWith(m.ym)).length;
+      return { mes: m.label, ingresos: total, facturas: qty };
+    });
+
+    // Producción por mes (OPs completadas)
+    const prodByMonth = months.map(m => {
+      const ops = (requirements||[]).filter(r => (r.fechaFinalizacion||r.createdAt||'').startsWith(m.ym) && r.status === 'COMPLETADO');
+      const millares = ops.reduce((s,op) => s + parseNum(op.millares||op.millaresProd||0), 0);
+      const kg = ops.reduce((s,op) => s + parseNum(op.kgProducidos||op.kgTotal||0), 0);
+      return { mes: m.label, ops: ops.length, millares, kg };
+    });
+
+    // Clientes únicos por mes
+    const clientesByMonth = months.map(m => {
+      const clientes = new Set((invoices||[]).filter(inv => (inv.fecha||'').startsWith(m.ym)).map(inv => inv.client||inv.cliente||''));
+      return { mes: m.label, clientes: clientes.size };
+    });
+
+    // Stock por categoría MP
+    const mpCategs = {};
+    (inventory||[]).filter(i => i.category !== 'Productos Terminados' && i.category !== 'Semielaborados').forEach(i => {
+      const cat = i.category || 'Otros';
+      if (!mpCategs[cat]) mpCategs[cat] = { name: cat, stock: 0, valor: 0 };
+      mpCategs[cat].stock += parseNum(i.stock||0);
+      mpCategs[cat].valor += parseNum(i.stock||0) * parseNum(i.cost||0);
+    });
+    const mpCatData = Object.values(mpCategs).sort((a,b) => b.valor - a.valor);
+
+    // Mermas por mes
+    const mermasByMonth = months.map(m => {
+      const lotes = (requirements||[]).flatMap(r => ['extrusion','impresion','sellado'].flatMap(ph => ((r.production||{})[ph]?.batches||[]).filter(b => (b.date||'').startsWith(m.ym))));
+      const mermaKg = lotes.reduce((s,b) => s + parseNum(b.mermaKg||0), 0);
+      const prodKg = lotes.reduce((s,b) => s + parseNum(b.producedKg||0), 0);
+      return { mes: m.label, mermaKg, merma_pct: prodKg > 0 ? ((mermaKg/prodKg)*100).toFixed(1) : 0 };
+    });
+
+    // Top productos vendidos
+    const prodVendidos = {};
+    (invoices||[]).filter(inv => months.some(m => (inv.fecha||'').startsWith(m.ym))).forEach(inv => {
+      (inv.items||[]).forEach(it => {
+        const k = it.desc||it.productName||it.nombre||'';
+        if (!k) return;
+        if (!prodVendidos[k]) prodVendidos[k] = { name: k, qty: 0, total: 0 };
+        prodVendidos[k].qty += parseNum(it.cantidad||it.qty||0);
+        prodVendidos[k].total += parseNum(it.totalUSD||it.total||0);
+      });
+    });
+    const topProductos = Object.values(prodVendidos).sort((a,b) => b.total - a.total).slice(0,8);
+
+    // Top clientes
+    const topClientes = {};
+    (invoices||[]).filter(inv => months.some(m => (inv.fecha||'').startsWith(m.ym))).forEach(inv => {
+      const k = inv.client||inv.cliente||'Sin nombre';
+      if (!topClientes[k]) topClientes[k] = { name: k, total: 0, facturas: 0 };
+      topClientes[k].total += parseNum(inv.totalUSD||inv.total||0);
+      topClientes[k].facturas++;
+    });
+    const topClientesArr = Object.values(topClientes).sort((a,b) => b.total - a.total).slice(0,6);
+
+    const COLORS = ['#f97316','#6366f1','#10b981','#3b82f6','#f59e0b','#ec4899','#8b5cf6','#06b6d4'];
+
+    const { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } = window.Recharts || {};
+
+    if (!window.Recharts) {
+      return (
+        <div className="p-8 text-center text-gray-500">
+          <BarChart3 size={48} className="mx-auto mb-3 text-purple-400"/>
+          <p className="font-black text-lg uppercase">Cargando Recharts...</p>
+          <p className="text-xs mt-2">Recarga la página si tarda más de 5 segundos</p>
+        </div>
+      );
+    }
+
+    const totalVentas = ventasByMonth.reduce((s,m)=>s+m.ingresos, 0);
+    const totalOPs = (requirements||[]).filter(r=>r.status==='COMPLETADO').length;
+    const totalClientes = new Set((invoices||[]).map(i=>i.client||i.cliente||'')).size;
+    const mermaPromedio = mermasByMonth.reduce((s,m)=>s+parseNum(m.merma_pct),0) / (kpiPeriod||1);
+
+    return (
+      <div className="space-y-6 animate-in fade-in">
+        {/* Header */}
+        <div className="bg-black rounded-3xl p-6 text-white flex flex-wrap gap-4 justify-between items-center">
+          <div>
+            <h2 className="text-2xl font-black uppercase flex items-center gap-3"><BarChart3 size={28} className="text-purple-400"/> Dashboard KPI</h2>
+            <p className="text-gray-400 text-xs mt-1 uppercase font-bold">Indicadores de gestión — Últimos {kpiPeriod} meses</p>
+          </div>
+          <div className="flex gap-2 items-center">
+            <label className="text-[10px] font-black text-gray-400 uppercase">Período:</label>
+            <select value={kpiPeriod} onChange={e=>setKpiMonths(parseInt(e.target.value))} className="bg-gray-800 border border-gray-600 text-white rounded-xl px-3 py-2 text-xs font-black outline-none">
+              {[3,6,12,24].map(n=><option key={n} value={n}>{n} meses</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* KPI Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[
+            { label:'Total Ingresos', val:`$${formatNum(totalVentas)}`, sub:`${(invoices||[]).length} facturas`, color:'text-green-600', bg:'bg-green-50', border:'border-green-200', icon:<Receipt size={24}/> },
+            { label:'OPs Completadas', val:totalOPs, sub:`${(requirements||[]).filter(r=>r.status==='EN PROCESO').length} en proceso`, color:'text-blue-600', bg:'bg-blue-50', border:'border-blue-200', icon:<Factory size={24}/> },
+            { label:'Clientes Activos', val:totalClientes, sub:'clientes únicos', color:'text-purple-600', bg:'bg-purple-50', border:'border-purple-200', icon:<User size={24}/> },
+            { label:'Merma Promedio', val:`${mermaPromedio.toFixed(1)}%`, sub:'últimos '+kpiPeriod+'m', color: mermaPromedio > 5 ? 'text-red-600' : 'text-orange-500', bg:'bg-orange-50', border:'border-orange-200', icon:<Thermometer size={24}/> },
+          ].map((k,i) => (
+            <div key={i} className={`${k.bg} border-2 ${k.border} rounded-2xl p-4`}>
+              <div className={`${k.color} mb-2`}>{k.icon}</div>
+              <div className={`font-black text-2xl ${k.color}`}>{k.val}</div>
+              <div className="text-[9px] font-black text-gray-500 uppercase mt-0.5">{k.label}</div>
+              <div className="text-[8px] text-gray-400 font-bold">{k.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Ventas por mes */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-5">
+          <h3 className="text-sm font-black uppercase text-gray-800 mb-4 flex items-center gap-2"><Receipt size={16} className="text-green-500"/> Ingresos por Mes (USD)</h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={ventasByMonth}>
+              <defs><linearGradient id="colorVentas" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.3}/><stop offset="95%" stopColor="#f97316" stopOpacity={0}/></linearGradient></defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
+              <XAxis dataKey="mes" tick={{fontSize:10, fontWeight:'bold'}}/>
+              <YAxis tick={{fontSize:10}} tickFormatter={v=>`$${formatNum(v)}`}/>
+              <Tooltip formatter={(v)=>[`$${formatNum(v)}`,'Ingresos']}/>
+              <Area type="monotone" dataKey="ingresos" stroke="#f97316" fill="url(#colorVentas)" strokeWidth={2.5} dot={{fill:'#f97316',r:3}}/>
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Producción y Mermas */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-white rounded-2xl border border-gray-200 p-5">
+            <h3 className="text-sm font-black uppercase text-gray-800 mb-4 flex items-center gap-2"><Factory size={16} className="text-blue-500"/> OPs por Mes</h3>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={prodByMonth}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
+                <XAxis dataKey="mes" tick={{fontSize:10}}/>
+                <YAxis tick={{fontSize:10}}/>
+                <Tooltip/>
+                <Bar dataKey="ops" fill="#6366f1" radius={[4,4,0,0]} name="OPs completadas"/>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-200 p-5">
+            <h3 className="text-sm font-black uppercase text-gray-800 mb-4 flex items-center gap-2"><Thermometer size={16} className="text-red-500"/> Merma (%) por Mes</h3>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={mermasByMonth}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
+                <XAxis dataKey="mes" tick={{fontSize:10}}/>
+                <YAxis tick={{fontSize:10}} tickFormatter={v=>`${v}%`}/>
+                <Tooltip formatter={(v)=>[`${v}%`,'Merma']}/>
+                <Bar dataKey="merma_pct" name="% Merma" radius={[4,4,0,0]}>
+                  {mermasByMonth.map((_,i)=><Cell key={i} fill={parseNum(mermasByMonth[i]?.merma_pct)>5?'#ef4444':'#f97316'}/>)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Top Productos Vendidos */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-5">
+          <h3 className="text-sm font-black uppercase text-gray-800 mb-4 flex items-center gap-2"><Box size={16} className="text-orange-500"/> Top Productos Vendidos</h3>
+          {topProductos.length > 0 ? (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={topProductos} layout="vertical" margin={{left:10}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
+                <XAxis type="number" tick={{fontSize:10}} tickFormatter={v=>`$${formatNum(v)}`}/>
+                <YAxis type="category" dataKey="name" tick={{fontSize:9, fontWeight:'bold'}} width={120}/>
+                <Tooltip formatter={(v)=>[`$${formatNum(v)}`,'Total USD']}/>
+                <Bar dataKey="total" name="Total USD" radius={[0,4,4,0]}>
+                  {topProductos.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : <div className="text-center py-8 text-gray-400 text-xs font-bold uppercase">Sin datos de ventas en el período</div>}
+        </div>
+
+        {/* Clientes + MP Stock */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-white rounded-2xl border border-gray-200 p-5">
+            <h3 className="text-sm font-black uppercase text-gray-800 mb-3 flex items-center gap-2"><User size={16} className="text-purple-500"/> Top Clientes (USD)</h3>
+            <div className="space-y-2">
+              {topClientesArr.map((c,i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[8px] font-black" style={{background:COLORS[i%COLORS.length]}}>{i+1}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-black text-[10px] uppercase truncate">{c.name}</div>
+                    <div className="bg-gray-100 rounded-full h-1.5 mt-0.5">
+                      <div className="h-1.5 rounded-full" style={{width:`${Math.min(100,(c.total/topClientesArr[0]?.total)*100)}%`, background:COLORS[i%COLORS.length]}}/>
+                    </div>
+                  </div>
+                  <div className="text-[10px] font-black text-gray-700 whitespace-nowrap">${formatNum(c.total)}</div>
+                </div>
+              ))}
+              {topClientesArr.length === 0 && <div className="text-center py-6 text-gray-400 text-xs font-bold">Sin datos</div>}
+            </div>
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-200 p-5">
+            <h3 className="text-sm font-black uppercase text-gray-800 mb-3 flex items-center gap-2"><Package size={16} className="text-indigo-500"/> Stock MP por Categoría</h3>
+            {mpCatData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={mpCatData} dataKey="valor" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={9}>
+                    {mpCatData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                  </Pie>
+                  <Tooltip formatter={(v)=>[`$${formatNum(v)}`,'Valor stock']}/>
+                </PieChart>
+              </ResponsiveContainer>
+            ) : <div className="text-center py-8 text-gray-400 text-xs font-bold uppercase">Sin inventario</div>}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderConfiguracionModule = () => {
     return (
       <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
@@ -16373,6 +16637,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
            {activeTab === 'costos' && renderReportesFinancierosModule()}
            {activeTab === 'estado_resultado' && renderEstadoResultadoModule()}
            {activeTab === 'libro_diario' && renderLibroDiarioModule()}
+           {activeTab === 'kpi' && renderKPIModule()}
         </main>
 
         {dialog && (
