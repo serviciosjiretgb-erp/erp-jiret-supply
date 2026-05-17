@@ -8,6 +8,7 @@
 //   5. generateProjectionData convertido a valor memoizado + wrapper de compatibilidad
 // ============================================================================
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import ReactDOM from 'react-dom/client';
 import { 
   LayoutDashboard, Package, Factory, TrendingUp, TrendingDown, AlertTriangle, 
   ClipboardList, PlayCircle, History, FileText, Settings2, Trash2, 
@@ -16842,3 +16843,5 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     </ErrorBoundary>
   );
 }
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
