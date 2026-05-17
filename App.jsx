@@ -7800,23 +7800,19 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         <div className="md:col-span-4 bg-green-50 border-2 border-green-200 rounded-2xl p-4">
                           <label className="text-[10px] font-black text-green-700 uppercase block mb-3 tracking-widest">📦 Inventario General / Productos Terminados — Seleccionar Producto</label>
 
-                          {/* Selector agrupado por producto (mismo agrupamiento que inventario) */}
+                          {/* Selector agrupado por producto */}
                           {(() => {
-                            // Construir grupos igual que inventario terminados
                             const invGrps = {};
-                            // FIX: include ALL FG items (kgProducidos OR millares > 0)
-                            // including FG-{slug} items from Entrega Parcial
+                            // FG de producción
                             (finishedGoodsInventory||[])
                               .filter(fg => parseNum(fg.kgProducidos) > 0 || parseNum(fg.millares) > 0)
                               .forEach(fg => {
                                 const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-                                // Use producto as part of key so FG-{slug} items don't collide
                                 const cat = fg.categoria || fg.producto || fg.id || '';
                                 const cli = fg.cliente || '';
                                 const key = `${cat}__${cli}__${fg.tipoProducto||'BOLSAS'}`;
                                 if (!invGrps[key]) invGrps[key] = {
-                                  key, esTermo,
-                                  categoria: cat, cliente: cli,
+                                  key, esTermo, categoria: cat, cliente: cli,
                                   tipoProducto: fg.tipoProducto||'BOLSAS',
                                   producto: fg.producto || cat,
                                   ancho: fg.ancho, largo: fg.largo, micras: fg.micras,
@@ -7826,8 +7822,29 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 const stock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
                                 g.totalStock += stock; g.lotes.push(fg);
                               });
-                            const grpList = Object.values(invGrps).filter(g => g.totalStock > 0 && !fgItems.some(i=>i.fgGrpKey===g.key));
-                            const selGrpKey = newInvoiceForm.fgId; // reusing fgId to hold grpKey
+                            // FIX: También incluir inventory con category='Productos Terminados'
+                            const ptByCleanId = {};
+                            (inventory||[]).filter(i => i.category === 'Productos Terminados' && parseNum(i.stock) > 0).forEach(i => {
+                              const cid = i.displayId || (i.id||'').split('___')[0];
+                              if (!ptByCleanId[cid]) ptByCleanId[cid] = { ...i, id: cid, totalStock: 0 };
+                              ptByCleanId[cid].totalStock += parseNum(i.stock||0);
+                            });
+                            Object.values(ptByCleanId).forEach(i => {
+                              const esTermo = (i.unit||'').toUpperCase() === 'KG';
+                              const key = `INV-PT__${i.id}__${esTermo?'TERMOENCOGIBLE':'BOLSAS'}`;
+                              invGrps[key] = {
+                                key, esTermo, categoria: i.desc || i.id, cliente: 'IMPORTADO',
+                                tipoProducto: esTermo ? 'TERMOENCOGIBLE' : 'BOLSAS',
+                                producto: i.desc || i.id,
+                                ancho: 0, largo: 0, micras: 0,
+                                totalStock: i.totalStock, lotes: [],
+                                _isInvPT: true, _invId: i.id, _unit: i.unit || 'und',
+                                _cost: parseNum(i.cost||0)
+                              };
+                            });
+                            const grpList = Object.values(invGrps).filter(g => g.totalStock > 0 && !fgItems.some(i=>i.fgGrpKey===g.key))
+                              .sort((a,b) => (a.producto||'').localeCompare(b.producto||''));
+                            const selGrpKey = newInvoiceForm.fgId;
                             const selGrp = invGrps[selGrpKey];
 
                             return (
@@ -7836,16 +7853,26 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                   <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Categoría / Producto</label>
                                   <select value={selGrpKey||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm, fgId: e.target.value, fgCantidad: ''})}
                                     className="w-full bg-white border-2 border-green-300 rounded-xl p-2.5 font-black text-xs outline-none focus:border-green-500 text-black">
-                                    <option value="">— Seleccione producto —</option>
-                                    {grpList.map(g => {
+                                    <option value="">— Seleccione producto terminado —</option>
+                                    <optgroup label="── Producción (FG) ──">
+                                      {grpList.filter(g=>!g._isInvPT).map(g => {
                                       const unit = g.esTermo ? 'KG' : 'Mill.';
-                                      const dims = g.ancho ? `${g.ancho}×${g.largo}cm ${g.micras}mic` : '';
                                       return (
                                         <option key={g.key} value={g.key}>
                                           {formatFGLabel(g)} | {formatNum(g.totalStock)} {unit}
                                         </option>
                                       );
                                     })}
+                                    </optgroup>
+                                    {grpList.filter(g=>g._isInvPT).length > 0 && (
+                                      <optgroup label="── Inventario (Importados) ──">
+                                        {grpList.filter(g=>g._isInvPT).map(g => (
+                                          <option key={g.key} value={g.key}>
+                                            {g.producto} | {formatNum(g.totalStock)} {g._unit||'und'}
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    )}
                                   </select>
                                   {selGrp && (
                                     <div className="mt-2 bg-white rounded-xl border border-green-200 p-3">
@@ -15926,76 +15953,55 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           body { background: white !important; }
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         }
-      /* ════════════════════════════════
-         G&B ERP — MOBILE ULTRA-COMPACT
-         ════════════════════════════════ */
+      /* ── MOBILE ULTRA-COMPACT ── */
       @media (max-width: 768px) {
         nav { padding: 6px 10px !important; }
         .hidden.md\:flex { display: none !important; }
-        main { padding: 6px !important; padding-bottom: 78px !important; overflow-x: hidden !important; }
-        .px-8, .px-6 { padding-left: 8px !important; padding-right: 8px !important; }
-        .py-8, .py-6, .py-5 { padding-top: 7px !important; padding-bottom: 7px !important; }
-        .p-8, .p-6, .p-5 { padding: 8px !important; }
+        main { padding: 4px !important; padding-bottom: 78px !important; overflow-x: hidden !important; }
+        .px-8, .px-6, .px-5 { padding-left: 6px !important; padding-right: 6px !important; }
+        .py-8, .py-6, .py-5 { padding-top: 6px !important; padding-bottom: 6px !important; }
+        .p-8, .p-6, .p-5, .p-4 { padding: 8px !important; }
         .p-10 { padding: 10px !important; }
-        .gap-8, .gap-6 { gap: 6px !important; }
-        .gap-4 { gap: 5px !important; }
-        .mb-8, .mb-6 { margin-bottom: 6px !important; }
+        .gap-8, .gap-6, .gap-5 { gap: 6px !important; }
+        .gap-4, .gap-3 { gap: 4px !important; }
+        .mb-8, .mb-6, .mb-4 { margin-bottom: 6px !important; }
         .space-y-6 > * + *, .space-y-8 > * + * { margin-top: 6px !important; }
-        .space-y-4 > * + * { margin-top: 5px !important; }
-        /* Tipografía densa */
+        .space-y-4 > * + *, .space-y-3 > * + * { margin-top: 4px !important; }
         .text-3xl { font-size: 1rem !important; }
         .text-2xl { font-size: 0.88rem !important; }
-        .text-xl  { font-size: 0.83rem !important; }
-        .text-lg  { font-size: 0.80rem !important; }
-        /* Tablas ultra-densas con scroll horizontal */
+        .text-xl  { font-size: 0.82rem !important; }
+        .text-lg  { font-size: 0.78rem !important; }
         table { font-size: 10px !important; }
         table th, table td { padding: 4px 5px !important; font-size: 10px !important; }
         table th { font-size: 9px !important; padding: 3px 4px !important; }
-        .overflow-x-auto { overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; scrollbar-width: none !important; }
+        .overflow-x-auto { overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; }
         .overflow-x-auto::-webkit-scrollbar { display: none !important; }
-        /* Módulo headers compactos */
+        .overflow-x-auto { scrollbar-width: none !important; }
         .border-b.flex.justify-between, .border-b.flex.items-center { flex-wrap: wrap !important; gap: 5px !important; padding: 7px 8px !important; }
-        .border-b.flex h2 { font-size: 0.82rem !important; }
-        /* Botones en headers: solo ícono */
+        .border-b.flex h2 { font-size: 0.8rem !important; }
         .border-b button > span { display: none !important; }
         .border-b button { padding: 4px 7px !important; }
-        /* Grids */
         .grid-cols-3, .grid-cols-4 { grid-template-columns: repeat(2, 1fr) !important; }
         .grid.grid-cols-2, .grid.grid-cols-3, .grid.grid-cols-4 { gap: 4px !important; }
         .grid .rounded-2xl, .grid .rounded-xl { padding: 7px !important; }
-        /* Sub-nav tabs */
         .sticky button { padding: 4px 6px !important; font-size: 8px !important; white-space: nowrap !important; gap: 2px !important; }
         .sticky svg { width: 10px !important; height: 10px !important; }
-        /* Forms */
         input[type="text"], input[type="number"], input[type="date"], select, textarea { padding: 5px 7px !important; font-size: 11px !important; }
-        /* Borders rounded */
         .rounded-3xl { border-radius: 12px !important; }
         .rounded-2xl { border-radius: 10px !important; }
-        /* Modals: bottom sheet */
         .fixed.inset-0 > div { width: 100% !important; max-width: 100% !important; border-radius: 18px 18px 0 0 !important; position: fixed !important; bottom: 0 !important; left: 0 !important; right: 0 !important; max-height: 91svh !important; overflow-y: auto !important; margin: 0 !important; }
-        /* Flex wrap */
         .flex.justify-between { flex-wrap: wrap !important; gap: 5px !important; }
-        /* Scrollbar global */
         ::-webkit-scrollbar { display: none !important; }
         * { scrollbar-width: none !important; }
-        /* Inventario: columnas hide on mobile */
-        .hide-mobile { display: none !important; }
-        /* Stat values */
-        .font-black.text-2xl, .font-black.text-3xl { font-size: 1rem !important; }
-        .font-black.text-xl { font-size: 0.9rem !important; }
-        /* Badges */
-        .px-3.py-1, .px-4.py-2 { padding: 2px 6px !important; }
       }
       @media (max-width: 420px) {
-        main { padding: 4px !important; padding-bottom: 78px !important; }
-        .px-8, .px-6 { padding-left: 5px !important; padding-right: 5px !important; }
-        table th, table td { padding: 3px 3px !important; font-size: 9px !important; }
+        main { padding: 3px !important; padding-bottom: 78px !important; }
+        table th, table td { padding: 3px !important; font-size: 9px !important; }
       }
-      /* mobile-cards: para tablas específicas marcadas con clase */
       @media (max-width: 768px) {
         .mobile-cards thead { display: none !important; }
         .mobile-cards tbody tr { display: block !important; margin-bottom: 5px !important; border: 1px solid #e5e7eb !important; border-radius: 8px !important; padding: 7px !important; background: white !important; }
-        .mobile-cards td { display: flex !important; justify-content: space-between !important; padding: 2px 0 !important; border: none !important; font-size: 11px !important; border-bottom: 1px solid #f3f4f6 !important; }
+        .mobile-cards td { display: flex !important; justify-content: space-between !important; padding: 2px 0 !important; border: none !important; border-bottom: 1px solid #f3f4f6 !important; font-size: 11px !important; }
         .mobile-cards td:last-child { border-bottom: none !important; }
         .mobile-cards td::before { content: attr(data-label); font-weight: 800; font-size: 8px; text-transform: uppercase; color: #9ca3af; flex-shrink: 0; margin-right: 6px; }
       }
