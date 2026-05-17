@@ -20,20 +20,13 @@
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <script type="module" src="./App.jsx"></script>
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js', { scope: '/' })
             .then(reg => {
               setInterval(() => reg.update(), 30 * 60 * 1000);
-              reg.addEventListener('updatefound', () => {
-                const sw = reg.installing;
-                sw.addEventListener('statechange', () => {
-                  if (sw.state === 'installed' && navigator.serviceWorker.controller)
-                    if (window.__showUpdateBanner) window.__showUpdateBanner();
-                });
-              });
             }).catch(e => console.error('[PWA]', e));
         });
       }
