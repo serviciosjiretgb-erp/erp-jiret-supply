@@ -9,7 +9,6 @@
 // ============================================================================
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
-import './index.css';
 import { 
   LayoutDashboard, Package, Factory, TrendingUp, TrendingDown, AlertTriangle, 
   ClipboardList, PlayCircle, History, FileText, Settings2, Trash2, 
@@ -9712,8 +9711,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         type: 'ENTRADA', qty: esTermo ? kgEntrega : millEntrega,
         unitCost: costoUnitWIP, totalValue: kgEntrega * costoUnitWIP,
         previousStock: 0, newStock: esTermo ? kgEntrega : millEntrega,
-        docRef: req.id, notes: `ENTREGA PARCIAL OP ${req.id}`, date: partialFecha || getTodayDate(),
-        date: getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now(), isFG: true
+         docRef: req.id, notes: `ENTREGA PARCIAL OP ${req.id}`,
+         date: partialFecha || getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now(), isFG: true
       });
 
       // Asiento contable

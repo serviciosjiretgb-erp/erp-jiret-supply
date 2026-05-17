@@ -13,9 +13,24 @@
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="manifest" href="/manifest.json" />
     <title>G&amp;B Supply — ERP</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {}
+        }
+      }
+    </script>
+    <style type="text/tailwindcss">
+      @layer utilities {
+        .scrollbar-none { scrollbar-width: none; }
+        .scrollbar-none::-webkit-scrollbar { display: none; }
+      }
+    </style>
     <style>
       html, body { overscroll-behavior: none; -webkit-overflow-scrolling: touch; }
       body { padding-bottom: env(safe-area-inset-bottom); }
+      @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     </style>
   </head>
   <body>
@@ -25,9 +40,8 @@
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js', { scope: '/' })
-            .then(reg => {
-              setInterval(() => reg.update(), 30 * 60 * 1000);
-            }).catch(e => console.error('[PWA]', e));
+            .then(reg => { setInterval(() => reg.update(), 30 * 60 * 1000); })
+            .catch(e => console.error('[PWA]', e));
         });
       }
       window.addEventListener('beforeinstallprompt', e => {
