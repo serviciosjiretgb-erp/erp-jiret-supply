@@ -824,29 +824,6 @@ export default function App() {
   const [_sessionId] = useState(() => Math.random().toString(36).substring(2)+Date.now());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [pwaInstallAvailable, setPwaInstallAvailable] = useState(false);
-
-  // ── AUTO-TRANSFORM TABLES TO CARDS ON MOBILE ──
-  useEffect(() => {
-    const applyMobileCards = () => {
-      if (window.innerWidth > 768) return;
-      document.querySelectorAll('table').forEach(table => {
-        if (table.classList.contains('no-mobile-cards')) return;
-        if (table.closest('.pdf-content')) return;
-        table.classList.add('mobile-cards');
-        const headers = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim().replace(/[↕⬆]/g,''));
-        table.querySelectorAll('tbody tr').forEach(row => {
-          [...row.querySelectorAll('td')].forEach((td, i) => {
-            if (headers[i] && !td.getAttribute('data-label')) td.setAttribute('data-label', headers[i]);
-          });
-        });
-      });
-    };
-    const timer = setTimeout(applyMobileCards, 300);
-    const observer = new MutationObserver(() => setTimeout(applyMobileCards, 100));
-    observer.observe(document.body, { childList: true, subtree: true });
-    window.addEventListener('resize', applyMobileCards);
-    return () => { clearTimeout(timer); observer.disconnect(); window.removeEventListener('resize', applyMobileCards); };
-  }, [activeTab, invView, ventasView, prodView]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
 
@@ -15949,159 +15926,78 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           body { background: white !important; }
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         }
-      /* ════════════════════════════════════════════
-         MOBILE RESPONSIVE — G&B ERP
-         Convierte tablas en cards, reduce padding,
-         hace todo legible en 390px de ancho
-         ════════════════════════════════════════════ */
+      /* ════════════════════════════════
+         G&B ERP — MOBILE ULTRA-COMPACT
+         ════════════════════════════════ */
       @media (max-width: 768px) {
-
-        /* ── TOP NAV COMPACT ── */
-        nav { padding: 8px 12px !important; min-height: 0 !important; }
-        .hidden.md\\:flex { display: none !important; }
-
-        /* ── MAIN CONTENT PADDING ── */
-        main { padding: 8px !important; padding-bottom: 80px !important; }
-        .px-8, .px-6 { padding-left: 10px !important; padding-right: 10px !important; }
-        .py-8, .py-6 { padding-top: 10px !important; padding-bottom: 10px !important; }
-        .p-8, .p-6 { padding: 10px !important; }
-        .p-10 { padding: 16px !important; }
-        .gap-6 { gap: 10px !important; }
-        .gap-8 { gap: 12px !important; }
-
-        /* ── ROUNDED ── */
-        .rounded-3xl { border-radius: 16px !important; }
-        .rounded-2xl { border-radius: 12px !important; }
-
-        /* ── TYPOGRAPHY ── */
-        .text-3xl { font-size: 1.15rem !important; }
-        .text-2xl { font-size: 1rem !important; }
-        .text-xl  { font-size: 0.95rem !important; }
-        h2.text-xl, h2.text-2xl { font-size: 0.95rem !important; }
-
-        /* ── GRIDS → 2 columnas en móvil ── */
+        nav { padding: 6px 10px !important; }
+        .hidden.md\:flex { display: none !important; }
+        main { padding: 6px !important; padding-bottom: 78px !important; overflow-x: hidden !important; }
+        .px-8, .px-6 { padding-left: 8px !important; padding-right: 8px !important; }
+        .py-8, .py-6, .py-5 { padding-top: 7px !important; padding-bottom: 7px !important; }
+        .p-8, .p-6, .p-5 { padding: 8px !important; }
+        .p-10 { padding: 10px !important; }
+        .gap-8, .gap-6 { gap: 6px !important; }
+        .gap-4 { gap: 5px !important; }
+        .mb-8, .mb-6 { margin-bottom: 6px !important; }
+        .space-y-6 > * + *, .space-y-8 > * + * { margin-top: 6px !important; }
+        .space-y-4 > * + * { margin-top: 5px !important; }
+        /* Tipografía densa */
+        .text-3xl { font-size: 1rem !important; }
+        .text-2xl { font-size: 0.88rem !important; }
+        .text-xl  { font-size: 0.83rem !important; }
+        .text-lg  { font-size: 0.80rem !important; }
+        /* Tablas ultra-densas con scroll horizontal */
+        table { font-size: 10px !important; }
+        table th, table td { padding: 4px 5px !important; font-size: 10px !important; }
+        table th { font-size: 9px !important; padding: 3px 4px !important; }
+        .overflow-x-auto { overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; scrollbar-width: none !important; }
+        .overflow-x-auto::-webkit-scrollbar { display: none !important; }
+        /* Módulo headers compactos */
+        .border-b.flex.justify-between, .border-b.flex.items-center { flex-wrap: wrap !important; gap: 5px !important; padding: 7px 8px !important; }
+        .border-b.flex h2 { font-size: 0.82rem !important; }
+        /* Botones en headers: solo ícono */
+        .border-b button > span { display: none !important; }
+        .border-b button { padding: 4px 7px !important; }
+        /* Grids */
         .grid-cols-3, .grid-cols-4 { grid-template-columns: repeat(2, 1fr) !important; }
-
-        /* ══════════════════════════════════════
-           TABLAS → CARDS APILADAS EN MÓVIL
-           Cada fila <tr> se convierte en una card
-           ══════════════════════════════════════ */
-        /* Contenedor con scroll horizontal para tablas complejas */
-        .overflow-x-auto {
-          overflow-x: auto !important;
-          -webkit-overflow-scrolling: touch !important;
-        }
-        /* Scroll invisible */
-        .overflow-x-auto::-webkit-scrollbar { display: none; }
-        .overflow-x-auto { scrollbar-width: none !important; }
-
-        /* ── STAT CARDS: 2 por fila ── */
-        .grid.grid-cols-2 { grid-template-columns: 1fr 1fr !important; }
-
-        /* ── FLEX WRAP: stack en móvil ── */
-        .flex.justify-between { flex-wrap: wrap !important; gap: 8px !important; }
-        .flex.gap-4.items-end { flex-wrap: wrap !important; }
-
-        /* ── BUTTONS: más pequeños ── */
-        button.px-6.py-3, button.px-8.py-3 {
-          padding: 8px 14px !important;
-          font-size: 10px !important;
-        }
-        button.px-5.py-2\\.5 {
-          padding: 7px 12px !important;
-          font-size: 10px !important;
-        }
-
-        /* ── MÓDULOS: headers más compactos ── */
-        .border-b.bg-green-50, .border-b.bg-yellow-50,
-        .border-b.bg-red-50, .border-b.bg-blue-50,
-        .border-b.bg-orange-50, .border-b.bg-gray-50 {
-          flex-direction: column !important;
-          align-items: flex-start !important;
-          gap: 8px !important;
-          padding: 10px 12px !important;
-        }
-
-        /* ── MODALS: bottom sheet ── */
-        .fixed.inset-0 > div {
-          width: 100% !important;
-          max-width: 100% !important;
-          border-radius: 20px 20px 0 0 !important;
-          position: fixed !important;
-          bottom: 0 !important; left: 0 !important; right: 0 !important;
-          max-height: 90svh !important;
-          overflow-y: auto !important;
-          margin: 0 !important;
-        }
-
-        /* ── SUB-NAV TABS ── */
-        .sticky.top-\\[52px\\] .flex,
-        .sticky.top-\\[72px\\] .flex {
-          gap: 0 !important;
-        }
-        .sticky.top-\\[52px\\] button,
-        .sticky.top-\\[72px\\] button {
-          padding: 6px 8px !important;
-          font-size: 8px !important;
-          white-space: nowrap !important;
-        }
-        .sticky.top-\\[52px\\] svg,
-        .sticky.top-\\[72px\\] svg { width: 11px !important; height: 11px !important; }
-
-        /* ── FORMULARIOS ── */
-        .grid.md\\:grid-cols-2, .grid.md\\:grid-cols-3 {
-          grid-template-columns: 1fr !important;
-        }
-
-        /* ── REPORTES: hide actions on mobile ── */
-        .no-pdf.print\\:hidden button span { display: none !important; }
-
-        /* ── SCROLLBAR GLOBAL HIDDEN ── */
+        .grid.grid-cols-2, .grid.grid-cols-3, .grid.grid-cols-4 { gap: 4px !important; }
+        .grid .rounded-2xl, .grid .rounded-xl { padding: 7px !important; }
+        /* Sub-nav tabs */
+        .sticky button { padding: 4px 6px !important; font-size: 8px !important; white-space: nowrap !important; gap: 2px !important; }
+        .sticky svg { width: 10px !important; height: 10px !important; }
+        /* Forms */
+        input[type="text"], input[type="number"], input[type="date"], select, textarea { padding: 5px 7px !important; font-size: 11px !important; }
+        /* Borders rounded */
+        .rounded-3xl { border-radius: 12px !important; }
+        .rounded-2xl { border-radius: 10px !important; }
+        /* Modals: bottom sheet */
+        .fixed.inset-0 > div { width: 100% !important; max-width: 100% !important; border-radius: 18px 18px 0 0 !important; position: fixed !important; bottom: 0 !important; left: 0 !important; right: 0 !important; max-height: 91svh !important; overflow-y: auto !important; margin: 0 !important; }
+        /* Flex wrap */
+        .flex.justify-between { flex-wrap: wrap !important; gap: 5px !important; }
+        /* Scrollbar global */
         ::-webkit-scrollbar { display: none !important; }
         * { scrollbar-width: none !important; }
+        /* Inventario: columnas hide on mobile */
+        .hide-mobile { display: none !important; }
+        /* Stat values */
+        .font-black.text-2xl, .font-black.text-3xl { font-size: 1rem !important; }
+        .font-black.text-xl { font-size: 0.9rem !important; }
+        /* Badges */
+        .px-3.py-1, .px-4.py-2 { padding: 2px 6px !important; }
       }
-
       @media (max-width: 420px) {
-        main { padding: 6px !important; padding-bottom: 80px !important; }
-        .px-8, .px-6 { padding-left: 8px !important; padding-right: 8px !important; }
-        .text-xl { font-size: 0.85rem !important; }
-        /* Stat cards: font reduce */
-        .font-black.text-xl, .font-black.text-2xl { font-size: 1rem !important; }
-        .font-black.text-3xl { font-size: 1.2rem !important; }
+        main { padding: 4px !important; padding-bottom: 78px !important; }
+        .px-8, .px-6 { padding-left: 5px !important; padding-right: 5px !important; }
+        table th, table td { padding: 3px 3px !important; font-size: 9px !important; }
       }
-      /* ── TABLA → CARD en móvil (inyectada dinámicamente) ── */
+      /* mobile-cards: para tablas específicas marcadas con clase */
       @media (max-width: 768px) {
-        /* Tablas de datos principales: cada fila es una card */
         .mobile-cards thead { display: none !important; }
-        .mobile-cards tbody tr {
-          display: block !important;
-          margin-bottom: 8px !important;
-          border: 1px solid #e5e7eb !important;
-          border-radius: 12px !important;
-          padding: 10px !important;
-          background: white !important;
-        }
-        .mobile-cards td {
-          display: flex !important;
-          justify-content: space-between !important;
-          align-items: center !important;
-          padding: 3px 0 !important;
-          border: none !important;
-          font-size: 11px !important;
-        }
-        .mobile-cards td::before {
-          content: attr(data-label);
-          font-weight: 800;
-          font-size: 9px;
-          text-transform: uppercase;
-          color: #6b7280;
-          margin-right: 8px;
-          flex-shrink: 0;
-        }
-        .mobile-cards tfoot { display: block; padding: 8px; }
-        .mobile-cards tfoot tr { display: flex; justify-content: space-between; }
-        .mobile-cards tfoot td { display: inline-block !important; }
-        .mobile-cards tfoot td::before { display: none; }
+        .mobile-cards tbody tr { display: block !important; margin-bottom: 5px !important; border: 1px solid #e5e7eb !important; border-radius: 8px !important; padding: 7px !important; background: white !important; }
+        .mobile-cards td { display: flex !important; justify-content: space-between !important; padding: 2px 0 !important; border: none !important; font-size: 11px !important; border-bottom: 1px solid #f3f4f6 !important; }
+        .mobile-cards td:last-child { border-bottom: none !important; }
+        .mobile-cards td::before { content: attr(data-label); font-weight: 800; font-size: 8px; text-transform: uppercase; color: #9ca3af; flex-shrink: 0; margin-right: 6px; }
       }
       `}</style>
       <div className="min-h-screen bg-gray-100 flex flex-col font-sans">
