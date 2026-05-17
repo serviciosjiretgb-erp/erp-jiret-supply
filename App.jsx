@@ -3251,15 +3251,15 @@ export default function App() {
           <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
           <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 px-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5 px-2 sm:px-4">
           {moduleCards.map((card, i) => (
             <button key={i}
               onClick={() => { clearAllReports(); setActiveTab(card.tab); if(card.view) card.view(); }}
-              className={`${card.bg} border-l-4 ${card.color} rounded-2xl p-6 text-left hover:opacity-90 hover:scale-[1.02] transition-all shadow-md flex flex-col gap-3`}>
-              <div className={card.iconColor}>{card.icon}</div>
+              className={`${card.bg} border-l-4 ${card.color} rounded-2xl p-3 sm:p-6 text-left hover:opacity-90 hover:scale-[1.02] transition-all shadow-md flex flex-col gap-2`}>
+              <div className={`${card.iconColor} [&>svg]:w-6 [&>svg]:h-6 sm:[&>svg]:w-9 sm:[&>svg]:h-9`}>{card.icon}</div>
               <div>
-                <h3 className={`text-sm font-black ${card.textColor} uppercase leading-tight`}>{card.title}</h3>
-                <p className={`text-[10px] ${card.descColor} mt-1 leading-snug`}>{card.desc}</p>
+                <h3 className={`text-[10px] sm:text-sm font-black ${card.textColor} uppercase leading-tight`}>{card.title}</h3>
+                <p className={`text-[8px] sm:text-[10px] ${card.descColor} mt-0.5 leading-snug hidden sm:block`}>{card.desc}</p>
               </div>
             </button>
           ))}
@@ -15926,44 +15926,60 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           body { background: white !important; }
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         }
-      /* ── MOBILE RESPONSIVE OVERRIDES ── */
+      /* ── MOBILE RESPONSIVE ── */
       @media (max-width: 768px) {
-        /* Tables: force horizontal scroll on all tables */
-        table { min-width: 500px; }
-        .overflow-x-auto { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-        /* Cards: full width, no horizontal overflow */
-        .rounded-3xl, .rounded-2xl { border-radius: 16px !important; }
-        /* Modals: full screen on mobile */
-        .fixed.inset-0 > div { 
-          width: 100% !important; 
-          max-width: 100% !important; 
+        /* ── TOP NAV: compact on mobile ── */
+        nav { padding: 8px 12px !important; }
+        /* ── Hide desktop nav pill on mobile ── */
+        .hidden.md\\:flex { display: none !important; }
+        /* ── Tables: horizontal scroll ── */
+        .overflow-x-auto { overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; }
+        /* ── HOME CARDS: 2 columns, no text overflow ── */
+        .grid-cols-2, .grid-cols-3, .grid-cols-4 { grid-template-columns: repeat(2, 1fr) !important; }
+        /* ── Reduce all padding on mobile ── */
+        .px-8 { padding-left: 12px !important; padding-right: 12px !important; }
+        .px-6 { padding-left: 10px !important; padding-right: 10px !important; }
+        .py-6 { padding-top: 12px !important; padding-bottom: 12px !important; }
+        .py-8 { padding-top: 14px !important; padding-bottom: 14px !important; }
+        .p-8 { padding: 12px !important; }
+        .p-6 { padding: 10px !important; }
+        /* ── Cards text ── */
+        .text-3xl { font-size: 1.1rem !important; }
+        .text-2xl { font-size: 1rem !important; }
+        .text-xl  { font-size: 0.95rem !important; }
+        /* ── Modals: bottom sheet ── */
+        .fixed.inset-0 > div {
+          width: 100% !important;
+          max-width: 100% !important;
           border-radius: 20px 20px 0 0 !important;
           position: fixed !important;
-          bottom: 0 !important;
-          left: 0 !important;
-          right: 0 !important;
-          max-height: 90svh !important;
+          bottom: 0 !important; left: 0 !important; right: 0 !important;
+          max-height: 92svh !important;
           overflow-y: auto !important;
+          margin: 0 !important;
         }
-        /* Grids: collapse to 1 column on small screens */
-        .grid-cols-2, .grid-cols-3, .grid-cols-4 { grid-template-columns: repeat(2, 1fr) !important; }
-        /* Home panel cards: 2 columns on mobile */
-        /* Text adjustments */
-        .text-3xl { font-size: 1.25rem !important; }
-        .text-2xl { font-size: 1.1rem !important; }
-        /* Nav sub-tabs: horizontal scroll */
-        .overflow-x-auto.flex { display: flex !important; }
-        /* Input groups: stack vertically */
-        .flex-wrap { flex-wrap: wrap !important; }
-        /* Buttons in table headers: show icon only */
-        /* Print button text hidden on mobile */
+        /* ── Form inputs: full width stack ── */
+        .grid.grid-cols-2, .grid.grid-cols-3, .grid.grid-cols-4 {
+          grid-template-columns: 1fr 1fr !important;
+        }
+        /* ── Sub-nav tabs: compact ── */
+        .text-\\[10px\\] { font-size: 8px !important; }
+        /* ── Buttons in headers: icon only ── */
+        .no-pdf.flex.gap-3 button span.hidden { display: none !important; }
+        /* ── Home module cards: prevent overflow ── */
+        .border-l-4.rounded-2xl { padding: 10px !important; }
+        .border-l-4.rounded-2xl h3 { font-size: 10px !important; }
+        .border-l-4.rounded-2xl p { font-size: 8px !important; display: none; }
+        .border-l-4.rounded-2xl svg { width: 24px !important; height: 24px !important; }
+        /* ── Scrollbar hidden on mobile ── */
+        ::-webkit-scrollbar { display: none; }
+        * { scrollbar-width: none; }
       }
-      @media (max-width: 480px) {
-        /* Single column grid on very small screens */
-        .grid-cols-2.mobile-1col { grid-template-columns: 1fr !important; }
-        /* Reduce padding in cards */
-        .px-8 { padding-left: 1rem !important; padding-right: 1rem !important; }
-        .py-6 { padding-top: 0.75rem !important; padding-bottom: 0.75rem !important; }
+      @media (max-width: 420px) {
+        .grid-cols-2 { grid-template-columns: repeat(2, 1fr) !important; }
+        .px-8 { padding-left: 8px !important; padding-right: 8px !important; }
+        table { font-size: 10px !important; }
+        table td, table th { padding: 4px 6px !important; }
       }
       `}</style>
       <div className="min-h-screen bg-gray-100 flex flex-col font-sans">
@@ -16021,12 +16037,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             )}
           </div>
         )}
-        <nav className="bg-black text-white px-4 sm:px-6 py-4 shadow-xl print:hidden sticky top-0 z-40 border-b-4 border-orange-500">
+        <nav className="bg-black text-white px-3 sm:px-6 py-2 sm:py-4 shadow-xl print:hidden sticky top-0 z-40 border-b-4 border-orange-500">
            <div className="flex justify-between items-center max-w-7xl mx-auto">
-              <div className="flex items-center gap-6">
+              <div className="flex items-center gap-3 sm:gap-6">
                  <div className="flex items-center cursor-pointer" onClick={() => {clearAllReports(); setActiveTab('home');}}>
-                    <span className="text-xl font-light tracking-widest text-gray-300">Supply</span>
-                    <span className="text-white font-black text-2xl leading-none ml-1">G</span><div className="bg-orange-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-black mx-0.5">&amp;</div><span className="text-white font-black text-2xl leading-none">B</span>
+                    <span className="text-sm sm:text-xl font-light tracking-widest text-gray-300">Supply</span>
+                    <span className="text-white font-black text-lg sm:text-2xl leading-none ml-1">G</span><div className="bg-orange-500 text-white rounded-full w-4 h-4 sm:w-5 sm:h-5 flex items-center justify-center text-[9px] sm:text-xs font-black mx-0.5">&amp;</div><span className="text-white font-black text-lg sm:text-2xl leading-none">B</span>
                  </div>
                  <div className="hidden md:flex bg-gray-900 rounded-2xl p-1 gap-1 border border-gray-800">
                     <button onClick={() => {clearAllReports(); setActiveTab('home');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'home' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Home size={14}/> Inicio</button>
@@ -16037,11 +16053,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
                  </div>
               </div>
-              <div className="flex items-center gap-3">
-                 {/* Reloj aislado — no re-renderiza el árbol principal */}
-                 <LiveClock />
-                 {/* Fix 6: Calculator with keyboard */}
-                 <div className="relative">
+              <div className="flex items-center gap-2 sm:gap-3">
+                 {/* Reloj — oculto en móvil */}
+                 <div className="hidden sm:block"><LiveClock /></div>
+                 {/* Calculadora — oculta en móvil */}
+                 <div className="relative hidden sm:block">
                    <button onClick={()=>setShowCalc(v=>!v)} title="Calculadora (atajos de teclado disponibles)" className={`p-2 rounded-xl transition-all border ${showCalc?'bg-orange-500 text-white border-orange-500':'bg-gray-900 text-gray-400 hover:text-white border-gray-800'}`}>
                      <Calculator size={18}/>
                    </button>
@@ -16214,8 +16230,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         )}
 
         {activeTab === 'inventario' && (
-           <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
-              <div className="max-w-7xl mx-auto flex items-stretch overflow-x-auto scrollbar-none" style={{scrollbarWidth:'none', msOverflowStyle:'none'}}>
+           <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[52px] sm:top-[72px] z-30">
+              <div className="max-w-7xl mx-auto flex items-stretch overflow-x-auto" style={{scrollbarWidth:'none', msOverflowStyle:'none'}}>
                 {/* GROUP 1: SOLICITUDES — perms: inv_planta, inv_almacen */}
                 {([{id:'requisiciones',perm:'inv_planta'},{id:'almacen',perm:'inv_almacen'}].some(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master')) && <div className="flex flex-col border-r border-gray-200">
                   <div className="text-[8px] font-black text-orange-500 uppercase tracking-widest px-4 pt-2 pb-0.5">Solicitudes</div>
