@@ -14841,6 +14841,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     const RC = window.Recharts || null;
     const kpiPeriod = kpiMonths || 6;
     const now = new Date();
+
+    // Safe arrays — must be defined FIRST before any usage
+    const safeInvoices = (invoices||[]).filter(Boolean);
+    const safeRequirements = (requirements||[]).filter(Boolean);
+    const safeInventory = (inventory||[]).filter(Boolean);
+    const safeOpCosts = (opCosts||[]).filter(Boolean);
+
     const months = Array.from({length: kpiPeriod}, (_,i) => {
       const d = new Date(now.getFullYear(), now.getMonth() - (kpiPeriod-1-i), 1);
       return { label: ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()] + ' ' + String(d.getFullYear()).slice(2), ym: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` };
@@ -15027,12 +15034,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       const cur = phases.find(ph=>!(r.production||{})[ph]?.isClosed)||phases[0];
       return { op: r.id, cliente: r.client||r.cliente||'—', fase: cur.charAt(0).toUpperCase()+cur.slice(1), monto: `$${formatNum((r.costoTotal||r.totalCost||0))}` };
     });
-
-    // All data arrays are already safe (filtered at the start of the module)
-    const safeInvoices = (invoices||[]).filter(Boolean);
-    const safeRequirements = (requirements||[]).filter(Boolean);
-    const safeInventory = (inventory||[]).filter(Boolean);
-    const safeOpCosts = (opCosts||[]).filter(Boolean);
 
     // Month-over-month comparison for trend arrow
     const currentMonthYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
