@@ -16061,13 +16061,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
         {/* ── ACTIVIDAD DE USUARIOS ── */}
         {appUser?.role === 'Master' && (() => {
-          const [actSearch, setActSearch] = [activitySearch, setActivitySearch];
-          const [actDateFrom, setActDateFrom] = [activityDateFrom, setActivityDateFrom];
-          const [actDateTo, setActDateTo] = [activityDateTo, setActivityDateTo];
           const filtActs = (userActivityLog||[]).filter(a => {
-            if(actSearch && !(a.username||'').toUpperCase().includes(actSearch.toUpperCase()) && !(a.action||'').toUpperCase().includes(actSearch.toUpperCase())) return false;
-            if(actDateFrom && a.date < actDateFrom) return false;
-            if(actDateTo && a.date > actDateTo) return false;
+            if(activitySearch && !(a.username||'').toUpperCase().includes(activitySearch.toUpperCase()) && !(a.action||'').toUpperCase().includes(activitySearch.toUpperCase())) return false;
+            if(activityDateFrom && a.date < activityDateFrom) return false;
+            if(activityDateTo && a.date > activityDateTo) return false;
             return true;
           }).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
           return (
@@ -16080,18 +16077,18 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               <div className="flex flex-wrap gap-3 mb-4">
                 <div className="relative">
                   <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
-                  <input type="text" value={actSearch} onChange={e=>setActivitySearch(e.target.value)} placeholder="Buscar usuario o acción..."
+                  <input type="text" value={activitySearch} onChange={e=>setActivitySearch(e.target.value)} placeholder="Buscar usuario o acción..."
                     className="border-2 border-gray-200 rounded-xl pl-7 pr-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-48"/>
                 </div>
                 <div className="flex items-center gap-2">
                   <label className="text-[9px] font-black text-gray-500 uppercase">Desde:</label>
-                  <input type="date" value={actDateFrom} onChange={e=>setActivityDateFrom(e.target.value)} className="border-2 border-gray-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                  <input type="date" value={activityDateFrom} onChange={e=>setActivityDateFrom(e.target.value)} className="border-2 border-gray-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
                 </div>
                 <div className="flex items-center gap-2">
                   <label className="text-[9px] font-black text-gray-500 uppercase">Hasta:</label>
-                  <input type="date" value={actDateTo} onChange={e=>setActivityDateTo(e.target.value)} className="border-2 border-gray-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                  <input type="date" value={activityDateTo} onChange={e=>setActivityDateTo(e.target.value)} className="border-2 border-gray-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
                 </div>
-                {(actSearch||actDateFrom||actDateTo) && <button onClick={()=>{setActivitySearch('');setActivityDateFrom('');setActivityDateTo('');}} className="text-[9px] font-black text-red-500 uppercase hover:underline">✕ Limpiar</button>}
+                {(activitySearch||activityDateFrom||activityDateTo) && <button onClick={()=>{setActivitySearch('');setActivityDateFrom('');setActivityDateTo('');}} className="text-[9px] font-black text-red-500 uppercase hover:underline">✕ Limpiar</button>}
                 <span className="ml-auto text-[9px] font-bold text-gray-500">{filtActs.length} registros</span>
               </div>
               {/* Table */}
