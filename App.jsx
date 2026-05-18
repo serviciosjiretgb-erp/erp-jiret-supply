@@ -15055,6 +15055,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         {pct !== null ? `${Math.abs(pct)}%` : (up ? 'Alza' : 'Baja')}
       </span>
     );
+    const totalIngresos = safeInvoices.reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0);
     const totalCostos = safeOpCosts.reduce((s,c)=>s+parseNum(c.amount||c.monto||0),0);
     const margen = totalIngresos - totalCostos;
     const opsCompletadas = safeRequirements.filter(r=>r.status==='COMPLETADO').length;
