@@ -14792,6 +14792,124 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       return { label: ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()] + ' ' + String(d.getFullYear()).slice(2), ym: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` };
     });
 
+    // Safe chart wrapper — renders fallback bars if RC not loaded
+    const SafeBarChart = ({data, dataKey, height=180, colorFn}) => {
+      if (RC && RC.ResponsiveContainer) {
+        return (
+          <div style={{height}}>
+            <RC.ResponsiveContainer width="100%" height="100%">
+              <RC.BarChart data={data} margin={{top:5,right:5,left:-25,bottom:0}}>
+                <RC.CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6"/>
+                <RC.XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#4b5563',fontWeight:600}}/>
+                <RC.YAxis axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#4b5563'}}/>
+                <RC.Tooltip contentStyle={{fontSize:10}}/>
+                <RC.Bar dataKey={dataKey} barSize={28} radius={[3,3,0,0]}>
+                  {data.map((_,i)=><RC.Cell key={i} fill={colorFn?colorFn(_,i):'#ff6b00'}/>)}
+                </RC.Bar>
+              </RC.BarChart>
+            </RC.ResponsiveContainer>
+          </div>
+        );
+      }
+      // Fallback simple bars
+      const max = Math.max(...data.map(d=>parseNum(d[dataKey])||0), 1);
+      return (
+        <div className="flex items-end gap-1" style={{height}}>
+          {data.map((d,i)=>{
+            const pct = ((parseNum(d[dataKey])||0)/max)*100;
+            const color = colorFn ? colorFn(d,i) : '#ff6b00';
+            return (
+              <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+                <div className="text-[7px] font-black text-gray-500 truncate">{d[dataKey]>0?formatNum(d[dataKey]):''}</div>
+                <div className="w-full rounded-t-sm" style={{height:`${Math.max(pct,2)}%`,background:color}}/>
+                <div className="text-[7px] font-bold text-gray-400 truncate w-full text-center">{d.name||''}</div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    };
+
+    const SafeHBarChart = ({data, dataKey, height=180}) => {
+      if (RC && RC.ResponsiveContainer) {
+        return (
+          <div style={{height}}>
+            <RC.ResponsiveContainer width="100%" height="100%">
+              <RC.BarChart layout="vertical" data={data} margin={{top:0,right:20,left:50,bottom:0}}>
+                <RC.CartesianGrid strokeDasharray="3 3" horizontal vertical={false} stroke="#f3f4f6"/>
+                <RC.XAxis type="number" hide/>
+                <RC.YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#4b5563',fontWeight:600}} width={80}/>
+                <RC.Tooltip contentStyle={{fontSize:10}}/>
+                <RC.Bar dataKey={dataKey} barSize={14} radius={[0,4,4,0]}>
+                  {data.map((_,i)=><RC.Cell key={i} fill={i===0?'#ff6b00':'#000'}/>)}
+                </RC.Bar>
+              </RC.BarChart>
+            </RC.ResponsiveContainer>
+          </div>
+        );
+      }
+      const max = Math.max(...data.map(d=>parseNum(d[dataKey])||0), 1);
+      return (
+        <div className="space-y-1.5" style={{height}}>
+          {data.map((d,i)=>(
+            <div key={i} className="flex items-center gap-2">
+              <div className="text-[9px] font-black w-20 truncate text-right text-gray-600">{d.name}</div>
+              <div className="flex-1 bg-gray-100 rounded-sm h-4">
+                <div className="h-4 rounded-sm" style={{width:`${(parseNum(d[dataKey])/max)*100}%`,background:i===0?'#ff6b00':'#000'}}/>
+              </div>
+              <div className="text-[9px] font-black w-16 text-right">${formatNum(d[dataKey])}</div>
+            </div>
+          ))}
+        </div>
+      );
+    };
+
+    const SafeLineChart = ({data, dataKey, height=130}) => {
+      if (RC && RC.ResponsiveContainer) {
+        return (
+          <div style={{height}}>
+            <RC.ResponsiveContainer width="100%" height="100%">
+              <RC.LineChart data={data} margin={{top:5,right:10,left:-25,bottom:0}}>
+                <RC.CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6"/>
+                <RC.XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#9ca3af'}}/>
+                <RC.YAxis axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#9ca3af'}}/>
+                <RC.Tooltip contentStyle={{fontSize:10}}/>
+                <RC.Line type="monotone" dataKey={dataKey} stroke="#000" strokeWidth={2} dot={{r:3,fill:'#000'}} activeDot={{r:5,fill:'#ff6b00',stroke:'#fff'}}/>
+              </RC.LineChart>
+            </RC.ResponsiveContainer>
+          </div>
+        );
+      }
+      return <SafeBarChart data={data} dataKey={dataKey} height={height} colorFn={()=>'#000'}/>;
+    };
+
+    const SafePieChart = ({data, colors, innerRadius=0, height=100}) => {
+      if (RC && RC.ResponsiveContainer) {
+        return (
+          <div style={{height,width:'100%'}}>
+            <RC.ResponsiveContainer width="100%" height="100%">
+              <RC.PieChart>
+                <RC.Pie data={data} cx="50%" cy="50%" outerRadius={35} innerRadius={innerRadius} dataKey="value" stroke="none">
+                  {data.map((_,i)=><RC.Cell key={i} fill={colors[i%colors.length]}/>)}
+                </RC.Pie>
+                <RC.Tooltip contentStyle={{fontSize:9}}/>
+              </RC.PieChart>
+            </RC.ResponsiveContainer>
+          </div>
+        );
+      }
+      return (
+        <div className="flex gap-1 justify-center mt-2">
+          {data.map((d,i)=>(
+            <div key={i} className="flex items-center gap-1">
+              <div className="w-3 h-3 rounded-sm" style={{background:colors[i]}}/>
+              <span className="text-[8px] font-bold text-gray-600">{d.name}</span>
+            </div>
+          ))}
+        </div>
+      );
+    };
+
     // Ingresos por mes reales
     const ventasByMonth = months.map(m => ({
       name: m.label,
@@ -14953,59 +15071,23 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           {/* TOP CLIENTES */}
           <div className="col-span-12 lg:col-span-6 bg-white p-4 rounded shadow-sm">
             <h3 className="text-[10px] font-bold text-gray-600 mb-3 uppercase tracking-wider">Desempeño por Cliente (USD)</h3>
-            {topClientes.length>0 ? (
-              <div style={{height:200}}>
-                <RC.ResponsiveContainer width="100%" height="100%">
-                  <RC.BarChart layout="vertical" data={topClientes} margin={{top:0,right:30,left:40,bottom:0}}>
-                    <RC.CartesianGrid strokeDasharray="3 3" horizontal vertical={false} stroke="#f3f4f6"/>
-                    <RC.XAxis type="number" hide/>
-                    <RC.YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fontSize:10,fill:'#4b5563',fontWeight:600}} width={90}/>
-                    <RC.Tooltip contentStyle={{fontSize:11}}/>
-                    <RC.Bar dataKey="value" barSize={18} radius={[0,4,4,0]}>
-                      {topClientes.map((_,i)=><RC.Cell key={i} fill={i===0?'#ff6b00':'#000'}/>)}
-                    </RC.Bar>
-                  </RC.BarChart>
-                </RC.ResponsiveContainer>
-              </div>
-            ) : <div className="text-center py-8 text-gray-400 text-xs">Sin datos de clientes en el período</div>}
+            {topClientes.length>0
+              ? <SafeHBarChart data={topClientes} dataKey="value" height={200}/>
+              : <div className="text-center py-8 text-gray-400 text-xs">Sin datos de clientes en el período</div>}
           </div>
 
           {/* VOLUMEN HISTÓRICO */}
           <div className="col-span-12 lg:col-span-6 bg-white p-4 rounded shadow-sm">
             <h3 className="text-[10px] font-bold text-gray-600 mb-3 uppercase tracking-wider">Ingresos por Período (USD)</h3>
-            <div style={{height:200}}>
-              <RC.ResponsiveContainer width="100%" height="100%">
-                <RC.BarChart data={ventasByMonth} margin={{top:5,right:0,left:-20,bottom:0}}>
-                  <RC.CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6"/>
-                  <RC.XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize:10,fill:'#4b5563',fontWeight:600}}/>
-                  <RC.YAxis axisLine={false} tickLine={false} tick={{fontSize:10,fill:'#4b5563'}}/>
-                  <RC.Tooltip contentStyle={{fontSize:11}}/>
-                  <RC.Bar dataKey="val" fill="#ff6b00" barSize={28} radius={[3,3,0,0]}>
-                    {ventasByMonth.map((_,i)=><RC.Cell key={i} fill={i===ventasByMonth.length-1?'#ff6b00':'#000'}/>)}
-                  </RC.Bar>
-                </RC.BarChart>
-              </RC.ResponsiveContainer>
-            </div>
+            <SafeBarChart data={ventasByMonth} dataKey="val" height={200} colorFn={(_,i)=>i===ventasByMonth.length-1?'#ff6b00':'#000'}/>
           </div>
 
           {/* STOCK MP */}
           <div className="col-span-12 lg:col-span-6 bg-white p-4 rounded shadow-sm border border-slate-200">
             <h3 className="text-[10px] font-bold text-gray-600 mb-3 uppercase tracking-wider">Stock MP por Categoría (KG)</h3>
-            {stockMP.length>0 ? (
-              <div style={{height:200}}>
-                <RC.ResponsiveContainer width="100%" height="100%">
-                  <RC.BarChart data={stockMP} margin={{top:5,right:5,left:-10,bottom:0}}>
-                    <RC.CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6"/>
-                    <RC.XAxis dataKey="category" axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#4b5563',fontWeight:600}}/>
-                    <RC.YAxis axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#4b5563'}}/>
-                    <RC.Tooltip contentStyle={{fontSize:11}}/>
-                    <RC.Bar dataKey="cantidad" barSize={32} radius={[4,4,0,0]}>
-                      {stockMP.map((e,i)=><RC.Cell key={i} fill={e.color||'#ff6b00'}/>)}
-                    </RC.Bar>
-                  </RC.BarChart>
-                </RC.ResponsiveContainer>
-              </div>
-            ) : <div className="text-center py-8 text-gray-400 text-xs">Sin datos de inventario</div>}
+            {stockMP.length>0
+              ? <SafeBarChart data={stockMP.map(s=>({...s,name:s.category}))} dataKey="cantidad" height={200} colorFn={(d)=>d.color||'#ff6b00'}/>
+              : <div className="text-center py-8 text-gray-400 text-xs">Sin datos de inventario</div>}
           </div>
 
           {/* TOP PRODUCTOS */}
@@ -15041,16 +15123,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             ].map((pie,pi)=>(
               <div key={pi} className="bg-white p-3 rounded shadow-sm flex flex-col items-center justify-center">
                 <h3 className="text-[9px] font-bold text-gray-500 w-full text-center mb-1 uppercase tracking-wider">{pie.title}</h3>
-                <div style={{height:100,width:'100%'}}>
-                  <RC.ResponsiveContainer width="100%" height="100%">
-                    <RC.PieChart>
-                      <RC.Pie data={pie.data} cx="50%" cy="50%" outerRadius={35} innerRadius={pi===1?15:0} dataKey="value" stroke="none">
-                        {pie.data.map((_,i)=><RC.Cell key={i} fill={pie.colors[i]}/>)}
-                      </RC.Pie>
-                      <RC.Tooltip contentStyle={{fontSize:10}}/>
-                    </RC.PieChart>
-                  </RC.ResponsiveContainer>
-                </div>
+                <SafePieChart data={pie.data} colors={pie.colors} innerRadius={pi===1?15:0} height={100}/>
                 <div className="flex gap-3 text-[8px] font-bold mt-1 uppercase tracking-wide">
                   {pie.data.map((d,i)=>(
                     <span key={i} className="flex items-center gap-1">
@@ -15066,17 +15139,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           {/* TENDENCIA + TABLA OPS */}
           <div className="col-span-12 lg:col-span-9 bg-white p-4 rounded shadow-sm flex flex-col">
             <h3 className="text-[10px] font-bold text-gray-600 mb-2 uppercase tracking-wider text-center">Tendencia de Ingresos (USD)</h3>
-            <div style={{height:130}}>
-              <RC.ResponsiveContainer width="100%" height="100%">
-                <RC.LineChart data={tendenciaIngresos} margin={{top:5,right:10,left:-25,bottom:0}}>
-                  <RC.CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6"/>
-                  <RC.XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize:10,fill:'#9ca3af'}}/>
-                  <RC.YAxis axisLine={false} tickLine={false} tick={{fontSize:10,fill:'#9ca3af'}}/>
-                  <RC.Tooltip contentStyle={{fontSize:11}}/>
-                  <RC.Line type="monotone" dataKey="val" stroke="#000" strokeWidth={2} dot={{r:3,fill:'#000'}} activeDot={{r:5,fill:'#ff6b00',stroke:'#fff'}}/>
-                </RC.LineChart>
-              </RC.ResponsiveContainer>
-            </div>
+            <SafeLineChart data={tendenciaIngresos} dataKey="val" height={130}/>
             {opsEnProceso.length>0 && (
               <>
                 <div className="bg-orange-500 text-white text-[9px] font-black grid grid-cols-4 px-3 py-1.5 uppercase rounded-t tracking-wider mt-4">
