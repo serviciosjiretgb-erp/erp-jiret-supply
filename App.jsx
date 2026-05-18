@@ -14838,422 +14838,324 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
   };
 
   const renderKPIModule = () => {
-    const RC = window.Recharts || null;
-    const kpiPeriod = kpiMonths || 6;
-    const now = new Date();
-
-    // Safe arrays — must be defined FIRST before any usage
+    // ── Safe data ──
     const safeInvoices = (invoices||[]).filter(Boolean);
     const safeRequirements = (requirements||[]).filter(Boolean);
     const safeInventory = (inventory||[]).filter(Boolean);
     const safeOpCosts = (opCosts||[]).filter(Boolean);
 
+    // ── Period config ──
+    const PERIODS = [
+      {label:'Mensual', months:1},
+      {label:'Trimestral', months:3},
+      {label:'Semestral', months:6},
+      {label:'Anual', months:12},
+    ];
+    const kpiPeriod = kpiMonths || 6;
+    const now = new Date();
     const months = Array.from({length: kpiPeriod}, (_,i) => {
       const d = new Date(now.getFullYear(), now.getMonth() - (kpiPeriod-1-i), 1);
-      return { label: ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()] + ' ' + String(d.getFullYear()).slice(2), ym: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` };
+      return {
+        label: ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()] + ' ' + String(d.getFullYear()).slice(2),
+        ym: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
+      };
     });
 
-    // Safe chart wrapper — renders fallback bars if RC not loaded
-    const SafeBarChart = ({data, dataKey, height=180, colorFn}) => {
-      if (RC && RC.ResponsiveContainer) {
-        return (
-          <div style={{height}}>
-            <RC.ResponsiveContainer width="100%" height="100%">
-              <RC.BarChart data={data} margin={{top:5,right:5,left:-25,bottom:0}}>
-                <RC.CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6"/>
-                <RC.XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#4b5563',fontWeight:600}}/>
-                <RC.YAxis axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#4b5563'}}/>
-                <RC.Tooltip contentStyle={{fontSize:10}}/>
-                <RC.Bar dataKey={dataKey} barSize={28} radius={[3,3,0,0]}>
-                  {data.map((_,i)=><RC.Cell key={i} fill={colorFn?colorFn(_,i):'#ff6b00'}/>)}
-                </RC.Bar>
-              </RC.BarChart>
-            </RC.ResponsiveContainer>
-          </div>
-        );
-      }
-      // Fallback simple bars
-      const max = Math.max(...data.map(d=>parseNum(d[dataKey])||0), 1);
-      return (
-        <div className="flex items-end gap-1" style={{height}}>
-          {data.map((d,i)=>{
-            const pct = ((parseNum(d[dataKey])||0)/max)*100;
-            const color = colorFn ? colorFn(d,i) : '#ff6b00';
-            return (
-              <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
-                <div className="text-[7px] font-black text-gray-500 truncate">{d[dataKey]>0?formatNum(d[dataKey]):''}</div>
-                <div className="w-full rounded-t-sm" style={{height:`${Math.max(pct,2)}%`,background:color}}/>
-                <div className="text-[7px] font-bold text-gray-400 truncate w-full text-center">{d.name||''}</div>
-              </div>
-            );
-          })}
-        </div>
-      );
-    };
-
-    const SafeHBarChart = ({data, dataKey, height=180}) => {
-      if (RC && RC.ResponsiveContainer) {
-        return (
-          <div style={{height}}>
-            <RC.ResponsiveContainer width="100%" height="100%">
-              <RC.BarChart layout="vertical" data={data} margin={{top:0,right:20,left:50,bottom:0}}>
-                <RC.CartesianGrid strokeDasharray="3 3" horizontal vertical={false} stroke="#f3f4f6"/>
-                <RC.XAxis type="number" hide/>
-                <RC.YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#4b5563',fontWeight:600}} width={80}/>
-                <RC.Tooltip contentStyle={{fontSize:10}}/>
-                <RC.Bar dataKey={dataKey} barSize={14} radius={[0,4,4,0]}>
-                  {data.map((_,i)=><RC.Cell key={i} fill={i===0?'#ff6b00':'#000'}/>)}
-                </RC.Bar>
-              </RC.BarChart>
-            </RC.ResponsiveContainer>
-          </div>
-        );
-      }
-      const max = Math.max(...data.map(d=>parseNum(d[dataKey])||0), 1);
-      return (
-        <div className="space-y-1.5" style={{height}}>
-          {data.map((d,i)=>(
-            <div key={i} className="flex items-center gap-2">
-              <div className="text-[9px] font-black w-20 truncate text-right text-gray-600">{d.name}</div>
-              <div className="flex-1 bg-gray-100 rounded-sm h-4">
-                <div className="h-4 rounded-sm" style={{width:`${(parseNum(d[dataKey])/max)*100}%`,background:i===0?'#ff6b00':'#000'}}/>
-              </div>
-              <div className="text-[9px] font-black w-16 text-right">${formatNum(d[dataKey])}</div>
-            </div>
-          ))}
-        </div>
-      );
-    };
-
-    const SafeLineChart = ({data, dataKey, height=130}) => {
-      if (RC && RC.ResponsiveContainer) {
-        return (
-          <div style={{height}}>
-            <RC.ResponsiveContainer width="100%" height="100%">
-              <RC.LineChart data={data} margin={{top:5,right:10,left:-25,bottom:0}}>
-                <RC.CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6"/>
-                <RC.XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#9ca3af'}}/>
-                <RC.YAxis axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#9ca3af'}}/>
-                <RC.Tooltip contentStyle={{fontSize:10}}/>
-                <RC.Line type="monotone" dataKey={dataKey} stroke="#000" strokeWidth={2} dot={{r:3,fill:'#000'}} activeDot={{r:5,fill:'#ff6b00',stroke:'#fff'}}/>
-              </RC.LineChart>
-            </RC.ResponsiveContainer>
-          </div>
-        );
-      }
-      return <SafeBarChart data={data} dataKey={dataKey} height={height} colorFn={()=>'#000'}/>;
-    };
-
-    const SafePieChart = ({data, colors, innerRadius=0, height=100}) => {
-      if (RC && RC.ResponsiveContainer) {
-        return (
-          <div style={{height,width:'100%'}}>
-            <RC.ResponsiveContainer width="100%" height="100%">
-              <RC.PieChart>
-                <RC.Pie data={data} cx="50%" cy="50%" outerRadius={35} innerRadius={innerRadius} dataKey="value" stroke="none">
-                  {data.map((_,i)=><RC.Cell key={i} fill={colors[i%colors.length]}/>)}
-                </RC.Pie>
-                <RC.Tooltip contentStyle={{fontSize:9}}/>
-              </RC.PieChart>
-            </RC.ResponsiveContainer>
-          </div>
-        );
-      }
-      return (
-        <div className="flex gap-1 justify-center mt-2">
-          {data.map((d,i)=>(
-            <div key={i} className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-sm" style={{background:colors[i]}}/>
-              <span className="text-[8px] font-bold text-gray-600">{d.name}</span>
-            </div>
-          ))}
-        </div>
-      );
-    };
-
-    // Ingresos por mes reales
-    const ventasByMonth = months.map(m => ({
-      name: m.label,
-      val: safeInvoices.filter(inv=>(inv.fecha||'').startsWith(m.ym)).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0),
-    }));
-
-    // Volumen KG procesado (de OPs completadas)
-    const kgByMonth = months.map(m => ({
-      name: m.label,
-      kg: safeRequirements.filter(r=>(r.fechaFinalizacion||r.createdAt||'').startsWith(m.ym)&&r.status==='COMPLETADO').reduce((s,r)=>s+parseNum(r.kgProducidos||r.kgTotal||0),0),
-    }));
-
-    // Top clientes — cross-reference with clients collection for real names
-    const clienteMap = {};
-    // Build clientId → name map from clients collection
-    const clientsById = {};
-    const clientsByRif = {};
-    (clients||[]).filter(Boolean).forEach(c => {
-      if(c.id) clientsById[c.id] = c.name || c.razon_social || c.nombre || c.id;
-      if(c.rif) clientsByRif[c.rif] = c.name || c.razon_social || c.nombre || c.rif;
-    });
-    safeInvoices.filter(inv=>months.some(m=>(inv.fecha||'').startsWith(m.ym))).forEach(inv=>{
-      // Use clientName if stored, else cross-reference by RIF or clientId
-      const rawName = inv.client||inv.cliente||'';
-      const byRif = inv.clientRif ? clientsByRif[inv.clientRif] : null;
-      const byId  = inv.clientId  ? clientsById[inv.clientId]   : null;
-      const k = byRif || byId || rawName || 'Sin nombre';
-      if(!clienteMap[k]) clienteMap[k]={name:k,value:0};
-      clienteMap[k].value+=parseNum(inv.totalUSD||inv.total||0);
-    });
-    const topClientes = Object.values(clienteMap).sort((a,b)=>b.value-a.value).slice(0,5);
-
-    // Top productos
-    const prodMap = {};
-    safeInvoices.filter(inv=>months.some(m=>(inv.fecha||'').startsWith(m.ym))).forEach(inv=>{
-      (inv.items||[]).forEach(it=>{
-        const k=it.desc||it.productName||it.nombre||'';
-        if(!k) return;
-        if(!prodMap[k]) prodMap[k]={name:k,ingresos:0,kg:0};
-        prodMap[k].ingresos+=parseNum(it.totalUSD||it.total||0);
-        prodMap[k].kg+=parseNum(it.cantidad||it.qty||0);
-      });
-    });
-    const topProductos = Object.values(prodMap).sort((a,b)=>b.ingresos-a.ingresos).slice(0,4);
-
-    // Stock MP por categoría
-    const stockMP = (() => {
-      const catMap = {};
-      safeInventory.filter(i=>i.category!=='Productos Terminados').forEach(i=>{
-        const cat=i.category||'Otros';
-        if(!catMap[cat]) catMap[cat]={category:cat,cantidad:0};
-        catMap[cat].cantidad+=parseNum(i.stock||0);
-      });
-      const SCOLORS = ['#ff6b00','#000000','#4b5563','#9ca3af','#6366f1','#10b981'];
-      return Object.values(catMap).map((c,i)=>({...c,color:SCOLORS[i%SCOLORS.length]}));
-    })();
-
-    // OPs en proceso para tabla
-    const opsEnProceso = safeRequirements.filter(r=>r.status==='EN PROCESO').slice(0,5).map(r=>{
-      const phases = ['extrusion','impresion','sellado'];
-      const cur = phases.find(ph=>!(r.production||{})[ph]?.isClosed)||phases[0];
-      return { op: r.id, cliente: r.client||r.cliente||'—', fase: cur.charAt(0).toUpperCase()+cur.slice(1), monto: `$${formatNum((r.costoTotal||r.totalCost||0))}` };
-    });
-
-    // Month-over-month comparison for trend arrow
-    const currentMonthYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    // ── Month-over-month ──
+    const currentYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
     const prevDate = new Date(now.getFullYear(), now.getMonth()-1, 1);
-    const prevMonthYM = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
-    const ventasMesActual   = safeInvoices.filter(inv=>(inv.fecha||'').startsWith(currentMonthYM)).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0);
-    const ventasMesAnterior = safeInvoices.filter(inv=>(inv.fecha||'').startsWith(prevMonthYM)).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0);
-    const huboCrecimiento   = ventasMesActual >= ventasMesAnterior;
-    const variacionPct      = ventasMesAnterior > 0 ? ((ventasMesActual - ventasMesAnterior)/ventasMesAnterior*100).toFixed(1) : null;
+    const prevYM = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
+    const mesActual = safeInvoices.filter(i=>(i.fecha||'').startsWith(currentYM)).reduce((s,i)=>s+parseNum(i.montoBase||i.totalUSD||i.total||0),0);
+    const mesAnterior = safeInvoices.filter(i=>(i.fecha||'').startsWith(prevYM)).reduce((s,i)=>s+parseNum(i.montoBase||i.totalUSD||i.total||0),0);
+    const crecimiento = mesAnterior > 0 ? ((mesActual-mesAnterior)/mesAnterior*100) : 0;
+    const subioMes = mesActual >= mesAnterior;
 
-    const TrendArrow = ({up, pct}) => (
-      <span className={`flex items-center gap-1 text-[10px] font-black ${up?'text-green-600':'text-red-500'}`}>
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          {up
-            ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 10l7-7m0 0l7 7m-7-7v18"/>
-            : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
-          }
-        </svg>
-        {pct !== null ? `${Math.abs(pct)}%` : (up ? 'Alza' : 'Baja')}
-      </span>
-    );
-    const totalIngresos = safeInvoices.reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0);
+    // ── KPI Totals ──
+    const totalIngresos = safeInvoices.reduce((s,i)=>s+parseNum(i.montoBase||i.totalUSD||i.total||0),0);
     const totalCostos = safeOpCosts.reduce((s,c)=>s+parseNum(c.amount||c.monto||0),0);
     const margen = totalIngresos - totalCostos;
     const opsCompletadas = safeRequirements.filter(r=>r.status==='COMPLETADO').length;
     const opsProceso = safeRequirements.filter(r=>r.status==='EN PROCESO').length;
-    const mermaGlobal = (() => {
-      let totalMerma=0, totalProd=0;
-      safeRequirements.forEach(r=>{['extrusion','impresion','sellado'].forEach(ph=>{((r.production||{})[ph]?.batches||[]).forEach(b=>{totalMerma+=parseNum(b.mermaKg||0);totalProd+=parseNum(b.producedKg||0);});});});
-      return totalProd>0?parseFloat(((totalMerma/totalProd)*100).toFixed(1)):0;
-    })();
-    const avancePlanta = opsProceso>0 ? Math.min(100, Math.round((opsCompletadas/(opsCompletadas+opsProceso))*100)) : 100;
 
-    // Tendencia ingresos = ventasByMonth
-    const tendenciaIngresos = ventasByMonth;
+    // ── Mermas ──
+    let totalMermaKg=0, totalProdKg=0;
+    safeRequirements.forEach(r=>{
+      ['extrusion','impresion','sellado'].forEach(ph=>{
+        ((r.production||{})[ph]?.batches||[]).forEach(b=>{
+          totalMermaKg+=parseNum(b.mermaKg||0);
+          totalProdKg+=parseNum(b.producedKg||0);
+        });
+      });
+    });
+    const mermaGlobal = totalProdKg>0 ? parseFloat(((totalMermaKg/totalProdKg)*100).toFixed(1)) : 0;
 
-    // Gauge component (SVG half-circle)
-    const GaugeChart = ({title,value,max,prefix='',suffix='',color='#ff6b00'}) => {
-      const pct = Math.min(100,(value/max)*100);
-      const r=32, cx=40, cy=40;
-      const arc = (p) => {
-        const angle = Math.PI - (p/100)*Math.PI;
-        return {x: cx + r*Math.cos(angle), y: cy - r*Math.sin(angle)};
-      };
-      const start = arc(0), end = arc(pct);
-      const large = pct>50?1:0;
-      return (
-        <div className="flex flex-col items-center">
-          <h4 className="text-[9px] font-bold text-gray-500 mb-1 uppercase tracking-wider text-center">{title}</h4>
-          <div className="relative">
-            <svg width="80" height="45" viewBox="0 0 80 45">
-              <path d={`M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${cx+r} ${cy}`} fill="none" stroke="#e5e7eb" strokeWidth="7" strokeLinecap="round"/>
-              {pct>0 && <path d={`M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${end.x} ${end.y}`} fill="none" stroke={color} strokeWidth="7" strokeLinecap="round"/>}
-              <text x={cx} y={cy+2} textAnchor="middle" fontSize="9" fontWeight="800" fill="#111">{prefix}{typeof value==='number'&&value%1!==0?value.toFixed(1):value}{suffix}</text>
-            </svg>
-          </div>
-          <div className="flex justify-between w-full text-[7px] font-bold text-gray-400 px-1">
-            <span>0</span><span>{max}</span>
+    // ── Ingresos por mes ──
+    const ingByMonth = months.map(m=>({
+      name: m.label,
+      val: safeInvoices.filter(i=>(i.fecha||'').startsWith(m.ym)).reduce((s,i)=>s+parseNum(i.montoBase||i.totalUSD||i.total||0),0)
+    }));
+    const maxIng = Math.max(...ingByMonth.map(m=>m.val), 1);
+
+    // ── Top clientes ──
+    const cliMap={};
+    safeInvoices.filter(i=>months.some(m=>(i.fecha||'').startsWith(m.ym))).forEach(inv=>{
+      const n = inv.clientName||inv.client||inv.cliente||'Sin nombre';
+      if(!cliMap[n]) cliMap[n]={name:n,total:0,facturas:0};
+      cliMap[n].total+=parseNum(inv.montoBase||inv.totalUSD||inv.total||0);
+      cliMap[n].facturas++;
+    });
+    const topClientes = Object.values(cliMap).sort((a,b)=>b.total-a.total).slice(0,6);
+    const maxCli = topClientes[0]?.total||1;
+
+    // ── Top productos vendidos (from itemsFacturados) ──
+    const prodMap={};
+    safeInvoices.filter(i=>months.some(m=>(i.fecha||'').startsWith(m.ym))).forEach(inv=>{
+      (inv.itemsFacturados||[]).forEach(it=>{
+        const k = it.desc||it.fgId||'';
+        if(!k) return;
+        if(!prodMap[k]) prodMap[k]={name:k,qty:0,ingresos:0};
+        prodMap[k].qty += parseNum(it.cantidad||0);
+        // distribute invoice total proportionally if no item-level price
+        prodMap[k].ingresos += parseNum(it.costoTotal||0)||parseNum(inv.montoBase||inv.totalUSD||inv.total||0)/Math.max((inv.itemsFacturados||[]).length,1);
+      });
+    });
+    const topProductos = Object.values(prodMap).sort((a,b)=>b.ingresos-a.ingresos).slice(0,5);
+    const maxProd = topProductos[0]?.ingresos||1;
+
+    // ── Mermas por mes ──
+    const mermaByMonth = months.map(m=>{
+      let mKg=0, pKg=0;
+      safeRequirements.forEach(r=>{
+        ['extrusion','impresion','sellado'].forEach(ph=>{
+          ((r.production||{})[ph]?.batches||[]).filter(b=>(b.date||'').startsWith(m.ym)).forEach(b=>{
+            mKg+=parseNum(b.mermaKg||0); pKg+=parseNum(b.producedKg||0);
+          });
+        });
+      });
+      return {name:m.label, pct:pKg>0?parseFloat(((mKg/pKg)*100).toFixed(1)):0, mermaKg:mKg};
+    });
+    const maxMerma = Math.max(...mermaByMonth.map(m=>m.pct),1);
+
+    // ── Stock MP por categoría ──
+    const stockCatMap={};
+    safeInventory.filter(i=>i.category!=='Productos Terminados').forEach(i=>{
+      const cat=i.category||'Otros';
+      if(!stockCatMap[cat]) stockCatMap[cat]={name:cat,val:0,sub:{}};
+      stockCatMap[cat].val+=parseNum(i.stock||0)*parseNum(i.cost||0);
+    });
+    const stockCats = Object.values(stockCatMap).sort((a,b)=>b.val-a.val);
+    const maxStock = stockCats[0]?.val||1;
+
+    // ── Stock PT por subcategoría ──
+    const ptSubMap={};
+    safeInventory.filter(i=>i.category==='Productos Terminados').forEach(i=>{
+      const sub = getItemSubcategory(i)||'Otros Terminados';
+      if(!ptSubMap[sub]) ptSubMap[sub]={name:sub,stock:0};
+      ptSubMap[sub].stock+=parseNum(i.stock||0);
+    });
+    const ptSubs = Object.values(ptSubMap).sort((a,b)=>b.stock-a.stock);
+
+    // ── OPs activas ──
+    const opsActivas = safeRequirements.filter(r=>r.status==='EN PROCESO').slice(0,5).map(r=>{
+      const phases=['extrusion','impresion','sellado'];
+      const done = phases.filter(ph=>(r.production||{})[ph]?.isClosed).length;
+      const cur = phases.find(ph=>!(r.production||{})[ph]?.isClosed)||phases[2];
+      return {op:r.id, cliente:r.client||r.cliente||'—', fase:cur.charAt(0).toUpperCase()+cur.slice(1), avance:Math.round((done/3)*100), monto:parseNum(r.costoTotal||0)};
+    });
+
+    // ── Bar component ──
+    const Bar = ({pct, color='#f97316', label, value}) => (
+      <div className="flex items-center gap-2">
+        {label && <div className="text-[9px] font-black text-gray-600 w-20 truncate text-right">{label}</div>}
+        <div className="flex-1 bg-gray-100 rounded-sm h-5 overflow-hidden">
+          <div className="h-5 rounded-sm flex items-center justify-end pr-1.5 transition-all" style={{width:`${Math.max(pct,2)}%`,background:color}}>
+            {pct>15 && <span className="text-[8px] font-black text-white">{value}</span>}
           </div>
         </div>
-      );
-    };
+        {pct<=15 && <span className="text-[9px] font-black text-gray-700 w-20">{value}</span>}
+      </div>
+    );
 
-    // RC may be null if Recharts CDN not loaded yet — charts fall back to simple bars
-    // Do NOT block entire module render for RC
+    const MiniBar = ({pct, color='#f97316', height=28}) => (
+      <div className="flex flex-col items-center justify-end" style={{height,flex:1}}>
+        <div className="w-full rounded-t-sm" style={{height:`${Math.max(pct,3)}%`,background:color,minHeight:2}}/>
+      </div>
+    );
 
     return (
-      <div className="min-h-screen bg-gray-100 p-2 sm:p-4 font-sans text-gray-800 animate-in fade-in">
-        {/* HEADER */}
-        <div className="bg-black text-white p-4 md:p-5 rounded-t-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+      <div className="bg-gray-50 min-h-screen p-4 font-sans animate-in fade-in">
+
+        {/* ── HEADER ── */}
+        <div className="bg-black rounded-2xl p-5 mb-5 flex flex-wrap justify-between items-center gap-4">
           <div>
-            <h1 className="text-xl md:text-2xl font-black uppercase tracking-tight">Panel de Control Gerencial</h1>
-            <p className="text-[10px] text-gray-400 font-medium mt-0.5">Métricas Integradas de Producción, Inventario y Análisis Comercial.</p>
+            <h1 className="text-xl font-black text-white uppercase tracking-tight flex items-center gap-2">
+              <BarChart3 size={22} className="text-orange-500"/> Panel de Control Gerencial
+            </h1>
+            <p className="text-[10px] text-gray-400 mt-0.5 uppercase font-bold">Servicios Jiret G&B — Métricas Integradas</p>
           </div>
-          <div className="grid grid-cols-3 gap-2 w-full md:w-auto">
-            {[3,6,12].map(n=>(
-              <button key={n} onClick={()=>setKpiMonths(n)} className={`px-3 py-1.5 text-[10px] font-black uppercase rounded ${kpiPeriod===n?'bg-orange-500 text-white':'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
-                {n==='3'?'Mes':n==='6'?'Trimestre':'Anual'}{n} m
+          <div className="flex bg-gray-900 rounded-xl p-1 gap-1 border border-gray-700">
+            {PERIODS.map(p=>(
+              <button key={p.months} onClick={()=>setKpiMonths(p.months)}
+                className={`px-3 py-1.5 text-[9px] font-black uppercase rounded-lg transition-all ${kpiPeriod===p.months?'bg-orange-500 text-white':'text-gray-400 hover:text-white hover:bg-gray-700'}`}>
+                {p.label}
               </button>
             ))}
           </div>
         </div>
 
-        <div className="bg-gray-200 p-3 sm:p-4 grid grid-cols-12 gap-3 rounded-b-xl shadow-inner">
-
-          {/* GAUGES + BARRAS */}
-          <div className="col-span-12 xl:col-span-9 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-white p-3 rounded shadow-sm flex justify-around items-center">
-              <GaugeChart title="Target Ingresos" value={totalIngresos>0?parseFloat((totalIngresos/1000000).toFixed(1)):0} max={2.0} prefix="$" suffix="M" />
-              <GaugeChart title="Vol. Procesado" value={kgByMonth.reduce((s,m)=>s+m.kg,0)} max={200000} suffix="kg" color="#000"/>
-              <GaugeChart title="Límite Merma" value={mermaGlobal} max={10} suffix="%" color={mermaGlobal>5?'#ef4444':'#ff6b00'}/>
-              <GaugeChart title="Avance Planta" value={avancePlanta} max={100} suffix="%"/>
+        {/* ── KPI CARDS ROW ── */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+          {[
+            {
+              label:'Total Ingresos', val:`$${formatNum(totalIngresos)}`,
+              sub: subioMes
+                ? <span className="text-green-500 text-[9px] font-black flex items-center gap-0.5">▲ {Math.abs(crecimiento).toFixed(1)}% vs mes anterior</span>
+                : <span className="text-red-400 text-[9px] font-black flex items-center gap-0.5">▼ {Math.abs(crecimiento).toFixed(1)}% vs mes anterior</span>,
+              color:'border-orange-500', icon:<Receipt size={20} className="text-orange-500"/>, bg:'bg-white'
+            },
+            {label:'Costos Operativos', val:`$${formatNum(totalCostos)}`, sub:`Margen: $${formatNum(margen)}`, color:'border-black', icon:<DollarSign size={20} className="text-gray-800"/>, bg:'bg-white'},
+            {label:'OPs Completadas', val:opsCompletadas, sub:`${opsProceso} en proceso`, color:'border-blue-500', icon:<Factory size={20} className="text-blue-500"/>, bg:'bg-white'},
+            {label:'Merma Global', val:`${mermaGlobal}%`, sub:mermaGlobal>5?'⚠ Sobre límite':'✓ Dentro del límite', color: mermaGlobal>5?'border-red-500':'border-green-500', icon:<Thermometer size={20} className={mermaGlobal>5?"text-red-500":"text-green-500"}/>, bg:'bg-white'},
+          ].map((k,i)=>(
+            <div key={i} className={`${k.bg} border-l-4 ${k.color} rounded-2xl p-4 shadow-sm`}>
+              <div className="flex justify-between items-start mb-2">{k.icon}<span className="text-[8px] font-black text-gray-400 uppercase">{k.label}</span></div>
+              <div className="text-2xl font-black text-gray-900">{k.val}</div>
+              <div className="text-[9px] mt-1 text-gray-500 font-bold">{k.sub}</div>
             </div>
-            <div className="bg-white p-4 rounded shadow-sm flex flex-col justify-center gap-4">
-              <div>
-                <div className="flex justify-between items-end mb-1">
-                  <span className="text-lg font-black text-orange-500">{opsCompletadas} OPs</span>
-                  <span className="text-[9px] text-gray-500 text-right w-2/3">Completadas en el período.</span>
-                </div>
-                <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-orange-500 h-full transition-all" style={{width:`${Math.min(100,(opsCompletadas/(opsCompletadas+opsProceso||1))*100)}%`}}/></div>
-              </div>
-              <div>
-                <div className="flex justify-between items-end mb-1">
-                  <span className="text-lg font-black text-black">{mermaGlobal}%</span>
-                  <span className="text-[9px] text-gray-500 text-right w-2/3">Índice de merma global.</span>
-                </div>
-                <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-black h-full" style={{width:`${(mermaGlobal/10)*100}%`}}/></div>
-              </div>
-            </div>
-          </div>
-
-          {/* FINANCIAL KPIs */}
-          <div className="col-span-12 xl:col-span-3 flex flex-col gap-2">
-            {[
-              {val:`$${formatNum(totalIngresos)}`,label:'Total Ingresos',border:'border-orange-500',extra:<TrendArrow up={huboCrecimiento} pct={variacionPct}/>},
-              {val:`$${formatNum(totalCostos)}`,label:'Costos Operativos',border:'border-black'},
-              {val:`$${formatNum(margen)}`,label:'Margen Neto',border:`border-${margen>=0?'gray':'red'}-400`},
-            ].map((k,i)=>(
-              <div key={i} className={`bg-white border-l-8 ${k.border} p-3 shadow-sm flex-1 flex flex-col justify-center`}>
-                <div className="flex items-center gap-2 justify-between"><h3 className="text-xl font-black text-black">{k.val}</h3>{k.extra}</div>
-                <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">{k.label}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* TOP CLIENTES */}
-          <div className="col-span-12 lg:col-span-6 bg-white p-4 rounded shadow-sm">
-            <h3 className="text-[10px] font-bold text-gray-600 mb-3 uppercase tracking-wider">Desempeño por Cliente (USD)</h3>
-            {topClientes.length>0
-              ? <SafeHBarChart data={topClientes} dataKey="value" height={200}/>
-              : <div className="text-center py-8 text-gray-400 text-xs">Sin datos de clientes en el período</div>}
-          </div>
-
-          {/* VOLUMEN HISTÓRICO */}
-          <div className="col-span-12 lg:col-span-6 bg-white p-4 rounded shadow-sm">
-            <h3 className="text-[10px] font-bold text-gray-600 mb-3 uppercase tracking-wider">Ingresos por Período (USD)</h3>
-            <SafeBarChart data={ventasByMonth} dataKey="val" height={200} colorFn={(_,i)=>i===ventasByMonth.length-1?'#ff6b00':'#000'}/>
-          </div>
-
-          {/* STOCK MP */}
-          <div className="col-span-12 lg:col-span-6 bg-white p-4 rounded shadow-sm border border-slate-200">
-            <h3 className="text-[10px] font-bold text-gray-600 mb-3 uppercase tracking-wider">Stock MP por Categoría (KG)</h3>
-            {stockMP.length>0
-              ? <SafeBarChart data={stockMP.map(s=>({...s,name:s.category}))} dataKey="cantidad" height={200} colorFn={(d)=>d.color||'#ff6b00'}/>
-              : <div className="text-center py-8 text-gray-400 text-xs">Sin datos de inventario</div>}
-          </div>
-
-          {/* TOP PRODUCTOS */}
-          <div className="col-span-12 lg:col-span-6 bg-white p-4 rounded shadow-sm border border-slate-200 flex flex-col">
-            <h3 className="text-[10px] font-bold text-gray-600 mb-3 uppercase tracking-wider">Top Productos Vendidos</h3>
-            {topProductos.length>0 ? (
-              <div className="overflow-x-auto flex-grow">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead><tr className="border-b-2 border-slate-100 text-gray-400 uppercase tracking-wider text-[9px]">
-                    <th className="py-2 font-bold">Producto</th>
-                    <th className="py-2 font-bold text-right">KG</th>
-                    <th className="py-2 font-bold text-right">Ingresos</th>
-                  </tr></thead>
-                  <tbody>
-                    {topProductos.map((p,i)=>(
-                      <tr key={i} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                        <td className="py-2 font-bold text-gray-800 text-[10px]">{p.name}</td>
-                        <td className="py-2 text-right font-semibold text-slate-600 text-[10px]">{formatNum(p.kg)}</td>
-                        <td className="py-2 text-right font-black text-orange-500 text-[10px]">${formatNum(p.ingresos)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : <div className="text-center py-8 text-gray-400 text-xs">Sin datos de productos</div>}
-          </div>
-
-          {/* PIES */}
-          <div className="col-span-12 lg:col-span-3 grid grid-rows-2 gap-3">
-            {[
-              { title:'Tipo de Producto', data:[{name:'Extrusión',value:65},{name:'Sellado',value:35}], colors:['#000','#ff6b00'] },
-              { title:'OPs en Planta', data:[{name:'Completadas',value:opsCompletadas},{name:'En Proceso',value:opsProceso}], colors:['#d1d5db','#ff6b00'] },
-            ].map((pie,pi)=>(
-              <div key={pi} className="bg-white p-3 rounded shadow-sm flex flex-col items-center justify-center">
-                <h3 className="text-[9px] font-bold text-gray-500 w-full text-center mb-1 uppercase tracking-wider">{pie.title}</h3>
-                <SafePieChart data={pie.data} colors={pie.colors} innerRadius={pi===1?15:0} height={100}/>
-                <div className="flex gap-3 text-[8px] font-bold mt-1 uppercase tracking-wide">
-                  {pie.data.map((d,i)=>(
-                    <span key={i} className="flex items-center gap-1">
-                      <div className="w-2 h-2" style={{background:pie.colors[i]}}/>
-                      {d.name.substring(0,4)}.
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* TENDENCIA + TABLA OPS */}
-          <div className="col-span-12 lg:col-span-9 bg-white p-4 rounded shadow-sm flex flex-col">
-            <h3 className="text-[10px] font-bold text-gray-600 mb-2 uppercase tracking-wider text-center">Tendencia de Ingresos (USD)</h3>
-            <SafeLineChart data={tendenciaIngresos} dataKey="val" height={130}/>
-            {opsEnProceso.length>0 && (
-              <>
-                <div className="bg-orange-500 text-white text-[9px] font-black grid grid-cols-4 px-3 py-1.5 uppercase rounded-t tracking-wider mt-4">
-                  <div>Planta / Fase</div><div>Estatus OP</div><div>Cliente</div><div className="text-right">Monto</div>
-                </div>
-                <div className="overflow-y-auto max-h-32 text-[10px] text-gray-600">
-                  {opsEnProceso.map((op,i)=>(
-                    <div key={i} className={`grid grid-cols-4 px-3 py-1.5 border-b border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'}`}>
-                      <div className="font-bold text-black">{op.fase}</div>
-                      <div>{op.op}</div>
-                      <div className="truncate">{op.cliente}</div>
-                      <div className="text-right font-bold text-orange-500">{op.monto}</div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-
+          ))}
         </div>
+
+        {/* ── ROW 2: Ingresos por mes + Top Clientes ── */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          {/* Ingresos por mes */}
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+            <h3 className="text-[10px] font-black text-gray-700 uppercase mb-4 flex items-center gap-2"><Receipt size={13} className="text-orange-500"/> Ingresos por Período (USD)</h3>
+            <div className="flex items-end gap-1" style={{height:120}}>
+              {ingByMonth.map((m,i)=>{
+                const pct=(m.val/maxIng)*100;
+                const isLast=i===ingByMonth.length-1;
+                return (
+                  <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                    {m.val>0&&<span className="text-[7px] font-black text-gray-500">${formatNum(m.val)}</span>}
+                    <div className="w-full rounded-t-sm" style={{height:`${Math.max(pct,3)}%`,minHeight:2,background:isLast?'#f97316':'#111'}}/>
+                    <span className="text-[7px] font-bold text-gray-400 text-center leading-tight">{m.name}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Top Clientes */}
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+            <h3 className="text-[10px] font-black text-gray-700 uppercase mb-4 flex items-center gap-2"><User size={13} className="text-purple-500"/> Desempeño por Cliente (USD)</h3>
+            {topClientes.length>0 ? (
+              <div className="space-y-2">
+                {topClientes.map((c,i)=>(
+                  <Bar key={i} pct={(c.total/maxCli)*100} color={i===0?'#f97316':'#111'} label={c.name} value={`$${formatNum(c.total)}`}/>
+                ))}
+              </div>
+            ) : <div className="text-center py-6 text-gray-300 text-xs font-bold">Sin datos en el período</div>}
+          </div>
+        </div>
+
+        {/* ── ROW 3: Top Productos + Mermas ── */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          {/* Top Productos */}
+          <div className="bg-white rounded-2xl p-5 shadow-sm border-t-4 border-orange-500">
+            <h3 className="text-[10px] font-black text-gray-700 uppercase mb-4 flex items-center gap-2"><ShoppingCart size={13} className="text-orange-500"/> Top Productos Vendidos</h3>
+            {topProductos.length>0 ? (
+              <div className="space-y-2">
+                {topProductos.map((p,i)=>(
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="w-5 h-5 rounded-md flex items-center justify-center text-[8px] font-black text-white" style={{background:i===0?'#f97316':'#111'}}>{i+1}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[10px] font-black truncate">{p.name}</div>
+                      <div className="bg-gray-100 h-1.5 rounded-full mt-0.5"><div className="h-1.5 rounded-full" style={{width:`${(p.ingresos/maxProd)*100}%`,background:i===0?'#f97316':'#333'}}/></div>
+                    </div>
+                    <div className="text-[10px] font-black whitespace-nowrap">${formatNum(p.ingresos)}</div>
+                  </div>
+                ))}
+              </div>
+            ) : <div className="text-center py-6 text-gray-300 text-xs font-bold">Sin ventas registradas en el período</div>}
+          </div>
+
+          {/* Mermas */}
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+            <h3 className="text-[10px] font-black text-gray-700 uppercase mb-1 flex items-center gap-2">
+              <Thermometer size={13} className={mermaGlobal>5?"text-red-500":"text-orange-500"}/>
+              Merma (%) por Mes
+              <span className={`ml-auto text-[8px] px-2 py-0.5 rounded font-black ${mermaGlobal>5?'bg-red-100 text-red-600':'bg-green-100 text-green-700'}`}>Prom: {mermaGlobal}%</span>
+            </h3>
+            <div className="flex items-end gap-1 mt-3" style={{height:100}}>
+              {mermaByMonth.map((m,i)=>{
+                const pct=(m.pct/maxMerma)*100;
+                const bad=m.pct>5;
+                return (
+                  <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+                    {m.pct>0&&<span className="text-[7px] font-black" style={{color:bad?'#ef4444':'#f97316'}}>{m.pct}%</span>}
+                    <div className="w-full rounded-t-sm" style={{height:`${Math.max(pct,3)}%`,minHeight:2,background:bad?'#ef4444':'#f97316'}}/>
+                    <span className="text-[7px] font-bold text-gray-400">{m.name}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* ── ROW 4: Stock MP + Stock PT Subcategorías ── */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          {/* Stock MP */}
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+            <h3 className="text-[10px] font-black text-gray-700 uppercase mb-4 flex items-center gap-2"><Package size={13} className="text-indigo-500"/> Stock Materia Prima por Categoría ($)</h3>
+            {stockCats.length>0 ? (
+              <div className="space-y-2">
+                {stockCats.map((c,i)=>{
+                  const colors=['#f97316','#111','#6366f1','#10b981','#f59e0b','#ec4899'];
+                  return <Bar key={i} pct={(c.val/maxStock)*100} color={colors[i%colors.length]} label={c.name} value={`$${formatNum(c.val)}`}/>;
+                })}
+              </div>
+            ) : <div className="text-center py-6 text-gray-300 text-xs font-bold">Sin datos de inventario</div>}
+          </div>
+
+          {/* Stock PT Subcategorías */}
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+            <h3 className="text-[10px] font-black text-gray-700 uppercase mb-4 flex items-center gap-2"><Box size={13} className="text-orange-500"/> Stock Productos Terminados — Líneas</h3>
+            {ptSubs.length>0 ? (
+              <div className="space-y-2">
+                {ptSubs.map((s,i)=>{
+                  const maxPT=ptSubs[0]?.stock||1;
+                  const colors=['#f97316','#6366f1','#10b981','#3b82f6','#f59e0b','#ec4899','#8b5cf6','#000'];
+                  return <Bar key={i} pct={(s.stock/maxPT)*100} color={colors[i%colors.length]} label={s.name} value={`${formatNum(s.stock)}`}/>;
+                })}
+              </div>
+            ) : <div className="text-center py-6 text-gray-300 text-xs font-bold">Sin productos terminados en inventario</div>}
+          </div>
+        </div>
+
+        {/* ── ROW 5: OPs en Planta ── */}
+        {opsActivas.length>0 && (
+          <div className="bg-black rounded-2xl p-5 shadow-sm">
+            <h3 className="text-[10px] font-black text-white uppercase mb-4 flex items-center gap-2"><Factory size={13} className="text-orange-500"/> Órdenes en Planta</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {opsActivas.map((op,i)=>(
+                <div key={i} className="bg-gray-900 rounded-xl p-3">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-orange-500 text-[10px] font-black">{op.op}</span>
+                    <span className="text-gray-400 text-[9px] font-bold">{op.avance}%</span>
+                  </div>
+                  <div className="text-[9px] font-bold text-white truncate mb-0.5">{op.cliente}</div>
+                  <div className="text-[8px] font-bold text-gray-500 uppercase mb-1.5">{op.fase}</div>
+                  <div className="bg-gray-800 rounded-full h-1.5"><div className="bg-orange-500 h-1.5 rounded-full" style={{width:`${op.avance}%`}}/></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
       </div>
     );
   };
+
 
     const renderConfiguracionModule = () => {
     try {
