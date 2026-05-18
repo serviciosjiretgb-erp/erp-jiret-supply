@@ -551,6 +551,7 @@ export default function App() {
   const [movSearchTerm, setMovSearchTerm] = useState('');
   const [userActivityLog, setUserActivityLog] = useState([]);
   const [kpiMonths, setKpiMonths] = useState(6);
+  const [activitySearch, setActivitySearch] = useState('');
   const [activityDateFrom, setActivityDateFrom] = useState('');
   const [activityDateTo, setActivityDateTo] = useState('');
   // Universal date/product filters for inventory sections
@@ -16069,11 +16070,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         </div>
 
         {/* ── ACTIVIDAD DE USUARIOS ── */}
-        {appUser?.role === 'Master' && ((actSearch, actFrom, actTo, actLog) => {
-          const filtActs = (actLog||[]).filter(a => {
+        {appUser?.role === 'Master' && (() => {
+          const [actSearch, setActSearch] = [activitySearch, setActivitySearch];
+          const [actDateFrom, setActDateFrom] = [activityDateFrom, setActivityDateFrom];
+          const [actDateTo, setActDateTo] = [activityDateTo, setActivityDateTo];
+          const filtActs = (userActivityLog||[]).filter(a => {
             if(actSearch && !(a.username||'').toUpperCase().includes(actSearch.toUpperCase()) && !(a.action||'').toUpperCase().includes(actSearch.toUpperCase())) return false;
-            if(actFrom && a.date < actFrom) return false;
-            if(actTo && a.date > actTo) return false;
+            if(actDateFrom && a.date < actDateFrom) return false;
+            if(actDateTo && a.date > actDateTo) return false;
             return true;
           }).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
           return (
@@ -16134,7 +16138,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               </div>
             </div>
           );
-        })(activitySearch||''  , activityDateFrom||''  , activityDateTo||''  , userActivityLog)}
+                })()}
 
       </div>
     );
