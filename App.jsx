@@ -16069,14 +16069,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         </div>
 
         {/* ── ACTIVIDAD DE USUARIOS ── */}
-        {appUser?.role === 'Master' && (() => {
-          const _as = activitySearch || '';
-          const _df = activityDateFrom || '';
-          const _dt = activityDateTo || '';
-          const filtActs = (userActivityLog||[]).filter(a => {
-            if(_as && !(a.username||'').toUpperCase().includes(_as.toUpperCase()) && !(a.action||'').toUpperCase().includes(_as.toUpperCase())) return false;
-            if(_df && a.date < _df) return false;
-            if(_dt && a.date > _dt) return false;
+        {appUser?.role === 'Master' && ((actSearch, actFrom, actTo, actLog) => {
+          const filtActs = (actLog||[]).filter(a => {
+            if(actSearch && !(a.username||'').toUpperCase().includes(actSearch.toUpperCase()) && !(a.action||'').toUpperCase().includes(actSearch.toUpperCase())) return false;
+            if(actFrom && a.date < actFrom) return false;
+            if(actTo && a.date > actTo) return false;
             return true;
           }).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
           return (
@@ -16137,7 +16134,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               </div>
             </div>
           );
-        })()}
+        })(activitySearch||''  , activityDateFrom||''  , activityDateTo||''  , userActivityLog)}
 
       </div>
     );
