@@ -8,6 +8,7 @@
 //   5. generateProjectionData convertido a valor memoizado + wrapper de compatibilidad
 // ============================================================================
 // recharts loaded via CDN in index.html
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { 
   LayoutDashboard, Package, Factory, TrendingUp, TrendingDown, AlertTriangle, 
