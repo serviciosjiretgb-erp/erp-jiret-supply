@@ -14962,7 +14962,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         <div className="bg-white rounded-2xl border border-gray-200 p-5">
           <h3 className="text-sm font-black uppercase text-gray-800 mb-4 flex items-center gap-2"><Box size={16} className="text-orange-500"/> Top Productos Vendidos</h3>
           {topProductos.length > 0 ? (
-            {RC ? (
+            RC ? (
               <RC.ResponsiveContainer width="100%" height={220}>
                 <RC.BarChart data={topProductos} layout="vertical" margin={{left:10}}>
                   <RC.CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
@@ -14990,7 +14990,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   );
                 })}
               </div>
-            )}
+            )
           ) : <div className="text-center py-8 text-gray-400 text-xs font-bold uppercase">Sin datos de ventas en el período</div>}
         </div>
 
