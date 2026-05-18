@@ -16,13 +16,13 @@
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>tailwind.config = { theme: { extend: {} } }</script>
-    <!-- Recharts CDN (for KPI Dashboard) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+    <!-- React + ReactDOM UMD (needed before App.jsx loads) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Recharts UMD -->
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
     <script>
-      // Expose Recharts globally once loaded
-      window.addEventListener('load', () => {
-        if (window.Recharts) console.log('[G&B ERP] Recharts loaded OK');
-      });
+      // Recharts exposes window.Recharts automatically via UMD
     </script>
     <style>
       html, body { overscroll-behavior: none; -webkit-overflow-scrolling: touch; }
@@ -31,7 +31,7 @@
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="./App.jsx"></script>
+    <script type="module" src="/App.jsx"></script>
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
