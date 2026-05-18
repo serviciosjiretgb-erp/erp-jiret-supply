@@ -15028,10 +15028,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       return { op: r.id, cliente: r.client||r.cliente||'—', fase: cur.charAt(0).toUpperCase()+cur.slice(1), monto: `$${formatNum((r.costoTotal||r.totalCost||0))}` };
     });
 
-    // Defensive: ensure all data is arrays
-    const safeInvoices = safeInvoices.filter(Boolean);
-    const safeRequirements = safeRequirements.filter(Boolean);
-    const safeInventory = safeInventory.filter(Boolean);
+    // All data arrays are already safe (filtered at the start of the module)
+    const safeInvoices = (invoices||[]).filter(Boolean);
+    const safeRequirements = (requirements||[]).filter(Boolean);
+    const safeInventory = (inventory||[]).filter(Boolean);
     const safeOpCosts = (opCosts||[]).filter(Boolean);
 
     // Month-over-month comparison for trend arrow
