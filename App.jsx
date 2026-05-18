@@ -3259,7 +3259,7 @@ export default function App() {
       hasAnyPerm('inventario') && { tab:'inventario', view:()=>setInvView(hasPerm('inventario')?'requisiciones':getFirstInvView()), icon:<Package size={36}/>, title:'Control Inventario', desc:'Solicitudes de Planta, Catálogo, Movimientos y Kardex', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
       hasAnyPerm('simulador') && { tab:'simulador', icon:<Calculator size={36}/>, title:'Simulador OP', desc:'Calculadora Inversa de Producción y Mermas', color:'border-orange-400', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-orange-500' },
       (hasPerm('costos') || hasPerm('costos_operativos')) && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
-      (hasPerm('kpi') || hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && { tab:'kpi', icon:<BarChart3 size={36}/>, title:'Dashboard KPI', desc:'Indicadores de ventas, producción, inventario y mermas', color:'border-purple-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-purple-600' },
+      (hasPerm('kpi') || hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && !hasPerm('ventas') && !hasPerm('ventas_ops') && { tab:'kpi', icon:<BarChart3 size={36}/>, title:'Dashboard KPI', desc:'Indicadores de ventas, producción, inventario y mermas', color:'border-purple-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-purple-600' },
       (hasPerm('costos') || hasPerm('costos_reportes')) && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos, Estado de Resultado y Libro Diario', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
       hasAnyPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={36}/>, title:'Configuración', desc:'Usuarios, Permisos y Respaldo', color:'border-gray-400', bg:'bg-white', textColor:'text-gray-800', descColor:'text-gray-400', iconColor:'text-gray-500' },
     ].filter(Boolean);
@@ -3270,15 +3270,18 @@ export default function App() {
           <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
           <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 px-3 sm:px-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-4 px-3 sm:px-6">
           {moduleCards.map((card, i) => (
             <button key={i}
               onClick={() => { clearAllReports(); setActiveTab(card.tab); if(card.view) card.view(); }}
-              className={`${card.bg} border-l-4 ${card.color} rounded-2xl p-4 sm:p-6 text-left hover:opacity-90 active:scale-95 transition-all shadow-md flex items-center gap-4 sm:flex-col sm:items-start sm:gap-2`}>
-              <div className={`${card.iconColor} flex-shrink-0 [&>svg]:w-7 [&>svg]:h-7 sm:[&>svg]:w-9 sm:[&>svg]:h-9`}>{card.icon}</div>
-              <div className="flex-1">
-                <h3 className={`text-sm sm:text-sm font-black ${card.textColor} uppercase leading-tight`}>{card.title}</h3>
-                <p className={`text-[10px] ${card.descColor} mt-0.5 leading-snug sm:block hidden`}>{card.desc}</p>
+              className={`${card.bg} border-l-4 ${card.color} rounded-2xl p-4 sm:p-5 text-left active:scale-95 transition-all shadow-md
+                flex flex-row items-center gap-4
+                sm:flex-col sm:items-start sm:gap-3`}>
+              <div className={`${card.iconColor} flex-shrink-0
+                [&>svg]:w-8 [&>svg]:h-8 sm:[&>svg]:w-9 sm:[&>svg]:h-9`}>{card.icon}</div>
+              <div className="flex-1 min-w-0">
+                <h3 className={`text-sm font-black ${card.textColor} uppercase leading-tight`}>{card.title}</h3>
+                <p className={`text-[10px] ${card.descColor} mt-0.5 leading-snug hidden sm:block`}>{card.desc}</p>
               </div>
             </button>
           ))}
@@ -14784,7 +14787,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
   };
 
   const renderKPIModule = () => {
-    const COLORS = ['#f97316','#6366f1','#10b981','#3b82f6','#f59e0b','#ec4899','#8b5cf6','#06b6d4'];
     const RC = window.Recharts || null;
     const kpiPeriod = kpiMonths || 6;
     const now = new Date();
@@ -14793,247 +14795,311 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       return { label: ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()] + ' ' + String(d.getFullYear()).slice(2), ym: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` };
     });
 
-    // Ventas por mes
+    // Ingresos por mes reales
     const ventasByMonth = months.map(m => ({
-      periodo: m.label,
-      kg: (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(m.ym)).reduce((s,inv)=>s+parseNum(inv.totalKg||0),0),
-      meta: 0,
-      ingresos: (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(m.ym)).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0),
-      facturas: (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(m.ym)).length,
+      name: m.label,
+      val: (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(m.ym)).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0),
     }));
 
-    // Produccion
-    const prodByMonth = months.map(m => ({
-      periodo: m.label,
-      ops: (requirements||[]).filter(r=>(r.fechaFinalizacion||r.createdAt||'').startsWith(m.ym)&&r.status==='COMPLETADO').length,
+    // Volumen KG procesado (de OPs completadas)
+    const kgByMonth = months.map(m => ({
+      name: m.label,
+      kg: (requirements||[]).filter(r=>(r.fechaFinalizacion||r.createdAt||'').startsWith(m.ym)&&r.status==='COMPLETADO').reduce((s,r)=>s+parseNum(r.kgProducidos||r.kgTotal||0),0),
     }));
 
-    // Mermas
-    const mermasByMonth = months.map(m => {
-      const lotes = (requirements||[]).flatMap(r=>['extrusion','impresion','sellado'].flatMap(ph=>((r.production||{})[ph]?.batches||[]).filter(b=>(b.date||'').startsWith(m.ym))));
-      const mermaKg = lotes.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
-      const prodKg = lotes.reduce((s,b)=>s+parseNum(b.producedKg||0),0);
-      return { periodo: m.label, merma_pct: prodKg>0?parseFloat(((mermaKg/prodKg)*100).toFixed(1)):0 };
-    });
-
-    // Top clientes
-    const topClientesMap = {};
+    // Top clientes (real data)
+    const clienteMap = {};
     (invoices||[]).filter(inv=>months.some(m=>(inv.fecha||'').startsWith(m.ym))).forEach(inv=>{
       const k=inv.client||inv.cliente||'Sin nombre';
-      if(!topClientesMap[k]) topClientesMap[k]={nombre:k,facturado:0,kg:0};
-      topClientesMap[k].facturado+=parseNum(inv.totalUSD||inv.total||0);
-      topClientesMap[k].kg+=parseNum(inv.totalKg||0);
+      if(!clienteMap[k]) clienteMap[k]={name:k,value:0};
+      clienteMap[k].value+=parseNum(inv.totalUSD||inv.total||0);
     });
-    const topClientes = Object.values(topClientesMap).sort((a,b)=>b.facturado-a.facturado).slice(0,4);
+    const topClientes = Object.values(clienteMap).sort((a,b)=>b.value-a.value).slice(0,5);
 
     // Top productos
-    const topProdMap = {};
+    const prodMap = {};
     (invoices||[]).filter(inv=>months.some(m=>(inv.fecha||'').startsWith(m.ym))).forEach(inv=>{
       (inv.items||[]).forEach(it=>{
         const k=it.desc||it.productName||it.nombre||'';
         if(!k) return;
-        if(!topProdMap[k]) topProdMap[k]={nombre:k,ingresos:0,kg:0};
-        topProdMap[k].ingresos+=parseNum(it.totalUSD||it.total||0);
-        topProdMap[k].kg+=parseNum(it.cantidad||it.qty||0);
+        if(!prodMap[k]) prodMap[k]={name:k,ingresos:0,kg:0};
+        prodMap[k].ingresos+=parseNum(it.totalUSD||it.total||0);
+        prodMap[k].kg+=parseNum(it.cantidad||it.qty||0);
       });
     });
-    const topProductos = Object.values(topProdMap).sort((a,b)=>b.ingresos-a.ingresos).slice(0,4);
+    const topProductos = Object.values(prodMap).sort((a,b)=>b.ingresos-a.ingresos).slice(0,4);
 
-    // OPs en proceso
-    const opsEnProceso = (requirements||[]).filter(r=>r.status==='EN PROCESO').slice(0,4).map(r=>{
+    // Stock MP por categoría
+    const stockMP = (() => {
+      const catMap = {};
+      (inventory||[]).filter(i=>i.category!=='Productos Terminados').forEach(i=>{
+        const cat=i.category||'Otros';
+        if(!catMap[cat]) catMap[cat]={category:cat,cantidad:0};
+        catMap[cat].cantidad+=parseNum(i.stock||0);
+      });
+      const SCOLORS = ['#ff6b00','#000000','#4b5563','#9ca3af','#6366f1','#10b981'];
+      return Object.values(catMap).map((c,i)=>({...c,color:SCOLORS[i%SCOLORS.length]}));
+    })();
+
+    // OPs en proceso para tabla
+    const opsEnProceso = (requirements||[]).filter(r=>r.status==='EN PROCESO').slice(0,5).map(r=>{
       const phases = ['extrusion','impresion','sellado'];
-      const completedPhases = phases.filter(ph=>(r.production||{})[ph]?.isClosed).length;
-      const avance = Math.round((completedPhases/phases.length)*100);
-      const currentPhase = phases.find(ph=>!(r.production||{})[ph]?.isClosed)||(phases[phases.length-1]);
-      return { op: r.id, cliente: r.client||r.cliente||'—', fase: currentPhase.charAt(0).toUpperCase()+currentPhase.slice(1), avance };
+      const cur = phases.find(ph=>!(r.production||{})[ph]?.isClosed)||phases[0];
+      return { op: r.id, cliente: r.client||r.cliente||'—', fase: cur.charAt(0).toUpperCase()+cur.slice(1), monto: `$${formatNum((r.costoTotal||r.totalCost||0))}` };
     });
 
-    const totalVentas = ventasByMonth.reduce((s,m)=>s+m.ingresos,0);
-    const totalOPs = (requirements||[]).filter(r=>r.status==='COMPLETADO').length;
-    const totalClientes = new Set((invoices||[]).map(i=>i.client||i.cliente||'')).size;
-    const mermaPromedio = mermasByMonth.reduce((s,m)=>s+m.merma_pct,0)/(kpiPeriod||1);
-    const opsActivas = (requirements||[]).filter(r=>r.status==='EN PROCESO').length;
-    const porcAvance = opsEnProceso.length>0 ? Math.round(opsEnProceso.reduce((s,o)=>s+o.avance,0)/opsEnProceso.length) : 0;
+    // KPIs globales
+    const totalIngresos = (invoices||[]).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0);
+    const totalCostos = (opCosts||[]).reduce((s,c)=>s+parseNum(c.amount||c.monto||0),0);
+    const margen = totalIngresos - totalCostos;
+    const opsCompletadas = (requirements||[]).filter(r=>r.status==='COMPLETADO').length;
+    const opsProceso = (requirements||[]).filter(r=>r.status==='EN PROCESO').length;
+    const mermaGlobal = (() => {
+      let totalMerma=0, totalProd=0;
+      (requirements||[]).forEach(r=>{['extrusion','impresion','sellado'].forEach(ph=>{((r.production||{})[ph]?.batches||[]).forEach(b=>{totalMerma+=parseNum(b.mermaKg||0);totalProd+=parseNum(b.producedKg||0);});});});
+      return totalProd>0?parseFloat(((totalMerma/totalProd)*100).toFixed(1)):0;
+    })();
+    const avancePlanta = opsProceso>0 ? Math.min(100, Math.round((opsCompletadas/(opsCompletadas+opsProceso))*100)) : 100;
+
+    // Tendencia ingresos = ventasByMonth
+    const tendenciaIngresos = ventasByMonth;
+
+    // Gauge component (SVG half-circle)
+    const GaugeChart = ({title,value,max,prefix='',suffix='',color='#ff6b00'}) => {
+      const pct = Math.min(100,(value/max)*100);
+      const r=32, cx=40, cy=40;
+      const arc = (p) => {
+        const angle = Math.PI - (p/100)*Math.PI;
+        return {x: cx + r*Math.cos(angle), y: cy - r*Math.sin(angle)};
+      };
+      const start = arc(0), end = arc(pct);
+      const large = pct>50?1:0;
+      return (
+        <div className="flex flex-col items-center">
+          <h4 className="text-[9px] font-bold text-gray-500 mb-1 uppercase tracking-wider text-center">{title}</h4>
+          <div className="relative">
+            <svg width="80" height="45" viewBox="0 0 80 45">
+              <path d={`M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${cx+r} ${cy}`} fill="none" stroke="#e5e7eb" strokeWidth="7" strokeLinecap="round"/>
+              {pct>0 && <path d={`M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${end.x} ${end.y}`} fill="none" stroke={color} strokeWidth="7" strokeLinecap="round"/>}
+              <text x={cx} y={cy+2} textAnchor="middle" fontSize="9" fontWeight="800" fill="#111">{prefix}{typeof value==='number'&&value%1!==0?value.toFixed(1):value}{suffix}</text>
+            </svg>
+          </div>
+          <div className="flex justify-between w-full text-[7px] font-bold text-gray-400 px-1">
+            <span>0</span><span>{max}</span>
+          </div>
+        </div>
+      );
+    };
+
+    if (!RC) return (
+      <div className="p-8 text-center"><div className="animate-spin w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-3"/><p className="text-gray-500 font-bold text-sm uppercase">Cargando dashboard...</p></div>
+    );
 
     return (
-      <div className="p-2 sm:p-4 bg-gray-50 min-h-screen animate-in fade-in">
-        {/* Header */}
-        <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b-2 border-gray-200 pb-5">
+      <div className="min-h-screen bg-gray-100 p-2 sm:p-4 font-sans text-gray-800 animate-in fade-in">
+        {/* HEADER */}
+        <div className="bg-black text-white p-4 md:p-5 rounded-t-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
           <div>
-            <h1 className="text-2xl font-black text-black uppercase tracking-tighter flex items-center gap-3">
-              <Activity size={28} className="text-orange-500"/> Métricas Operativas y Ventas
-            </h1>
-            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-1">Servicios Jiret G&B — Panel de Control Gerencial</p>
+            <h1 className="text-xl md:text-2xl font-black uppercase tracking-tight">Panel de Control Gerencial</h1>
+            <p className="text-[10px] text-gray-400 font-medium mt-0.5">Métricas Integradas de Producción, Inventario y Análisis Comercial.</p>
           </div>
-          <div className="flex bg-white rounded-xl shadow-sm border border-gray-200 p-1">
+          <div className="grid grid-cols-3 gap-2 w-full md:w-auto">
             {[3,6,12].map(n=>(
-              <button key={n} onClick={()=>setKpiMonths(n)}
-                className={`px-4 py-2 text-[10px] font-black uppercase rounded-lg transition-all ${kpiPeriod===n?'bg-black text-white shadow-md':'text-gray-500 hover:bg-gray-100'}`}>
-                {n} meses
+              <button key={n} onClick={()=>setKpiMonths(n)} className={`px-3 py-1.5 text-[10px] font-black uppercase rounded ${kpiPeriod===n?'bg-orange-500 text-white':'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                {n==='3'?'Mes':n==='6'?'Trimestre':'Anual'}{n} m
               </button>
             ))}
           </div>
         </div>
 
-        {/* KPI Cards Top-Level */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-white p-5 rounded-2xl shadow-sm border-t-4 border-orange-500 flex flex-col justify-between">
-            <div className="flex justify-between items-start mb-3">
-              <div className="bg-black p-2.5 rounded-xl text-orange-500"><Factory size={20}/></div>
-              <div className="bg-green-50 text-green-600 text-[10px] font-black px-2 py-1 rounded-lg flex items-center gap-1"><TrendingUp size={13}/>${formatNum(totalVentas)}</div>
-            </div>
-            <div>
-              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Ingresos ({kpiPeriod}m)</p>
-              <h3 className="text-3xl font-black text-black">{(invoices||[]).length} <span className="text-lg text-gray-400">facturas</span></h3>
-            </div>
-          </div>
-          <div className="bg-black p-5 rounded-2xl shadow-sm border-t-4 border-orange-500 text-white flex flex-col justify-between">
-            <div className="bg-white/10 p-2.5 rounded-xl text-orange-500 w-max mb-3"><Timer size={20}/></div>
-            <div>
-              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Órdenes Activas en Planta</p>
-              <h3 className="text-3xl font-black text-white">{opsActivas} <span className="text-lg text-gray-500">OPs</span></h3>
-            </div>
-          </div>
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col justify-center">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-[10px] font-black text-gray-600 uppercase tracking-widest flex items-center gap-1"><Activity size={14} className="text-orange-500"/> Avance Global OPs</h3>
-              <span className="text-xl font-black text-black">{porcAvance}%</span>
-            </div>
-            <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden border border-gray-200">
-              <div className="bg-orange-500 h-3 rounded-full transition-all" style={{width:`${porcAvance}%`}}/>
-            </div>
-            <p className="text-[9px] font-bold text-gray-400 text-right mt-1 uppercase">{opsEnProceso[0]?.fase||'Sin OPs activas'}</p>
-          </div>
-        </div>
+        <div className="bg-gray-200 p-3 sm:p-4 grid grid-cols-12 gap-3 rounded-b-xl shadow-inner">
 
-        {/* Histórico Producción */}
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 mb-5">
-          <h3 className="text-[10px] font-black text-black uppercase tracking-widest mb-4 flex items-center gap-2">
-            <Calendar size={14} className="text-orange-500"/> Histórico de Ingresos vs OPs Completadas
-          </h3>
-          {RC ? (
+          {/* GAUGES + BARRAS */}
+          <div className="col-span-12 xl:col-span-9 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="bg-white p-3 rounded shadow-sm flex justify-around items-center">
+              <GaugeChart title="Target Ingresos" value={totalIngresos>0?parseFloat((totalIngresos/1000000).toFixed(1)):0} max={2.0} prefix="$" suffix="M" />
+              <GaugeChart title="Vol. Procesado" value={kgByMonth.reduce((s,m)=>s+m.kg,0)} max={200000} suffix="kg" color="#000"/>
+              <GaugeChart title="Límite Merma" value={mermaGlobal} max={10} suffix="%" color={mermaGlobal>5?'#ef4444':'#ff6b00'}/>
+              <GaugeChart title="Avance Planta" value={avancePlanta} max={100} suffix="%"/>
+            </div>
+            <div className="bg-white p-4 rounded shadow-sm flex flex-col justify-center gap-4">
+              <div>
+                <div className="flex justify-between items-end mb-1">
+                  <span className="text-lg font-black text-orange-500">{opsCompletadas} OPs</span>
+                  <span className="text-[9px] text-gray-500 text-right w-2/3">Completadas en el período.</span>
+                </div>
+                <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-orange-500 h-full transition-all" style={{width:`${Math.min(100,(opsCompletadas/(opsCompletadas+opsProceso||1))*100)}%`}}/></div>
+              </div>
+              <div>
+                <div className="flex justify-between items-end mb-1">
+                  <span className="text-lg font-black text-black">{mermaGlobal}%</span>
+                  <span className="text-[9px] text-gray-500 text-right w-2/3">Índice de merma global.</span>
+                </div>
+                <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-black h-full" style={{width:`${(mermaGlobal/10)*100}%`}}/></div>
+              </div>
+            </div>
+          </div>
+
+          {/* FINANCIAL KPIs */}
+          <div className="col-span-12 xl:col-span-3 flex flex-col gap-2">
+            {[
+              {val:`$${formatNum(totalIngresos)}`,label:'Total Ingresos',border:'border-orange-500'},
+              {val:`$${formatNum(totalCostos)}`,label:'Costos Operativos',border:'border-black'},
+              {val:`$${formatNum(margen)}`,label:'Margen Neto',border:`border-${margen>=0?'gray':'red'}-400`},
+            ].map((k,i)=>(
+              <div key={i} className={`bg-white border-l-8 ${k.border} p-3 shadow-sm flex-1 flex flex-col justify-center`}>
+                <h3 className="text-xl font-black text-black">{k.val}</h3>
+                <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">{k.label}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* TOP CLIENTES */}
+          <div className="col-span-12 lg:col-span-6 bg-white p-4 rounded shadow-sm">
+            <h3 className="text-[10px] font-bold text-gray-600 mb-3 uppercase tracking-wider">Desempeño por Cliente (USD)</h3>
+            {topClientes.length>0 ? (
+              <div style={{height:200}}>
+                <RC.ResponsiveContainer width="100%" height="100%">
+                  <RC.BarChart layout="vertical" data={topClientes} margin={{top:0,right:30,left:40,bottom:0}}>
+                    <RC.CartesianGrid strokeDasharray="3 3" horizontal vertical={false} stroke="#f3f4f6"/>
+                    <RC.XAxis type="number" hide/>
+                    <RC.YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fontSize:10,fill:'#4b5563',fontWeight:600}} width={90}/>
+                    <RC.Tooltip contentStyle={{fontSize:11}}/>
+                    <RC.Bar dataKey="value" barSize={18} radius={[0,4,4,0]}>
+                      {topClientes.map((_,i)=><RC.Cell key={i} fill={i===0?'#ff6b00':'#000'}/>)}
+                    </RC.Bar>
+                  </RC.BarChart>
+                </RC.ResponsiveContainer>
+              </div>
+            ) : <div className="text-center py-8 text-gray-400 text-xs">Sin datos de clientes en el período</div>}
+          </div>
+
+          {/* VOLUMEN HISTÓRICO */}
+          <div className="col-span-12 lg:col-span-6 bg-white p-4 rounded shadow-sm">
+            <h3 className="text-[10px] font-bold text-gray-600 mb-3 uppercase tracking-wider">Ingresos por Período (USD)</h3>
             <div style={{height:200}}>
               <RC.ResponsiveContainer width="100%" height="100%">
-                <RC.BarChart data={ventasByMonth.map((m,i)=>({...m, ops:prodByMonth[i]?.ops||0}))} margin={{top:5,right:5,left:-20,bottom:0}}>
-                  <RC.CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee"/>
-                  <RC.XAxis dataKey="periodo" axisLine={false} tickLine={false} tick={{fontSize:9,fontWeight:700,fill:'#888'}}/>
-                  <RC.YAxis axisLine={false} tickLine={false} tick={{fontSize:9,fontWeight:700,fill:'#888'}}/>
-                  <RC.Tooltip contentStyle={{background:'#111',borderRadius:'10px',border:'none',color:'#fff',fontWeight:'bold',fontSize:11}} cursor={{fill:'#f9fafb'}}/>
-                  <RC.Bar dataKey="ingresos" name="Ingresos $" radius={[4,4,0,0]} barSize={30}>
-                    {ventasByMonth.map((_,i)=><RC.Cell key={i} fill={i===ventasByMonth.length-1?'#f97316':'#000'}/>)}
+                <RC.BarChart data={ventasByMonth} margin={{top:5,right:0,left:-20,bottom:0}}>
+                  <RC.CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6"/>
+                  <RC.XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize:10,fill:'#4b5563',fontWeight:600}}/>
+                  <RC.YAxis axisLine={false} tickLine={false} tick={{fontSize:10,fill:'#4b5563'}}/>
+                  <RC.Tooltip contentStyle={{fontSize:11}}/>
+                  <RC.Bar dataKey="val" fill="#ff6b00" barSize={28} radius={[3,3,0,0]}>
+                    {ventasByMonth.map((_,i)=><RC.Cell key={i} fill={i===ventasByMonth.length-1?'#ff6b00':'#000'}/>)}
                   </RC.Bar>
                 </RC.BarChart>
               </RC.ResponsiveContainer>
             </div>
-          ) : (
-            <div className="flex items-end gap-1 h-36">
-              {ventasByMonth.map((m,i)=>{
-                const max=Math.max(...ventasByMonth.map(x=>x.ingresos),1);
-                return <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                  <div className="text-[7px] font-black text-gray-400">${formatNum(m.ingresos)}</div>
-                  <div className="w-full rounded-t" style={{height:`${(m.ingresos/max)*100}%`,background:i===ventasByMonth.length-1?'#f97316':'#000'}}/>
-                  <div className="text-[7px] font-bold text-gray-400">{m.periodo}</div>
-                </div>;
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Rankings 3 cols */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Top Clientes */}
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
-            <h3 className="text-[10px] font-black text-black uppercase tracking-widest mb-3 flex items-center gap-2 border-b pb-2"><Award size={14} className="text-orange-500"/> Top Clientes</h3>
-            <div className="space-y-3 mt-3">
-              {topClientes.length > 0 ? topClientes.map((c,i)=>(
-                <div key={i} className="flex justify-between items-center">
-                  <div className="flex gap-2 items-center">
-                    <div className="w-5 h-5 rounded bg-gray-100 flex items-center justify-center text-[9px] font-black text-gray-500">{i+1}</div>
-                    <div>
-                      <p className="text-[10px] font-black text-black truncate max-w-[120px]">{c.nombre}</p>
-                      <p className="text-[8px] font-bold text-gray-400 uppercase">{formatNum(c.kg)} KG</p>
-                    </div>
-                  </div>
-                  <p className="text-[10px] font-black">${formatNum(c.facturado)}</p>
-                </div>
-              )) : <p className="text-[10px] text-gray-400 text-center py-4">Sin datos en el período</p>}
-            </div>
           </div>
 
-          {/* Top Productos */}
-          <div className="bg-white p-5 rounded-2xl shadow-sm border-t-4 border-orange-500">
-            <h3 className="text-[10px] font-black text-black uppercase tracking-widest mb-3 flex items-center gap-2 border-b pb-2"><ShoppingCart size={14} className="text-orange-500"/> Top Productos Vendidos</h3>
-            <div className="space-y-3 mt-3">
-              {topProductos.length > 0 ? topProductos.map((p,i)=>(
-                <div key={i} className="flex justify-between items-center">
-                  <div className="flex gap-2 items-center">
-                    <div className="w-5 h-5 rounded bg-orange-50 flex items-center justify-center text-[9px] font-black text-orange-600">{i+1}</div>
-                    <div>
-                      <p className="text-[10px] font-black text-black truncate max-w-[130px]" title={p.nombre}>{p.nombre}</p>
-                      <p className="text-[8px] font-bold text-orange-500 uppercase">{formatNum(p.kg)} KG</p>
-                    </div>
-                  </div>
-                  <p className="text-[10px] font-black">${formatNum(p.ingresos)}</p>
-                </div>
-              )) : <p className="text-[10px] text-gray-400 text-center py-4">Sin datos en el período</p>}
-            </div>
+          {/* STOCK MP */}
+          <div className="col-span-12 lg:col-span-6 bg-white p-4 rounded shadow-sm border border-slate-200">
+            <h3 className="text-[10px] font-bold text-gray-600 mb-3 uppercase tracking-wider">Stock MP por Categoría (KG)</h3>
+            {stockMP.length>0 ? (
+              <div style={{height:200}}>
+                <RC.ResponsiveContainer width="100%" height="100%">
+                  <RC.BarChart data={stockMP} margin={{top:5,right:5,left:-10,bottom:0}}>
+                    <RC.CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6"/>
+                    <RC.XAxis dataKey="category" axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#4b5563',fontWeight:600}}/>
+                    <RC.YAxis axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#4b5563'}}/>
+                    <RC.Tooltip contentStyle={{fontSize:11}}/>
+                    <RC.Bar dataKey="cantidad" barSize={32} radius={[4,4,0,0]}>
+                      {stockMP.map((e,i)=><RC.Cell key={i} fill={e.color||'#ff6b00'}/>)}
+                    </RC.Bar>
+                  </RC.BarChart>
+                </RC.ResponsiveContainer>
+              </div>
+            ) : <div className="text-center py-8 text-gray-400 text-xs">Sin datos de inventario</div>}
           </div>
 
-          {/* OPs en Proceso */}
-          <div className="bg-black p-5 rounded-2xl shadow-sm text-white">
-            <h3 className="text-[10px] font-black uppercase tracking-widest mb-3 flex items-center gap-2 border-b border-gray-700 pb-2"><PackageCheck size={14} className="text-orange-500"/> Desglose en Planta</h3>
-            <div className="space-y-3 mt-3">
-              {opsEnProceso.length > 0 ? opsEnProceso.map((op,i)=>(
-                <div key={i} className="space-y-1">
-                  <div className="flex justify-between text-[10px] font-bold">
-                    <span className="text-orange-500">{op.op}</span>
-                    <span className="text-gray-400">{op.avance}%</span>
-                  </div>
-                  <div className="flex justify-between text-[8px] font-bold uppercase text-gray-500 mb-1">
-                    <span className="truncate max-w-[100px]">{op.cliente}</span>
-                    <span>{op.fase}</span>
-                  </div>
-                  <div className="w-full bg-gray-800 rounded-full h-1.5">
-                    <div className="bg-orange-500 h-1.5 rounded-full" style={{width:`${op.avance}%`}}/>
-                  </div>
-                </div>
-              )) : <p className="text-[10px] text-gray-400 text-center py-4">Sin OPs activas</p>}
-            </div>
+          {/* TOP PRODUCTOS */}
+          <div className="col-span-12 lg:col-span-6 bg-white p-4 rounded shadow-sm border border-slate-200 flex flex-col">
+            <h3 className="text-[10px] font-bold text-gray-600 mb-3 uppercase tracking-wider">Top Productos Vendidos</h3>
+            {topProductos.length>0 ? (
+              <div className="overflow-x-auto flex-grow">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead><tr className="border-b-2 border-slate-100 text-gray-400 uppercase tracking-wider text-[9px]">
+                    <th className="py-2 font-bold">Producto</th>
+                    <th className="py-2 font-bold text-right">KG</th>
+                    <th className="py-2 font-bold text-right">Ingresos</th>
+                  </tr></thead>
+                  <tbody>
+                    {topProductos.map((p,i)=>(
+                      <tr key={i} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                        <td className="py-2 font-bold text-gray-800 text-[10px]">{p.name}</td>
+                        <td className="py-2 text-right font-semibold text-slate-600 text-[10px]">{formatNum(p.kg)}</td>
+                        <td className="py-2 text-right font-black text-orange-500 text-[10px]">${formatNum(p.ingresos)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : <div className="text-center py-8 text-gray-400 text-xs">Sin datos de productos</div>}
           </div>
-        </div>
 
-        {/* Mermas */}
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 mt-4">
-          <h3 className="text-[10px] font-black text-black uppercase tracking-widest mb-3 flex items-center gap-2">
-            <Thermometer size={14} className="text-red-500"/> Merma (%) por Mes — Promedio: {mermaPromedio.toFixed(1)}%
-            <span className={`ml-2 text-[9px] px-2 py-0.5 rounded font-black ${mermaPromedio>5?'bg-red-100 text-red-600':'bg-green-100 text-green-700'}`}>{mermaPromedio>5?'⚠ CRÍTICO':'✓ NORMAL'}</span>
-          </h3>
-          {RC ? (
-            <div style={{height:150}}>
+          {/* PIES */}
+          <div className="col-span-12 lg:col-span-3 grid grid-rows-2 gap-3">
+            {[
+              { title:'Tipo de Producto', data:[{name:'Extrusión',value:65},{name:'Sellado',value:35}], colors:['#000','#ff6b00'] },
+              { title:'OPs en Planta', data:[{name:'Completadas',value:opsCompletadas},{name:'En Proceso',value:opsProceso}], colors:['#d1d5db','#ff6b00'] },
+            ].map((pie,pi)=>(
+              <div key={pi} className="bg-white p-3 rounded shadow-sm flex flex-col items-center justify-center">
+                <h3 className="text-[9px] font-bold text-gray-500 w-full text-center mb-1 uppercase tracking-wider">{pie.title}</h3>
+                <div style={{height:100,width:'100%'}}>
+                  <RC.ResponsiveContainer width="100%" height="100%">
+                    <RC.PieChart>
+                      <RC.Pie data={pie.data} cx="50%" cy="50%" outerRadius={35} innerRadius={pi===1?15:0} dataKey="value" stroke="none">
+                        {pie.data.map((_,i)=><RC.Cell key={i} fill={pie.colors[i]}/>)}
+                      </RC.Pie>
+                      <RC.Tooltip contentStyle={{fontSize:10}}/>
+                    </RC.PieChart>
+                  </RC.ResponsiveContainer>
+                </div>
+                <div className="flex gap-3 text-[8px] font-bold mt-1 uppercase tracking-wide">
+                  {pie.data.map((d,i)=>(
+                    <span key={i} className="flex items-center gap-1">
+                      <div className="w-2 h-2" style={{background:pie.colors[i]}}/>
+                      {d.name.substring(0,4)}.
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* TENDENCIA + TABLA OPS */}
+          <div className="col-span-12 lg:col-span-9 bg-white p-4 rounded shadow-sm flex flex-col">
+            <h3 className="text-[10px] font-bold text-gray-600 mb-2 uppercase tracking-wider text-center">Tendencia de Ingresos (USD)</h3>
+            <div style={{height:130}}>
               <RC.ResponsiveContainer width="100%" height="100%">
-                <RC.BarChart data={mermasByMonth} margin={{top:0,right:5,left:-25,bottom:0}}>
-                  <RC.CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee"/>
-                  <RC.XAxis dataKey="periodo" axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#888'}}/>
-                  <RC.YAxis axisLine={false} tickLine={false} tick={{fontSize:9,fill:'#888'}} tickFormatter={v=>`${v}%`}/>
-                  <RC.Tooltip formatter={v=>[`${v}%`,'Merma']} contentStyle={{background:'#111',borderRadius:'10px',border:'none',color:'#fff',fontSize:11}}/>
-                  <RC.Bar dataKey="merma_pct" radius={[4,4,0,0]}>
-                    {mermasByMonth.map((_,i)=><RC.Cell key={i} fill={mermasByMonth[i]?.merma_pct>5?'#ef4444':'#f97316'}/>)}
-                  </RC.Bar>
-                </RC.BarChart>
+                <RC.LineChart data={tendenciaIngresos} margin={{top:5,right:10,left:-25,bottom:0}}>
+                  <RC.CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6"/>
+                  <RC.XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize:10,fill:'#9ca3af'}}/>
+                  <RC.YAxis axisLine={false} tickLine={false} tick={{fontSize:10,fill:'#9ca3af'}}/>
+                  <RC.Tooltip contentStyle={{fontSize:11}}/>
+                  <RC.Line type="monotone" dataKey="val" stroke="#000" strokeWidth={2} dot={{r:3,fill:'#000'}} activeDot={{r:5,fill:'#ff6b00',stroke:'#fff'}}/>
+                </RC.LineChart>
               </RC.ResponsiveContainer>
             </div>
-          ) : (
-            <div className="flex items-end gap-1 h-24">
-              {mermasByMonth.map((m,i)=>{
-                const max=Math.max(...mermasByMonth.map(x=>x.merma_pct),1);
-                return <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
-                  <div className="text-[7px] font-black" style={{color:m.merma_pct>5?'#ef4444':'#f97316'}}>{m.merma_pct}%</div>
-                  <div className="w-full rounded-t" style={{height:`${Math.max((m.merma_pct/max)*80,2)}%`,background:m.merma_pct>5?'#ef4444':'#f97316'}}/>
-                  <div className="text-[7px] font-bold text-gray-400">{m.periodo}</div>
-                </div>;
-              })}
-            </div>
-          )}
+            {opsEnProceso.length>0 && (
+              <>
+                <div className="bg-orange-500 text-white text-[9px] font-black grid grid-cols-4 px-3 py-1.5 uppercase rounded-t tracking-wider mt-4">
+                  <div>Planta / Fase</div><div>Estatus OP</div><div>Cliente</div><div className="text-right">Monto</div>
+                </div>
+                <div className="overflow-y-auto max-h-32 text-[10px] text-gray-600">
+                  {opsEnProceso.map((op,i)=>(
+                    <div key={i} className={`grid grid-cols-4 px-3 py-1.5 border-b border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'}`}>
+                      <div className="font-bold text-black">{op.fase}</div>
+                      <div>{op.op}</div>
+                      <div className="truncate">{op.cliente}</div>
+                      <div className="text-right font-bold text-orange-500">{op.monto}</div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
         </div>
       </div>
     );
@@ -16422,7 +16488,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     {hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
                     {hasPerm('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
                     {hasPerm('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
-                    {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
+                    {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && !hasPerm('ventas') && !hasPerm('ventas_ops') && !hasPerm('ventas_facturacion') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
                     {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
                  </div>
               </div>
@@ -16710,10 +16776,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
            {activeTab === 'simulador' && renderSimuladorModule()}
            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
            {activeTab === 'configuracion' && renderConfiguracionModule()}
-           {activeTab === 'costos' && renderReportesFinancierosModule()}
+           {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && !hasPerm('ventas') && renderReportesFinancierosModule()}
            {activeTab === 'estado_resultado' && renderEstadoResultadoModule()}
            {activeTab === 'libro_diario' && renderLibroDiarioModule()}
-           {activeTab === 'kpi' && renderKPIModule()}
+           {activeTab === 'kpi' && (hasPerm('kpi') || hasPerm('costos') || appUser?.role==='Master') && !hasPerm('ventas') && renderKPIModule()}
         </main>
 
         {dialog && (
