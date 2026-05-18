@@ -4061,47 +4061,70 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="md:col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
-                    <select value={osaItemForm.itemId} onChange={e=>setOsaItemForm(f=>({...f,itemId:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
-                      <option value="">— Seleccionar artículo —</option>
-                      <optgroup label="── Materia Prima / Consumibles ──">
-                        {(inventory||[])
-                          .filter(i=>{
-                            if(i.category==='Semielaborados') return false;
-                            if(!osaSearch) return true;
-                            const cid=(i.displayId||(i.id||'').split('___')[0]).toUpperCase();
-                            return cid.includes(osaSearch)||(i.desc||'').toUpperCase().includes(osaSearch);
-                          })
-                          .sort((a,b)=>(a.displayId||a.id||'').localeCompare(b.displayId||b.id||''))
-                          .map(i=>{
-                            const cid=i.displayId||(i.id||'').split('___')[0];
-                            const a=i.almacen?` [${i.almacen.replace('ALMACEN ','')}]`:'';
-                            return <option key={i.id} value={i.id}>{cid}{a} — {i.desc} ({formatNum(i.stock)} {i.unit})</option>;
-                          })}
-                      </optgroup>
-                      <optgroup label="── Semielaborados / Bobinas ──">
-                        {(inventory||[])
-                          .filter(i=>i.category==='Semielaborados')
-                          .sort((a,b)=>(a.id||'').localeCompare(b.id||''))
-                          .map(i=>{
-                            const a=i.almacen?` [${i.almacen.replace('ALMACEN ','')}]`:'';
-                            return <option key={i.id} value={`SEM::${i.id}`}>{i.id}{a} — {i.desc} ({formatNum(i.stock)} KG)</option>;
-                          })}
-                      </optgroup>
-                      <optgroup label="── Productos Terminados ──">
-                        {(finishedGoodsInventory||[])
-                          .sort((a,b)=>(a.producto||'').localeCompare(b.producto||''))
-                          .map(fg => {
-                            const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
-                            const stk = parseNum(esTermo?fg.kgProducidos:fg.millares);
-                            return (
-                              <option key={fg.id} value={'FG::'+fg.id}>
-                                {(fg.producto||fg.id||'').toUpperCase()}{fg.cliente?' ['+fg.cliente+']':''} — {formatNum(stk)} {esTermo?'KG':'Mill.'}
-                              </option>
-                            );
-                          })
+                    {(() => {
+                      // Group inventory items by category, deduplicate by clean code
+                      const osaInv = (inventory||[]).filter(i=>{
+                        const cid = (i.displayId||(i.id||'')).split('___')[0];
+                        if(!osaSearch) return true;
+                        return cid.toUpperCase().includes(osaSearch)||(i.desc||'').toUpperCase().includes(osaSearch);
+                      });
+                      // Deduplicate: keep highest stock per clean code+desc
+                      const dedupMap = {};
+                      osaInv.forEach(i=>{
+                        const cid = (i.displayId||(i.id||'')).split('___')[0];
+                        const key = cid + '||' + (i.desc||'');
+                        if(!dedupMap[key] || parseNum(i.stock) > parseNum(dedupMap[key].stock)) {
+                          dedupMap[key] = {...i, _cleanId: cid};
                         }
-                      </optgroup>
-                    </select></div>
+                      });
+                      const dedupItems = Object.values(dedupMap);
+                      // Group by category
+                      const CAT_ORDER = ['Materia Prima','Semielaborados','Productos Terminados','Cintas','Stretch Film','Papel Kraft','Dispensadores','Bolsas Plásticas','Termoencogibles','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                      const catGroups = {};
+                      dedupItems.forEach(i=>{
+                        const sub = getItemSubcategory(i);
+                        const cat = i.category==='Productos Terminados' && sub ? sub : (i.category||'Otros');
+                        if(!catGroups[cat]) catGroups[cat]=[];
+                        catGroups[cat].push(i);
+                      });
+                      // Also add FG from finishedGoodsInventory grouped by tipo
+                      const fgBolsas = (finishedGoodsInventory||[]).filter(fg=>fg.tipoProducto!=='TERMOENCOGIBLE' && parseNum(fg.millares)>0);
+                      const fgTermos = (finishedGoodsInventory||[]).filter(fg=>fg.tipoProducto==='TERMOENCOGIBLE' && parseNum(fg.kgProducidos)>0);
+                      const sortedCats = CAT_ORDER.filter(c=>catGroups[c]?.length>0);
+                      return (
+                        <select value={osaItemForm.itemId} onChange={e=>setOsaItemForm(f=>({...f,itemId:e.target.value}))}
+                          className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
+                          <option value="">— Seleccionar artículo —</option>
+                          {sortedCats.map(cat=>(
+                            <optgroup key={cat} label={`── ${cat.toUpperCase()} ──`}>
+                              {(catGroups[cat]||[]).sort((a,b)=>(a._cleanId||'').localeCompare(b._cleanId||'')).map(i=>(
+                                <option key={i.id} value={i.id}>
+                                  {i._cleanId} — {i.desc} ({formatNum(i.stock)} {i.unit})
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                          {fgBolsas.length>0 && (
+                            <optgroup label="── BOLSAS PLÁSTICAS (FG Producción) ──">
+                              {fgBolsas.sort((a,b)=>(a.producto||'').localeCompare(b.producto||'')).map(fg=>(
+                                <option key={fg.id} value={'FG::'+fg.id}>
+                                  {(fg.producto||fg.id||'').toUpperCase()} — {formatNum(fg.millares)} Mill.
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {fgTermos.length>0 && (
+                            <optgroup label="── TERMOENCOGIBLES (FG Producción) ──">
+                              {fgTermos.sort((a,b)=>(a.producto||'').localeCompare(b.producto||'')).map(fg=>(
+                                <option key={fg.id} value={'FG::'+fg.id}>
+                                  {(fg.producto||fg.id||'').toUpperCase()} — {formatNum(fg.kgProducidos)} KG
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                        </select>
+                      );
+                    })()}</div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
                     <input type="number" step="0.01" min="0.01" value={osaItemForm.qty} onChange={e=>setOsaItemForm(f=>({...f,qty:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0.00"/></div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Lote / Obs.</label>
@@ -6082,7 +6105,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           }
           const cleanId = getCleanId(i);
           const matchSearch = cleanId.toUpperCase().includes(searchInvUpper) || getCleanDesc(i).toUpperCase().includes(searchInvUpper);
-          const matchCat = catalogCatFilter === 'TODAS' || (i?.category||'Otros') === catalogCatFilter;
+          const matchCat = catalogCatFilter === 'TODAS'
+            ? true
+            : catalogCatFilter.startsWith('__SUB__')
+              ? getItemSubcategory(i) === catalogCatFilter.replace('__SUB__','')
+              : (i?.category||'Otros') === catalogCatFilter;
           if (!matchSearch || !matchCat) continue;
           if (!groups[cleanId]) {
             groups[cleanId] = {
@@ -6557,13 +6584,28 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                      </select>
                    </div>
                  </div>
-                 <div className="flex flex-wrap gap-2">
-                   {allCatalogCats.map(cat => (
-                     <button key={cat} onClick={()=>setCatalogCatFilter(cat)}
-                       className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all border-2 ${catalogCatFilter===cat ? 'bg-orange-500 text-white border-orange-500 shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-orange-300 hover:text-orange-600'}`}>
-                       {cat === 'TODAS' ? `Todas (${filteredInventory.length})` : `${cat} (${filteredInventory.filter(i=>(i?.category||'Otros')===cat).length})`}
+                 <div className="flex flex-wrap gap-2 items-center">
+                   <select value={catalogCatFilter} onChange={e=>setCatalogCatFilter(e.target.value)}
+                     className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-400 bg-white min-w-52">
+                     <option value="TODAS">📦 Todas las categorías ({filteredInventory.length})</option>
+                     {/* Main categories */}
+                     {allCatalogCats.filter(c=>c!=='TODAS').map(cat=>(
+                       <option key={cat} value={cat}>
+                         📂 {cat} — {filteredInventory.filter(i=>(i?.category||'Otros')===cat).length} artículos
+                       </option>
+                     ))}
+                     {/* Subcategories for Productos Terminados */}
+                     {['Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Otros Terminados'].map(sub=>{
+                       const cnt = (allCatalogItems||[]).filter(i=>getItemSubcategory(i)===sub).length;
+                       return cnt>0 ? <option key={sub} value={'__SUB__'+sub}>  ↳ {sub} — {cnt} artículos</option> : null;
+                     })}
+                   </select>
+                   {catalogCatFilter !== 'TODAS' && (
+                     <button onClick={()=>setCatalogCatFilter('TODAS')}
+                       className="px-3 py-2 rounded-xl text-[9px] font-black uppercase border-2 border-gray-200 text-gray-500 hover:border-orange-300 hover:text-orange-600 transition-all">
+                       ✕ Limpiar
                      </button>
-                   ))}
+                   )}
                  </div>
                </div>
                {selectedInvItems.size > 0 && (
