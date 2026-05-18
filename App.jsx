@@ -457,7 +457,7 @@ export default function App() {
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
-  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '' };
+  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', nroFiscal: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
   // Formularios Producción
@@ -479,7 +479,7 @@ export default function App() {
   const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
 
   // Formularios Inventario
-  const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', unit: 'kg', cost: '', stock: '', almacen: 'ALMACEN ZI', stockPerAlmacen: {} };
+  const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', subcategory: '', unit: 'kg', cost: '', stock: '', almacen: 'ALMACEN ZI', stockPerAlmacen: {} };
   const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
   const [editingInvId, setEditingInvId] = useState(null);
   const [showInvItemForm, setShowInvItemForm] = useState(false); // collapsible form
@@ -2228,7 +2228,7 @@ export default function App() {
       };
     });
     try { 
-      await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: editingInvoiceId ? (newInvoiceForm.timestamp || Date.now()) : Date.now(), user: appUser?.name, itemsFacturados: itemsFacturadosSave, fgId: fgItems[0]?.fgId||newInvoiceForm.fgId||'', fgCantidad: fgItems[0]?.cantidad||0 }); 
+      await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, nroFiscal: newInvoiceForm.nroFiscal||'', montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: editingInvoiceId ? (newInvoiceForm.timestamp || Date.now()) : Date.now(), user: appUser?.name, itemsFacturados: itemsFacturadosSave, fgId: fgItems[0]?.fgId||newInvoiceForm.fgId||'', fgCantidad: fgItems[0]?.cantidad||0 }); 
 
       // ── Construir lista de items a descontar del inventario ──
       // Se ejecuta SIEMPRE (creación Y edición) para garantizar el descuento
@@ -2386,7 +2386,7 @@ export default function App() {
   };
   const startEditInvoice = (inv) => {
     setEditingInvoiceId(inv.id);
-    setNewInvoiceForm({ fecha: inv.fecha || getTodayDate(), clientRif: inv.clientRif || '', clientName: inv.clientName || '', documento: inv.documento || '', productoMaquilado: inv.productoMaquilado || '', vendedor: inv.vendedor || '', montoBase: String(inv.montoBase || ''), iva: String(inv.iva || ''), total: String(inv.total || ''), aplicaIva: inv.aplicaIva || 'SI', opAsignada: inv.opAsignada || '', opData: inv.opData || null, fgId: '', timestamp: inv.timestamp });
+    setNewInvoiceForm({ fecha: inv.fecha || getTodayDate(), clientRif: inv.clientRif || '', clientName: inv.clientName || '', documento: inv.documento || '', nroFiscal: inv.nroFiscal || '', productoMaquilado: inv.productoMaquilado || '', vendedor: inv.vendedor || '', montoBase: String(inv.montoBase || ''), iva: String(inv.iva || ''), total: String(inv.total || ''), aplicaIva: inv.aplicaIva || 'SI', opAsignada: inv.opAsignada || '', opData: inv.opData || null, fgId: '', timestamp: inv.timestamp });
     
     // Restore fgItems from saved invoice data
     const restoredItems = [];
@@ -6276,7 +6276,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    </div>
                    <div>
                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
-                     <select value={newInvItemForm.category} onChange={e=>setNewInvItemForm({...newInvItemForm, category: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
+                     <select value={newInvItemForm.category} onChange={e=>setNewInvItemForm({...newInvItemForm, category: e.target.value, subcategory: ''})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
                         <option value="Materia Prima">Materia Prima</option>
                         <option value="Semielaborados">Semielaborados / Bobinas</option>
                         <option value="Pigmentos">Pigmentos</option>
@@ -6289,6 +6289,24 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         <option value="Otros">Otros</option>
                      </select>
                    </div>
+                   {/* Subcategoría — solo visible para Productos Terminados */}
+                   {newInvItemForm.category === 'Productos Terminados' && (
+                   <div>
+                     <label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Línea / Subcategoría</label>
+                     <select value={newInvItemForm.subcategory||''} onChange={e=>setNewInvItemForm({...newInvItemForm, subcategory: e.target.value})}
+                       className="w-full border-2 border-orange-300 bg-orange-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
+                       <option value="">— Seleccione línea —</option>
+                       <option value="Stretch Film">Stretch Film</option>
+                       <option value="Cintas">Cintas</option>
+                       <option value="Papel Kraft">Papel Kraft</option>
+                       <option value="Dispensadores">Dispensadores</option>
+                       <option value="Bolsas Plásticas">Bolsas Plásticas</option>
+                       <option value="Empaques Flexibles">Empaques Flexibles</option>
+                       <option value="Termoencogibles">Termoencogibles</option>
+                       <option value="Otros Terminados">Otros Terminados</option>
+                     </select>
+                   </div>
+                   )}
                    <div className="grid grid-cols-2 gap-2">
                      <div>
                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Costo Promedio ($)</label>
@@ -7849,6 +7867,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           <input type="date" value={newInvoiceForm.fecha} onChange={e=>setNewInvoiceForm({...newInvoiceForm, fecha: e.target.value})} className="border-2 border-orange-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-orange-50" />
                         </div>
                         <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest shadow-sm">FACTURA NRO: {newInvoiceForm.documento || generateInvoiceId()}</span>
+                        {/* NRO FISCAL MANUAL */}
+                        <div className="flex items-center gap-2">
+                          <label className="text-[9px] font-black text-gray-500 uppercase whitespace-nowrap">Nro. Fiscal:</label>
+                          <input
+                            type="text"
+                            value={newInvoiceForm.nroFiscal||''}
+                            onChange={e=>setNewInvoiceForm({...newInvoiceForm, nroFiscal: e.target.value.toUpperCase()})}
+                            placeholder="00001234"
+                            className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-400 w-32 text-center"
+                          />
+                        </div>
                         <button type="button" onClick={()=>{setShowNewInvoicePanel(false);setEditingInvoiceId(null);setNewInvoiceForm(initialInvoiceForm);}} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
                       </div>
                     </div>
@@ -14922,10 +14951,21 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       kg: (requirements||[]).filter(r=>(r.fechaFinalizacion||r.createdAt||'').startsWith(m.ym)&&r.status==='COMPLETADO').reduce((s,r)=>s+parseNum(r.kgProducidos||r.kgTotal||0),0),
     }));
 
-    // Top clientes (real data)
+    // Top clientes — cross-reference with clients collection for real names
     const clienteMap = {};
+    // Build clientId → name map from clients collection
+    const clientsById = {};
+    const clientsByRif = {};
+    (clients||[]).forEach(c => {
+      if(c.id) clientsById[c.id] = c.name || c.razon_social || c.nombre || c.id;
+      if(c.rif) clientsByRif[c.rif] = c.name || c.razon_social || c.nombre || c.rif;
+    });
     (invoices||[]).filter(inv=>months.some(m=>(inv.fecha||'').startsWith(m.ym))).forEach(inv=>{
-      const k=inv.client||inv.cliente||'Sin nombre';
+      // Use clientName if stored, else cross-reference by RIF or clientId
+      const rawName = inv.client||inv.cliente||'';
+      const byRif = inv.clientRif ? clientsByRif[inv.clientRif] : null;
+      const byId  = inv.clientId  ? clientsById[inv.clientId]   : null;
+      const k = byRif || byId || rawName || 'Sin nombre';
       if(!clienteMap[k]) clienteMap[k]={name:k,value:0};
       clienteMap[k].value+=parseNum(inv.totalUSD||inv.total||0);
     });
@@ -14963,8 +15003,26 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       return { op: r.id, cliente: r.client||r.cliente||'—', fase: cur.charAt(0).toUpperCase()+cur.slice(1), monto: `$${formatNum((r.costoTotal||r.totalCost||0))}` };
     });
 
-    // KPIs globales
-    const totalIngresos = (invoices||[]).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0);
+    // Month-over-month comparison for trend arrow
+    const currentMonthYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    const prevDate = new Date(now.getFullYear(), now.getMonth()-1, 1);
+    const prevMonthYM = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
+    const ventasMesActual   = (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(currentMonthYM)).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0);
+    const ventasMesAnterior = (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(prevMonthYM)).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0);
+    const huboCrecimiento   = ventasMesActual >= ventasMesAnterior;
+    const variacionPct      = ventasMesAnterior > 0 ? ((ventasMesActual - ventasMesAnterior)/ventasMesAnterior*100).toFixed(1) : null;
+
+    const TrendArrow = ({up, pct}) => (
+      <span className={`flex items-center gap-1 text-[10px] font-black ${up?'text-green-600':'text-red-500'}`}>
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          {up
+            ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 10l7-7m0 0l7 7m-7-7v18"/>
+            : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
+          }
+        </svg>
+        {pct !== null ? `${Math.abs(pct)}%` : (up ? 'Alza' : 'Baja')}
+      </span>
+    );
     const totalCostos = (opCosts||[]).reduce((s,c)=>s+parseNum(c.amount||c.monto||0),0);
     const margen = totalIngresos - totalCostos;
     const opsCompletadas = (requirements||[]).filter(r=>r.status==='COMPLETADO').length;
@@ -15057,12 +15115,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           {/* FINANCIAL KPIs */}
           <div className="col-span-12 xl:col-span-3 flex flex-col gap-2">
             {[
-              {val:`$${formatNum(totalIngresos)}`,label:'Total Ingresos',border:'border-orange-500'},
+              {val:`$${formatNum(totalIngresos)}`,label:'Total Ingresos',border:'border-orange-500',extra:<TrendArrow up={huboCrecimiento} pct={variacionPct}/>},
               {val:`$${formatNum(totalCostos)}`,label:'Costos Operativos',border:'border-black'},
               {val:`$${formatNum(margen)}`,label:'Margen Neto',border:`border-${margen>=0?'gray':'red'}-400`},
             ].map((k,i)=>(
               <div key={i} className={`bg-white border-l-8 ${k.border} p-3 shadow-sm flex-1 flex flex-col justify-center`}>
-                <h3 className="text-xl font-black text-black">{k.val}</h3>
+                <div className="flex items-center gap-2 justify-between"><h3 className="text-xl font-black text-black">{k.val}</h3>{k.extra}</div>
                 <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">{k.label}</p>
               </div>
             ))}
