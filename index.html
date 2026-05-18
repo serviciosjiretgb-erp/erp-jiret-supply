@@ -13,24 +13,20 @@
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="manifest" href="/manifest.json" />
     <title>G&amp;B Supply — ERP</title>
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config = { theme: { extend: {} } }</script>
+    <!-- Recharts CDN (for KPI Dashboard) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
     <script>
-      tailwind.config = {
-        theme: {
-          extend: {}
-        }
-      }
+      // Expose Recharts globally once loaded
+      window.addEventListener('load', () => {
+        if (window.Recharts) console.log('[G&B ERP] Recharts loaded OK');
+      });
     </script>
-    <style type="text/tailwindcss">
-      @layer utilities {
-        .scrollbar-none { scrollbar-width: none; }
-        .scrollbar-none::-webkit-scrollbar { display: none; }
-      }
-    </style>
     <style>
       html, body { overscroll-behavior: none; -webkit-overflow-scrolling: touch; }
       body { padding-bottom: env(safe-area-inset-bottom); }
-      @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     </style>
   </head>
   <body>
