@@ -14838,12 +14838,35 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
     const COLORS = ['#f97316','#6366f1','#10b981','#3b82f6','#f59e0b','#ec4899','#8b5cf6','#06b6d4'];
 
-    const { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } = window.Recharts || {};
+    // Safe chart renderer — falls back to simple bar/line if Recharts not loaded
+    const RC = window.Recharts || null;
 
     const totalVentas = ventasByMonth.reduce((s,m)=>s+m.ingresos, 0);
     const totalOPs = (requirements||[]).filter(r=>r.status==='COMPLETADO').length;
     const totalClientes = new Set((invoices||[]).map(i=>i.client||i.cliente||'')).size;
     const mermaPromedio = mermasByMonth.reduce((s,m)=>s+parseNum(m.merma_pct),0) / (kpiPeriod||1);
+
+    // Simple bar chart fallback using div bars
+    const SimpleBarChart = ({data, valueKey, colorFn, height=160}) => {
+      const max = Math.max(...data.map(d=>parseNum(d[valueKey])||0), 1);
+      return (
+        <div className="flex items-end gap-1" style={{height}}>
+          {data.map((d,i)=>{
+            const pct = ((parseNum(d[valueKey])||0)/max)*100;
+            const color = colorFn ? colorFn(d,i) : COLORS[i%COLORS.length];
+            return (
+              <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                <div className="text-[7px] font-black text-gray-500 truncate w-full text-center">
+                  {valueKey==='ingresos'?`$${formatNum(d[valueKey])}`:d[valueKey]||'0'}
+                </div>
+                <div className="w-full rounded-t-sm transition-all" style={{height:`${Math.max(pct,2)}%`, background:color}}/>
+                <div className="text-[7px] font-bold text-gray-400 truncate w-full text-center">{d.mes||d.name||''}</div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    };
 
     return (
       <div className="space-y-6 animate-in fade-in">
@@ -14881,45 +14904,57 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         {/* Ventas por mes */}
         <div className="bg-white rounded-2xl border border-gray-200 p-5">
           <h3 className="text-sm font-black uppercase text-gray-800 mb-4 flex items-center gap-2"><Receipt size={16} className="text-green-500"/> Ingresos por Mes (USD)</h3>
-          <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={ventasByMonth}>
-              <defs><linearGradient id="colorVentas" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.3}/><stop offset="95%" stopColor="#f97316" stopOpacity={0}/></linearGradient></defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
-              <XAxis dataKey="mes" tick={{fontSize:10, fontWeight:'bold'}}/>
-              <YAxis tick={{fontSize:10}} tickFormatter={v=>`$${formatNum(v)}`}/>
-              <Tooltip formatter={(v)=>[`$${formatNum(v)}`,'Ingresos']}/>
-              <Area type="monotone" dataKey="ingresos" stroke="#f97316" fill="url(#colorVentas)" strokeWidth={2.5} dot={{fill:'#f97316',r:3}}/>
-            </AreaChart>
-          </ResponsiveContainer>
+          {RC ? (
+            <RC.ResponsiveContainer width="100%" height={220}>
+              <RC.AreaChart data={ventasByMonth}>
+                <defs><linearGradient id="colorVentas" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.3}/><stop offset="95%" stopColor="#f97316" stopOpacity={0}/></linearGradient></defs>
+                <RC.CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
+                <RC.XAxis dataKey="mes" tick={{fontSize:10}}/>
+                <RC.YAxis tick={{fontSize:10}} tickFormatter={v=>`$${formatNum(v)}`}/>
+                <RC.Tooltip formatter={(v)=>[`$${formatNum(v)}`,'Ingresos']}/>
+                <RC.Area type="monotone" dataKey="ingresos" stroke="#f97316" fill="url(#colorVentas)" strokeWidth={2.5}/>
+              </RC.AreaChart>
+            </RC.ResponsiveContainer>
+          ) : (
+            <SimpleBarChart data={ventasByMonth} valueKey="ingresos" colorFn={()=>'#f97316'} height={180}/>
+          )}
         </div>
 
         {/* Producción y Mermas */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-white rounded-2xl border border-gray-200 p-5">
             <h3 className="text-sm font-black uppercase text-gray-800 mb-4 flex items-center gap-2"><Factory size={16} className="text-blue-500"/> OPs por Mes</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={prodByMonth}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
-                <XAxis dataKey="mes" tick={{fontSize:10}}/>
-                <YAxis tick={{fontSize:10}}/>
-                <Tooltip/>
-                <Bar dataKey="ops" fill="#6366f1" radius={[4,4,0,0]} name="OPs completadas"/>
-              </BarChart>
-            </ResponsiveContainer>
+            {RC ? (
+              <RC.ResponsiveContainer width="100%" height={200}>
+                <RC.BarChart data={prodByMonth}>
+                  <RC.CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
+                  <RC.XAxis dataKey="mes" tick={{fontSize:10}}/>
+                  <RC.YAxis tick={{fontSize:10}}/>
+                  <RC.Tooltip/>
+                  <RC.Bar dataKey="ops" fill="#6366f1" radius={[4,4,0,0]}/>
+                </RC.BarChart>
+              </RC.ResponsiveContainer>
+            ) : (
+              <SimpleBarChart data={prodByMonth} valueKey="ops" colorFn={()=>'#6366f1'} height={160}/>
+            )}
           </div>
           <div className="bg-white rounded-2xl border border-gray-200 p-5">
             <h3 className="text-sm font-black uppercase text-gray-800 mb-4 flex items-center gap-2"><Thermometer size={16} className="text-red-500"/> Merma (%) por Mes</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={mermasByMonth}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
-                <XAxis dataKey="mes" tick={{fontSize:10}}/>
-                <YAxis tick={{fontSize:10}} tickFormatter={v=>`${v}%`}/>
-                <Tooltip formatter={(v)=>[`${v}%`,'Merma']}/>
-                <Bar dataKey="merma_pct" name="% Merma" radius={[4,4,0,0]}>
-                  {mermasByMonth.map((_,i)=><Cell key={i} fill={parseNum(mermasByMonth[i]?.merma_pct)>5?'#ef4444':'#f97316'}/>)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            {RC ? (
+              <RC.ResponsiveContainer width="100%" height={200}>
+                <RC.BarChart data={mermasByMonth}>
+                  <RC.CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
+                  <RC.XAxis dataKey="mes" tick={{fontSize:10}}/>
+                  <RC.YAxis tick={{fontSize:10}} tickFormatter={v=>`${v}%`}/>
+                  <RC.Tooltip formatter={(v)=>[`${v}%`,'Merma']}/>
+                  <RC.Bar dataKey="merma_pct" radius={[4,4,0,0]}>
+                    {mermasByMonth.map((_,i)=><RC.Cell key={i} fill={parseNum(mermasByMonth[i]?.merma_pct)>5?'#ef4444':'#f97316'}/>)}
+                  </RC.Bar>
+                </RC.BarChart>
+              </RC.ResponsiveContainer>
+            ) : (
+              <SimpleBarChart data={mermasByMonth} valueKey="merma_pct" colorFn={(d)=>parseNum(d.merma_pct)>5?'#ef4444':'#f97316'} height={160}/>
+            )}
           </div>
         </div>
 
@@ -14927,17 +14962,35 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         <div className="bg-white rounded-2xl border border-gray-200 p-5">
           <h3 className="text-sm font-black uppercase text-gray-800 mb-4 flex items-center gap-2"><Box size={16} className="text-orange-500"/> Top Productos Vendidos</h3>
           {topProductos.length > 0 ? (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={topProductos} layout="vertical" margin={{left:10}}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
-                <XAxis type="number" tick={{fontSize:10}} tickFormatter={v=>`$${formatNum(v)}`}/>
-                <YAxis type="category" dataKey="name" tick={{fontSize:9, fontWeight:'bold'}} width={120}/>
-                <Tooltip formatter={(v)=>[`$${formatNum(v)}`,'Total USD']}/>
-                <Bar dataKey="total" name="Total USD" radius={[0,4,4,0]}>
-                  {topProductos.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            {RC ? (
+              <RC.ResponsiveContainer width="100%" height={220}>
+                <RC.BarChart data={topProductos} layout="vertical" margin={{left:10}}>
+                  <RC.CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
+                  <RC.XAxis type="number" tick={{fontSize:10}} tickFormatter={v=>`$${formatNum(v)}`}/>
+                  <RC.YAxis type="category" dataKey="name" tick={{fontSize:9}} width={130}/>
+                  <RC.Tooltip formatter={(v)=>[`$${formatNum(v)}`,'Total USD']}/>
+                  <RC.Bar dataKey="total" radius={[0,4,4,0]}>
+                    {topProductos.map((_,i)=><RC.Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                  </RC.Bar>
+                </RC.BarChart>
+              </RC.ResponsiveContainer>
+            ) : (
+              <div className="space-y-2">
+                {topProductos.map((p,i)=>{
+                  const maxVal = topProductos[0]?.total||1;
+                  return (
+                    <div key={i} className="flex items-center gap-2">
+                      <div className="text-[9px] font-black w-4 text-gray-400">{i+1}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[10px] font-black truncate">{p.name}</div>
+                        <div className="h-2 rounded-full mt-0.5" style={{width:`${(p.total/maxVal)*100}%`,background:COLORS[i%COLORS.length]}}/>
+                      </div>
+                      <div className="text-[10px] font-black text-gray-700">${formatNum(p.total)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           ) : <div className="text-center py-8 text-gray-400 text-xs font-bold uppercase">Sin datos de ventas en el período</div>}
         </div>
 
@@ -14964,14 +15017,26 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           <div className="bg-white rounded-2xl border border-gray-200 p-5">
             <h3 className="text-sm font-black uppercase text-gray-800 mb-3 flex items-center gap-2"><Package size={16} className="text-indigo-500"/> Stock MP por Categoría</h3>
             {mpCatData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie data={mpCatData} dataKey="valor" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={9}>
-                    {mpCatData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
-                  </Pie>
-                  <Tooltip formatter={(v)=>[`$${formatNum(v)}`,'Valor stock']}/>
-                </PieChart>
-              </ResponsiveContainer>
+              RC ? (
+                <RC.ResponsiveContainer width="100%" height={200}>
+                  <RC.PieChart>
+                    <RC.Pie data={mpCatData} dataKey="valor" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({name,percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={8}>
+                      {mpCatData.map((_,i)=><RC.Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                    </RC.Pie>
+                    <RC.Tooltip formatter={(v)=>[`$${formatNum(v)}`,'Valor stock']}/>
+                  </RC.PieChart>
+                </RC.ResponsiveContainer>
+              ) : (
+                <div className="space-y-2">
+                  {mpCatData.slice(0,6).map((c,i)=>(
+                    <div key={i} className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full flex-shrink-0" style={{background:COLORS[i%COLORS.length]}}/>
+                      <div className="flex-1 text-[10px] font-bold truncate">{c.name}</div>
+                      <div className="text-[10px] font-black">${formatNum(c.valor)}</div>
+                    </div>
+                  ))}
+                </div>
+              )
             ) : <div className="text-center py-8 text-gray-400 text-xs font-bold uppercase">Sin inventario</div>}
           </div>
         </div>
