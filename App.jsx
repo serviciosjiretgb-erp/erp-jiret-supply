@@ -12719,13 +12719,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       { id: 'estado_financiero', icon: <TrendingUp size={26}/>, label: 'Estado Financiero', desc: 'Estado de resultado integral', color: 'gray', perm: 'costos_reportes' },
       { id: 'variaciones', icon: <TrendingDown size={26}/>, label: 'Variaciones', desc: 'Mes actual vs anterior', color: 'red', perm: 'costos_reportes' },
     ];
-    // Show all cards for costos/Master; only permitted cards for ventas-only
-    const isVentasOnly = (hasPerm('ventas') || hasPerm('ventas_ops') || hasPerm('ventas_facturacion'))
-      && !hasPerm('costos') && !hasPerm('costos_reportes') && !hasPerm('costos_operativos')
-      && appUser?.role !== 'Master';
-    const REPORT_CARDS = isVentasOnly
-      ? ALL_REPORT_CARDS.filter(c => c.perm === null) // only Finiquito (perm=null)
-      : ALL_REPORT_CARDS.filter(c => !c.perm || hasPerm(c.perm) || hasPerm('costos') || appUser?.role==='Master');
+    // Show only report cards the user has permission for
+    const REPORT_CARDS = ALL_REPORT_CARDS.filter(c =>
+      !c.perm || hasPerm(c.perm) || hasPerm('costos') || appUser?.role === 'Master'
+    );
 
     return (
       <div className="space-y-6 animate-in fade-in">
@@ -14891,9 +14888,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       );
     };
 
-    if (!RC) return (
-      <div className="p-8 text-center"><div className="animate-spin w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-3"/><p className="text-gray-500 font-bold text-sm uppercase">Cargando dashboard...</p></div>
-    );
+    // RC may be null if Recharts CDN not loaded yet — charts fall back to simple bars
+    // Do NOT block entire module render for RC
 
     return (
       <div className="min-h-screen bg-gray-100 p-2 sm:p-4 font-sans text-gray-800 animate-in fade-in">
@@ -16142,9 +16138,25 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           }).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
           return (
             <div className="rounded-3xl shadow-sm border-2 border-gray-200 bg-white p-8">
-              <div className="flex justify-between items-center border-b pb-4 mb-5">
+              <div className="flex flex-wrap justify-between items-center border-b pb-4 mb-5 gap-3">
                 <h2 className="text-xl font-black uppercase flex items-center gap-3 text-black"><Eye className="text-orange-500" size={22}/> Registro de Actividad de Usuarios</h2>
-                <button onClick={()=>handleExportPDF('Actividad_Usuarios',true)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={13}/> PDF</button>
+                <div className="flex gap-2 flex-wrap">
+                  <button onClick={()=>handleExportPDF('Actividad_Usuarios',true)} className="bg-black text-white px-4 py-2 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={13}/> PDF</button>
+                  <button onClick={()=>setDialog({title:'🗑 Limpiar Registros',text:'¿Eliminar los registros de actividad filtrados actualmente? Si no hay filtro de fecha se borran TODOS. Esta acción es irreversible.',type:'confirm',onConfirm:async()=>{
+                    try {
+                      const toDelete = (userActivityLog||[]).filter(a=>{
+                        const _df=activityDateFrom||''; const _dt=activityDateTo||'';
+                        if(_df && a.date < _df) return false;
+                        if(_dt && a.date > _dt) return false;
+                        return true;
+                      });
+                      const b = writeBatch(db);
+                      toDelete.forEach(a=>b.delete(getDocRef('userActivity',a.id)));
+                      await b.commit();
+                      setDialog({title:'✅ Limpiado',text:`${toDelete.length} registros eliminados.`,type:'alert'});
+                    } catch(err){setDialog({title:'Error',text:err.message,type:'alert'});}
+                  }})} className="bg-red-100 text-red-700 px-4 py-2 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-red-200"><Trash2 size={13}/> Limpiar {activityDateFrom||activityDateTo?'filtrado':'todo'}</button>
+                </div>
               </div>
               {/* Filters */}
               <div className="flex flex-wrap gap-3 mb-4">
