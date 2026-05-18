@@ -154,6 +154,18 @@ const formatFGLabel = (item) => {
 
   return `${cat} - ${dims}`;
 };
+const detectSubcategory = (code, desc) => {
+  const c = ((code||'')+(desc||'')).toUpperCase();
+  if (/STRECTH|STRECH|STRETCH|STREFIL|ENTREFIL|SFM-|SFA-|OSFA|SFJUMBO|PSFM|STRETCH FILM/.test(c)) return 'Stretch Film';
+  if (/CINTA|CINTA DE EMBALAR/.test(c)) return 'Cintas';
+  if (/PAPEL KRAFT|KRAFT/.test(c)) return 'Papel Kraft';
+  if (/DISPEN|DISPENSADOR/.test(c)) return 'Dispensadores';
+  if (/BOL-|BOLSA|EMBUTID|EMPAQUE|LAMINA/.test(c)) return 'Bolsas Plasticas';
+  if (/TERMO|THERMO|SHRINK|ENCOG/.test(c)) return 'Termoencogibles';
+  return '';
+};
+const getItemSubcategory = (item) => (item && (item.subcategory || detectSubcategory(item.id || item.displayId || '', item.desc || ''))) || '';
+
 const parseNum = (val) => {
   if (!val) return 0;
   if (typeof val === 'number') return val;
@@ -302,7 +314,7 @@ export default function App() {
   const [appUser, setAppUser] = useState(null); 
   const [systemUsers, setSystemUsers] = useState([]); 
   const [settings, setSettings] = useState({}); 
-  const [depositos, setDepositos] = useState(['ALMACEN PRINCIPAL','PLANTA','DEPOSITO 2','ALMACEN EXTERNO']); // dinámico desde Firebase
+  const [depositos, setDepositos] = useState(['ALMACEN ZI', 'ALMACEN BQTO', 'ALMACEN C2', 'ALMACEN MCY']); // activos
   const [showDepositoModal, setShowDepositoModal] = useState(false);
   const [depositoForm, setDepositoForm] = useState({ nombre: '', editId: null });
   
@@ -4224,7 +4236,11 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
         const cleanId = i.displayId || (i.id||'').split('___')[0];
         const alm = i.almacen || 'ALMACEN ZI';
         const matchAlm = almacenesFilter.almacen === 'TODOS' || alm === almacenesFilter.almacen;
-        const matchCat = almacenesFilter.cat === 'TODAS' || i.category === almacenesFilter.cat;
+        const matchCat = almacenesFilter.cat === 'TODAS' 
+        ? true
+        : almacenesFilter.cat.startsWith('__SUB__')
+          ? getItemSubcategory(i) === almacenesFilter.cat.replace('__SUB__','')
+          : i.category === almacenesFilter.cat;
         const matchSearch = !filtSearch || cleanId.toUpperCase().includes(filtSearch) || (i.desc||'').toUpperCase().includes(filtSearch);
         if (!matchAlm || !matchCat || !matchSearch) continue;
         // Clave SIEMPRE por cleanId + almacen → cada producto-almacén es fila independiente
@@ -4351,10 +4367,15 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               </div>
               <select value={almacenesFilter.almacen} onChange={e=>setAlmacenesFilter(f=>({...f,almacen:e.target.value}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-white">
                 <option value="TODOS">📦 Todos los almacenes</option>
-                {depositos.map(d=><option key={d} value={d}>🏭 {d}</option>)}
+                {depositos.filter(d=>!['PLANTA','ALMACEN EXTERNO','DEPOSITO 2'].includes(d)).map(d=><option key={d} value={d}>🏭 {d}</option>)}
               </select>
               <select value={almacenesFilter.cat} onChange={e=>setAlmacenesFilter(f=>({...f,cat:e.target.value}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-white">
-                {allCats.map(c=><option key={c} value={c}>{c}</option>)}
+                {allCats.map(c=><option key={c} value={c}>{c === 'TODAS' ? `Todas (${(inventory||[]).length})` : `${c} (${(inventory||[]).filter(i=>i.category===c).length})`}</option>)}
+                <optgroup label="── Subcategorías ──">
+                  {['Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles'].map(sub=>(
+                    <option key={sub} value={'__SUB__'+sub}>↳ {sub} ({(inventory||[]).filter(i=>getItemSubcategory(i)===sub).length})</option>
+                  ))}
+                </optgroup>
               </select>
               <span className="text-[10px] font-black text-gray-500 uppercase ml-auto">
                 {filtItems.length} artículo(s) — Stock total: {formatNum(filtItems.reduce((s,i)=>s+parseNum(i.stock||0),0))} — Valor: ${formatNum(filtItems.reduce((s,i)=>s+parseNum(i.stock||0)*parseNum(i.cost||0),0))}
@@ -4397,7 +4418,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 <td className="py-2 px-4 font-black text-orange-600 text-[10px]">{i.id}</td>
                                 <td className="py-2 px-4 font-bold text-[10px] uppercase">{i.desc}</td>
                                 <td className="py-2 px-4 text-center text-[9px]"><span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-black">{(i.category||'').substring(0,8)}</span></td>
-                                <td className="py-2 px-4 text-center text-[9px]">{i.subcategory ? <span className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-black">{i.subcategory}</span> : <span className="text-gray-300">—</span>}</td>
+                                <td className="py-2 px-4 text-center text-[9px]">{getItemSubcategory(i) ? <span className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-black text-[8px]">{getItemSubcategory(i)}</span> : <span className="text-gray-300">—</span>}</td>
                                 <td className="py-2 px-4 text-center font-bold text-gray-500 text-[9px]">{i.unit||'—'}</td>
                                 <td className="py-2 px-4 text-right font-black text-blue-700">{formatNum(i.stock)}</td>
                                 <td className="py-2 px-4 text-right font-bold text-gray-500">${formatNum(i.cost||0)}</td>
