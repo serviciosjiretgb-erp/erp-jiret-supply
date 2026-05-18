@@ -15045,6 +15045,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
   };
 
   const renderConfiguracionModule = () => {
+    try {
     if (!settings || !systemUsers) {
       return (
         <div className="flex flex-col items-center justify-center py-20 text-gray-500">
@@ -16140,8 +16141,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
       </div>
     );
+    } catch(err) {
+      console.error("Configuracion error:", err.message, err.stack);
+      return (<div className="max-w-2xl mx-auto mt-12 bg-red-50 border-2 border-red-300 rounded-3xl p-8 text-center"><div className="text-red-500 font-black text-lg uppercase mb-2">Error en Configuración</div><div className="text-red-700 text-xs font-bold bg-red-100 rounded-xl p-3 font-mono">{err.message}</div><button onClick={()=>window.location.reload()} className="mt-4 bg-black text-white px-6 py-2.5 rounded-xl font-black text-xs uppercase">Recargar</button></div>);
+    }
   };
-
   if (!appUser) {
     return (
       <div className="min-h-screen flex" style={{background:'#111'}}>
