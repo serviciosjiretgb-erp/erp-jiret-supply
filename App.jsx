@@ -3958,7 +3958,7 @@ export default function App() {
         const w = window.open('','_blank');
         const rows = items.map((it,i)=>`<tr>
           <td style="padding:6px 8px;border:1px solid #000;text-align:center">${i+1}</td>
-          <td style="padding:6px 8px;border:1px solid #000;text-align:center">${it.itemId}</td>
+          <td style="padding:6px 8px;border:1px solid #000;text-align:center;font-weight:700">${(it.itemId||'').split('___')[0].split('__')[0]}</td>
           <td style="padding:6px 8px;border:1px solid #000">${it.desc}</td>
           <td style="padding:6px 8px;border:1px solid #000;text-align:center;font-weight:900">${formatNum(it.qty)}</td>
           <td style="padding:6px 8px;border:1px solid #000;text-align:center">${it.unit||'UND'}</td>
@@ -4176,7 +4176,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                       {osaItemList.map((it,i)=>(
                         <tr key={i} className="hover:bg-orange-50">
                           <td className="py-2.5 px-3 border-r text-center font-black text-gray-400">{i+1}</td>
-                          <td className="py-2.5 px-3 border-r text-center font-black text-orange-600">{it.itemId}</td>
+                          <td className="py-2.5 px-3 border-r text-center font-black text-orange-600">{(it.itemId||'').split('___')[0]}</td>
                           <td className="py-2.5 px-3 border-r font-bold uppercase text-gray-800">{it.desc}</td>
                           <td className="py-2.5 px-3 border-r text-center font-black">{formatNum(it.qty)}</td>
                           <td className="py-2.5 px-3 border-r text-center font-bold text-gray-500">{it.unit}</td>
@@ -5113,9 +5113,24 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             if(!fgGrps[gk]) fgGrps[gk]={key:gk, desc:formatFGLabel(fg)||fg.producto, esTermo:fg.tipoProducto==='TERMOENCOGIBLE', stk:0};
                             fgGrps[gk].stk += fg.tipoProducto==='TERMOENCOGIBLE'?parseNum(fg.kgProducidos):parseNum(fg.millares);
                           });
-                          return Object.values(fgGrps).map(g=>(
-                            <option key={g.key} value={g.key}>{g.desc} — Stock: {formatNum(g.stk)} {g.esTermo?'KG':'Millares'}</option>
-                          ));
+                          // Group by tipo
+                          const byTipo = {TERMOENCOGIBLE:[], BOLSAS:[]};
+                          Object.values(fgGrps).forEach(g=>{
+                            if(g.esTermo) byTipo.TERMOENCOGIBLE.push(g);
+                            else byTipo.BOLSAS.push(g);
+                          });
+                          return (<>
+                            {byTipo.BOLSAS.length>0 && <optgroup label="── BOLSAS PLÁSTICAS (Millares) ──">
+                              {byTipo.BOLSAS.sort((a,b)=>(a.desc||'').localeCompare(b.desc||'')).map(g=>(
+                                <option key={g.key} value={g.key}>{g.desc} — {formatNum(g.stk)} Mill.</option>
+                              ))}
+                            </optgroup>}
+                            {byTipo.TERMOENCOGIBLE.length>0 && <optgroup label="── TERMOENCOGIBLES (KG) ──">
+                              {byTipo.TERMOENCOGIBLE.sort((a,b)=>(a.desc||'').localeCompare(b.desc||'')).map(g=>(
+                                <option key={g.key} value={g.key}>{g.desc} — {formatNum(g.stk)} KG</option>
+                              ))}
+                            </optgroup>}
+                          </>);
                         })()}
                       </select>
                       {cargarForm._fgSelectKey && <div className="mt-1.5 bg-blue-50 rounded-lg px-3 py-1.5 text-[9px] font-bold text-blue-700">Stock actual: {formatNum(cargarForm._fgExistStock)} {cargarForm._fgEsTermo?'KG':'Millares'} | Costo promedio actual: ${formatNum(cargarForm._fgExistCost)}</div>}
@@ -8042,22 +8057,38 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                   <select value={selGrpKey||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm, fgId: e.target.value, fgCantidad: ''})}
                                     className="w-full bg-white border-2 border-green-300 rounded-xl p-2.5 font-black text-xs outline-none focus:border-green-500 text-black">
                                     <option value="">— Seleccione producto terminado —</option>
-                                    <optgroup label="── Producción (FG) ──">
-                                      {grpList.filter(g=>!g._isInvPT).map(g => {
-                                      const unit = g.esTermo ? 'KG' : 'Mill.';
-                                      return (
-                                        <option key={g.key} value={g.key}>
-                                          {formatFGLabel(g)} | {formatNum(g.totalStock)} {unit}
-                                        </option>
-                                      );
+                                    {/* Producción — Bolsas */}
+                                    {grpList.filter(g=>!g._isInvPT && !g.esTermo).length>0 && (
+                                      <optgroup label="── BOLSAS PLÁSTICAS — Producción (Millares) ──">
+                                        {grpList.filter(g=>!g._isInvPT && !g.esTermo).map(g=>(
+                                          <option key={g.key} value={g.key}>{formatFGLabel(g)} | {formatNum(g.totalStock)} Mill.</option>
+                                        ))}
+                                      </optgroup>
+                                    )}
+                                    {/* Producción — Termos */}
+                                    {grpList.filter(g=>!g._isInvPT && g.esTermo).length>0 && (
+                                      <optgroup label="── TERMOENCOGIBLES — Producción (KG) ──">
+                                        {grpList.filter(g=>!g._isInvPT && g.esTermo).map(g=>(
+                                          <option key={g.key} value={g.key}>{formatFGLabel(g)} | {formatNum(g.totalStock)} KG</option>
+                                        ))}
+                                      </optgroup>
+                                    )}
+                                    {/* Inventario importados por subcategoría */}
+                                    {['Stretch Film','Cintas','Papel Kraft','Dispensadores','Otros Terminados'].map(sub=>{
+                                      const items = grpList.filter(g=>g._isInvPT && getItemSubcategory({id:g._invId,desc:g.producto,subcategory:g._sub}||g._invItem||{})===sub);
+                                      return items.length>0 ? (
+                                        <optgroup key={sub} label={`── ${sub.toUpperCase()} — Inventario ──`}>
+                                          {items.map(g=>(
+                                            <option key={g.key} value={g.key}>{g.producto} | {formatNum(g.totalStock)} {g._unit||'und'}</option>
+                                          ))}
+                                        </optgroup>
+                                      ) : null;
                                     })}
-                                    </optgroup>
-                                    {grpList.filter(g=>g._isInvPT).length > 0 && (
-                                      <optgroup label="── Inventario (Importados) ──">
-                                        {grpList.filter(g=>g._isInvPT).map(g => (
-                                          <option key={g.key} value={g.key}>
-                                            {g.producto} | {formatNum(g.totalStock)} {g._unit||'und'}
-                                          </option>
+                                    {/* Importados sin subcategoría */}
+                                    {grpList.filter(g=>g._isInvPT && !['Stretch Film','Cintas','Papel Kraft','Dispensadores','Otros Terminados'].includes(getItemSubcategory({id:g._invId,desc:g.producto}||{}))).length>0 && (
+                                      <optgroup label="── INVENTARIO IMPORTADO ──">
+                                        {grpList.filter(g=>g._isInvPT && !['Stretch Film','Cintas','Papel Kraft','Dispensadores','Otros Terminados'].includes(getItemSubcategory({id:g._invId,desc:g.producto}||{}))).map(g=>(
+                                          <option key={g.key} value={g.key}>{g.producto} | {formatNum(g.totalStock)} {g._unit||'und'}</option>
                                         ))}
                                       </optgroup>
                                     )}
