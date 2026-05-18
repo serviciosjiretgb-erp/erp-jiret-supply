@@ -3270,15 +3270,15 @@ export default function App() {
           <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
           <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5 px-2 sm:px-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 px-3 sm:px-4">
           {moduleCards.map((card, i) => (
             <button key={i}
               onClick={() => { clearAllReports(); setActiveTab(card.tab); if(card.view) card.view(); }}
-              className={`${card.bg} border-l-4 ${card.color} rounded-2xl p-3 sm:p-6 text-left hover:opacity-90 hover:scale-[1.02] transition-all shadow-md flex flex-col gap-2`}>
-              <div className={`${card.iconColor} [&>svg]:w-6 [&>svg]:h-6 sm:[&>svg]:w-9 sm:[&>svg]:h-9`}>{card.icon}</div>
-              <div>
-                <h3 className={`text-[10px] sm:text-sm font-black ${card.textColor} uppercase leading-tight`}>{card.title}</h3>
-                <p className={`text-[8px] sm:text-[10px] ${card.descColor} mt-0.5 leading-snug hidden sm:block`}>{card.desc}</p>
+              className={`${card.bg} border-l-4 ${card.color} rounded-2xl p-4 sm:p-6 text-left hover:opacity-90 active:scale-95 transition-all shadow-md flex items-center gap-4 sm:flex-col sm:items-start sm:gap-2`}>
+              <div className={`${card.iconColor} flex-shrink-0 [&>svg]:w-7 [&>svg]:h-7 sm:[&>svg]:w-9 sm:[&>svg]:h-9`}>{card.icon}</div>
+              <div className="flex-1">
+                <h3 className={`text-sm sm:text-sm font-black ${card.textColor} uppercase leading-tight`}>{card.title}</h3>
+                <p className={`text-[10px] ${card.descColor} mt-0.5 leading-snug sm:block hidden`}>{card.desc}</p>
               </div>
             </button>
           ))}
@@ -16287,7 +16287,21 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           body { background: white !important; }
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         }
-      /* ── MOBILE ULTRA-COMPACT ── */
+      /* ── OCULTAR BOTONES DE ACCIÓN EN MÓVIL ── */
+      @media (max-width: 768px) {
+        /* Botones de imprimir, excel, pdf en cabeceras de módulos */
+        .action-btn-pdf,
+        .action-btn-excel,
+        .action-btn-print { display: none !important; }
+        /* Reducir espacio en cabeceras de módulos */
+        .module-header-actions { flex-wrap: wrap !important; gap: 4px !important; }
+      }
+      /* ── REPORTES: scroll horizontal para tablas anchas ── */
+      @media (max-width: 768px) {
+        #pdf-content { overflow-x: auto !important; }
+        #pdf-content table { min-width: 600px !important; font-size: 9px !important; }
+        #pdf-content td, #pdf-content th { padding: 3px 4px !important; }
+      }
       @media (max-width: 768px) {
         nav { padding: 6px 10px !important; }
         .hidden.md\:flex { display: none !important; }
