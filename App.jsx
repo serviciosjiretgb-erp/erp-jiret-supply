@@ -7,9 +7,7 @@
 //   4. Lazy useState initializers para formularios con getTodayDate()
 //   5. generateProjectionData convertido a valor memoizado + wrapper de compatibilidad
 // ============================================================================
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
-// Expose recharts globally for dynamic access inside renderKPIModule
-if (typeof window !== 'undefined') window.Recharts = { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area };
+// recharts loaded via CDN in index.html
 import ReactDOM from 'react-dom/client';
 import { 
   LayoutDashboard, Package, Factory, TrendingUp, TrendingDown, AlertTriangle, 
@@ -14840,16 +14838,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     const COLORS = ['#f97316','#6366f1','#10b981','#3b82f6','#f59e0b','#ec4899','#8b5cf6','#06b6d4'];
 
     const { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } = window.Recharts || {};
-
-    if (!window.Recharts) {
-      return (
-        <div className="p-8 text-center text-gray-500">
-          <BarChart3 size={48} className="mx-auto mb-3 text-purple-400"/>
-          <p className="font-black text-lg uppercase">Cargando Recharts...</p>
-          <p className="text-xs mt-2">Recarga la página si tarda más de 5 segundos</p>
-        </div>
-      );
-    }
 
     const totalVentas = ventasByMonth.reduce((s,m)=>s+m.ingresos, 0);
     const totalOPs = (requirements||[]).filter(r=>r.status==='COMPLETADO').length;
