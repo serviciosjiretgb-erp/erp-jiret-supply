@@ -2770,6 +2770,23 @@ export default function App() {
           timestamp: Date.now()
         };
         await setDoc(getDocRef('finishedGoodsInventory', finishedEntry.id), finishedEntry);
+        // ── AUTO-SYNC FG → ALMACEN ZI (Inventario General) ──
+        try {
+          const esTerFG = finishedEntry.tipoProducto === 'TERMOENCOGIBLE';
+          const fgInvId = `${reqId}___ALMACEN-ZI`;
+          const fgInvDoc = {
+            id: fgInvId, desc: finishedEntry.producto || reqDoc.desc || reqId,
+            category: 'Productos Terminados',
+            subcategory: esTerFG ? 'Termoencogibles' : 'Bolsas Plásticas',
+            unit: esTerFG ? 'kg' : 'millares',
+            stock: esTerFG ? kgFinales : millaresFinales,
+            cost: parseNum(finishedEntry.costoUnitario || finishedEntry.costoUnitarioMillar || 0),
+            almacen: 'ALMACEN ZI',
+            opId: reqId, cliente: finishedEntry.cliente || '',
+            timestamp: Date.now(), updatedAt: getTodayDate()
+          };
+          await setDoc(getDocRef('inventory', fgInvId), fgInvDoc, { merge: true });
+        } catch(e){ console.warn('Auto-inv FG error:', e); }
         await pushNotif('OP_CERRADA', '🏁 OP Finalizada', `La OP #${reqId.replace('OP-','')} fue completada y movida a Terminados.`, { opId: reqId, destino:'ventas', targetTab:'ventas' });
         // ── Kardex ENTRADA for FG produced ──
         try {
@@ -2811,6 +2828,22 @@ export default function App() {
         };
 
         await setDoc(getDocRef('finishedGoodsInventory', finishedEntry.id), finishedEntry);
+        // ── AUTO-SYNC FG → ALMACEN ZI ──
+        try {
+          const esTerFG2 = finishedEntry.tipoProducto === 'TERMOENCOGIBLE';
+          const fgInvId2 = `${reqId}___ALMACEN-ZI`;
+          const qtyFG2 = esTerFG2 ? kgFinales : millaresFinales;
+          await setDoc(getDocRef('inventory', fgInvId2), {
+            id: fgInvId2, desc: finishedEntry.producto || reqDoc.desc || reqId,
+            category: 'Productos Terminados',
+            subcategory: esTerFG2 ? 'Termoencogibles' : 'Bolsas Plásticas',
+            unit: esTerFG2 ? 'kg' : 'millares',
+            stock: qtyFG2,
+            cost: parseNum(finishedEntry.costoUnitario || finishedEntry.costoUnitarioMillar || 0),
+            almacen: 'ALMACEN ZI', opId: reqId,
+            cliente: finishedEntry.cliente || '', timestamp: Date.now(), updatedAt: getTodayDate()
+          }, { merge: true });
+        } catch(e){ console.warn('Auto-inv FG2 error:', e); }
         // ── Kardex ENTRADA for FG produced ──
         try {
           const fgProdQty = finishedEntry.tipoProducto==='TERMOENCOGIBLE' ? parseNum(finishedEntry.kgProducidos||0) : parseNum(finishedEntry.millares||0);
@@ -15000,14 +15033,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
     // ── Bar component ──
     const Bar = ({pct, color='#f97316', label, value}) => (
-      <div className="flex items-center gap-2">
-        {label && <div className="text-[9px] font-black text-gray-600 w-20 truncate text-right">{label}</div>}
-        <div className="flex-1 bg-gray-100 rounded-sm h-5 overflow-hidden">
-          <div className="h-5 rounded-sm flex items-center justify-end pr-1.5 transition-all" style={{width:`${Math.max(pct,2)}%`,background:color}}>
-            {pct>15 && <span className="text-[8px] font-black text-white">{value}</span>}
-          </div>
+      <div className="space-y-0.5">
+        <div className="flex justify-between items-center">
+          <span className="text-[9px] font-black text-gray-700 uppercase">{label}</span>
+          <span className="text-[9px] font-black text-gray-900">{value}</span>
         </div>
-        {pct<=15 && <span className="text-[9px] font-black text-gray-700 w-20">{value}</span>}
+        <div className="w-full bg-gray-100 rounded-sm h-4 overflow-hidden">
+          <div className="h-4 rounded-sm transition-all" style={{width:`${Math.max(pct,1)}%`,background:color}}/>
+        </div>
       </div>
     );
 
@@ -15114,25 +15147,48 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             ) : <div className="text-center py-6 text-gray-300 text-xs font-bold">Sin ventas registradas en el período</div>}
           </div>
 
-          {/* Mermas */}
+          {/* Mermas — donut + barras */}
           <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-            <h3 className="text-[10px] font-black text-gray-700 uppercase mb-1 flex items-center gap-2">
+            <h3 className="text-[10px] font-black text-gray-700 uppercase mb-3 flex items-center gap-2">
               <Thermometer size={13} className={mermaGlobal>5?"text-red-500":"text-orange-500"}/>
               Merma (%) por Mes
-              <span className={`ml-auto text-[8px] px-2 py-0.5 rounded font-black ${mermaGlobal>5?'bg-red-100 text-red-600':'bg-green-100 text-green-700'}`}>Prom: {mermaGlobal}%</span>
+              <span className={`ml-auto text-[8px] px-2 py-0.5 rounded font-black ${mermaGlobal>5?'bg-red-100 text-red-600':'bg-green-100 text-green-700'}`}>Promedio: {mermaGlobal}%</span>
             </h3>
-            <div className="flex items-end gap-1 mt-3" style={{height:100}}>
-              {mermaByMonth.map((m,i)=>{
-                const pct=(m.pct/maxMerma)*100;
-                const bad=m.pct>5;
+            <div className="flex gap-4 items-center">
+              {/* Donut */}
+              {(() => {
+                const good = Math.max(100-mermaGlobal*10, 0);
+                const bad = Math.min(mermaGlobal*10, 100);
+                const r=28, cx=36, cy=36, circ=2*Math.PI*r;
+                const dashBad = (bad/100)*circ;
+                const dashGood = (good/100)*circ;
                 return (
-                  <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
-                    {m.pct>0&&<span className="text-[7px] font-black" style={{color:bad?'#ef4444':'#f97316'}}>{m.pct}%</span>}
-                    <div className="w-full rounded-t-sm" style={{height:`${Math.max(pct,3)}%`,minHeight:2,background:bad?'#ef4444':'#f97316'}}/>
-                    <span className="text-[7px] font-bold text-gray-400">{m.name}</span>
+                  <div className="flex-shrink-0 flex flex-col items-center">
+                    <svg width="72" height="72" viewBox="0 0 72 72">
+                      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#f3f4f6" strokeWidth="8"/>
+                      <circle cx={cx} cy={cy} r={r} fill="none" stroke={mermaGlobal>5?'#ef4444':'#10b981'} strokeWidth="8"
+                        strokeDasharray={`${dashBad} ${circ-dashBad}`} strokeDashoffset={circ/4} strokeLinecap="round"/>
+                      <text x={cx} y={cy+1} textAnchor="middle" fontSize="10" fontWeight="900" fill={mermaGlobal>5?'#ef4444':'#10b981'}>{mermaGlobal}%</text>
+                      <text x={cx} y={cy+11} textAnchor="middle" fontSize="6" fill="#9ca3af">merma</text>
+                    </svg>
+                    <span className={`text-[8px] font-black ${mermaGlobal>5?'text-red-500':'text-green-600'}`}>{mermaGlobal>5?'⚠ CRÍTICO':'✓ NORMAL'}</span>
                   </div>
                 );
-              })}
+              })()}
+              {/* Barras por mes */}
+              <div className="flex-1 flex items-end gap-1" style={{height:90}}>
+                {mermaByMonth.map((m,i)=>{
+                  const pct=(m.pct/Math.max(maxMerma,1))*100;
+                  const bad=m.pct>5;
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center gap-0.5 h-full justify-end">
+                      {m.pct>0&&<span className="text-[7px] font-black leading-none" style={{color:bad?'#ef4444':'#f97316'}}>{m.pct}%</span>}
+                      <div className="w-full rounded-t-sm" style={{height:`${Math.max(pct,3)}%`,minHeight:2,background:bad?'#ef4444':'#f97316'}}/>
+                      <span className="text-[6px] font-bold text-gray-400 text-center leading-tight">{m.name}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
@@ -15167,43 +15223,42 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           </div>
         </div>
 
-        {/* ── ROW 5: OPs en Planta ── */}
+        {/* ── ROW 5: OPs en Planta — lista compacta vertical ── */}
         {opsActivas.length>0 && (
           <div className="bg-black rounded-2xl p-5 shadow-sm">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-[10px] font-black text-white uppercase flex items-center gap-2"><Factory size={13} className="text-orange-500"/> Órdenes en Planta</h3>
-              <span className="text-[9px] font-black text-orange-400">{opsActivas.length} OP{opsActivas.length>1?'s':''} activa{opsActivas.length>1?'s':''}</span>
+              <h3 className="text-[10px] font-black text-white uppercase flex items-center gap-2">
+                <Factory size={13} className="text-orange-500"/> Órdenes en Planta
+              </h3>
+              <span className="text-[9px] font-black text-orange-400">{opsActivas.length} activa{opsActivas.length>1?'s':''}</span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            <div className="space-y-2">
               {opsActivas.map((op,i)=>(
-                <div key={i} className="bg-gray-900 rounded-xl p-3 border border-gray-800">
-                  {/* Header */}
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-orange-500 text-[11px] font-black">{op.op}</span>
-                    <span className="px-2 py-0.5 rounded-full text-[8px] font-black" style={{background:op.faseColor+'22',color:op.faseColor}}>{op.fase}</span>
+                <div key={i} className="flex items-center gap-3 bg-gray-900 rounded-xl px-4 py-2.5 border border-gray-800">
+                  {/* OP ID */}
+                  <div className="w-24 flex-shrink-0">
+                    <div className="text-orange-500 text-[10px] font-black">{op.op}</div>
+                    <div className="text-gray-500 text-[8px] font-bold truncate">{op.cliente}</div>
                   </div>
-                  {/* Client */}
-                  <div className="text-[10px] font-black text-white truncate mb-2">{op.cliente}</div>
+                  {/* Fase badge */}
+                  <div className="w-20 flex-shrink-0 text-center">
+                    <span className="px-2 py-0.5 rounded text-[8px] font-black" style={{background:op.faseColor+'33',color:op.faseColor}}>{op.fase}</span>
+                  </div>
                   {/* Phase dots */}
-                  <div className="flex items-center gap-1 mb-2">
+                  <div className="flex items-center gap-1 flex-shrink-0">
                     {op.phases.map((ph,pi)=>(
-                      <div key={pi} className="flex items-center gap-1 flex-1">
-                        <div className="w-4 h-4 rounded-full flex items-center justify-center text-[6px] font-black"
-                          style={{background:ph.done?'#10b981':'#374151',color:'white'}}>
-                          {ph.done?'✓':pi+1}
-                        </div>
-                        <div className="text-[7px] font-bold truncate" style={{color:ph.done?'#10b981':'#6b7280'}}>{ph.name}</div>
-                        {pi<op.phases.length-1 && <div className="h-px flex-1" style={{background:ph.done?'#10b981':'#374151'}}/>}
+                      <div key={pi} className="w-5 h-5 rounded-full flex items-center justify-center text-[7px] font-black"
+                        style={{background:ph.done?'#10b981':'#374151',color:'white'}} title={ph.name}>
+                        {ph.done?'✓':pi+1}
                       </div>
                     ))}
                   </div>
-                  {/* Progress bar */}
-                  <div className="bg-gray-800 rounded-full h-2 overflow-hidden">
-                    <div className="h-2 rounded-full transition-all" style={{width:`${op.avance}%`,background:op.faseColor}}/>
-                  </div>
-                  <div className="flex justify-between items-center mt-1">
-                    <span className="text-[8px] text-gray-500 font-bold">{op.avance}% completado</span>
-                    {op.monto>0 && <span className="text-[8px] font-black text-orange-400">${formatNum(op.monto)}</span>}
+                  {/* Progress bar + % */}
+                  <div className="flex-1 flex items-center gap-2 min-w-0">
+                    <div className="flex-1 bg-gray-800 rounded-full h-2 overflow-hidden">
+                      <div className="h-2 rounded-full" style={{width:`${op.avance}%`,background:op.faseColor}}/>
+                    </div>
+                    <span className="text-[9px] font-black w-8 text-right flex-shrink-0" style={{color:op.faseColor}}>{op.avance}%</span>
                   </div>
                 </div>
               ))}
