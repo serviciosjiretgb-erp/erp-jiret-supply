@@ -15045,6 +15045,19 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
   };
 
   const renderConfiguracionModule = () => {
+    if (!settings || !systemUsers) {
+      return (
+        <div className="flex flex-col items-center justify-center py-20 text-gray-500">
+          <Loader2 className="w-8 h-8 animate-spin mb-4 text-orange-500" />
+          <p className="font-bold tracking-widest text-sm uppercase text-black">Cargando configuración...</p>
+        </div>
+      );
+    }
+    // Alias locales para que los usen los sub-bloques del módulo
+    const actSearch    = activitySearch    || '';
+    const actDateFrom  = activityDateFrom  || '';
+    const actDateTo    = activityDateTo    || '';
+
     return (
       <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
         {/* Accesos Directos Contables */}
@@ -16062,9 +16075,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         {/* ── ACTIVIDAD DE USUARIOS ── */}
         {appUser?.role === 'Master' && (() => {
           const filtActs = (userActivityLog||[]).filter(a => {
-            if(activitySearch && !(a.username||'').toUpperCase().includes(activitySearch.toUpperCase()) && !(a.action||'').toUpperCase().includes(activitySearch.toUpperCase())) return false;
-            if(activityDateFrom && a.date < activityDateFrom) return false;
-            if(activityDateTo && a.date > activityDateTo) return false;
+            if(actSearch && !(a.username||'').toUpperCase().includes(actSearch.toUpperCase()) && !(a.action||'').toUpperCase().includes(actSearch.toUpperCase())) return false;
+            if(actDateFrom && a.date < actDateFrom) return false;
+            if(actDateTo && a.date > actDateTo) return false;
             return true;
           }).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
           return (
