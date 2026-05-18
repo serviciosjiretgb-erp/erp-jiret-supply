@@ -15053,11 +15053,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         </div>
       );
     }
-    // Alias locales para que los usen los sub-bloques del módulo
-    const actSearch    = activitySearch    || '';
-    const actDateFrom  = activityDateFrom  || '';
-    const actDateTo    = activityDateTo    || '';
-
     return (
       <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
         {/* Accesos Directos Contables */}
@@ -16074,10 +16069,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
         {/* ── ACTIVIDAD DE USUARIOS ── */}
         {appUser?.role === 'Master' && (() => {
+          const _as = activitySearch || '';
+          const _df = activityDateFrom || '';
+          const _dt = activityDateTo || '';
           const filtActs = (userActivityLog||[]).filter(a => {
-            if(actSearch && !(a.username||'').toUpperCase().includes(actSearch.toUpperCase()) && !(a.action||'').toUpperCase().includes(actSearch.toUpperCase())) return false;
-            if(actDateFrom && a.date < actDateFrom) return false;
-            if(actDateTo && a.date > actDateTo) return false;
+            if(_as && !(a.username||'').toUpperCase().includes(_as.toUpperCase()) && !(a.action||'').toUpperCase().includes(_as.toUpperCase())) return false;
+            if(_df && a.date < _df) return false;
+            if(_dt && a.date > _dt) return false;
             return true;
           }).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
           return (
