@@ -14853,13 +14853,31 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     ];
     const kpiPeriod = kpiMonths || 6;
     const now = new Date();
-    const months = Array.from({length: kpiPeriod}, (_,i) => {
-      const d = new Date(now.getFullYear(), now.getMonth() - (kpiPeriod-1-i), 1);
-      return {
-        label: ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()] + ' ' + String(d.getFullYear()).slice(2),
-        ym: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
-      };
-    });
+    // Start from earliest invoice/op date OR N months back — whichever is more recent
+    const allDates = [
+      ...safeInvoices.map(i=>i.fecha||''),
+      ...safeRequirements.map(r=>r.createdAt||r.fecha||''),
+    ].filter(Boolean).sort();
+    const earliestYM = allDates[0] ? allDates[0].substring(0,7) : null;
+    // Build months array: from earliest activity date up to today, max kpiPeriod months
+    const buildMonths = () => {
+      const result = [];
+      for(let i=kpiPeriod-1; i>=0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+        const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        if(!earliestYM || ym >= earliestYM) {
+          result.push({
+            label: ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()] + ' ' + String(d.getFullYear()).slice(2),
+            ym
+          });
+        }
+      }
+      return result.length > 0 ? result : [{
+        label: ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][now.getMonth()] + ' ' + String(now.getFullYear()).slice(2),
+        ym: `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`
+      }];
+    };
+    const months = buildMonths();
 
     // ── Month-over-month ──
     const currentYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
@@ -14872,7 +14890,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
     // ── KPI Totals ──
     const totalIngresos = safeInvoices.reduce((s,i)=>s+parseNum(i.montoBase||i.totalUSD||i.total||0),0);
-    const totalCostos = safeOpCosts.reduce((s,c)=>s+parseNum(c.amount||c.monto||0),0);
+    // Costos operativos + costo de ventas (costoTotal de items facturados)
+    const costosOp = safeOpCosts.reduce((s,c)=>s+parseNum(c.amount||c.monto||0),0);
+    const costoVentas = safeInvoices.reduce((s,inv)=>{
+      const itemsCost = (inv.itemsFacturados||[]).reduce((ss,it)=>ss+parseNum(it.costoTotal||0),0);
+      return s + itemsCost;
+    },0);
+    const totalCostos = costosOp + costoVentas;
     const margen = totalIngresos - totalCostos;
     const opsCompletadas = safeRequirements.filter(r=>r.status==='COMPLETADO').length;
     const opsProceso = safeRequirements.filter(r=>r.status==='EN PROCESO').length;
@@ -14955,12 +14979,23 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     });
     const ptSubs = Object.values(ptSubMap).sort((a,b)=>b.stock-a.stock);
 
-    // ── OPs activas ──
-    const opsActivas = safeRequirements.filter(r=>r.status==='EN PROCESO').slice(0,5).map(r=>{
+    // ── OPs activas — ALL ──
+    const opsActivas = safeRequirements.filter(r=>r.status==='EN PROCESO').map(r=>{
       const phases=['extrusion','impresion','sellado'];
       const done = phases.filter(ph=>(r.production||{})[ph]?.isClosed).length;
       const cur = phases.find(ph=>!(r.production||{})[ph]?.isClosed)||phases[2];
-      return {op:r.id, cliente:r.client||r.cliente||'—', fase:cur.charAt(0).toUpperCase()+cur.slice(1), avance:Math.round((done/3)*100), monto:parseNum(r.costoTotal||0)};
+      const phaseColors = {extrusion:'#f97316', impresion:'#6366f1', sellado:'#10b981'};
+      const phaseLabel = {extrusion:'Extrusión', impresion:'Impresión', sellado:'Sellado'};
+      return {
+        op:r.id, cliente:r.client||r.cliente||'—',
+        fase: phaseLabel[cur]||cur.charAt(0).toUpperCase()+cur.slice(1),
+        faseColor: phaseColors[cur]||'#f97316',
+        avance:Math.round((done/3)*100),
+        monto:parseNum(r.costoTotal||r.totalCost||0),
+        millares:parseNum(r.millares||r.millaresTotal||0),
+        kg:parseNum(r.kgTotal||r.kgProducidos||0),
+        phases: phases.map(ph=>({name:phaseLabel[ph]||ph, done:!!(r.production||{})[ph]?.isClosed}))
+      };
     });
 
     // ── Bar component ──
@@ -15013,7 +15048,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 : <span className="text-red-400 text-[9px] font-black flex items-center gap-0.5">▼ {Math.abs(crecimiento).toFixed(1)}% vs mes anterior</span>,
               color:'border-orange-500', icon:<Receipt size={20} className="text-orange-500"/>, bg:'bg-white'
             },
-            {label:'Costos Operativos', val:`$${formatNum(totalCostos)}`, sub:`Margen: $${formatNum(margen)}`, color:'border-black', icon:<DollarSign size={20} className="text-gray-800"/>, bg:'bg-white'},
+            {label:'Costos Totales', val:`$${formatNum(totalCostos)}`, sub:`Ventas: $${formatNum(costoVentas)} | Op: $${formatNum(costosOp)}`, color:'border-black', icon:<DollarSign size={20} className="text-gray-800"/>, bg:'bg-white'},
             {label:'OPs Completadas', val:opsCompletadas, sub:`${opsProceso} en proceso`, color:'border-blue-500', icon:<Factory size={20} className="text-blue-500"/>, bg:'bg-white'},
             {label:'Merma Global', val:`${mermaGlobal}%`, sub:mermaGlobal>5?'⚠ Sobre límite':'✓ Dentro del límite', color: mermaGlobal>5?'border-red-500':'border-green-500', icon:<Thermometer size={20} className={mermaGlobal>5?"text-red-500":"text-green-500"}/>, bg:'bg-white'},
           ].map((k,i)=>(
@@ -15135,17 +15170,41 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         {/* ── ROW 5: OPs en Planta ── */}
         {opsActivas.length>0 && (
           <div className="bg-black rounded-2xl p-5 shadow-sm">
-            <h3 className="text-[10px] font-black text-white uppercase mb-4 flex items-center gap-2"><Factory size={13} className="text-orange-500"/> Órdenes en Planta</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-[10px] font-black text-white uppercase flex items-center gap-2"><Factory size={13} className="text-orange-500"/> Órdenes en Planta</h3>
+              <span className="text-[9px] font-black text-orange-400">{opsActivas.length} OP{opsActivas.length>1?'s':''} activa{opsActivas.length>1?'s':''}</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {opsActivas.map((op,i)=>(
-                <div key={i} className="bg-gray-900 rounded-xl p-3">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-orange-500 text-[10px] font-black">{op.op}</span>
-                    <span className="text-gray-400 text-[9px] font-bold">{op.avance}%</span>
+                <div key={i} className="bg-gray-900 rounded-xl p-3 border border-gray-800">
+                  {/* Header */}
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-orange-500 text-[11px] font-black">{op.op}</span>
+                    <span className="px-2 py-0.5 rounded-full text-[8px] font-black" style={{background:op.faseColor+'22',color:op.faseColor}}>{op.fase}</span>
                   </div>
-                  <div className="text-[9px] font-bold text-white truncate mb-0.5">{op.cliente}</div>
-                  <div className="text-[8px] font-bold text-gray-500 uppercase mb-1.5">{op.fase}</div>
-                  <div className="bg-gray-800 rounded-full h-1.5"><div className="bg-orange-500 h-1.5 rounded-full" style={{width:`${op.avance}%`}}/></div>
+                  {/* Client */}
+                  <div className="text-[10px] font-black text-white truncate mb-2">{op.cliente}</div>
+                  {/* Phase dots */}
+                  <div className="flex items-center gap-1 mb-2">
+                    {op.phases.map((ph,pi)=>(
+                      <div key={pi} className="flex items-center gap-1 flex-1">
+                        <div className="w-4 h-4 rounded-full flex items-center justify-center text-[6px] font-black"
+                          style={{background:ph.done?'#10b981':'#374151',color:'white'}}>
+                          {ph.done?'✓':pi+1}
+                        </div>
+                        <div className="text-[7px] font-bold truncate" style={{color:ph.done?'#10b981':'#6b7280'}}>{ph.name}</div>
+                        {pi<op.phases.length-1 && <div className="h-px flex-1" style={{background:ph.done?'#10b981':'#374151'}}/>}
+                      </div>
+                    ))}
+                  </div>
+                  {/* Progress bar */}
+                  <div className="bg-gray-800 rounded-full h-2 overflow-hidden">
+                    <div className="h-2 rounded-full transition-all" style={{width:`${op.avance}%`,background:op.faseColor}}/>
+                  </div>
+                  <div className="flex justify-between items-center mt-1">
+                    <span className="text-[8px] text-gray-500 font-bold">{op.avance}% completado</span>
+                    {op.monto>0 && <span className="text-[8px] font-black text-orange-400">${formatNum(op.monto)}</span>}
+                  </div>
                 </div>
               ))}
             </div>
