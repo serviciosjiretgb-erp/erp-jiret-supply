@@ -1522,6 +1522,8 @@ export default function App() {
           const b = writeBatch(db);
           allDocs.forEach(d => {
             const upd = { cost: newCost, timestamp: Date.now() };
+            if (almacenEditForm.desc) upd.desc = almacenEditForm.desc.toUpperCase();
+            if (almacenEditForm.subcategory !== undefined) upd.subcategory = almacenEditForm.subcategory;
             if (d.id === realDocId && hasStockChange) upd.stock = newStock;
             b.set(getDocRef('inventory', d.id), upd, { merge: true });
           });
@@ -4382,6 +4384,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             <th className="py-2 px-4 text-left">Código</th>
                             <th className="py-2 px-4 text-left">Descripción</th>
                             <th className="py-2 px-4 text-center">Categoría</th>
+                            <th className="py-2 px-4 text-center">Subcategoría</th>
                             <th className="py-2 px-4 text-center">U.M.</th>
                             <th className="py-2 px-4 text-right">Stock</th>
                             <th className="py-2 px-4 text-right">Costo U. ($)</th>
@@ -4394,6 +4397,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 <td className="py-2 px-4 font-black text-orange-600 text-[10px]">{i.id}</td>
                                 <td className="py-2 px-4 font-bold text-[10px] uppercase">{i.desc}</td>
                                 <td className="py-2 px-4 text-center text-[9px]"><span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-black">{(i.category||'').substring(0,8)}</span></td>
+                                <td className="py-2 px-4 text-center text-[9px]">{i.subcategory ? <span className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-black">{i.subcategory}</span> : <span className="text-gray-300">—</span>}</td>
                                 <td className="py-2 px-4 text-center font-bold text-gray-500 text-[9px]">{i.unit||'—'}</td>
                                 <td className="py-2 px-4 text-right font-black text-blue-700">{formatNum(i.stock)}</td>
                                 <td className="py-2 px-4 text-right font-bold text-gray-500">${formatNum(i.cost||0)}</td>
@@ -14942,13 +14946,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     // Ingresos por mes reales
     const ventasByMonth = months.map(m => ({
       name: m.label,
-      val: (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(m.ym)).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0),
+      val: safeInvoices.filter(inv=>(inv.fecha||'').startsWith(m.ym)).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0),
     }));
 
     // Volumen KG procesado (de OPs completadas)
     const kgByMonth = months.map(m => ({
       name: m.label,
-      kg: (requirements||[]).filter(r=>(r.fechaFinalizacion||r.createdAt||'').startsWith(m.ym)&&r.status==='COMPLETADO').reduce((s,r)=>s+parseNum(r.kgProducidos||r.kgTotal||0),0),
+      kg: safeRequirements.filter(r=>(r.fechaFinalizacion||r.createdAt||'').startsWith(m.ym)&&r.status==='COMPLETADO').reduce((s,r)=>s+parseNum(r.kgProducidos||r.kgTotal||0),0),
     }));
 
     // Top clientes — cross-reference with clients collection for real names
@@ -14956,11 +14960,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     // Build clientId → name map from clients collection
     const clientsById = {};
     const clientsByRif = {};
-    (clients||[]).forEach(c => {
+    (clients||[]).filter(Boolean).forEach(c => {
       if(c.id) clientsById[c.id] = c.name || c.razon_social || c.nombre || c.id;
       if(c.rif) clientsByRif[c.rif] = c.name || c.razon_social || c.nombre || c.rif;
     });
-    (invoices||[]).filter(inv=>months.some(m=>(inv.fecha||'').startsWith(m.ym))).forEach(inv=>{
+    safeInvoices.filter(inv=>months.some(m=>(inv.fecha||'').startsWith(m.ym))).forEach(inv=>{
       // Use clientName if stored, else cross-reference by RIF or clientId
       const rawName = inv.client||inv.cliente||'';
       const byRif = inv.clientRif ? clientsByRif[inv.clientRif] : null;
@@ -14973,7 +14977,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
     // Top productos
     const prodMap = {};
-    (invoices||[]).filter(inv=>months.some(m=>(inv.fecha||'').startsWith(m.ym))).forEach(inv=>{
+    safeInvoices.filter(inv=>months.some(m=>(inv.fecha||'').startsWith(m.ym))).forEach(inv=>{
       (inv.items||[]).forEach(it=>{
         const k=it.desc||it.productName||it.nombre||'';
         if(!k) return;
@@ -14987,7 +14991,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     // Stock MP por categoría
     const stockMP = (() => {
       const catMap = {};
-      (inventory||[]).filter(i=>i.category!=='Productos Terminados').forEach(i=>{
+      safeInventory.filter(i=>i.category!=='Productos Terminados').forEach(i=>{
         const cat=i.category||'Otros';
         if(!catMap[cat]) catMap[cat]={category:cat,cantidad:0};
         catMap[cat].cantidad+=parseNum(i.stock||0);
@@ -14997,18 +15001,24 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     })();
 
     // OPs en proceso para tabla
-    const opsEnProceso = (requirements||[]).filter(r=>r.status==='EN PROCESO').slice(0,5).map(r=>{
+    const opsEnProceso = safeRequirements.filter(r=>r.status==='EN PROCESO').slice(0,5).map(r=>{
       const phases = ['extrusion','impresion','sellado'];
       const cur = phases.find(ph=>!(r.production||{})[ph]?.isClosed)||phases[0];
       return { op: r.id, cliente: r.client||r.cliente||'—', fase: cur.charAt(0).toUpperCase()+cur.slice(1), monto: `$${formatNum((r.costoTotal||r.totalCost||0))}` };
     });
 
+    // Defensive: ensure all data is arrays
+    const safeInvoices = safeInvoices.filter(Boolean);
+    const safeRequirements = safeRequirements.filter(Boolean);
+    const safeInventory = safeInventory.filter(Boolean);
+    const safeOpCosts = (opCosts||[]).filter(Boolean);
+
     // Month-over-month comparison for trend arrow
     const currentMonthYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
     const prevDate = new Date(now.getFullYear(), now.getMonth()-1, 1);
     const prevMonthYM = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
-    const ventasMesActual   = (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(currentMonthYM)).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0);
-    const ventasMesAnterior = (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(prevMonthYM)).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0);
+    const ventasMesActual   = safeInvoices.filter(inv=>(inv.fecha||'').startsWith(currentMonthYM)).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0);
+    const ventasMesAnterior = safeInvoices.filter(inv=>(inv.fecha||'').startsWith(prevMonthYM)).reduce((s,inv)=>s+parseNum(inv.totalUSD||inv.total||0),0);
     const huboCrecimiento   = ventasMesActual >= ventasMesAnterior;
     const variacionPct      = ventasMesAnterior > 0 ? ((ventasMesActual - ventasMesAnterior)/ventasMesAnterior*100).toFixed(1) : null;
 
@@ -15023,13 +15033,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         {pct !== null ? `${Math.abs(pct)}%` : (up ? 'Alza' : 'Baja')}
       </span>
     );
-    const totalCostos = (opCosts||[]).reduce((s,c)=>s+parseNum(c.amount||c.monto||0),0);
+    const totalCostos = safeOpCosts.reduce((s,c)=>s+parseNum(c.amount||c.monto||0),0);
     const margen = totalIngresos - totalCostos;
-    const opsCompletadas = (requirements||[]).filter(r=>r.status==='COMPLETADO').length;
-    const opsProceso = (requirements||[]).filter(r=>r.status==='EN PROCESO').length;
+    const opsCompletadas = safeRequirements.filter(r=>r.status==='COMPLETADO').length;
+    const opsProceso = safeRequirements.filter(r=>r.status==='EN PROCESO').length;
     const mermaGlobal = (() => {
       let totalMerma=0, totalProd=0;
-      (requirements||[]).forEach(r=>{['extrusion','impresion','sellado'].forEach(ph=>{((r.production||{})[ph]?.batches||[]).forEach(b=>{totalMerma+=parseNum(b.mermaKg||0);totalProd+=parseNum(b.producedKg||0);});});});
+      safeRequirements.forEach(r=>{['extrusion','impresion','sellado'].forEach(ph=>{((r.production||{})[ph]?.batches||[]).forEach(b=>{totalMerma+=parseNum(b.mermaKg||0);totalProd+=parseNum(b.producedKg||0);});});});
       return totalProd>0?parseFloat(((totalMerma/totalProd)*100).toFixed(1)):0;
     })();
     const avancePlanta = opsProceso>0 ? Math.min(100, Math.round((opsCompletadas/(opsCompletadas+opsProceso))*100)) : 100;
@@ -17280,6 +17290,32 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 <p className="font-black text-xs text-indigo-800 uppercase">{editingAlmacenItem.displayId || editingAlmacenItem.id.split('___')[0]}</p>
                 <p className="text-[10px] font-bold text-indigo-600 mt-0.5">{editingAlmacenItem.desc}</p>
                 <p className="text-[10px] font-bold text-indigo-500 mt-0.5">Almacén: {editingAlmacenItem.almacen || '—'} | Actual: {formatNum(editingAlmacenItem.stock)} {editingAlmacenItem.unit} @ ${formatNum(editingAlmacenItem.cost || 0)}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="col-span-2">
+                  <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">Descripción</label>
+                  <input type="text" value={almacenEditForm.desc||''} onChange={e=>setAlmacenEditForm(f=>({...f,desc:e.target.value.toUpperCase()}))}
+                    placeholder={editingAlmacenItem.desc}
+                    className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-400 uppercase"/>
+                </div>
+                {editingAlmacenItem.category === 'Productos Terminados' && (
+                <div className="col-span-2">
+                  <label className="text-[10px] font-black text-orange-600 uppercase block mb-1.5">Línea / Subcategoría</label>
+                  <select value={almacenEditForm.subcategory !== undefined ? almacenEditForm.subcategory : (editingAlmacenItem.subcategory||'')}
+                    onChange={e=>setAlmacenEditForm(f=>({...f,subcategory:e.target.value}))}
+                    className="w-full border-2 border-orange-300 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500 bg-orange-50">
+                    <option value="">— Sin subcategoría —</option>
+                    <option value="Stretch Film">Stretch Film</option>
+                    <option value="Cintas">Cintas</option>
+                    <option value="Papel Kraft">Papel Kraft</option>
+                    <option value="Dispensadores">Dispensadores</option>
+                    <option value="Bolsas Plásticas">Bolsas Plásticas</option>
+                    <option value="Empaques Flexibles">Empaques Flexibles</option>
+                    <option value="Termoencogibles">Termoencogibles</option>
+                    <option value="Otros Terminados">Otros Terminados</option>
+                  </select>
+                </div>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4 mb-5">
                 <div>
