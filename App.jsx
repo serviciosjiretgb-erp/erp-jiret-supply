@@ -470,7 +470,7 @@ export default function App() {
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
-  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', nroFiscal: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '' };
+  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', nroFiscal: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
 
   // Formularios Producción
@@ -2248,7 +2248,7 @@ export default function App() {
       };
     });
     try { 
-      await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, nroFiscal: newInvoiceForm.nroFiscal||'', montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: editingInvoiceId ? (newInvoiceForm.timestamp || Date.now()) : Date.now(), user: appUser?.name, itemsFacturados: itemsFacturadosSave, fgId: fgItems[0]?.fgId||newInvoiceForm.fgId||'', fgCantidad: fgItems[0]?.cantidad||0 }); 
+      await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, nroFiscal: newInvoiceForm.nroFiscal||'', tasa: parseNum(newInvoiceForm.tasa||settings?.tasaBCV||0), montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: editingInvoiceId ? (newInvoiceForm.timestamp || Date.now()) : Date.now(), user: appUser?.name, itemsFacturados: itemsFacturadosSave, fgId: fgItems[0]?.fgId||newInvoiceForm.fgId||'', fgCantidad: fgItems[0]?.cantidad||0 }); 
 
       // ── Construir lista de items a descontar del inventario ──
       // Se ejecuta SIEMPRE (creación Y edición) para garantizar el descuento
@@ -8213,7 +8213,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                       <div className="text-[9px] text-gray-500 font-bold">{selGrp.cliente}</div>
                                       {selGrp.ancho && <div className="text-[9px] text-orange-600 font-bold">{selGrp.ancho}×{selGrp.largo}cm | {selGrp.micras}mic</div>}
                                       <div className="flex gap-3 mt-1">
-                                        <span className="text-[9px] font-black text-green-700">Stock: {formatNum(selGrp.totalStock)} {selGrp.esTermo?'KG':'Millares'}</span>
+                                        <span className="text-[9px] font-black text-green-700">Stock: {formatNum(selGrp.totalStock)} {selGrp.esTermo?'KG':selGrp._isInvPT&&selGrp._unit&&selGrp._unit!=='Mill.'?selGrp._unit:'Millares'}</span>
                                         <span className="text-[9px] text-gray-400">{selGrp.lotes.length} lote{selGrp.lotes.length!==1?'s':''}</span>
                                       </div>
                                     </div>
@@ -8222,29 +8222,40 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 {selGrp && (
                                   <div className="flex gap-2 items-end">
                                     <div>
-                                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cantidad ({selGrp.esTermo?'KG':'Millares'})</label>
+                                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cantidad ({selGrp.esTermo?'KG':selGrp._unit==='Millares'||selGrp._unit==='Mill.'||!selGrp._isInvPT?'Millares':'UND'})</label>
                                       <input type="number" step="0.01" max={selGrp.totalStock} value={newInvoiceForm.fgCantidad}
                                         onChange={e=>setNewInvoiceForm({...newInvoiceForm, fgCantidad: e.target.value})}
                                         className="w-32 border-2 border-green-400 rounded-xl p-2 font-black text-sm outline-none focus:border-green-600 text-center bg-white"
                                         placeholder={formatNum(selGrp.totalStock)} />
-                                      <div className="text-[8px] text-gray-500 text-center mt-0.5">Disp: {formatNum(selGrp.totalStock)} {selGrp.esTermo?'KG':'Mill.'}</div>
+                                      <div className="text-[8px] text-gray-500 text-center mt-0.5">Disp: {formatNum(selGrp.totalStock)} {selGrp.esTermo?'KG':selGrp._isInvPT&&selGrp._unit&&!['Mill.','Millares'].includes(selGrp._unit)?selGrp._unit:'Mill.'}</div>
+                                    </div>
+                                    <div>
+                                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Precio Unitario (USD)</label>
+                                      <input type="number" step="0.01" min="0" value={newInvoiceForm._fgPrecio||''}
+                                        onChange={e=>setNewInvoiceForm({...newInvoiceForm, _fgPrecio: e.target.value})}
+                                        className="w-28 border-2 border-orange-300 rounded-xl p-2 font-black text-sm outline-none focus:border-orange-500 text-center bg-orange-50"
+                                        placeholder="0.00" />
                                     </div>
                                     <button type="button"
                                       onClick={() => {
                                         const cant = parseNum(newInvoiceForm.fgCantidad) || selGrp.totalStock;
+                                        const precioU = parseNum(newInvoiceForm._fgPrecio||0);
                                         if (cant > selGrp.totalStock + 0.001) return setDialog({title:'Aviso', text:`Máximo: ${formatNum(selGrp.totalStock)} ${selGrp.esTermo?'KG':'Mill.'}`, type:'alert'});
-                                        // Registrar el grupo con sus lotes para descuento proporcional
+                                        const unit = selGrp.esTermo?'KG':selGrp._isInvPT&&selGrp._unit&&!['Mill.','Millares'].includes(selGrp._unit)?selGrp._unit:'Mill.';
                                         setFgItems(prev => [...prev, {
                                           fgGrpKey: selGrp.key,
-                                          fgId: selGrp.lotes[0]?.id || '', // primer lote como referencia
+                                          fgId: selGrp.lotes[0]?.id || '',
                                           cantidad: cant,
-                                          desc: `${selGrp.categoria||selGrp.producto} | ${selGrp.cliente}`,
-                                          unidad: selGrp.esTermo ? 'KG' : 'Mill.',
+                                          precioUnit: precioU,
+                                          totalUSD: precioU * cant,
+                                          totalRenglon: precioU * cant,
+                                          desc: `${selGrp.categoria||selGrp.producto}${selGrp.cliente?' | '+selGrp.cliente:''}`,
+                                          unidad: unit,
                                           maxCant: selGrp.totalStock,
                                           esTermo: selGrp.esTermo,
-                                          grpLotes: selGrp.lotes // para descuento proporcional
+                                          grpLotes: selGrp.lotes
                                         }]);
-                                        setNewInvoiceForm({...newInvoiceForm, fgId: '', fgCantidad: ''});
+                                        setNewInvoiceForm({...newInvoiceForm, fgId: '', fgCantidad: '', _fgPrecio: ''});
                                       }}
                                       className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs uppercase hover:bg-green-700 flex items-center gap-1 h-fit">
                                       <Plus size={14}/> Agregar
@@ -8263,7 +8274,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                   <tr className="font-black text-[9px] uppercase">
                                     <th className="p-2 text-left">Lote / Producto</th>
                                     <th className="p-2 text-center">Cantidad</th>
-                                    <th className="p-2 text-center">Restante</th>
+                                    <th className="p-2 text-right">Precio U.</th>
+                                    <th className="p-2 text-right">Total</th>
                                     <th className="p-2 text-center">Quitar</th>
                                   </tr>
                                 </thead>
@@ -8272,7 +8284,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                     <tr key={idx} className="hover:bg-green-50">
                                       <td className="p-2 font-bold text-gray-800">{item.desc}</td>
                                       <td className="p-2 text-center font-black text-green-700">{formatNum(item.cantidad)} {item.unidad}</td>
-                                      <td className="p-2 text-center font-bold text-gray-500 text-[9px]">{formatNum(Math.max(0, item.maxCant - item.cantidad))} {item.unidad} restante</td>
+                                      <td className="p-2 text-right font-black text-orange-600">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
+                                      <td className="p-2 text-right font-black text-gray-800">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
                                       <td className="p-2 text-center">
                                         <button type="button" onClick={()=>setFgItems(prev=>prev.filter((_,i)=>i!==idx))} className="text-red-400 hover:text-red-600"><X size={14}/></button>
                                       </td>
@@ -8300,10 +8313,18 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         </select>
                       </div>
                       
-                      <div className="md:col-span-2">
+                      <div className="md:col-span-1">
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Tasa de Cambio</label>
+                        <input type="number" step="0.01" min="0" value={newInvoiceForm.tasa||''}
+                          onChange={e=>setNewInvoiceForm({...newInvoiceForm, tasa:e.target.value})}
+                          className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black"
+                          placeholder={`${formatNum(settings?.tasaBCV||0)} Bs/$`}/>
+                        <div className="text-[8px] text-gray-400 mt-1">BCV: {formatNum(settings?.tasaBCV||0)} Bs/$</div>
+                      </div>
+                      <div className="md:col-span-1">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">OP Relacionada</label>
                         <select value={newInvoiceForm.opAsignada} onChange={e=>handleInvoiceFormChange('opAsignada', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
-                          <option value="">Seleccione OP...</option>
+                          <option value="">— No aplica —</option>
                           {(requirements || []).map(r=><option key={r.id} value={r.id}>#{String(r.id).replace('OP-','').padStart(5,'0')} — {r.client} | {r.desc}</option>)}
                         </select>
                       </div>
