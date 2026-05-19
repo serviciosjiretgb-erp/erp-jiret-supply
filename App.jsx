@@ -330,6 +330,7 @@ export default function App() {
   const [prodView, setProdView] = useState('proyeccion');
   const [invView, setInvView] = useState('catalogo');
   const [fgSearch, setFgSearch] = useState('');
+  const [fgCatFilter, setFgCatFilter] = useState('TODAS');
   const [selectedOpId, setSelectedOpId] = useState('');
   const [fgItems, setFgItems] = useState([]); // [{fgId, cantidad, desc, unidad, maxCant}]
   const [showCargarProducto, setShowCargarProducto] = useState(false);
@@ -2238,12 +2239,13 @@ export default function App() {
       const precioUnitVenta = totalFacturado > 0 ? totalFacturado/cantNum : parseNum(it.precioUnit||0);
       return {
         fgId: it.fgId,
+        invCode: it.invCode || '',
         cantidad: it.cantidad,
         desc: it.desc || fg?.producto || '',
         unidad: it.unidad || (esTermo?'KG':'Millares'),
         esTermo,
-        precioUnit: precioUnitVenta,          // ← precio de venta por unidad
-        costoUnit: costoCapturado,            // ← costo congelado al momento de facturar
+        precioUnit: precioUnitVenta,
+        costoUnit: costoCapturado,
         costoTotal: parseNum(it.cantidad) * costoCapturado
       };
     });
@@ -5055,9 +5057,18 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               </p>
             </div>
             <div className="flex gap-3 items-center">
-              <div className="relative">
-                <Search className="absolute left-3 top-2.5 text-gray-400" size={14}/>
-                <input type="text" placeholder="Buscar OP, cliente, producto..." value={fgSearch} onChange={e=>setFgSearch(e.target.value)} className="pl-9 pr-4 py-2 border-2 border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:border-green-500 w-56" />
+              <div className="flex gap-2 items-center flex-wrap">
+                <div className="relative">
+                  <Search className="absolute left-3 top-2.5 text-gray-400" size={14}/>
+                  <input type="text" placeholder="Buscar código, descripción..." value={fgSearch} onChange={e=>setFgSearch(e.target.value)} className="pl-9 pr-8 py-2 border-2 border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:border-green-500 w-52" />
+                  {fgSearch && <button onClick={()=>setFgSearch('')} className="absolute right-2 top-2 text-gray-400 hover:text-red-500"><X size={13}/></button>}
+                </div>
+                <select value={fgCatFilter||'TODAS'} onChange={e=>setFgCatFilter(e.target.value)}
+                  className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black outline-none focus:border-green-400 bg-white">
+                  <option value="TODAS">Todas las líneas</option>
+                  {['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles'].map(s=><option key={s} value={s}>{s}</option>)}
+                </select>
+                {(fgSearch||fgCatFilter!=='TODAS') && <button onClick={()=>{setFgSearch('');setFgCatFilter('TODAS');}} className="px-3 py-2 rounded-xl text-[9px] font-black text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 uppercase">✕ Limpiar</button>}
               </div>
 
               <button onClick={()=>setShowCargarProducto(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showCargarProducto?'bg-red-500 text-white':'bg-green-600 text-white hover:bg-green-700'}`}><Plus size={14}/> {showCargarProducto?'CANCELAR':'CARGAR PRODUCTO'}</button>
@@ -5501,7 +5512,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         allPT.push({id:(i.displayId||(i.id||'').split('___')[0]), desc:i.desc||'', category:'Productos Terminados', subcategory:getItemSubcategory(i)||'Otros Terminados', unit:i.unit||'und', stock:parseNum(i.stock||0), cost:parseNum(i.cost||0), isProduccion:false, _invId:i.id});
                     });
                     // Filter by search
-                    const filtered = allPT.filter(i=>!fgSearch||(i.id||'').toUpperCase().includes(fgSearch.toUpperCase())||(i.desc||'').toUpperCase().includes(fgSearch.toUpperCase())||(i.subcategory||'').toUpperCase().includes(fgSearch.toUpperCase())||(i.cliente||'').toUpperCase().includes(fgSearch.toUpperCase()));
+                    const filtered = allPT.filter(i=>{
+                      if(fgSearch && !(i.id||'').toUpperCase().includes(fgSearch.toUpperCase()) && !(i.desc||'').toUpperCase().includes(fgSearch.toUpperCase()) && !(i.cliente||'').toUpperCase().includes(fgSearch.toUpperCase())) return false;
+                      if(fgCatFilter && fgCatFilter!=='TODAS' && (i.subcategory||'')!==fgCatFilter) return false;
+                      return true;
+                    });
                     // Group by subcategory
                     const subGroups = {};
                     filtered.forEach(i=>{const s=i.subcategory||'Otros';if(!subGroups[s])subGroups[s]=[];subGroups[s].push(i);});
@@ -8034,10 +8049,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     : parseNum(inv.montoBase||0) / qty;
                 const total = precioVenta * qty;
                 // codigo: clean fgId (no FG-MANUAL timestamps)
-                // Use inventory id if found, else clean fgId
-                const invMatch = (inventory||[]).find(inv=>(inv.id||'').startsWith(it.fgId||'__NONE__')||it.fgId===(inv.displayId||inv.id||'').split('___')[0]);
-                const rawId = invMatch ? (invMatch.displayId||(invMatch.id||'').split('___')[0]) : (it.fgId||'').split('___')[0];
-                const codigo = rawId.startsWith('FG-MANUAL-')||rawId.startsWith('FGG::') ? (it.desc||'').substring(0,15) : rawId;
+                // Use saved invCode first, then fgId cleaned
+                const codigo = it.invCode || (()=>{
+                  const rawId = (it.fgId||'').split('___')[0];
+                  if(/^FG-\d{10,}$/.test(rawId)||rawId.startsWith('FGG::')) return '';
+                  return rawId;
+                })();
                 rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
@@ -8319,9 +8336,20 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                         const precioU = parseNum(newInvoiceForm._fgPrecio||0);
                                         if (cant > selGrp.totalStock + 0.001) return setDialog({title:'Aviso', text:`Máximo: ${formatNum(selGrp.totalStock)} ${selGrp.esTermo?'KG':'Mill.'}`, type:'alert'});
                                         const unit = selGrp.esTermo?'KG':selGrp._isInvPT&&selGrp._unit&&!['Mill.','Millares'].includes(selGrp._unit)?selGrp._unit:'Mill.';
+                                        // Get clean inventory code
+                                        let invCode = '';
+                                        if(selGrp._isInvPT && selGrp._invId) {
+                                          invCode = (selGrp._invId||'').split('___')[0];
+                                        } else if(selGrp.lotes && selGrp.lotes[0]) {
+                                          // For FG production: look in inventory by opId
+                                          const fgDoc = (finishedGoodsInventory||[]).find(f=>f.id===selGrp.lotes[0].id);
+                                          const invByOp = (inventory||[]).find(i=>i.opId===fgDoc?.opId||(i.id||'').startsWith(fgDoc?.opId||'__'));
+                                          invCode = invByOp ? (invByOp.displayId||(invByOp.id||'').split('___')[0]) : (selGrp.lotes[0].id||'').split('___')[0];
+                                        }
                                         setFgItems(prev => [...prev, {
                                           fgGrpKey: selGrp.key,
-                                          fgId: selGrp.lotes[0]?.id || '',
+                                          fgId: selGrp.lotes[0]?.id || selGrp._invId || '',
+                                          invCode,
                                           cantidad: cant,
                                           precioUnit: precioU,
                                           totalUSD: precioU * cant,
@@ -8441,7 +8469,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             <tbody>
                               {fgItems.length > 0 ? fgItems.map((item,i)=>(
                                 <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                                  <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{(()=>{const cid=(item.fgId||"").split("___")[0];const inv=(inventory||[]).find(x=>(x.id||"").split("___")[0]===cid||(x.displayId||"")===cid);return inv?(inv.displayId||(inv.id||"").split("___")[0]):cid.includes("FG-MANUAL-")?"":cid;})()}</td>
+                                  <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode || (item.fgId||'').split('___')[0].replace(/^FG-\d{10,}$/,'')}</td>
                                   <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{maxWidth:"180px",wordBreak:"break-word"}}>{item.desc}</td>
                                   <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
                                   <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:"—"}</td>
@@ -15568,43 +15596,59 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
         {/* ── ROW 5: OPs en Planta — lista compacta vertical ── */}
         {opsActivas.length>0 && (
-          <div className="bg-black rounded-2xl p-5 shadow-sm">
-            <div className="flex justify-between items-center mb-4">
+          <div className="bg-black rounded-2xl shadow-sm overflow-hidden">
+            <div className="flex justify-between items-center px-5 py-3 border-b border-gray-800">
               <h3 className="text-[10px] font-black text-white uppercase flex items-center gap-2">
-                <Factory size={13} className="text-orange-500"/> Órdenes en Planta
+                <Factory size={13} className="text-orange-500"/> Tabla de Órdenes Activas
               </h3>
-              <span className="text-[9px] font-black text-orange-400">{opsActivas.length} activa{opsActivas.length>1?'s':''}</span>
+              <span className="text-[9px] font-black text-orange-400">{opsActivas.length} OP{opsActivas.length>1?'s':''} activa{opsActivas.length>1?'s':''}</span>
             </div>
-            <div className="space-y-2">
-              {opsActivas.map((op,i)=>(
-                <div key={i} className="flex items-center gap-3 bg-gray-900 rounded-xl px-4 py-2.5 border border-gray-800">
-                  {/* OP ID */}
-                  <div className="w-24 flex-shrink-0">
-                    <div className="text-orange-500 text-[10px] font-black">{op.op}</div>
-                    <div className="text-gray-500 text-[8px] font-bold truncate">{op.cliente}</div>
-                  </div>
-                  {/* Fase badge */}
-                  <div className="w-20 flex-shrink-0 text-center">
-                    <span className="px-2 py-0.5 rounded text-[8px] font-black" style={{background:op.faseColor+'33',color:op.faseColor}}>{op.fase}</span>
-                  </div>
-                  {/* Phase dots */}
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    {op.phases.map((ph,pi)=>(
-                      <div key={pi} className="w-5 h-5 rounded-full flex items-center justify-center text-[7px] font-black"
-                        style={{background:ph.done?'#10b981':'#374151',color:'white'}} title={ph.name}>
-                        {ph.done?'✓':pi+1}
-                      </div>
-                    ))}
-                  </div>
-                  {/* Progress bar + % */}
-                  <div className="flex-1 flex items-center gap-2 min-w-0">
-                    <div className="flex-1 bg-gray-800 rounded-full h-2 overflow-hidden">
-                      <div className="h-2 rounded-full" style={{width:`${op.avance}%`,background:op.faseColor}}/>
-                    </div>
-                    <span className="text-[9px] font-black w-8 text-right flex-shrink-0" style={{color:op.faseColor}}>{op.avance}%</span>
-                  </div>
-                </div>
-              ))}
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-[9px]">
+                <thead>
+                  <tr className="bg-gray-900 text-gray-400 uppercase tracking-widest">
+                    <th className="py-2.5 px-4 text-left font-black border-b border-gray-800">Orden ID</th>
+                    <th className="py-2.5 px-4 text-left font-black border-b border-gray-800">Cliente</th>
+                    <th className="py-2.5 px-4 text-center font-black border-b border-gray-800">Estatus</th>
+                    <th className="py-2.5 px-4 text-center font-black border-b border-gray-800 w-40">Fases</th>
+                    <th className="py-2.5 px-4 text-right font-black border-b border-gray-800 w-20">%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {opsActivas.map((op,i)=>(
+                    <tr key={i} className={`border-b border-gray-800 hover:bg-gray-900 transition-colors ${i%2===0?'bg-black':'bg-gray-950'}`}>
+                      <td className="py-2.5 px-4 font-black text-orange-500 whitespace-nowrap">{op.op}</td>
+                      <td className="py-2.5 px-4 text-gray-300 font-bold max-w-[140px] truncate" title={op.cliente}>{op.cliente}</td>
+                      <td className="py-2.5 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-md text-[8px] font-black" style={{background:op.faseColor+'22',color:op.faseColor,border:`1px solid ${op.faseColor}44`}}>
+                          {op.fase}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <div className="flex items-center gap-1 justify-center">
+                          {op.phases.map((ph,pi)=>(
+                            <div key={pi} className="flex items-center gap-0.5">
+                              <div className="w-4 h-4 rounded-sm flex items-center justify-center text-[7px] font-black"
+                                style={{background:ph.done?'#10b981':'#374151',color:'white'}} title={ph.name}>
+                                {ph.done?'✓':pi+1}
+                              </div>
+                              {pi<op.phases.length-1 && <div className="w-2 h-px" style={{background:ph.done?'#10b981':'#374151'}}/>}
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-4 text-right">
+                        <div className="flex items-center gap-1.5 justify-end">
+                          <div className="flex-1 bg-gray-800 rounded-full h-1.5 w-16">
+                            <div className="h-1.5 rounded-full" style={{width:`${op.avance}%`,background:op.faseColor}}/>
+                          </div>
+                          <span className="font-black w-8 text-right" style={{color:op.faseColor}}>{op.avance}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
