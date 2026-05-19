@@ -5051,7 +5051,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 <Package className="text-green-600" size={24}/> Inventario de Productos Terminados
               </h2>
               <p className="text-[10px] font-bold text-green-600 mt-1 uppercase tracking-widest">
-                Bolsas en Millares — Termoencogible en KG
+                Productos Terminados por Categoría y Subcategoría
               </p>
             </div>
             <div className="flex gap-3 items-center">
@@ -5441,60 +5441,132 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
               return (
                 <>
-                  {/* KPIs — solo mostrar categorías con datos */}
+                  {/* ── SUBCATEGORY CARDS ── */}
                   {(() => {
-                    const semGrp = (inventory||[]).filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0);
-                    const totalSemKg = semGrp.reduce((s,i)=>s+parseNum(i.stock),0);
-                    const cols = [bolsasGrp.length>0, termosGrp.length>0, semGrp.length>0, true].filter(Boolean).length;
+                    const SUB_COLORS = {
+                      'Bolsas Plásticas':   {bg:'bg-blue-50',   border:'border-blue-200',   text:'text-blue-700',   icon:'📦'},
+                      'Termoencogibles':    {bg:'bg-green-50',  border:'border-green-200',  text:'text-green-700',  icon:'🟢'},
+                      'Stretch Film':       {bg:'bg-purple-50', border:'border-purple-200', text:'text-purple-700', icon:'🎞'},
+                      'Cintas':             {bg:'bg-yellow-50', border:'border-yellow-200', text:'text-yellow-700', icon:'🎀'},
+                      'Papel Kraft':        {bg:'bg-amber-50',  border:'border-amber-200',  text:'text-amber-700',  icon:'📜'},
+                      'Dispensadores':      {bg:'bg-pink-50',   border:'border-pink-200',   text:'text-pink-700',   icon:'📌'},
+                      'Empaques Flexibles': {bg:'bg-indigo-50', border:'border-indigo-200', text:'text-indigo-700', icon:'🗂'},
+                      'Otros Terminados':   {bg:'bg-gray-50',   border:'border-gray-200',   text:'text-gray-700',   icon:'📋'},
+                    };
+                    const ptItems = (inventory||[]).filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0);
+                    // Also count FG production items
+                    const fgBolsasCount = bolsasGrp.length;
+                    const fgTermoCount = termosGrp.length;
+                    const subcatCounts = {};
+                    ptItems.forEach(i=>{const sub=getItemSubcategory(i)||'Otros Terminados';if(!subcatCounts[sub])subcatCounts[sub]={count:0,stock:0,valor:0,unit:''};subcatCounts[sub].count++;subcatCounts[sub].stock+=parseNum(i.stock);subcatCounts[sub].valor+=parseNum(i.stock)*parseNum(i.cost||0);subcatCounts[sub].unit=i.unit||'und';});
+                    if(fgBolsasCount>0){if(!subcatCounts['Bolsas Plásticas'])subcatCounts['Bolsas Plásticas']={count:0,stock:0,valor:0,unit:'Millares'};subcatCounts['Bolsas Plásticas'].count+=fgBolsasCount;subcatCounts['Bolsas Plásticas'].stock+=bolsasGrp.reduce((s,g)=>s+g.totalStock,0);subcatCounts['Bolsas Plásticas'].valor+=bolsasGrp.reduce((s,g)=>s+g.pesoTot,0);subcatCounts['Bolsas Plásticas'].unit='Millares';}
+                    if(fgTermoCount>0){if(!subcatCounts['Termoencogibles'])subcatCounts['Termoencogibles']={count:0,stock:0,valor:0,unit:'KG'};subcatCounts['Termoencogibles'].count+=fgTermoCount;subcatCounts['Termoencogibles'].stock+=termosGrp.reduce((s,g)=>s+g.totalStock,0);subcatCounts['Termoencogibles'].valor+=termosGrp.reduce((s,g)=>s+g.pesoTot,0);subcatCounts['Termoencogibles'].unit='KG';}
+                    const totalValor = Object.values(subcatCounts).reduce((s,v)=>s+v.valor,0)+(inventory||[]).filter(i=>i.category==='Semielaborados').reduce((s,i)=>s+parseNum(i.stock)*parseNum(i.cost||0),0);
+                    const subs = Object.entries(subcatCounts);
                     return (
-                      <div className={`grid grid-cols-${cols} gap-4 mb-6`}>
-                        {bolsasGrp.length > 0 && (
-                          <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
-                            <div className="text-[9px] font-black text-blue-700 uppercase mb-1">📦 Bolsas</div>
-                            <div className="font-black text-blue-600 text-lg">{formatNum(totalMillares)} Mill.</div>
-                            <div className="text-[9px] text-gray-500">{bolsasGrp.length} producto{bolsasGrp.length!==1?'s':''}</div>
+                      <>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mb-5">
+                          {subs.map(([sub,v])=>{const c=SUB_COLORS[sub]||{bg:'bg-gray-50',border:'border-gray-200',text:'text-gray-700',icon:'📋'};return(
+                            <div key={sub} className={`${c.bg} border ${c.border} rounded-2xl p-3 text-center`}>
+                              <div className={`text-[9px] font-black ${c.text} uppercase mb-1`}>{c.icon} {sub}</div>
+                              <div className={`font-black ${c.text} text-base`}>{formatNum(v.stock)} <span className="text-[9px]">{v.unit}</span></div>
+                              <div className="text-[8px] text-gray-400 mt-0.5">{v.count} artículo{v.count!==1?'s':''} · ${formatNum(v.valor)}</div>
+                            </div>
+                          ))}
+                          <div className="bg-orange-50 border border-orange-200 rounded-2xl p-3 text-center">
+                            <div className="text-[9px] font-black text-orange-700 uppercase mb-1">💰 Valor Total</div>
+                            <div className="font-black text-orange-600 text-lg">${formatNum(totalValor)}</div>
+                            <div className="text-[8px] text-gray-400 mt-0.5">{subs.length} subcategoría{subs.length!==1?'s':''}</div>
                           </div>
-                        )}
-                        {termosGrp.length > 0 && (
-                          <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
-                            <div className="text-[9px] font-black text-green-700 uppercase mb-1">🟢 Termoencogible</div>
-                            <div className="font-black text-green-600 text-lg">{formatNum(totalKgTermo)} KG</div>
-                            <div className="text-[9px] text-gray-500">{termosGrp.length} producto{termosGrp.length!==1?'s':''}</div>
-                          </div>
-                        )}
-                        {semGrp.length > 0 && (
-                          <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 text-center">
-                            <div className="text-[9px] font-black text-indigo-700 uppercase mb-1">🔄 Semielaborados/Bobinas</div>
-                            <div className="font-black text-indigo-600 text-lg">{formatNum(totalSemKg)} KG</div>
-                            <div className="text-[9px] text-gray-500">{semGrp.length} artículo{semGrp.length!==1?'s':''}</div>
-                          </div>
-                        )}
-                        <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 text-center">
-                          <div className="text-[9px] font-black text-orange-700 uppercase mb-1">Valor Total</div>
-                          <div className="font-black text-orange-600">${formatNum(
-                            bolsasGrp.reduce((s,g)=>s+g.pesoTot,0)+
-                            termosGrp.reduce((s,g)=>s+g.pesoTot,0)+
-                            semGrp.reduce((s,i)=>s+parseNum(i.stock)*parseNum(i.cost||0),0)
-                          )}</div>
                         </div>
-                      </div>
+                      </>
                     );
                   })()}
 
-                  {bolsasGrp.length > 0 && (
-                    <div className="mb-6">
-                      <h3 className="text-sm font-black uppercase text-blue-700 mb-3 flex items-center gap-2"><span className="bg-blue-100 px-3 py-1 rounded-lg">📦 BOLSAS / EMPAQUES — en Millares</span></h3>
-                      {renderGrpTable(bolsasGrp, false)}
-                    </div>
-                  )}
-                  {termosGrp.length > 0 && (
-                    <div className="mb-6">
-                      <h3 className="text-sm font-black uppercase text-green-700 mb-3 flex items-center gap-2"><span className="bg-green-100 px-3 py-1 rounded-lg">🟢 TERMOENCOGIBLE — en KG</span></h3>
-                      {renderGrpTable(termosGrp, true)}
-                    </div>
-                  )}
-                  {/* FIX 3: inventory PT items are now included in allFG → shown in bolsas/termos tables above */}
-                  {groups.length === 0 && (finishedGoodsInventory||[]).filter(fg=>(parseNum(fg.kgProducidos)||parseNum(fg.millares))>0).length===0 && invPTForView.length===0 && inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0).length===0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>}
+                  {/* ── TABLA UNIFICADA POR SUBCATEGORÍA ── */}
+                  {(() => {
+                    // Merge FG production + inventory PT into single table
+                    const allPT = [];
+                    // From finishedGoodsInventory (producción)
+                    bolsasGrp.forEach(g=>{
+                      allPT.push({id:g.lotes[0]?.id||g.key, desc:g.producto||g.categoria||g.desc||g.key, category:'Productos Terminados', subcategory:'Bolsas Plásticas', unit:'Millares', stock:g.totalStock, cost:g.costoUnitMil||0, isProduccion:true, cliente:g.cliente||''});
+                    });
+                    termosGrp.forEach(g=>{
+                      allPT.push({id:g.lotes[0]?.id||g.key, desc:g.producto||g.desc||g.key, category:'Productos Terminados', subcategory:'Termoencogibles', unit:'KG', stock:g.totalStock, cost:g.costoUnit||0, isProduccion:true, cliente:g.cliente||''});
+                    });
+                    // From inventory (importados PT)
+                    (inventory||[]).filter(i=>i.category==='Productos Terminados').forEach(i=>{
+                      if(!allPT.some(p=>p.id===(i.displayId||(i.id||'').split('___')[0])))
+                        allPT.push({id:(i.displayId||(i.id||'').split('___')[0]), desc:i.desc||'', category:'Productos Terminados', subcategory:getItemSubcategory(i)||'Otros Terminados', unit:i.unit||'und', stock:parseNum(i.stock||0), cost:parseNum(i.cost||0), isProduccion:false, _invId:i.id});
+                    });
+                    // Filter by search
+                    const filtered = allPT.filter(i=>!fgSearch||(i.id||'').toUpperCase().includes(fgSearch.toUpperCase())||(i.desc||'').toUpperCase().includes(fgSearch.toUpperCase())||(i.subcategory||'').toUpperCase().includes(fgSearch.toUpperCase())||(i.cliente||'').toUpperCase().includes(fgSearch.toUpperCase()));
+                    // Group by subcategory
+                    const subGroups = {};
+                    filtered.forEach(i=>{const s=i.subcategory||'Otros';if(!subGroups[s])subGroups[s]=[];subGroups[s].push(i);});
+                    const SUB_ORDER = ['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
+                    const orderedSubs = [...SUB_ORDER.filter(s=>subGroups[s]), ...Object.keys(subGroups).filter(s=>!SUB_ORDER.includes(s))];
+                    if(filtered.length===0) return <div className="text-center py-12 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>;
+                    return (
+                      <div className="space-y-4">
+                        {orderedSubs.map(sub=>{
+                          const items = subGroups[sub]||[];
+                          const subTotal = items.reduce((s,i)=>s+i.stock*i.cost,0);
+                          return (
+                            <div key={sub} className="rounded-2xl border border-gray-200 overflow-hidden">
+                              <div className="bg-gray-800 text-white px-5 py-2.5 flex justify-between items-center">
+                                <span className="font-black text-sm uppercase">{sub}</span>
+                                <span className="text-gray-300 text-[10px] font-bold">{items.length} artículo{items.length!==1?'s':''} · Valor: ${formatNum(subTotal)}</span>
+                              </div>
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-xs border-collapse">
+                                  <thead className="bg-gray-100">
+                                    <tr className="font-black text-[9px] uppercase text-gray-600">
+                                      <th className="py-2 px-3 text-left">Código</th>
+                                      <th className="py-2 px-3 text-left">Descripción</th>
+                                      <th className="py-2 px-3 text-center">U.M.</th>
+                                      <th className="py-2 px-3 text-right">Stock</th>
+                                      <th className="py-2 px-3 text-right">Costo U. ($)</th>
+                                      <th className="py-2 px-3 text-right">Valor ($)</th>
+                                      <th className="py-2 px-3 text-center w-16">Editar</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {items.sort((a,b)=>(a.desc||'').localeCompare(b.desc||'')).map((item,i)=>(
+                                      <tr key={i} className={`border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
+                                        <td className="py-2 px-3 font-black text-orange-600 text-[10px] whitespace-nowrap">{item.id}</td>
+                                        <td className="py-2 px-3 font-bold text-gray-800">{item.desc}{item.cliente&&<span className="text-[8px] text-gray-400 ml-1">| {item.cliente}</span>}</td>
+                                        <td className="py-2 px-3 text-center font-bold text-gray-500">{item.unit}</td>
+                                        <td className="py-2 px-3 text-right font-black text-gray-900">{formatNum(item.stock)}</td>
+                                        <td className="py-2 px-3 text-right font-bold text-gray-600">${formatNum(item.cost)}</td>
+                                        <td className="py-2 px-3 text-right font-black text-green-700">${formatNum(item.stock*item.cost)}</td>
+                                        <td className="py-2 px-3 text-center">
+                                          {!item.isProduccion && item._invId && (
+                                            <button onClick={()=>{const inv=(inventory||[]).find(x=>x.id===item._invId);if(inv)setEditingAlmacenItem(inv);}}
+                                              className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-600 hover:text-white transition-all">
+                                              <Edit size={11}/>
+                                            </button>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                  <tfoot className="bg-gray-100 border-t border-gray-200">
+                                    <tr className="font-black text-[10px]">
+                                      <td colSpan={5} className="py-2 px-3 text-right text-gray-500 uppercase">Total {sub}:</td>
+                                      <td className="py-2 px-3 text-right text-gray-900">${formatNum(subTotal)}</td>
+                                      <td/>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                  {/* OLD renderGrpTable section removed - now using unified table above */}
 
                   {/* ── Semielaborados / Bobinas (de Inventario General) ── */}
                   {(() => {
@@ -7961,8 +8033,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     : parseNum(inv.montoBase||0) / qty;
                 const total = precioVenta * qty;
                 // codigo: clean fgId (no FG-MANUAL timestamps)
-                const rawId = (it.fgId||'').split('___')[0];
-                const codigo = rawId.startsWith('FG-MANUAL-') ? (it.desc||rawId).substring(0,20) : rawId;
+                // Use inventory id if found, else clean fgId
+                const invMatch = (inventory||[]).find(inv=>(inv.id||'').startsWith(it.fgId||'__NONE__')||it.fgId===(inv.displayId||inv.id||'').split('___')[0]);
+                const rawId = invMatch ? (invMatch.displayId||(invMatch.id||'').split('___')[0]) : (it.fgId||'').split('___')[0];
+                const codigo = rawId.startsWith('FG-MANUAL-')||rawId.startsWith('FGG::') ? (it.desc||'').substring(0,15) : rawId;
                 rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
