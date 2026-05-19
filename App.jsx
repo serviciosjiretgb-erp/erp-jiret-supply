@@ -331,10 +331,14 @@ export default function App() {
   const [cotizaciones, setCotizaciones] = useState([]);
   const [showNewCotizPanel, setShowNewCotizPanel] = useState(false);
   const [editingCotizId, setEditingCotizId] = useState(null);
-  const initialCotizForm = { fecha: '', clientRif: '', clientName: '', documento: '', tasa: '', descripcion: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', validez: '15', observaciones: '' };
+  const initialCotizForm = { fecha: '', clientRif: '', clientName: '', documento: '', descripcion: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', validez: '15', condicionId: '', observaciones: '' };
   const [newCotizForm, setNewCotizForm] = useState({...initialCotizForm, fecha: getTodayDate()});
   const [cotizItems, setCotizItems] = useState([]);
-  const [cotizSearchTerm, setCotizSearchTerm] = useState(''); 
+  const [cotizSearchTerm, setCotizSearchTerm] = useState('');
+  const [condicionesCotiz, setCondicionesCotiz] = useState([{'id': 'cond1', 'nombre': 'Contado / Entrega Inmediata', 'detalle': 'Condiciones de Pago: De contado. | Forma de Pago: Bolívares al tipo de cambio BCV vigente a la fecha de pago. | Tiempo de Entrega: Inmediata. | Validez: 1 día calendario.'}, {'id': 'cond2', 'nombre': 'Crédito Estándar (Stock Disponible)', 'detalle': 'Condiciones de Pago: Financiamiento a 7/15 días continuos. | Forma de Pago: Bolívares al tipo de cambio BCV vigente. | Tiempo de Entrega: Inmediata o 2–3 días hábiles tras confirmación de OC. | Validez: 1 día calendario.'}, {'id': 'cond3', 'nombre': 'Fabricación Nacional con Anticipo', 'detalle': 'Condiciones de Pago: Anticipo del 30%/50% con la OC; saldo a 7/21 días desde entrega. | Formas de Pago: Bolívares (BCV) o Divisas (efectivo/transferencia). | Entrega: 10 a 12 días hábiles desde OC + anticipo. | Variación: ±4–8% cantidad despachada. | Reclamos: 7 días hábiles desde recepción.'}, {'id': 'cond4', 'nombre': 'Proyectos Especiales / Importación', 'detalle': 'Condiciones de Pago: 50% anticipo al procesar OC; 50% contra entrega. | Formas de Pago: Bolívares (BCV) o Divisas (efectivo/Zelle). | Tiempo de Entrega: 60–70 días continuos aprox., sujeto a tránsito y aduana.'}]);
+  const [showCondManager, setShowCondManager] = useState(false);
+  const [editingCond, setEditingCond] = useState(null);
+  const [newCondForm, setNewCondForm] = useState({nombre:'',detalle:''}); 
   const [prodView, setProdView] = useState('proyeccion');
   const [invView, setInvView] = useState('catalogo');
   const [fgSearch, setFgSearch] = useState('');
@@ -8132,9 +8136,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 <div className="p-8 bg-gray-50/50 border-b">
                   <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-5">
                     {/* Header */}
-                    <div className="flex justify-between items-center border-b pb-4">
+                    <div className="flex justify-between items-center border-b pb-4 flex-wrap gap-3">
                       <h3 className="text-sm font-black uppercase">{editingCotizId?`Editando: ${editingCotizId}`:'Nueva Cotización'}</h3>
-                      <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-3 flex-wrap">
                         <div>
                           <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
                           <input type="date" value={newCotizForm.fecha} onChange={e=>setNewCotizForm({...newCotizForm,fecha:e.target.value})} className="border-2 border-orange-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-orange-50"/>
@@ -8145,9 +8149,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           <input type="number" min="1" value={newCotizForm.validez} onChange={e=>setNewCotizForm({...newCotizForm,validez:e.target.value})} className="w-20 border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-400 text-center"/>
                         </div>
                         <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$</label>
-                          <input type="number" step="0.01" value={newCotizForm.tasa} onChange={e=>setNewCotizForm({...newCotizForm,tasa:e.target.value})} className="w-28 border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-400 text-center" placeholder={formatNum(settings?.tasaBCV||0)}/>
+                          <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Condición de Venta</label>
+                          <select value={newCotizForm.condicionId||''} onChange={e=>setNewCotizForm({...newCotizForm,condicionId:e.target.value})}
+                            className="border-2 border-orange-200 rounded-xl p-2 text-xs font-black outline-none focus:border-orange-500 bg-orange-50" style={{maxWidth:220}}>
+                            <option value="">— Sin condición —</option>
+                            {(condicionesCotiz||[]).map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}
+                          </select>
                         </div>
+                        <button type="button" onClick={()=>setShowCondManager(true)}
+                          className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black uppercase text-gray-600 hover:bg-gray-100 flex items-center gap-1 mt-4">
+                          <Settings2 size={11}/> Gestionar
+                        </button>
                       </div>
                     </div>
 
@@ -8202,6 +8214,74 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           </button>
                         </div>
                       </div>
+                    </div>
+
+                    {/* FG Product picker (referencial) */}
+                    <div className="border-2 border-dashed border-blue-200 rounded-2xl p-4">
+                      <h4 className="text-[10px] font-black text-blue-700 uppercase mb-3 flex items-center gap-2"><Package size={13}/> Productos Terminados — Seleccionar (Referencial)</h4>
+                      {(() => {
+                        // Build FG groups same as invoice
+                        const cotFGGrps = {};
+                        (finishedGoodsInventory||[]).forEach(fg=>{
+                          const pn=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                          const cn=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
+                          const key=`${pn}__${cn}__${fg.tipoProducto||'BOLSAS'}`;
+                          if(!cotFGGrps[key]) cotFGGrps[key]={key,desc:formatFGLabel(fg)||fg.producto,esTermo:fg.tipoProducto==='TERMOENCOGIBLE',stk:0,lotes:[]};
+                          const qty=fg.tipoProducto==='TERMOENCOGIBLE'?parseNum(fg.kgProducidos):parseNum(fg.millares);
+                          cotFGGrps[key].stk+=qty; cotFGGrps[key].lotes.push(fg);
+                        });
+                        const invPT = (inventory||[]).filter(i=>i.category==='Productos Terminados');
+                        return (
+                          <div className="flex gap-2 flex-wrap items-end">
+                            <div className="flex-1 min-w-64">
+                              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Producto / Categoría</label>
+                              <select id="cotiz-fg-sel" className="w-full border-2 border-blue-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-400 bg-white">
+                                <option value="">— Seleccione producto —</option>
+                                <optgroup label="── BOLSAS PLÁSTICAS (Producción) ──">
+                                  {Object.values(cotFGGrps).filter(g=>!g.esTermo).map(g=><option key={g.key} value={'FGG::'+g.key+'::BOLSAS'}>{g.desc} | {formatNum(g.stk)} Mill.</option>)}
+                                </optgroup>
+                                <optgroup label="── TERMOENCOGIBLES (Producción) ──">
+                                  {Object.values(cotFGGrps).filter(g=>g.esTermo).map(g=><option key={g.key} value={'FGG::'+g.key+'::TERMO'}>{g.desc} | {formatNum(g.stk)} KG</option>)}
+                                </optgroup>
+                                {['Stretch Film','Cintas','Papel Kraft','Dispensadores'].map(sub=>{
+                                  const items=invPT.filter(i=>getItemSubcategory(i)===sub);
+                                  return items.length>0?<optgroup key={sub} label={`── ${sub.toUpperCase()} ──`}>
+                                    {items.map(i=><option key={i.id} value={'INV::'+i.id}>{(i.displayId||(i.id||'').split('___')[0])} — {i.desc} | {formatNum(i.stock)} {i.unit}</option>)}
+                                  </optgroup>:null;
+                                })}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
+                              <input type="number" step="0.01" id="cotiz-fg-qty" className="w-24 border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center" placeholder="0"/>
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Precio U. USD</label>
+                              <input type="number" step="0.01" id="cotiz-fg-precio" className="w-28 border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black text-center bg-orange-50" placeholder="0.00"/>
+                            </div>
+                            <button type="button" onClick={()=>{
+                              const sel=document.getElementById('cotiz-fg-sel')?.value||'';
+                              const qty=parseNum(document.getElementById('cotiz-fg-qty')?.value||0);
+                              const precio=parseNum(document.getElementById('cotiz-fg-precio')?.value||0);
+                              if(!sel||qty<=0||precio<=0) return;
+                              let desc='', code='';
+                              if(sel.startsWith('FGG::')){
+                                const parts=sel.split('::');
+                                const grp=Object.values(cotFGGrps).find(g=>g.key===parts[1]);
+                                desc=grp?.desc||parts[1]; code=grp?.lotes[0]?.id||'';
+                              } else if(sel.startsWith('INV::')){
+                                const invItem=(inventory||[]).find(i=>i.id===sel.replace('INV::',''));
+                                desc=invItem?.desc||''; code=(invItem?.displayId||(invItem?.id||'').split('___')[0])||'';
+                              }
+                              setCotizItems(prev=>[...prev,{desc,code,cantidad:qty,precioUnit:precio,total:qty*precio}]);
+                              ['cotiz-fg-qty','cotiz-fg-precio'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+                              if(document.getElementById('cotiz-fg-sel')) document.getElementById('cotiz-fg-sel').value='';
+                            }} className="bg-blue-600 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-blue-700 flex items-center gap-1">
+                              <Plus size={13}/> Agregar
+                            </button>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Tabla ítems */}
@@ -8304,6 +8384,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 <div style="font-size:18px;font-weight:900;color:#f97316;border-top:2px solid #000;padding-top:8px;margin-top:8px">TOTAL: $${formatNum(cot.total||0)}</div>
                               </div>
                               ${cot.observaciones?`<div style="margin-top:20px;padding:12px;border:1px solid #ddd;font-size:10px"><b>Observaciones:</b> ${cot.observaciones}</div>`:''}
+                              ${(()=>{const cond=(condicionesCotiz||[]).find(c=>c.id===cot.condicionId);return cond?`<div style="margin-top:24px;border-top:2px solid #f97316;padding-top:14px;font-size:9px;color:#444"><div style="font-weight:900;font-size:10px;color:#f97316;text-transform:uppercase;margin-bottom:6px">⚖ CONDICIONES COMERCIALES — ${cond.nombre}</div>${(cond.detalle||'').split('|').map(s=>`<div style="margin-bottom:3px">${s.trim()}</div>`).join('')}</div>`:'';})()}
                               <script>window.print();</script></body></html>`);
                             }} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button>
                             <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('cotizaciones',cot.id));setDialog({title:'Eliminada',text:`${cot.documento} eliminada.`,type:'alert'});},'Eliminar cotización')} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button>
@@ -8315,6 +8396,72 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   {filteredCotiz.length===0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay cotizaciones registradas</div>}
                 </div>
               </div>
+
+              {/* ── MODAL GESTIÓN DE CONDICIONES ── */}
+              {showCondManager && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center" style={{background:'rgba(0,0,0,0.5)'}}>
+                  <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden">
+                    <div className="px-8 py-5 border-b bg-orange-50 flex justify-between items-center">
+                      <h3 className="font-black uppercase text-black flex items-center gap-2"><Settings2 size={18} className="text-orange-500"/> Gestión de Condiciones de Venta</h3>
+                      <button onClick={()=>{setShowCondManager(false);setEditingCond(null);setNewCondForm({nombre:'',detalle:''}); }} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
+                    </div>
+                    <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                      {/* Form to add/edit */}
+                      <div className="bg-gray-50 rounded-2xl p-4 border-2 border-dashed border-orange-200">
+                        <h4 className="text-[10px] font-black text-orange-700 uppercase mb-3">{editingCond?'Editando condición':'Nueva condición'}</h4>
+                        <div className="space-y-3">
+                          <div>
+                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre / Título</label>
+                            <input type="text" value={newCondForm.nombre} onChange={e=>setNewCondForm({...newCondForm,nombre:e.target.value})}
+                              className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400"
+                              placeholder="Ej: Contado / Entrega Inmediata"/>
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Detalle completo</label>
+                            <textarea rows={4} value={newCondForm.detalle} onChange={e=>setNewCondForm({...newCondForm,detalle:e.target.value})}
+                              className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 resize-none"
+                              placeholder="Condiciones de Pago: ... | Forma de Pago: ... | Tiempo de Entrega: ..."/>
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={()=>{
+                              if(!newCondForm.nombre.trim()) return;
+                              if(editingCond) {
+                                setCondicionesCotiz(prev=>prev.map(c=>c.id===editingCond?{...c,...newCondForm}:c));
+                              } else {
+                                setCondicionesCotiz(prev=>[...prev,{id:'cond_'+Date.now(),nombre:newCondForm.nombre,detalle:newCondForm.detalle}]);
+                              }
+                              setEditingCond(null); setNewCondForm({nombre:'',detalle:''});
+                            }} className="bg-orange-500 text-white px-6 py-2 rounded-xl font-black text-[10px] uppercase hover:bg-orange-600">
+                              {editingCond?'Guardar Cambios':'Agregar'}
+                            </button>
+                            {editingCond && <button onClick={()=>{setEditingCond(null);setNewCondForm({nombre:'',detalle:''}); }} className="border-2 border-gray-200 px-4 py-2 rounded-xl font-black text-[10px] uppercase text-gray-500 hover:bg-gray-100">Cancelar</button>}
+                          </div>
+                        </div>
+                      </div>
+                      {/* List */}
+                      <div className="space-y-2">
+                        {(condicionesCotiz||[]).map((cond,i)=>(
+                          <div key={cond.id} className={`border-2 rounded-2xl p-4 ${editingCond===cond.id?'border-orange-400 bg-orange-50':'border-gray-100 bg-white'}`}>
+                            <div className="flex justify-between items-start gap-3">
+                              <div className="flex-1">
+                                <div className="font-black text-sm text-black">{cond.nombre}</div>
+                                <div className="text-[10px] text-gray-500 font-bold mt-1 leading-relaxed">{cond.detalle}</div>
+                              </div>
+                              <div className="flex gap-1.5 flex-shrink-0">
+                                <button onClick={()=>{setEditingCond(cond.id);setNewCondForm({nombre:cond.nombre,detalle:cond.detalle});}}
+                                  className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
+                                <button onClick={()=>setCondicionesCotiz(prev=>prev.filter(c=>c.id!==cond.id))}
+                                  className="p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        {(condicionesCotiz||[]).length===0 && <p className="text-center text-gray-400 text-xs font-bold uppercase py-4">Sin condiciones. Agrega una arriba.</p>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })()}
