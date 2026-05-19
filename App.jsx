@@ -3309,39 +3309,39 @@ export default function App() {
     };
 
     const moduleCards = [
-      hasAnyPerm('ventas') && { tab:'ventas', view:()=>setVentasView(hasPerm('ventas')?'facturacion':getFirstVentasView()), icon:<Users size={28}/>, title:'Ventas y Facturación', color:'#f97316',
+      hasAnyPerm('ventas') && { tab:'ventas', view:()=>setVentasView(hasPerm('ventas')?'facturacion':getFirstVentasView()), icon:<Users size={20}/>, title:'Ventas y Facturación', color:'#f97316',
         stats: ()=>{const hoy=(invoices||[]).filter(i=>i.fecha===getTodayDate()).length;const ult=(invoices||[]).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))[0];return {s1:`Facturas hoy: ${hoy}`,s2:`Última: ${ult?.documento||'—'}`};},
         chart: ()=>{ const last5=(invoices||[]).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0)).slice(0,5).map(i=>parseNum(i.total||0)); const mx=Math.max(...last5,1); return last5.map((v,i)=>({h:Math.max((v/mx)*40,3),i}));}
       },
-      hasAnyPerm('produccion') && { tab:'produccion', view:()=>setProdView(hasPerm('produccion')?'proyeccion':getFirstProdView()), icon:<Factory size={28}/>, title:'Producción Planta', color:'#f97316',
+      hasAnyPerm('produccion') && { tab:'produccion', view:()=>setProdView(hasPerm('produccion')?'proyeccion':getFirstProdView()), icon:<Factory size={20}/>, title:'Producción Planta', color:'#f97316',
         stats: ()=>{ const act=(requirements||[]).filter(r=>r.status==='EN PROCESO').length; const oee=act>0?91:0; return {s1:`Lotes activos: ${act}`, s2:`Eficiencia: ${oee}%`};},
         chart:null
       },
-      hasAnyPerm('formulas') && { tab:'formulas', icon:<Beaker size={28}/>, title:'Fórmulas / Recetas', color:'#a855f7',
+      hasAnyPerm('formulas') && { tab:'formulas', icon:<Beaker size={20}/>, title:'Fórmulas / Recetas', color:'#a855f7',
         stats: ()=>{ const tot=(formulas||[]).length; const rec=(formulas||[]).slice(0,3).map(f=>f.categoria||f.nombre||'—'); return {s1:`Recetas sts: ${tot}`, list:rec};},
         chart:null
       },
-      hasAnyPerm('inventario') && { tab:'inventario', view:()=>setInvView(hasPerm('inventario')?'requisiciones':getFirstInvView()), icon:<Package size={28}/>, title:'Control Inventario', color:'#38bdf8',
+      hasAnyPerm('inventario') && { tab:'inventario', view:()=>setInvView(hasPerm('inventario')?'requisiciones':getFirstInvView()), icon:<Package size={20}/>, title:'Control Inventario', color:'#38bdf8',
         stats: ()=>{ const tot=(inventory||[]).reduce((s,i)=>s+parseNum(i.stock||0)*parseNum(i.cost||0),0); const crit=(inventory||[]).filter(i=>parseNum(i.stock||0)<5).length; return {s1:`Stock total: $${formatNum(tot)}`, s2:`Materiales críticos: ${crit}`};},
         chart:null
       },
-      hasAnyPerm('simulador') && { tab:'simulador', icon:<Calculator size={28}/>, title:'Simulador OP', color:'#f97316',
+      hasAnyPerm('simulador') && { tab:'simulador', icon:<Calculator size={20}/>, title:'Simulador OP', color:'#f97316',
         stats: ()=>{ const last=(requirements||[]).slice(-1)[0]; const sim=last?`$${formatNum(parseNum(last.costoTotal||0))}`:'—'; return {s1:'Simulado se result', s2:sim};},
         chart:null
       },
-      (hasPerm('costos')||hasPerm('costos_operativos')) && { tab:'costos_operativos', icon:<DollarSign size={28}/>, title:'Costos Operativos', color:'#22c55e',
+      (hasPerm('costos')||hasPerm('costos_operativos')) && { tab:'costos_operativos', icon:<DollarSign size={20}/>, title:'Costos Operativos', color:'#22c55e',
         stats: ()=>{ const tot=(opCosts||[]).reduce((s,c)=>s+parseNum(c.amount||c.monto||0),0); return {s1:`Total costos: $${formatNum(tot)}`, s2:'Registro de gastos'};},
         chart:null
       },
-      (hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && { tab:'kpi', icon:<BarChart3 size={28}/>, title:'Dashboard KPI', color:'#a855f7',
+      (hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && { tab:'kpi', icon:<BarChart3 size={20}/>, title:'Dashboard KPI', color:'#a855f7',
         stats: ()=>({ s1:'KPI', s2:'YLD', s3:'RPI' }),
         chart:null
       },
-      (hasPerm('costos')||hasPerm('costos_reportes')) && { tab:'costos', icon:<TrendingUp size={28}/>, title:'Reportes Financieros', color:'#3b82f6',
+      (hasPerm('costos')||hasPerm('costos_reportes')) && { tab:'costos', icon:<TrendingUp size={20}/>, title:'Reportes Financieros', color:'#3b82f6',
         stats: ()=>({ s1:'Reportes', s2:'Resultado integral', list:['Finiquito','Estado Financiero','Variaciones']}),
         chart:null
       },
-      hasAnyPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={28}/>, title:'Configuración', color:'#6b7280',
+      hasAnyPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={20}/>, title:'Configuración', color:'#6b7280',
         stats: ()=>{ const us=(systemUsers||[]).length; return {s1:`Estama / sistema`, s2:`${us} usuario${us!==1?'s':''}`};},
         chart:null
       },
@@ -3361,7 +3361,7 @@ export default function App() {
               <div key={i} className="rounded-2xl overflow-hidden shadow-lg border border-gray-800 bg-gray-900 flex flex-col" style={{minHeight:160}}>
                 {/* Header */}
                 <div className="px-5 pt-4 pb-2 flex items-start gap-3">
-                  <div className="p-2 rounded-xl" style={{background:card.color+'22',color:card.color}}>{card.icon}</div>
+              <div className="p-2 rounded-xl flex-shrink-0" style={{background:card.color+'22',color:card.color}}>{card.icon}</div>
                   <div className="flex-1">
                     <h3 className="font-black text-white uppercase text-sm leading-tight">{card.title}</h3>
                     {stats.s1 && <p className="text-[10px] text-gray-400 font-bold mt-0.5">{stats.s1}</p>}
@@ -5555,12 +5555,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   {(() => {
                     // Merge FG production + inventory PT into single table
                     const allPT = [];
-                    // From finishedGoodsInventory (producción)
+                    // From finishedGoodsInventory (producción) — use fg.id as code
                     bolsasGrp.forEach(g=>{
-                      allPT.push({id:g.lotes[0]?.id||g.key, desc:g.producto||g.categoria||g.desc||g.key, category:'Productos Terminados', subcategory:'Bolsas Plásticas', unit:'Millares', stock:g.totalStock, cost:g.costoUnitMil||0, isProduccion:true, cliente:g.cliente||''});
+                      const fgDoc = g.lotes[0] || {};
+                      allPT.push({id: fgDoc.id || g.key, desc:g.producto||g.categoria||g.desc||g.key, category:'Productos Terminados', subcategory:'Bolsas Plásticas', unit:'Millares', stock:g.totalStock, cost:g.costoUnitMil||0, isProduccion:true, cliente:g.cliente||''});
                     });
                     termosGrp.forEach(g=>{
-                      allPT.push({id:g.lotes[0]?.id||g.key, desc:g.producto||g.desc||g.key, category:'Productos Terminados', subcategory:'Termoencogibles', unit:'KG', stock:g.totalStock, cost:g.costoUnit||0, isProduccion:true, cliente:g.cliente||''});
+                      const fgDoc = g.lotes[0] || {};
+                      allPT.push({id: fgDoc.id || g.key, desc:g.producto||g.desc||g.key, category:'Productos Terminados', subcategory:'Termoencogibles', unit:'KG', stock:g.totalStock, cost:g.costoUnit||0, isProduccion:true, cliente:g.cliente||''});
                     });
                     // From inventory (importados PT)
                     (inventory||[]).filter(i=>i.category==='Productos Terminados').forEach(i=>{
@@ -8392,15 +8394,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                         const precioU = parseNum(newInvoiceForm._fgPrecio||0);
                                         if (cant > selGrp.totalStock + 0.001) return setDialog({title:'Aviso', text:`Máximo: ${formatNum(selGrp.totalStock)} ${selGrp.esTermo?'KG':'Mill.'}`, type:'alert'});
                                         const unit = selGrp.esTermo?'KG':selGrp._isInvPT&&selGrp._unit&&!['Mill.','Millares'].includes(selGrp._unit)?selGrp._unit:'Mill.';
-                                        // Get clean inventory code
+                                        // Get clean inventory code — for FG production use fg.id directly
                                         let invCode = '';
                                         if(selGrp._isInvPT && selGrp._invId) {
                                           invCode = (selGrp._invId||'').split('___')[0];
                                         } else if(selGrp.lotes && selGrp.lotes[0]) {
-                                          // For FG production: look in inventory by opId
-                                          const fgDoc = (finishedGoodsInventory||[]).find(f=>f.id===selGrp.lotes[0].id);
-                                          const invByOp = (inventory||[]).find(i=>i.opId===fgDoc?.opId||(i.id||'').startsWith(fgDoc?.opId||'__'));
-                                          invCode = invByOp ? (invByOp.displayId||(invByOp.id||'').split('___')[0]) : (selGrp.lotes[0].id||'').split('___')[0];
+                                          // FG production: the document id IS the code (e.g. FG-EMBUTIDOS2KIRI-53x83x0.012)
+                                          invCode = selGrp.lotes[0].id || '';
                                         }
                                         setFgItems(prev => [...prev, {
                                           fgGrpKey: selGrp.key,
@@ -15679,9 +15679,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 </thead>
                 <tbody>
                   {opsActivas.map((op,i)=>(
-                    <tr key={i} className={`border-b border-gray-800 hover:bg-gray-900 transition-colors ${i%2===0?'bg-black':'bg-gray-950'}`}>
-                      <td className="py-2.5 px-4 font-black text-orange-500 whitespace-nowrap">{op.op}</td>
-                      <td className="py-2.5 px-4 text-gray-300 font-bold max-w-[140px] truncate" title={op.cliente}>{op.cliente}</td>
+                    <tr key={i} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
+                      <td className="py-3 px-4 font-black text-orange-500 whitespace-nowrap text-[11px]">{op.op}</td>
+                      <td className="py-3 px-4 text-gray-200 font-bold max-w-[200px] truncate text-[10px]" title={op.cliente}>{op.cliente}</td>
                       <td className="py-2.5 px-4 text-center">
                         <span className="px-2 py-0.5 rounded-md text-[8px] font-black" style={{background:op.faseColor+'22',color:op.faseColor,border:`1px solid ${op.faseColor}44`}}>
                           {op.fase}
@@ -16886,42 +16886,60 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </button>
           )}
         </div>
-        {/* ── DERECHA: Panel de login limpio (blanco puro) ── */}
-        <div className="flex items-center justify-center bg-white" style={{width:'380px',minWidth:'320px'}}>
-          <div className="w-full px-10 py-12">
-            <div className="text-center mb-10">
-               <span className="text-2xl font-light tracking-widest text-gray-700">Supply</span>
-               <div className="flex items-center justify-center -mt-1">
-                  <span className="text-black font-black text-[46px] leading-none">G</span>
-                  <div className="bg-orange-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-xl font-black mx-1 shadow">&amp;</div>
-                  <span className="text-black font-black text-[46px] leading-none">B</span>
-               </div>
-               <p className="text-[9px] font-black tracking-widest text-gray-400 uppercase mt-1">Enterprise Resource Planning</p>
-               <p className="text-[10px] font-bold text-orange-500 mt-1">Bienvenido — {new Date().getFullYear()}</p>
+        {/* ── DERECHA: Panel de login oscuro estilo imagen 4 ── */}
+        <div className="flex items-center justify-center" style={{width:'420px',minWidth:'340px',background:'rgba(10,10,10,0.85)',backdropFilter:'blur(12px)'}}>
+          <div className="w-full px-10 py-10">
+            <div className="text-center mb-8">
+              <p className="text-[10px] font-black tracking-widest text-orange-500 uppercase mb-3">INICIO DE SESIÓN DE SISTEMA ERP</p>
+              <div className="flex items-center justify-center gap-1 mb-1">
+                <span className="text-white font-black text-[42px] leading-none">G</span>
+                <div className="bg-orange-500 text-white rounded-full w-7 h-7 flex items-center justify-center text-lg font-black mx-0.5 shadow">&amp;</div>
+                <span className="text-white font-black text-[42px] leading-none">B</span>
+              </div>
+              <p className="text-lg font-black text-white uppercase tracking-widest">SISTEMA ERP</p>
+              <p className="text-[9px] font-bold tracking-[0.3em] text-white/40 uppercase mt-0.5">SISTEMA ERP — SERVICIOS JIREH</p>
             </div>
-            <form onSubmit={handleLogin} className="space-y-5">
+            <form onSubmit={handleLogin} className="space-y-4">
               <div>
-                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-2 tracking-widest">Usuario de Acceso</label>
-                 <div className="relative">
-                    <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={17}/>
-                    <input type="text" required value={loginData.username} onChange={e=>setLoginData({...loginData,username:e.target.value})} className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl py-4 pl-12 pr-4 text-sm font-black outline-none focus:border-orange-500 focus:bg-white transition-all" placeholder="administrador"/>
-                 </div>
+                <label className="block text-[9px] font-black text-white/50 uppercase mb-2 tracking-widest">Usuario de Acceso</label>
+                <div className="relative">
+                  <User className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" size={16}/>
+                  <input type="text" required value={loginData.username} onChange={e=>setLoginData({...loginData,username:e.target.value})}
+                    className="w-full rounded-2xl py-4 pl-11 pr-4 text-sm font-black outline-none transition-all text-white placeholder-white/20"
+                    style={{background:'rgba(255,255,255,0.08)',border:'1px solid rgba(255,255,255,0.1)'}}
+                    onFocus={e=>{e.target.style.border='1px solid #f97316';}}
+                    onBlur={e=>{e.target.style.border='1px solid rgba(255,255,255,0.1)';}}
+                    placeholder="Administrador"/>
+                </div>
               </div>
               <div>
-                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-2 tracking-widest">Clave de Seguridad</label>
-                 <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={17}/>
-                    <input type="password" required value={loginData.password} onChange={e=>setLoginData({...loginData,password:e.target.value})} className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl py-4 pl-12 pr-4 text-sm font-black outline-none focus:border-orange-500 focus:bg-white transition-all" placeholder="••••••••••"/>
-                 </div>
+                <label className="block text-[9px] font-black text-white/50 uppercase mb-2 tracking-widest">Clave de Seguridad</label>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" size={16}/>
+                  <input type="password" required value={loginData.password} onChange={e=>setLoginData({...loginData,password:e.target.value})}
+                    className="w-full rounded-2xl py-4 pl-11 pr-4 text-sm font-black outline-none transition-all text-white placeholder-white/20"
+                    style={{background:'rgba(255,255,255,0.08)',border:'1px solid rgba(255,255,255,0.1)'}}
+                    onFocus={e=>{e.target.style.border='1px solid #f97316';}}
+                    onBlur={e=>{e.target.style.border='1px solid rgba(255,255,255,0.1)';}}
+                    placeholder="••••••••••••••"/>
+                </div>
               </div>
-              {loginError && <div className="bg-red-50 text-red-500 text-[10px] font-black uppercase p-3 rounded-xl text-center border border-red-100">{loginError}</div>}
-              <button type="submit" className="w-full bg-black text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs hover:bg-orange-600 transition-all shadow-xl flex justify-center items-center gap-2 mt-2">INGRESAR AL SISTEMA <ArrowRight size={15}/></button>
+              {loginError && <div className="bg-red-500/20 text-red-400 text-[10px] font-black uppercase p-3 rounded-xl text-center border border-red-500/30">{loginError}</div>}
+              <button type="submit" className="w-full font-black py-4 rounded-2xl uppercase tracking-widest text-sm flex justify-center items-center gap-2 mt-4 transition-all hover:brightness-110 active:scale-95 shadow-xl"
+                style={{background:'linear-gradient(135deg,#f97316,#ea580c)',color:'white'}}>
+                INGRESAR AL SISTEMA →
+              </button>
             </form>
-            <p className="text-center text-[9px] font-bold text-gray-300 uppercase tracking-widest mt-8">© {new Date().getFullYear()} Jiret G&B C.A.</p>
+            <div className="text-center mt-6 space-y-2">
+              <p className="text-[9px] font-bold text-white/30 hover:text-white/60 cursor-pointer transition-colors">Olvidé mi contraseña</p>
+              <p className="text-[9px] font-bold text-white/30 hover:text-white/60 cursor-pointer transition-colors">Contactar a soporte</p>
+            </div>
+            <div className="absolute bottom-6 left-0 right-0 text-center">
+              <p className="text-[8px] font-black text-white/20 uppercase tracking-widest">SUPPLY G&B — SISTEMA ERP — SERVICIOS JIRET</p>
+            </div>
           </div>
         </div>
       </div>
-    );
   }
 
 
