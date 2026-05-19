@@ -2232,13 +2232,18 @@ export default function App() {
       const costoCapturado = esTermo
         ? parseNum(fg?.costoUnitario||it.costoUnit||0)
         : parseNum(fg?.costoUnitarioMillar||it.costoUnit||0);
+      // precioUnit = precio de venta = total del renglón / cantidad
+      const cantNum = parseNum(it.cantidad)||1;
+      const totalFacturado = parseNum(it.totalUSD||it.totalRenglon||0);
+      const precioUnitVenta = totalFacturado > 0 ? totalFacturado/cantNum : parseNum(it.precioUnit||0);
       return {
         fgId: it.fgId,
         cantidad: it.cantidad,
         desc: it.desc || fg?.producto || '',
         unidad: it.unidad || (esTermo?'KG':'Millares'),
         esTermo,
-        costoUnit: costoCapturado,   // ← costo congelado al momento de facturar
+        precioUnit: precioUnitVenta,          // ← precio de venta por unidad
+        costoUnit: costoCapturado,            // ← costo congelado al momento de facturar
         costoTotal: parseNum(it.cantidad) * costoCapturado
       };
     });
@@ -4442,7 +4447,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             {/* Tarjetas por almacén o tabla general */}
             {almacenesFilter.almacen === 'TODOS' ? (
               <div className="p-6 space-y-4">
-                {depositos.map(dep => {
+                {depositos.filter(d=>!["PLANTA","ALMACEN EXTERNO","DEPOSITO 2","ALMACEN PRINCIPAL"].includes(d)).map(dep => {
                   const depItems = filtItems.filter(i=>(i.almacen||'ALMACEN PRINCIPAL')===dep);
                   if(depItems.length===0) return null;
                   const depVal = depItems.reduce((s,i)=>s+(i.stock||0)*(i.cost||0),0);
@@ -6592,9 +6597,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                      <select value={catalogAlmacenFilter} onChange={e=>setCatalogAlmacenFilter(e.target.value)}
                        className="border-2 border-indigo-200 rounded-xl px-3 py-2 text-[10px] font-black uppercase outline-none focus:border-indigo-500 bg-white text-indigo-700">
                        <option value="TODOS">TODOS LOS ALMACENES</option>
-                       {['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY','ALMACEN PRINCIPAL','PLANTA','DEPOSITO 2','ALMACEN EXTERNO','Productos Terminados',
-                         ...(depositos||[]).filter(d=>!['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY','ALMACEN PRINCIPAL','PLANTA','DEPOSITO 2','ALMACEN EXTERNO'].includes(d))
-                       ].filter((v,i,a)=>a.indexOf(v)===i).map(a=>(
+                       {['ALMACEN ZI','ALMACEN BQTO','ALMACEN C2','ALMACEN MCY','Productos Terminados'].map(a=>(
                          <option key={a} value={a}>{a}</option>
                        ))}
                      </select>
@@ -7664,7 +7667,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           </div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center my-6 pb-4 border-b-4 border-orange-500">
-            <span className="text-2xl font-black uppercase">INVOICE N° {inv.documento}</span>
+            <span className="text-2xl font-black uppercase">INVOICE N° {(inv.documento||'').replace(/^FAC-/,'INVO-')}</span>
           </div>
 
           {/* Datos del cliente y factura */}
@@ -7704,18 +7707,29 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               <tr>
                 <th className="p-4 border-b border-black text-left">Descripción / Concepto</th>
                 {opDisplay && <th className="p-4 border-b border-black text-center">Cantidad</th>}
+                <th className="p-4 border-b border-black text-right">Precio Unit. (USD)</th>
                 <th className="p-4 border-b border-black text-right">Importe Base (USD)</th>
               </tr>
             </thead>
             <tbody>
+              {(inv.itemsFacturados&&inv.itemsFacturados.length>0) ? inv.itemsFacturados.map((it,i)=>(
+                <tr key={i} className="border-t border-gray-200">
+                  <td className="p-4 border-r border-black font-bold text-sm">{it.desc||inv.productoMaquilado||'MAQUILA / SERVICIO'}</td>
+                  <td className="p-4 border-r border-black text-center font-black">{formatNum(it.cantidad)} {it.unidad||''}</td>
+                  <td className="p-4 border-r border-black text-right font-bold">{it.precioUnit>0?`$${formatNum(it.precioUnit)}`:'—'}</td>
+                  <td className="p-4 text-right font-black">${formatNum(parseNum(it.precioUnit||0)*parseNum(it.cantidad||1)||parseNum(inv.montoBase)/Math.max((inv.itemsFacturados||[]).length,1))}</td>
+                </tr>
+              )) : (
               <tr>
                 <td className="p-4 border-r border-black font-bold text-sm">
                   {inv.productoMaquilado || 'MAQUILA / SERVICIO'}
                   {opDisplay && <span className="block text-[10px] text-gray-500 mt-1">{opDisplay.tipoProducto} | {opDisplay.desc}</span>}
                 </td>
                 {opDisplay && <td className="p-4 border-r border-black text-center font-black">{formatNum(opDisplay.cantidad)} {opDisplay.presentacion}<br/><span className="text-[10px] text-gray-500">{formatNum(opDisplay.requestedKg)} KG</span></td>}
+                <td className="p-4 border-r border-black text-right font-bold">—</td>
                 <td className="p-4 text-right font-black text-lg">${formatNum(inv.montoBase)}</td>
               </tr>
+              )}
             </tbody>
           </table>
 
@@ -7935,11 +7949,20 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
             } else {
               items.forEach(it=>{
-                const precio=parseNum(it.precioUnit||it.costoUnit||0);
                 const qty=parseNum(it.cantidad||1);
-                const total=parseNum(it.costoTotal||precio*qty||0);
                 const costo=parseNum(it.costoUnit||0);
-                rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo:(it.fgId||'').split('___')[0],producto:it.desc||it.fgId||'—',qty,precio,total,costo,costoTotal:costo*qty,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+                const costoTotal=costo*qty;
+                // precio de venta: from saved precioUnit, or derive from invoice total / items
+                const precioVenta = parseNum(it.precioUnit||0) > 0
+                  ? parseNum(it.precioUnit)
+                  : (inv.itemsFacturados||[]).length > 0
+                    ? parseNum(inv.montoBase||0) / (inv.itemsFacturados||[]).length / qty
+                    : parseNum(inv.montoBase||0) / qty;
+                const total = precioVenta * qty;
+                // codigo: clean fgId (no FG-MANUAL timestamps)
+                const rawId = (it.fgId||'').split('___')[0];
+                const codigo = rawId.startsWith('FG-MANUAL-') ? (it.desc||rawId).substring(0,20) : rawId;
+                rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
           });
@@ -7977,7 +8000,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         <td className="py-1.5 px-3 font-black text-orange-600 whitespace-nowrap">{r.doc}</td>
                         <td className="py-1.5 px-3 font-bold max-w-[120px] truncate" title={r.cliente}>{r.cliente}</td>
                         <td className="py-1.5 px-3 font-black text-indigo-600 whitespace-nowrap">{r.codigo}</td>
-                        <td className="py-1.5 px-3 font-bold max-w-[140px] truncate" title={r.producto}>{r.producto}</td>
+                        <td className="py-1.5 px-3 font-bold" style={{minWidth:160,maxWidth:220,whiteSpace:'normal',wordBreak:'break-word'}}>{r.producto}</td>
                         <td className="py-1.5 px-3 font-bold text-center">{formatNum(r.qty)}</td>
                         <td className="py-1.5 px-3 font-bold text-right whitespace-nowrap">USD {formatNum(r.precio)}</td>
                         <td className="py-1.5 px-3 font-black text-right whitespace-nowrap">USD {formatNum(r.total)}</td>
@@ -7991,7 +8014,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     {rows.length===0 && <tr><td colSpan={13} className="py-8 text-center text-gray-400 font-bold">Sin datos en el período seleccionado</td></tr>}
                   </tbody>
                   {rows.length>0 && <tfoot><tr className="bg-black text-white font-black">
-                    <td colSpan={7} className="py-2.5 px-3 text-[8px] uppercase">TOTALES</td>
+                    <td colSpan={5} className="py-2.5 px-3 text-[8px] uppercase">TOTALES</td>
+                    <td className="py-2.5 px-3 text-right font-black">{formatNum(rows.reduce((s,r)=>s+r.qty,0))}</td>
+                    <td/>
                     <td className="py-2.5 px-3 text-right whitespace-nowrap">USD {formatNum(totalVentas)}</td>
                     <td/><td className="py-2.5 px-3 text-right whitespace-nowrap">USD {formatNum(totalCosto)}</td>
                     <td className="py-2.5 px-3 text-right whitespace-nowrap text-green-400">USD {formatNum(totalUtil)}</td>
@@ -9239,7 +9264,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               <tbody className="divide-y divide-gray-100">
                 {relInv.map(inv=>(
                   <tr key={inv.id} className="hover:bg-gray-50">
-                    <td className="p-2 border-r font-black text-orange-600">{inv.documento}</td>
+                    <td className="p-2 border-r font-black text-orange-600">{(inv.documento||'').replace(/^FAC-/,'INVO-')}</td>
                     <td className="p-2 border-r text-center font-bold">{inv.fecha}</td>
                     <td className="p-2 border-r text-right font-bold">${formatNum(inv.montoBase)}</td>
                     <td className="p-2 text-right font-black text-green-600">${formatNum(inv.total)}</td>
