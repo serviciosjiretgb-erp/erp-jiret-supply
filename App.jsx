@@ -331,7 +331,7 @@ export default function App() {
   const [cotizaciones, setCotizaciones] = useState([]);
   const [showNewCotizPanel, setShowNewCotizPanel] = useState(false);
   const [editingCotizId, setEditingCotizId] = useState(null);
-  const initialCotizForm = { fecha: '', clientRif: '', clientName: '', documento: '', descripcion: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', validez: '15', condicionId: '', observaciones: '' };
+  const initialCotizForm = { fecha: '', clientRif: '', clientName: '', documento: '', descripcion: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', validez: '15', condicionId: '', observaciones: '', condicionPago: 'CONTADO', diasCredito: '', porcentajeAnticipo: '', tiempoEntrega: '', formaPago: 'BS A TASA BCV' };
   const [newCotizForm, setNewCotizForm] = useState({...initialCotizForm, fecha: getTodayDate()});
   const [cotizItems, setCotizItems] = useState([]);
   const [cotizSearchTerm, setCotizSearchTerm] = useState('');
@@ -2711,7 +2711,7 @@ export default function App() {
             id: `WIP-${Date.now()}`,
             opId: req.opId, reqId: req.id,
             cliente: reqDoc.client || 'N/A',
-            producto: reqDoc.desc || reqDoc.categoria || 'Producto',
+            producto: descFinal || reqDoc.desc || reqDoc.categoria || 'Producto',
             especificaciones: `${reqDoc.ancho}x${reqDoc.largo} - ${reqDoc.micras}mic`,
             materiales: req.items.map(it => ({ id: it.id, qty: parseNum(it.qty), cost: (inventory || []).find(i => i.id === it.id)?.cost || 0 })),
             kgAsignados: req.items.reduce((sum, it) => sum + parseNum(it.qty), 0),
@@ -2767,15 +2767,24 @@ export default function App() {
       const kgFinales = parseNum(phaseData.producedKg) || parseNum(reqDoc.requestedKg) || 0;
 
       if (wipEntries.length === 0) {
+        // Generate structured code: FG-CATEGORIA-WxLx0.MIC
+        const _catRaw = (reqDoc.categoria||reqDoc.desc||'PT').toUpperCase().trim();
+        const _catShort = _catRaw.replace(/[\s\/\-&]+/g,'').substring(0,18);
+        const _w = parseFloat(reqDoc.ancho||0); const _l = parseFloat(reqDoc.largo||0);
+        let _m = parseFloat(reqDoc.micras||0);
+        const _strDims = (_w>0||_l>0) ? `${_w}x${_l}x${_m}` : '';
+        const _codigoFinal = _strDims ? `FG-${_catShort}-${_strDims}` : `FG-${_catShort}-${Date.now()}`;
+        const _descFinal = _strDims ? `${_catRaw} - ${_w}X${_l}X${Math.round(_m*1000||_m)}MIC` : _catRaw;
+
         // Crear entrada sin WIP (cierre directo)
         const finishedEntry = {
-          id: `FG-${Date.now()}`,
+          id: _codigoFinal,
           opId: reqId,
           reqId: reqId,
           cliente: reqDoc.client || 'N/A',
           tipoProducto: reqDoc.tipoProducto || 'BOLSAS',
           categoria: reqDoc.categoria || '',
-          producto: reqDoc.desc || reqDoc.categoria || 'Producto',
+          producto: _descFinal || reqDoc.desc || reqDoc.categoria || 'Producto',
           ancho: reqDoc.ancho || 0,
           largo: reqDoc.largo || 0,
           micras: reqDoc.micras || 0,
@@ -3404,7 +3413,8 @@ export default function App() {
                 const stats = card.stats ? card.stats() : {};
                 const bars = card.chart ? card.chart() : [];
                 const isDark = cfg.dark;
-                const bg = isDark ? '#1e1e24' : 'white';
+                // Transparent backgrounds to show the background image (from spec)
+                const bg = isDark ? 'rgba(0,0,0,0.75)' : 'rgba(255,255,255,0.88)';
                 const textMain = isDark ? 'white' : '#333';
                 const textSub = isDark ? '#888' : '#666';
 
@@ -3459,10 +3469,11 @@ export default function App() {
                 }
 
                 return (
-                  <div key={i} style={{background:bg, borderRadius:12, padding:20, display:'flex', flexDirection:'column',
-                    justifyContent:'space-between', boxShadow:'0 4px 12px rgba(0,0,0,0.1)',
+                  <div key={i} style={{background:bg, backdropFilter:'blur(8px)', WebkitBackdropFilter:'blur(8px)',
+                    borderRadius:12, padding:20, display:'flex', flexDirection:'column',
+                    justifyContent:'space-between', boxShadow:'0 4px 16px rgba(0,0,0,0.15)',
                     borderLeft:`5px solid ${cfg.borderColor}`, color:textMain, transition:'transform 0.2s',
-                    border:isDark?'none':`1px solid #e5e7eb`, borderLeftColor:cfg.borderColor, borderLeftWidth:5, borderLeftStyle:'solid'}}
+                    border:isDark?'none':`1px solid rgba(229,231,235,0.5)`, borderLeftColor:cfg.borderColor, borderLeftWidth:5, borderLeftStyle:'solid'}}
                     onMouseEnter={e=>e.currentTarget.style.transform='translateY(-4px)'}
                     onMouseLeave={e=>e.currentTarget.style.transform='translateY(0)'}>
                     {/* Card header: icon + title */}
@@ -8193,7 +8204,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               await setDoc(getDocRef('cotizaciones',id),{
                 ...newCotizForm, id, documento:id, tasa:parseNum(newCotizForm.tasa||settings?.tasaBCV||0),
                 montoBase:base, iva:ivaAmt, total:parseFloat((base+ivaAmt).toFixed(2)),
-                items:cotizItems, timestamp:editingCotizId?(newCotizForm.timestamp||Date.now()):Date.now(),
+                items:cotizItems, condicionPago:newCotizForm.condicionPago||'CONTADO', diasCredito:newCotizForm.diasCredito||'', porcentajeAnticipo:newCotizForm.porcentajeAnticipo||'', tiempoEntrega:newCotizForm.tiempoEntrega||'', formaPago:newCotizForm.formaPago||'BS A TASA BCV', timestamp:editingCotizId?(newCotizForm.timestamp||Date.now()):Date.now(),
                 user:appUser?.name, status:'VIGENTE'
               });
               setShowNewCotizPanel(false); setEditingCotizId(null);
@@ -8244,9 +8255,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             {(condicionesCotiz||[]).map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}
                           </select>
                         </div>
-                        <button type="button" onClick={()=>setShowCondManager(true)}
-                          className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black uppercase text-gray-600 hover:bg-gray-100 flex items-center gap-1 mt-4">
-                          <Settings2 size={11}/> Gestionar
+                        <button type="button" onClick={()=>setShowCondManager(v=>!v)}
+                          className={`border-2 rounded-xl px-3 py-2 text-[9px] font-black uppercase flex items-center gap-1 mt-4 transition-all ${showCondManager?'border-orange-400 bg-orange-500 text-white':'border-gray-200 text-gray-600 hover:bg-gray-100'}`}>
+                          <Settings2 size={11}/> {showCondManager?'Cerrar condiciones':'Condiciones'}
                         </button>
                       </div>
                     </div>
@@ -8267,13 +8278,121 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       </div>
                     </div>
 
+                    {/* Condiciones de Venta — inline collapsible */}
+                    {showCondManager && (
+                      <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-5 space-y-4 animate-in fade-in">
+                        <h4 className="text-[10px] font-black text-orange-700 uppercase flex items-center gap-2"><Settings2 size={13}/> Gestión de Condiciones de Venta</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <div>
+                            <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Condición</label>
+                            <select value={newCotizForm.condicionPago||'CONTADO'} onChange={e=>setNewCotizForm({...newCotizForm,condicionPago:e.target.value,diasCredito:e.target.value==='CONTADO'?'':newCotizForm.diasCredito})}
+                              className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
+                              <option value="CONTADO">CONTADO</option>
+                              <option value="CREDITO">CRÉDITO</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Días Crédito</label>
+                            <input type="number" disabled={newCotizForm.condicionPago!=='CREDITO'} value={newCotizForm.diasCredito||''}
+                              onChange={e=>setNewCotizForm({...newCotizForm,diasCredito:e.target.value})}
+                              className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400 disabled:opacity-40 disabled:bg-gray-50" placeholder="7"/>
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Anticipo (%)</label>
+                            <input type="number" min="0" max="100" value={newCotizForm.porcentajeAnticipo||''}
+                              onChange={e=>setNewCotizForm({...newCotizForm,porcentajeAnticipo:e.target.value})}
+                              className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="0"/>
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Forma de Pago</label>
+                            <select value={newCotizForm.formaPago||'BS A TASA BCV'} onChange={e=>setNewCotizForm({...newCotizForm,formaPago:e.target.value})}
+                              className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
+                              <option value="BS A TASA BCV">Bs. a tasa BCV</option>
+                              <option value="TRANSFERENCIA EN DIVISAS">Transferencia en Divisas</option>
+                              <option value="EFECTIVO DIVISAS">Efectivo en Divisas</option>
+                              <option value="ZELLE">Zelle</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Tiempo de Entrega</label>
+                            <select value={newCotizForm.tiempoEntrega||''} onChange={e=>setNewCotizForm({...newCotizForm,tiempoEntrega:e.target.value})}
+                              className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
+                              <option value="">— Seleccione —</option>
+                              <option value="Inmediata">Inmediata</option>
+                              <option value="De 2 a 3 días hábiles">2 a 3 días hábiles (Stretch Film / Otros)</option>
+                              <option value="De 10 a 12 días hábiles">10 a 12 días hábiles (Bolsas / Termos)</option>
+                              <option value="De 60 a 70 días continuos">60 a 70 días continuos (Importación)</option>
+                            </select>
+                          </div>
+                          {/* Preview */}
+                          <div className="bg-white rounded-xl border border-orange-200 p-3 text-[9px] font-bold text-gray-600 space-y-1">
+                            <div className="text-[8px] font-black text-orange-600 uppercase mb-1">Vista previa condición:</div>
+                            {newCotizForm.condicionPago==='CONTADO'&&<div>• Condición: Contado.</div>}
+                            {newCotizForm.condicionPago==='CREDITO'&&<div>• Crédito a {newCotizForm.diasCredito||'__'} días.</div>}
+                            {parseNum(newCotizForm.porcentajeAnticipo)>0&&<div>• Anticipo: {newCotizForm.porcentajeAnticipo}% con la OC.</div>}
+                            {newCotizForm.tiempoEntrega&&<div>• Entrega: {newCotizForm.tiempoEntrega}.</div>}
+                            {newCotizForm.formaPago&&<div>• Pago: {newCotizForm.formaPago}.</div>}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Descripción general */}
                     <div>
                       <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block">Descripción / Concepto General</label>
                       <input type="text" value={newCotizForm.descripcion} onChange={e=>setNewCotizForm({...newCotizForm,descripcion:e.target.value.toUpperCase()})} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 uppercase" placeholder="Ej: COTIZACIÓN BOLSAS PLÁSTICAS"/>
                     </div>
 
-
+                    {/* ── SELECTOR DE PRODUCTOS TERMINADOS (Inventario General) ── */}
+                    <div className="border-2 border-blue-100 rounded-2xl p-4 bg-blue-50/50">
+                      <h4 className="text-[10px] font-black text-blue-700 uppercase mb-3 flex items-center gap-2"><Package size={13}/> Seleccionar Producto del Inventario General</h4>
+                      <div className="flex gap-2 mb-2">
+                        <div className="relative flex-1">
+                          <Search className="absolute left-3 top-2.5 text-gray-400" size={13}/>
+                          <input type="text" placeholder="Buscar por código o descripción..." value={cotizSearchTerm}
+                            onChange={e=>setCotizSearchTerm(e.target.value.toUpperCase())}
+                            className="w-full pl-9 pr-8 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400 bg-white"/>
+                          {cotizSearchTerm && <button onClick={()=>setCotizSearchTerm('')} className="absolute right-2 top-2 text-gray-400 hover:text-red-500"><X size={13}/></button>}
+                        </div>
+                      </div>
+                      {/* Results dropdown */}
+                      {cotizSearchTerm.length>0 && (()=>{
+                        const ptResults = (inventory||[]).filter(i=>{
+                          if(i.category!=='Productos Terminados') return false;
+                          const code=(i.displayId||(i.id||'').split('___')[0]).toUpperCase();
+                          const desc=(i.desc||'').toUpperCase();
+                          return code.includes(cotizSearchTerm)||desc.includes(cotizSearchTerm);
+                        });
+                        if(ptResults.length===0) return <div className="text-[9px] text-gray-400 font-bold py-2 text-center">Sin resultados para "{cotizSearchTerm}"</div>;
+                        return (
+                          <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-xl bg-white shadow-sm divide-y divide-gray-50">
+                            {ptResults.map(item=>{
+                              const code=(item.displayId||(item.id||'').split('___')[0]).replace(/_inv$/i,'');
+                              const sub=item.subcategory||getItemSubcategory(item)||'';
+                              const isStretch=sub.toLowerCase().includes('stretch')||sub.toLowerCase().includes('cinta')||sub.toLowerCase().includes('kraft');
+                              const entrega=isStretch?'De 2 a 3 días hábiles':'De 10 a 12 días hábiles';
+                              return (
+                                <div key={item.id} onClick={()=>{
+                                  const qty=1; const precio=parseNum(item.cost||0);
+                                  setCotizItems(prev=>[...prev,{desc:`${code} — ${item.desc||''}`,code,cantidad:qty,precioUnit:precio,total:qty*precio}]);
+                                  setNewCotizForm(f=>({...f, tiempoEntrega:f.tiempoEntrega||entrega}));
+                                  setCotizSearchTerm('');
+                                }} className="flex justify-between items-center p-2.5 hover:bg-orange-50 cursor-pointer transition-colors">
+                                  <div>
+                                    <span className="font-black text-orange-600 text-[10px]">{code}</span>
+                                    <span className="text-[9px] text-gray-600 ml-2">{item.desc}</span>
+                                    <span className="text-[8px] text-gray-400 ml-2">({formatNum(item.stock)} {item.unit||'und'})</span>
+                                  </div>
+                                  <span className="text-orange-500 font-black text-[10px] ml-4">${formatNum(item.cost)}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+                    </div>
 
                     {/* Tabla ítems */}
                     <div className="border-2 border-gray-200 rounded-2xl overflow-hidden">
@@ -8376,8 +8495,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 ${cot.aplicaIva==='SI'?`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #eee"><span>IVA (16%):</span><span>$${formatNum(cot.iva||0)}</span></div>`:''}
                                 <div style="display:flex;justify-content:space-between;padding:8px 0;margin-top:6px;border-top:3px solid #f97316"><span style="font-weight:900;font-size:18px">SALDO TOTAL:</span><span style="font-weight:900;font-size:22px;color:#f97316">$${formatNum(cot.total||0)}</span></div>
                               </div>
-                              ${cot.observaciones?`<div style="margin-top:20px;padding:12px;border:1px solid #ddd;font-size:10px"><b>Observaciones:</b> ${cot.observaciones}</div>`:''}
-                              ${(()=>{const cond=(condicionesCotiz||[]).find(c=>c.id===cot.condicionId);return cond?`<div style="margin-top:24px;border-top:2px solid #f97316;padding-top:14px;font-size:9px;color:#444"><div style="font-weight:900;font-size:10px;color:#f97316;text-transform:uppercase;margin-bottom:6px">⚖ CONDICIONES COMERCIALES — ${cond.nombre}</div>${(cond.detalle||'').split('|').map(s=>`<div style="margin-bottom:3px">${s.trim()}</div>`).join('')}</div>`:'';})()}
+                              ${cot.observaciones?`<div style="margin-top:16px;padding:10px;border:1px solid #ddd;font-size:10px"><b>Observaciones:</b> ${cot.observaciones}</div>`:''}
+                              <div style="margin-top:20px;border:2px solid #000;padding:14px;font-size:11px">
+                                <div style="background:#000;color:#fff;text-align:center;font-weight:900;text-transform:uppercase;padding:5px;margin:-14px -14px 12px -14px;font-size:10px">GESTIÓN DE CONDICIONES DE VENTA</div>
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:10px">
+                                  <div><b>CONDICIÓN DE PAGO:</b> ${(cot.condicionPago||'CONTADO')}${cot.condicionPago==='CREDITO'&&cot.diasCredito?` (${cot.diasCredito} DÍAS)`:''}</div>
+                                  <div><b>FORMA DE PAGO:</b> ${cot.formaPago||'BS A TASA BCV'}</div>
+                                  <div><b>ANTICIPO:</b> ${parseNum(cot.porcentajeAnticipo||0)>0?`${cot.porcentajeAnticipo}% ($${formatNum(parseNum(cot.total||0)*(parseNum(cot.porcentajeAnticipo||0)/100))})`:'NO APLICA'}</div>
+                                  <div><b>TIEMPO DE ENTREGA:</b> ${cot.tiempoEntrega||'Por confirmar'}</div>
+                                  <div><b>VALIDEZ DE OFERTA:</b> ${cot.validez||15} DÍAS</div>
+                                </div>
+                              </div>
                               <script>window.print();</script></body></html>`);
                             }} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button>
                             <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('cotizaciones',cot.id));setDialog({title:'Eliminada',text:`${cot.documento} eliminada.`,type:'alert'});},'Eliminar cotización')} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button>
@@ -8754,48 +8882,29 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
                           {/* Selector agrupado por producto */}
                           {(() => {
+                            // Facturación: SOLO de Inventario General / Productos Terminados
                             const invGrps = {};
-                            // FG de producción
-                            (finishedGoodsInventory||[])
-                              .filter(fg => parseNum(fg.kgProducidos) > 0 || parseNum(fg.millares) > 0)
-                              .forEach(fg => {
-                                const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-                                const cat = fg.categoria || fg.producto || fg.id || '';
-                                const cli = fg.cliente || '';
-                                const key = `${cat}__${cli}__${fg.tipoProducto||'BOLSAS'}`;
-                                if (!invGrps[key]) invGrps[key] = {
-                                  key, esTermo, categoria: cat, cliente: cli,
-                                  tipoProducto: fg.tipoProducto||'BOLSAS',
-                                  producto: fg.producto || cat,
-                                  ancho: fg.ancho, largo: fg.largo, micras: fg.micras,
-                                  totalStock: 0, lotes: []
-                                };
-                                const g = invGrps[key];
-                                const stock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-                                g.totalStock += stock; g.lotes.push(fg);
-                              });
-                            // FIX: También incluir inventory con category='Productos Terminados'
-                            const ptByCleanId = {};
-                            (inventory||[]).filter(i => i.category === 'Productos Terminados' && parseNum(i.stock) > 0).forEach(i => {
-                              const cid = i.displayId || (i.id||'').split('___')[0];
-                              if (!ptByCleanId[cid]) ptByCleanId[cid] = { ...i, id: cid, totalStock: 0 };
-                              ptByCleanId[cid].totalStock += parseNum(i.stock||0);
-                            });
-                            Object.values(ptByCleanId).forEach(i => {
-                              const esTermo = (i.unit||'').toUpperCase() === 'KG';
-                              const key = `INV-PT__${i.id}__${esTermo?'TERMOENCOGIBLE':'BOLSAS'}`;
-                              invGrps[key] = {
-                                key, esTermo, categoria: i.desc || i.id, cliente: 'IMPORTADO',
-                                tipoProducto: esTermo ? 'TERMOENCOGIBLE' : 'BOLSAS',
-                                producto: i.desc || i.id,
+                            (inventory||[]).filter(i => i.category==='Productos Terminados' && parseNum(i.stock||0)>0).forEach(i => {
+                              const rawId = (i.displayId||(i.id||'')).split('___')[0].replace(/_inv$/i,'');
+                              const esTermo = (i.subcategory||i.unit||'').toUpperCase().includes('KG')||
+                                             (i.subcategory||'').toLowerCase().includes('termo');
+                              const key = rawId;
+                              if(!invGrps[key]) invGrps[key] = {
+                                key, esTermo,
+                                categoria: i.subcategory || getItemSubcategory(i) || 'Otros',
+                                cliente: '',
+                                tipoProducto: esTermo?'TERMOENCOGIBLE':'BOLSAS',
+                                producto: i.desc || rawId,
                                 ancho: 0, largo: 0, micras: 0,
-                                totalStock: i.totalStock, lotes: [],
+                                totalStock: 0, lotes: [{id: rawId, ...i}],
                                 _isInvPT: true, _invId: i.id, _unit: i.unit || 'und',
                                 _cost: parseNum(i.cost||0)
                               };
+                              invGrps[key].totalStock += parseNum(i.stock||0);
                             });
-                            const grpList = Object.values(invGrps).filter(g => g.totalStock > 0 && !fgItems.some(i=>i.fgGrpKey===g.key))
-                              .sort((a,b) => (a.producto||'').localeCompare(b.producto||''));
+                            const grpList = Object.values(invGrps)
+                              .filter(g => g.totalStock>0 && !fgItems.some(it=>it.fgGrpKey===g.key))
+                              .sort((a,b)=>(a.producto||'').localeCompare(b.producto||''));
                             const selGrpKey = newInvoiceForm.fgId;
                             const selGrp = invGrps[selGrpKey];
 
@@ -16142,53 +16251,33 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
         {/* ── ROW 5: OPs en Planta — lista compacta vertical ── */}
         {opsActivas.length>0 && (
-          <div className="bg-black rounded-2xl shadow-sm overflow-hidden">
-            <div className="flex justify-between items-center px-5 py-3 border-b border-gray-800">
-              <h3 className="text-[10px] font-black text-white uppercase flex items-center gap-2">
+          <div className="bg-white/90 rounded-2xl shadow-sm overflow-hidden border border-gray-200" style={{backdropFilter:"blur(8px)"}}>
+            <div className="flex justify-between items-center px-5 py-3 border-b border-gray-200">
+              <h3 className="text-[10px] font-black text-black uppercase flex items-center gap-2">
                 <Factory size={13} className="text-orange-500"/> Tabla de Órdenes Activas
               </h3>
-              <span className="text-[9px] font-black text-orange-400">{opsActivas.length} OP{opsActivas.length>1?'s':''} activa{opsActivas.length>1?'s':''}</span>
+              <span className="text-[9px] font-black text-orange-600">{opsActivas.length} OP{opsActivas.length>1?'s':''} activa{opsActivas.length>1?'s':''}</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-[9px]">
                 <thead>
-                  <tr className="bg-gray-900 text-gray-400 uppercase tracking-widest">
-                    <th className="py-2.5 px-4 text-left font-black border-b border-gray-800">Orden ID</th>
-                    <th className="py-2.5 px-4 text-left font-black border-b border-gray-800">Cliente</th>
-                    <th className="py-2.5 px-4 text-center font-black border-b border-gray-800">Estatus</th>
-                    <th className="py-2.5 px-4 text-center font-black border-b border-gray-800 w-40">Fases</th>
-                    <th className="py-2.5 px-4 text-right font-black border-b border-gray-800 w-20">%</th>
+                  <tr className="bg-gray-50 text-gray-500 uppercase tracking-widest">
+                    <th className="py-2.5 px-4 text-left font-black border-b border-gray-100 text-black">Orden ID</th>
+                    <th className="py-2.5 px-4 text-left font-black border-b border-gray-100 text-black">Cliente</th>
+                    <th className="py-2.5 px-4 text-right font-black border-b border-gray-100 text-black w-32">Avance</th>
                   </tr>
                 </thead>
                 <tbody>
                   {opsActivas.map((op,i)=>(
-                    <tr key={i} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
+                    <tr key={i} className="border-b border-gray-100 hover:bg-orange-50/50 transition-colors">
                       <td className="py-3 px-4 font-black text-orange-500 whitespace-nowrap text-[11px]">{op.op}</td>
-                      <td className="py-3 px-4 text-gray-200 font-bold max-w-[200px] truncate text-[10px]" title={op.cliente}>{op.cliente}</td>
-                      <td className="py-2.5 px-4 text-center">
-                        <span className="px-2 py-0.5 rounded-md text-[8px] font-black" style={{background:op.faseColor+'22',color:op.faseColor,border:`1px solid ${op.faseColor}44`}}>
-                          {op.fase}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-4">
-                        <div className="flex items-center gap-1 justify-center">
-                          {op.phases.map((ph,pi)=>(
-                            <div key={pi} className="flex items-center gap-0.5">
-                              <div className="w-4 h-4 rounded-sm flex items-center justify-center text-[7px] font-black"
-                                style={{background:ph.done?'#10b981':'#374151',color:'white'}} title={ph.name}>
-                                {ph.done?'✓':pi+1}
-                              </div>
-                              {pi<op.phases.length-1 && <div className="w-2 h-px" style={{background:ph.done?'#10b981':'#374151'}}/>}
-                            </div>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-4 text-right">
-                        <div className="flex items-center gap-1.5 justify-end">
-                          <div className="flex-1 bg-gray-800 rounded-full h-1.5 w-16">
-                            <div className="h-1.5 rounded-full" style={{width:`${op.avance}%`,background:op.faseColor}}/>
+                      <td className="py-3 px-4 text-gray-700 font-bold max-w-[260px] truncate text-[10px]" title={op.cliente}>{op.cliente}</td>
+                      <td className="py-3 px-4 text-right">
+                        <div className="flex items-center gap-2 justify-end">
+                          <div className="w-20 bg-gray-800 rounded-full h-1.5">
+                            <div className="h-1.5 rounded-full" style={{width:`${op.avance}%`,background:op.avance>=70?'#10b981':op.avance>=30?'#f97316':'#6b7280'}}/>
                           </div>
-                          <span className="font-black w-8 text-right" style={{color:op.faseColor}}>{op.avance}%</span>
+                          <span className="font-black text-[10px] w-8" style={{color:op.avance>=70?'#10b981':op.avance>=30?'#f97316':'#9ca3af'}}>{op.avance}%</span>
                         </div>
                       </td>
                     </tr>
