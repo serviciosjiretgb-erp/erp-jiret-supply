@@ -325,7 +325,8 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
 
   const [activeTab, setActiveTab] = useState('home'); 
-  const [ventasView, setVentasView] = useState('facturacion'); 
+  const [ventasView, setVentasView] = useState('facturacion');
+  const [pvFilter, setPvFilter] = useState('general'); 
   const [prodView, setProdView] = useState('proyeccion');
   const [invView, setInvView] = useState('catalogo');
   const [fgSearch, setFgSearch] = useState('');
@@ -2155,7 +2156,7 @@ export default function App() {
       onConfirm: async () => await deleteDoc(getDocRef('clientes', rif))
     });
   };
-  const generateInvoiceId = () => `FAC-${((invoices || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(4, '0')}`;
+  const generateInvoiceId = () => `INVO-${((invoices || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(4, '0')}`;
   
   const handleInvoiceFormChange = (field, value) => {
     const valUpper = typeof value === 'string' ? value.toUpperCase() : value;
@@ -3357,7 +3358,7 @@ export default function App() {
        else if (invSubFilter === 'MERCANCÍA / COMPRA')
          filteredData = filteredData.filter(m => !String(m.notes||'').toUpperCase().includes('PRODUCCI'));
        else if (invSubFilter === 'VENTAS')
-         filteredData = filteredData.filter(m => String(m.notes||'').toUpperCase().includes('VENTA') || String(m.reference||'').toUpperCase().startsWith('FAC'));
+         filteredData = filteredData.filter(m => String(m.notes||'').toUpperCase().includes('VENTA') || String(m.reference||'').toUpperCase().startsWith('INVO'));
        else if (invSubFilter === 'CONSUMO PRODUCCIÓN')
          filteredData = filteredData.filter(m => String(m.notes||'').toUpperCase().includes('PRODUCCI') || String(m.notes||'').toUpperCase().includes('PROD'));
      }
@@ -7663,7 +7664,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           </div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center my-6 pb-4 border-b-4 border-orange-500">
-            <span className="text-2xl font-black uppercase">FACTURA N° {inv.documento}</span>
+            <span className="text-2xl font-black uppercase">INVOICE N° {inv.documento}</span>
           </div>
 
           {/* Datos del cliente y factura */}
@@ -7841,7 +7842,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden" id="pdf-content">
               <div className="px-8 py-5 border-b bg-green-50 flex justify-between items-center flex-wrap gap-3 no-pdf">
                 <div>
-                  <h2 className="text-xl font-black text-green-900 uppercase flex items-center gap-3"><Package className="text-green-600" size={22}/> Productos Vendidos</h2>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h2 className="text-xl font-black text-green-900 uppercase flex items-center gap-3"><Package className="text-green-600" size={22}/> Productos Vendidos</h2>
+                    <select value={pvFilter||'general'} onChange={e=>setPvFilter(e.target.value)}
+                      className="border-2 border-green-200 rounded-xl px-3 py-1.5 text-xs font-black outline-none focus:border-green-400 bg-white">
+                      <option value="general">📊 General (Todo)</option>
+                      {Array.from({length:6},(_,i)=>{const d=new Date();d.setMonth(d.getMonth()-i);const ym=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;const label=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()]+' '+d.getFullYear();return <option key={ym} value={ym}>{label}</option>;}).reverse()}
+                    </select>
+                  </div>
                   <p className="text-[10px] font-bold text-green-700 mt-0.5">{pvFiltered.length} de {sorted.length} líneas</p>
                 </div>
                 <div className="flex gap-3 items-center flex-wrap">
@@ -7908,6 +7916,87 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       </tr>
                     </tfoot>
                   )}
+                </table>
+              </div>
+            </div>
+          );
+        })()}
+
+        {ventasView === 'reporte_ventas' && (() => {
+          const filtInvs = (invoices||[]).filter(inv=>{
+            if(!inv) return false;
+            if(pvFilter && pvFilter !== 'general') return (inv.fecha||'').startsWith(pvFilter);
+            return true;
+          }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+          const rows = [];
+          filtInvs.forEach(inv=>{
+            const items = inv.itemsFacturados||[];
+            if(items.length===0){
+              rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+            } else {
+              items.forEach(it=>{
+                const precio=parseNum(it.precioUnit||it.costoUnit||0);
+                const qty=parseNum(it.cantidad||1);
+                const total=parseNum(it.costoTotal||precio*qty||0);
+                const costo=parseNum(it.costoUnit||0);
+                rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo:(it.fgId||'').split('___')[0],producto:it.desc||it.fgId||'—',qty,precio,total,costo,costoTotal:costo*qty,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+              });
+            }
+          });
+          const totalVentas=rows.reduce((s,r)=>s+r.total,0);
+          const totalCosto=rows.reduce((s,r)=>s+r.costoTotal,0);
+          const totalUtil=totalVentas-totalCosto;
+          const pctUtil=totalVentas>0?Math.round((totalUtil/totalVentas)*100):0;
+          return (
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden p-6">
+              <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
+                <div>
+                  <h2 className="text-xl font-black uppercase flex items-center gap-2"><BarChart3 size={20} className="text-orange-500"/> Reporte General de Ventas y Costos</h2>
+                  <p className="text-[10px] text-gray-500 font-bold uppercase mt-0.5">Detalle por artículo facturado</p>
+                </div>
+                <div className="flex gap-2 flex-wrap items-center">
+                  <select value={pvFilter||'general'} onChange={e=>setPvFilter(e.target.value)} className="border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white">
+                    <option value="general">📊 General (Todo)</option>
+                    {Array.from({length:12},(_,i)=>{const d=new Date();d.setMonth(d.getMonth()-i);const ym=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;const label=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()]+' '+d.getFullYear();return <option key={ym} value={ym}>{label}</option>;}).reverse()}
+                  </select>
+                  <button onClick={()=>{const csv=['Fecha\tDocumento\tCliente\tCódigo\tProducto\tCantidad\tPrecio\tTotal\tCosto U.\tTotal Costo\tUtilidad\t%\tTasa',...rows.map(r=>`${r.fecha}\t${r.doc}\t${r.cliente}\t${r.codigo}\t${r.producto}\t${formatNum(r.qty)}\tUSD ${formatNum(r.precio)}\tUSD ${formatNum(r.total)}\tUSD ${formatNum(r.costo)}\tUSD ${formatNum(r.costoTotal)}\tUSD ${formatNum(r.total-r.costoTotal)}\t${r.total>0?Math.round(((r.total-r.costoTotal)/r.total)*100):0}%\t${formatNum(r.tasa)}`)].join('\n');const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,\uFEFF'+encodeURIComponent(csv);a.download=`Reporte_Ventas_${pvFilter||'General'}_${getTodayDate()}.csv`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                {[{label:'Total Ventas',val:`$${formatNum(totalVentas)}`,color:'border-orange-500'},{label:'Total Costos',val:`$${formatNum(totalCosto)}`,color:'border-gray-800'},{label:'Utilidad Bruta',val:`$${formatNum(totalUtil)}`,color:totalUtil>=0?'border-green-500':'border-red-500'},{label:'% Margen',val:`${pctUtil}%`,color:pctUtil>=30?'border-green-500':pctUtil>=15?'border-yellow-500':'border-red-500'}].map((k,i)=>(
+                  <div key={i} className={`bg-gray-50 border-l-4 ${k.color} rounded-xl p-3`}><div className="text-[9px] font-black text-gray-400 uppercase">{k.label}</div><div className="text-lg font-black text-gray-900 mt-0.5">{k.val}</div></div>
+                ))}
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-gray-100">
+                <table className="w-full border-collapse text-[9px]" style={{minWidth:900}}>
+                  <thead><tr className="bg-black text-white">{['Fecha','Documento','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','Total Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2.5 px-3 text-left font-black uppercase text-[8px] whitespace-nowrap">{h}</th>)}</tr></thead>
+                  <tbody>
+                    {rows.map((r,i)=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return(
+                      <tr key={i} className={`border-b border-gray-50 ${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
+                        <td className="py-1.5 px-3 font-bold text-gray-500 whitespace-nowrap">{r.fecha}</td>
+                        <td className="py-1.5 px-3 font-black text-orange-600 whitespace-nowrap">{r.doc}</td>
+                        <td className="py-1.5 px-3 font-bold max-w-[120px] truncate" title={r.cliente}>{r.cliente}</td>
+                        <td className="py-1.5 px-3 font-black text-indigo-600 whitespace-nowrap">{r.codigo}</td>
+                        <td className="py-1.5 px-3 font-bold max-w-[140px] truncate" title={r.producto}>{r.producto}</td>
+                        <td className="py-1.5 px-3 font-bold text-center">{formatNum(r.qty)}</td>
+                        <td className="py-1.5 px-3 font-bold text-right whitespace-nowrap">USD {formatNum(r.precio)}</td>
+                        <td className="py-1.5 px-3 font-black text-right whitespace-nowrap">USD {formatNum(r.total)}</td>
+                        <td className="py-1.5 px-3 font-bold text-right text-gray-500 whitespace-nowrap">USD {formatNum(r.costo)}</td>
+                        <td className="py-1.5 px-3 font-bold text-right text-gray-500 whitespace-nowrap">USD {formatNum(r.costoTotal)}</td>
+                        <td className={`py-1.5 px-3 font-black text-right whitespace-nowrap ${util>=0?'text-green-600':'text-red-500'}`}>USD {formatNum(util)}</td>
+                        <td className={`py-1.5 px-3 font-black text-center ${pct>=30?'text-green-600':pct>=15?'text-yellow-600':'text-red-500'}`}>{pct}%</td>
+                        <td className="py-1.5 px-3 font-bold text-right text-gray-400 whitespace-nowrap">{r.tasa>0?formatNum(r.tasa):'—'}</td>
+                      </tr>
+                    );})}
+                    {rows.length===0 && <tr><td colSpan={13} className="py-8 text-center text-gray-400 font-bold">Sin datos en el período seleccionado</td></tr>}
+                  </tbody>
+                  {rows.length>0 && <tfoot><tr className="bg-black text-white font-black">
+                    <td colSpan={7} className="py-2.5 px-3 text-[8px] uppercase">TOTALES</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">USD {formatNum(totalVentas)}</td>
+                    <td/><td className="py-2.5 px-3 text-right whitespace-nowrap">USD {formatNum(totalCosto)}</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap text-green-400">USD {formatNum(totalUtil)}</td>
+                    <td className="py-2.5 px-3 text-center text-orange-400">{pctUtil}%</td><td/>
+                  </tr></tfoot>}
                 </table>
               </div>
             </div>
@@ -7981,7 +8070,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">📅 Fecha de Factura</label>
                           <input type="date" value={newInvoiceForm.fecha} onChange={e=>setNewInvoiceForm({...newInvoiceForm, fecha: e.target.value})} className="border-2 border-orange-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-orange-50" />
                         </div>
-                        <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest shadow-sm">FACTURA NRO: {newInvoiceForm.documento || generateInvoiceId()}</span>
+                        <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest shadow-sm">INVOICE NRO: {newInvoiceForm.documento || generateInvoiceId()}</span>
                         {/* NRO FISCAL MANUAL */}
                         <div className="flex items-center gap-2">
                           <label className="text-[9px] font-black text-gray-500 uppercase whitespace-nowrap">Nro. Fiscal:</label>
@@ -9586,7 +9675,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             <div className="bg-green-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">4. Ventas y Facturación de la OP</div>
             <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
               <table className="w-full text-xs">
-                <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600"><th className="p-3 border-r text-left">Factura N°</th><th className="p-3 border-r text-center">Fecha</th><th className="p-3 border-r text-right">Base (Ingreso Real)</th><th className="p-3 border-r text-right">IVA (16%)</th><th className="p-3 text-right">Total Cobrado</th></tr></thead>
+                <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600"><th className="p-3 border-r text-left">Invoice N°</th><th className="p-3 border-r text-center">Fecha</th><th className="p-3 border-r text-right">Base (Ingreso Real)</th><th className="p-3 border-r text-right">IVA (16%)</th><th className="p-3 text-right">Total Cobrado</th></tr></thead>
                 <tbody className="divide-y divide-gray-100">
                   {relatedInvoices.length===0?(
                     <tr><td colSpan="5" className="p-4 text-center text-gray-400 font-black uppercase">No hay facturas asociadas a esta OP.</td></tr>
@@ -12879,10 +12968,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       { id: 'estado_financiero', icon: <TrendingUp size={26}/>, label: 'Estado Financiero', desc: 'Estado de resultado integral', color: 'gray', perm: 'costos_reportes' },
       { id: 'variaciones', icon: <TrendingDown size={26}/>, label: 'Variaciones', desc: 'Mes actual vs anterior', color: 'red', perm: 'costos_reportes' },
     ];
-    // Show only report cards the user has permission for
-    const REPORT_CARDS = ALL_REPORT_CARDS.filter(c =>
-      !c.perm || hasPerm(c.perm) || hasPerm('costos') || appUser?.role === 'Master'
-    );
+    // Ventas-only users: ONLY Finiquito (perm:null). Others: filter by permission.
+    const isVentasOnly = (hasPerm('ventas')||hasPerm('ventas_facturacion')||hasPerm('ventas_ops'))
+      && !hasPerm('costos') && !hasPerm('costos_reportes') && appUser?.role !== 'Master';
+    const REPORT_CARDS = isVentasOnly
+      ? ALL_REPORT_CARDS.filter(c => c.perm === null)
+      : ALL_REPORT_CARDS.filter(c => !c.perm || hasPerm(c.perm) || hasPerm('costos') || appUser?.role === 'Master');
 
     return (
       <div className="space-y-6 animate-in fade-in">
@@ -16916,6 +17007,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    {id:'clientes',           icon:<Users size={16}/>,    label:'Directorio',        perm:'ventas_directorio'}, 
                    {id:'requisiciones',      icon:<FileText size={16}/>, label:'OPs',               perm:'ventas_ops'},
                    {id:'productos_vendidos', icon:<Package size={16}/>,  label:'Productos Vendidos',perm:'ventas_productos_vendidos'},
+                   {id:'reporte_ventas',     icon:<BarChart3 size={16}/>, label:'Reporte Ventas',    perm:'ventas_facturacion'},
                  ].filter(t=>hasPerm(t.perm)||hasPerm('ventas')||appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
