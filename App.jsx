@@ -895,6 +895,33 @@ export default function App() {
     const result = await window.__pwaInstallPrompt.userChoice;
     if (result.outcome === 'accepted') setPwaInstallAvailable(false);
   };
+
+  // ── RESTORE 7 FG products to Inventario General PT + ALMACEN ZI ──
+  useEffect(() => {
+    if(!inventory || !appUser || sessionStorage.getItem('fg_restore_v3')==='done') return;
+    const FG_PRODUCTS = [{'id': 'FG-EMBUTIDOS2KIRI-53x83x0.012', 'desc': 'EMBUTIDOS 2 KIRI - 53X83X12MIC', 'subcategory': 'Bolsas Plásticas'}, {'id': 'FG-VENILACBOLSA25-53x91x0.020', 'desc': 'VENILAC - BOLSA 25KG - 53X91X20MIC', 'subcategory': 'Bolsas Plásticas'}, {'id': 'FG-VENILACBOLSA12-37x75x0.010', 'desc': 'VENILAC - BOLSA 12KG - 37X75X10MIC', 'subcategory': 'Bolsas Plásticas'}, {'id': 'FG-AFSGRIS-60x82x0.030', 'desc': 'AFS GRIS 60X82X30MIC', 'subcategory': 'Bolsas Plásticas'}, {'id': 'FG-EMBUTIDO1KIRI2-28x75x0.012', 'desc': 'EMBUTIDO 1 - KIRI 28X75X12MIC', 'subcategory': 'Bolsas Plásticas'}, {'id': 'FG-PAÑALKIRI-60x75x0.004', 'desc': 'PAÑAL-KIRI 60X75X4MIC', 'subcategory': 'Bolsas Plásticas'}, {'id': 'FG-TERMOPINTURASD-70x0x0.012', 'desc': 'TERMO - PINTURAS DEL CARIBE 70X12MIC', 'subcategory': 'Termoencogibles'}];
+    const doRestore = async () => {
+      let restored = 0;
+      for(const prod of FG_PRODUCTS) {
+        const docId = `${prod.id}___ALMACEN-ZI`;
+        const exists = (inventory||[]).some(i=>i.id===docId||(i.id||'').split('___')[0]===prod.id);
+        if(!exists) {
+          try {
+            await setDoc(getDocRef('inventory', docId), {
+              id: docId, displayId: prod.id, desc: prod.desc,
+              category: 'Productos Terminados', subcategory: prod.subcategory,
+              almacen: 'ALMACEN ZI', unit: prod.subcategory==='Termoencogibles'?'KG':'Millares',
+              stock: 0, cost: 0, timestamp: Date.now()
+            });
+            restored++;
+          } catch(e) {}
+        }
+      }
+      sessionStorage.setItem('fg_restore_v3','done');
+    };
+    doRestore();
+  }, [inventory, appUser]);
+
   // Heartbeat: update lastPing every 30 seconds to keep session alive
   useEffect(() => {
     if (!appUser || appUser.role === 'Master') return;
@@ -3382,39 +3409,50 @@ export default function App() {
     };
 
     return (
-      <div className="relative min-h-screen animate-in fade-in overflow-hidden" style={{background:'#f5f6f8'}}>
-        {/* Background image behind cards (mascot = loginBg which fills full bg) */}
-        {settings?.loginBg && (
-          <div className="absolute inset-0 pointer-events-none" style={{zIndex:0}}>
-            <img src={settings.loginBg} className="w-full h-full object-cover object-center opacity-30" alt=""/>
-            <div className="absolute inset-0" style={{background:'linear-gradient(to bottom, rgba(245,246,248,0.2) 0%, rgba(245,246,248,0.85) 100%)'}}/>
-          </div>
-        )}
-
-        {/* Mascot positioned left (same loginBg but cropped to left column) */}
-        {settings?.loginBg && (
-          <div className="absolute left-0 bottom-0 pointer-events-none hidden lg:block" style={{width:'16%',height:'80%',zIndex:1,overflow:'hidden'}}>
-            <img src={settings.loginBg} className="h-full w-auto object-cover object-left-bottom" style={{maxWidth:'none'}} alt="mascot"/>
-          </div>
-        )}
+      <div className="relative min-h-screen animate-in fade-in overflow-hidden" style={{background:'#f8f9fa'}}>
+        {/* Minimalist geometric background — technical/grid style */}
+        <div className="absolute inset-0 pointer-events-none" style={{zIndex:0}}>
+          <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" style={{position:'absolute',top:0,left:0}}>
+            <defs>
+              <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(249,115,22,0.07)" strokeWidth="0.8"/>
+              </pattern>
+              <pattern id="grid2" width="200" height="200" patternUnits="userSpaceOnUse">
+                <rect width="200" height="200" fill="url(#grid)"/>
+                <path d="M 200 0 L 0 0 0 200" fill="none" stroke="rgba(249,115,22,0.12)" strokeWidth="1"/>
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#grid2)"/>
+            {/* Accent circles */}
+            <circle cx="5%" cy="15%" r="80" fill="none" stroke="rgba(249,115,22,0.06)" strokeWidth="1.5"/>
+            <circle cx="5%" cy="15%" r="130" fill="none" stroke="rgba(249,115,22,0.04)" strokeWidth="1"/>
+            <circle cx="95%" cy="85%" r="100" fill="none" stroke="rgba(249,115,22,0.06)" strokeWidth="1.5"/>
+            <circle cx="95%" cy="85%" r="160" fill="none" stroke="rgba(249,115,22,0.03)" strokeWidth="1"/>
+            {/* Diagonal accent lines */}
+            <line x1="0" y1="0" x2="15%" y2="100%" stroke="rgba(249,115,22,0.04)" strokeWidth="60"/>
+            <line x1="85%" y1="0" x2="100%" y2="100%" stroke="rgba(249,115,22,0.03)" strokeWidth="40"/>
+          </svg>
+          {/* Subtle gradient overlay */}
+          <div className="absolute inset-0" style={{background:'radial-gradient(ellipse at 50% 0%, rgba(249,115,22,0.04) 0%, transparent 70%)'}}/>
+        </div>
 
         <div className="relative" style={{zIndex:2}}>
           {/* Title */}
-          <div className="text-center pt-8 pb-6">
-            <h1 className="text-3xl font-black uppercase tracking-widest text-gray-900">PANEL PRINCIPAL ERP</h1>
-            <div className="w-20 h-1 bg-orange-500 mx-auto mt-3 rounded-full"/>
+          <div className="text-center pt-7 pb-5">
+            <h1 className="text-2xl font-black uppercase tracking-widest text-gray-900">PANEL PRINCIPAL ERP</h1>
+            <div className="w-16 h-1 bg-orange-500 mx-auto mt-2 rounded-full"/>
           </div>
 
-          {/* Grid — paddingLeft to leave space for mascot */}
-          <div className="px-6 pb-8" style={{paddingLeft: settings?.loginBg ? 'max(80px, 17%)' : 24}}>
-            <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:20}}>
+          {/* Grid — responsive: 1 col mobile, 2 tablet, 4 desktop */}
+          <div className="px-4 sm:px-6 pb-8">
+            <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(min(100%,260px),1fr))', gap:16}}>
               {moduleCards.map((card, i) => {
                 const cfg = CARD_CONFIG[card.tab] || {dark:false,borderColor:card.color,chartType:'configText'};
                 const stats = card.stats ? card.stats() : {};
                 const bars = card.chart ? card.chart() : [];
                 const isDark = cfg.dark;
-                // Transparent backgrounds to show the background image (from spec)
-                const bg = isDark ? 'rgba(0,0,0,0.75)' : 'rgba(255,255,255,0.88)';
+                // Solid backgrounds for geometric background
+                const bg = isDark ? '#1e1e28' : 'white';
                 const textMain = isDark ? 'white' : '#333';
                 const textSub = isDark ? '#888' : '#666';
 
@@ -3469,13 +3507,13 @@ export default function App() {
                 }
 
                 return (
-                  <div key={i} style={{background:bg, backdropFilter:'blur(8px)', WebkitBackdropFilter:'blur(8px)',
+                  <div key={i} style={{background:bg,
                     borderRadius:12, padding:20, display:'flex', flexDirection:'column',
-                    justifyContent:'space-between', boxShadow:'0 4px 16px rgba(0,0,0,0.15)',
-                    borderLeft:`5px solid ${cfg.borderColor}`, color:textMain, transition:'transform 0.2s',
-                    border:isDark?'none':`1px solid rgba(229,231,235,0.5)`, borderLeftColor:cfg.borderColor, borderLeftWidth:5, borderLeftStyle:'solid'}}
-                    onMouseEnter={e=>e.currentTarget.style.transform='translateY(-4px)'}
-                    onMouseLeave={e=>e.currentTarget.style.transform='translateY(0)'}>
+                    justifyContent:'space-between', boxShadow:'0 2px 10px rgba(0,0,0,0.08)',
+                    borderLeft:`5px solid ${cfg.borderColor}`, color:textMain, transition:'transform 0.2s, box-shadow 0.2s',
+                    border:isDark?'none':`1px solid rgba(229,231,235,0.8)`, borderLeftColor:cfg.borderColor, borderLeftWidth:5, borderLeftStyle:'solid'}}
+                    onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-4px)';e.currentTarget.style.boxShadow='0 8px 24px rgba(0,0,0,0.12)';}}
+                    onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='0 2px 10px rgba(0,0,0,0.08)';}}>
                     {/* Card header: icon + title */}
                     <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:12}}>
                       <div style={{color:cfg.borderColor,fontSize:'1.6rem',flexShrink:0}}>{card.icon}</div>
@@ -8394,6 +8432,37 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       })()}
                     </div>
 
+                    {/* ── AGREGAR ÍTEM MANUAL ── */}
+                    <div className="border-2 border-dashed border-gray-200 rounded-2xl p-4 bg-gray-50/50">
+                      <h4 className="text-[10px] font-black text-gray-600 uppercase mb-3">Agregar Ítem Manual</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                        <div className="md:col-span-2">
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Descripción</label>
+                          <input type="text" id="mitem-desc" className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-gray-400 uppercase bg-white" placeholder="Ej: BOLSA 28X75 - EMBUTIDOS"/>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
+                          <input type="number" step="0.01" id="mitem-qty" className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-gray-400 bg-white" placeholder="0"/>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Precio U. (USD)</label>
+                          <input type="number" step="0.01" id="mitem-precio" className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500 bg-orange-50" placeholder="0.00"/>
+                        </div>
+                        <div className="flex items-end">
+                          <button type="button" onClick={()=>{
+                            const desc=(document.getElementById('mitem-desc')?.value||'').toUpperCase();
+                            const qty=parseNum(document.getElementById('mitem-qty')?.value||0);
+                            const precio=parseNum(document.getElementById('mitem-precio')?.value||0);
+                            if(!desc||qty<=0||precio<=0) return;
+                            setCotizItems(prev=>[...prev,{desc,cantidad:qty,precioUnit:precio,total:qty*precio}]);
+                            ['mitem-desc','mitem-qty','mitem-precio'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+                          }} className="w-full bg-gray-700 text-white px-3 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-gray-900 flex items-center gap-1 justify-center">
+                            <Plus size={13}/> Agregar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Tabla ítems */}
                     <div className="border-2 border-gray-200 rounded-2xl overflow-hidden">
                       <table className="w-full text-xs border-collapse">
@@ -8477,7 +8546,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             <button onClick={()=>{
                               const w=window.open('','_blank');
                               const rows=(cot.items||[]).map((it,i)=>`<tr style="background:${i%2?'#f9fafb':'white'}"><td style="padding:8px 12px;border:1px solid #eee">${it.desc}</td><td style="padding:8px 12px;border:1px solid #eee;text-align:center">${formatNum(it.cantidad)}</td><td style="padding:8px 12px;border:1px solid #eee;text-align:right">$${formatNum(it.precioUnit)}</td><td style="padding:8px 12px;border:1px solid #eee;text-align:right;font-weight:900">$${formatNum(it.total)}</td></tr>`).join('');
-                              w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Cotización ${cot.documento}</title><style>*{font-family:Arial;box-sizing:border-box}body{padding:28px;max-width:850px;margin:0 auto}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#f97316;color:white;padding:7px 10px;text-align:left;text-transform:uppercase;font-size:9px;border:1px solid #f97316}td{border:1px solid #ccc;padding:6px 10px;font-size:11px}.totals td{border:none;padding:3px 8px}@media print{body{padding:12px}}</style></head><body>
+                              w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Cotización ${cot.documento}</title><style>@page{size:letter;margin:12mm 14mm 12mm 14mm}*{font-family:Arial,sans-serif;box-sizing:border-box;margin:0;padding:0}body{padding:0;width:100%}table{width:100%;border-collapse:collapse;font-size:10.5px}th{background:#f97316;color:white;padding:6px 9px;text-align:left;text-transform:uppercase;font-size:8.5px;border:1px solid #f97316}td{border:1px solid #d1d5db;padding:5px 9px;font-size:10.5px}@media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
                               <div style="border-bottom:3px solid #f97316;padding-bottom:12px;margin-bottom:20px;display:flex;justify-content:space-between">
                                 <div><h2 style="margin:0;font-size:20px">SERVICIOS JIRET G&B, C.A.</h2><p style="margin:2px 0;font-size:11px">RIF: J-412309374</p></div>
                                 <div style="text-align:right"><h1 style="color:#f97316;font-size:22px;margin:0">COTIZACIÓN</h1><p style="font-size:13px;margin:0">${cot.documento}</p></div>
@@ -9108,7 +9177,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             <thead>
                               <tr style={{background:'#f97316'}} className="text-white">
                                 <th className="py-2.5 px-2 text-left font-black uppercase text-[8px] w-28">Código</th>
-                                <th className="py-2.5 px-2 text-left font-black uppercase text-[8px]">Descripción</th>
+                                <th className="py-2.5 px-2 text-left font-black uppercase text-[8px]" style={{maxWidth:100}}>Descripción</th>
                                 <th className="py-2.5 px-2 text-center font-black uppercase text-[8px] w-20">Cant.</th>
                                 <th className="py-2.5 px-2 text-right font-black uppercase text-[8px] w-24">Precio U.</th>
                                 <th className="py-2.5 px-2 text-right font-black uppercase text-[8px] w-24">Total</th>
@@ -9118,7 +9187,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               {fgItems.length > 0 ? fgItems.map((item,i)=>(
                                 <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
                                   <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode ? cleanFGCode(item.invCode) : cleanFGCode(item.fgId||'').replace(/^FG-\d{10,}$/,'')}</td>
-                                  <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{maxWidth:"180px",wordBreak:"break-word"}}>{item.desc}</td>
+                                  <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{maxWidth:90,wordBreak:"break-word",lineHeight:1.3}}>{item.desc}</td>
                                   <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
                                   <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:"—"}</td>
                                   <td className="py-2 px-2 text-right font-black text-green-700 text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:"—"}</td>
