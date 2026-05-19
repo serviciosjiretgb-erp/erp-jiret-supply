@@ -327,7 +327,14 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState('home'); 
   const [ventasView, setVentasView] = useState('facturacion');
-  const [pvFilter, setPvFilter] = useState('general'); 
+  const [pvFilter, setPvFilter] = useState('general');
+  const [cotizaciones, setCotizaciones] = useState([]);
+  const [showNewCotizPanel, setShowNewCotizPanel] = useState(false);
+  const [editingCotizId, setEditingCotizId] = useState(null);
+  const initialCotizForm = { fecha: '', clientRif: '', clientName: '', documento: '', tasa: '', descripcion: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', validez: '15', observaciones: '' };
+  const [newCotizForm, setNewCotizForm] = useState({...initialCotizForm, fecha: getTodayDate()});
+  const [cotizItems, setCotizItems] = useState([]);
+  const [cotizSearchTerm, setCotizSearchTerm] = useState(''); 
   const [prodView, setProdView] = useState('proyeccion');
   const [invView, setInvView] = useState('catalogo');
   const [fgSearch, setFgSearch] = useState('');
@@ -977,6 +984,7 @@ export default function App() {
     });
     const unsubMovs = onSnapshot(getColRef('inventoryMovements'), (s) => setInvMovements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubCli = onSnapshot(getColRef('clientes'), (s) => setClients(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubCotiz = onSnapshot(getColRef('cotizaciones'), (s) => setCotizaciones(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
@@ -5616,7 +5624,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                         <td className="py-2 px-3 text-right font-black text-green-700">${formatNum(item.stock*item.cost)}</td>
                                         <td className="py-2 px-3 text-center">
                                           {!item.isProduccion && item._invId && (
-                                            <button onClick={()=>{const inv=(inventory||[]).find(x=>x.id===item._invId);if(inv)setEditingAlmacenItem(inv);}}
+                                            <button onClick={()=>{const inv=(inventory||[]).find(x=>x.id===item._invId);if(inv){requireAdminPassword(()=>{setEditingAlmacenItem(inv);setAlmacenEditForm({stock:String(inv.stock||''),cost:String(inv.cost||''),desc:inv.desc||'',subcategory:inv.subcategory||''});}, 'Editar producto en almacén');}else{setDialog({title:'Aviso',text:'Este artículo es de producción. Edita el costo en Finishedgoods directamente.',type:'alert'});}}}
                                               className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-600 hover:text-white transition-all">
                                               <Edit size={11}/>
                                             </button>
@@ -8078,6 +8086,234 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     </tfoot>
                   )}
                 </table>
+              </div>
+            </div>
+          );
+        })()}
+
+        {ventasView === 'cotizaciones' && (() => {
+          const generateCotizId = () => `COT-${((cotizaciones||[]).reduce((m,r)=>Math.max(m,parseInt(String(r.id).replace(/\D/g,''))||0),0)+1).toString().padStart(4,'0')}`;
+          const handleSaveCotiz = async () => {
+            try {
+              const id = editingCotizId || newCotizForm.documento || generateCotizId();
+              const base = parseNum(cotizItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||newCotizForm.montoBase||0);
+              const ivaAmt = newCotizForm.aplicaIva==='SI' ? parseFloat((base*0.16).toFixed(2)) : 0;
+              await setDoc(getDocRef('cotizaciones',id),{
+                ...newCotizForm, id, documento:id, tasa:parseNum(newCotizForm.tasa||settings?.tasaBCV||0),
+                montoBase:base, iva:ivaAmt, total:parseFloat((base+ivaAmt).toFixed(2)),
+                items:cotizItems, timestamp:editingCotizId?(newCotizForm.timestamp||Date.now()):Date.now(),
+                user:appUser?.name, status:'VIGENTE'
+              });
+              setShowNewCotizPanel(false); setEditingCotizId(null);
+              setNewCotizForm({...initialCotizForm,fecha:getTodayDate()}); setCotizItems([]);
+              setDialog({title:'✅ Cotización guardada',text:`${id} guardada correctamente.`,type:'alert'});
+            } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+          };
+          const filteredCotiz = (cotizaciones||[]).filter(c=>
+            !cotizSearchTerm ||
+            (c.documento||'').toUpperCase().includes(cotizSearchTerm.toUpperCase()) ||
+            (c.clientName||'').toUpperCase().includes(cotizSearchTerm.toUpperCase())
+          ).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+
+          return (
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
+              <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center">
+                <div>
+                  <h2 className="text-xl font-black text-black uppercase flex items-center gap-3"><FileText className="text-orange-500" size={24}/> Cotizaciones</h2>
+                  <p className="text-[10px] text-gray-500 font-bold uppercase mt-0.5">Presupuestos y propuestas comerciales</p>
+                </div>
+                <button onClick={()=>{setShowNewCotizPanel(!showNewCotizPanel);setNewCotizForm({...initialCotizForm,fecha:getTodayDate()});setCotizItems([]);setEditingCotizId(null);}}
+                  className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-500 transition-colors">
+                  {showNewCotizPanel?'CANCELAR':'NUEVA COTIZACIÓN'}
+                </button>
+              </div>
+
+              {showNewCotizPanel && (
+                <div className="p-8 bg-gray-50/50 border-b">
+                  <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-5">
+                    {/* Header */}
+                    <div className="flex justify-between items-center border-b pb-4">
+                      <h3 className="text-sm font-black uppercase">{editingCotizId?`Editando: ${editingCotizId}`:'Nueva Cotización'}</h3>
+                      <div className="flex items-center gap-4">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                          <input type="date" value={newCotizForm.fecha} onChange={e=>setNewCotizForm({...newCotizForm,fecha:e.target.value})} className="border-2 border-orange-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-orange-50"/>
+                        </div>
+                        <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black">{editingCotizId||generateCotizId()}</span>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Validez (días)</label>
+                          <input type="number" min="1" value={newCotizForm.validez} onChange={e=>setNewCotizForm({...newCotizForm,validez:e.target.value})} className="w-20 border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-400 text-center"/>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$</label>
+                          <input type="number" step="0.01" value={newCotizForm.tasa} onChange={e=>setNewCotizForm({...newCotizForm,tasa:e.target.value})} className="w-28 border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-400 text-center" placeholder={formatNum(settings?.tasaBCV||0)}/>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Cliente + Vendedor */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block">Cliente</label>
+                        <select required value={newCotizForm.clientRif} onChange={e=>{const c=(clients||[]).find(cl=>cl.rif===e.target.value);if(c){setNewCotizForm({...newCotizForm,clientRif:c.rif,clientName:c.name,vendedor:(c.vendedor||'').toUpperCase()});}else setNewCotizForm({...newCotizForm,clientRif:'',clientName:'',vendedor:''}); }}
+                          className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500">
+                          <option value="">Seleccione cliente...</option>
+                          {(clients||[]).map(c=><option key={c.rif} value={c.rif}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block">Vendedor</label>
+                        <input type="text" value={newCotizForm.vendedor} onChange={e=>setNewCotizForm({...newCotizForm,vendedor:e.target.value.toUpperCase()})} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 uppercase"/>
+                      </div>
+                    </div>
+
+                    {/* Descripción general */}
+                    <div>
+                      <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block">Descripción / Concepto General</label>
+                      <input type="text" value={newCotizForm.descripcion} onChange={e=>setNewCotizForm({...newCotizForm,descripcion:e.target.value.toUpperCase()})} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 uppercase" placeholder="Ej: COTIZACIÓN BOLSAS PLÁSTICAS"/>
+                    </div>
+
+                    {/* Agregar ítems */}
+                    <div className="border-2 border-dashed border-orange-200 rounded-2xl p-4">
+                      <h4 className="text-[10px] font-black text-orange-700 uppercase mb-3">Agregar Ítem</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                        <div className="md:col-span-2">
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Descripción del Ítem</label>
+                          <input type="text" id="cotiz-item-desc" className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="Producto o servicio"/>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cant.</label>
+                          <input type="number" step="0.01" id="cotiz-item-qty" className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="0"/>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Precio U. (USD)</label>
+                          <input type="number" step="0.01" id="cotiz-item-precio" className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500 bg-orange-50" placeholder="0.00"/>
+                        </div>
+                        <div className="flex items-end">
+                          <button type="button" onClick={()=>{
+                            const desc=document.getElementById('cotiz-item-desc')?.value||'';
+                            const qty=parseNum(document.getElementById('cotiz-item-qty')?.value||0);
+                            const precio=parseNum(document.getElementById('cotiz-item-precio')?.value||0);
+                            if(!desc||qty<=0||precio<=0) return;
+                            setCotizItems(prev=>[...prev,{desc:desc.toUpperCase(),cantidad:qty,precioUnit:precio,total:qty*precio}]);
+                            ['cotiz-item-desc','cotiz-item-qty','cotiz-item-precio'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+                          }} className="w-full bg-green-600 text-white px-3 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-green-700 flex items-center gap-1 justify-center">
+                            <Plus size={13}/> Agregar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tabla ítems */}
+                    <div className="border-2 border-gray-200 rounded-2xl overflow-hidden">
+                      <table className="w-full text-xs border-collapse">
+                        <thead><tr style={{background:'#f97316'}} className="text-white">
+                          <th className="py-2.5 px-3 text-left font-black text-[8px] uppercase">Descripción</th>
+                          <th className="py-2.5 px-3 text-center font-black text-[8px] uppercase w-20">Cant.</th>
+                          <th className="py-2.5 px-3 text-right font-black text-[8px] uppercase w-24">Precio U.</th>
+                          <th className="py-2.5 px-3 text-right font-black text-[8px] uppercase w-24">Total</th>
+                          <th className="py-2.5 px-3 w-8"/>
+                        </tr></thead>
+                        <tbody>
+                          {cotizItems.length>0 ? cotizItems.map((it,i)=>(
+                            <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
+                              <td className="py-2 px-3 font-bold text-gray-800">{it.desc}</td>
+                              <td className="py-2 px-3 text-center font-black">{formatNum(it.cantidad)}</td>
+                              <td className="py-2 px-3 text-right font-black">${formatNum(it.precioUnit)}</td>
+                              <td className="py-2 px-3 text-right font-black text-green-700">${formatNum(it.total)}</td>
+                              <td className="py-2 px-3 text-center"><button onClick={()=>setCotizItems(p=>p.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={13}/></button></td>
+                            </tr>
+                          )) : Array.from({length:5}).map((_,i)=>(
+                            <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
+                              <td className="py-2.5 px-3 border-r border-gray-100">&nbsp;</td>
+                              <td className="py-2.5 px-3 text-right text-gray-300 w-20">0,00</td>
+                              <td className="py-2.5 px-3 text-right text-gray-300 w-24">0,00</td>
+                              <td className="py-2.5 px-3 text-right text-gray-300 w-24">0,00</td>
+                              <td className="w-8"/>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {/* Totales */}
+                      <div className="border-t-2 border-gray-200 bg-gray-50 px-4 py-3 flex justify-between items-start gap-4">
+                        <textarea rows={2} placeholder="Observaciones / Condiciones de pago:" value={newCotizForm.observaciones||''} onChange={e=>setNewCotizForm({...newCotizForm,observaciones:e.target.value})} className="flex-1 border border-gray-200 rounded-lg p-2 text-[9px] font-bold outline-none resize-none"/>
+                        <div className="space-y-1 text-right min-w-48">
+                          {(()=>{ const base=cotizItems.reduce((s,it)=>s+it.total,0)||parseNum(newCotizForm.montoBase||0); const iva=newCotizForm.aplicaIva==='SI'?base*0.16:0; return(<>
+                            <div className="flex justify-between gap-6 text-[9px]"><span className="font-black text-gray-600 uppercase">SUBTOTAL</span><span className="font-black">${formatNum(base)}</span></div>
+                            <div className="flex justify-between gap-6 text-[9px] items-center"><span className="font-black text-gray-600 uppercase flex items-center gap-1">IVA <select value={newCotizForm.aplicaIva} onChange={e=>setNewCotizForm({...newCotizForm,aplicaIva:e.target.value})} className="border rounded px-1 text-[8px] outline-none"><option value="SI">16%</option><option value="NO">Exento</option></select></span><span className="font-black">${formatNum(iva)}</span></div>
+                            <div className="flex justify-between gap-6 border-t pt-1"><span className="font-black text-gray-900 uppercase text-sm">TOTAL</span><span className="font-black text-orange-600 text-xl">${formatNum(base+iva)}</span></div>
+                          </>); })()}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button type="button" onClick={handleSaveCotiz} className="bg-orange-500 text-white px-12 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600">GUARDAR COTIZACIÓN</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Lista cotizaciones */}
+              <div className="p-8">
+                <div className="relative max-w-2xl mb-6">
+                  <Search className="absolute left-4 top-4 text-gray-400" size={18}/>
+                  <input type="text" placeholder="BUSCAR COTIZACIÓN O CLIENTE..." value={cotizSearchTerm} onChange={e=>setCotizSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-4 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white"/>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest">
+                      <th className="py-4 px-4">Nro / Fecha</th>
+                      <th className="py-4 px-4">Cliente</th>
+                      <th className="py-4 px-4">Descripción</th>
+                      <th className="py-4 px-4 text-center">Validez</th>
+                      <th className="py-4 px-4 text-right">Total USD</th>
+                      <th className="py-4 px-4 text-center">Estatus</th>
+                      <th className="py-4 px-4 text-center">Acciones</th>
+                    </tr></thead>
+                    <tbody className="divide-y">{filteredCotiz.map(cot=>(
+                      <tr key={cot.id} className="hover:bg-gray-50">
+                        <td className="py-4 px-4 font-black text-orange-600">{cot.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{cot.fecha}</span></td>
+                        <td className="py-4 px-4 font-bold text-gray-700 uppercase">{cot.clientName||'—'}</td>
+                        <td className="py-4 px-4 font-bold text-gray-500 text-[10px] max-w-[200px] truncate">{cot.descripcion||'—'}</td>
+                        <td className="py-4 px-4 text-center text-[10px] font-bold">{cot.validez||'15'} días</td>
+                        <td className="py-4 px-4 text-right font-black text-green-600 text-lg">${formatNum(cot.total)}</td>
+                        <td className="py-4 px-4 text-center">
+                          <span className={`px-2 py-0.5 rounded text-[8px] font-black ${cot.status==='VIGENTE'?'bg-green-100 text-green-700':cot.status==='APROBADA'?'bg-blue-100 text-blue-700':'bg-gray-100 text-gray-600'}`}>{cot.status||'VIGENTE'}</span>
+                        </td>
+                        <td className="py-4 px-4">
+                          <div className="flex justify-center gap-2">
+                            <button onClick={()=>{setEditingCotizId(cot.id);setNewCotizForm({...cot});setCotizItems(cot.items||[]);setShowNewCotizPanel(true);window.scrollTo({top:0,behavior:'smooth'});}} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button>
+                            <button onClick={()=>{
+                              const w=window.open('','_blank');
+                              const rows=(cot.items||[]).map((it,i)=>`<tr style="background:${i%2?'#f9fafb':'white'}"><td style="padding:8px 12px;border:1px solid #eee">${it.desc}</td><td style="padding:8px 12px;border:1px solid #eee;text-align:center">${formatNum(it.cantidad)}</td><td style="padding:8px 12px;border:1px solid #eee;text-align:right">$${formatNum(it.precioUnit)}</td><td style="padding:8px 12px;border:1px solid #eee;text-align:right;font-weight:900">$${formatNum(it.total)}</td></tr>`).join('');
+                              w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Cotización ${cot.documento}</title><style>*{font-family:Arial;box-sizing:border-box}body{padding:32px}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#f97316;color:white;padding:8px 12px;text-align:left;text-transform:uppercase;font-size:9px}@media print{body{padding:16px}}</style></head><body>
+                              <div style="border-bottom:3px solid #f97316;padding-bottom:12px;margin-bottom:20px;display:flex;justify-content:space-between">
+                                <div><h2 style="margin:0;font-size:20px">SERVICIOS JIRET G&B, C.A.</h2><p style="margin:2px 0;font-size:11px">RIF: J-412309374</p></div>
+                                <div style="text-align:right"><h1 style="color:#f97316;font-size:22px;margin:0">COTIZACIÓN</h1><p style="font-size:13px;margin:0">${cot.documento}</p></div>
+                              </div>
+                              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px;font-size:11px">
+                                <div><b>Cliente:</b> ${cot.clientName||'—'}</div><div><b>Fecha:</b> ${cot.fecha}</div>
+                                <div><b>Vendedor:</b> ${cot.vendedor||'—'}</div><div><b>Validez:</b> ${cot.validez||15} días</div>
+                                ${cot.tasa>0?`<div><b>Tasa Bs/$:</b> ${formatNum(cot.tasa)}</div>`:''} 
+                              </div>
+                              <table><thead><tr><th>Descripción</th><th>Cantidad</th><th>Precio Unit.</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>
+                              <div style="text-align:right;margin-top:16px;font-size:12px">
+                                <div>Subtotal: $${formatNum(cot.montoBase||0)}</div>
+                                ${cot.aplicaIva==='SI'?`<div>IVA (16%): $${formatNum(cot.iva||0)}</div>`:''}
+                                <div style="font-size:18px;font-weight:900;color:#f97316;border-top:2px solid #000;padding-top:8px;margin-top:8px">TOTAL: $${formatNum(cot.total||0)}</div>
+                              </div>
+                              ${cot.observaciones?`<div style="margin-top:20px;padding:12px;border:1px solid #ddd;font-size:10px"><b>Observaciones:</b> ${cot.observaciones}</div>`:''}
+                              <script>window.print();</script></body></html>`);
+                            }} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button>
+                            <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('cotizaciones',cot.id));setDialog({title:'Eliminada',text:`${cot.documento} eliminada.`,type:'alert'});},'Eliminar cotización')} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                  {filteredCotiz.length===0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay cotizaciones registradas</div>}
+                </div>
               </div>
             </div>
           );
@@ -17309,6 +17545,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               <div className="max-w-7xl mx-auto flex gap-4 px-4 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  {[ 
                    {id:'facturacion',        icon:<Receipt size={16}/>,  label:'Facturación',       perm:'ventas_facturacion'}, 
+                   {id:'cotizaciones',       icon:<FileText size={16}/>, label:'Cotizaciones',      perm:'ventas_facturacion'},
                    {id:'clientes',           icon:<Users size={16}/>,    label:'Directorio',        perm:'ventas_directorio'}, 
                    {id:'requisiciones',      icon:<FileText size={16}/>, label:'OPs',               perm:'ventas_ops'},
                    {id:'productos_vendidos', icon:<Package size={16}/>,  label:'Productos Vendidos',perm:'ventas_productos_vendidos'},
