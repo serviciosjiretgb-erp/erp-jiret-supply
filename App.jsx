@@ -5472,7 +5472,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               <div className={`font-black ${c.text} text-base`}>{formatNum(v.stock)} <span className="text-[9px]">{v.unit}</span></div>
                               <div className="text-[8px] text-gray-400 mt-0.5">{v.count} artículo{v.count!==1?'s':''} · ${formatNum(v.valor)}</div>
                             </div>
-                          ))}
+                          );
+                          })}
                           <div className="bg-orange-50 border border-orange-200 rounded-2xl p-3 text-center">
                             <div className="text-[9px] font-black text-orange-700 uppercase mb-1">💰 Valor Total</div>
                             <div className="font-black text-orange-600 text-lg">${formatNum(totalValor)}</div>
@@ -8430,29 +8431,29 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           <table className="w-full text-xs border-collapse">
                             <thead>
                               <tr style={{background:'#f97316'}} className="text-white">
-                                <th className="py-2.5 px-3 text-left font-black uppercase text-[9px]">Código</th>
-                                <th className="py-2.5 px-3 text-left font-black uppercase text-[9px]">Descripción</th>
-                                <th className="py-2.5 px-3 text-center font-black uppercase text-[9px] w-20">Cantidad</th>
-                                <th className="py-2.5 px-3 text-right font-black uppercase text-[9px] w-28">Precio Unit.</th>
-                                <th className="py-2.5 px-3 text-right font-black uppercase text-[9px] w-28">Total</th>
+                                <th className="py-2.5 px-2 text-left font-black uppercase text-[8px] w-28">Código</th>
+                                <th className="py-2.5 px-2 text-left font-black uppercase text-[8px]">Descripción</th>
+                                <th className="py-2.5 px-2 text-center font-black uppercase text-[8px] w-20">Cant.</th>
+                                <th className="py-2.5 px-2 text-right font-black uppercase text-[8px] w-24">Precio U.</th>
+                                <th className="py-2.5 px-2 text-right font-black uppercase text-[8px] w-24">Total</th>
                               </tr>
                             </thead>
                             <tbody>
                               {fgItems.length > 0 ? fgItems.map((item,i)=>(
                                 <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                                  <td className="py-2 px-3 font-black text-orange-600 text-[9px]">{(item.fgId||'').split('___')[0]}</td>
-                                  <td className="py-2 px-3 font-bold text-gray-800">{item.desc}</td>
-                                  <td className="py-2 px-3 text-center font-black">{formatNum(item.cantidad)} {item.unidad}</td>
-                                  <td className="py-2 px-3 text-right font-black">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
-                                  <td className="py-2 px-3 text-right font-black text-green-700">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
+                                  <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{(()=>{const cid=(item.fgId||"").split("___")[0];const inv=(inventory||[]).find(x=>(x.id||"").split("___")[0]===cid||(x.displayId||"")===cid);return inv?(inv.displayId||(inv.id||"").split("___")[0]):cid.includes("FG-MANUAL-")?"":cid;})()}</td>
+                                  <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{maxWidth:"180px",wordBreak:"break-word"}}>{item.desc}</td>
+                                  <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
+                                  <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:"—"}</td>
+                                  <td className="py-2 px-2 text-right font-black text-green-700 text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:"—"}</td>
                                 </tr>
                               )) : Array.from({length:8}).map((_,i)=>(
                                 <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                                  <td className="py-2.5 px-3 border-r border-gray-100 w-24">&nbsp;</td>
-                                  <td className="py-2.5 px-3 border-r border-gray-100">&nbsp;</td>
-                                  <td className="py-2.5 px-3 border-r border-gray-100 text-right text-gray-300">0,00</td>
-                                  <td className="py-2.5 px-3 border-r border-gray-100 text-right text-gray-300">0,00</td>
-                                  <td className="py-2.5 px-3 text-right text-gray-300">0,00</td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100 w-28">&nbsp;</td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100">&nbsp;</td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-300 w-20">0,00</td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-300 w-24">0,00</td>
+                                  <td className="py-2.5 px-2 text-right text-gray-300 w-24">0,00</td>
                                 </tr>
                               ))}
                             </tbody>
