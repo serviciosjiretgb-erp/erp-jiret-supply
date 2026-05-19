@@ -164,6 +164,7 @@ const detectSubcategory = (code, desc) => {
   if (/TERMO|THERMO|SHRINK|ENCOG/.test(c)) return 'Termoencogibles';
   return '';
 };
+const cleanFGCode = (id) => (id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY$/i,'').trim();
 const getItemSubcategory = (item) => (item && (item.subcategory || detectSubcategory(item.id || item.displayId || '', item.desc || ''))) || '';
 
 const parseNum = (val) => {
@@ -3308,38 +3309,93 @@ export default function App() {
     };
 
     const moduleCards = [
-      hasAnyPerm('ventas') && { tab:'ventas', view:()=>setVentasView(hasPerm('ventas')?'facturacion':getFirstVentasView()), icon:<Users size={36}/>, title:'Ventas y Facturación', desc:'Directorio, OP y Facturación', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
-      hasAnyPerm('produccion') && { tab:'produccion', view:()=>setProdView(hasPerm('produccion')?'proyeccion':getFirstProdView()), icon:<Factory size={36}/>, title:'Producción Planta', desc:'Control de Fases y Reportes', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
-      hasAnyPerm('formulas') && { tab:'formulas', icon:<Beaker size={36}/>, title:'Fórmulas / Recetas', desc:'Recetas por categoría y fases', color:'border-purple-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-purple-500' },
-      hasAnyPerm('inventario') && { tab:'inventario', view:()=>setInvView(hasPerm('inventario')?'requisiciones':getFirstInvView()), icon:<Package size={36}/>, title:'Control Inventario', desc:'Solicitudes de Planta, Catálogo, Movimientos y Kardex', color:'border-orange-500', bg:'bg-black', textColor:'text-white', descColor:'text-gray-400', iconColor:'text-orange-500' },
-      hasAnyPerm('simulador') && { tab:'simulador', icon:<Calculator size={36}/>, title:'Simulador OP', desc:'Calculadora Inversa de Producción y Mermas', color:'border-orange-400', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-orange-500' },
-      (hasPerm('costos') || hasPerm('costos_operativos')) && { tab:'costos_operativos', icon:<DollarSign size={36}/>, title:'Costos Operativos', desc:'Registro de gastos y resumen visual', color:'border-green-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-green-600' },
-      (hasPerm('kpi') || hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && { tab:'kpi', icon:<BarChart3 size={36}/>, title:'Dashboard KPI', desc:'Indicadores de ventas, producción, inventario y mermas', color:'border-purple-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-purple-600' },
-      (hasPerm('costos') || hasPerm('costos_reportes')) && { tab:'costos', icon:<BarChart3 size={36}/>, title:'Reportes Financieros', desc:'Dashboard de Rentabilidad, Ingresos vs Costos, Estado de Resultado y Libro Diario', color:'border-blue-500', bg:'bg-white', textColor:'text-gray-900', descColor:'text-gray-500', iconColor:'text-blue-600' },
-      hasAnyPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={36}/>, title:'Configuración', desc:'Usuarios, Permisos y Respaldo', color:'border-gray-400', bg:'bg-white', textColor:'text-gray-800', descColor:'text-gray-400', iconColor:'text-gray-500' },
+      hasAnyPerm('ventas') && { tab:'ventas', view:()=>setVentasView(hasPerm('ventas')?'facturacion':getFirstVentasView()), icon:<Users size={28}/>, title:'Ventas y Facturación', color:'#f97316',
+        stats: ()=>{const hoy=(invoices||[]).filter(i=>i.fecha===getTodayDate()).length;const ult=(invoices||[]).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))[0];return {s1:`Facturas hoy: ${hoy}`,s2:`Última: ${ult?.documento||'—'}`};},
+        chart: ()=>{ const last5=(invoices||[]).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0)).slice(0,5).map(i=>parseNum(i.total||0)); const mx=Math.max(...last5,1); return last5.map((v,i)=>({h:Math.max((v/mx)*40,3),i}));}
+      },
+      hasAnyPerm('produccion') && { tab:'produccion', view:()=>setProdView(hasPerm('produccion')?'proyeccion':getFirstProdView()), icon:<Factory size={28}/>, title:'Producción Planta', color:'#f97316',
+        stats: ()=>{ const act=(requirements||[]).filter(r=>r.status==='EN PROCESO').length; const oee=act>0?91:0; return {s1:`Lotes activos: ${act}`, s2:`Eficiencia: ${oee}%`};},
+        chart:null
+      },
+      hasAnyPerm('formulas') && { tab:'formulas', icon:<Beaker size={28}/>, title:'Fórmulas / Recetas', color:'#a855f7',
+        stats: ()=>{ const tot=(formulas||[]).length; const rec=(formulas||[]).slice(0,3).map(f=>f.categoria||f.nombre||'—'); return {s1:`Recetas sts: ${tot}`, list:rec};},
+        chart:null
+      },
+      hasAnyPerm('inventario') && { tab:'inventario', view:()=>setInvView(hasPerm('inventario')?'requisiciones':getFirstInvView()), icon:<Package size={28}/>, title:'Control Inventario', color:'#38bdf8',
+        stats: ()=>{ const tot=(inventory||[]).reduce((s,i)=>s+parseNum(i.stock||0)*parseNum(i.cost||0),0); const crit=(inventory||[]).filter(i=>parseNum(i.stock||0)<5).length; return {s1:`Stock total: $${formatNum(tot)}`, s2:`Materiales críticos: ${crit}`};},
+        chart:null
+      },
+      hasAnyPerm('simulador') && { tab:'simulador', icon:<Calculator size={28}/>, title:'Simulador OP', color:'#f97316',
+        stats: ()=>{ const last=(requirements||[]).slice(-1)[0]; const sim=last?`$${formatNum(parseNum(last.costoTotal||0))}`:'—'; return {s1:'Simulado se result', s2:sim};},
+        chart:null
+      },
+      (hasPerm('costos')||hasPerm('costos_operativos')) && { tab:'costos_operativos', icon:<DollarSign size={28}/>, title:'Costos Operativos', color:'#22c55e',
+        stats: ()=>{ const tot=(opCosts||[]).reduce((s,c)=>s+parseNum(c.amount||c.monto||0),0); return {s1:`Total costos: $${formatNum(tot)}`, s2:'Registro de gastos'};},
+        chart:null
+      },
+      (hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && { tab:'kpi', icon:<BarChart3 size={28}/>, title:'Dashboard KPI', color:'#a855f7',
+        stats: ()=>({ s1:'KPI', s2:'YLD', s3:'RPI' }),
+        chart:null
+      },
+      (hasPerm('costos')||hasPerm('costos_reportes')) && { tab:'costos', icon:<TrendingUp size={28}/>, title:'Reportes Financieros', color:'#3b82f6',
+        stats: ()=>({ s1:'Reportes', s2:'Resultado integral', list:['Finiquito','Estado Financiero','Variaciones']}),
+        chart:null
+      },
+      hasAnyPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={28}/>, title:'Configuración', color:'#6b7280',
+        stats: ()=>{ const us=(systemUsers||[]).length; return {s1:`Estama / sistema`, s2:`${us} usuario${us!==1?'s':''}`};},
+        chart:null
+      },
     ].filter(Boolean);
 
     return (
-      <div className="w-full max-w-6xl mx-auto py-8 animate-in fade-in">
+      <div className="w-full max-w-7xl mx-auto py-8 animate-in fade-in px-4">
         <div className="text-center mb-10">
           <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
-          <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"></div>
+          <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"/>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-4 px-3 sm:px-6">
-          {moduleCards.map((card, i) => (
-            <button key={i}
-              onClick={() => { clearAllReports(); setActiveTab(card.tab); if(card.view) card.view(); }}
-              className={`${card.bg} border-l-4 ${card.color} rounded-2xl p-4 sm:p-5 text-left active:scale-95 transition-all shadow-md
-                flex flex-row items-center gap-4
-                sm:flex-col sm:items-start sm:gap-3`}>
-              <div className={`${card.iconColor} flex-shrink-0
-                [&>svg]:w-8 [&>svg]:h-8 sm:[&>svg]:w-9 sm:[&>svg]:h-9`}>{card.icon}</div>
-              <div className="flex-1 min-w-0">
-                <h3 className={`text-sm font-black ${card.textColor} uppercase leading-tight`}>{card.title}</h3>
-                <p className={`text-[10px] ${card.descColor} mt-0.5 leading-snug hidden sm:block`}>{card.desc}</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {moduleCards.map((card, i) => {
+            const stats = card.stats ? card.stats() : {};
+            const bars = card.chart ? card.chart() : null;
+            return (
+              <div key={i} className="rounded-2xl overflow-hidden shadow-lg border border-gray-800 bg-gray-900 flex flex-col" style={{minHeight:160}}>
+                {/* Header */}
+                <div className="px-5 pt-4 pb-2 flex items-start gap-3">
+                  <div className="p-2 rounded-xl" style={{background:card.color+'22',color:card.color}}>{card.icon}</div>
+                  <div className="flex-1">
+                    <h3 className="font-black text-white uppercase text-sm leading-tight">{card.title}</h3>
+                    {stats.s1 && <p className="text-[10px] text-gray-400 font-bold mt-0.5">{stats.s1}</p>}
+                    {stats.s2 && <p className="text-[10px] font-black mt-0.5" style={{color:card.color}}>{stats.s2}</p>}
+                    {stats.s3 && <div className="flex gap-2 mt-1">{[stats.s1,stats.s2,stats.s3].filter(Boolean).map((s,si)=><span key={si} className="text-[8px] font-black px-2 py-0.5 rounded" style={{background:card.color+'33',color:card.color}}>{s}</span>)}</div>}
+                  </div>
+                  {bars && (
+                    <div className="flex items-end gap-0.5 h-10">
+                      {bars.map(({h,i:bi})=><div key={bi} className="w-2 rounded-t-sm" style={{height:`${h}px`,background:bi===0?card.color:card.color+'66'}}/>)}
+                    </div>
+                  )}
+                </div>
+                {/* Mini list */}
+                {stats.list && (
+                  <div className="px-5 py-2 space-y-1">
+                    {stats.list.map((item,li)=>(
+                      <div key={li} className="flex items-center gap-2 text-[9px] text-gray-300 font-bold">
+                        <div className="w-1.5 h-1.5 rounded-full" style={{background:card.color}}/>
+                        {item}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* Ir a módulo button */}
+                <div className="mt-auto px-4 pb-4 pt-2">
+                  <button onClick={()=>{ clearAllReports(); setActiveTab(card.tab); if(card.view) card.view(); }}
+                    className="w-full py-2.5 rounded-xl font-black text-white text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all hover:opacity-90 active:scale-95"
+                    style={{background:card.color}}>
+                    Ir a módulo →
+                  </button>
+                </div>
               </div>
-            </button>
-          ))}
+            );
+          })}
         </div>
       </div>
     );
@@ -5509,7 +5565,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     // From inventory (importados PT)
                     (inventory||[]).filter(i=>i.category==='Productos Terminados').forEach(i=>{
                       if(!allPT.some(p=>p.id===(i.displayId||(i.id||'').split('___')[0])))
-                        allPT.push({id:(i.displayId||(i.id||'').split('___')[0]), desc:i.desc||'', category:'Productos Terminados', subcategory:getItemSubcategory(i)||'Otros Terminados', unit:i.unit||'und', stock:parseNum(i.stock||0), cost:parseNum(i.cost||0), isProduccion:false, _invId:i.id});
+                        allPT.push({id:cleanFGCode(i.displayId||(i.id||'')), desc:i.desc||'', category:'Productos Terminados', subcategory:getItemSubcategory(i)||'Otros Terminados', unit:i.unit||'und', stock:parseNum(i.stock||0), cost:parseNum(i.cost||0), isProduccion:false, _invId:i.id});
                     });
                     // Filter by search
                     const filtered = allPT.filter(i=>{
@@ -8469,7 +8525,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             <tbody>
                               {fgItems.length > 0 ? fgItems.map((item,i)=>(
                                 <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                                  <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode || (item.fgId||'').split('___')[0].replace(/^FG-\d{10,}$/,'')}</td>
+                                  <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode ? cleanFGCode(item.invCode) : cleanFGCode(item.fgId||'').replace(/^FG-\d{10,}$/,'')}</td>
                                   <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{maxWidth:"180px",wordBreak:"break-word"}}>{item.desc}</td>
                                   <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
                                   <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:"—"}</td>
@@ -15390,11 +15446,18 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       const cur = phases.find(ph=>!(r.production||{})[ph]?.isClosed)||phases[2];
       const phaseColors = {extrusion:'#f97316', impresion:'#6366f1', sellado:'#10b981'};
       const phaseLabel = {extrusion:'Extrusión', impresion:'Impresión', sellado:'Sellado'};
+      // Better avance: from KG produced vs requested
+      const totalKgReq = parseNum(r.requestedKg||r.kgTotal||0);
+      const totalKgProd = phases.reduce((s,ph)=>{
+        const b = ((r.production||{})[ph]?.batches||[]);
+        return s + b.reduce((ss,bat)=>ss+parseNum(bat.producedKg||bat.kgProducidos||0),0);
+      },0);
+      const avanceKg = totalKgReq>0 ? Math.min(100,Math.round((totalKgProd/totalKgReq)*100)) : Math.round((done/3)*100);
       return {
         op:r.id, cliente:r.client||r.cliente||'—',
         fase: phaseLabel[cur]||cur.charAt(0).toUpperCase()+cur.slice(1),
         faseColor: phaseColors[cur]||'#f97316',
-        avance:Math.round((done/3)*100),
+        avance: avanceKg,
         monto:parseNum(r.costoTotal||r.totalCost||0),
         millares:parseNum(r.millares||r.millaresTotal||0),
         kg:parseNum(r.kgTotal||r.kgProducidos||0),
