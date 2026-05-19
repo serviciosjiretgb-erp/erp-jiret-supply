@@ -3359,55 +3359,138 @@ export default function App() {
       },
     ].filter(Boolean);
 
+    // Build card visual config matching the HTML spec
+    const CARD_CONFIG = {
+      ventas:       {dark:true,  borderColor:'#ffd700', chartType:'bars',       barData:card=>card.chart?card.chart():null},
+      produccion:   {dark:true,  borderColor:'#f97316', chartType:'lineSvg',    svgPts1:'0,25 15,10 30,20 45,5 60,15 75,10 90,20 100,25', svgPts2:'0,20 15,5 30,15 45,0 60,10 75,5 90,15 100,20'},
+      formulas:     {dark:true,  borderColor:'#a855f7', chartType:'textList'},
+      inventario:   {dark:true,  borderColor:'#f97316', chartType:'donut'},
+      simulador:    {dark:false, borderColor:'#f97316', chartType:'monetary'},
+      costos_operativos:{dark:false,borderColor:'#22c55e',chartType:'blocks'},
+      kpi:          {dark:false, borderColor:'#a855f7', chartType:'kpiDots'},
+      costos:       {dark:false, borderColor:'#3b82f6', chartType:'lineSvgSmall', svgPts:'0,15 20,5 40,10 60,0 80,10 100,5'},
+      configuracion:{dark:false, borderColor:'#6b7280', chartType:'configText'},
+    };
+
     return (
-      <div className="w-full max-w-7xl mx-auto py-8 animate-in fade-in px-4">
-        <div className="text-center mb-10">
-          <h2 className="text-3xl font-black text-black uppercase tracking-widest">Panel Principal ERP</h2>
-          <div className="w-24 h-1.5 bg-orange-500 mx-auto mt-4 rounded-full"/>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {moduleCards.map((card, i) => {
-            const stats = card.stats ? card.stats() : {};
-            const bars = card.chart ? card.chart() : null;
-            return (
-              <div key={i} className="rounded-2xl overflow-hidden shadow-lg border border-gray-800 bg-gray-900 flex flex-col" style={{minHeight:160}}>
-                {/* Header */}
-                <div className="px-5 pt-4 pb-2 flex items-start gap-3">
-              <div className="p-2 rounded-xl flex-shrink-0" style={{background:card.color+'22',color:card.color}}>{card.icon}</div>
-                  <div className="flex-1">
-                    <h3 className="font-black text-white uppercase text-sm leading-tight">{card.title}</h3>
-                    {stats.s1 && <p className="text-[10px] text-gray-400 font-bold mt-0.5">{stats.s1}</p>}
-                    {stats.s2 && <p className="text-[10px] font-black mt-0.5" style={{color:card.color}}>{stats.s2}</p>}
-                    {stats.s3 && <div className="flex gap-2 mt-1">{[stats.s1,stats.s2,stats.s3].filter(Boolean).map((s,si)=><span key={si} className="text-[8px] font-black px-2 py-0.5 rounded" style={{background:card.color+'33',color:card.color}}>{s}</span>)}</div>}
-                  </div>
-                  {bars && (
-                    <div className="flex items-end gap-0.5 h-10">
-                      {bars.map(({h,i:bi})=><div key={bi} className="w-2 rounded-t-sm" style={{height:`${h}px`,background:bi===0?card.color:card.color+'66'}}/>)}
+      <div className="relative min-h-screen animate-in fade-in overflow-hidden" style={{background:'#f5f6f8'}}>
+        {/* Background image behind cards (mascot = loginBg which fills full bg) */}
+        {settings?.loginBg && (
+          <div className="absolute inset-0 pointer-events-none" style={{zIndex:0}}>
+            <img src={settings.loginBg} className="w-full h-full object-cover object-center opacity-30" alt=""/>
+            <div className="absolute inset-0" style={{background:'linear-gradient(to bottom, rgba(245,246,248,0.2) 0%, rgba(245,246,248,0.85) 100%)'}}/>
+          </div>
+        )}
+
+        {/* Mascot positioned left (same loginBg but cropped to left column) */}
+        {settings?.loginBg && (
+          <div className="absolute left-0 bottom-0 pointer-events-none hidden lg:block" style={{width:'16%',height:'80%',zIndex:1,overflow:'hidden'}}>
+            <img src={settings.loginBg} className="h-full w-auto object-cover object-left-bottom" style={{maxWidth:'none'}} alt="mascot"/>
+          </div>
+        )}
+
+        <div className="relative" style={{zIndex:2}}>
+          {/* Title */}
+          <div className="text-center pt-8 pb-6">
+            <h1 className="text-3xl font-black uppercase tracking-widest text-gray-900">PANEL PRINCIPAL ERP</h1>
+            <div className="w-20 h-1 bg-orange-500 mx-auto mt-3 rounded-full"/>
+          </div>
+
+          {/* Grid — paddingLeft to leave space for mascot */}
+          <div className="px-6 pb-8" style={{paddingLeft: settings?.loginBg ? 'max(80px, 17%)' : 24}}>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:20}}>
+              {moduleCards.map((card, i) => {
+                const cfg = CARD_CONFIG[card.tab] || {dark:false,borderColor:card.color,chartType:'configText'};
+                const stats = card.stats ? card.stats() : {};
+                const bars = card.chart ? card.chart() : [];
+                const isDark = cfg.dark;
+                const bg = isDark ? '#1e1e24' : 'white';
+                const textMain = isDark ? 'white' : '#333';
+                const textSub = isDark ? '#888' : '#666';
+
+                // Mini chart body
+                let chartBody = null;
+                if(cfg.chartType==='bars' && bars && bars.length>0) {
+                  chartBody = <div style={{display:'flex',gap:3,alignItems:'flex-end',height:56,width:'100%',padding:'4px 0'}}>
+                    {bars.map(({h,i:bi})=><div key={bi} style={{flex:1,height:`${h}px`,background:bi===0?card.color:card.color+'77',borderRadius:'2px 2px 0 0'}}/>)}
+                  </div>;
+                } else if(cfg.chartType==='lineSvg') {
+                  chartBody = <svg viewBox="0 0 100 30" preserveAspectRatio="none" style={{width:'100%',height:56}}>
+                    <polyline fill="none" stroke="#2196f3" strokeWidth="1.5" points={cfg.svgPts1}/>
+                    <polyline fill="none" stroke="#f97316" strokeWidth="1.5" points={cfg.svgPts2}/>
+                  </svg>;
+                } else if(cfg.chartType==='textList' && stats.list) {
+                  chartBody = <ul style={{textAlign:'left',fontSize:'0.72rem',color:textSub,listStyle:'none',padding:0,width:'100%'}}>
+                    {stats.list.map((it,li)=><li key={li} style={{display:'flex',alignItems:'center',gap:6,marginBottom:3}}>
+                      <span style={{width:6,height:6,borderRadius:'50%',background:card.color,flexShrink:0}}/>
+                      {it} <span style={{marginLeft:'auto',color:'#22c55e'}}>✓</span>
+                    </li>)}
+                  </ul>;
+                } else if(cfg.chartType==='donut') {
+                  const tot=(inventory||[]).reduce((s,i)=>s+parseNum(i.stock||0)*parseNum(i.cost||0),0);
+                  chartBody = <div style={{display:'flex',alignItems:'center',gap:10,width:'100%'}}>
+                    <svg viewBox="0 0 36 36" style={{width:52,height:52,flexShrink:0}}>
+                      <circle cx="18" cy="18" r="15.9" fill="none" stroke="#2196f3" strokeWidth="3.5" strokeDasharray="60 40"/>
+                      <circle cx="18" cy="18" r="15.9" fill="none" stroke="#f97316" strokeWidth="3.5" strokeDasharray="25 75" strokeDashoffset="-60"/>
+                      <circle cx="18" cy="18" r="15.9" fill="none" stroke="#22c55e" strokeWidth="3.5" strokeDasharray="15 85" strokeDashoffset="-85"/>
+                    </svg>
+                    <div style={{fontSize:'0.65rem',color:textSub,lineHeight:1.6}}>
+                      <div><span style={{color:'#2196f3'}}>●</span> Stock: ${formatNum(tot)}</div>
+                      <div><span style={{color:'#f97316'}}>●</span> Materiales críticos: {(inventory||[]).filter(i=>parseNum(i.stock||0)<5).length}</div>
                     </div>
-                  )}
-                </div>
-                {/* Mini list */}
-                {stats.list && (
-                  <div className="px-5 py-2 space-y-1">
-                    {stats.list.map((item,li)=>(
-                      <div key={li} className="flex items-center gap-2 text-[9px] text-gray-300 font-bold">
-                        <div className="w-1.5 h-1.5 rounded-full" style={{background:card.color}}/>
-                        {item}
+                  </div>;
+                } else if(cfg.chartType==='monetary') {
+                  const last=(requirements||[]).slice(-1)[0];
+                  chartBody = <div style={{fontSize:'1.6rem',fontWeight:900,color:card.color}}>${formatNum(parseNum(last?.costoTotal||0))}</div>;
+                } else if(cfg.chartType==='blocks') {
+                  chartBody = <div style={{display:'flex',gap:4,height:50,width:'100%',borderRadius:6,overflow:'hidden'}}>
+                    {[{f:2,c:'#2196f3'},{f:1,c:'#f97316'},{f:1.5,c:'#22c55e'}].map((b,bi)=><div key={bi} style={{flex:b.f,background:b.c,borderRadius:4}}/>)}
+                  </div>;
+                } else if(cfg.chartType==='kpiDots') {
+                  chartBody = <div style={{display:'flex',gap:12,alignItems:'center',fontSize:'0.75rem',fontWeight:700}}>
+                    {[['KPI','#22c55e'],['YLD','#f97316'],['RPI','#f59e0b']].map(([l,c])=><span key={l} style={{display:'flex',alignItems:'center',gap:4}}>{l} <span style={{width:10,height:10,borderRadius:'50%',background:c,display:'inline-block'}}/></span>)}
+                  </div>;
+                } else if(cfg.chartType==='lineSvgSmall') {
+                  chartBody = <svg viewBox="0 0 100 20" preserveAspectRatio="none" style={{width:'100%',height:44}}>
+                    <polyline fill="none" stroke={card.color} strokeWidth="2" points={cfg.svgPts||'0,15 20,5 40,10 60,0 80,10 100,5'}/>
+                  </svg>;
+                } else if(cfg.chartType==='configText') {
+                  chartBody = <p style={{fontSize:'0.8rem',color:textSub,fontWeight:600}}>{stats.s1}</p>;
+                }
+
+                return (
+                  <div key={i} style={{background:bg, borderRadius:12, padding:20, display:'flex', flexDirection:'column',
+                    justifyContent:'space-between', boxShadow:'0 4px 12px rgba(0,0,0,0.1)',
+                    borderLeft:`5px solid ${cfg.borderColor}`, color:textMain, transition:'transform 0.2s',
+                    border:isDark?'none':`1px solid #e5e7eb`, borderLeftColor:cfg.borderColor, borderLeftWidth:5, borderLeftStyle:'solid'}}
+                    onMouseEnter={e=>e.currentTarget.style.transform='translateY(-4px)'}
+                    onMouseLeave={e=>e.currentTarget.style.transform='translateY(0)'}>
+                    {/* Card header: icon + title */}
+                    <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:12}}>
+                      <div style={{color:cfg.borderColor,fontSize:'1.6rem',flexShrink:0}}>{card.icon}</div>
+                      <div>
+                        <h3 style={{fontSize:'0.85rem',fontWeight:900,margin:0,textTransform:'uppercase'}}>{card.title}</h3>
+                        <p style={{fontSize:'0.65rem',color:textSub,margin:0,marginTop:2}}>{stats.s2||''}</p>
                       </div>
-                    ))}
+                    </div>
+                    {/* Mini chart */}
+                    <div style={{flex:1,display:'flex',justifyContent:'center',alignItems:'center',marginBottom:12,minHeight:50}}>
+                      {chartBody}
+                    </div>
+                    {/* Footer: stats + button */}
+                    {stats.s1 && !['configText','monetary'].includes(cfg.chartType) && (
+                      <p style={{fontSize:'0.65rem',color:textSub,marginBottom:8,fontWeight:600}}>{stats.s1}</p>
+                    )}
+                    <button onClick={()=>{ clearAllReports(); setActiveTab(card.tab); if(card.view) card.view(); }}
+                      style={{background:'#f97316',color:'white',border:'none',padding:'10px 20px',borderRadius:20,fontWeight:700,fontSize:'0.8rem',cursor:'pointer',width:'100%',transition:'background 0.2s'}}
+                      onMouseEnter={e=>e.target.style.background='#ea580c'} onMouseLeave={e=>e.target.style.background='#f97316'}>
+                      Ir a módulo →
+                    </button>
                   </div>
-                )}
-                {/* Ir a módulo button */}
-                <div className="mt-auto px-4 pb-4 pt-2">
-                  <button onClick={()=>{ clearAllReports(); setActiveTab(card.tab); if(card.view) card.view(); }}
-                    className="w-full py-2.5 rounded-xl font-black text-white text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all hover:opacity-90 active:scale-95"
-                    style={{background:card.color}}>
-                    Ir a módulo →
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -17224,107 +17307,123 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
   };
   if (!appUser) {
     return (
-      <div className="min-h-screen flex" style={{background:'#111'}}>
-        {/* ── IZQUIERDA: Video / branding ── */}
-        <div className="flex-1 relative hidden md:block">
+      <div className="min-h-screen w-full relative overflow-hidden" style={{background:'#111'}}>
+        {/* ── FONDO FULL con video/imagen ── */}
+        <div className="absolute inset-0">
           {settings?.loginVideo ? (
-            <video
-              ref={async el=>{
+            <video ref={async el=>{
                 if(!el||!settings.loginVideo) return;
                 if(settings.loginVideo.startsWith('indexeddb://')) {
-                  // Load from IndexedDB
-                  try {
-                    const db2 = await new Promise((res,rej)=>{const r=indexedDB.open('erp_video_db',1);r.onsuccess=e=>res(e.target.result);r.onerror=rej;});
-                    const tx = db2.transaction('videos','readonly');
-                    const blob = await new Promise((res,rej)=>{const r=tx.objectStore('videos').get('loginVideo');r.onsuccess=e=>res(e.target.result);r.onerror=rej;});
-                    if(blob) el.src = URL.createObjectURL(blob);
-                  } catch(e) { el.style.display='none'; }
-                } else {
-                  el.src = settings.loginVideo;
-                }
+                  try { const db2=await new Promise((res,rej)=>{const r=indexedDB.open('erp_video_db',1);r.onsuccess=e=>res(e.target.result);r.onerror=rej;}); const tx=db2.transaction('videos','readonly'); const blob=await new Promise((res,rej)=>{const r=tx.objectStore('videos').get('loginVideo');r.onsuccess=e=>res(e.target.result);r.onerror=rej;}); if(blob) el.src=URL.createObjectURL(blob); } catch(e){ el.style.display='none'; }
+                } else { el.src=settings.loginVideo; }
               }}
               autoPlay loop playsInline muted={loginVideoMuted}
-              className="absolute inset-0 w-full h-full object-cover"
-              onError={e=>{e.target.style.display='none';}}/>
+              className="w-full h-full object-cover" onError={e=>e.target.style.display='none'}/>
           ) : settings?.loginBg ? (
-            <img src={settings.loginBg} className="absolute inset-0 w-full h-full object-cover" alt="bg"/>
+            <img src={settings.loginBg} className="w-full h-full object-cover object-center" alt="bg"/>
           ) : (
-            <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-gray-800 to-black flex flex-col items-center justify-center gap-4">
-              <div className="text-orange-500 opacity-30"><Factory size={120}/></div>
-              <p className="text-white/20 font-black text-xs uppercase tracking-widest">Sin video — Configura uno en Configuración</p>
+            <div className="w-full h-full flex flex-col items-center justify-center" style={{background:'linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)'}}>
+              <div className="text-orange-500/20"><Factory size={200}/></div>
             </div>
           )}
-          {/* Overlay izquierdo */}
-          <div className="absolute inset-0" style={{background:'linear-gradient(120deg,rgba(0,0,0,0.5) 0%,rgba(0,0,0,0.15) 60%,rgba(17,17,17,0.9) 100%)'}}/>
-          {/* Texto inferior */}
-          <div className="absolute bottom-10 left-10 text-white z-10 drop-shadow-2xl">
-            <p className="text-5xl font-black tracking-wider uppercase">SUPPLY G&B</p>
-            <p className="text-sm font-light tracking-[0.3em] uppercase text-white/60 mt-1">Sistema ERP — Servicios Jiret</p>
+          {/* Overlay gradiente suave: izquierda visible, derecha más oscura */}
+          <div className="absolute inset-0" style={{background:'linear-gradient(to right, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.15) 50%, rgba(0,0,0,0.6) 100%)'}}/>
+        </div>
+
+        {/* ── HEADER ── */}
+        <header className="absolute top-0 left-0 w-full z-20 flex justify-between items-center px-8 py-3" style={{background:'rgba(18,18,18,0.92)',borderBottom:'2px solid #f97316'}}>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center">
+              <span className="text-white font-black text-xl">Supply </span>
+              <span className="text-white font-black text-2xl">G</span>
+              <div className="bg-orange-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-sm font-black mx-0.5">&amp;</div>
+              <span className="text-white font-black text-2xl">B</span>
+            </div>
+            <div className="w-px h-6 bg-white/20 mx-2"/>
+            <div className="flex items-center gap-2 opacity-60">
+              <div className="w-5 h-5 rounded-full border-2 border-orange-500 flex items-center justify-center"><span className="text-orange-500 text-[8px] font-black">J</span></div>
+              <span className="text-white/60 text-xs font-bold">Jireh</span>
+            </div>
           </div>
-          {settings?.loginVideo && (
-            <button onClick={()=>setLoginVideoMuted(v=>!v)}
-              className="absolute bottom-10 right-10 z-20 bg-black/50 hover:bg-black/80 text-white p-2.5 rounded-full transition-all border border-white/20"
-              title={loginVideoMuted?"Activar sonido":"Silenciar"}>
-              <span className="text-xl">{loginVideoMuted?'🔇':'🔊'}</span>
+          <div className="flex items-center gap-5">
+            <div className="text-right">
+              <div className="text-white text-xs font-bold">{new Date().toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div>
+              <div className="text-white/40 text-[9px]">{new Date().toLocaleDateString('es-VE',{weekday:'short',day:'numeric',month:'short',year:'numeric'})}</div>
+            </div>
+            <div className="flex items-center gap-2 bg-white/10 rounded-xl px-3 py-2">
+              <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center"><User size={14} className="text-white"/></div>
+              <span className="text-white text-xs font-bold">Administrador General</span>
+              <Lock size={12} className="text-white/40"/>
+            </div>
+          </div>
+        </header>
+
+        {/* ── FOOTER ── */}
+        <footer className="absolute bottom-0 left-0 w-full z-20 flex justify-between items-center px-8 py-2" style={{background:'rgba(18,18,18,0.85)',borderTop:'1px solid rgba(255,255,255,0.1)'}}>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1">
+              <span className="text-white font-black text-sm">SUPPLY G&amp;B</span>
+            </div>
+            <span className="text-white/30 text-[9px] uppercase tracking-widest">Sistema ERP — Servicios Jiret</span>
+          </div>
+          <div className="text-white/20 text-[9px] uppercase tracking-widest">SUPPLY G&amp;B — SISTEMA ERP — SERVICIOS JIRET</div>
+        </footer>
+
+        {/* ── PANEL LOGIN (glassmorphism) — posicionado a la derecha ── */}
+        <div className="absolute z-30 top-1/2 -translate-y-1/2 right-[8%]"
+          style={{width:440, background:'rgba(30,30,36,0.75)', backdropFilter:'blur(16px)', WebkitBackdropFilter:'blur(16px)',
+            border:'1px solid rgba(255,255,255,0.1)', borderLeft:'4px solid #f97316', borderRadius:14, padding:'40px', color:'white'}}>
+          
+          <h2 style={{fontSize:'1.1rem',marginBottom:4,color:'#ccc',fontWeight:600}}>INICIO DE SESIÓN DE SISTEMA ERP</h2>
+          <div style={{marginBottom:24}}>
+            <h1 style={{fontSize:'2rem',fontWeight:900,color:'white',margin:0,letterSpacing:2}}>SISTEMA ERP</h1>
+            <h3 style={{fontSize:'0.85rem',color:'#888',letterSpacing:'0.1em',fontWeight:400,marginTop:2}}>SERVICIOS JIREH</h3>
+          </div>
+
+          <form onSubmit={handleLogin}>
+            <div style={{marginBottom:16}}>
+              <label style={{display:'block',fontSize:'0.7rem',color:'#aaa',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.1em'}}>USUARIO DE ACCESO</label>
+              <div style={{display:'flex',alignItems:'center',background:'rgba(0,0,0,0.4)',borderRadius:8,padding:'11px 14px',border:'1px solid rgba(255,255,255,0.1)',transition:'border 0.2s'}}
+                onFocus={e=>e.currentTarget.style.border='1px solid #f97316'} onBlur={e=>e.currentTarget.style.border='1px solid rgba(255,255,255,0.1)'}>
+                <User size={15} style={{color:'#888',marginRight:12,flexShrink:0}}/>
+                <input type="text" required value={loginData.username} onChange={e=>setLoginData({...loginData,username:e.target.value})}
+                  style={{background:'transparent',border:'none',color:'white',width:'100%',outline:'none',fontSize:'0.95rem',fontWeight:700}}
+                  placeholder="Administrador"/>
+              </div>
+            </div>
+            <div style={{marginBottom:20}}>
+              <label style={{display:'block',fontSize:'0.7rem',color:'#aaa',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.1em'}}>CLAVE DE SEGURIDAD</label>
+              <div style={{display:'flex',alignItems:'center',background:'rgba(0,0,0,0.4)',borderRadius:8,padding:'11px 14px',border:'1px solid rgba(255,255,255,0.1)'}}>
+                <Lock size={15} style={{color:'#888',marginRight:12,flexShrink:0}}/>
+                <input type="password" required value={loginData.password} onChange={e=>setLoginData({...loginData,password:e.target.value})}
+                  style={{background:'transparent',border:'none',color:'white',width:'100%',outline:'none',fontSize:'0.95rem',fontWeight:700}}
+                  placeholder="••••••••••••••"/>
+              </div>
+            </div>
+            {loginError && <div style={{background:'rgba(239,68,68,0.15)',color:'#f87171',fontSize:'0.7rem',padding:'10px 14px',borderRadius:8,marginBottom:12,textAlign:'center',border:'1px solid rgba(239,68,68,0.3)',textTransform:'uppercase',fontWeight:700}}>{loginError}</div>}
+            <button type="submit" style={{width:'100%',background:'#f97316',color:'white',border:'none',padding:'14px',borderRadius:8,fontSize:'0.95rem',fontWeight:900,cursor:'pointer',letterSpacing:'0.05em',transition:'background 0.2s'}}
+              onMouseEnter={e=>e.target.style.background='#ea580c'} onMouseLeave={e=>e.target.style.background='#f97316'}>
+              INGRESAR AL SISTEMA →
             </button>
-          )}
-        </div>
-        {/* ── DERECHA: Panel de login oscuro estilo imagen 4 ── */}
-        <div className="flex items-center justify-center" style={{width:'420px',minWidth:'340px',background:'rgba(10,10,10,0.85)',backdropFilter:'blur(12px)'}}>
-          <div className="w-full px-10 py-10">
-            <div className="text-center mb-8">
-              <p className="text-[10px] font-black tracking-widest text-orange-500 uppercase mb-3">INICIO DE SESIÓN DE SISTEMA ERP</p>
-              <div className="flex items-center justify-center gap-1 mb-1">
-                <span className="text-white font-black text-[42px] leading-none">G</span>
-                <div className="bg-orange-500 text-white rounded-full w-7 h-7 flex items-center justify-center text-lg font-black mx-0.5 shadow">&amp;</div>
-                <span className="text-white font-black text-[42px] leading-none">B</span>
-              </div>
-              <p className="text-lg font-black text-white uppercase tracking-widest">SISTEMA ERP</p>
-              <p className="text-[9px] font-bold tracking-[0.3em] text-white/40 uppercase mt-0.5">SISTEMA ERP — SERVICIOS JIREH</p>
-            </div>
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-[9px] font-black text-white/50 uppercase mb-2 tracking-widest">Usuario de Acceso</label>
-                <div className="relative">
-                  <User className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" size={16}/>
-                  <input type="text" required value={loginData.username} onChange={e=>setLoginData({...loginData,username:e.target.value})}
-                    className="w-full rounded-2xl py-4 pl-11 pr-4 text-sm font-black outline-none transition-all text-white placeholder-white/20"
-                    style={{background:'rgba(255,255,255,0.08)',border:'1px solid rgba(255,255,255,0.1)'}}
-                    onFocus={e=>{e.target.style.border='1px solid #f97316';}}
-                    onBlur={e=>{e.target.style.border='1px solid rgba(255,255,255,0.1)';}}
-                    placeholder="Administrador"/>
-                </div>
-              </div>
-              <div>
-                <label className="block text-[9px] font-black text-white/50 uppercase mb-2 tracking-widest">Clave de Seguridad</label>
-                <div className="relative">
-                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" size={16}/>
-                  <input type="password" required value={loginData.password} onChange={e=>setLoginData({...loginData,password:e.target.value})}
-                    className="w-full rounded-2xl py-4 pl-11 pr-4 text-sm font-black outline-none transition-all text-white placeholder-white/20"
-                    style={{background:'rgba(255,255,255,0.08)',border:'1px solid rgba(255,255,255,0.1)'}}
-                    onFocus={e=>{e.target.style.border='1px solid #f97316';}}
-                    onBlur={e=>{e.target.style.border='1px solid rgba(255,255,255,0.1)';}}
-                    placeholder="••••••••••••••"/>
-                </div>
-              </div>
-              {loginError && <div className="bg-red-500/20 text-red-400 text-[10px] font-black uppercase p-3 rounded-xl text-center border border-red-500/30">{loginError}</div>}
-              <button type="submit" className="w-full font-black py-4 rounded-2xl uppercase tracking-widest text-sm flex justify-center items-center gap-2 mt-4 transition-all hover:brightness-110 active:scale-95 shadow-xl"
-                style={{background:'linear-gradient(135deg,#f97316,#ea580c)',color:'white'}}>
-                INGRESAR AL SISTEMA →
-              </button>
-            </form>
-            <div className="text-center mt-6 space-y-2">
-              <p className="text-[9px] font-bold text-white/30 hover:text-white/60 cursor-pointer transition-colors">Olvidé mi contraseña</p>
-              <p className="text-[9px] font-bold text-white/30 hover:text-white/60 cursor-pointer transition-colors">Contactar a soporte</p>
-            </div>
-            <div className="absolute bottom-6 left-0 right-0 text-center">
-              <p className="text-[8px] font-black text-white/20 uppercase tracking-widest">SUPPLY G&B — SISTEMA ERP — SERVICIOS JIRET</p>
-            </div>
+          </form>
+
+          <div style={{marginTop:24,textAlign:'center',display:'flex',flexDirection:'column',gap:8}}>
+            <a href="#" style={{color:'#ccc',textDecoration:'none',fontSize:'0.85rem',transition:'color 0.2s'}}
+              onMouseEnter={e=>e.target.style.color='#f97316'} onMouseLeave={e=>e.target.style.color='#ccc'}>Olvidé mi contraseña</a>
+            <a href="#" style={{color:'#ccc',textDecoration:'none',fontSize:'0.85rem',transition:'color 0.2s'}}
+              onMouseEnter={e=>e.target.style.color='#f97316'} onMouseLeave={e=>e.target.style.color='#ccc'}>Contactar a soporte</a>
           </div>
         </div>
+
+        {settings?.loginVideo && (
+          <button onClick={()=>setLoginVideoMuted(v=>!v)} className="absolute bottom-14 right-8 z-30 bg-black/50 hover:bg-black/80 text-white p-2.5 rounded-full transition-all border border-white/20">
+            <span className="text-lg">{loginVideoMuted?'🔇':'🔊'}</span>
+          </button>
+        )}
       </div>
     );
   }
+
 
 
   // ============================================================================
