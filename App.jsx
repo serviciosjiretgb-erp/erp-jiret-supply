@@ -7850,7 +7850,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           const [pvFiltProducto, pvSetProducto] = [pvProductoFilter, setPvProductoFilter];
           const pvFiltered = sorted.filter(s =>
             (pvFiltCliente === 'TODOS' || s.cliente === pvFiltCliente) &&
-            (pvFiltProducto === 'TODOS' || s.producto === pvFiltProducto)
+            (pvFiltProducto === 'TODOS' || s.producto === pvFiltProducto) &&
+            (!pvFilter || pvFilter === 'general' || (s.fecha||'').startsWith(pvFilter))
           );
           return (
             <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden" id="pdf-content">
@@ -7861,7 +7862,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <select value={pvFilter||'general'} onChange={e=>setPvFilter(e.target.value)}
                       className="border-2 border-green-200 rounded-xl px-3 py-1.5 text-xs font-black outline-none focus:border-green-400 bg-white">
                       <option value="general">📊 General (Todo)</option>
-                      {Array.from({length:6},(_,i)=>{const d=new Date();d.setMonth(d.getMonth()-i);const ym=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;const label=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()]+' '+d.getFullYear();return <option key={ym} value={ym}>{label}</option>;}).reverse()}
+                      {Array.from(new Set((invoices||[]).filter(Boolean).map(i=>(i.fecha||'').substring(0,7)).filter(ym=>ym&&ym.length===7))).sort().map(ym=>{const [y,m]=ym.split('-');const label=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1]+' '+y;return <option key={ym} value={ym}>{label}</option>;})}
                     </select>
                   </div>
                   <p className="text-[10px] font-bold text-green-700 mt-0.5">{pvFiltered.length} de {sorted.length} líneas</p>
@@ -7980,9 +7981,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 <div className="flex gap-2 flex-wrap items-center">
                   <select value={pvFilter||'general'} onChange={e=>setPvFilter(e.target.value)} className="border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white">
                     <option value="general">📊 General (Todo)</option>
-                    {Array.from({length:12},(_,i)=>{const d=new Date();d.setMonth(d.getMonth()-i);const ym=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;const label=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()]+' '+d.getFullYear();return <option key={ym} value={ym}>{label}</option>;}).reverse()}
+                    {Array.from(new Set((invoices||[]).filter(Boolean).map(i=>(i.fecha||'').substring(0,7)).filter(ym=>ym&&ym.length===7))).sort().map(ym=>{const [y,m]=ym.split('-');const label=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1]+' '+y;return <option key={ym} value={ym}>{label}</option>;})}
                   </select>
-                  <button onClick={()=>{const csv=['Fecha\tDocumento\tCliente\tCódigo\tProducto\tCantidad\tPrecio\tTotal\tCosto U.\tTotal Costo\tUtilidad\t%\tTasa',...rows.map(r=>`${r.fecha}\t${r.doc}\t${r.cliente}\t${r.codigo}\t${r.producto}\t${formatNum(r.qty)}\tUSD ${formatNum(r.precio)}\tUSD ${formatNum(r.total)}\tUSD ${formatNum(r.costo)}\tUSD ${formatNum(r.costoTotal)}\tUSD ${formatNum(r.total-r.costoTotal)}\t${r.total>0?Math.round(((r.total-r.costoTotal)/r.total)*100):0}%\t${formatNum(r.tasa)}`)].join('\n');const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,\uFEFF'+encodeURIComponent(csv);a.download=`Reporte_Ventas_${pvFilter||'General'}_${getTodayDate()}.csv`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
+                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=rows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatNum(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=6&&ci<=11?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="6" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
+                  <button onClick={()=>handleExportPDF('Reporte_Ventas_Costos', true)} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Printer size={12}/> Imprimir</button>
                 </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
@@ -8347,20 +8349,76 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         <input type="text" required className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black uppercase" value={newInvoiceForm.productoMaquilado} onChange={e=>handleInvoiceFormChange('productoMaquilado', e.target.value)} placeholder="EJ: BOLSAS DE 28 X 75" />
                       </div>
 
-                      <div className="md:col-span-2">
-                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Base (USD) e IVA</label>
-                        <div className="flex gap-2">
-                           <input type="number" step="0.01" required className="flex-1 bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-xl font-black outline-none focus:bg-white focus:border-orange-500 text-black text-center" value={newInvoiceForm.montoBase} onChange={e=>handleInvoiceFormChange('montoBase', e.target.value)} placeholder="0.00" />
-                           <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva', e.target.value)} className="w-32 bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-xs font-black outline-none focus:bg-white focus:border-orange-500 text-black">
-                             <option value="SI">+ IVA</option>
-                             <option value="NO">EXENTO</option>
-                           </select>
+                      {/* ── TABLA INVOICE ── */}
+                      <div className="md:col-span-4">
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Detalle de Factura</label>
+                        <div className="border-2 border-gray-200 rounded-2xl overflow-hidden">
+                          <table className="w-full text-xs border-collapse">
+                            <thead>
+                              <tr style={{background:'#f97316'}} className="text-white">
+                                <th className="py-2.5 px-3 text-left font-black uppercase text-[9px]">Código</th>
+                                <th className="py-2.5 px-3 text-left font-black uppercase text-[9px]">Descripción</th>
+                                <th className="py-2.5 px-3 text-center font-black uppercase text-[9px] w-20">Cantidad</th>
+                                <th className="py-2.5 px-3 text-right font-black uppercase text-[9px] w-28">Precio Unit.</th>
+                                <th className="py-2.5 px-3 text-right font-black uppercase text-[9px] w-28">Total</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {fgItems.length > 0 ? fgItems.map((item,i)=>(
+                                <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
+                                  <td className="py-2 px-3 font-black text-orange-600 text-[9px]">{(item.fgId||'').split('___')[0]}</td>
+                                  <td className="py-2 px-3 font-bold text-gray-800">{item.desc}</td>
+                                  <td className="py-2 px-3 text-center font-black">{formatNum(item.cantidad)} {item.unidad}</td>
+                                  <td className="py-2 px-3 text-right font-black">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
+                                  <td className="py-2 px-3 text-right font-black text-green-700">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
+                                </tr>
+                              )) : Array.from({length:8}).map((_,i)=>(
+                                <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
+                                  <td className="py-2.5 px-3 border-r border-gray-100 w-24">&nbsp;</td>
+                                  <td className="py-2.5 px-3 border-r border-gray-100">&nbsp;</td>
+                                  <td className="py-2.5 px-3 border-r border-gray-100 text-right text-gray-300">0,00</td>
+                                  <td className="py-2.5 px-3 border-r border-gray-100 text-right text-gray-300">0,00</td>
+                                  <td className="py-2.5 px-3 text-right text-gray-300">0,00</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {/* Totales */}
+                          <div className="border-t-2 border-gray-200 bg-gray-50 px-4 py-3">
+                            <div className="flex justify-between items-center text-[10px] mb-2">
+                              <textarea rows={2} placeholder="Observaciones / Instrucciones de pago:"
+                                value={newInvoiceForm.observaciones||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm, observaciones:e.target.value})}
+                                className="border border-gray-200 rounded-lg p-2 text-[9px] font-bold flex-1 mr-6 outline-none resize-none"/>
+                              <div className="space-y-1 text-right min-w-52">
+                                {[
+                                  ['TOTAL PARCIAL', `$${formatNum(fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||parseNum(newInvoiceForm.montoBase||0))}`],
+                                  ['DESCUENTO','$0,00'],
+                                  ['SUBTOTAL MENOS DESCUENTO', `$${formatNum(fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||parseNum(newInvoiceForm.montoBase||0))}`],
+                                  ['TASA DE IMPUESTO', `${newInvoiceForm.aplicaIva==='SI'?'16':'0'},00%`],
+                                  ['TOTAL IMPUESTOS', `$${formatNum(parseNum(newInvoiceForm.iva||0))}`],
+                                  ['ENVÍO/MANIPULACIÓN','$0,00'],
+                                ].map(([k,v])=>(
+                                  <div key={k} className="flex justify-between gap-8"><span className="font-black text-gray-600 uppercase">{k}</span><span className="font-black">{v}</span></div>
+                                ))}
+                                <div className="flex justify-between gap-8 border-t-2 border-gray-400 pt-2 mt-2">
+                                  <span className="font-black text-gray-900 uppercase text-sm">Saldo adeudado</span>
+                                  <span className="font-black text-orange-600 text-xl">$ {formatNum(newInvoiceForm.total||0)}</span>
+                                </div>
+                              </div>
+                            </div>
+                            {/* Manual base override if no items */}
+                            {fgItems.length === 0 && (
+                              <div className="flex gap-3 mt-2 pt-2 border-t border-gray-200 items-center">
+                                <span className="text-[9px] font-black text-gray-500 uppercase">Base manual:</span>
+                                <input type="number" step="0.01" className="w-32 border border-gray-200 rounded-lg px-2 py-1 text-xs font-black outline-none" value={newInvoiceForm.montoBase} onChange={e=>handleInvoiceFormChange('montoBase', e.target.value)} placeholder="0.00"/>
+                                <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva', e.target.value)} className="border border-gray-200 rounded-lg px-2 py-1 text-[9px] font-black outline-none">
+                                  <option value="SI">+ IVA 16%</option>
+                                  <option value="NO">EXENTO</option>
+                                </select>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      
-                      <div className="md:col-span-2">
-                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Total Factura</label>
-                        <div className="p-4 bg-orange-50 border-2 border-orange-200 rounded-2xl font-black text-orange-700 text-xl text-center shadow-inner">${formatNum(newInvoiceForm.total)}</div>
                       </div>
                     </div>
                     
