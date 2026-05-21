@@ -342,6 +342,9 @@ export default function App() {
   const [prodView, setProdView] = useState('proyeccion');
   const [invView, setInvView] = useState('catalogo');
   const [fgSearch, setFgSearch] = useState('');
+  // Multi-warehouse dispatch state for invoicing
+  const [mwDispatch, setMwDispatch] = useState({}); // {productCode: {ALMACEN_ZI: qty, ALMACEN_C2: qty, ...}}
+  const [showMwPanel, setShowMwPanel] = useState(null); // productCode being dispatched
   const [fgCatFilter, setFgCatFilter] = useState('TODAS');
   const [selectedOpId, setSelectedOpId] = useState('');
   const [fgItems, setFgItems] = useState([]); // [{fgId, cantidad, desc, unidad, maxCant}]
@@ -2309,6 +2312,61 @@ export default function App() {
             itemsToProcess.push({ fgId: newInvoiceForm.fgId, cantidad: cantPendiente });
           }
         }
+      }
+
+      // ── MULTI-WAREHOUSE DEDUCTION from inventory (Inventario General) ──
+      // For items from Inventario General (not finishedGoodsInventory),
+      // use the mwDispatch assignments to deduct from each warehouse document
+      const itemsWithInvCode = itemsToProcess.filter(it => it.invCode || (it._isInvPT));
+      if(itemsWithInvCode.length > 0) {
+        const batch = writeBatch(db);
+        for(const item of itemsWithInvCode) {
+          const code = item.invCode || (item.fgId||'').split('___')[0];
+          const cantTotal = parseNum(item.cantidad);
+          if(cantTotal <= 0) continue;
+
+          const dispatch = mwDispatch[code] || {};
+          const hasDispatch = Object.values(dispatch).some(v=>parseNum(v)>0);
+          
+          // Get all warehouse docs for this product
+          const whDocs = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code);
+          
+          if(hasDispatch) {
+            // Use explicit warehouse assignments
+            for(const [almNom, qty] of Object.entries(dispatch)) {
+              const qtyNum = parseNum(qty);
+              if(qtyNum <= 0) continue;
+              const whDoc = whDocs.find(i=>(i.almacen||'').toUpperCase()===almNom.toUpperCase() || (i.id||'').includes(almNom.replace(/\s+/g,'-')));
+              if(!whDoc) continue;
+              const newStock = Math.max(0, parseNum(whDoc.stock||0) - qtyNum);
+              batch.update(getDocRef('inventory', whDoc.id), {stock: newStock, timestamp: Date.now()});
+              // Kardex entry
+              await addDoc(getColRef('inventoryMovements'), {
+                itemId: whDoc.id, itemDesc: item.desc||code, almacen: almNom,
+                type: 'SALIDA', qty: qtyNum, unitCost: parseNum(item.costoUnit||0),
+                totalValue: qtyNum * parseNum(item.costoUnit||0),
+                previousStock: parseNum(whDoc.stock||0), newStock,
+                docRef: id, notes: `VENTA ${id} — Almacén: ${almNom}`,
+                date: newInvoiceForm.fecha||getTodayDate(), user: appUser?.name||'Admin', timestamp: Date.now()
+              });
+            }
+          } else {
+            // Auto: deduct from warehouses with stock (FIFO by smallest stock first)
+            let remaining = cantTotal;
+            const sorted = [...whDocs].sort((a,b)=>parseNum(a.stock||0)-parseNum(b.stock||0));
+            for(const wh of sorted) {
+              if(remaining<=0) break;
+              const avail = parseNum(wh.stock||0);
+              if(avail<=0) continue;
+              const deduct = Math.min(remaining, avail);
+              remaining -= deduct;
+              const newStock = Math.max(0, avail - deduct);
+              batch.update(getDocRef('inventory', wh.id), {stock: newStock, timestamp: Date.now()});
+            }
+          }
+        }
+        await batch.commit();
+        setMwDispatch({}); setShowMwPanel(null);
       }
 
       // ── Descontar cada item del inventario de terminados (FIFO por lote) ──
@@ -9093,11 +9151,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             <div className="bg-white rounded-xl border border-green-200 overflow-hidden">
                               <table className="w-full text-xs">
                                 <thead className="bg-green-600 text-white">
-                                  <tr className="font-black text-[9px] uppercase">
-                                    <th className="p-2 text-left">Lote / Producto</th>
-                                    <th className="p-2 text-center">Cantidad</th>
+                                  <tr className="font-black text-[9px] uppercase bg-gray-50">
+                                    <th className="p-2 text-left">Código / Producto</th>
+                                    <th className="p-2 text-center">Cant. Total</th>
                                     <th className="p-2 text-right">Precio U.</th>
                                     <th className="p-2 text-right">Total</th>
+                                    <th className="p-2 text-center">Almacenes</th>
                                     <th className="p-2 text-center">Quitar</th>
                                   </tr>
                                 </thead>
@@ -9105,10 +9164,70 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                   {fgItems.map((item, idx) => (
                                     <tr key={idx} className="hover:bg-green-50">
                                       <td className="p-2 font-bold text-gray-800">{item.desc}</td>
-                                      <td className="p-2 text-center font-black text-green-700">{formatNum(item.cantidad)} {item.unidad}</td>
+                                      <td className="p-2 text-center font-black text-green-700">{formatNum(item.cantidad)} <span className="text-[8px] text-gray-400">{item.unidad}</span></td>
                                       <td className="p-2 text-right font-black text-orange-600">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
                                       <td className="p-2 text-right font-black text-gray-800">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
                                       <td className="p-2 text-center">
+                                        {/* Warehouse dispatch button */}
+                                        {(()=>{
+                                          const code = item.invCode || (item.fgId||'').split('___')[0];
+                                          const warehouses = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code && parseNum(i.stock||0)>0);
+                                          const dispatch = mwDispatch[code]||{};
+                                          const assigned = Object.values(dispatch).reduce((s,v)=>s+parseNum(v),0);
+                                          const needed = parseNum(item.cantidad);
+                                          const ok = warehouses.length===0 || Math.abs(assigned-needed)<0.01;
+                                          if(warehouses.length===0) return <span className="text-[8px] text-gray-300 font-bold">Auto</span>;
+                                          return (
+                                            <button type="button" onClick={()=>setShowMwPanel(showMwPanel===code?null:code)}
+                                              className={`text-[8px] font-black px-2 py-1 rounded-lg transition-all ${ok?'bg-green-100 text-green-700 hover:bg-green-200':'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}>
+                                              {ok?'✓ OK':'⚠ Asignar'}
+                                              <div className="text-[7px] font-bold">{warehouses.length} alm.</div>
+                                            </button>
+                                          );
+                                        })()}
+                                        {/* Inline warehouse panel */}
+                                        {showMwPanel===(item.invCode||(item.fgId||'').split('___')[0]) && (()=>{
+                                          const code = item.invCode||(item.fgId||'').split('___')[0];
+                                          const warehouses = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code && parseNum(i.stock||0)>0);
+                                          const dispatch = mwDispatch[code]||{};
+                                          const assigned = Object.values(dispatch).reduce((s,v)=>s+parseNum(v),0);
+                                          const needed = parseNum(item.cantidad);
+                                          return (
+                                            <div className="absolute z-50 left-0 mt-1 w-72 bg-white rounded-xl shadow-2xl border border-orange-200 p-3 text-left" style={{top:'100%'}}>
+                                              <div className="flex justify-between items-center mb-2">
+                                                <h4 className="text-[9px] font-black text-orange-700 uppercase">Asignar por Almacén</h4>
+                                                <button onClick={()=>setShowMwPanel(null)} className="text-gray-400 hover:text-red-500"><X size={12}/></button>
+                                              </div>
+                                              <div className="text-[8px] text-gray-500 font-bold mb-2">Necesario: <span className="text-orange-600 font-black">{formatNum(needed)} {item.unidad}</span></div>
+                                              {warehouses.map(wh=>{
+                                                const almNom = wh.almacen || (wh.id||'').split('___')[1]?.replace(/-/g,' ')||'';
+                                                const maxStock = parseNum(wh.stock||0);
+                                                const val = dispatch[almNom]||'';
+                                                return (
+                                                  <div key={wh.id} className="flex items-center gap-2 mb-1.5">
+                                                    <div className="flex-1">
+                                                      <div className="text-[8px] font-black text-gray-700">{almNom}</div>
+                                                      <div className="text-[7px] text-green-600 font-bold">Disponible: {formatNum(maxStock)} {item.unidad}</div>
+                                                    </div>
+                                                    <input type="number" step="0.01" min="0" max={maxStock} value={val}
+                                                      onChange={e=>{
+                                                        const v=Math.min(parseNum(e.target.value),maxStock);
+                                                        setMwDispatch(prev=>({...prev,[code]:{...(prev[code]||{}),[almNom]:v||''}}));
+                                                      }}
+                                                      className="w-20 border-2 border-orange-200 rounded-lg px-2 py-1 text-xs font-black text-center outline-none focus:border-orange-500"
+                                                      placeholder="0"/>
+                                                  </div>
+                                                );
+                                              })}
+                                              <div className={`mt-2 text-[8px] font-black text-center py-1 rounded-lg ${Math.abs(assigned-needed)<0.01?'bg-green-100 text-green-700':'bg-orange-100 text-orange-600'}`}>
+                                                Asignado: {formatNum(assigned)} / {formatNum(needed)} {item.unidad}
+                                                {Math.abs(assigned-needed)>0.01 && <span> ({assigned<needed?'Faltan':'Sobran'} {formatNum(Math.abs(assigned-needed))})</span>}
+                                              </div>
+                                            </div>
+                                          );
+                                        })()}
+                                      </td>
+                                      <td className="p-2 text-center" style={{position:'relative'}}>
                                         <button type="button" onClick={()=>setFgItems(prev=>prev.filter((_,i)=>i!==idx))} className="text-red-400 hover:text-red-600"><X size={14}/></button>
                                       </td>
                                     </tr>
