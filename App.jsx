@@ -2287,7 +2287,8 @@ export default function App() {
 
   const handleCreateInvoice = async (e) => {
     e.preventDefault(); 
-    if(!newInvoiceForm.clientRif || !newInvoiceForm.montoBase) return setDialog({title: 'Aviso', text: 'Selecciona un cliente e ingresa el monto base.', type: 'alert'});
+    if(!newInvoiceForm.clientRif) return setDialog({title: 'Aviso', text: 'Selecciona un cliente para continuar.', type: 'alert'});
+    if(!newInvoiceForm.montoBase && fgItems.length === 0) return setDialog({title: 'Aviso', text: 'Ingresa el monto base o agrega productos al carrito.', type: 'alert'});
     const id = editingInvoiceId || newInvoiceForm.documento || generateInvoiceId();
     // Build itemsFacturados from fgItems for persistence
     // ISSUE 2: Capturar costo al momento de facturar (se congela aquí, no al leer luego)
@@ -9271,83 +9272,40 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 <tbody className="divide-y divide-green-100">
                                   {fgItems.map((item, idx) => (
                                     <tr key={idx} className="hover:bg-green-50">
-                                      <td className="p-2 font-bold text-gray-800">{item.desc}</td>
-                                      <td className="p-2 text-center font-black text-green-700">{formatNum(item.cantidad)} <span className="text-[8px] text-gray-400">{item.unidad}</span></td>
-                                      <td className="p-2 text-right font-black text-orange-600">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
-                                      <td className="p-2 text-right font-black text-gray-800">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
-                                      <td className="p-2 text-center">
-                                        {/* Warehouse dispatch button */}
+                                      <td className="p-2.5 font-black text-orange-600 text-[9px] whitespace-nowrap">{item.invCode||cleanFGCode(item.fgId||'')}<br/><span className="font-bold text-gray-700 text-[9px]">{item.desc}</span></td>
+                                      <td className="p-2.5 text-center font-black text-green-700 text-[10px]">{formatNum(item.cantidad)} <span className="text-[8px] text-gray-400">{item.unidad}</span></td>
+                                      <td className="p-2.5 text-right font-black text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
+                                      <td className="p-2.5 text-right font-black text-gray-800 text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
+                                      <td className="p-2.5 text-center relative">
                                         {(()=>{
-                                          const code = item.invCode || (item.fgId||'').split('___')[0];
-                                          const warehouses = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code && parseNum(i.stock||0)>0);
-                                          const dispatch = mwDispatch[code]||{};
-                                          const assigned = Object.values(dispatch).reduce((s,v)=>s+parseNum(v),0);
-                                          const needed = parseNum(item.cantidad);
-                                          const ok = warehouses.length===0 || Math.abs(assigned-needed)<0.01;
-                                          if(warehouses.length===0) return <span className="text-[8px] text-gray-300 font-bold">Auto</span>;
-                                          return (
-                                            <button type="button" onClick={()=>setShowMwPanel(showMwPanel===code?null:code)}
-                                              className={`text-[8px] font-black px-2 py-1 rounded-lg transition-all ${ok?'bg-green-100 text-green-700 hover:bg-green-200':'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}>
-                                              {ok?'✓ OK':'⚠ Asignar'}
-                                              <div className="text-[7px] font-bold">{warehouses.length} alm.</div>
-                                            </button>
-                                          );
+                                          const code=item.invCode||(item.fgId||'').split('___')[0];
+                                          const whs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
+                                          if(whs.length<=1) return null;
+                                          const disp=mwDispatch[code]||{};
+                                          const asgn=Object.values(disp).reduce((s,v)=>s+parseNum(v),0);
+                                          const need=parseNum(item.cantidad);
+                                          const ok=Math.abs(asgn-need)<0.01&&asgn>0;
+                                          return <button type="button" onClick={()=>setShowMwPanel(showMwPanel===code?null:code)} className={`text-[8px] font-black px-2 py-1 rounded-lg ${ok?'bg-green-100 text-green-700':'bg-orange-100 text-orange-600'}`}>{ok?'✓ OK':`⚠ ${whs.length} alm`}</button>;
                                         })()}
-                                        {/* Inline warehouse panel */}
                                         {showMwPanel===(item.invCode||(item.fgId||'').split('___')[0]) && (()=>{
-                                          const code = item.invCode||(item.fgId||'').split('___')[0];
-                                          const warehouses = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code && parseNum(i.stock||0)>0);
-                                          const dispatch = mwDispatch[code]||{};
-                                          const assigned = Object.values(dispatch).reduce((s,v)=>s+parseNum(v),0);
-                                          const needed = parseNum(item.cantidad);
-                                          return (
-                                            <div className="absolute z-50 left-0 mt-1 w-72 bg-white rounded-xl shadow-2xl border border-orange-200 p-3 text-left" style={{top:'100%'}}>
-                                              <div className="flex justify-between items-center mb-2">
-                                                <h4 className="text-[9px] font-black text-orange-700 uppercase">Asignar por Almacén</h4>
-                                                <button onClick={()=>setShowMwPanel(null)} className="text-gray-400 hover:text-red-500"><X size={12}/></button>
-                                              </div>
-                                              <div className="text-[8px] text-gray-500 font-bold mb-2">Necesario: <span className="text-orange-600 font-black">{formatNum(needed)} {item.unidad}</span></div>
-                                              {warehouses.map(wh=>{
-                                                const almNom = wh.almacen || (wh.id||'').split('___')[1]?.replace(/-/g,' ')||'';
-                                                const maxStock = parseNum(wh.stock||0);
-                                                const val = dispatch[almNom]||'';
-                                                return (
-                                                  <div key={wh.id} className="flex items-center gap-2 mb-1.5">
-                                                    <div className="flex-1">
-                                                      <div className="text-[8px] font-black text-gray-700">{almNom}</div>
-                                                      <div className="text-[7px] text-green-600 font-bold">Disponible: {formatNum(maxStock)} {item.unidad}</div>
-                                                    </div>
-                                                    <input type="number" step="0.01" min="0" max={maxStock} value={val}
-                                                      onChange={e=>{
-                                                        const v=Math.min(parseNum(e.target.value),maxStock);
-                                                        setMwDispatch(prev=>({...prev,[code]:{...(prev[code]||{}),[almNom]:v||''}}));
-                                                      }}
-                                                      className="w-20 border-2 border-orange-200 rounded-lg px-2 py-1 text-xs font-black text-center outline-none focus:border-orange-500"
-                                                      placeholder="0"/>
-                                                  </div>
-                                                );
-                                              })}
-                                              <div className={`mt-2 text-[8px] font-black text-center py-1 rounded-lg ${Math.abs(assigned-needed)<0.01?'bg-green-100 text-green-700':'bg-orange-100 text-orange-600'}`}>
-                                                Asignado: {formatNum(assigned)} / {formatNum(needed)} {item.unidad}
-                                                {Math.abs(assigned-needed)>0.01 && <span> ({assigned<needed?'Faltan':'Sobran'} {formatNum(Math.abs(assigned-needed))})</span>}
-                                              </div>
-                                            </div>
-                                          );
+                                          const code=item.invCode||(item.fgId||'').split('___')[0];
+                                          const whs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
+                                          const disp=mwDispatch[code]||{};
+                                          const asgn=Object.values(disp).reduce((s,v)=>s+parseNum(v),0);
+                                          const need=parseNum(item.cantidad);
+                                          return <div className="absolute z-50 right-0 top-full mt-1 w-56 bg-white rounded-xl shadow-2xl border border-orange-200 p-3 text-left">
+                                            <div className="flex justify-between mb-2"><span className="text-[9px] font-black text-orange-700 uppercase">Almacenes</span><button onClick={()=>setShowMwPanel(null)} className="text-gray-400 hover:text-red-500"><X size={11}/></button></div>
+                                            <div className="text-[8px] text-gray-500 mb-2">Nec: <b className="text-orange-600">{formatNum(need)} {item.unidad}</b></div>
+                                            {whs.map(wh=>{const alm=wh.almacen||(wh.id||'').split('___')[1]?.replace(/-/g,' ')||'';const mx=parseNum(wh.stock||0);const v=disp[alm]||'';return<div key={wh.id} className="flex items-center gap-2 mb-1.5"><div className="flex-1 min-w-0"><div className="text-[8px] font-black truncate">{alm}</div><div className="text-[7px] text-green-600">Disp:{formatNum(mx)}</div></div><input type="number" step="0.01" min="0" max={mx} value={v} onChange={e=>{const nv=Math.min(parseNum(e.target.value),mx);setMwDispatch(p=>({...p,[code]:{...(p[code]||{}),[alm]:nv||''}}));}} className="w-16 border-2 border-orange-200 rounded-lg px-1.5 py-1 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0"/></div>;})}
+                                            <div className={`mt-1.5 text-[8px] font-black text-center py-1 rounded-lg ${Math.abs(asgn-need)<0.01&&asgn>0?'bg-green-100 text-green-700':'bg-orange-50 text-orange-600'}`}>{formatNum(asgn)}/{formatNum(need)}</div>
+                                          </div>;
                                         })()}
                                       </td>
-                                      <td className="p-2 text-center" style={{position:'relative'}}>
-                                        <button type="button" onClick={()=>setFgItems(prev=>prev.filter((_,i)=>i!==idx))} className="text-red-400 hover:text-red-600"><X size={14}/></button>
-                                      </td>
+                                      <td className="p-2.5 text-center"><button type="button" onClick={()=>setFgItems(p=>p.filter((_,i)=>i!==idx))} className="text-red-400 hover:text-red-600 p-1"><X size={13}/></button></td>
                                     </tr>
                                   ))}
                                 </tbody>
-                                <tfoot className="bg-green-50 border-t border-green-200">
-                                  <tr className="font-black text-[10px]">
-                                    <td className="p-2 text-right uppercase text-gray-600" colSpan="1">Total lotes:</td>
-                                    <td className="p-2 text-center text-green-700">{fgItems.length} lote{fgItems.length!==1?'s':''}</td>
-                                    <td colSpan="2"></td>
-                                  </tr>
-                                </tfoot>
+
                               </table>
                             </div>
                           )}
@@ -9362,13 +9320,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         </select>
                       </div>
                       
-                      <div className="md:col-span-1">
-                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Tasa de Cambio</label>
+                      <div>
+                        <label className="text-[9px] font-black text-gray-600 uppercase mb-1 block">Tasa Bs/$</label>
                         <input type="number" step="0.01" min="0" value={newInvoiceForm.tasa||''}
                           onChange={e=>setNewInvoiceForm({...newInvoiceForm, tasa:e.target.value})}
-                          className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black"
-                          placeholder={`${formatNum(settings?.tasaBCV||0)} Bs/$`}/>
-                        <div className="text-[8px] text-gray-400 mt-1">BCV: {formatNum(settings?.tasaBCV||0)} Bs/$</div>
+                          className="w-28 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black text-center"
+                          placeholder={`${formatNum(settings?.tasaBCV||0)}`}/>
+                        <div className="text-[7px] text-gray-400 mt-0.5 text-center">BCV: {formatNum(settings?.tasaBCV||0)}</div>
                       </div>
                       <div className="md:col-span-1">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">OP Relacionada</label>
@@ -9391,10 +9349,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         </div>
                       )}
 
-                      <div className="md:col-span-4">
-                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Descripción / Producto Maquilado</label>
-                        <input type="text" required className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black uppercase" value={newInvoiceForm.productoMaquilado} onChange={e=>handleInvoiceFormChange('productoMaquilado', e.target.value)} placeholder="EJ: BOLSAS DE 28 X 75" />
-                      </div>
+                      {/* Only show producto maquilado when OP is selected */}
+                      {newInvoiceForm.opAsignada && (
+                        <div className="md:col-span-4">
+                          <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Descripción / Producto Maquilado</label>
+                          <input type="text" className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 text-black uppercase" value={newInvoiceForm.productoMaquilado} onChange={e=>handleInvoiceFormChange('productoMaquilado', e.target.value)} placeholder="EJ: BOLSAS DE 28 X 75" />
+                        </div>
+                      )}
 
                       {/* ── TABLA INVOICE ── */}
                       <div className="md:col-span-4">
