@@ -6371,6 +6371,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </table>
           </div>
         </div>
+        );
       }
 
       // ── HISTORIAL VIEW ──
