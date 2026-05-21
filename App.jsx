@@ -8257,7 +8257,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             <tbody>
               {(inv.itemsFacturados&&inv.itemsFacturados.length>0) ? inv.itemsFacturados.map((it,i)=>(
                 <tr key={i} className="border-t border-gray-200">
-                  <td className="p-4 border-r border-black font-bold text-sm">{it.desc||inv.productoMaquilado||'MAQUILA / SERVICIO'}</td>
+                  <td className="p-4 border-r border-black font-bold text-sm">
+                    {it.invCode && <span className="block text-[9px] font-black text-indigo-700 mb-1 tracking-wide">{it.invCode.split('___')[0]}</span>}
+                    {it.desc||inv.productoMaquilado||'MAQUILA / SERVICIO'}
+                  </td>
                   <td className="p-4 border-r border-black text-center font-black">{formatNum(it.cantidad)} {it.unidad||''}</td>
                   <td className="p-4 border-r border-black text-right font-bold">{it.precioUnit>0?`$${formatNum(it.precioUnit)}`:'—'}</td>
                   <td className="p-4 text-right font-black">${formatNum(parseNum(it.precioUnit||0)*parseNum(it.cantidad||1)||parseNum(inv.montoBase)/Math.max((inv.itemsFacturados||[]).length,1))}</td>
@@ -9054,15 +9057,22 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     ? parseNum(inv.montoBase||0) / (inv.itemsFacturados||[]).length / qty
                     : parseNum(inv.montoBase||0) / qty;
                 const total = precioVenta * qty;
-                // codigo: always the clean product code (invCode > inventory lookup > desc)
-                // Never show ALMACEN names, FG-MANUAL timestamps, or warehouse suffixes
-                const _rawCode = (it.invCode || (it.fgId||'').split('___')[0]).replace(/___.*$/,'').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
-                const _isBadCode = /^FG-MANUAL-\d{8,}$/.test(_rawCode) || /^ALMACEN/.test(_rawCode) || /^\d{8,}$/.test(_rawCode) || !_rawCode;
-                const codigo = _isBadCode
-                  ? ((inventory||[]).find(i=>i.category==='Productos Terminados'&&(i.desc||'').toUpperCase()===(it.desc||'').toUpperCase())
-                    ? ((i)=>(i.displayId||(i.id||'').split('___')[0]).replace(/_inv$/i,''))((inventory||[]).find(i=>i.category==='Productos Terminados'&&(i.desc||'').toUpperCase()===(it.desc||'').toUpperCase()))
-                    : _rawCode||'—')
-                  : _rawCode;
+                // codigo: use the exact product code from Inventario de Productos Terminados
+                // Priority: invCode saved on item → fgId lookup in finishedGoodsInventory → fgId cleaned → '—'
+                let codigo = '';
+                if(it.invCode && !/^ALMACEN/.test(it.invCode) && !/^\d{8,}$/.test(it.invCode)) {
+                  // invCode is the clean product code (set from inventory or FG id)
+                  codigo = it.invCode.split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                }
+                if(!codigo && it.fgId) {
+                  // Look up in finishedGoodsInventory to get the real product id
+                  const fgDoc = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
+                  if(fgDoc) codigo = fgDoc.id;
+                }
+                if(!codigo && it.fgId) {
+                  codigo = it.fgId.split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                }
+                if(!codigo) codigo = '—';
                 rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
