@@ -5809,9 +5809,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         almacen: i.almacen || rawId.split('___')[1]?.replace(/-/g,' ') || '',
                         stock: qty, docId: i.id
                       });
-                      // Use latest non-zero cost and desc
-                      if(parseNum(i.cost||0) > 0) ptByCode[cleanCode].cost = parseNum(i.cost);
+                      // Prefer ZI cost (primary warehouse), then any non-zero
+                      const isZI = (i.almacen||'').includes('ZI') || (i.id||'').includes('ALMACEN-ZI');
+                      if(parseNum(i.cost||0) > 0 && (isZI || ptByCode[cleanCode].cost===0)) ptByCode[cleanCode].cost = parseNum(i.cost);
                       if(i.desc && i.desc.length > (ptByCode[cleanCode].desc||'').length) ptByCode[cleanCode].desc = i.desc;
+                      // Subcategory from ZI or first found
+                      if(isZI && i.subcategory) ptByCode[cleanCode].subcategory = i.subcategory || getItemSubcategory(i) || 'Otros Terminados';
                     });
                     const allPT = Object.values(ptByCode);
                     // Filter by search
@@ -6302,7 +6305,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         });
       });
 
-      const renderTFSection = (title, color, items, isTerminados, isFG) => (
+      const renderTFSection = (title, color, items, isTerminados, isFG) => {
+        // Get active warehouses for multi-column
+        const activeWH = depositos.filter(d=>!['PLANTA','ALMACEN EXTERNO','DEPOSITO 2','ALMACEN PRINCIPAL'].includes(d));
+        return (
         <div className="mb-6">
           <div className={`${color} text-white px-4 py-2 rounded-t-xl font-black text-[10px] uppercase tracking-widest`}>{title}</div>
           <div className="border border-gray-200 rounded-b-xl overflow-hidden">
@@ -6310,9 +6316,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr className="uppercase font-black text-[9px] tracking-widest text-gray-500">
                   <th className="py-2 px-4 border-r">Descripción / Código</th>
-                  <th className="py-2 px-4 border-r text-center">Unidad</th>
+                  <th className="py-2 px-4 border-r text-center">U.M.</th>
                   <th className="py-2 px-4 border-r text-center">Stock Sistema</th>
-                  <th className="py-2 px-4 border-r text-center bg-orange-50 w-44">Conteo Físico</th>
+                  {activeWH.map(alm=>(
+                    <th key={alm} className="py-2 px-3 border-r text-center bg-orange-50 min-w-24 text-[8px]">{alm.replace('ALMACEN ','ALM. ')}</th>
+                  ))}
                   <th className="py-2 px-4 text-center">Diferencia</th>
                 </tr>
               </thead>
@@ -6322,9 +6330,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   const sysStock = isFG
                     ? (item._isInvItem ? parseNum(item.totalStock) : item.totalStock)
                     : (item.isWip ? item.kgEn : parseNum(item.stock));
-                  const physVal = physicalCounts[pfId];
-                  const physNum = physVal !== undefined && physVal !== '' ? parseNum(physVal) : null;
-                  const diff = physNum !== null ? physNum - sysStock : null;
+                  // Sum all per-warehouse counts
+                  const whCounts = activeWH.map(alm => {
+                    const key = `${pfId}||${alm}`;
+                    return parseNum(physicalCounts[key]||'');
+                  });
+                  const totalPhysical = whCounts.some((_,i)=>physicalCounts[`${pfId}||${activeWH[i]}`]!==undefined && physicalCounts[`${pfId}||${activeWH[i]}`]!=='')
+                    ? whCounts.reduce((s,v)=>s+v,0) : null;
+                  const diff = totalPhysical !== null ? totalPhysical - sysStock : null;
                   const desc = isFG ? formatFGLabel(item) : item.isWip ? item.desc : item.desc;
                   return (
                     <tr key={pfId} className="hover:bg-gray-50">
@@ -6334,24 +6347,31 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       </td>
                       <td className="py-2 px-4 border-r text-center font-bold text-gray-500">{item.unit||'KG'}</td>
                       <td className="py-2 px-4 border-r text-center font-black text-blue-600">{formatNum(sysStock)}</td>
-                      <td className="py-2 px-4 border-r bg-orange-50/30">
-                        <input type="number" step="0.01" value={physicalCounts[pfId]??''} onChange={e=>setPhysicalCounts({...physicalCounts,[pfId]:e.target.value})}
-                          className="w-full border-2 border-orange-200 rounded-lg p-1.5 text-center font-black outline-none focus:border-orange-500 bg-white text-sm text-black" placeholder="-"/>
-                      </td>
-                      <td className="py-2 px-4 text-center font-black text-base">
-                        {diff !== null
-                          ? <span className={diff>0?'text-green-600':diff<0?'text-red-600':'text-gray-400'}>{diff>0?'+':''}{formatNum(diff)}</span>
-                          : <span className="text-gray-300">—</span>}
+                      {activeWH.map((alm,ai) => {
+                        const key = `${pfId}||${alm}`;
+                        return (
+                          <td key={alm} className="py-1.5 px-2 border-r bg-orange-50/20">
+                            <input type="number" step="0.01" value={physicalCounts[key]??''}
+                              onChange={e=>setPhysicalCounts({...physicalCounts,[key]:e.target.value,[pfId]:String((activeWH.reduce((s,a2,i2)=>{const k2=`${pfId}||${a2}`;const v=(i2===ai?parseNum(e.target.value):parseNum(physicalCounts[k2]||''));return s+v;},0)))})}
+                              className="w-full border-2 border-orange-200 rounded-lg p-1.5 text-center font-black outline-none focus:border-orange-500 bg-white text-xs text-black" placeholder="-"/>
+                          </td>
+                        );
+                      })}
+                      <td className="py-2 px-4 text-center">
+                        {diff !== null ? (
+                          <span className={`font-black text-[10px] px-2 py-0.5 rounded ${diff===0?'text-gray-500':diff>0?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>
+                            {diff>0?'+':''}{formatNum(diff)}
+                          </span>
+                        ) : <span className="text-gray-300 text-[10px]">—</span>}
                       </td>
                     </tr>
                   );
                 })}
-                {items.length === 0 && <tr><td colSpan="5" className="py-4 text-center text-xs text-gray-400 font-bold uppercase">Sin registros</td></tr>}
               </tbody>
             </table>
           </div>
         </div>
-      );
+      };
 
       // ── HISTORIAL VIEW ──
       if (showTomaHistorial) {
@@ -6545,6 +6565,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     // FIX: Show ALL inventory items in Inventario General
     // PT items appear in their own category "Productos Terminados"
     // AND also in the finished view
+    // Fix 5: allCatalogItems = inventory (all warehouses, all categories including PT)
+    // PT items from ALMACEN ZI are the master source for cost+stock
     const allCatalogItems = [...(inventory || []), ...fgDeduped];
     // Categorías únicas — sin duplicados
     const allCatalogCats = ['TODAS', ...Array.from(new Set(allCatalogItems.map(i=>i?.category||'Otros')))]
@@ -6553,6 +6575,19 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     const getCleanId = (i) => i?.displayId || (i?.id||'').split('___')[0];
     const getCleanDesc = (i) => i?.desc || '';
 
+    // FIX 3: Deduplicate inventory items by clean code, keep highest stock per warehouse
+    const deduplicateInventory = (items) => {
+      const seen = {};
+      items.forEach(i => {
+        const cid = (i.displayId||(i.id||'')).split('___')[0].replace(/_inv$/i,'');
+        const alm = i.almacen || (i.id||'').split('___')[1]?.replace(/-/g,' ') || '';
+        const key = cid + '||' + alm;
+        if(!seen[key] || parseNum(i.stock||0) > parseNum(seen[key].stock||0)) {
+          seen[key] = {...i, displayId: i.displayId || cid};
+        }
+      });
+      return Object.values(seen);
+    };
     const filteredInventory = (() => {
       if (catalogAlmacenFilter === 'TODOS') {
         // TODOS: agrupar por código limpio, sumar stock y calcular costo promedio
@@ -6601,7 +6636,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             groups[key] = i;
           }
         }
-        return Object.values(groups);
+        return deduplicateInventory(Object.values(groups));
       } else {
         // Almacén específico: filtrar por almacen field
         return allCatalogItems.filter(i => {
@@ -9078,7 +9113,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
              <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Receipt className="text-orange-500" size={24}/> Facturación de Venta</h2><div className="flex gap-2"><button onClick={()=>setShowGeneralInvoicesReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors">REPORTE GENERAL</button><button onClick={()=>{setShowNewInvoicePanel(!showNewInvoicePanel); setNewInvoiceForm(initialInvoiceForm);}} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-slate-800 transition-colors">{showNewInvoicePanel ? 'CANCELAR' : 'NUEVA FACTURA'}</button></div></div>
              {showNewInvoicePanel && (
                 <div className="p-8 bg-gray-50/50 border-b">
-                  <form onSubmit={handleCreateInvoice} className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+                  <form onSubmit={handleCreateInvoice} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
                     <div className="flex justify-between items-center border-b border-gray-100 pb-4 mb-6">
                       <h3 className="text-sm font-black uppercase text-black tracking-widest">{editingInvoiceId ? `Editando Factura: ${editingInvoiceId}` : 'Registrar Factura de Venta'}</h3>
                       <div className="flex items-center gap-4">
@@ -9110,7 +9145,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         {(() => {
                           // Build consolidated groups by clean code (same as OSA)
                           const ptConsolidated = {};
-                          (inventory||[]).filter(i=>i.category==='Productos Terminados' && parseNum(i.stock||0)>0).forEach(i=>{
+                          (inventory||[]).filter(i=>i.category==='Productos Terminados').forEach(i=>{
                             const cid=(i.displayId||(i.id||'')).split('___')[0].replace(/_inv$/i,'');
                             if(!ptConsolidated[cid]) ptConsolidated[cid]={cid,desc:i.desc||'',subcategory:i.subcategory||getItemSubcategory(i)||'Otros Terminados',unit:i.unit||'und',totalStock:0,cost:parseNum(i.cost||0),warehouses:[],_invId:i.id};
                             ptConsolidated[cid].totalStock+=parseNum(i.stock||0);
