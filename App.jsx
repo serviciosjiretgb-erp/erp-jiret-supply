@@ -588,6 +588,7 @@ export default function App() {
   const [movSearchTerm, setMovSearchTerm] = useState('');
   const [userActivityLog, setUserActivityLog] = useState([]);
   const [kpiMonths, setKpiMonths] = useState(6);
+  const [kpiSelectedMonth, setKpiSelectedMonth] = useState(''); // '' = current month
   const [activitySearch, setActivitySearch] = useState('');
   const [activityDateFrom, setActivityDateFrom] = useState('');
   const [activityDateTo, setActivityDateTo] = useState('');
@@ -7231,7 +7232,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                          <span className="font-black text-orange-700 text-sm">{selectedInvItems.size} artículo{selectedInvItems.size!==1?'s':''} seleccionado{selectedInvItems.size!==1?'s':''}</span>
                          <div className="flex gap-2">
                            <button onClick={()=>setSelectedInvItems(new Set())} className="text-[10px] font-black text-gray-500 uppercase hover:underline px-3 py-1.5 rounded-lg border border-gray-200">Limpiar</button>
-                           <button onClick={()=>requireAdminPassword(()=>{setDialog({title:`Eliminar ${selectedInvItems.size} artículo(s)`,text:`¿Deseas eliminar permanentemente los ${selectedInvItems.size} artículo(s)?`,type:'confirm',onConfirm:async()=>{try{const b=writeBatch(db);for(const itemId of selectedInvItems){const cleanId2=itemId.split('___')[0];const docs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===cleanId2);if(docs.length>0){docs.forEach(d=>b.delete(getDocRef('inventory',d.id)));}else{b.delete(getDocRef('inventory',itemId));}}await b.commit();setSelectedInvItems(new Set());setDialog({title:'✅ Eliminados',text:'Artículos eliminados.',type:'alert'});}catch(err){setDialog({title:'Error',text:err.message,type:'alert'}),'';}}})}; },`Eliminar ${selectedInvItems.size} artículo(s)`)}
+                           <button onClick={()=>requireAdminPassword(()=>{setDialog({title:`Eliminar ${selectedInvItems.size} artículo(s)`,text:`¿Deseas eliminar permanentemente los ${selectedInvItems.size} artículo(s)?`,type:'confirm',onConfirm:async()=>{try{const b=writeBatch(db);for(const itemId of selectedInvItems){const cleanId2=itemId.split('___')[0];const docs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===cleanId2);if(docs.length>0){docs.forEach(d=>b.delete(getDocRef('inventory',d.id)));}else{b.delete(getDocRef('inventory',itemId));}}await b.commit();setSelectedInvItems(new Set());setDialog({title:'✅ Eliminados',text:'Artículos eliminados.',type:'alert'});}catch(err){setDialog({title:'Error',text:err.message,type:'alert'}); }}})},`Eliminar ${selectedInvItems.size} artículo(s)`)}
                              className="bg-red-600 text-white px-4 py-1.5 rounded-xl font-black text-[10px] uppercase flex items-center gap-1">
                              <Trash2 size={12}/> Eliminar
                            </button>
@@ -16267,10 +16268,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
   const renderKPIModule = () => {
     // ── Safe data ──
-    const safeInvoices = (invoices||[]).filter(Boolean);
-    const safeRequirements = (requirements||[]).filter(Boolean);
+    const safeInvoicesAll = (invoices||[]).filter(Boolean);
+    const safeRequirementsAll = (requirements||[]).filter(Boolean);
     const safeInventory = (inventory||[]).filter(Boolean);
-    const safeOpCosts = (opCosts||[]).filter(Boolean);
+    const safeOpCostsAll = (opCosts||[]).filter(Boolean);
 
     // ── Period config ──
     const PERIODS = [
@@ -16281,6 +16282,31 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     ];
     const kpiPeriod = kpiMonths || 6;
     const now = new Date();
+
+    // ── Available months for the month picker ──
+    const allAvailableMonths = (() => {
+      const set = new Set();
+      safeInvoicesAll.forEach(i=>{ const ym=(i.fecha||'').substring(0,7); if(ym.length===7) set.add(ym); });
+      safeRequirementsAll.forEach(r=>{ const ym=(r.fecha||r.createdAt||'').substring(0,7); if(ym.length===7) set.add(ym); });
+      const cur = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+      set.add(cur);
+      return Array.from(set).sort().reverse();
+    })();
+    const MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    const formatYM = (ym) => { const [y,m]=ym.split('-'); return `${MONTH_NAMES[parseInt(m,10)-1]} ${y}`; };
+    const currentYMStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    const activeMonth = kpiSelectedMonth || currentYMStr;
+
+    // ── Filter data: Mensual = selected month only; others = last N months ──
+    const safeInvoices = kpiPeriod === 1
+      ? safeInvoicesAll.filter(i=>(i.fecha||'').startsWith(activeMonth))
+      : safeInvoicesAll;
+    const safeRequirements = kpiPeriod === 1
+      ? safeRequirementsAll.filter(r=>(r.fecha||r.createdAt||'').startsWith(activeMonth))
+      : safeRequirementsAll;
+    const safeOpCosts = kpiPeriod === 1
+      ? safeOpCostsAll.filter(c=>(c.fecha||c.date||'').startsWith(activeMonth))
+      : safeOpCostsAll;
     // Start from earliest invoice/op date OR N months back — whichever is more recent
     const allDates = [
       ...safeInvoices.map(i=>i.fecha||''),
@@ -16461,15 +16487,28 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             <h1 className="text-xl font-black text-white uppercase tracking-tight flex items-center gap-2">
               <BarChart3 size={22} className="text-orange-500"/> Panel de Control Gerencial
             </h1>
-            <p className="text-[10px] text-gray-400 mt-0.5 uppercase font-bold">Servicios Jiret G&B — Métricas Integradas</p>
+            <p className="text-[10px] text-gray-400 mt-0.5 uppercase font-bold">
+              Servicios Jiret G&B — Métricas Integradas
+              {kpiPeriod===1 && <span className="ml-2 text-orange-400">· {formatYM(activeMonth)}</span>}
+            </p>
           </div>
-          <div className="flex bg-gray-900 rounded-xl p-1 gap-1 border border-gray-700">
-            {PERIODS.map(p=>(
-              <button key={p.months} onClick={()=>setKpiMonths(p.months)}
-                className={`px-3 py-1.5 text-[9px] font-black uppercase rounded-lg transition-all ${kpiPeriod===p.months?'bg-orange-500 text-white':'text-gray-400 hover:text-white hover:bg-gray-700'}`}>
-                {p.label}
-              </button>
-            ))}
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="flex bg-gray-900 rounded-xl p-1 gap-1 border border-gray-700">
+              {PERIODS.map(p=>(
+                <button key={p.months} onClick={()=>{setKpiMonths(p.months);if(p.months!==1)setKpiSelectedMonth('');}}
+                  className={`px-3 py-1.5 text-[9px] font-black uppercase rounded-lg transition-all ${kpiPeriod===p.months?'bg-orange-500 text-white':'text-gray-400 hover:text-white hover:bg-gray-700'}`}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            {kpiPeriod===1 && (
+              <select value={activeMonth} onChange={e=>setKpiSelectedMonth(e.target.value)}
+                className="bg-gray-900 border border-gray-700 text-white text-[10px] font-black rounded-xl px-3 py-2 outline-none focus:border-orange-500">
+                {allAvailableMonths.map(ym=>(
+                  <option key={ym} value={ym}>{formatYM(ym)}</option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
 
@@ -16640,6 +16679,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   <tr className="bg-gray-50 text-gray-500 uppercase tracking-widest">
                     <th className="py-2.5 px-4 text-left font-black border-b border-gray-100 text-black">Orden ID</th>
                     <th className="py-2.5 px-4 text-left font-black border-b border-gray-100 text-black">Cliente</th>
+                    <th className="py-2.5 px-4 text-left font-black border-b border-gray-100 text-black">Categoría</th>
                     <th className="py-2.5 px-4 text-left font-black border-b border-gray-100 text-black">Producto</th>
                     <th className="py-2.5 px-4 text-right font-black border-b border-gray-100 text-black w-28">Avance</th>
                   </tr>
@@ -16648,8 +16688,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   {opsActivas.map((op,i)=>(
                     <tr key={i} className="border-b border-gray-100 hover:bg-orange-50/50 transition-colors">
                       <td className="py-3 px-4 font-black text-orange-500 whitespace-nowrap text-[11px]">{op.op}</td>
-                      <td className="py-3 px-4 text-gray-700 font-bold max-w-[180px] truncate text-[10px]" title={op.cliente}>{op.cliente}</td>
-                      <td className="py-3 px-4 text-gray-500 text-[9px] font-bold max-w-[160px] truncate">{(()=>{const req=(requirements||[]).find(r=>r.id===op.op||r.id===('OP-'+op.op));return req?.desc||req?.categoria||req?.productoMaquilado||'—';})()}</td>
+                      <td className="py-3 px-4 text-gray-700 font-bold max-w-[150px] truncate text-[10px]" title={op.cliente}>{op.cliente}</td>
+                      <td className="py-3 px-4 text-[9px] font-black whitespace-nowrap">{(()=>{const req=(requirements||[]).find(r=>r.id===op.op||r.id===('OP-'+op.op));const cat=req?.categoria||req?.tipoProducto||'';return cat?<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full uppercase text-[8px] font-black">{cat}</span>:'—';})()}</td>
+                      <td className="py-3 px-4 text-gray-500 text-[9px] font-bold max-w-[140px] truncate">{(()=>{const req=(requirements||[]).find(r=>r.id===op.op||r.id===('OP-'+op.op));return req?.desc||req?.productoMaquilado||'—';})()}</td>
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center gap-2 justify-end">
                           <div className="w-20 bg-gray-800 rounded-full h-1.5">
@@ -17854,10 +17895,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           <div className="text-white/20 text-[9px] uppercase tracking-widest">SUPPLY G&amp;B — SISTEMA ERP — SERVICIOS JIRET</div>
         </footer>
 
-        {/* ── PANEL LOGIN (glassmorphism) — posicionado a la derecha ── */}
-        <div className="absolute z-30 top-1/2 -translate-y-1/2 right-[8%]"
-          style={{width:440, background:'rgba(30,30,36,0.75)', backdropFilter:'blur(16px)', WebkitBackdropFilter:'blur(16px)',
-            border:'1px solid rgba(255,255,255,0.1)', borderLeft:'4px solid #f97316', borderRadius:14, padding:'40px', color:'white'}}>
+        {/* ── PANEL LOGIN (glassmorphism) — centered on mobile, right on desktop ── */}
+        <div className="absolute z-30 inset-0 flex items-center justify-center sm:items-center sm:justify-end sm:pr-[8%] px-4 sm:px-0"
+          style={{pointerEvents:'none'}}>
+        <div
+          style={{width:'100%', maxWidth:440, background:'rgba(30,30,36,0.92)', backdropFilter:'blur(16px)', WebkitBackdropFilter:'blur(16px)',
+            border:'1px solid rgba(255,255,255,0.1)', borderLeft:'4px solid #f97316', borderRadius:14, padding:'32px 28px', color:'white', pointerEvents:'all'}}>
           
           <h2 style={{fontSize:'1.1rem',marginBottom:4,color:'#ccc',fontWeight:600}}>INICIO DE SESIÓN DE SISTEMA ERP</h2>
           <div style={{marginBottom:24}}>
@@ -17898,6 +17941,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             <a href="#" style={{color:'#ccc',textDecoration:'none',fontSize:'0.85rem',transition:'color 0.2s'}}
               onMouseEnter={e=>e.target.style.color='#f97316'} onMouseLeave={e=>e.target.style.color='#ccc'}>Contactar a soporte</a>
           </div>
+        </div>
         </div>
 
         {settings?.loginVideo && (
