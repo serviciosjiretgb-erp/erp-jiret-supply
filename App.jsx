@@ -6865,41 +6865,97 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    <ClipboardEdit size={16}/> TOMA FÍSICA / AJUSTE
                  </button>
                  <button onClick={() => {
-                   // Excel con membrete por categoría seleccionada
-                   const empresa = 'SERVICIOS JIRET G&B, C.A.';
-                   const rif = 'J-412309374';
-                   const dir = 'Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9, Maracaibo.';
+                   const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
+                   const rif = settings?.empresaRif || 'J-412309374';
+                   const dir = settings?.empresaDireccion || 'Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9, Maracaibo.';
                    const catLabel = catalogCatFilter === 'TODAS' ? 'TODAS LAS CATEGORÍAS' : catalogCatFilter.toUpperCase();
-                   let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>body{font-family:Arial;font-size:11px;}h2,h3,p{text-align:center;margin:4px 0;}table{border-collapse:collapse;width:100%;margin-top:14px;}th,td{border:1px solid #000;padding:6px 8px;}th{background:#1a1a1a;color:#fff;text-align:center;font-weight:bold;}tr.catHeader td{background:#ea580c;color:#fff;font-weight:bold;}.subtot td{background:#f3f4f6;font-weight:bold;}.grandtot td{background:#000;color:#fff;font-weight:bold;font-size:12px;}</style></head><body>`;
-                   html += `<h2>${empresa}</h2><h3>RIF: ${rif}</h3><p>${dir}</p>`;
-                   html += `<h3>INVENTARIO GENERAL — ${catLabel}</h3><p>Fecha: ${getTodayDate()}</p>`;
-                   html += `<table><thead><tr><th>Código</th><th>Descripción</th><th>Categoría</th><th>U.M.</th><th>Costo Unit. ($)</th><th>Stock Actual</th><th>Valor Total ($)</th><th>Almacén</th></tr></thead><tbody>`;
-                   const grouped = {};
-                   filteredInventory.forEach(i => { const c = i?.category||'Otros'; if(!grouped[c]) grouped[c]=[]; grouped[c].push(i); });
-                   const catOrder = ['Materia Prima','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
-                   const cats = Object.keys(grouped).sort((a,b)=>{const ia=catOrder.indexOf(a),ib=catOrder.indexOf(b);if(ia===-1&&ib===-1)return a.localeCompare(b);if(ia===-1)return 1;if(ib===-1)return -1;return ia-ib;});
-                   let grandStock=0,grandVal=0;
-                   cats.forEach(cat=>{
-                     const items=grouped[cat];
-                     const catStock=items.reduce((s,i)=>s+parseNum(i?.stock),0);
-                     const catVal=items.reduce((s,i)=>s+(parseNum(i?.cost)*parseNum(i?.stock)),0);
-                     html+=`<tr class="catHeader"><td colspan="6">${cat.toUpperCase()} — ${items.length} artículos</td><td style="text-align:right">${formatNum(catStock)}</td><td style="text-align:right">$${formatNum(catVal)}</td></tr>`;
-                     items.sort((a,b)=>(a.displayId||a.id||'').localeCompare(b.displayId||b.id||'')).forEach(inv=>{
-                       const val=parseNum(inv?.cost)*parseNum(inv?.stock);
-                       const cid=inv?.displayId||(inv?.id||'').split('___')[0];
-                       const almLabel = inv?._wb?.length>1
-                         ? inv._wb.map(w=>(w.almacen||'').replace('ALMACEN ','')+':'+formatNum(w.stock)).join(' | ')
-                         : (inv?.almacen||'—').replace('ALMACEN ','');
-                       html+=`<tr><td style="font-weight:900;color:#ea580c">${cid}</td><td>${inv?.desc||''}</td><td>${inv?.category}</td><td style="text-align:center">${inv?.unit||'UND'}</td><td style="text-align:right">$${formatNum(inv?.cost)}</td><td style="text-align:right">${formatNum(inv?.stock)}</td><td style="text-align:right">$${formatNum(val)}</td><td style="text-align:center;font-size:9px;color:#6b7280">${almLabel}</td></tr>`;
-                     });
-                     html+=`<tr class="subtot"><td colspan="5" style="text-align:right">Subtotal ${cat}:</td><td style="text-align:right">${formatNum(catStock)}</td><td style="text-align:right">$${formatNum(catVal)}</td></tr>`;
-                     grandStock+=catStock; grandVal+=catVal;
+                   // ── Build grouped structure: category → subcategory → items ──
+                   const catOrder = ['Productos Terminados','Materia Prima','Semielaborados','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                   const SUB_ORDER = ['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
+                   const catGroups = {};
+                   filteredInventory.forEach(i => {
+                     const cat = i?.category || 'Otros';
+                     const sub = getItemSubcategory(i) || i?.subcategory || '';
+                     if(!catGroups[cat]) catGroups[cat] = { items: [], subGroups: {} };
+                     catGroups[cat].items.push(i);
+                     if(sub) {
+                       if(!catGroups[cat].subGroups[sub]) catGroups[cat].subGroups[sub] = [];
+                       catGroups[cat].subGroups[sub].push(i);
+                     }
                    });
-                   html+=`</tbody><tfoot><tr class="grandtot"><td colspan="6" style="text-align:right">TOTAL INVENTARIO:</td><td style="text-align:right">${formatNum(grandStock)}</td><td style="text-align:right">$${formatNum(grandVal)}</td></tr></tfoot></table>`;
-                   html+=`<p style="margin-top:14px;font-size:9px;text-align:center">Generado por Supply G&B ERP — ${getTodayDate()}</p></body></html>`;
+                   const sortedCats = [...catOrder.filter(c=>catGroups[c]), ...Object.keys(catGroups).filter(c=>!catOrder.includes(c))];
+                   let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>
+                     body{font-family:Arial;font-size:11px;}
+                     h2,h3,p{text-align:center;margin:4px 0;}
+                     table{border-collapse:collapse;width:100%;margin-top:14px;}
+                     th,td{border:1px solid #ccc;padding:5px 8px;}
+                     th{background:#111;color:#fff;font-weight:bold;font-size:9px;text-transform:uppercase;}
+                     .catHdr td{background:#1a1a1a;color:#fff;font-weight:900;font-size:11px;}
+                     .subHdr td{background:#ea580c;color:#fff;font-weight:bold;font-size:10px;}
+                     .subtotCat td{background:#f3f4f6;font-weight:bold;}
+                     .subtotSub td{background:#fff7ed;font-weight:bold;color:#92400e;}
+                     .grandtot td{background:#000;color:#fff;font-weight:900;font-size:12px;}
+                   </style></head><body>`;
+                   html += `<h2>${empresa}</h2><h3>RIF: ${rif}</h3><p>${dir}</p>`;
+                   html += `<h3>INVENTARIO GENERAL — ${catLabel}</h3><p>Generado: ${getTodayDate()}</p>`;
+                   html += `<table><thead><tr><th>Código</th><th>Descripción</th><th>Categoría</th><th>Subcategoría</th><th>U.M.</th><th>Costo Unit. ($)</th><th>Exist. Consolidada</th><th>Por Almacén</th><th>Valor Total ($)</th></tr></thead><tbody>`;
+                   let grandStock=0, grandVal=0;
+                   sortedCats.forEach(cat => {
+                     const catData = catGroups[cat];
+                     const catItems = catData.items;
+                     const catVal = catItems.reduce((s,i)=>s+(parseNum(i?.cost)*parseNum(i?.stock)),0);
+                     const hasSubs = Object.keys(catData.subGroups).length > 0;
+                     // Category header row
+                     html += `<tr class="catHdr"><td colspan="8">${cat.toUpperCase()} — ${catItems.length} artículo${catItems.length!==1?'s':''}</td><td style="text-align:right;font-weight:900">$${formatNum(catVal)}</td></tr>`;
+                     if(hasSubs) {
+                       // Group by subcategory
+                       const orderedSubs = [...SUB_ORDER.filter(s=>catData.subGroups[s]), ...Object.keys(catData.subGroups).filter(s=>!SUB_ORDER.includes(s))];
+                       // Items with no subcategory
+                       const noSubItems = catItems.filter(i=>!getItemSubcategory(i) && !i?.subcategory);
+                       orderedSubs.forEach(sub => {
+                         const subItems = catData.subGroups[sub] || [];
+                         const subVal = subItems.reduce((s,i)=>s+(parseNum(i?.cost)*parseNum(i?.stock)),0);
+                         const subStock = subItems.reduce((s,i)=>s+parseNum(i?.stock),0);
+                         html += `<tr class="subHdr"><td colspan="7">  ↳ ${sub} — ${subItems.length} artículo${subItems.length!==1?'s':''}</td><td/><td style="text-align:right">$${formatNum(subVal)}</td></tr>`;
+                         subItems.sort((a,b)=>(a.id||'').localeCompare(b.id||'')).forEach(inv => {
+                           const val = parseNum(inv?.cost)*parseNum(inv?.stock);
+                           const cid = inv?.displayId||(inv?.id||'').split('___')[0];
+                           const almLabel = (inv?._warehouseBreakdown||[]).length>1
+                             ? inv._warehouseBreakdown.map(w=>(w.almacen||'').replace('ALMACEN ','')+':'+formatNum(w.stock)).join(' | ')
+                             : (inv?.almacen||inv?._warehouseBreakdown?.[0]?.almacen||'—').replace('ALMACEN ','');
+                           html += `<tr><td style="font-weight:900;color:#ea580c">${cid}</td><td>${inv?.desc||''}</td><td>${inv?.category||''}</td><td>${sub}</td><td style="text-align:center">${inv?.unit||'UND'}</td><td style="text-align:right">$${formatNum(inv?.cost)}</td><td style="text-align:right">${formatNum(inv?.stock)}</td><td style="font-size:9px;color:#6b7280">${almLabel}</td><td style="text-align:right">$${formatNum(val)}</td></tr>`;
+                         });
+                         html += `<tr class="subtotSub"><td colspan="6" style="text-align:right">Subtotal ${sub}:</td><td style="text-align:right">${formatNum(subStock)}</td><td/><td style="text-align:right">$${formatNum(subVal)}</td></tr>`;
+                       });
+                       // Items without subcategory (if any)
+                       noSubItems.sort((a,b)=>(a.id||'').localeCompare(b.id||'')).forEach(inv => {
+                         const val = parseNum(inv?.cost)*parseNum(inv?.stock);
+                         const cid = inv?.displayId||(inv?.id||'').split('___')[0];
+                         const almLabel = (inv?._warehouseBreakdown||[]).length>1
+                           ? inv._warehouseBreakdown.map(w=>(w.almacen||'').replace('ALMACEN ','')+':'+formatNum(w.stock)).join(' | ')
+                           : (inv?.almacen||inv?._warehouseBreakdown?.[0]?.almacen||'—').replace('ALMACEN ','');
+                         html += `<tr><td style="font-weight:900;color:#ea580c">${cid}</td><td>${inv?.desc||''}</td><td>${inv?.category||''}</td><td>—</td><td style="text-align:center">${inv?.unit||'UND'}</td><td style="text-align:right">$${formatNum(inv?.cost)}</td><td style="text-align:right">${formatNum(inv?.stock)}</td><td style="font-size:9px;color:#6b7280">${almLabel}</td><td style="text-align:right">$${formatNum(val)}</td></tr>`;
+                       });
+                     } else {
+                       // No subcategories — flat list
+                       catItems.sort((a,b)=>(a.id||'').localeCompare(b.id||'')).forEach(inv => {
+                         const val = parseNum(inv?.cost)*parseNum(inv?.stock);
+                         const cid = inv?.displayId||(inv?.id||'').split('___')[0];
+                         const almLabel = (inv?._warehouseBreakdown||[]).length>1
+                           ? inv._warehouseBreakdown.map(w=>(w.almacen||'').replace('ALMACEN ','')+':'+formatNum(w.stock)).join(' | ')
+                           : (inv?.almacen||inv?._warehouseBreakdown?.[0]?.almacen||'—').replace('ALMACEN ','');
+                         html += `<tr><td style="font-weight:900;color:#ea580c">${cid}</td><td>${inv?.desc||''}</td><td>${inv?.category||''}</td><td>—</td><td style="text-align:center">${inv?.unit||'UND'}</td><td style="text-align:right">$${formatNum(inv?.cost)}</td><td style="text-align:right">${formatNum(inv?.stock)}</td><td style="font-size:9px;color:#6b7280">${almLabel}</td><td style="text-align:right">$${formatNum(val)}</td></tr>`;
+                       });
+                     }
+                     const catStock2 = catItems.reduce((s,i)=>s+parseNum(i?.stock),0);
+                     html += `<tr class="subtotCat"><td colspan="6" style="text-align:right">Subtotal ${cat}:</td><td style="text-align:right;font-weight:900">${formatNum(catStock2)}</td><td/><td style="text-align:right;font-weight:900">$${formatNum(catVal)}</td></tr>`;
+                     grandStock += catStock2; grandVal += catVal;
+                   });
+                   html += `</tbody><tfoot><tr class="grandtot"><td colspan="6" style="text-align:right">TOTAL INVENTARIO GENERAL:</td><td style="text-align:right">${formatNum(grandStock)}</td><td/><td style="text-align:right">$${formatNum(grandVal)}</td></tr></tfoot></table>`;
+                   html += `<p style="margin-top:14px;font-size:9px;text-align:center">Generado por Supply G&amp;B ERP — ${getTodayDate()}</p></body></html>`;
                    const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});
                    const url=URL.createObjectURL(blob);
-                   const a=document.createElement('a');a.href=url;a.download=`Catalogo_${catalogCatFilter}_${getTodayDate()}.xls`;
+                   const a=document.createElement('a');a.href=url;a.download=`Inventario_${catLabel.replace(/\s+/g,'_')}_${getTodayDate()}.xls`;
                    document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
                  }} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2">
                    <Download size={16}/> EXCEL {catalogCatFilter === 'TODAS' ? 'TODOS' : catalogCatFilter.toUpperCase()}
@@ -16863,6 +16919,15 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
   };
 
     const renderConfiguracionModule = () => {
+    try {
+    if (!settings || !systemUsers) {
+      return (
+        <div className="flex flex-col items-center justify-center py-20 text-gray-500">
+          <Loader2 className="w-8 h-8 animate-spin mb-4 text-orange-500" />
+          <p className="font-bold tracking-widest text-sm uppercase text-black">Cargando configuración...</p>
+        </div>
+      );
+    }
     return (
       <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
         {/* Accesos Directos Contables */}
