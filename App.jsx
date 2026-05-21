@@ -7208,159 +7208,131 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    </button>
                  </div>
                )}
-               <div className="rounded-xl print:border print:border-black print:rounded-none">
-                  <table className="w-full text-left">
-                   <thead className="bg-gray-100 border-b-2 border-gray-200 print:border-black">
-                     <tr className="uppercase font-black text-gray-800 text-[10px] tracking-widest print:text-black">
-                       <th className="py-3 px-2 text-center no-pdf print:hidden w-8">
-                         <input type="checkbox" className="w-3.5 h-3.5 rounded"
-                           checked={filteredInventory.filter(i=>!i._isFGGroup).length > 0 && filteredInventory.filter(i=>!i._isFGGroup).every(i=>selectedInvItems.has(i.id))}
-                           onChange={e=>{
-                             const ids = filteredInventory.filter(i=>!i._isFGGroup).map(i=>i.id);
-                             setSelectedInvItems(e.target.checked ? new Set(ids) : new Set());
-                           }}
-                           title="Seleccionar todos"
-                         />
-                       </th>
-                       <th className="py-3 px-2">Código</th>
-                       <th className="py-3 px-2">Descripción</th>
-                       <th className="py-3 px-2 text-center">Categoría</th>
-                       <th className="py-3 px-2 text-center">Costo Unit. ($)</th>
-                       <th className="py-3 px-2 text-right">Stock Actual</th>
-                       <th className="py-3 px-2 text-right">Valor Total ($)</th>
-                       <th className="py-3 px-2 text-center no-pdf print:hidden">Acciones</th>
-                     </tr>
-                   </thead>
-                   <tbody className="divide-y divide-gray-100 print:divide-black">
-                     {(() => {
-                       if (filteredInventory.length === 0) return (
-                         <tr><td colSpan="7" className="p-10 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin artículos registrados</td></tr>
+               {/* ── CATEGORY CARD LAYOUT — same structure as Inventario de Productos Terminados ── */}
+               {(() => {
+                 if(filteredInventory.length === 0) return (
+                   <div className="p-12 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin artículos registrados</div>
+                 );
+                 const grouped = {};
+                 filteredInventory.forEach(inv => {
+                   const cat = inv?.category || 'Otros';
+                   if(!grouped[cat]) grouped[cat] = [];
+                   grouped[cat].push(inv);
+                 });
+                 const catOrder = ['Productos Terminados','Materia Prima','Semielaborados','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                 const sortedCats = Object.keys(grouped).sort((a,b)=>{const ia=catOrder.indexOf(a);const ib=catOrder.indexOf(b);if(ia===-1&&ib===-1)return a.localeCompare(b);if(ia===-1)return 1;if(ib===-1)return -1;return ia-ib;});
+                 const catColors = {'Productos Terminados':'bg-green-800','Materia Prima':'bg-blue-800','Semielaborados':'bg-indigo-800','Pigmentos':'bg-purple-800','Tintas':'bg-pink-800','Químicos':'bg-teal-800','Consumibles':'bg-orange-800','Herramientas':'bg-yellow-800','Seguridad Industrial':'bg-emerald-800','Otros':'bg-gray-800'};
+                 const grandTotal = filteredInventory.reduce((s,i)=>s+(parseNum(i?.cost)*parseNum(i?.stock)),0);
+                 return (
+                   <div className="space-y-4 pb-4">
+                     {/* Selection bar */}
+                     {selectedInvItems.size > 0 && (
+                       <div className="mx-0 bg-orange-50 border-2 border-orange-300 rounded-2xl px-5 py-3 flex items-center justify-between gap-3 no-pdf">
+                         <span className="font-black text-orange-700 text-sm">{selectedInvItems.size} artículo{selectedInvItems.size!==1?'s':''} seleccionado{selectedInvItems.size!==1?'s':''}</span>
+                         <div className="flex gap-2">
+                           <button onClick={()=>setSelectedInvItems(new Set())} className="text-[10px] font-black text-gray-500 uppercase hover:underline px-3 py-1.5 rounded-lg border border-gray-200">Limpiar</button>
+                           <button onClick={()=>requireAdminPassword(()=>{setDialog({title:`Eliminar ${selectedInvItems.size} artículo(s)`,text:`¿Deseas eliminar permanentemente los ${selectedInvItems.size} artículo(s)?`,type:'confirm',onConfirm:async()=>{try{const b=writeBatch(db);for(const itemId of selectedInvItems){const cleanId2=itemId.split('___')[0];const docs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===cleanId2);if(docs.length>0){docs.forEach(d=>b.delete(getDocRef('inventory',d.id)));}else{b.delete(getDocRef('inventory',itemId));}}await b.commit();setSelectedInvItems(new Set());setDialog({title:'✅ Eliminados',text:'Artículos eliminados.',type:'alert'});}catch(err){setDialog({title:'Error',text:err.message,type:'alert'}),'';}}})}; },`Eliminar ${selectedInvItems.size} artículo(s)`)}
+                             className="bg-red-600 text-white px-4 py-1.5 rounded-xl font-black text-[10px] uppercase flex items-center gap-1">
+                             <Trash2 size={12}/> Eliminar
+                           </button>
+                         </div>
+                       </div>
+                     )}
+                     {sortedCats.map(cat => {
+                       const items = grouped[cat];
+                       const catTotalVal = items.reduce((s,i)=>s+(parseNum(i?.cost)*parseNum(i?.stock)),0);
+                       const hdrClass = catColors[cat] || 'bg-gray-800';
+                       return (
+                         <div key={cat} className="rounded-2xl border border-gray-200 overflow-hidden">
+                           {/* Category header */}
+                           <div className={`${hdrClass} text-white px-5 py-2.5 flex justify-between items-center`}>
+                             <span className="font-black text-sm uppercase">{cat}</span>
+                             <span className="text-gray-300 text-[10px] font-bold">{items.length} artículo{items.length!==1?'s':''} · Valor: ${formatNum(catTotalVal)}</span>
+                           </div>
+                           <div className="overflow-x-auto">
+                             <table className="w-full text-xs border-collapse">
+                               <thead className="bg-gray-100">
+                                 <tr className="font-black text-[9px] uppercase text-gray-600">
+                                   <th className="py-2 px-3 text-left">Código</th>
+                                   <th className="py-2 px-3 text-left">Descripción</th>
+                                   <th className="py-2 px-3 text-center">U.M.</th>
+                                   <th className="py-2 px-3 text-right">Exist. Consolidada</th>
+                                   <th className="py-2 px-3 text-left text-[8px]">Por Almacén</th>
+                                   <th className="py-2 px-3 text-right">Costo U. ($)</th>
+                                   <th className="py-2 px-3 text-right">Valor ($)</th>
+                                   <th className="py-2 px-3 text-center w-16 no-pdf print:hidden">Acciones</th>
+                                 </tr>
+                               </thead>
+                               <tbody>
+                                 {items.sort((a,b)=>(a.id||'').localeCompare(b.id||'')).map((inv,i)=>{
+                                   const totalVal = parseNum(inv?.cost)*parseNum(inv?.stock);
+                                   return (
+                                     <tr key={inv?.id} className={`border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
+                                       <td className="py-2 px-3 font-black text-orange-600 text-[10px] whitespace-nowrap">
+                                         <label className="flex items-center gap-1.5 cursor-pointer no-pdf print:hidden" style={{display:'inline-flex'}}>
+                                           {!inv?._isFGGroup && <input type="checkbox" className="w-3 h-3 rounded text-orange-500" checked={selectedInvItems.has(inv?.id)} onChange={e=>{const next=new Set(selectedInvItems);if(e.target.checked)next.add(inv?.id);else next.delete(inv?.id);setSelectedInvItems(next);}}/>}
+                                         </label>
+                                         {inv?.id}
+                                       </td>
+                                       <td className="py-2 px-3 font-bold text-gray-800">{inv?.desc}</td>
+                                       <td className="py-2 px-3 text-center font-bold text-gray-500">{inv?.unit||'und'}</td>
+                                       <td className="py-2 px-3 text-right font-black text-gray-900">{formatNum(inv?.stock)}</td>
+                                       <td className="py-2 px-3">
+                                         {inv?._warehouseBreakdown?.length > 1 ? (
+                                           <div className="space-y-0.5">
+                                             {inv._warehouseBreakdown.map((w,wi)=>(
+                                               <div key={wi} className="flex gap-2 text-[8px] font-bold">
+                                                 <span className="text-gray-400">{(w.almacen||'').replace('ALMACEN ','')}</span>
+                                                 <span className="text-gray-700 font-black">{formatNum(w.stock)}</span>
+                                               </div>
+                                             ))}
+                                           </div>
+                                         ) : (
+                                           <span className="text-[8px] text-gray-400">{(inv?.almacen||inv?._warehouseBreakdown?.[0]?.almacen||'').replace('ALMACEN ','')}</span>
+                                         )}
+                                       </td>
+                                       <td className="py-2 px-3 text-right font-bold text-gray-600">
+                                         ${formatNum(inv?.cost)}
+                                         {inv?._warehouseBreakdown?.length > 1 && <span className="text-[8px] text-orange-400 ml-0.5">prom</span>}
+                                       </td>
+                                       <td className="py-2 px-3 text-right font-black text-green-700">${formatNum(totalVal)}</td>
+                                       <td className="py-2 px-3 text-center no-pdf print:hidden">
+                                         <div className="flex gap-1 justify-center">
+                                           {inv?._isFGGroup ? (
+                                             <button onClick={()=>setInvView('finished')} className="p-1.5 bg-green-50 text-green-600 rounded-lg hover:bg-green-600 hover:text-white text-[8px] font-black uppercase transition-all" title="Ver en Terminados"><Package size={10}/></button>
+                                           ) : (
+                                             <>
+                                               <button onClick={()=>requireAdminPassword(()=>startEditInvItem(inv),'Editar artículo')} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-600 hover:text-white transition-all"><Edit size={11}/></button>
+                                               <button onClick={()=>requireAdminPassword(async()=>{const cleanId2=inv.displayId||inv.id.split('___')[0]||inv.id;const realDocs=(inventory||[]).filter(i=>{const cid=i.displayId||(i.id||'').split('___')[0];return cid===cleanId2||i.id===cleanId2;});if(realDocs.length>0){for(const d of realDocs)await deleteDoc(getDocRef('inventory',d.id));}else{await deleteDoc(getDocRef('inventory',inv.id));}setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});},'Eliminar artículo')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={11}/></button>
+                                             </>
+                                           )}
+                                         </div>
+                                       </td>
+                                     </tr>
+                                   );
+                                 })}
+                               </tbody>
+                               <tfoot className="bg-gray-100 border-t border-gray-200">
+                                 <tr className="font-black text-[10px]">
+                                   <td colSpan={5} className="py-2 px-3 text-right text-gray-500 uppercase">Total {cat}:</td>
+                                   <td/>
+                                   <td className="py-2 px-3 text-right text-gray-900">${formatNum(catTotalVal)}</td>
+                                   <td className="no-pdf print:hidden"/>
+                                 </tr>
+                               </tfoot>
+                             </table>
+                           </div>
+                         </div>
                        );
-                       // Group by category
-                       const grouped = {};
-                       filteredInventory.forEach(inv => {
-                         const cat = inv?.category || 'Otros';
-                         if (!grouped[cat]) grouped[cat] = [];
-                         grouped[cat].push(inv);
-                       });
-                       const catOrder = ['Materia Prima','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
-                       const sortedCats = Object.keys(grouped).sort((a,b) => {
-                         const ia = catOrder.indexOf(a); const ib = catOrder.indexOf(b);
-                         if (ia === -1 && ib === -1) return a.localeCompare(b);
-                         if (ia === -1) return 1; if (ib === -1) return -1;
-                         return ia - ib;
-                       });
-                       const catColors = { 'Materia Prima':'bg-blue-600','Pigmentos':'bg-purple-600','Tintas':'bg-pink-600','Químicos':'bg-teal-600','Consumibles':'bg-orange-600','Herramientas':'bg-yellow-600','Seguridad Industrial':'bg-green-600','Otros':'bg-gray-600' };
-                       const rows = [];
-                       sortedCats.forEach(cat => {
-                         const items = grouped[cat];
-                         const catTotalVal = items.reduce((s,i)=>s+(parseNum(i?.cost)*parseNum(i?.stock)),0);
-                         const catTotalStock = items.reduce((s,i)=>s+parseNum(i?.stock),0);
-                         const colClass = catColors[cat] || 'bg-gray-600';
-                         rows.push(
-                           <tr key={`cat-${cat}`} className={`${colClass} text-white`}>
-                             <td className="py-2 px-2 print:hidden"></td>
-                             <td colSpan="3" className="py-2 px-2 font-black text-[10px] uppercase tracking-widest">
-                               📂 {cat} — {items.length} artículo{items.length!==1?'s':''}
-                             </td>
-                             <td className="py-2 px-2 text-right font-black text-[10px]">{formatNum(catTotalStock)}</td>
-                             <td className="py-2 px-2 text-right font-black text-[10px]">${formatNum(catTotalVal)}</td>
-                             <td className="py-2 px-2 print:hidden hidden md:table-cell"></td>
-                             <td className="py-2 px-2 print:hidden"></td>
-                           </tr>
-                         );
-                         items.forEach(inv => {
-                           const totalVal = parseNum(inv?.cost) * parseNum(inv?.stock);
-                           rows.push(
-                             <tr key={inv?.id} className={`hover:bg-gray-50 transition-colors group ${selectedInvItems.has(inv?.id)?'bg-orange-50/50':''}`}>
-                               <td className="py-2 px-2 text-center no-pdf print:hidden">
-                                 {!inv?._isFGGroup && <input type="checkbox" className="w-3.5 h-3.5 rounded text-orange-500 cursor-pointer"
-                                   checked={selectedInvItems.has(inv?.id)}
-                                   onChange={e=>{
-                                     const next = new Set(selectedInvItems);
-                                     if(e.target.checked) next.add(inv?.id); else next.delete(inv?.id);
-                                     setSelectedInvItems(next);
-                                   }}
-                                 />}
-                               </td>
-                               <td className="py-2 px-2 font-black text-orange-600 text-[10px] print:text-black">{inv?.id}</td>
-                               <td className="py-2 px-2 font-black uppercase text-[10px] text-black">{inv?.desc}</td>
-                               <td className="py-2 px-2 text-center hidden md:table-cell">
-                                 <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase text-white ${colClass}`}>{(inv?.category||'').substring(0,6)}</span>
-                               </td>
-                               <td className="py-2 px-2 text-right font-bold text-gray-600 text-[10px] print:text-black">
-                                 ${formatNum(inv?.cost)}
-                                 {inv?._warehouseBreakdown?.length > 1 && <span className="text-[8px] text-orange-400 ml-0.5">prom</span>}
-                               </td>
-                               <td className="py-2 px-2 text-right font-black text-blue-600 text-[10px] print:text-black">
-                                 {formatNum(inv?.stock)} <span className="text-[8px] text-gray-400">{inv?.unit}</span>
-                                 {inv?._warehouseBreakdown?.length > 1 && (
-                                   <div className="text-[8px] text-gray-400 font-normal">
-                                     {inv._warehouseBreakdown.map((w,wi)=>(
-                                       <span key={wi} className="block">{(w.almacen||'').replace('ALMACEN ','')}: {formatNum(w.stock)}</span>
-                                     ))}
-                                   </div>
-                                 )}
-                               </td>
-                               <td className="py-2 px-2 text-right font-black text-green-600 text-[10px] print:text-black hidden lg:table-cell">${formatNum(totalVal)}</td>
-
-                               <td className="py-2 px-2 text-center no-pdf print:hidden">
-                                 <div className="flex gap-1 justify-center">
-                                   {inv?._isFGGroup ? (
-                                     // FG items: redirect to Terminados view for editing
-                                     <button onClick={()=>{setInvView('finished');}} className="p-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-500 hover:text-white text-[8px] font-black px-2 uppercase" title="Ver en Terminados">
-                                     </button>
-                                   ) : (
-                                     <>
-                                       <button onClick={()=>requireAdminPassword(()=>startEditInvItem(inv),'Editar artículo del catálogo')} className="p-1 bg-orange-100 text-orange-600 rounded hover:bg-orange-500 hover:text-white"><Edit size={11}/></button>
-                                       <button onClick={()=>requireAdminPassword(async()=>{
-                                         // Delete all warehouse-specific docs for this item
-                                         const cleanId2 = inv.displayId || inv.id.split('___')[0] || inv.id;
-                                         const realDocs = (inventory||[]).filter(i=>{
-                                           const cid = i.displayId||(i.id||'').split('___')[0];
-                                           return cid===cleanId2||i.id===cleanId2;
-                                         });
-                                         if(realDocs.length>0){
-                                           for(const d of realDocs) await deleteDoc(getDocRef('inventory',d.id));
-                                         } else {
-                                           await deleteDoc(getDocRef('inventory',inv.id));
-                                         }
-                                         setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});
-                                       },'Eliminar artículo de catálogo')} className="p-1 bg-red-50 text-red-400 rounded hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
-                                     </>
-                                   )}
-                                 </div>
-                               </td>
-                             </tr>
-                           );
-                         });
-                         // Category subtotal row
-                         rows.push(
-                           <tr key={`subtot-${cat}`} className="bg-gray-50 border-t-2 border-gray-200">
-                             <td className="py-2 px-2 print:hidden"></td>
-                             <td colSpan="3" className="py-2 px-2 text-right text-[10px] font-black uppercase text-gray-500">Subtotal {cat}:</td>
-                             <td className="py-2 px-2 text-right font-black text-blue-700 text-[10px]">{formatNum(catTotalStock)}</td>
-                             <td className="py-2 px-2 text-right font-black text-green-700 text-[10px]">${formatNum(catTotalVal)}</td>
-                             <td className="print:hidden hidden md:table-cell"></td>
-                             <td className="print:hidden"></td>
-                           </tr>
-                         );
-                       });
-                       // Grand total
-                       const grandTotal = filteredInventory.reduce((s,i)=>s+(parseNum(i?.cost)*parseNum(i?.stock)),0);
-                       rows.push(
-                         <tr key="grand-total" className="bg-black text-white">
-                           <td colSpan="4" className="py-3 px-4 text-right font-black uppercase text-[10px] tracking-widest">TOTAL INVENTARIO:</td>
-                           <td className="py-3 px-4 text-right font-black">{formatNum(filteredInventory.reduce((s,i)=>s+parseNum(i?.stock),0))}</td>
-                           <td className="py-3 px-4 text-right font-black text-orange-400 text-base">${formatNum(grandTotal)}</td>
-                           <td className="print:hidden"></td>
-                         </tr>
-                       );
-                       return rows;
-                     })()}
-                   </tbody>
-                 </table>
-               </div>
+                     })}
+                     {/* Grand total */}
+                     <div className="bg-black text-white rounded-2xl px-6 py-3 flex justify-between items-center">
+                       <span className="font-black uppercase text-[10px] tracking-widest">TOTAL INVENTARIO GENERAL</span>
+                       <span className="font-black text-orange-400 text-lg">${formatNum(grandTotal)}</span>
+                     </div>
+                   </div>
+                 );
+               })()}
             </div>
           </div>
         )}
@@ -9057,17 +9029,20 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     ? parseNum(inv.montoBase||0) / (inv.itemsFacturados||[]).length / qty
                     : parseNum(inv.montoBase||0) / qty;
                 const total = precioVenta * qty;
-                // codigo: buscar primero en Inventario General (Productos Terminados) por descripción
-                // luego invCode limpio, luego finishedGoodsInventory por fgId
+                // codigo: buscar en finishedGoodsInventory por coincidencia de descripción/producto+cliente
+                // Si invCode es FG-MANUAL-* o ALMACEN, usar descripción para encontrar el fg.id correcto
                 let codigo = '';
                 const _cleanInvCode = (it.invCode||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
 
-                // 1. invCode válido (no es nombre de almacén ni timestamp puro)
-                if(_cleanInvCode && !/^ALMACEN/i.test(_cleanInvCode) && !/^\d{8,}$/.test(_cleanInvCode)) {
+                // 1. invCode válido (no es ALMACEN, no timestamp puro, no FG-MANUAL-*)
+                if(_cleanInvCode &&
+                   !/^ALMACEN/i.test(_cleanInvCode) &&
+                   !/^\d{8,}$/.test(_cleanInvCode) &&
+                   !/^FG-MANUAL-\d/i.test(_cleanInvCode)) {
                   codigo = _cleanInvCode;
                 }
 
-                // 2. Si no hay código o el invCode era ALMACEN: buscar por descripción en inventory PT
+                // 2. Buscar en inventory PT por descripción exacta
                 if(!codigo) {
                   const desc = (it.desc||'').toUpperCase().trim();
                   if(desc) {
@@ -9081,17 +9056,44 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   }
                 }
 
-                // 3. Lookup por fgId en finishedGoodsInventory → también intentar match por descripción en PT
-                if(!codigo && it.fgId) {
-                  const fgDoc = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
-                  if(fgDoc) {
-                    const fgDesc = (fgDoc.producto||'').toUpperCase().trim();
-                    const ptByDesc = fgDesc ? (inventory||[]).find(i=>i.category==='Productos Terminados'&&(i.desc||'').toUpperCase().trim()===fgDesc) : null;
-                    codigo = ptByDesc ? (ptByDesc.displayId||(ptByDesc.id||'').split('___')[0]).replace(/_inv$/i,'').trim() : fgDoc.id;
+                // 3. Buscar en finishedGoodsInventory por múltiples estrategias
+                if(!codigo) {
+                  // 3a. fgId directo y no es FG-MANUAL
+                  const fgById = it.fgId ? (finishedGoodsInventory||[]).find(f=>f.id===it.fgId) : null;
+                  if(fgById && !/^FG-MANUAL-\d/i.test(fgById.id)) {
+                    codigo = fgById.id;
+                  }
+
+                  if(!codigo) {
+                    // 3b. Extraer producto y cliente de it.desc (formato "PRODUCTO | CLIENTE")
+                    const descParts = (it.desc||'').split(' | ');
+                    const prodPart = (descParts[0]||'').toUpperCase().trim();
+                    const clientPart = (descParts[1]||'').toUpperCase().trim();
+
+                    // 3c. Match por formatFGLabel exacto
+                    let fgMatch = prodPart ? (finishedGoodsInventory||[]).find(fg => {
+                      const lbl = (formatFGLabel(fg)||'').toUpperCase().trim();
+                      if(lbl === (it.desc||'').toUpperCase().trim()) return true;
+                      // Match por producto + cliente
+                      const fgProd = (fg.producto||fg.categoria||'').toUpperCase().trim();
+                      const fgCli = (fg.cliente||'').toUpperCase().trim();
+                      const fgProdBase = fgProd.split(' - ')[0].trim();
+                      const prodMatch = fgProd.includes(prodPart) || prodPart.includes(fgProdBase) || fgProdBase.includes(prodPart.split(' - ')[0]);
+                      const cliMatch = !clientPart || fgCli.includes(clientPart.substring(0,12)) || clientPart.includes(fgCli.substring(0,12));
+                      return prodMatch && cliMatch;
+                    }) : null;
+
+                    if(fgMatch && !/^FG-MANUAL-\d/i.test(fgMatch.id)) {
+                      codigo = fgMatch.id;
+                    } else if(fgMatch) {
+                      codigo = fgMatch.id;
+                    } else if(fgById) {
+                      codigo = fgById.id;
+                    }
                   }
                 }
 
-                // 4. Fallback final
+                // 4. Fallback
                 if(!codigo) codigo = _cleanInvCode || (it.fgId||'').split('___')[0] || '—';
                 rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
@@ -9361,12 +9363,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
                       {/* Carrito de lotes agregados */}
                           {fgItems.length > 0 && (
-                            <div className="bg-white rounded-xl border-2 border-green-300 overflow-x-auto mt-2">
+                            <div className="bg-white rounded-xl border-2 border-green-300 overflow-hidden mt-2">
                               <div className="flex items-center justify-between px-4 py-2 bg-green-600 text-white">
                                 <span className="text-[10px] font-black uppercase tracking-wider">🛒 Productos Seleccionados ({fgItems.length})</span>
                                 <span className="text-[9px] font-bold opacity-80">Haz clic en ✕ para quitar un producto</span>
                               </div>
-                              <table className="w-full text-xs" style={{minWidth:680}}>
+                              <table className="w-full text-xs">
                                 <thead>
                                   <tr className="font-black text-[9px] uppercase bg-gray-50 border-b-2 border-green-200">
                                     <th className="p-2.5 text-left" style={{width:120}}>Código</th>
