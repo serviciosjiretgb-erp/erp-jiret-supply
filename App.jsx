@@ -2295,10 +2295,17 @@ export default function App() {
     const itemsFacturadosSave = fgItems.map(it => {
       const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
       const esTermo = it.esTermo ?? (fg?.tipoProducto==='TERMOENCOGIBLE');
-      const costoCapturado = esTermo
-        ? parseNum(fg?.costoUnitario||it.costoUnit||0)
-        : parseNum(fg?.costoUnitarioMillar||it.costoUnit||0);
-      // precioUnit = precio de venta = total del renglón / cantidad
+      // Get costo: first from finishedGoods, then from inventory PT
+      let costoCapturado = 0;
+      if(fg) {
+        costoCapturado = esTermo ? parseNum(fg?.costoUnitario||0) : parseNum(fg?.costoUnitarioMillar||0);
+      }
+      if(!costoCapturado && it.invCode) {
+        // Look up cost from inventory PT
+        const invItem = (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode);
+        costoCapturado = parseNum(invItem?.cost||it._cost||0);
+      }
+      if(!costoCapturado && it._cost) costoCapturado = parseNum(it._cost);
       const cantNum = parseNum(it.cantidad)||1;
       const totalFacturado = parseNum(it.totalUSD||it.totalRenglon||0);
       const precioUnitVenta = totalFacturado > 0 ? totalFacturado/cantNum : parseNum(it.precioUnit||0);
@@ -2314,8 +2321,30 @@ export default function App() {
         costoTotal: parseNum(it.cantidad) * costoCapturado
       };
     });
+
+    // ── Calculate totals from fgItems (not from stale form state) ──
+    const computedBase = fgItems.length > 0
+      ? fgItems.reduce((s,it)=>s + parseNum(it.precioUnit||0)*parseNum(it.cantidad||0), 0)
+      : parseNum(newInvoiceForm.montoBase||0);
+    const aplicaIvaFinal = newInvoiceForm.aplicaIva || 'SI';
+    const computedIva = aplicaIvaFinal==='SI' ? parseFloat((computedBase*0.16).toFixed(2)) : 0;
+    const computedTotal = parseFloat((computedBase + computedIva).toFixed(2));
+
     try { 
-      await setDoc(getDocRef('maquilaInvoices', id), { ...newInvoiceForm, id, documento: id, nroFiscal: newInvoiceForm.nroFiscal||'', tasa: parseNum(newInvoiceForm.tasa||settings?.tasaBCV||0), montoBase: parseNum(newInvoiceForm.montoBase), iva: parseNum(newInvoiceForm.iva), total: parseNum(newInvoiceForm.total), aplicaIva: newInvoiceForm.aplicaIva || 'SI', timestamp: editingInvoiceId ? (newInvoiceForm.timestamp || Date.now()) : Date.now(), user: appUser?.name, itemsFacturados: itemsFacturadosSave, fgId: fgItems[0]?.fgId||newInvoiceForm.fgId||'', fgCantidad: fgItems[0]?.cantidad||0 }); 
+      await setDoc(getDocRef('maquilaInvoices', id), {
+        ...newInvoiceForm, id, documento: id,
+        nroFiscal: newInvoiceForm.nroFiscal||'',
+        tasa: parseNum(newInvoiceForm.tasa||settings?.tasaBCV||0),
+        montoBase: computedBase,
+        iva: computedIva,
+        total: computedTotal,
+        aplicaIva: aplicaIvaFinal,
+        timestamp: editingInvoiceId ? (newInvoiceForm.timestamp || Date.now()) : Date.now(),
+        user: appUser?.name,
+        itemsFacturados: itemsFacturadosSave,
+        fgId: fgItems[0]?.fgId||newInvoiceForm.fgId||'',
+        fgCantidad: fgItems[0]?.cantidad||0
+      });
 
       // ── Construir lista de items a descontar del inventario ──
       // Se ejecuta SIEMPRE (creación Y edición) para garantizar el descuento
@@ -8250,9 +8279,20 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           {/* Totales */}
           <div className="flex justify-end mb-8">
             <div className="w-64 space-y-2 border-l-4 border-orange-500 pl-4">
-              <div className="flex justify-between font-bold text-sm"><span>SUBTOTAL:</span><span>${formatNum(inv.montoBase)}</span></div>
-              {inv.aplicaIva === 'SI' && <div className="flex justify-between font-bold text-sm"><span>IVA (16%):</span><span>${formatNum(inv.iva)}</span></div>}
-              <div className="flex justify-between font-black text-2xl border-t-2 border-black pt-2 text-orange-600"><span>TOTAL:</span><span>${formatNum(inv.total)}</span></div>
+              {(()=>{
+                // Recalculate from itemsFacturados if saved montoBase=0
+                const items = inv.itemsFacturados||[];
+                const base = parseNum(inv.montoBase||0) > 0
+                  ? parseNum(inv.montoBase)
+                  : items.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0);
+                const ivaAmt = inv.aplicaIva==='SI' ? parseNum(inv.iva||0)||parseFloat((base*0.16).toFixed(2)) : 0;
+                const totalFinal = parseNum(inv.total||0) > 0 ? parseNum(inv.total) : base+ivaAmt;
+                return (<>
+                  <div className="flex justify-between font-bold text-sm"><span>SUBTOTAL:</span><span>${formatNum(base)}</span></div>
+                  {inv.aplicaIva === 'SI' && <div className="flex justify-between font-bold text-sm"><span>IVA (16%):</span><span>${formatNum(ivaAmt)}</span></div>}
+                  <div className="flex justify-between font-black text-2xl border-t-2 border-black pt-2 text-orange-600"><span>TOTAL:</span><span>${formatNum(totalFinal)}</span></div>
+                </>);
+              })()}
             </div>
           </div>
 
@@ -8996,7 +9036,16 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             } else {
               items.forEach(it=>{
                 const qty=parseNum(it.cantidad||1);
-                const costo=parseNum(it.costoUnit||0);
+                // Look up real cost: saved costoUnit first, then from inventory by invCode
+                let costo=parseNum(it.costoUnit||0);
+                if(!costo && it.invCode) {
+                  const invDoc=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode||(i.id||'').split('___')[0]===it.invCode);
+                  costo=parseNum(invDoc?.cost||0);
+                }
+                if(!costo && it.fgId) {
+                  const fgDoc=(finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
+                  if(fgDoc) costo=it.esTermo?parseNum(fgDoc.costoUnitario||0):parseNum(fgDoc.costoUnitarioMillar||0);
+                }
                 const costoTotal=costo*qty;
                 // precio de venta: from saved precioUnit, or derive from invoice total / items
                 const precioVenta = parseNum(it.precioUnit||0) > 0
@@ -9463,7 +9512,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
              <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR FACTURA O CLIENTE..." value={invoiceSearchTerm} onChange={e=>setInvoiceSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">OP N°</th><th className="py-4 px-4 text-black">Cliente / Producto</th><th className="py-4 px-4 text-right text-black w-32">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{(invoices || []).map(inv=>{
                if(!String(inv?.documento || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()) && !String(inv?.clientName || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase())) return null;
                return (
-               <tr key={inv?.id} className="hover:bg-gray-50"><td className="py-5 px-4 font-black text-sm">{inv?.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{inv?.fecha || getSafeDate(inv?.timestamp)}</span></td><td className="py-5 px-4 font-black text-xs text-orange-600">{inv?.opAsignada || '---'}</td><td className="py-5 px-4 font-bold text-gray-700 uppercase">{inv?.clientName}<br/><span className="text-[9px] font-black text-orange-500 block max-w-xs truncate" title={inv?.productoMaquilado}>{inv?.productoMaquilado || 'S/D'}</span></td><td className="py-5 px-4 text-right font-black text-green-600 text-lg w-32">${formatNum(inv?.total)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>startEditInvoice(inv)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteInvoice(inv?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
+               <tr key={inv?.id} className="hover:bg-gray-50"><td className="py-5 px-4 font-black text-sm">{inv?.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{inv?.fecha || getSafeDate(inv?.timestamp)}</span></td><td className="py-5 px-4 font-black text-xs text-orange-600">{inv?.opAsignada || '---'}</td><td className="py-5 px-4 font-bold text-gray-700 uppercase">{inv?.clientName}<br/><span className="text-[9px] font-black text-orange-500 block max-w-xs truncate" title={inv?.productoMaquilado}>{inv?.productoMaquilado || 'S/D'}</span></td><td className="py-5 px-4 text-right font-black text-green-600 text-lg w-32">${formatNum((()=>{const t=parseNum(inv?.total||0);if(t>0) return t;const items=inv?.itemsFacturados||[];const b=items.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0);return inv?.aplicaIva==="SI"?b*1.16:b;})())}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>startEditInvoice(inv)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteInvoice(inv?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
              )})}</tbody></table></div></div>
           </div>
         )}
