@@ -6305,7 +6305,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         });
       });
 
-      const renderTFSection = (title, color, items, isTerminados, isFG) => {
+      function renderTFSection(title, color, items, isTerminados, isFG) {
         // Get active warehouses for multi-column
         const activeWH = depositos.filter(d=>!['PLANTA','ALMACEN EXTERNO','DEPOSITO 2','ALMACEN PRINCIPAL'].includes(d));
         return (
@@ -6371,7 +6371,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </table>
           </div>
         </div>
-      };
+      }
 
       // ── HISTORIAL VIEW ──
       if (showTomaHistorial) {
