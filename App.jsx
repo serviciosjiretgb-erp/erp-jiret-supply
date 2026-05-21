@@ -594,7 +594,13 @@ export default function App() {
   const [movSearchTerm, setMovSearchTerm] = useState('');
   const [userActivityLog, setUserActivityLog] = useState([]);
   const [kpiMonths, setKpiMonths] = useState(6);
-  const [kpiSelectedMonth, setKpiSelectedMonth] = useState(''); // '' = current month
+  const [kpiSelectedMonth, setKpiSelectedMonth] = useState('');
+  // ── Auditoría module state ──
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditModuleFilter, setAuditModuleFilter] = useState('Todos');
+  const [auditTipoFilter, setAuditTipoFilter] = useState('Todos');
+  const [auditDate, setAuditDate] = useState('');
+  const [auditPage, setAuditPage] = useState(1);
   const [activitySearch, setActivitySearch] = useState('');
   const [activityDateFrom, setActivityDateFrom] = useState('');
   const [activityDateTo, setActivityDateTo] = useState('');
@@ -3535,6 +3541,10 @@ export default function App() {
         stats: ()=>{ const us=(systemUsers||[]).length; return {s1:`Estama / sistema`, s2:`${us} usuario${us!==1?'s':''}`};},
         chart:null
       },
+      (hasPerm('auditoria')||appUser?.role==='Master') && { tab:'auditoria', icon:<ShieldCheck size={20}/>, title:'Auditoría de Sistema', color:'#dc2626',
+        stats: ()=>{ const tot=(invoices||[]).length+(invMovements||[]).length; return {s1:`${tot} eventos registrados`, s2:'Registro de actividad'};},
+        chart:null
+      },
     ].filter(Boolean);
 
     // Build card visual config matching the HTML spec
@@ -3548,6 +3558,7 @@ export default function App() {
       kpi:          {dark:false, borderColor:'#a855f7', chartType:'kpiDots'},
       costos:       {dark:false, borderColor:'#3b82f6', chartType:'lineSvgSmall', svgPts:'0,15 20,5 40,10 60,0 80,10 100,5'},
       configuracion:{dark:false, borderColor:'#6b7280', chartType:'configText'},
+      auditoria:    {dark:false, borderColor:'#dc2626', chartType:'configText'},
     };
 
     return (
@@ -6627,9 +6638,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         fgDeduped.push(fgById[item.id]);
       }
     }
-    // Inventario General shows ONLY non-PT categories (MP, Consumibles, etc.)
-    // Productos Terminados appear exclusively in invView === 'finished'
-    const allCatalogItems = (inventory || []).filter(i => i?.category !== 'Productos Terminados');
+    // Inventario General shows ALL categories including Productos Terminados
+    // PT items are properly deduplicated via the grouping logic below
+    const allCatalogItems = [...(inventory || [])];
     // Categorías únicas — sin duplicados
     const allCatalogCats = ['TODAS', ...Array.from(new Set(allCatalogItems.map(i=>i?.category||'Otros')))]
       .sort((a,b)=>{ if(a==='TODAS')return -1; if(b==='TODAS')return 1; if(a==='Productos Terminados')return -1; if(b==='Productos Terminados')return 1; return a.localeCompare(b); });
@@ -16778,57 +16789,73 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
   // MÓDULO AUDITORÍA DE SISTEMA
   // ============================================================================
   const renderAuditoriaModule = () => {
-    const [auditSearch, setAuditSearch] = React.useState('');
-    const [auditModule, setAuditModule] = React.useState('Todos');
-    const [auditTipo, setAuditTipo] = React.useState('Todos');
-    const [auditDate, setAuditDate] = React.useState('');
-    const [auditPage, setAuditPage] = React.useState(1);
     const PAGE_SIZE = 25;
-    const buildLogs = () => {
+    // Build logs from real system data
+    const allLogs = (() => {
       const logs = [];
       (invoices||[]).forEach(inv=>{
-        logs.push({id:`INV-${inv.id}`,fecha:inv.fecha||'',hora:'—',usuario:inv.vendedor||inv.user||'Sistema',rol:'Facturación',modulo:'Ventas',tipo:'CREACIÓN',detalle:`Factura ${inv.documento||inv.id} — Cliente: ${inv.clientName||'—'} — Total: $${formatNum(parseNum(inv.total||inv.montoBase||0))}`,ts:inv.timestamp||0});
+        logs.push({id:`INV-${inv.id}`,fecha:inv.fecha||'',usuario:inv.vendedor||inv.user||'Sistema',rol:'Facturación',modulo:'Ventas',tipo:'CREACIÓN',detalle:`Factura ${inv.documento||inv.id} — Cliente: ${inv.clientName||'—'} — Total: $${formatNum(parseNum(inv.total||inv.montoBase||0))}`,ts:inv.timestamp||0});
       });
       (invMovements||[]).forEach(m=>{
-        const tipoMap={'ENTRADA':'CREACIÓN','SALIDA':'EDICIÓN','AJUSTE':'EDICIÓN','AUTOCONSUMO':'EDICIÓN'};
-        logs.push({id:`MOV-${m.id}`,fecha:m.date||'',hora:'—',usuario:m.user||'Sistema',rol:'Almacén',modulo:'Control Inventario',tipo:tipoMap[m.type]||'EDICIÓN',detalle:`${m.type} — ${m.itemName||m.itemId} — Qty: ${formatNum(m.qty)}${m.reference?' — Ref: '+m.reference:''}`,ts:m.timestamp||0});
+        const t={'ENTRADA':'CREACIÓN','SALIDA':'EDICIÓN','AJUSTE':'EDICIÓN','AUTOCONSUMO':'EDICIÓN'}[m.type]||'EDICIÓN';
+        logs.push({id:`MOV-${m.id}`,fecha:m.date||'',usuario:m.user||'Sistema',rol:'Almacén',modulo:'Control Inventario',tipo:t,detalle:`${m.type} — ${m.itemName||m.itemId||''} — Qty: ${formatNum(m.qty)}${m.reference?' — Ref: '+m.reference:''}`,ts:m.timestamp||0});
       });
-      (requirements||[]).filter(r=>r.status==='COMPLETADO'||r.status==='EN PROCESO').forEach(r=>{
-        logs.push({id:`OP-${r.id}`,fecha:r.fechaFinalizacion||r.fecha||'',hora:'—',usuario:r.supervisorPlanta||'Sistema',rol:'Producción',modulo:'Producción Planta',tipo:r.status==='COMPLETADO'?'CREACIÓN':'EDICIÓN',detalle:`OP #${String(r.id).replace('OP-','').padStart(5,'0')} (${r.status}) — ${r.client||'—'} — ${r.desc||r.categoria||'—'}`,ts:r.timestamp||0});
+      (requirements||[]).forEach(r=>{
+        const tipo = r.status==='COMPLETADO'?'CREACIÓN':r.status==='EN PROCESO'?'EDICIÓN':'ACCESO';
+        logs.push({id:`REQ-${r.id}`,fecha:r.fechaFinalizacion||r.fecha||'',usuario:r.supervisorPlanta||appUser?.name||'Sistema',rol:'Producción',modulo:'Producción Planta',tipo,detalle:`OP #${String(r.id).replace('OP-','').padStart(5,'0')} (${r.status}) — ${r.client||'—'} — ${r.desc||r.categoria||'—'}`,ts:r.timestamp||0});
+      });
+      (finishedGoodsInventory||[]).forEach(fg=>{
+        logs.push({id:`FG-${fg.id}`,fecha:fg.fechaFinalizacion||fg.updatedAt||'',usuario:'Sistema',rol:'Producción',modulo:'Inventario Terminados',tipo:'CREACIÓN',detalle:`Producto terminado: ${fg.producto||fg.id} — ${fg.cliente||'—'} — Stock: ${formatNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)} ${fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millares'}`,ts:fg.timestamp||0});
       });
       return logs.sort((a,b)=>b.ts-a.ts||(b.fecha||'').localeCompare(a.fecha||''));
-    };
-    const allLogs = buildLogs();
-    const modulos = ['Todos',...new Set(allLogs.map(l=>l.modulo))];
+    })();
+
+    const modulos = ['Todos',...Array.from(new Set(allLogs.map(l=>l.modulo)))];
     const tiposDisp = ['Todos','CREACIÓN','EDICIÓN','ELIMINACIÓN','ACCESO','SALIDA','EXPORTACIÓN','ALERTA'];
+
     const filtered = allLogs.filter(l=>{
       const s=(auditSearch||'').toUpperCase();
       if(s && !(l.usuario||'').toUpperCase().includes(s) && !(l.detalle||'').toUpperCase().includes(s) && !(l.tipo||'').toUpperCase().includes(s) && !(l.modulo||'').toUpperCase().includes(s)) return false;
-      if(auditModule!=='Todos' && l.modulo!==auditModule) return false;
-      if(auditTipo!=='Todos' && l.tipo!==auditTipo) return false;
+      if(auditModuleFilter!=='Todos' && l.modulo!==auditModuleFilter) return false;
+      if(auditTipoFilter!=='Todos' && l.tipo!==auditTipoFilter) return false;
       if(auditDate && !(l.fecha||'').startsWith(auditDate)) return false;
       return true;
     });
+
     const totalPages = Math.max(1,Math.ceil(filtered.length/PAGE_SIZE));
-    const page = Math.min(auditPage,totalPages);
-    const pageItems = filtered.slice((page-1)*PAGE_SIZE,page*PAGE_SIZE);
+    const page = Math.min(auditPage, totalPages);
+    const pageItems = filtered.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
+
     const tipoStyle = (t) => ({'CREACIÓN':{c:'text-green-700',bg:'bg-green-50',b:'border-green-200'},'EDICIÓN':{c:'text-orange-600',bg:'bg-orange-50',b:'border-orange-200'},'ELIMINACIÓN':{c:'text-red-700',bg:'bg-red-50',b:'border-red-200'},'ACCESO':{c:'text-blue-700',bg:'bg-blue-50',b:'border-blue-200'},'SALIDA':{c:'text-gray-600',bg:'bg-gray-100',b:'border-gray-200'},'EXPORTACIÓN':{c:'text-purple-700',bg:'bg-purple-50',b:'border-purple-200'},'ALERTA':{c:'text-red-700',bg:'bg-red-100',b:'border-red-300'}}[t]||{c:'text-gray-700',bg:'bg-gray-50',b:'border-gray-200'});
+
     const exportExcel = () => {
-      let html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><style>th{background:#000;color:#fff;padding:5px;border:1px solid #000}td{border:1px solid #ccc;padding:4px;font-size:10px}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. — Auditoría ${getTodayDate()}</h2><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Módulo</th><th>Tipo</th><th>Detalle</th></tr></thead><tbody>`;
-      html+=filtered.map(l=>`<tr><td>${l.fecha}</td><td>${l.usuario}</td><td>${l.modulo}</td><td>${l.tipo}</td><td>${(l.detalle||'').replace(/</g,'&lt;')}</td></tr>`).join('');
+      const empresa = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+      let html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><style>th{background:#000;color:#fff;padding:5px;border:1px solid #000}td{border:1px solid #ccc;padding:4px;font-size:10px}</style></head><body><h2>${empresa}</h2><h3>Auditoría de Sistema — ${getTodayDate()}</h3><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Rol</th><th>Módulo</th><th>Tipo</th><th>Detalle</th></tr></thead><tbody>`;
+      html+=filtered.map(l=>`<tr><td>${l.fecha||''}</td><td>${l.usuario||''}</td><td>${l.rol||''}</td><td>${l.modulo||''}</td><td>${l.tipo||''}</td><td>${(l.detalle||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td></tr>`).join('');
       html+=`</tbody></table></body></html>`;
-      const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Auditoria_${getTodayDate()}.xls`;a.click();
+      const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel'});
+      const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Auditoria_${getTodayDate()}.xls`;a.click();
     };
+
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="max-w-7xl mx-auto bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          {/* Header */}
           <div className="px-8 py-6 border-b-2 border-black flex flex-col md:flex-row md:justify-between md:items-center gap-4">
             <div>
-              <h1 className="text-2xl font-black uppercase flex items-center gap-3 tracking-wider"><ShieldCheck size={28} className="text-orange-500"/> Auditoría de Sistema</h1>
-              <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Servicios Jiret G&B — Registro de Actividad · {filtered.length} eventos</p>
+              <h1 className="text-2xl font-black uppercase flex items-center gap-3 tracking-wider">
+                <ShieldCheck size={28} className="text-orange-500"/> Auditoría de Sistema
+              </h1>
+              <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">
+                Servicios Jiret G&B — Registro de Actividad · <span className="text-black font-black">{filtered.length}</span> eventos
+              </p>
             </div>
-            <button onClick={exportExcel} className="bg-black hover:bg-orange-500 text-white font-black py-3 px-6 flex items-center gap-2 uppercase text-[10px] tracking-widest rounded-2xl transition-colors"><Download size={15}/> Exportar Log</button>
+            <button onClick={exportExcel}
+              className="bg-black hover:bg-orange-500 text-white font-black py-3 px-6 flex items-center gap-2 uppercase text-[10px] tracking-widest rounded-2xl transition-colors">
+              <Download size={15}/> Exportar Log
+            </button>
           </div>
+          {/* Filters */}
           <div className="px-6 py-4 bg-gray-50/50 border-b border-gray-200 flex flex-wrap gap-3">
             <div className="relative flex-1 min-w-48">
               <Search className="absolute left-3 top-3.5 text-gray-400" size={14}/>
@@ -16836,40 +16863,42 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 className="w-full pl-9 py-3 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-500 bg-white"
                 placeholder="Buscar por usuario, módulo, detalle..."/>
             </div>
-            <select value={auditModule} onChange={e=>{setAuditModule(e.target.value);setAuditPage(1);}}
-              className="border-2 border-gray-200 rounded-xl px-3 py-3 text-xs font-black outline-none focus:border-orange-500 bg-white">
+            <select value={auditModuleFilter} onChange={e=>{setAuditModuleFilter(e.target.value);setAuditPage(1);}}
+              className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500 bg-white">
               {modulos.map(m=><option key={m} value={m}>{m==='Todos'?'Todos los Módulos':m}</option>)}
             </select>
-            <select value={auditTipo} onChange={e=>{setAuditTipo(e.target.value);setAuditPage(1);}}
-              className="border-2 border-gray-200 rounded-xl px-3 py-3 text-xs font-black outline-none focus:border-orange-500 bg-white">
+            <select value={auditTipoFilter} onChange={e=>{setAuditTipoFilter(e.target.value);setAuditPage(1);}}
+              className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500 bg-white">
               {tiposDisp.map(t=><option key={t} value={t}>{t==='Todos'?'Todos los Tipos':t}</option>)}
             </select>
             <input type="date" value={auditDate} onChange={e=>{setAuditDate(e.target.value);setAuditPage(1);}}
-              className="border-2 border-gray-200 rounded-xl px-3 py-3 text-xs font-bold outline-none focus:border-orange-500 bg-white"/>
-            {(auditSearch||auditModule!=='Todos'||auditTipo!=='Todos'||auditDate) && (
-              <button onClick={()=>{setAuditSearch('');setAuditModule('Todos');setAuditTipo('Todos');setAuditDate('');setAuditPage(1);}}
-                className="px-4 py-3 rounded-xl text-[10px] font-black uppercase bg-red-50 text-red-600 border-2 border-red-200 hover:bg-red-100">
+              className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500 bg-white"/>
+            {(auditSearch||auditModuleFilter!=='Todos'||auditTipoFilter!=='Todos'||auditDate) && (
+              <button onClick={()=>{setAuditSearch('');setAuditModuleFilter('Todos');setAuditTipoFilter('Todos');setAuditDate('');setAuditPage(1);}}
+                className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-red-50 text-red-600 border-2 border-red-200 hover:bg-red-100">
                 ✕ Limpiar
               </button>
             )}
           </div>
+          {/* Table */}
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse" style={{minWidth:780}}>
-              <thead><tr className="bg-black text-white text-[9px] uppercase tracking-widest">
-                <th className="p-3 font-black border-r border-gray-800 w-28 text-left">Fecha</th>
-                <th className="p-3 font-black border-r border-gray-800 w-36 text-left">Usuario / Rol</th>
-                <th className="p-3 font-black border-r border-gray-800 w-36 text-left">Módulo</th>
-                <th className="p-3 font-black border-r border-gray-800 w-32 text-left">Tipo</th>
-                <th className="p-3 font-black text-left">Detalle del Evento</th>
-              </tr></thead>
+            <table className="w-full border-collapse text-xs" style={{minWidth:780}}>
+              <thead>
+                <tr className="bg-black text-white text-[9px] uppercase tracking-widest">
+                  <th className="p-3 font-black border-r border-gray-800 w-24 text-left">Fecha</th>
+                  <th className="p-3 font-black border-r border-gray-800 w-36 text-left">Usuario / Rol</th>
+                  <th className="p-3 font-black border-r border-gray-800 w-36 text-left">Módulo</th>
+                  <th className="p-3 font-black border-r border-gray-800 w-28 text-left">Tipo</th>
+                  <th className="p-3 font-black text-left">Detalle del Evento</th>
+                </tr>
+              </thead>
               <tbody className="divide-y divide-gray-100">
-                {pageItems.length>0 ? pageItems.map(log=>{
-                  const st=tipoStyle(log.tipo);
+                {pageItems.length > 0 ? pageItems.map((log,idx) => {
+                  const st = tipoStyle(log.tipo);
                   return (
-                    <tr key={log.id} className="hover:bg-gray-50 group">
+                    <tr key={log.id||idx} className="hover:bg-gray-50 group">
                       <td className="p-3 align-top">
                         <div className="text-[10px] font-black text-gray-900">{log.fecha}</div>
-                        <div className="text-[9px] text-gray-400 font-bold">{log.hora}</div>
                       </td>
                       <td className="p-3 align-top">
                         <div className="text-[10px] font-black group-hover:text-orange-600">{log.usuario}</div>
@@ -16879,7 +16908,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         <span className="text-[9px] font-bold text-gray-700 bg-gray-100 px-2 py-1 rounded-lg">{log.modulo}</span>
                       </td>
                       <td className="p-3 align-top">
-                        <div className={`inline-flex items-center gap-1 text-[9px] font-black uppercase px-2 py-1 rounded-lg border ${st.c} ${st.bg} ${st.b}`}>
+                        <div className={`inline-flex items-center text-[9px] font-black uppercase px-2 py-1 rounded-lg border ${st.c} ${st.bg} ${st.b}`}>
                           {log.tipo}
                         </div>
                       </td>
@@ -16889,29 +16918,35 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     </tr>
                   );
                 }) : (
-                  <tr><td colSpan="5" className="p-10 text-center text-gray-400">
-                    <Search size={28} className="mx-auto mb-3 text-gray-300"/>
-                    <p className="font-black uppercase">Sin registros</p>
-                    <p className="text-xs mt-1">Ajusta los filtros.</p>
-                  </td></tr>
+                  <tr>
+                    <td colSpan="5" className="p-10 text-center text-gray-400">
+                      <Search size={28} className="mx-auto mb-3 text-gray-300"/>
+                      <p className="font-black uppercase text-sm">Sin registros</p>
+                      <p className="text-xs mt-1">Ajusta los filtros de búsqueda.</p>
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
           </div>
+          {/* Pagination */}
           <div className="px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4 border-t border-gray-200">
             <span className="text-xs text-gray-600 font-bold">
-              Mostrando <span className="font-black text-black">{Math.min((page-1)*PAGE_SIZE+1,filtered.length)}–{Math.min(page*PAGE_SIZE,filtered.length)}</span> de <span className="font-black text-black">{filtered.length}</span>
+              Mostrando <span className="font-black text-black">{filtered.length > 0 ? (page-1)*PAGE_SIZE+1 : 0}–{Math.min(page*PAGE_SIZE,filtered.length)}</span> de <span className="font-black text-black">{filtered.length}</span>
             </span>
-            <div className="flex gap-1">
-              <button onClick={()=>setAuditPage(p=>Math.max(1,p-1))} disabled={page<=1}
-                className="px-4 py-2 border border-gray-300 rounded-xl hover:bg-gray-100 disabled:opacity-40 font-black text-[10px] uppercase">Anterior</button>
-              {Array.from({length:Math.min(totalPages,5)},(_,i)=>{const pg=totalPages<=5?i+1:page<=3?i+1:page>=totalPages-2?totalPages-4+i:page-2+i;return(
-                <button key={pg} onClick={()=>setAuditPage(pg)}
-                  className={`px-4 py-2 border rounded-xl font-black text-xs ${pg===page?'bg-black text-white border-black':'border-gray-300 hover:bg-gray-100'}`}>{pg}</button>
-              );}).filter(Boolean)}
-              <button onClick={()=>setAuditPage(p=>Math.min(totalPages,p+1))} disabled={page>=totalPages}
-                className="px-4 py-2 border border-gray-300 rounded-xl hover:bg-gray-100 disabled:opacity-40 font-black text-[10px] uppercase">Siguiente</button>
-            </div>
+            {totalPages > 1 && (
+              <div className="flex gap-1">
+                <button onClick={()=>setAuditPage(p=>Math.max(1,p-1))} disabled={page<=1}
+                  className="px-4 py-2 border border-gray-300 rounded-xl hover:bg-gray-100 disabled:opacity-40 font-black text-[10px] uppercase">← Ant.</button>
+                {Array.from({length:Math.min(totalPages,5)},(_,i)=>{
+                  const pg = totalPages<=5 ? i+1 : page<=3 ? i+1 : page>=totalPages-2 ? totalPages-4+i : page-2+i;
+                  return <button key={pg} onClick={()=>setAuditPage(pg)}
+                    className={`px-4 py-2 border rounded-xl font-black text-xs ${pg===page?'bg-black text-white border-black':'border-gray-300 hover:bg-gray-100'}`}>{pg}</button>;
+                })}
+                <button onClick={()=>setAuditPage(p=>Math.min(totalPages,p+1))} disabled={page>=totalPages}
+                  className="px-4 py-2 border border-gray-300 rounded-xl hover:bg-gray-100 disabled:opacity-40 font-black text-[10px] uppercase">Sig. →</button>
+              </div>
+            )}
           </div>
         </div>
       </div>
