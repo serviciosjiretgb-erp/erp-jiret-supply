@@ -700,7 +700,7 @@ export default function App() {
         <th style="width:30%">Descripción</th>
         <th style="width:7%">Unidad</th>
         <th style="width:12%">Stock Sistema</th>
-        <th style="width:12%">Conteo Físico</th>
+        <th style="width:8%">Conteo ZI</th><th style="width:8%">Conteo BQTO</th><th style="width:8%">Conteo C2</th><th style="width:8%">Conteo MCY</th>
         <th style="width:12%">Diferencia</th>
         <th style="width:16%">Observaciones</th>
       </tr></thead>
@@ -5805,36 +5805,43 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   {(() => {
                     // Merge FG production + inventory PT into single table
                     // CONSOLIDATE by SKU (same code across warehouses = 1 row)
+                    // Build consolidated PT by cleanCode — deduplicate same SKU across all warehouses
                     const ptByCode = {};
                     (inventory||[]).filter(i=>i.category==='Productos Terminados').forEach(i=>{
                       const rawId = (i.displayId || i.id || '');
-                      const cleanCode = rawId.split('___')[0].replace(/_inv$/i,'').trim();
+                      const cleanCode = rawId.split('___')[0].replace(/_inv$/i,'').replace(/-RESTORE$/i,'').trim();
+                      if(!cleanCode) return;
+                      const isZI = (i.almacen||'').includes('ZI') || (i.id||'').includes('ALMACEN-ZI');
+                      const almNom = i.almacen || rawId.split('___')[1]?.replace(/-/g,' ') || '';
+                      const qty = parseNum(i.stock||0);
                       if(!ptByCode[cleanCode]) ptByCode[cleanCode] = {
                         id: cleanCode,
                         desc: i.desc || '',
                         category: 'Productos Terminados',
                         subcategory: i.subcategory || getItemSubcategory(i) || 'Otros Terminados',
                         unit: i.unit || 'und',
-                        stock: 0, // will sum
+                        stock: 0,
                         cost: parseNum(i.cost||0),
                         isProduccion: false,
                         _invId: i.id,
-                        warehouses: [] // for breakdown
+                        warehouses: {},  // keyed by almacen to dedup
                       };
-                      const qty = parseNum(i.stock||0);
-                      ptByCode[cleanCode].stock += qty;
-                      ptByCode[cleanCode].warehouses.push({
-                        almacen: i.almacen || rawId.split('___')[1]?.replace(/-/g,' ') || '',
-                        stock: qty, docId: i.id
-                      });
-                      // Prefer ZI cost (primary warehouse), then any non-zero
-                      const isZI = (i.almacen||'').includes('ZI') || (i.id||'').includes('ALMACEN-ZI');
-                      if(parseNum(i.cost||0) > 0 && (isZI || ptByCode[cleanCode].cost===0)) ptByCode[cleanCode].cost = parseNum(i.cost);
+                      // Accumulate per warehouse (dedup same almacen)
+                      if(!ptByCode[cleanCode].warehouses[almNom]) {
+                        ptByCode[cleanCode].warehouses[almNom] = {almacen: almNom, stock: 0, docId: i.id};
+                      }
+                      ptByCode[cleanCode].warehouses[almNom].stock += qty;
+                      // Prefer ZI cost
+                      if(parseNum(i.cost||0)>0 && (isZI||ptByCode[cleanCode].cost===0)) ptByCode[cleanCode].cost = parseNum(i.cost);
                       if(i.desc && i.desc.length > (ptByCode[cleanCode].desc||'').length) ptByCode[cleanCode].desc = i.desc;
-                      // Subcategory from ZI or first found
                       if(isZI && i.subcategory) ptByCode[cleanCode].subcategory = i.subcategory || getItemSubcategory(i) || 'Otros Terminados';
                     });
-                    const allPT = Object.values(ptByCode);
+                    // Convert warehouses map to array and compute total stock
+                    const allPT = Object.values(ptByCode).map(p=>({
+                      ...p,
+                      warehouses: Object.values(p.warehouses),
+                      stock: Object.values(p.warehouses).reduce((s,w)=>s+w.stock,0)
+                    }));
                     // Filter by search
                     const filtered = allPT.filter(i=>{
                       if(fgSearch && !(i.id||'').toUpperCase().includes(fgSearch.toUpperCase()) && !(i.desc||'').toUpperCase().includes(fgSearch.toUpperCase()) && !(i.cliente||'').toUpperCase().includes(fgSearch.toUpperCase())) return false;
@@ -6324,8 +6331,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       });
 
       function renderTFSection(title, color, items, isTerminados, isFG, singleWH) {
-        // Get active warehouses for multi-column
-        const activeWH = depositos.filter(d=>!['PLANTA','ALMACEN EXTERNO','DEPOSITO 2','ALMACEN PRINCIPAL'].includes(d));
+        // Multi-warehouse for PT, single ZI for MP/WIP (singleWH param)
+        const activeWH = singleWH ? ['ALMACEN ZI'] : depositos.filter(d=>!['PLANTA','ALMACEN EXTERNO','DEPOSITO 2','ALMACEN PRINCIPAL'].includes(d));
         return (
         <div className="mb-6">
           <div className={`${color} text-white px-4 py-2 rounded-t-xl font-black text-[10px] uppercase tracking-widest`}>{title}</div>
@@ -17595,109 +17602,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           </div>
         </div>
 
-        {/* ── REPARAR DUPLICADOS ── */}
-        {appUser?.role === 'Master' && (
-          <div className="rounded-3xl shadow-sm border-2 border-amber-200 bg-amber-50 p-8">
-            <div className="flex items-center gap-3 mb-4">
-              <AlertTriangle size={20} className="text-amber-600"/>
-              <h2 className="text-lg font-black uppercase text-amber-900">Reparar Productos Duplicados — Inventario</h2>
-            </div>
-            <p className="text-[10px] text-amber-800 font-bold mb-4 leading-relaxed">
-              Detecta documentos con el mismo código SKU en múltiples almacenes que pueden haberse creado por error al editar. 
-              Fusiona stock del maestro, propaga descripción y elimina documentos vacíos (stock=0 sin historial).
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
-              {(()=>{
-                const byCode = {};
-                (inventory||[]).forEach(i=>{
-                  const code=(i.displayId||(i.id||'').split('___')[0]).replace(/_inv$/i,'');
-                  if(!byCode[code]) byCode[code]=[];
-                  byCode[code].push(i);
-                });
-                const dups = Object.entries(byCode).filter(([c,docs])=>docs.length>1&&docs.some(d=>parseNum(d.stock||0)===0));
-                const orphans = Object.entries(byCode).filter(([c,docs])=>docs.length>1&&docs.every(d=>parseNum(d.stock||0)===0));
-                const ok = Object.entries(byCode).filter(([c,docs])=>docs.length>1&&docs.every(d=>parseNum(d.stock||0)>0));
-                return [
-                  {label:'Con duplicados vacíos', val:dups.length, color:'text-red-600 bg-red-50 border-red-200'},
-                  {label:'Todos sin stock', val:orphans.length, color:'text-orange-600 bg-orange-50 border-orange-200'},
-                  {label:'Multi-almacén OK', val:ok.length, color:'text-green-600 bg-green-50 border-green-200'},
-                ].map((k,i)=>(
-                  <div key={i} className={`rounded-xl border p-3 ${k.color}`}>
-                    <div className="text-xl font-black">{k.val}</div>
-                    <div className="text-[9px] font-bold uppercase">{k.label}</div>
-                  </div>
-                ));
-              })()}
-            </div>
-            <div className="flex gap-3 flex-wrap">
-              <button onClick={async()=>{
-                try {
-                  const byCode={};
-                  (inventory||[]).forEach(i=>{const code=(i.displayId||(i.id||'').split('___')[0]).replace(/_inv$/i,'');if(!byCode[code])byCode[code]=[];byCode[code].push(i);});
-                  const duplicates=Object.entries(byCode).filter(([c,docs])=>docs.length>1);
-                  if(duplicates.length===0) return setDialog({title:'✅ Sin duplicados',text:'Inventario limpio. No hay documentos duplicados.',type:'alert'});
-                  let report=`${duplicates.length} código(s) con múltiples documentos:\n\n`;
-                  duplicates.slice(0,15).forEach(([code,docs])=>{
-                    report+=`• ${code}: ${docs.length} docs | Stocks: ${docs.map(d=>`${d.almacen||'?'}=${formatNum(parseNum(d.stock||0))}`).join(', ')}\n`;
-                  });
-                  if(duplicates.length>15) report+=`...y ${duplicates.length-15} más.\n`;
-                  setDialog({title:`Reporte: ${duplicates.length} código(s) duplicados`,text:report,type:'alert'});
-                } catch(err){setDialog({title:'Error',text:err.message,type:'alert'});}
-              }} className="bg-amber-600 text-white px-5 py-2.5 rounded-xl font-black text-[9px] uppercase hover:bg-amber-700 flex items-center gap-2">
-                <Search size={13}/> Escanear Duplicados
-              </button>
-              <button onClick={async()=>{
-                try {
-                  const byCode={};
-                  (inventory||[]).forEach(i=>{const code=(i.displayId||(i.id||'').split('___')[0]).replace(/_inv$/i,'');if(!byCode[code])byCode[code]=[];byCode[code].push(i);});
-                  const toFix=Object.entries(byCode).filter(([c,docs])=>docs.length>1&&docs.some(d=>parseNum(d.stock||0)===0));
-                  if(toFix.length===0) return setDialog({title:'✅ Nada que fusionar',text:'No hay documentos vacíos para eliminar.',type:'alert'});
-                  setDialog({title:`Fusionar ${toFix.length} producto(s)`,text:`Se eliminarán los documentos con stock=0 para:\n${toFix.slice(0,10).map(([c])=>c).join('\n')}${toFix.length>10?`\n...y ${toFix.length-10} más.`:''}\n\nLos documentos con stock real se conservan íntegramente.`,type:'confirm',onConfirm:async()=>{
-                    const batch=writeBatch(db);
-                    let deleted=0,propagated=0;
-                    for(const [code,docs] of toFix){
-                      const sorted=[...docs].sort((a,b)=>parseNum(b.stock||0)-parseNum(a.stock||0));
-                      const master=sorted[0];
-                      // Propagate master's desc/cost to all sibling docs with stock
-                      sorted.filter(d=>d.id!==master.id&&parseNum(d.stock||0)>0).forEach(sib=>{
-                        batch.update(getDocRef('inventory',sib.id),{desc:master.desc||sib.desc,cost:master.cost||sib.cost,subcategory:master.subcategory||sib.subcategory||'',displayId:master.displayId||(master.id||'').split('___')[0]});
-                        propagated++;
-                      });
-                      // Delete empty duplicates
-                      sorted.filter(d=>d.id!==master.id&&parseNum(d.stock||0)===0).forEach(d=>{batch.delete(getDocRef('inventory',d.id));deleted++;});
-                    }
-                    await batch.commit();
-                    setDialog({title:'✅ Reparación completada',text:`Eliminados: ${deleted} doc(s) vacíos. Propagados: ${propagated} doc(s) actualizados.`,type:'alert'});
-                  }});
-                } catch(err){setDialog({title:'Error',text:err.message,type:'alert'});}
-              }} className="bg-red-600 text-white px-5 py-2.5 rounded-xl font-black text-[9px] uppercase hover:bg-red-700 flex items-center gap-2">
-                <Trash2 size={13}/> Eliminar Duplicados Vacíos
-              </button>
-              <button onClick={async()=>{
-                // Propagate desc+cost from ZI to all siblings
-                try {
-                  const byCode={};
-                  (inventory||[]).forEach(i=>{const code=(i.displayId||(i.id||'').split('___')[0]).replace(/_inv$/i,'');if(!byCode[code])byCode[code]=[];byCode[code].push(i);});
-                  const multi=Object.entries(byCode).filter(([c,docs])=>docs.length>1);
-                  if(multi.length===0) return setDialog({title:'Nada que sincronizar',text:'No hay productos multi-almacén.',type:'alert'});
-                  const batch=writeBatch(db);
-                  let synced=0;
-                  for(const [code,docs] of multi){
-                    const master=docs.find(d=>(d.almacen||d.id||'').includes('ZI'))||docs.sort((a,b)=>parseNum(b.stock||0)-parseNum(a.stock||0))[0];
-                    docs.filter(d=>d.id!==master.id).forEach(sib=>{
-                      batch.update(getDocRef('inventory',sib.id),{desc:master.desc||sib.desc,cost:master.cost||sib.cost,subcategory:master.subcategory||sib.subcategory||''});
-                      synced++;
-                    });
-                  }
-                  await batch.commit();
-                  setDialog({title:'✅ Sincronización completada',text:`${synced} documentos de almacenes sincronizados desde el maestro ZI.`,type:'alert'});
-                } catch(err){setDialog({title:'Error',text:err.message,type:'alert'});}
-              }} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-black text-[9px] uppercase hover:bg-blue-700 flex items-center gap-2">
-                <RefreshCw size={13}/> Sincronizar Descripciones
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* ── ACTIVIDAD DE USUARIOS ── */}
         {appUser?.role === 'Master' && (() => {
