@@ -2311,7 +2311,7 @@ export default function App() {
       const precioUnitVenta = totalFacturado > 0 ? totalFacturado/cantNum : parseNum(it.precioUnit||0);
       return {
         fgId: it.fgId,
-        invCode: it.invCode || '',
+        invCode: (it.invCode || '').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim() || '',
         cantidad: it.cantidad,
         desc: it.desc || fg?.producto || '',
         unidad: it.unidad || (esTermo?'KG':'Millares'),
@@ -9054,13 +9054,15 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     ? parseNum(inv.montoBase||0) / (inv.itemsFacturados||[]).length / qty
                     : parseNum(inv.montoBase||0) / qty;
                 const total = precioVenta * qty;
-                // codigo: clean fgId (no FG-MANUAL timestamps)
-                // Use saved invCode first, then fgId cleaned
-                const codigo = it.invCode || (()=>{
-                  const rawId = (it.fgId||'').split('___')[0];
-                  if(/^FG-\d{10,}$/.test(rawId)||rawId.startsWith('FGG::')) return '';
-                  return rawId;
-                })();
+                // codigo: always the clean product code (invCode > inventory lookup > desc)
+                // Never show ALMACEN names, FG-MANUAL timestamps, or warehouse suffixes
+                const _rawCode = (it.invCode || (it.fgId||'').split('___')[0]).replace(/___.*$/,'').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                const _isBadCode = /^FG-MANUAL-\d{8,}$/.test(_rawCode) || /^ALMACEN/.test(_rawCode) || /^\d{8,}$/.test(_rawCode) || !_rawCode;
+                const codigo = _isBadCode
+                  ? ((inventory||[]).find(i=>i.category==='Productos Terminados'&&(i.desc||'').toUpperCase()===(it.desc||'').toUpperCase())
+                    ? ((i)=>(i.displayId||(i.id||'').split('___')[0]).replace(/_inv$/i,''))((inventory||[]).find(i=>i.category==='Productos Terminados'&&(i.desc||'').toUpperCase()===(it.desc||'').toUpperCase()))
+                    : _rawCode||'—')
+                  : _rawCode;
                 rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
