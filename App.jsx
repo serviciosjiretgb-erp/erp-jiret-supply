@@ -2532,20 +2532,37 @@ export default function App() {
     
     // Restore fgItems from saved invoice data
     const restoredItems = [];
-    // From itemsFacturados array (multi-product invoices)
     if((inv.itemsFacturados||[]).length > 0) {
       inv.itemsFacturados.forEach(it => {
+        // Try FG inventory first
         const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
         if(fg) {
           const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
           const currentStock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
           restoredItems.push({
             fgGrpKey: fg.id, fgId: fg.id,
+            invCode: it.invCode || fg.id,
             cantidad: parseNum(it.cantidad||0),
-            desc: formatFGLabel(fg)||fg.producto||fg.id,
-            unidad: esTermo?'KG':'Mill.',
+            precioUnit: parseNum(it.precioUnit||0),
+            totalUSD: parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),
+            desc: it.desc || formatFGLabel(fg)||fg.producto||fg.id,
+            unidad: it.unidad||(esTermo?'KG':'Mill.'),
             maxCant: parseNum(it.cantidad||0) + currentStock,
-            esTermo, grpLotes: [fg], _savedItem: true
+            esTermo, grpLotes: [fg], _savedItem: true, _isInvPT: false
+          });
+        } else {
+          // From inventory PT (non-FG items)
+          const invItem = (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode||(i.id||'').split('___')[0]===(it.fgId||''));
+          restoredItems.push({
+            fgGrpKey: it.invCode||it.fgId||'', fgId: invItem?.id||it.fgId||'',
+            invCode: it.invCode||'',
+            cantidad: parseNum(it.cantidad||0),
+            precioUnit: parseNum(it.precioUnit||0),
+            totalUSD: parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),
+            desc: it.desc || invItem?.desc || it.invCode || '—',
+            unidad: it.unidad||invItem?.unit||'und',
+            maxCant: parseNum(it.cantidad||0)+(parseNum(invItem?.stock||0)),
+            esTermo: false, grpLotes: [], _savedItem: true, _isInvPT: true
           });
         }
       });
@@ -6306,7 +6323,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         });
       });
 
-      function renderTFSection(title, color, items, isTerminados, isFG) {
+      function renderTFSection(title, color, items, isTerminados, isFG, singleWH) {
         // Get active warehouses for multi-column
         const activeWH = depositos.filter(d=>!['PLANTA','ALMACEN EXTERNO','DEPOSITO 2','ALMACEN PRINCIPAL'].includes(d));
         return (
@@ -6488,11 +6505,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
 
             {renderTFSection('📦 Inventario General (Materia Prima / Consumibles)', 'bg-gray-700',
-              inventory.filter(i=>i.category!=='Productos Terminados'&&i.category!=='Semielaborados'), false, false)}
+              inventory.filter(i=>i.category!=='Productos Terminados'&&i.category!=='Semielaborados'), false, false, true)}
             {inventory.some(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0) &&
               renderTFSection('🔄 Semielaborados / Bobinas (en proceso)', 'bg-indigo-600',
-                inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0), false, false)}
-            {renderTFSection('⚙ En Proceso (WIP) — Remanente de Materia Prima', 'bg-blue-600', wipItems, false, false)}
+                inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0), false, false, true, true)}
+            {renderTFSection('⚙ En Proceso (WIP) — Remanente de Materia Prima', 'bg-blue-600', wipItems, false, false, true)}
             {renderTFSection('✅ Productos Terminados', 'bg-green-700', [
               ...tfFGList.map(g=>({...g, id:`FG-TF-${g.key}`, unit:g.esTermo?'KG':'Millares'})),
               ...inventory.filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0).map(i=>({...i, id:`INV-PT-${i.id}`, unit:i.unit||'KG', totalStock:i.stock, _isInvItem:true}))
@@ -7256,7 +7273,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                    {inv?._isFGGroup ? (
                                      // FG items: redirect to Terminados view for editing
                                      <button onClick={()=>{setInvView('finished');}} className="p-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-500 hover:text-white text-[8px] font-black px-2 uppercase" title="Ver en Terminados">
-                                       Ver FG
                                      </button>
                                    ) : (
                                      <>
@@ -9399,32 +9415,36 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 className="border border-gray-200 rounded-lg p-2 text-[9px] font-bold flex-1 mr-6 outline-none resize-none"/>
                               <div className="space-y-1 text-right min-w-52">
                                 {[
-                                  ['TOTAL PARCIAL', `$${formatNum(fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||parseNum(newInvoiceForm.montoBase||0))}`],
+                                  ['TOTAL PARCIAL', `$${formatNum(fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0))}`],
                                   ['DESCUENTO','$0,00'],
                                   ['SUBTOTAL MENOS DESCUENTO', `$${formatNum(fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||parseNum(newInvoiceForm.montoBase||0))}`],
-                                  ['TASA DE IMPUESTO', `${newInvoiceForm.aplicaIva==='SI'?'16':'0'},00%`],
+                                  ['__IVA__', ''],
                                   ['TOTAL IMPUESTOS', `$${formatNum(parseNum(newInvoiceForm.iva||0))}`],
                                   ['ENVÍO/MANIPULACIÓN','$0,00'],
-                                ].map(([k,v])=>(
-                                  <div key={k} className="flex justify-between gap-8"><span className="font-black text-gray-600 uppercase">{k}</span><span className="font-black">{v}</span></div>
-                                ))}
+                                ].map(([k,v])=>{
+                                  if(k==='__IVA__') return null;
+                                  return <div key={k} className="flex justify-between gap-8"><span className="font-black text-gray-600 uppercase">{k}</span><span className="font-black">{v}</span></div>;
+                                })}
+                                <div className="flex justify-between gap-8 items-center">
+                                  <span className="font-black text-gray-600 uppercase flex items-center gap-2">TASA DE IMPUESTO
+                                    <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva',e.target.value)} className="border border-gray-200 rounded px-1.5 py-0.5 text-[9px] font-black outline-none ml-1">
+                                      <option value="SI">+ IVA 16%</option>
+                                      <option value="NO">EXENTO</option>
+                                    </select>
+                                  </span>
+                                  <span className="font-black">{newInvoiceForm.aplicaIva==='SI'?'16,00%':'0,00%'}</span>
+                                </div>
                                 <div className="flex justify-between gap-8 border-t-2 border-gray-400 pt-2 mt-2">
                                   <span className="font-black text-gray-900 uppercase text-sm">Saldo adeudado</span>
-                                  <span className="font-black text-orange-600 text-xl">$ {formatNum(newInvoiceForm.total||0)}</span>
+                                  <span className="font-black text-orange-600 text-xl">$ {(()=>{
+                                    const base=fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0);
+                                    const iva=newInvoiceForm.aplicaIva==='SI'?base*0.16:0;
+                                    return formatNum(base+iva);
+                                  })()}</span>
                                 </div>
                               </div>
                             </div>
-                            {/* Manual base override if no items */}
-                            {fgItems.length === 0 && (
-                              <div className="flex gap-3 mt-2 pt-2 border-t border-gray-200 items-center">
-                                <span className="text-[9px] font-black text-gray-500 uppercase">Base manual:</span>
-                                <input type="number" step="0.01" className="w-32 border border-gray-200 rounded-lg px-2 py-1 text-xs font-black outline-none" value={newInvoiceForm.montoBase} onChange={e=>handleInvoiceFormChange('montoBase', e.target.value)} placeholder="0.00"/>
-                                <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva', e.target.value)} className="border border-gray-200 rounded-lg px-2 py-1 text-[9px] font-black outline-none">
-                                  <option value="SI">+ IVA 16%</option>
-                                  <option value="NO">EXENTO</option>
-                                </select>
-                              </div>
-                            )}
+
                           </div>
                         </div>
                       </div>
@@ -16520,14 +16540,16 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   <tr className="bg-gray-50 text-gray-500 uppercase tracking-widest">
                     <th className="py-2.5 px-4 text-left font-black border-b border-gray-100 text-black">Orden ID</th>
                     <th className="py-2.5 px-4 text-left font-black border-b border-gray-100 text-black">Cliente</th>
-                    <th className="py-2.5 px-4 text-right font-black border-b border-gray-100 text-black w-32">Avance</th>
+                    <th className="py-2.5 px-4 text-left font-black border-b border-gray-100 text-black">Producto</th>
+                    <th className="py-2.5 px-4 text-right font-black border-b border-gray-100 text-black w-28">Avance</th>
                   </tr>
                 </thead>
                 <tbody>
                   {opsActivas.map((op,i)=>(
                     <tr key={i} className="border-b border-gray-100 hover:bg-orange-50/50 transition-colors">
                       <td className="py-3 px-4 font-black text-orange-500 whitespace-nowrap text-[11px]">{op.op}</td>
-                      <td className="py-3 px-4 text-gray-700 font-bold max-w-[260px] truncate text-[10px]" title={op.cliente}>{op.cliente}</td>
+                      <td className="py-3 px-4 text-gray-700 font-bold max-w-[180px] truncate text-[10px]" title={op.cliente}>{op.cliente}</td>
+                      <td className="py-3 px-4 text-gray-500 text-[9px] font-bold max-w-[160px] truncate">{(()=>{const req=(requirements||[]).find(r=>r.id===op.op||r.id===('OP-'+op.op));return req?.desc||req?.categoria||req?.productoMaquilado||'—';})()}</td>
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center gap-2 justify-end">
                           <div className="w-20 bg-gray-800 rounded-full h-1.5">
