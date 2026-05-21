@@ -1573,6 +1573,26 @@ export default function App() {
       if (!hasCostChange && !hasStockChange) return;
       // FIX 8: Cost = DIRECT SUBSTITUTION to ALL warehouses (no averaging, no division)
       // Stock = only the specific warehouse being edited
+      // DESC/SUBCATEGORY: propagate to ALL warehouse docs via batch (Fix Issue #2)
+      const hasDescChange = almacenEditForm.desc && almacenEditForm.desc !== editingAlmacenItem.desc;
+      const hasSubcatChange = almacenEditForm.subcategory && almacenEditForm.subcategory !== (editingAlmacenItem.subcategory||'');
+      if(hasDescChange || hasSubcatChange) {
+        // Propagate to all warehouse docs with same displayId
+        const allWarehouseDocs = (inventory||[]).filter(i=>{
+          const cid = i.displayId||(i.id||'').split('___')[0];
+          return cid === cleanIdEdit;
+        });
+        if(allWarehouseDocs.length > 1) {
+          const batchProp = writeBatch(db);
+          allWarehouseDocs.forEach(wDoc=>{
+            const updates = {};
+            if(hasDescChange) updates.desc = almacenEditForm.desc.toUpperCase();
+            if(hasSubcatChange) updates.subcategory = almacenEditForm.subcategory;
+            batchProp.update(getDocRef('inventory', wDoc.id), updates);
+          });
+          await batchProp.commit();
+        }
+      }
       if (hasCostChange) {
         const allDocs = (inventory||[]).filter(i => (i.displayId || (i.id||'').split('___')[0]) === cleanIdEdit);
         if (allDocs.length > 0) {
@@ -9397,7 +9417,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           </div>
                         </div>
                       </div>
-                    </div>
                     
                     <div className="flex justify-end pt-4"><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR FACTURA DE VENTA</button></div>
                   </form>
@@ -17542,6 +17561,110 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
           </div>
         </div>
+
+        {/* ── REPARAR DUPLICADOS ── */}
+        {appUser?.role === 'Master' && (
+          <div className="rounded-3xl shadow-sm border-2 border-amber-200 bg-amber-50 p-8">
+            <div className="flex items-center gap-3 mb-4">
+              <AlertTriangle size={20} className="text-amber-600"/>
+              <h2 className="text-lg font-black uppercase text-amber-900">Reparar Productos Duplicados — Inventario</h2>
+            </div>
+            <p className="text-[10px] text-amber-800 font-bold mb-4 leading-relaxed">
+              Detecta documentos con el mismo código SKU en múltiples almacenes que pueden haberse creado por error al editar. 
+              Fusiona stock del maestro, propaga descripción y elimina documentos vacíos (stock=0 sin historial).
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+              {(()=>{
+                const byCode = {};
+                (inventory||[]).forEach(i=>{
+                  const code=(i.displayId||(i.id||'').split('___')[0]).replace(/_inv$/i,'');
+                  if(!byCode[code]) byCode[code]=[];
+                  byCode[code].push(i);
+                });
+                const dups = Object.entries(byCode).filter(([c,docs])=>docs.length>1&&docs.some(d=>parseNum(d.stock||0)===0));
+                const orphans = Object.entries(byCode).filter(([c,docs])=>docs.length>1&&docs.every(d=>parseNum(d.stock||0)===0));
+                const ok = Object.entries(byCode).filter(([c,docs])=>docs.length>1&&docs.every(d=>parseNum(d.stock||0)>0));
+                return [
+                  {label:'Con duplicados vacíos', val:dups.length, color:'text-red-600 bg-red-50 border-red-200'},
+                  {label:'Todos sin stock', val:orphans.length, color:'text-orange-600 bg-orange-50 border-orange-200'},
+                  {label:'Multi-almacén OK', val:ok.length, color:'text-green-600 bg-green-50 border-green-200'},
+                ].map((k,i)=>(
+                  <div key={i} className={`rounded-xl border p-3 ${k.color}`}>
+                    <div className="text-xl font-black">{k.val}</div>
+                    <div className="text-[9px] font-bold uppercase">{k.label}</div>
+                  </div>
+                ));
+              })()}
+            </div>
+            <div className="flex gap-3 flex-wrap">
+              <button onClick={async()=>{
+                try {
+                  const byCode={};
+                  (inventory||[]).forEach(i=>{const code=(i.displayId||(i.id||'').split('___')[0]).replace(/_inv$/i,'');if(!byCode[code])byCode[code]=[];byCode[code].push(i);});
+                  const duplicates=Object.entries(byCode).filter(([c,docs])=>docs.length>1);
+                  if(duplicates.length===0) return setDialog({title:'✅ Sin duplicados',text:'Inventario limpio. No hay documentos duplicados.',type:'alert'});
+                  let report=`${duplicates.length} código(s) con múltiples documentos:\n\n`;
+                  duplicates.slice(0,15).forEach(([code,docs])=>{
+                    report+=`• ${code}: ${docs.length} docs | Stocks: ${docs.map(d=>`${d.almacen||'?'}=${formatNum(parseNum(d.stock||0))}`).join(', ')}\n`;
+                  });
+                  if(duplicates.length>15) report+=`...y ${duplicates.length-15} más.\n`;
+                  setDialog({title:`Reporte: ${duplicates.length} código(s) duplicados`,text:report,type:'alert'});
+                } catch(err){setDialog({title:'Error',text:err.message,type:'alert'});}
+              }} className="bg-amber-600 text-white px-5 py-2.5 rounded-xl font-black text-[9px] uppercase hover:bg-amber-700 flex items-center gap-2">
+                <Search size={13}/> Escanear Duplicados
+              </button>
+              <button onClick={async()=>{
+                try {
+                  const byCode={};
+                  (inventory||[]).forEach(i=>{const code=(i.displayId||(i.id||'').split('___')[0]).replace(/_inv$/i,'');if(!byCode[code])byCode[code]=[];byCode[code].push(i);});
+                  const toFix=Object.entries(byCode).filter(([c,docs])=>docs.length>1&&docs.some(d=>parseNum(d.stock||0)===0));
+                  if(toFix.length===0) return setDialog({title:'✅ Nada que fusionar',text:'No hay documentos vacíos para eliminar.',type:'alert'});
+                  setDialog({title:`Fusionar ${toFix.length} producto(s)`,text:`Se eliminarán los documentos con stock=0 para:\n${toFix.slice(0,10).map(([c])=>c).join('\n')}${toFix.length>10?`\n...y ${toFix.length-10} más.`:''}\n\nLos documentos con stock real se conservan íntegramente.`,type:'confirm',onConfirm:async()=>{
+                    const batch=writeBatch(db);
+                    let deleted=0,propagated=0;
+                    for(const [code,docs] of toFix){
+                      const sorted=[...docs].sort((a,b)=>parseNum(b.stock||0)-parseNum(a.stock||0));
+                      const master=sorted[0];
+                      // Propagate master's desc/cost to all sibling docs with stock
+                      sorted.filter(d=>d.id!==master.id&&parseNum(d.stock||0)>0).forEach(sib=>{
+                        batch.update(getDocRef('inventory',sib.id),{desc:master.desc||sib.desc,cost:master.cost||sib.cost,subcategory:master.subcategory||sib.subcategory||'',displayId:master.displayId||(master.id||'').split('___')[0]});
+                        propagated++;
+                      });
+                      // Delete empty duplicates
+                      sorted.filter(d=>d.id!==master.id&&parseNum(d.stock||0)===0).forEach(d=>{batch.delete(getDocRef('inventory',d.id));deleted++;});
+                    }
+                    await batch.commit();
+                    setDialog({title:'✅ Reparación completada',text:`Eliminados: ${deleted} doc(s) vacíos. Propagados: ${propagated} doc(s) actualizados.`,type:'alert'});
+                  }});
+                } catch(err){setDialog({title:'Error',text:err.message,type:'alert'});}
+              }} className="bg-red-600 text-white px-5 py-2.5 rounded-xl font-black text-[9px] uppercase hover:bg-red-700 flex items-center gap-2">
+                <Trash2 size={13}/> Eliminar Duplicados Vacíos
+              </button>
+              <button onClick={async()=>{
+                // Propagate desc+cost from ZI to all siblings
+                try {
+                  const byCode={};
+                  (inventory||[]).forEach(i=>{const code=(i.displayId||(i.id||'').split('___')[0]).replace(/_inv$/i,'');if(!byCode[code])byCode[code]=[];byCode[code].push(i);});
+                  const multi=Object.entries(byCode).filter(([c,docs])=>docs.length>1);
+                  if(multi.length===0) return setDialog({title:'Nada que sincronizar',text:'No hay productos multi-almacén.',type:'alert'});
+                  const batch=writeBatch(db);
+                  let synced=0;
+                  for(const [code,docs] of multi){
+                    const master=docs.find(d=>(d.almacen||d.id||'').includes('ZI'))||docs.sort((a,b)=>parseNum(b.stock||0)-parseNum(a.stock||0))[0];
+                    docs.filter(d=>d.id!==master.id).forEach(sib=>{
+                      batch.update(getDocRef('inventory',sib.id),{desc:master.desc||sib.desc,cost:master.cost||sib.cost,subcategory:master.subcategory||sib.subcategory||''});
+                      synced++;
+                    });
+                  }
+                  await batch.commit();
+                  setDialog({title:'✅ Sincronización completada',text:`${synced} documentos de almacenes sincronizados desde el maestro ZI.`,type:'alert'});
+                } catch(err){setDialog({title:'Error',text:err.message,type:'alert'});}
+              }} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-black text-[9px] uppercase hover:bg-blue-700 flex items-center gap-2">
+                <RefreshCw size={13}/> Sincronizar Descripciones
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ── ACTIVIDAD DE USUARIOS ── */}
         {appUser?.role === 'Master' && (() => {
