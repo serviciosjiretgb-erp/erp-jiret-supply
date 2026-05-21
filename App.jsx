@@ -160,7 +160,7 @@ const detectSubcategory = (code, desc) => {
   if (/CINTA|CINTA DE EMBALAR/.test(c)) return 'Cintas';
   if (/PAPEL KRAFT|KRAFT/.test(c)) return 'Papel Kraft';
   if (/DISPEN|DISPENSADOR/.test(c)) return 'Dispensadores';
-  if (/BOL-|BOLSA|EMBUTID|EMPAQUE|LAMINA/.test(c)) return 'Bolsas Plasticas';
+  if (/BOL-|BOLSA|EMBUTID|EMPAQUE|LAMINA|PAÑAL|FG-[A-Z]/.test(c) && !/TERMO|STRETCH|STRECTH|CINTA|KRAFT|DISPEN/.test(c)) return 'Bolsas Plásticas';
   if (/TERMO|THERMO|SHRINK|ENCOG/.test(c)) return 'Termoencogibles';
   return '';
 };
@@ -7316,9 +7316,64 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                        const items = grouped[cat];
                        const catTotalVal = items.reduce((s,i)=>s+(parseNum(i?.cost)*parseNum(i?.stock)),0);
                        const hdrClass = catColors[cat] || 'bg-gray-800';
+                       const isPT = cat === 'Productos Terminados';
+                       // For PT: build subcategory sub-groups
+                       const SUB_ORDER_PT = ['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
+                       const SUB_CLR = {'Bolsas Plásticas':'#1d4ed8','Termoencogibles':'#15803d','Stretch Film':'#7c3aed','Cintas':'#b45309','Papel Kraft':'#92400e','Dispensadores':'#be185d','Empaques Flexibles':'#4338ca','Otros Terminados':'#374151'};
+                       const ptSubGroups = {};
+                       if(isPT) {
+                         items.forEach(i=>{ const s=i?.subcategory||getItemSubcategory(i)||'Otros Terminados'; if(!ptSubGroups[s])ptSubGroups[s]=[]; ptSubGroups[s].push(i); });
+                       }
+                       const orderedSubs = isPT ? [...SUB_ORDER_PT.filter(s=>ptSubGroups[s]),...Object.keys(ptSubGroups).filter(s=>!SUB_ORDER_PT.includes(s))] : [];
+                       const renderRow = (inv,i) => {
+                         const totalVal = parseNum(inv?.cost)*parseNum(inv?.stock);
+                         return (
+                           <tr key={inv?.id||i} className={`border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
+                             <td className="py-2 px-3 font-black text-orange-600 text-[10px] whitespace-nowrap">
+                               <label className="flex items-center gap-1.5 cursor-pointer no-pdf print:hidden" style={{display:'inline-flex'}}>
+                                 {!inv?._isFGGroup && <input type="checkbox" className="w-3 h-3 rounded text-orange-500" checked={selectedInvItems.has(inv?.id)} onChange={e=>{const next=new Set(selectedInvItems);if(e.target.checked)next.add(inv?.id);else next.delete(inv?.id);setSelectedInvItems(next);}}/>}
+                               </label>
+                               {inv?.id}
+                             </td>
+                             <td className="py-2 px-3 font-bold text-gray-800">{inv?.desc}</td>
+                             <td className="py-2 px-3 text-center font-bold text-gray-500">{inv?.unit||'und'}</td>
+                             <td className="py-2 px-3 text-right font-black text-gray-900">{formatNum(inv?.stock)}</td>
+                             <td className="py-2 px-3">
+                               {inv?._warehouseBreakdown?.length > 1 ? (
+                                 <div className="space-y-0.5">
+                                   {inv._warehouseBreakdown.map((w,wi)=>(
+                                     <div key={wi} className="flex gap-2 text-[8px] font-bold">
+                                       <span className="text-gray-400">{(w.almacen||'').replace('ALMACEN ','')}</span>
+                                       <span className="text-gray-700 font-black">{formatNum(w.stock)}</span>
+                                     </div>
+                                   ))}
+                                 </div>
+                               ) : (
+                                 <span className="text-[8px] text-gray-400">{(inv?.almacen||inv?._warehouseBreakdown?.[0]?.almacen||'').replace('ALMACEN ','')}</span>
+                               )}
+                             </td>
+                             <td className="py-2 px-3 text-right font-bold text-gray-600">
+                               ${formatNum(inv?.cost)}
+                               {inv?._warehouseBreakdown?.length > 1 && <span className="text-[8px] text-orange-400 ml-0.5">prom</span>}
+                             </td>
+                             <td className="py-2 px-3 text-right font-black text-green-700">${formatNum(totalVal)}</td>
+                             <td className="py-2 px-3 text-center no-pdf print:hidden">
+                               <div className="flex gap-1 justify-center">
+                                 {inv?._isFGGroup ? (
+                                   <button onClick={()=>setInvView('finished')} className="p-1.5 bg-green-50 text-green-600 rounded-lg hover:bg-green-600 hover:text-white text-[8px] font-black uppercase transition-all" title="Ver en Terminados"><Package size={10}/></button>
+                                 ) : (
+                                   <>
+                                     <button onClick={()=>requireAdminPassword(()=>startEditInvItem(inv),'Editar artículo')} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-600 hover:text-white transition-all"><Edit size={11}/></button>
+                                     <button onClick={()=>requireAdminPassword(async()=>{const cleanId2=inv.displayId||inv.id.split('___')[0]||inv.id;const realDocs=(inventory||[]).filter(i=>{const cid=i.displayId||(i.id||'').split('___')[0];return cid===cleanId2||i.id===cleanId2;});if(realDocs.length>0){for(const d of realDocs)await deleteDoc(getDocRef('inventory',d.id));}else{await deleteDoc(getDocRef('inventory',inv.id));}setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});},'Eliminar artículo')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={11}/></button>
+                                   </>
+                                 )}
+                               </div>
+                             </td>
+                           </tr>
+                         );
+                       };
                        return (
                          <div key={cat} className="rounded-2xl border border-gray-200 overflow-hidden">
-                           {/* Category header */}
                            <div className={`${hdrClass} text-white px-5 py-2.5 flex justify-between items-center`}>
                              <span className="font-black text-sm uppercase">{cat}</span>
                              <span className="text-gray-300 text-[10px] font-bold">{items.length} artículo{items.length!==1?'s':''} · Valor: ${formatNum(catTotalVal)}</span>
@@ -7338,53 +7393,24 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                  </tr>
                                </thead>
                                <tbody>
-                                 {items.sort((a,b)=>(a.id||'').localeCompare(b.id||'')).map((inv,i)=>{
-                                   const totalVal = parseNum(inv?.cost)*parseNum(inv?.stock);
-                                   return (
-                                     <tr key={inv?.id} className={`border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
-                                       <td className="py-2 px-3 font-black text-orange-600 text-[10px] whitespace-nowrap">
-                                         <label className="flex items-center gap-1.5 cursor-pointer no-pdf print:hidden" style={{display:'inline-flex'}}>
-                                           {!inv?._isFGGroup && <input type="checkbox" className="w-3 h-3 rounded text-orange-500" checked={selectedInvItems.has(inv?.id)} onChange={e=>{const next=new Set(selectedInvItems);if(e.target.checked)next.add(inv?.id);else next.delete(inv?.id);setSelectedInvItems(next);}}/>}
-                                         </label>
-                                         {inv?.id}
-                                       </td>
-                                       <td className="py-2 px-3 font-bold text-gray-800">{inv?.desc}</td>
-                                       <td className="py-2 px-3 text-center font-bold text-gray-500">{inv?.unit||'und'}</td>
-                                       <td className="py-2 px-3 text-right font-black text-gray-900">{formatNum(inv?.stock)}</td>
-                                       <td className="py-2 px-3">
-                                         {inv?._warehouseBreakdown?.length > 1 ? (
-                                           <div className="space-y-0.5">
-                                             {inv._warehouseBreakdown.map((w,wi)=>(
-                                               <div key={wi} className="flex gap-2 text-[8px] font-bold">
-                                                 <span className="text-gray-400">{(w.almacen||'').replace('ALMACEN ','')}</span>
-                                                 <span className="text-gray-700 font-black">{formatNum(w.stock)}</span>
-                                               </div>
-                                             ))}
-                                           </div>
-                                         ) : (
-                                           <span className="text-[8px] text-gray-400">{(inv?.almacen||inv?._warehouseBreakdown?.[0]?.almacen||'').replace('ALMACEN ','')}</span>
-                                         )}
-                                       </td>
-                                       <td className="py-2 px-3 text-right font-bold text-gray-600">
-                                         ${formatNum(inv?.cost)}
-                                         {inv?._warehouseBreakdown?.length > 1 && <span className="text-[8px] text-orange-400 ml-0.5">prom</span>}
-                                       </td>
-                                       <td className="py-2 px-3 text-right font-black text-green-700">${formatNum(totalVal)}</td>
-                                       <td className="py-2 px-3 text-center no-pdf print:hidden">
-                                         <div className="flex gap-1 justify-center">
-                                           {inv?._isFGGroup ? (
-                                             <button onClick={()=>setInvView('finished')} className="p-1.5 bg-green-50 text-green-600 rounded-lg hover:bg-green-600 hover:text-white text-[8px] font-black uppercase transition-all" title="Ver en Terminados"><Package size={10}/></button>
-                                           ) : (
-                                             <>
-                                               <button onClick={()=>requireAdminPassword(()=>startEditInvItem(inv),'Editar artículo')} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-600 hover:text-white transition-all"><Edit size={11}/></button>
-                                               <button onClick={()=>requireAdminPassword(async()=>{const cleanId2=inv.displayId||inv.id.split('___')[0]||inv.id;const realDocs=(inventory||[]).filter(i=>{const cid=i.displayId||(i.id||'').split('___')[0];return cid===cleanId2||i.id===cleanId2;});if(realDocs.length>0){for(const d of realDocs)await deleteDoc(getDocRef('inventory',d.id));}else{await deleteDoc(getDocRef('inventory',inv.id));}setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});},'Eliminar artículo')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={11}/></button>
-                                             </>
-                                           )}
-                                         </div>
-                                       </td>
-                                     </tr>
-                                   );
-                                 })}
+                                 {isPT ? (
+                                   // PT: subcategory sub-headers + items
+                                   orderedSubs.flatMap(sub => {
+                                     const subItems = (ptSubGroups[sub]||[]).sort((a,b)=>(a.id||'').localeCompare(b.id||''));
+                                     const subVal = subItems.reduce((s,i)=>s+(parseNum(i?.cost)*parseNum(i?.stock)),0);
+                                     const subColor = SUB_CLR[sub]||'#374151';
+                                     return [
+                                       <tr key={`subhdr-${sub}`}>
+                                         <td colSpan="8" className="py-1.5 px-3 text-[9px] font-black uppercase tracking-wider text-white" style={{background:subColor}}>
+                                           ↳ {sub} — {subItems.length} artículo{subItems.length!==1?'s':''} · ${formatNum(subVal)}
+                                         </td>
+                                       </tr>,
+                                       ...subItems.map((inv,i) => renderRow(inv,i))
+                                     ];
+                                   })
+                                 ) : (
+                                   items.sort((a,b)=>(a.id||'').localeCompare(b.id||'')).map((inv,i) => renderRow(inv,i))
+                                 )}
                                </tbody>
                                <tfoot className="bg-gray-100 border-t border-gray-200">
                                  <tr className="font-black text-[10px]">
@@ -17977,93 +18003,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           </div>
         </div>
 
-
-        {/* ── ACTIVIDAD DE USUARIOS ── */}
-        {appUser?.role === 'Master' && (() => {
-          const [actSearch, setActSearch] = [activitySearch, setActivitySearch];
-          const [actDateFrom, setActDateFrom] = [activityDateFrom, setActivityDateFrom];
-          const [actDateTo, setActDateTo] = [activityDateTo, setActivityDateTo];
-          const filtActs = (userActivityLog||[]).filter(a => {
-            if(actSearch && !(a.username||'').toUpperCase().includes(actSearch.toUpperCase()) && !(a.action||'').toUpperCase().includes(actSearch.toUpperCase())) return false;
-            if(actDateFrom && a.date < actDateFrom) return false;
-            if(actDateTo && a.date > actDateTo) return false;
-            return true;
-          }).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-          return (
-            <div className="rounded-3xl shadow-sm border-2 border-gray-200 bg-white p-8">
-              <div className="flex flex-wrap justify-between items-center border-b pb-4 mb-5 gap-3">
-                <h2 className="text-xl font-black uppercase flex items-center gap-3 text-black"><Eye className="text-orange-500" size={22}/> Registro de Actividad de Usuarios</h2>
-                <div className="flex gap-2 flex-wrap">
-                  <button onClick={()=>handleExportPDF('Actividad_Usuarios',true)} className="bg-black text-white px-4 py-2 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={13}/> PDF</button>
-                  <button onClick={()=>setDialog({title:'🗑 Limpiar Registros',text:'¿Eliminar los registros de actividad filtrados actualmente? Si no hay filtro de fecha se borran TODOS. Esta acción es irreversible.',type:'confirm',onConfirm:async()=>{
-                    try {
-                      const toDelete = (userActivityLog||[]).filter(a=>{
-                        const _df=activityDateFrom||''; const _dt=activityDateTo||'';
-                        if(_df && a.date < _df) return false;
-                        if(_dt && a.date > _dt) return false;
-                        return true;
-                      });
-                      const b = writeBatch(db);
-                      toDelete.forEach(a=>b.delete(getDocRef('userActivity',a.id)));
-                      await b.commit();
-                      setDialog({title:'✅ Limpiado',text:`${toDelete.length} registros eliminados.`,type:'alert'});
-                    } catch(err){setDialog({title:'Error',text:err.message,type:'alert'});}
-                  }})} className="bg-red-100 text-red-700 px-4 py-2 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-red-200"><Trash2 size={13}/> Limpiar {activityDateFrom||activityDateTo?'filtrado':'todo'}</button>
-                </div>
-              </div>
-              {/* Filters */}
-              <div className="flex flex-wrap gap-3 mb-4">
-                <div className="relative">
-                  <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
-                  <input type="text" value={activitySearch} onChange={e=>setActivitySearch(e.target.value)} placeholder="Buscar usuario o acción..."
-                    className="border-2 border-gray-200 rounded-xl pl-7 pr-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-48"/>
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-[9px] font-black text-gray-500 uppercase">Desde:</label>
-                  <input type="date" value={activityDateFrom} onChange={e=>setActivityDateFrom(e.target.value)} className="border-2 border-gray-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-[9px] font-black text-gray-500 uppercase">Hasta:</label>
-                  <input type="date" value={activityDateTo} onChange={e=>setActivityDateTo(e.target.value)} className="border-2 border-gray-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
-                </div>
-                {(activitySearch||activityDateFrom||activityDateTo) && <button onClick={()=>{setActivitySearch('');setActivityDateFrom('');setActivityDateTo('');}} className="text-[9px] font-black text-red-500 uppercase hover:underline">✕ Limpiar</button>}
-                <span className="ml-auto text-[9px] font-bold text-gray-500">{filtActs.length} registros</span>
-              </div>
-              {/* Table */}
-              <div className="overflow-x-auto rounded-xl border border-gray-200">
-                <table className="w-full text-xs" id="pdf-content">
-                  <div className="hidden pdf-header p-4 mb-2"><ReportHeader/><h1 className="text-lg font-black uppercase border-b-4 border-orange-500 pb-1">REGISTRO DE ACTIVIDAD DE USUARIOS</h1></div>
-                  <thead className="bg-gray-800 text-white">
-                    <tr className="uppercase font-black text-[9px]">
-                      <th className="py-2.5 px-4 text-left">Fecha / Hora</th>
-                      <th className="py-2.5 px-4 text-left">Usuario</th>
-                      <th className="py-2.5 px-4 text-center">Acción</th>
-                      <th className="py-2.5 px-4 text-left">Módulo</th>
-                      <th className="py-2.5 px-4 text-left">Detalle</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {filtActs.length === 0 ? (
-                      <tr><td colSpan="5" className="py-8 text-center text-gray-400 font-bold uppercase text-[10px]">Sin registros para los filtros seleccionados</td></tr>
-                    ) : filtActs.slice(0, 200).map((a, i) => (
-                      <tr key={i} className="hover:bg-gray-50">
-                        <td className="py-2 px-4 font-bold text-gray-500 text-[9px] whitespace-nowrap">
-                          {a.date} {a.timestamp ? new Date(a.timestamp).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'}) : ''}
-                        </td>
-                        <td className="py-2 px-4 font-black text-orange-600 text-[10px]">{a.username} <span className="text-gray-400 font-bold">({a.name||'—'})</span></td>
-                        <td className="py-2 px-4 text-center">
-                          <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${a.action==='LOGIN'?'bg-green-100 text-green-700':a.action==='LOGOUT'?'bg-gray-100 text-gray-600':'bg-blue-100 text-blue-700'}`}>{a.action}</span>
-                        </td>
-                        <td className="py-2 px-4 text-[10px] font-bold">{a.module||'—'}</td>
-                        <td className="py-2 px-4 text-[10px] text-gray-500">{a.details||'—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          );
-                })()}
 
       </div>
     );
