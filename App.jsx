@@ -3578,9 +3578,9 @@ export default function App() {
             <div className="w-16 h-1 bg-orange-500 mx-auto mt-2 rounded-full"/>
           </div>
 
-          {/* Grid — responsive: 1 col mobile, 2 tablet, 4 desktop */}
+          {/* Grid — responsive: 1 col mobile, 2 tablet, 3 desktop */}
           <div className="px-4 sm:px-6 pb-8">
-            <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(min(100%,260px),1fr))', gap:16}}>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(min(100%,340px),1fr))', gap:16}}>
               {moduleCards.map((card, i) => {
                 const cfg = CARD_CONFIG[card.tab] || {dark:false,borderColor:card.color,chartType:'configText'};
                 const stats = card.stats ? card.stats() : {};
@@ -9057,22 +9057,42 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     ? parseNum(inv.montoBase||0) / (inv.itemsFacturados||[]).length / qty
                     : parseNum(inv.montoBase||0) / qty;
                 const total = precioVenta * qty;
-                // codigo: use the exact product code from Inventario de Productos Terminados
-                // Priority: invCode saved on item → fgId lookup in finishedGoodsInventory → fgId cleaned → '—'
+                // codigo: buscar primero en Inventario General (Productos Terminados) por descripción
+                // luego invCode limpio, luego finishedGoodsInventory por fgId
                 let codigo = '';
-                if(it.invCode && !/^ALMACEN/.test(it.invCode) && !/^\d{8,}$/.test(it.invCode)) {
-                  // invCode is the clean product code (set from inventory or FG id)
-                  codigo = it.invCode.split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                const _cleanInvCode = (it.invCode||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+
+                // 1. invCode válido (no es nombre de almacén ni timestamp puro)
+                if(_cleanInvCode && !/^ALMACEN/i.test(_cleanInvCode) && !/^\d{8,}$/.test(_cleanInvCode)) {
+                  codigo = _cleanInvCode;
                 }
+
+                // 2. Si no hay código o el invCode era ALMACEN: buscar por descripción en inventory PT
+                if(!codigo) {
+                  const desc = (it.desc||'').toUpperCase().trim();
+                  if(desc) {
+                    const ptMatch = (inventory||[]).find(i =>
+                      i.category==='Productos Terminados' &&
+                      (i.desc||'').toUpperCase().trim() === desc
+                    );
+                    if(ptMatch) {
+                      codigo = (ptMatch.displayId || (ptMatch.id||'').split('___')[0]).replace(/_inv$/i,'').trim();
+                    }
+                  }
+                }
+
+                // 3. Lookup por fgId en finishedGoodsInventory → también intentar match por descripción en PT
                 if(!codigo && it.fgId) {
-                  // Look up in finishedGoodsInventory to get the real product id
                   const fgDoc = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
-                  if(fgDoc) codigo = fgDoc.id;
+                  if(fgDoc) {
+                    const fgDesc = (fgDoc.producto||'').toUpperCase().trim();
+                    const ptByDesc = fgDesc ? (inventory||[]).find(i=>i.category==='Productos Terminados'&&(i.desc||'').toUpperCase().trim()===fgDesc) : null;
+                    codigo = ptByDesc ? (ptByDesc.displayId||(ptByDesc.id||'').split('___')[0]).replace(/_inv$/i,'').trim() : fgDoc.id;
+                  }
                 }
-                if(!codigo && it.fgId) {
-                  codigo = it.fgId.split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
-                }
-                if(!codigo) codigo = '—';
+
+                // 4. Fallback final
+                if(!codigo) codigo = _cleanInvCode || (it.fgId||'').split('___')[0] || '—';
                 rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
@@ -9341,22 +9361,28 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
                       {/* Carrito de lotes agregados */}
                           {fgItems.length > 0 && (
-                            <div className="bg-white rounded-xl border border-green-200 overflow-hidden">
-                              <table className="w-full text-xs">
-                                <thead className="bg-green-600 text-white">
-                                  <tr className="font-black text-[9px] uppercase bg-gray-50">
-                                    <th className="p-2 text-left">Código / Producto</th>
-                                    <th className="p-2 text-center">Cant. Total</th>
-                                    <th className="p-2 text-right">Precio U.</th>
-                                    <th className="p-2 text-right">Total</th>
-                                    <th className="p-2 text-center">Almacenes</th>
-                                    <th className="p-2 text-center">Quitar</th>
+                            <div className="bg-white rounded-xl border-2 border-green-300 overflow-x-auto mt-2">
+                              <div className="flex items-center justify-between px-4 py-2 bg-green-600 text-white">
+                                <span className="text-[10px] font-black uppercase tracking-wider">🛒 Productos Seleccionados ({fgItems.length})</span>
+                                <span className="text-[9px] font-bold opacity-80">Haz clic en ✕ para quitar un producto</span>
+                              </div>
+                              <table className="w-full text-xs" style={{minWidth:680}}>
+                                <thead>
+                                  <tr className="font-black text-[9px] uppercase bg-gray-50 border-b-2 border-green-200">
+                                    <th className="p-2.5 text-left" style={{width:120}}>Código</th>
+                                    <th className="p-2.5 text-left">Producto / Descripción</th>
+                                    <th className="p-2.5 text-center" style={{width:90}}>Cant. Total</th>
+                                    <th className="p-2.5 text-right" style={{width:90}}>Precio U.</th>
+                                    <th className="p-2.5 text-right" style={{width:90}}>Total</th>
+                                    <th className="p-2.5 text-center" style={{width:70}}>Alm.</th>
+                                    <th className="p-2.5 text-center" style={{width:60}}>Quitar</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-green-100">
                                   {fgItems.map((item, idx) => (
-                                    <tr key={idx} className="hover:bg-green-50">
-                                      <td className="p-2.5 font-black text-orange-600 text-[9px] whitespace-nowrap">{item.invCode||cleanFGCode(item.fgId||'')}<br/><span className="font-bold text-gray-700 text-[9px]">{item.desc}</span></td>
+                                    <tr key={idx} className="hover:bg-red-50 group">
+                                      <td className="p-2.5 font-black text-orange-600 text-[9px]" style={{width:120}}>{item.invCode||cleanFGCode(item.fgId||'')}</td>
+                                      <td className="p-2.5 font-bold text-gray-800 text-[10px]">{item.desc}</td>
                                       <td className="p-2.5 text-center font-black text-green-700 text-[10px]">{formatNum(item.cantidad)} <span className="text-[8px] text-gray-400">{item.unidad}</span></td>
                                       <td className="p-2.5 text-right font-black text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
                                       <td className="p-2.5 text-right font-black text-gray-800 text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
@@ -9385,11 +9411,15 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                           </div>;
                                         })()}
                                       </td>
-                                      <td className="p-2.5 text-center"><button type="button" onClick={()=>setFgItems(p=>p.filter((_,i)=>i!==idx))} className="text-red-400 hover:text-red-600 p-1"><X size={13}/></button></td>
+                                      <td className="p-2.5 text-center">
+                                        <button type="button" onClick={()=>setFgItems(p=>p.filter((_,i)=>i!==idx))}
+                                          className="bg-red-100 hover:bg-red-500 text-red-500 hover:text-white p-1.5 rounded-lg transition-all font-black text-xs" title="Quitar producto">
+                                          <X size={13}/>
+                                        </button>
+                                      </td>
                                     </tr>
                                   ))}
                                 </tbody>
-
                               </table>
                             </div>
                           )}
@@ -9459,7 +9489,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               {fgItems.length > 0 ? fgItems.map((item,i)=>(
                                 <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
                                   <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode ? cleanFGCode(item.invCode) : cleanFGCode(item.fgId||'').replace(/^FG-\d{10,}$/,'')}</td>
-                                  <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{width:"28%",maxWidth:140,wordBreak:"break-word",lineHeight:1.3}}>{item.desc}</td>
+                                  <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{wordBreak:"break-word",lineHeight:1.3}}>{item.desc}</td>
                                   <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
                                   <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:"—"}</td>
                                   <td className="py-2 px-2 text-right font-black text-green-700 text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:"—"}</td>
