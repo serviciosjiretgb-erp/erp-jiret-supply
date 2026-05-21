@@ -5776,26 +5776,34 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   {/* ── TABLA UNIFICADA POR SUBCATEGORÍA ── */}
                   {(() => {
                     // Merge FG production + inventory PT into single table
-                    // ONLY from inventory with category 'Productos Terminados'
-                    const allPT = (inventory||[])
-                      .filter(i=>i.category==='Productos Terminados')
-                      .map(i=>{
-                        // Clean the code: remove _inv suffix, ___ALMACEN... suffixes
-                        const rawId = (i.displayId || i.id || '');
-                        const baseId = rawId.split('___')[0];
-                        const cleanCode = baseId.replace(/_inv$/i,'').replace(/\s+T-\d+.*_inv$/i,'').trim();
-                        return {
-                          id: cleanCode,
-                          desc: i.desc || '',
-                          category: 'Productos Terminados',
-                          subcategory: i.subcategory || getItemSubcategory(i) || 'Otros Terminados',
-                          unit: i.unit || 'und',
-                          stock: parseNum(i.stock||0),
-                          cost: parseNum(i.cost||0),
-                          isProduccion: false,
-                          _invId: i.id
-                        };
+                    // CONSOLIDATE by SKU (same code across warehouses = 1 row)
+                    const ptByCode = {};
+                    (inventory||[]).filter(i=>i.category==='Productos Terminados').forEach(i=>{
+                      const rawId = (i.displayId || i.id || '');
+                      const cleanCode = rawId.split('___')[0].replace(/_inv$/i,'').trim();
+                      if(!ptByCode[cleanCode]) ptByCode[cleanCode] = {
+                        id: cleanCode,
+                        desc: i.desc || '',
+                        category: 'Productos Terminados',
+                        subcategory: i.subcategory || getItemSubcategory(i) || 'Otros Terminados',
+                        unit: i.unit || 'und',
+                        stock: 0, // will sum
+                        cost: parseNum(i.cost||0),
+                        isProduccion: false,
+                        _invId: i.id,
+                        warehouses: [] // for breakdown
+                      };
+                      const qty = parseNum(i.stock||0);
+                      ptByCode[cleanCode].stock += qty;
+                      ptByCode[cleanCode].warehouses.push({
+                        almacen: i.almacen || rawId.split('___')[1]?.replace(/-/g,' ') || '',
+                        stock: qty, docId: i.id
                       });
+                      // Use latest non-zero cost and desc
+                      if(parseNum(i.cost||0) > 0) ptByCode[cleanCode].cost = parseNum(i.cost);
+                      if(i.desc && i.desc.length > (ptByCode[cleanCode].desc||'').length) ptByCode[cleanCode].desc = i.desc;
+                    });
+                    const allPT = Object.values(ptByCode);
                     // Filter by search
                     const filtered = allPT.filter(i=>{
                       if(fgSearch && !(i.id||'').toUpperCase().includes(fgSearch.toUpperCase()) && !(i.desc||'').toUpperCase().includes(fgSearch.toUpperCase()) && !(i.cliente||'').toUpperCase().includes(fgSearch.toUpperCase())) return false;
@@ -5808,8 +5816,30 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     const SUB_ORDER = ['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
                     const orderedSubs = [...SUB_ORDER.filter(s=>subGroups[s]), ...Object.keys(subGroups).filter(s=>!SUB_ORDER.includes(s))];
                     if(filtered.length===0) return <div className="text-center py-12 text-gray-400 font-bold uppercase text-xs">No hay productos terminados registrados</div>;
+
+                    // Excel export function for PT
+                    const exportPTExcel = (subset) => {
+                      const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><style>th{background:#f97316;color:#fff;font-size:9px;padding:5px 8px;border:1px solid #f97316}td{border:1px solid #ccc;padding:4px 8px;font-size:10px}body{font-family:Arial}</style></head><body>
+                      <div style="border-bottom:3px solid #f97316;padding-bottom:10px;margin-bottom:16px">
+                        <h2 style="margin:0;font-size:14px;font-weight:900">SERVICIOS JIRET G&amp;B, C.A.</h2>
+                        <p style="margin:2px 0;font-size:11px;font-weight:bold">RIF: J-412309374</p>
+                        <h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900">INVENTARIO PRODUCTOS TERMINADOS — CONSOLIDADO</h3>
+                        <p style="font-size:10px">Generado: ${getTodayDate()}</p>
+                      </div>
+                      <table><thead><tr><th>Código</th><th>Descripción</th><th>Subcategoría</th><th>U.M.</th><th>Existencia Consolidada</th><th>Costo U. ($)</th><th>Valor Total ($)</th><th>Almacenes</th></tr></thead><tbody>
+                      ${subset.map(i=>`<tr><td>${i.id}</td><td>${i.desc}</td><td>${i.subcategory}</td><td>${i.unit}</td><td style="text-align:right">${formatNum(i.stock)}</td><td style="text-align:right">${formatNum(i.cost)}</td><td style="text-align:right">${formatNum(i.stock*i.cost)}</td><td>${(i.warehouses||[]).filter(w=>w.stock>0).map(w=>`${w.almacen}: ${formatNum(w.stock)}`).join(' | ')}</td></tr>`).join('')}
+                      </tbody><tfoot><tr><td colspan="4" style="font-weight:900;text-align:right">TOTALES</td><td style="text-align:right;font-weight:900">${formatNum(subset.reduce((s,i)=>s+i.stock,0))}</td><td/><td style="text-align:right;font-weight:900">$${formatNum(subset.reduce((s,i)=>s+i.stock*i.cost,0))}</td><td/></tr></tfoot></table></body></html>`;
+                      const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`PT_Consolidado_${getTodayDate()}.xls`;a.click();
+                    };
+
                     return (
                       <div className="space-y-4">
+                        {/* Excel Todos button */}
+                        <div className="flex justify-end">
+                          <button onClick={()=>exportPTExcel(filtered)} className="bg-green-600 text-white px-5 py-2.5 rounded-xl font-black text-[9px] uppercase hover:bg-green-700 flex items-center gap-2 shadow-sm">
+                            <Download size={13}/> EXCEL TODOS
+                          </button>
+                        </div>
                         {orderedSubs.map(sub=>{
                           const items = subGroups[sub]||[];
                           const subTotal = items.reduce((s,i)=>s+i.stock*i.cost,0);
@@ -5826,7 +5856,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                       <th className="py-2 px-3 text-left">Código</th>
                                       <th className="py-2 px-3 text-left">Descripción</th>
                                       <th className="py-2 px-3 text-center">U.M.</th>
-                                      <th className="py-2 px-3 text-right">Stock</th>
+                                      <th className="py-2 px-3 text-right">Exist. Consolidada</th>
+                                      <th className="py-2 px-3 text-left text-[8px]">Por Almacén</th>
                                       <th className="py-2 px-3 text-right">Costo U. ($)</th>
                                       <th className="py-2 px-3 text-right">Valor ($)</th>
                                       <th className="py-2 px-3 text-center w-16">Editar</th>
@@ -5839,6 +5870,20 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                         <td className="py-2 px-3 font-bold text-gray-800">{item.desc}{item.cliente&&<span className="text-[8px] text-gray-400 ml-1">| {item.cliente}</span>}</td>
                                         <td className="py-2 px-3 text-center font-bold text-gray-500">{item.unit}</td>
                                         <td className="py-2 px-3 text-right font-black text-gray-900">{formatNum(item.stock)}</td>
+                                        <td className="py-2 px-3">
+                                          {(item.warehouses||[]).filter(w=>w.stock>0).length>1?(
+                                            <div className="space-y-0.5">
+                                              {(item.warehouses||[]).filter(w=>w.stock>0).map((w,wi)=>(
+                                                <div key={wi} className="flex gap-2 text-[8px] font-bold text-gray-500">
+                                                  <span className="text-gray-400">{(w.almacen||'').replace('ALMACEN ','')}</span>
+                                                  <span className="text-gray-700 font-black">{formatNum(w.stock)}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          ):(
+                                            <span className="text-[8px] text-gray-400">{((item.warehouses||[])[0]?.almacen||'').replace('ALMACEN ','')}</span>
+                                          )}
+                                        </td>
                                         <td className="py-2 px-3 text-right font-bold text-gray-600">${formatNum(item.cost)}</td>
                                         <td className="py-2 px-3 text-right font-black text-green-700">${formatNum(item.stock*item.cost)}</td>
                                         <td className="py-2 px-3 text-center">
@@ -6576,6 +6621,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    <thead className="bg-gray-100 border-b-2 border-gray-200">
                      <tr className="uppercase font-black text-[10px] tracking-widest text-gray-500">
                        <th className="py-4 px-4 border-r">OP / Fase</th>
+                       <th className="py-4 px-4 border-r">Lote</th>
                        <th className="py-4 px-4 border-r">Fecha / Solicitante</th>
                        <th className="py-4 px-4 border-r">Insumos Solicitados</th>
                        <th className="py-4 px-4 border-r text-center">Estado</th>
@@ -6591,12 +6637,24 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                          return (invIt?.desc||it.id||'').toUpperCase().includes(reqFilter);
                        });
                        const phaseMatch = (r.phase||'').toUpperCase().includes(reqFilter);
-                       return opMatch || prodMatch || phaseMatch;
-                     }).map(r => (
+                       const loteMatch = (r.lote||r.batch||'').toUpperCase().includes(reqFilter);
+                       return opMatch || prodMatch || phaseMatch || loteMatch;
+                     }).map(r => {
+                       // Calc total KG from items
+                       const totalKg = (r.items||[]).reduce((s,it)=>{
+                         const invIt=(inventory||[]).find(inv=>inv.id===it.id);
+                         const unit=(invIt?.unit||'').toUpperCase();
+                         if(unit==='KG'||unit==='K'||unit.includes('KG')) return s+parseNum(it.qty||it.quantity||0);
+                         return s;
+                       },0);
+                       return (
                        <tr key={r.id} className="hover:bg-gray-50">
                          <td className="py-4 px-4 font-black border-r text-orange-600 text-lg">
                            {String(r.opId).replace('OP-', '').padStart(5, '0')}<br/>
                            <span className="text-[10px] text-gray-500 block text-black">{r.phase}</span>
+                         </td>
+                         <td className="py-4 px-4 border-r">
+                           <span className="bg-orange-100 text-orange-800 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase">{r.lote||r.batch||r.batchId||'—'}</span>
                          </td>
                          <td className="py-4 px-4 border-r font-bold">
                            {r.date}<br/>
@@ -6608,6 +6666,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                <li key={idx}><span className="font-black bg-gray-100 px-2 rounded">{it.qty}</span> x {(inventory || []).find(inv=>inv.id===it.id)?.desc || it.id}</li>
                              ))}
                            </ul>
+                           {totalKg > 0 && <div className="mt-1.5 text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded inline-block">⚖ Total KG: {formatNum(totalKg)}</div>}
                          </td>
                          <td className="py-4 px-4 text-center border-r">
                            {r.status === 'PENDIENTE' && <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border border-orange-200">PENDIENTE</span>}
@@ -6625,8 +6684,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                            )}
                          </td>
                        </tr>
-                     ))}
-                     {invRequisitions.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin Requisiciones Registradas</td></tr>}
+                       );
+                     })}
+                     {invRequisitions.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">Sin Requisiciones Registradas</td></tr>}
                    </tbody>
                  </table>
                </div>
