@@ -442,6 +442,7 @@ export default function App() {
   const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
 
   // Estados para Toma Física
+  const [tomaFisicaDate, setTomaFisicaDate] = useState(getTodayDate());
   const [physicalCounts, setPhysicalCounts] = useState({});
   const [tomasFisicas, setTomasFisicas] = useState([]);
   const [showTomaHistorial, setShowTomaHistorial] = useState(false);
@@ -1208,7 +1209,7 @@ export default function App() {
               const qty = Math.abs(ch.diff);
               const movId = `TF-${timestamp}-${ch.item.id}`;
               batch.set(getDocRef('inventoryMovements', movId), {
-                id: movId, date: getTodayDate(), itemId: ch.item.id, itemName: ch.item.desc,
+                id: movId, date: tomaFisicaDate||getTodayDate(), itemId: ch.item.id, itemName: ch.item.desc,
                 type, qty, cost: ch.item.cost, totalValue: qty * ch.item.cost,
                 reference: 'TOMA FÍSICA', notes: 'AJUSTE MASIVO SISTEMA',
                 timestamp, user: appUser?.name || 'Sistema'
@@ -1222,7 +1223,7 @@ export default function App() {
               batch.update(getDocRef('finishedGoodsInventory', mainDoc.id), updateField);
               const movId = `TF-FG-${timestamp}-${mainDoc.id}`;
               batch.set(getDocRef('inventoryMovements', movId), {
-                id: movId, date: getTodayDate(), itemId: `FG::${mainDoc.id}`,
+                id: movId, date: tomaFisicaDate||getTodayDate(), itemId: `FG::${mainDoc.id}`,
                 itemName: `${mainDoc.categoria||mainDoc.producto||'FG'} — ${mainDoc.cliente||''}`,
                 type: ch.diff > 0 ? 'AJUSTE (POSITIVO)' : 'AJUSTE (NEGATIVO)',
                 qty: Math.abs(ch.diff), cost: mainDoc.costoUnitario||0,
@@ -2699,7 +2700,16 @@ export default function App() {
   // ============================================================================
   const handleSendRequisitionToAlmacen = async () => {
     if (!phaseForm.insumos || phaseForm.insumos.length === 0) { return setDialog({title: 'Aviso', text: 'Agregue insumos a la lista antes de solicitar a almacén.', type: 'alert'}); }
-    const newReq = { opId: selectedPhaseReqId, phase: activePhaseTab, items: phaseForm.insumos, status: 'PENDIENTE', timestamp: Date.now(), date: getTodayDate(), user: appUser?.name || 'Operador de Planta' };
+    // Include lote number from the current active batch if available
+    const reqLote = (() => {
+      const req = (requirements||[]).find(r=>r.id===selectedPhaseReqId);
+      const prod = req?.production || {};
+      const phaseProd = prod[activePhaseTab] || {};
+      const batches = phaseProd.batches || [];
+      // Use the last active batch number
+      return batches.length > 0 ? `LOTE-${String(batches.length).padStart(3,'0')}` : '';
+    })();
+    const newReq = { opId: selectedPhaseReqId, phase: activePhaseTab, items: phaseForm.insumos, status: 'PENDIENTE', lote: reqLote, timestamp: Date.now(), date: getTodayDate(), user: appUser?.name || 'Operador de Planta' };
     try {
       await addDoc(getColRef('inventoryRequisitions'), newReq);
       setPhaseForm({...phaseForm, insumos: []});
@@ -6434,7 +6444,18 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             <div className="flex gap-2">
               <button onClick={()=>setShowTomaHistorial(true)} className="bg-white border-2 border-orange-200 text-orange-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-orange-50 flex items-center gap-2"><History size={16}/> Historial ({tomasFisicas.length})</button>
               <button onClick={exportTomaFisicaExcel} className="bg-white border-2 border-gray-200 text-gray-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 flex items-center gap-2"><Download size={16}/> Excel Formato</button>
-              <button onClick={() => requireAdminPassword(handleProcessTomaFisica, 'Procesar Ajuste de Toma Fisica')} className="bg-orange-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 flex items-center gap-2"><CheckCircle2 size={16}/> Procesar Ajustes</button>
+              <div className="flex items-center gap-3">
+                <div>
+                  <label className="text-[8px] font-black text-gray-500 uppercase block mb-1">📅 Fecha de Toma Física *</label>
+                  <input type="date" required value={tomaFisicaDate||getTodayDate()}
+                    onChange={e=>setTomaFisicaDate(e.target.value)}
+                    className="border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500 bg-orange-50"/>
+                </div>
+                <button onClick={()=>{
+                  if(!tomaFisicaDate) return setDialog({title:'Aviso',text:'Seleccione una fecha para la Toma Física antes de procesar.',type:'alert'});
+                  requireAdminPassword(handleProcessTomaFisica,'Procesar Ajuste de Toma Fisica');
+                }} className="bg-orange-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 flex items-center gap-2"><CheckCircle2 size={16}/> Procesar Ajustes</button>
+              </div>
             </div>
           </div>
 
@@ -9082,186 +9103,119 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                      {/* ── PRODUCT PICKER — Inventario General PT ── */}
-                      <div className="md:col-span-4">
-                        <div className="bg-green-50 border-2 border-green-200 rounded-2xl overflow-hidden">
-                          <div className="px-5 py-3 bg-green-700 flex items-center gap-3">
-                            <Package size={16} className="text-white"/>
-                            <span className="text-[11px] font-black text-white uppercase tracking-widest">Inventario General / Productos Terminados — Seleccionar Producto</span>
-                          </div>
+                    {/* ── DROPDOWN SELECTOR — Like OSA (Petición 3) ── */}
+                    {/* ── PRODUCT PICKER — Inventario General PT ── */}
+                      <div className="md:col-span-4 bg-green-50 border-2 border-green-200 rounded-2xl p-4">
+                        <label className="text-[10px] font-black text-green-700 uppercase block mb-2 tracking-widest">📦 Inventario General / Productos Terminados</label>
+                        {(() => {
+                          // Build consolidated groups by clean code (same as OSA)
+                          const ptConsolidated = {};
+                          (inventory||[]).filter(i=>i.category==='Productos Terminados' && parseNum(i.stock||0)>0).forEach(i=>{
+                            const cid=(i.displayId||(i.id||'')).split('___')[0].replace(/_inv$/i,'');
+                            if(!ptConsolidated[cid]) ptConsolidated[cid]={cid,desc:i.desc||'',subcategory:i.subcategory||getItemSubcategory(i)||'Otros Terminados',unit:i.unit||'und',totalStock:0,cost:parseNum(i.cost||0),warehouses:[],_invId:i.id};
+                            ptConsolidated[cid].totalStock+=parseNum(i.stock||0);
+                            ptConsolidated[cid].warehouses.push({almacen:i.almacen||(i.id||'').split('___')[1]?.replace(/-/g,' ')||'',stock:parseNum(i.stock||0),docId:i.id});
+                            if(parseNum(i.cost||0)>0) ptConsolidated[cid].cost=parseNum(i.cost);
+                          });
+                          const SUB_ORDER=['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
+                          const subcatGrps={};
+                          Object.values(ptConsolidated).forEach(g=>{const s=g.subcategory||'Otros Terminados';if(!subcatGrps[s])subcatGrps[s]=[];subcatGrps[s].push(g);});
+                          const selGrp = newInvoiceForm.fgId ? ptConsolidated[newInvoiceForm.fgId] : null;
 
-                          {(() => {
-                            // Build groups from inventory PT only
-                            const invGrps = {};
-                            (inventory||[]).filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock||0)>0).forEach(i=>{
-                              const rawId=(i.displayId||(i.id||'')).split('___')[0].replace(/_inv$/i,'');
-                              const sub=i.subcategory||getItemSubcategory(i)||'Otros Terminados';
-                              const esTermo=sub.toLowerCase().includes('termo')||(i.unit||'').toUpperCase()==='KG';
-                              const key=rawId;
-                              if(!invGrps[key]) invGrps[key]={
-                                key,esTermo,sub,
-                                producto:i.desc||rawId, rawId,
-                                totalStock:0, unit:i.unit||'und',
-                                cost:parseNum(i.cost||0), _invId:i.id,
-                                warehouses:[]
-                              };
-                              invGrps[key].totalStock+=parseNum(i.stock||0);
-                              invGrps[key].warehouses.push({almacen:i.almacen||(i.id||'').split('___')[1]?.replace(/-/g,' ')||'',stock:parseNum(i.stock||0),docId:i.id});
-                            });
-                            const allGrps=Object.values(invGrps).filter(g=>g.totalStock>0&&!fgItems.some(it=>(it.invCode||it.fgGrpKey)===g.key));
-                            const SUB_ORDER=['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
-                            const SUB_COLORS={
-                              'Bolsas Plásticas':   {bg:'bg-blue-50',   border:'border-blue-200',   badge:'bg-blue-600',   text:'text-blue-800'},
-                              'Termoencogibles':    {bg:'bg-green-50',  border:'border-green-200',  badge:'bg-green-600',  text:'text-green-800'},
-                              'Stretch Film':       {bg:'bg-purple-50', border:'border-purple-200', badge:'bg-purple-600', text:'text-purple-800'},
-                              'Cintas':             {bg:'bg-yellow-50', border:'border-yellow-200', badge:'bg-yellow-600', text:'text-yellow-800'},
-                              'Papel Kraft':        {bg:'bg-amber-50',  border:'border-amber-200',  badge:'bg-amber-700',  text:'text-amber-800'},
-                              'Dispensadores':      {bg:'bg-pink-50',   border:'border-pink-200',   badge:'bg-pink-600',   text:'text-pink-800'},
-                              'Empaques Flexibles': {bg:'bg-indigo-50', border:'border-indigo-200', badge:'bg-indigo-600', text:'text-indigo-800'},
-                              'Otros Terminados':   {bg:'bg-gray-50',   border:'border-gray-200',   badge:'bg-gray-600',   text:'text-gray-700'},
-                            };
-                            const subGroups={};
-                            allGrps.forEach(g=>{if(!subGroups[g.sub])subGroups[g.sub]=[];subGroups[g.sub].push(g);});
-                            const orderedSubs=[...SUB_ORDER.filter(s=>subGroups[s]),...Object.keys(subGroups).filter(s=>!SUB_ORDER.includes(s))];
-
-                            const selGrp=invGrps[newInvoiceForm.fgId];
-
-                            if(allGrps.length===0) return <div className="p-5 text-center text-gray-400 text-xs font-bold uppercase">Sin productos terminados en inventario</div>;
-
-                            return (
-                              <div className="p-4 space-y-4">
-                                {/* Category groups */}
-                                {orderedSubs.map(sub=>{
-                                  const items=subGroups[sub]||[];
-                                  const clr=SUB_COLORS[sub]||SUB_COLORS['Otros Terminados'];
-                                  return (
-                                    <div key={sub}>
-                                      <div className={`flex items-center gap-2 mb-2`}>
-                                        <span className={`${clr.badge} text-white text-[8px] font-black px-2.5 py-1 rounded-full uppercase`}>{sub}</span>
-                                        <span className="text-[8px] text-gray-400 font-bold">{items.length} artículo{items.length!==1?'s':''}</span>
-                                      </div>
-                                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-2">
-                                        {items.map(g=>{
-                                          const isSelected=newInvoiceForm.fgId===g.key;
-                                          return (
-                                            <button key={g.key} type="button"
-                                              onClick={()=>setNewInvoiceForm({...newInvoiceForm,fgId:isSelected?'':g.key,fgCantidad:'',_fgPrecio:''})}
-                                              className={`text-left p-3 rounded-xl border-2 transition-all ${isSelected?'border-orange-400 bg-orange-50 shadow-md ring-2 ring-orange-300':clr.border+' '+clr.bg+' hover:border-orange-300 hover:shadow-sm'}`}>
-                                              <div className={`text-[8px] font-black uppercase mb-0.5 ${isSelected?'text-orange-700':clr.text}`}>{g.rawId}</div>
-                                              <div className="text-[9px] font-bold text-gray-700 leading-tight mb-1 line-clamp-2">{g.producto}</div>
-                                              <div className={`text-[10px] font-black ${isSelected?'text-orange-600':'text-green-600'}`}>{formatNum(g.totalStock)} <span className="text-[8px] font-bold text-gray-400">{g.unit}</span></div>
-                                              {/* Warehouse breakdown */}
-                                              {g.warehouses.filter(w=>w.stock>0).length>1 && (
-                                                <div className="mt-1 space-y-0.5">
-                                                  {g.warehouses.filter(w=>w.stock>0).map((w,wi)=>(
-                                                    <div key={wi} className="text-[7px] text-gray-400 font-bold flex justify-between">
-                                                      <span>{(w.almacen||'').replace('ALMACEN ','')}</span>
-                                                      <span className="text-gray-600">{formatNum(w.stock)}</span>
-                                                    </div>
-                                                  ))}
-                                                </div>
-                                              )}
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-
-                                {/* ── SELECTED PRODUCT ROW ── */}
-                                {selGrp && (
-                                  <div className="bg-white border-2 border-orange-300 rounded-2xl p-4 shadow-sm">
-                                    <div className="flex flex-wrap gap-4 items-start">
-                                      <div className="flex-1 min-w-0">
-                                        <div className="text-[10px] font-black text-orange-700 uppercase mb-0.5">{selGrp.rawId}</div>
-                                        <div className="font-black text-sm text-gray-900 leading-tight">{selGrp.producto}</div>
-                                        <div className="text-[9px] text-green-700 font-bold mt-1">Stock total: {formatNum(selGrp.totalStock)} {selGrp.unit}</div>
-                                      </div>
-
-                                      {/* Qty + Precio */}
-                                      <div className="flex gap-3 items-end flex-wrap">
-                                        <div>
-                                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad ({selGrp.unit})</label>
-                                          <input type="number" step="0.01" max={selGrp.totalStock} value={newInvoiceForm.fgCantidad}
-                                            onChange={e=>setNewInvoiceForm({...newInvoiceForm,fgCantidad:e.target.value})}
-                                            className="w-28 border-2 border-green-400 rounded-xl p-2.5 font-black text-sm outline-none focus:border-green-600 text-center bg-white"
-                                            placeholder={formatNum(selGrp.totalStock)}/>
-                                        </div>
-                                        <div>
-                                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Precio Unitario (USD)</label>
-                                          <input type="number" step="0.01" min="0" value={newInvoiceForm._fgPrecio||''}
-                                            onChange={e=>setNewInvoiceForm({...newInvoiceForm,_fgPrecio:e.target.value})}
-                                            className="w-28 border-2 border-orange-300 rounded-xl p-2.5 font-black text-sm outline-none focus:border-orange-500 text-center bg-orange-50"
-                                            placeholder="0.00"/>
-                                        </div>
-
-                                        {/* ── WAREHOUSE DISPATCH PANEL (prominent) ── */}
-                                        {selGrp.warehouses.filter(w=>w.stock>0).length>1 && (
-                                          <div className="bg-orange-50 border-2 border-orange-200 rounded-xl p-3 min-w-52">
-                                            <div className="text-[9px] font-black text-orange-700 uppercase mb-2 flex items-center gap-1.5">
-                                              <Warehouse size={12}/> Asignar por Almacén
-                                              <span className="text-[8px] font-bold text-orange-500 ml-1">Necesario: {formatNum(parseNum(newInvoiceForm.fgCantidad)||selGrp.totalStock)} {selGrp.unit}</span>
-                                            </div>
-                                            {selGrp.warehouses.filter(w=>w.stock>0).map((wh,wi)=>{
-                                              const val=(mwDispatch[selGrp.key]||{})[wh.almacen]||'';
-                                              return (
-                                                <div key={wi} className="flex items-center gap-2 mb-1.5">
-                                                  <div className="flex-1">
-                                                    <div className="text-[9px] font-black text-gray-800">{(wh.almacen||'').replace('ALMACEN ','ALM. ')}</div>
-                                                    <div className="text-[8px] text-green-600 font-bold">Disp: {formatNum(wh.stock)} {selGrp.unit}</div>
-                                                  </div>
-                                                  <input type="number" step="0.01" min="0" max={wh.stock} value={val}
-                                                    onChange={e=>{
-                                                      const v=Math.min(parseNum(e.target.value),wh.stock);
-                                                      setMwDispatch(prev=>({...prev,[selGrp.key]:{...(prev[selGrp.key]||{}),[wh.almacen]:v||''}}));
-                                                    }}
-                                                    className="w-20 border-2 border-orange-300 rounded-lg px-2 py-1.5 text-xs font-black text-center outline-none focus:border-orange-500 bg-white"
-                                                    placeholder="0"/>
-                                                </div>
-                                              );
-                                            })}
-                                            {(()=>{
-                                              const assigned=Object.values(mwDispatch[selGrp.key]||{}).reduce((s,v)=>s+parseNum(v),0);
-                                              const needed=parseNum(newInvoiceForm.fgCantidad)||selGrp.totalStock;
-                                              const ok=Math.abs(assigned-needed)<0.01;
-                                              const hasAny=assigned>0;
-                                              return hasAny?(
-                                                <div className={`mt-1.5 text-[8px] font-black text-center py-1.5 rounded-lg ${ok?'bg-green-100 text-green-700':'bg-orange-100 text-orange-700'}`}>
-                                                  {ok?'✓ Asignación completa':assigned<needed?`Faltan ${formatNum(needed-assigned)} ${selGrp.unit}`:`Sobran ${formatNum(assigned-needed)}`}
-                                                </div>
-                                              ):null;
-                                            })()}
-                                          </div>
-                                        )}
-
-                                        <button type="button"
-                                          onClick={()=>{
-                                            const cant=parseNum(newInvoiceForm.fgCantidad)||selGrp.totalStock;
-                                            const precioU=parseNum(newInvoiceForm._fgPrecio||0);
-                                            if(cant>selGrp.totalStock+0.001) return setDialog({title:'Aviso',text:`Máximo: ${formatNum(selGrp.totalStock)} ${selGrp.unit}`,type:'alert'});
-                                            const unit=selGrp.unit||'und';
-                                            setFgItems(prev=>[...prev,{
-                                              fgGrpKey:selGrp.key, fgId:selGrp._invId||selGrp.key,
-                                              invCode:selGrp.rawId, cantidad:cant, precioUnit:precioU,
-                                              totalUSD:precioU*cant, totalRenglon:precioU*cant,
-                                              desc:selGrp.producto, unidad:unit, maxCant:selGrp.totalStock,
-                                              esTermo:selGrp.esTermo, grpLotes:[],
-                                              _isInvPT:true, _invId:selGrp._invId, _cost:selGrp.cost
-                                            }]);
-                                            setNewInvoiceForm({...newInvoiceForm,fgId:'',fgCantidad:'',_fgPrecio:''});
-                                          }}
-                                          className="bg-green-600 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-green-700 flex items-center gap-1.5 self-end">
-                                          <Plus size={15}/> Agregar
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
+                          return (
+                            <div className="space-y-3">
+                              {/* Search + Dropdown like OSA */}
+                              <div className="mb-1">
+                                <input type="text" placeholder="🔍 Buscar por código o descripción..." value={newInvoiceForm._ptSearch||''}
+                                  onChange={e=>setNewInvoiceForm({...newInvoiceForm,_ptSearch:e.target.value.toUpperCase(),fgId:'',fgCantidad:'',_fgPrecio:''})}
+                                  className="w-full border-2 border-green-300 bg-white rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500 uppercase"/>
                               </div>
-                            );
-                          })()}
-                        </div>
+                              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                                <div className="md:col-span-2">
+                                  <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Categoría / Producto</label>
+                                  <select value={newInvoiceForm.fgId||''} onChange={e=>{setNewInvoiceForm({...newInvoiceForm,fgId:e.target.value,fgCantidad:'',_fgPrecio:''});}}
+                                    className="w-full border-2 border-green-300 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500 bg-white">
+                                    <option value="">— Seleccione producto terminado —</option>
+                                    {SUB_ORDER.filter(s=>subcatGrps[s]?.length>0).map(sub=>(
+                                      <optgroup key={sub} label={`── ${sub.toUpperCase()} ──`}>
+                                        {(subcatGrps[sub]||[])
+                                          .filter(g=>!newInvoiceForm._ptSearch || g.cid.includes(newInvoiceForm._ptSearch||'') || (g.desc||'').toUpperCase().includes(newInvoiceForm._ptSearch||''))
+                                          .filter(g=>!fgItems.some(it=>it.fgGrpKey===g.cid))
+                                          .sort((a,b)=>a.cid.localeCompare(b.cid))
+                                          .map(g=>(
+                                          <option key={g.cid} value={g.cid}>
+                                            {g.cid} — {g.desc} ({formatNum(g.totalStock)} {g.unit})
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    ))}
+                                  </select>
+                                </div>
+                                {selGrp && (<>
+                                  <div>
+                                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad ({selGrp.unit})</label>
+                                    <input type="number" step="0.01" max={selGrp.totalStock} value={newInvoiceForm.fgCantidad}
+                                      onChange={e=>setNewInvoiceForm({...newInvoiceForm,fgCantidad:e.target.value})}
+                                      className="w-full border-2 border-green-400 rounded-xl p-2.5 font-black text-sm outline-none focus:border-green-600 text-center bg-white"
+                                      placeholder={formatNum(selGrp.totalStock)}/>
+                                    <div className="text-[8px] text-green-600 font-black mt-0.5 text-center">Disp: {formatNum(selGrp.totalStock)}</div>
+                                  </div>
+                                  <div>
+                                    <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Precio U. (USD)</label>
+                                    <input type="number" step="0.01" min="0" value={newInvoiceForm._fgPrecio||''}
+                                      onChange={e=>setNewInvoiceForm({...newInvoiceForm,_fgPrecio:e.target.value})}
+                                      className="w-full border-2 border-orange-300 rounded-xl p-2.5 font-black text-sm outline-none focus:border-orange-500 text-center bg-orange-50"
+                                      placeholder="0.00"/>
+                                  </div>
+                                  <div>
+                                    <button type="button"
+                                      onClick={()=>{
+                                        const cant=parseNum(newInvoiceForm.fgCantidad)||selGrp.totalStock;
+                                        const precioU=parseNum(newInvoiceForm._fgPrecio||0);
+                                        if(cant>selGrp.totalStock+0.001) return setDialog({title:'Aviso',text:`Máximo: ${formatNum(selGrp.totalStock)} ${selGrp.unit}`,type:'alert'});
+                                        setFgItems(prev=>[...prev,{
+                                          fgGrpKey:selGrp.cid, fgId:selGrp._invId||selGrp.cid,
+                                          invCode:selGrp.cid, cantidad:cant, precioUnit:precioU,
+                                          totalUSD:precioU*cant, totalRenglon:precioU*cant,
+                                          desc:selGrp.desc, unidad:selGrp.unit, maxCant:selGrp.totalStock,
+                                          esTermo:selGrp.unit==='KG', grpLotes:[],
+                                          _isInvPT:true, _invId:selGrp._invId, _cost:selGrp.cost
+                                        }]);
+                                        setNewInvoiceForm({...newInvoiceForm,fgId:'',fgCantidad:'',_fgPrecio:'',_ptSearch:''});
+                                      }}
+                                      className="w-full bg-green-600 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-green-700 flex items-center gap-1 justify-center">
+                                      <Plus size={14}/> Agregar
+                                    </button>
+                                  </div>
+                                </>)}
+                              </div>
+
+                              {/* ── WAREHOUSE DISPATCH (shown when product selected + multi-warehouse) ── */}
+                              {selGrp && selGrp.warehouses.filter(w=>w.stock>0).length>1 && (
+                                <div className="bg-white border-2 border-orange-200 rounded-xl p-3">
+                                  <div className="text-[9px] font-black text-orange-700 uppercase mb-2 flex items-center gap-1.5">
+                                    <Warehouse size={12}/> Asignar por Almacén — Necesario: {formatNum(parseNum(newInvoiceForm.fgCantidad)||selGrp.totalStock)} {selGrp.unit}
+                                  </div>
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                    {selGrp.warehouses.filter(w=>w.stock>0).map((wh,wi)=>{
+                                      const val=(mwDispatch[selGrp.cid]||{})[wh.almacen]||'';
+                                      return (
+                                        <div key={wi} className="bg-gray-50 rounded-lg p-2">
+                                          <div className="text-[8px] font-black text-gray-700 mb-0.5">{(wh.almacen||'').replace('ALMACEN ','ALM.')}</div>
+                                          <div className="text-[8px] text-green-600 font-bold mb-1">Disp: {formatNum(wh.stock)}</div>
+                                          <input type="number" step="0.01" min="0" max={wh.stock} value={val}
+                                            onChange={e=>{const v=Math.min(parseNum(e.target.value),wh.stock);setMwDispatch(prev=>({...prev,[selGrp.cid]:{...(prev[selGrp.cid]||{}),[wh.almacen]:v||''}}));}}
+                                            className="w-full border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black text-center outline-none focus:border-orange-500 bg-white" placeholder="0"/>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  {(()=>{const a=Object.values(mwDispatch[selGrp.cid]||{}).reduce((s,v)=>s+parseNum(v),0);const n=parseNum(newInvoiceForm.fgCantidad)||selGrp.totalStock;const ok=Math.abs(a-n)<0.01;return a>0?<div className={`mt-1.5 text-[8px] font-black text-center py-1 rounded-lg ${ok?'bg-green-100 text-green-700':'bg-orange-100 text-orange-700'}`}>{ok?'✓ Asignación completa':a<n?`Faltan ${formatNum(n-a)}`:``}</div>:null;})()}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {/* Carrito de lotes agregados */}
@@ -9424,7 +9378,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               {fgItems.length > 0 ? fgItems.map((item,i)=>(
                                 <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
                                   <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode ? cleanFGCode(item.invCode) : cleanFGCode(item.fgId||'').replace(/^FG-\d{10,}$/,'')}</td>
-                                  <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{maxWidth:90,wordBreak:"break-word",lineHeight:1.3}}>{item.desc}</td>
+                                  <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{width:"28%",maxWidth:140,wordBreak:"break-word",lineHeight:1.3}}>{item.desc}</td>
                                   <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
                                   <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:"—"}</td>
                                   <td className="py-2 px-2 text-right font-black text-green-700 text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:"—"}</td>
