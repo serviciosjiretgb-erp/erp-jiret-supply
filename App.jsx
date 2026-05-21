@@ -295,6 +295,12 @@ const SYSTEM_MODULES = [
       { id: 'conf_usuarios',  label: 'Usuarios y Permisos' },
       { id: 'conf_respaldo',  label: 'Respaldo' },
     ]
+  },
+  {
+    id: 'auditoria',
+    label: '10. MÓDULO Auditoría de Sistema',
+    icon: '🛡️',
+    submodules: []
   }
 ];
 
@@ -5834,12 +5840,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   {/* ── TABLA UNIFICADA POR SUBCATEGORÍA ── */}
                   {(() => {
                     // Merge FG production + inventory PT into single table
-                    // CONSOLIDATE by SKU (same code across warehouses = 1 row)
-                    // Build consolidated PT by cleanCode — deduplicate same SKU across all warehouses
+                    // CONSOLIDATE by SKU: for same code+almacen take LATEST doc (SET not SUM)
                     const ptByCode = {};
                     (inventory||[]).filter(i=>i.category==='Productos Terminados').forEach(i=>{
                       const rawId = (i.displayId || i.id || '');
-                      const cleanCode = rawId.split('___')[0].replace(/_inv$/i,'').replace(/-RESTORE$/i,'').trim();
+                      const cleanCode = rawId.split('___')[0].replace(/_inv$/i,'').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
                       if(!cleanCode) return;
                       const isZI = (i.almacen||'').includes('ZI') || (i.id||'').includes('ALMACEN-ZI');
                       const almNom = i.almacen || rawId.split('___')[1]?.replace(/-/g,' ') || '';
@@ -5854,17 +5859,21 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         cost: parseNum(i.cost||0),
                         isProduccion: false,
                         _invId: i.id,
-                        warehouses: {},  // keyed by almacen to dedup
+                        warehouses: {},
                       };
-                      // Accumulate per warehouse (dedup same almacen)
-                      if(!ptByCode[cleanCode].warehouses[almNom]) {
-                        ptByCode[cleanCode].warehouses[almNom] = {almacen: almNom, stock: 0, docId: i.id};
+                      // SET (not accumulate) for same cleanCode+almacen to avoid duplicate doc summation
+                      // Keep the entry with highest stock among duplicates
+                      if(!ptByCode[cleanCode].warehouses[almNom] || qty > ptByCode[cleanCode].warehouses[almNom].stock) {
+                        ptByCode[cleanCode].warehouses[almNom] = {almacen: almNom, stock: qty, docId: i.id};
                       }
-                      ptByCode[cleanCode].warehouses[almNom].stock += qty;
-                      // Prefer ZI cost
                       if(parseNum(i.cost||0)>0 && (isZI||ptByCode[cleanCode].cost===0)) ptByCode[cleanCode].cost = parseNum(i.cost);
                       if(i.desc && i.desc.length > (ptByCode[cleanCode].desc||'').length) ptByCode[cleanCode].desc = i.desc;
                       if(isZI && i.subcategory) ptByCode[cleanCode].subcategory = i.subcategory || getItemSubcategory(i) || 'Otros Terminados';
+                    });
+                    // Post-process: if named warehouses exist, remove the empty-almacen fallback doc
+                    Object.values(ptByCode).forEach(p => {
+                      const hasNamed = Object.keys(p.warehouses).some(alm => alm.trim() !== '');
+                      if(hasNamed && p.warehouses['']) delete p.warehouses[''];
                     });
                     // Convert warehouses map to array and compute total stock
                     const allPT = Object.values(ptByCode).map(p=>({
@@ -6618,12 +6627,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         fgDeduped.push(fgById[item.id]);
       }
     }
-    // FIX: Show ALL inventory items in Inventario General
-    // PT items appear in their own category "Productos Terminados"
-    // AND also in the finished view
-    // Fix 5: allCatalogItems = inventory (all warehouses, all categories including PT)
-    // PT items from ALMACEN ZI are the master source for cost+stock
-    const allCatalogItems = [...(inventory || []), ...fgDeduped];
+    // Inventario General shows ONLY non-PT categories (MP, Consumibles, etc.)
+    // Productos Terminados appear exclusively in invView === 'finished'
+    const allCatalogItems = (inventory || []).filter(i => i?.category !== 'Productos Terminados');
     // Categorías únicas — sin duplicados
     const allCatalogCats = ['TODAS', ...Array.from(new Set(allCatalogItems.map(i=>i?.category||'Otros')))]
       .sort((a,b)=>{ if(a==='TODAS')return -1; if(b==='TODAS')return 1; if(a==='Productos Terminados')return -1; if(b==='Productos Terminados')return 1; return a.localeCompare(b); });
@@ -7133,7 +7139,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  <div className="flex flex-wrap gap-3 items-center">
                    <div className="relative flex-1 min-w-48">
                      <Search className="absolute left-4 top-4 text-gray-400" size={18} />
-                     <input type="text" placeholder="BUSCAR INSUMO..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-10 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
+                     <input type="text" placeholder="🔍 Buscar por código o producto..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-12 pr-10 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white" />
                      {invSearchTerm && <button onClick={()=>setInvSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500"><X size={16}/></button>}
                    </div>
                    {/* Filtro por Almacén */}
@@ -16712,16 +16718,151 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
   };
 
 
-    const renderConfiguracionModule = () => {
-    try {
-    if (!settings || !systemUsers) {
-      return (
-        <div className="flex flex-col items-center justify-center py-20 text-gray-500">
-          <Loader2 className="w-8 h-8 animate-spin mb-4 text-orange-500" />
-          <p className="font-bold tracking-widest text-sm uppercase text-black">Cargando configuración...</p>
+  // ============================================================================
+  // MÓDULO AUDITORÍA DE SISTEMA
+  // ============================================================================
+  const renderAuditoriaModule = () => {
+    const [auditSearch, setAuditSearch] = React.useState('');
+    const [auditModule, setAuditModule] = React.useState('Todos');
+    const [auditTipo, setAuditTipo] = React.useState('Todos');
+    const [auditDate, setAuditDate] = React.useState('');
+    const [auditPage, setAuditPage] = React.useState(1);
+    const PAGE_SIZE = 25;
+    const buildLogs = () => {
+      const logs = [];
+      (invoices||[]).forEach(inv=>{
+        logs.push({id:`INV-${inv.id}`,fecha:inv.fecha||'',hora:'—',usuario:inv.vendedor||inv.user||'Sistema',rol:'Facturación',modulo:'Ventas',tipo:'CREACIÓN',detalle:`Factura ${inv.documento||inv.id} — Cliente: ${inv.clientName||'—'} — Total: $${formatNum(parseNum(inv.total||inv.montoBase||0))}`,ts:inv.timestamp||0});
+      });
+      (invMovements||[]).forEach(m=>{
+        const tipoMap={'ENTRADA':'CREACIÓN','SALIDA':'EDICIÓN','AJUSTE':'EDICIÓN','AUTOCONSUMO':'EDICIÓN'};
+        logs.push({id:`MOV-${m.id}`,fecha:m.date||'',hora:'—',usuario:m.user||'Sistema',rol:'Almacén',modulo:'Control Inventario',tipo:tipoMap[m.type]||'EDICIÓN',detalle:`${m.type} — ${m.itemName||m.itemId} — Qty: ${formatNum(m.qty)}${m.reference?' — Ref: '+m.reference:''}`,ts:m.timestamp||0});
+      });
+      (requirements||[]).filter(r=>r.status==='COMPLETADO'||r.status==='EN PROCESO').forEach(r=>{
+        logs.push({id:`OP-${r.id}`,fecha:r.fechaFinalizacion||r.fecha||'',hora:'—',usuario:r.supervisorPlanta||'Sistema',rol:'Producción',modulo:'Producción Planta',tipo:r.status==='COMPLETADO'?'CREACIÓN':'EDICIÓN',detalle:`OP #${String(r.id).replace('OP-','').padStart(5,'0')} (${r.status}) — ${r.client||'—'} — ${r.desc||r.categoria||'—'}`,ts:r.timestamp||0});
+      });
+      return logs.sort((a,b)=>b.ts-a.ts||(b.fecha||'').localeCompare(a.fecha||''));
+    };
+    const allLogs = buildLogs();
+    const modulos = ['Todos',...new Set(allLogs.map(l=>l.modulo))];
+    const tiposDisp = ['Todos','CREACIÓN','EDICIÓN','ELIMINACIÓN','ACCESO','SALIDA','EXPORTACIÓN','ALERTA'];
+    const filtered = allLogs.filter(l=>{
+      const s=(auditSearch||'').toUpperCase();
+      if(s && !(l.usuario||'').toUpperCase().includes(s) && !(l.detalle||'').toUpperCase().includes(s) && !(l.tipo||'').toUpperCase().includes(s) && !(l.modulo||'').toUpperCase().includes(s)) return false;
+      if(auditModule!=='Todos' && l.modulo!==auditModule) return false;
+      if(auditTipo!=='Todos' && l.tipo!==auditTipo) return false;
+      if(auditDate && !(l.fecha||'').startsWith(auditDate)) return false;
+      return true;
+    });
+    const totalPages = Math.max(1,Math.ceil(filtered.length/PAGE_SIZE));
+    const page = Math.min(auditPage,totalPages);
+    const pageItems = filtered.slice((page-1)*PAGE_SIZE,page*PAGE_SIZE);
+    const tipoStyle = (t) => ({'CREACIÓN':{c:'text-green-700',bg:'bg-green-50',b:'border-green-200'},'EDICIÓN':{c:'text-orange-600',bg:'bg-orange-50',b:'border-orange-200'},'ELIMINACIÓN':{c:'text-red-700',bg:'bg-red-50',b:'border-red-200'},'ACCESO':{c:'text-blue-700',bg:'bg-blue-50',b:'border-blue-200'},'SALIDA':{c:'text-gray-600',bg:'bg-gray-100',b:'border-gray-200'},'EXPORTACIÓN':{c:'text-purple-700',bg:'bg-purple-50',b:'border-purple-200'},'ALERTA':{c:'text-red-700',bg:'bg-red-100',b:'border-red-300'}}[t]||{c:'text-gray-700',bg:'bg-gray-50',b:'border-gray-200'});
+    const exportExcel = () => {
+      let html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><style>th{background:#000;color:#fff;padding:5px;border:1px solid #000}td{border:1px solid #ccc;padding:4px;font-size:10px}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. — Auditoría ${getTodayDate()}</h2><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Módulo</th><th>Tipo</th><th>Detalle</th></tr></thead><tbody>`;
+      html+=filtered.map(l=>`<tr><td>${l.fecha}</td><td>${l.usuario}</td><td>${l.modulo}</td><td>${l.tipo}</td><td>${(l.detalle||'').replace(/</g,'&lt;')}</td></tr>`).join('');
+      html+=`</tbody></table></body></html>`;
+      const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Auditoria_${getTodayDate()}.xls`;a.click();
+    };
+    return (
+      <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
+        <div className="max-w-7xl mx-auto bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="px-8 py-6 border-b-2 border-black flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+            <div>
+              <h1 className="text-2xl font-black uppercase flex items-center gap-3 tracking-wider"><ShieldCheck size={28} className="text-orange-500"/> Auditoría de Sistema</h1>
+              <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Servicios Jiret G&B — Registro de Actividad · {filtered.length} eventos</p>
+            </div>
+            <button onClick={exportExcel} className="bg-black hover:bg-orange-500 text-white font-black py-3 px-6 flex items-center gap-2 uppercase text-[10px] tracking-widest rounded-2xl transition-colors"><Download size={15}/> Exportar Log</button>
+          </div>
+          <div className="px-6 py-4 bg-gray-50/50 border-b border-gray-200 flex flex-wrap gap-3">
+            <div className="relative flex-1 min-w-48">
+              <Search className="absolute left-3 top-3.5 text-gray-400" size={14}/>
+              <input type="text" value={auditSearch} onChange={e=>{setAuditSearch(e.target.value);setAuditPage(1);}}
+                className="w-full pl-9 py-3 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-500 bg-white"
+                placeholder="Buscar por usuario, módulo, detalle..."/>
+            </div>
+            <select value={auditModule} onChange={e=>{setAuditModule(e.target.value);setAuditPage(1);}}
+              className="border-2 border-gray-200 rounded-xl px-3 py-3 text-xs font-black outline-none focus:border-orange-500 bg-white">
+              {modulos.map(m=><option key={m} value={m}>{m==='Todos'?'Todos los Módulos':m}</option>)}
+            </select>
+            <select value={auditTipo} onChange={e=>{setAuditTipo(e.target.value);setAuditPage(1);}}
+              className="border-2 border-gray-200 rounded-xl px-3 py-3 text-xs font-black outline-none focus:border-orange-500 bg-white">
+              {tiposDisp.map(t=><option key={t} value={t}>{t==='Todos'?'Todos los Tipos':t}</option>)}
+            </select>
+            <input type="date" value={auditDate} onChange={e=>{setAuditDate(e.target.value);setAuditPage(1);}}
+              className="border-2 border-gray-200 rounded-xl px-3 py-3 text-xs font-bold outline-none focus:border-orange-500 bg-white"/>
+            {(auditSearch||auditModule!=='Todos'||auditTipo!=='Todos'||auditDate) && (
+              <button onClick={()=>{setAuditSearch('');setAuditModule('Todos');setAuditTipo('Todos');setAuditDate('');setAuditPage(1);}}
+                className="px-4 py-3 rounded-xl text-[10px] font-black uppercase bg-red-50 text-red-600 border-2 border-red-200 hover:bg-red-100">
+                ✕ Limpiar
+              </button>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse" style={{minWidth:780}}>
+              <thead><tr className="bg-black text-white text-[9px] uppercase tracking-widest">
+                <th className="p-3 font-black border-r border-gray-800 w-28 text-left">Fecha</th>
+                <th className="p-3 font-black border-r border-gray-800 w-36 text-left">Usuario / Rol</th>
+                <th className="p-3 font-black border-r border-gray-800 w-36 text-left">Módulo</th>
+                <th className="p-3 font-black border-r border-gray-800 w-32 text-left">Tipo</th>
+                <th className="p-3 font-black text-left">Detalle del Evento</th>
+              </tr></thead>
+              <tbody className="divide-y divide-gray-100">
+                {pageItems.length>0 ? pageItems.map(log=>{
+                  const st=tipoStyle(log.tipo);
+                  return (
+                    <tr key={log.id} className="hover:bg-gray-50 group">
+                      <td className="p-3 align-top">
+                        <div className="text-[10px] font-black text-gray-900">{log.fecha}</div>
+                        <div className="text-[9px] text-gray-400 font-bold">{log.hora}</div>
+                      </td>
+                      <td className="p-3 align-top">
+                        <div className="text-[10px] font-black group-hover:text-orange-600">{log.usuario}</div>
+                        <div className="text-[8px] text-gray-500 uppercase font-bold">{log.rol}</div>
+                      </td>
+                      <td className="p-3 align-top">
+                        <span className="text-[9px] font-bold text-gray-700 bg-gray-100 px-2 py-1 rounded-lg">{log.modulo}</span>
+                      </td>
+                      <td className="p-3 align-top">
+                        <div className={`inline-flex items-center gap-1 text-[9px] font-black uppercase px-2 py-1 rounded-lg border ${st.c} ${st.bg} ${st.b}`}>
+                          {log.tipo}
+                        </div>
+                      </td>
+                      <td className="p-3 align-top">
+                        <p className="text-[10px] text-gray-700 leading-relaxed">{log.detalle}</p>
+                      </td>
+                    </tr>
+                  );
+                }) : (
+                  <tr><td colSpan="5" className="p-10 text-center text-gray-400">
+                    <Search size={28} className="mx-auto mb-3 text-gray-300"/>
+                    <p className="font-black uppercase">Sin registros</p>
+                    <p className="text-xs mt-1">Ajusta los filtros.</p>
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4 border-t border-gray-200">
+            <span className="text-xs text-gray-600 font-bold">
+              Mostrando <span className="font-black text-black">{Math.min((page-1)*PAGE_SIZE+1,filtered.length)}–{Math.min(page*PAGE_SIZE,filtered.length)}</span> de <span className="font-black text-black">{filtered.length}</span>
+            </span>
+            <div className="flex gap-1">
+              <button onClick={()=>setAuditPage(p=>Math.max(1,p-1))} disabled={page<=1}
+                className="px-4 py-2 border border-gray-300 rounded-xl hover:bg-gray-100 disabled:opacity-40 font-black text-[10px] uppercase">Anterior</button>
+              {Array.from({length:Math.min(totalPages,5)},(_,i)=>{const pg=totalPages<=5?i+1:page<=3?i+1:page>=totalPages-2?totalPages-4+i:page-2+i;return(
+                <button key={pg} onClick={()=>setAuditPage(pg)}
+                  className={`px-4 py-2 border rounded-xl font-black text-xs ${pg===page?'bg-black text-white border-black':'border-gray-300 hover:bg-gray-100'}`}>{pg}</button>
+              );}).filter(Boolean)}
+              <button onClick={()=>setAuditPage(p=>Math.min(totalPages,p+1))} disabled={page>=totalPages}
+                className="px-4 py-2 border border-gray-300 rounded-xl hover:bg-gray-100 disabled:opacity-40 font-black text-[10px] uppercase">Siguiente</button>
+            </div>
+          </div>
         </div>
-      );
-    }
+      </div>
+    );
+  };
+
+    const renderConfiguracionModule = () => {
     return (
       <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
         {/* Accesos Directos Contables */}
@@ -18152,6 +18293,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     {hasPerm('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
                     {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
                     {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
+                    {(hasPerm('auditoria')||appUser?.role==='Master') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='auditoria'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShieldCheck size={14}/> Auditoría</button>}
                  </div>
               </div>
               <div className="flex items-center gap-2 sm:gap-3">
@@ -18444,6 +18586,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
            {activeTab === 'estado_resultado' && renderEstadoResultadoModule()}
            {activeTab === 'libro_diario' && renderLibroDiarioModule()}
            {activeTab === 'kpi' && (hasPerm('kpi') || hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && renderKPIModule()}
+           {activeTab === 'auditoria' && (hasPerm('auditoria') || appUser?.role==='Master') && renderAuditoriaModule()}
         </main>
 
         {dialog && (
