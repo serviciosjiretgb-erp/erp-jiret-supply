@@ -164,7 +164,14 @@ const detectSubcategory = (code, desc) => {
   if (/TERMO|THERMO|SHRINK|ENCOG/.test(c)) return 'Termoencogibles';
   return '';
 };
-const cleanFGCode = (id) => (id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY$/i,'').trim();
+const cleanFGCode = (id) => {
+  if(!id) return '';
+  // Strip all suffixes: ___ALMACEN-*, -RESTORE, -BACKUP, -COPY, _inv, then normalize separators
+  let c = (id||'').split('___')[0];
+  c = c.replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'');
+  c = c.replace(/\s+/g,'').trim();
+  return c;
+};
 const getItemSubcategory = (item) => (item && (item.subcategory || detectSubcategory(item.id || item.displayId || '', item.desc || ''))) || '';
 
 const parseNum = (val) => {
@@ -827,18 +834,18 @@ export default function App() {
         const subColor = SUB_COLORS_EXCEL[sub]||'#374151';
         html += `<tr><td colspan="10" style="background:${subColor};color:#fff;font-weight:bold;padding:4px 8px;font-size:10px;">↳ ${sub.toUpperCase()} — ${subItems.length} artículo${subItems.length!==1?'s':''}</td></tr>`;
         subItems.forEach((item,i) => {
-          const almLabel = item.warehouses ? Object.entries(item.warehouses).map(([a,q])=>(a||'').replace('ALMACEN ','')+':'+formatNum(q)).join(' | ') : '';
+          const almLabel = item.warehouses ? Object.entries(item.warehouses).filter(([,q])=>q>0).map(([a,q])=>(a||'ZI').replace('ALMACEN ','')+': '+formatNum(q)).join(' | ') : '';
           html += `<tr style="${i%2===1?'background-color:#f0fff4':''}">
             <td style="font-weight:900;color:#065f46">${item.id}</td>
             <td>${(item.desc||'').toUpperCase()}</td>
             <td style="text-align:center">${item.unit||'und'}</td>
-            <td style="text-align:right">${formatNum(item.stock)}</td>
-            <td style="background-color:#ffffcc;text-align:center"></td>
-            <td style="background-color:#ffffcc;text-align:center"></td>
-            <td style="background-color:#ffffcc;text-align:center"></td>
-            <td style="background-color:#ffffcc;text-align:center"></td>
+            <td style="text-align:right;font-weight:bold">${formatNum(item.stock)}</td>
+            <td style="background-color:#ffffcc;text-align:center">${(item.warehouses||{})['ALMACEN ZI']>0?formatNum((item.warehouses||{})['ALMACEN ZI']||0):''}</td>
+            <td style="background-color:#ffffcc;text-align:center">${(item.warehouses||{})['ALMACEN BQTO']>0?formatNum((item.warehouses||{})['ALMACEN BQTO']||0):''}</td>
+            <td style="background-color:#ffffcc;text-align:center">${(item.warehouses||{})['ALMACEN C2']>0?formatNum((item.warehouses||{})['ALMACEN C2']||0):''}</td>
+            <td style="background-color:#ffffcc;text-align:center">${(item.warehouses||{})['ALMACEN MCY']>0?formatNum((item.warehouses||{})['ALMACEN MCY']||0):''}</td>
             <td></td>
-            <td style="font-size:8px;color:#6b7280">${almLabel}</td>
+            <td style="font-size:9px;color:#6b7280">${almLabel}</td>
           </tr>`;
         });
       });
@@ -952,6 +959,59 @@ export default function App() {
       sessionStorage.setItem('fg_restore_v3','done');
     };
     doRestore();
+  }, [inventory, appUser]);
+
+  // ── ONE-TIME CLEANUP: delete MP-0240 (ESENTTIA) + FG duplicate docs ──
+  useEffect(() => {
+    if(!inventory || !appUser || sessionStorage.getItem('cleanup_mp0240_fg_v1')==='done') return;
+    const doCleanup = async () => {
+      try {
+        const b = writeBatch(db);
+        let count = 0;
+
+        // 1. Delete all docs with id starting with MP-0240
+        const mp0240Docs = (inventory||[]).filter(i => (i.id||'').startsWith('MP-0240'));
+        mp0240Docs.forEach(i => { b.delete(getDocRef('inventory', i.id)); count++; });
+
+        // 2. Delete FG PT duplicate docs — keep highest-stock doc per (cleanCode + almacén)
+        // The 7 affected codes
+        const FG_CODES = [
+          'FG-TERMOPINTURASD-70x0x0.012','FG-AFSGRIS-60x82x0.030',
+          'FG-EMBUTIDO1KIRI2-28x75x0.012','FG-EMBUTIDOS2KIRI-53x83x0.012',
+          'FG-PAÑALKIRI-60x75x0.004','FG-VENILACBOLSA12-37x75x0.010',
+          'FG-VENILACBOLSA25-53x91x0.020'
+        ];
+        FG_CODES.forEach(code => {
+          // All docs whose cleanCode matches
+          const docs = (inventory||[]).filter(i => {
+            const cc = (i.displayId||(i.id||'').split('___')[0])
+              .replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+            return cc === code;
+          });
+          if(docs.length <= 1) return;
+          // Group by almacén
+          const byAlm = {};
+          docs.forEach(d => {
+            const alm = d.almacen || (d.id||'').split('___')[1]?.replace(/-/g,' ') || 'ALMACEN ZI';
+            if(!byAlm[alm]) byAlm[alm] = [];
+            byAlm[alm].push(d);
+          });
+          Object.values(byAlm).forEach(almDocs => {
+            if(almDocs.length <= 1) return;
+            // Sort: keep highest stock, then most recent timestamp
+            almDocs.sort((a,b) => parseNum(b.stock)-parseNum(a.stock) || (b.timestamp||0)-(a.timestamp||0));
+            // Delete all but first (highest stock)
+            almDocs.slice(1).forEach(d => { b.delete(getDocRef('inventory', d.id)); count++; });
+          });
+        });
+
+        if(count > 0) await b.commit();
+        sessionStorage.setItem('cleanup_mp0240_fg_v1','done');
+      } catch(e) {
+        console.error('Cleanup error:', e);
+      }
+    };
+    doCleanup();
   }, [inventory, appUser]);
 
   // Heartbeat: update lastPing every 30 seconds to keep session alive
@@ -3234,7 +3294,7 @@ export default function App() {
     const invItem = (inventory || []).find(i => i?.id === ing?.nombre); 
     let desc = invItem ? invItem.desc : ing?.nombre;
     if (!invItem) { 
-       if (ing?.nombre === 'MP-0240') desc = 'PEBD 240 (ESENTTIA)'; 
+       if (ing?.nombre === 'MP-0240') desc = 'PEBD 240';
        if (ing?.nombre === 'MP-11PG4') desc = 'LINEAL 11PG4 (METALOCENO)'; 
        if (ing?.nombre === 'MP-3003') desc = 'PEBD 3003 (BAPOLENE)'; 
        if (ing?.nombre === 'MP-RECICLADO') desc = 'MATERIAL RECICLADO'; 
@@ -6661,7 +6721,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 <th className="py-2 px-4 border-r">Código / Descripción</th>
                                 <th className="py-2 px-4 border-r text-center">U.M.</th>
                                 <th className="py-2 px-4 border-r text-center">Stock Sistema</th>
-                                <th className="py-2 px-3 border-r text-center bg-orange-50 text-[8px]">Conteo Físico</th>
+                                {depositos.map(alm=>(
+                                  <th key={alm} className="py-2 px-3 border-r text-center bg-orange-50 min-w-24 text-[8px]">{alm.replace('ALMACEN ','ALM. ')}</th>
+                                ))}
                                 <th className="py-2 px-4 text-center">Diferencia</th>
                               </tr>
                             </thead>
@@ -6669,29 +6731,54 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               {subItems.map(item => {
                                 const pfId = item.id;
                                 const sysStock = item.stock;
-                                const physVal = physicalCounts[pfId];
-                                const totalPhysical = physVal!==undefined && physVal!=='' ? parseNum(physVal) : null;
+                                // Sum all per-warehouse counts
+                                const whCounts = depositos.map(alm => {
+                                  const key = `${pfId}||${alm}`;
+                                  return parseNum(physicalCounts[key]||'');
+                                });
+                                const anyEntered = depositos.some(alm => {
+                                  const key = `${pfId}||${alm}`;
+                                  return physicalCounts[key]!==undefined && physicalCounts[key]!=='';
+                                });
+                                const totalPhysical = anyEntered ? whCounts.reduce((s,v)=>s+v,0) : null;
                                 const diff = totalPhysical !== null ? totalPhysical - sysStock : null;
                                 return (
                                   <tr key={pfId} className="hover:bg-gray-50">
                                     <td className="py-2 px-4 border-r">
                                       <div className="font-black text-[10px] text-orange-600">{pfId}</div>
                                       <div className="text-[9px] text-gray-600 font-bold uppercase">{item.desc}</div>
-                                      {Object.keys(item.warehouses).length > 1 && (
+                                      {/* Show system stock per warehouse as reference */}
+                                      {Object.keys(item.warehouses||{}).length > 0 && (
                                         <div className="flex gap-2 mt-0.5 flex-wrap">
-                                          {Object.entries(item.warehouses).map(([alm,qty])=>(
-                                            <span key={alm} className="text-[8px] text-gray-400 font-bold">{(alm||'').replace('ALMACEN ','')}: {formatNum(qty)}</span>
+                                          {Object.entries(item.warehouses||{}).filter(([,q])=>q>0).map(([alm,qty])=>(
+                                            <span key={alm} className="text-[8px] text-blue-500 font-bold bg-blue-50 px-1 rounded">{(alm||'').replace('ALMACEN ','')}: {formatNum(qty)}</span>
                                           ))}
                                         </div>
                                       )}
                                     </td>
                                     <td className="py-2 px-4 border-r text-center font-bold text-gray-500">{item.unit}</td>
                                     <td className="py-2 px-4 border-r text-center font-black text-blue-600">{formatNum(sysStock)}</td>
-                                    <td className="py-1.5 px-2 border-r bg-orange-50/30">
-                                      <input type="number" step="0.01" value={physicalCounts[pfId]??''}
-                                        onChange={e=>setPhysicalCounts({...physicalCounts,[pfId]:e.target.value})}
-                                        className="w-full border-2 border-orange-200 rounded-lg p-1.5 text-center font-black outline-none focus:border-orange-500 bg-white text-xs text-black" placeholder="-"/>
-                                    </td>
+                                    {depositos.map((alm, ai) => {
+                                      const key = `${pfId}||${alm}`;
+                                      // Only highlight warehouses where this item actually has stock
+                                      const hasStockHere = (item.warehouses||{})[alm] > 0;
+                                      return (
+                                        <td key={alm} className={`py-1.5 px-2 border-r ${hasStockHere ? 'bg-orange-50/40' : 'bg-gray-50/50'}`}>
+                                          <input type="number" step="0.01" value={physicalCounts[key]??''}
+                                            onChange={e => {
+                                              const nv = e.target.value;
+                                              const total = depositos.reduce((s,a2,i2)=>{
+                                                const k2=`${pfId}||${a2}`;
+                                                const v = i2===ai ? parseNum(nv) : parseNum(physicalCounts[k2]||'');
+                                                return s+v;
+                                              },0);
+                                              setPhysicalCounts({...physicalCounts, [key]: nv, [pfId]: String(total)});
+                                            }}
+                                            className={`w-full border-2 rounded-lg p-1.5 text-center font-black outline-none text-xs text-black ${hasStockHere ? 'border-orange-300 focus:border-orange-500 bg-white' : 'border-gray-200 focus:border-gray-400 bg-gray-50'}`}
+                                            placeholder={hasStockHere ? formatNum((item.warehouses||{})[alm]||0) : '—'}/>
+                                        </td>
+                                      );
+                                    })}
                                     <td className="py-2 px-4 text-center">
                                       {diff !== null ? (
                                         <span className={`font-black text-[10px] px-2 py-0.5 rounded ${diff===0?'text-gray-500':diff>0?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>
