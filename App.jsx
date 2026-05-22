@@ -522,7 +522,7 @@ export default function App() {
   const [calcInputs, setCalcInputs] = useState(initialCalcInputs);
 
   // Formularios Inventario
-  const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', subcategory: '', unit: 'kg', cost: '', stock: '', almacen: 'ALMACEN ZI', stockPerAlmacen: {} };
+  const initialInvItemForm = { id: '', desc: '', category: 'Materia Prima', subcategory: '', unit: 'kg', cost: '', stock: '', almacen: 'ALMACEN ZI', stockPerAlmacen: {}, activo: true };
   const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
   const [editingInvId, setEditingInvId] = useState(null);
   const [showInvItemForm, setShowInvItemForm] = useState(false); // collapsible form
@@ -794,7 +794,7 @@ export default function App() {
     // ── PRODUCTOS TERMINADOS — por subcategoría, código limpio ──
     // Consolidate inventory PT items by clean code
     const ptByCodeExcel = {};
-    inventory.filter(i=>i.category==='Productos Terminados').forEach(i => {
+    inventory.filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i => {
       const cleanCode = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
       if(!cleanCode) return;
       const qty = parseNum(i.stock||0);
@@ -1899,6 +1899,22 @@ export default function App() {
   // ============================================================================
   // LOGICA INVENTARIO Y COSTO PROMEDIO
   // ============================================================================
+  // Toggle activo/inactivo for all docs of a given cleanCode
+  const handleToggleActivo = async (cleanCode, currentActivo) => {
+    const newActivo = !currentActivo;
+    const allDocs = (inventory||[]).filter(i => {
+      const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+      return cc === cleanCode;
+    });
+    try {
+      const b = writeBatch(db);
+      allDocs.forEach(d => b.update(getDocRef('inventory', d.id), { activo: newActivo, timestamp: Date.now() }));
+      await b.commit();
+    } catch(err) {
+      setDialog({ title: 'Error', text: err.message, type: 'alert' });
+    }
+  };
+
   const handleSaveInvItem = async (e) => {
     e.preventDefault();
     if (!newInvItemForm.id || !newInvItemForm.desc) return setDialog({ title: 'Aviso', text: 'Código obligatorio.', type: 'alert' });
@@ -5928,7 +5944,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     // Merge FG production + inventory PT into single table
                     // CONSOLIDATE by SKU: for same code+almacen take LATEST doc (SET not SUM)
                     const ptByCode = {};
-                    (inventory||[]).filter(i=>i.category==='Productos Terminados').forEach(i=>{
+                    (inventory||[]).filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i=>{
                       const rawId = (i.displayId || i.id || '');
                       const cleanCode = rawId.split('___')[0].replace(/_inv$/i,'').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
                       if(!cleanCode) return;
@@ -6637,7 +6653,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
 
             {renderTFSection('📦 Inventario General (Materia Prima / Consumibles)', 'bg-gray-700',
-              inventory.filter(i=>i.category!=='Productos Terminados'&&i.category!=='Semielaborados'), false, false, true)}
+              inventory.filter(i=>i.category!=='Productos Terminados'&&i.category!=='Semielaborados'&&i.activo!==false), false, false, true)}
             {inventory.some(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0) &&
               renderTFSection('🔄 Semielaborados / Bobinas (en proceso)', 'bg-indigo-600',
                 inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0), false, false, true, true)}
@@ -6647,7 +6663,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             {(() => {
               // Consolidate inventory PT items by clean code (strip ___ALMACEN suffix)
               const ptByCode = {};
-              inventory.filter(i=>i.category==='Productos Terminados').forEach(i => {
+              inventory.filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i => {
                 const cleanCode = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
                 if(!cleanCode) return;
                 const almNom = i.almacen || (i.id||'').split('___')[1]?.replace(/-/g,' ') || '';
@@ -6674,18 +6690,31 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               });
               const allPTItems = Object.values(ptByCode);
 
-              // Also include FG items from finishedGoodsInventory (production lots)
-              const fgPTItems = tfFGList.map(g => ({
-                id: `FG-${(g.categoria||g.producto||'PT').replace(/[\s_\-\/\|]/g,'').substring(0,14).toUpperCase()}-${g.ancho||0}x${g.largo||0}x${g.micras||0}`,
-                desc: formatFGLabel(g),
-                unit: g.esTermo ? 'KG' : 'Millares',
-                subcategory: getItemSubcategory({id:'FG', desc: g.categoria||g.producto||'', category:'Productos Terminados'}) || (g.esTermo?'Termoencogibles':'Bolsas Plásticas'),
-                stock: g.totalStock,
-                warehouses: {'ALMACEN ZI': g.totalStock},
-                _isFGItem: true, _fgGroup: g
-              }));
+              // Include FG items from finishedGoodsInventory ONLY if no inventory PT doc exists for that cleanCode
+              const existingCodes = new Set(allPTItems.map(i=>i.id.toUpperCase()));
+              const fgPTItems = tfFGList
+                .map(g => {
+                  const code = `FG-${(g.categoria||g.producto||'PT').replace(/[\s_\-\/\|]/g,'').substring(0,14).toUpperCase()}-${g.ancho||0}x${g.largo||0}x${g.micras||0}`;
+                  return {
+                    id: code,
+                    desc: formatFGLabel(g),
+                    unit: g.esTermo ? 'KG' : 'Millares',
+                    subcategory: getItemSubcategory({id:'FG', desc: g.categoria||g.producto||'', category:'Productos Terminados'}) || (g.esTermo?'Termoencogibles':'Bolsas Plásticas'),
+                    stock: g.totalStock,
+                    warehouses: {'ALMACEN ZI': g.totalStock},
+                    _isFGItem: true, _fgGroup: g
+                  };
+                })
+                .filter(item => !existingCodes.has(item.id.toUpperCase())); // skip if already in inventory PT
 
-              const combined = [...allPTItems, ...fgPTItems];
+              // Final merge — deduplicate by id (case-insensitive), keep first seen
+              const seenIds = new Set();
+              const combined = [...allPTItems, ...fgPTItems].filter(item => {
+                const key = item.id.toUpperCase();
+                if(seenIds.has(key)) return false;
+                seenIds.add(key);
+                return true;
+              });
 
               // Group by subcategory
               const SUB_ORDER_PT = ['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
@@ -6867,7 +6896,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     }
     // Inventario General shows ALL categories including Productos Terminados
     // PT items are properly deduplicated via the grouping logic below
-    const allCatalogItems = [...(inventory || [])];
+    const allCatalogItems = [...(inventory || [])]; // Show ALL including inactive (can toggle from here)
     // Categorías únicas — sin duplicados
     const allCatalogCats = ['TODAS', ...Array.from(new Set(allCatalogItems.map(i=>i?.category||'Otros')))]
       .sort((a,b)=>{ if(a==='TODAS')return -1; if(b==='TODAS')return 1; if(a==='Productos Terminados')return -1; if(b==='Productos Terminados')return 1; return a.localeCompare(b); });
@@ -7554,8 +7583,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                        const orderedSubs = isPT ? [...SUB_ORDER_PT.filter(s=>ptSubGroups[s]),...Object.keys(ptSubGroups).filter(s=>!SUB_ORDER_PT.includes(s))] : [];
                        const renderRow = (inv,i) => {
                          const totalVal = parseNum(inv?.cost)*parseNum(inv?.stock);
+                         const isInactive = inv?.activo === false;
                          return (
-                           <tr key={inv?.id||i} className={`border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
+                           <tr key={inv?.id||i} className={`border-t border-gray-100 ${isInactive ? 'opacity-50 bg-gray-50' : i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
                              <td className="py-2 px-3 font-black text-orange-600 text-[10px] whitespace-nowrap">
                                <label className="flex items-center gap-1.5 cursor-pointer no-pdf print:hidden" style={{display:'inline-flex'}}>
                                  {!inv?._isFGGroup && <input type="checkbox" className="w-3 h-3 rounded text-orange-500" checked={selectedInvItems.has(inv?.id)} onChange={e=>{const next=new Set(selectedInvItems);if(e.target.checked)next.add(inv?.id);else next.delete(inv?.id);setSelectedInvItems(next);}}/>}
@@ -7585,7 +7615,16 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                              </td>
                              <td className="py-2 px-3 text-right font-black text-green-700">${formatNum(totalVal)}</td>
                              <td className="py-2 px-3 text-center no-pdf print:hidden">
-                               <div className="flex gap-1 justify-center">
+                               <div className="flex gap-1 justify-center items-center">
+                                 {/* Activo/Inactivo toggle */}
+                                 {!inv?._isFGGroup && (
+                                   <button
+                                     title={inv?.activo===false ? 'Inactivo — clic para activar' : 'Activo — clic para desactivar'}
+                                     onClick={()=>requireAdminPassword(()=>handleToggleActivo(cleanFGCode(inv?.displayId||inv?.id||''), inv?.activo!==false), inv?.activo===false?'Activar producto':'Desactivar producto')}
+                                     className={`px-2 py-1 rounded-lg text-[8px] font-black border transition-all ${inv?.activo===false ? 'bg-red-50 text-red-500 border-red-200 hover:bg-green-50 hover:text-green-700 hover:border-green-300' : 'bg-green-50 text-green-600 border-green-200 hover:bg-red-50 hover:text-red-500 hover:border-red-200'}`}>
+                                     {inv?.activo===false ? '✕ INACT' : '✓ ACT'}
+                                   </button>
+                                 )}
                                  {inv?._isFGGroup ? (
                                    <button onClick={()=>setInvView('finished')} className="p-1.5 bg-green-50 text-green-600 rounded-lg hover:bg-green-600 hover:text-white text-[8px] font-black uppercase transition-all" title="Ver en Terminados"><Package size={10}/></button>
                                  ) : (
@@ -7951,7 +7990,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <optgroup label="── Productos Terminados (Importados / Inventario) ──">
                       {(() => {
                         const ptMap = {};
-                        (inventory||[]).filter(i=>i.category==='Productos Terminados').forEach(i=>{
+                        (inventory||[]).filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i=>{
                           const cid = i.displayId||(i.id||'').split('___')[0];
                           if(!ptMap[cid]) ptMap[cid]={id:cid, desc:i.desc||cid, stock:0, unit:i.unit||'und'};
                           ptMap[cid].stock += parseNum(i.stock||0);
@@ -9580,7 +9619,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         {(() => {
                           // Build consolidated groups by clean code (same as OSA)
                           const ptConsolidated = {};
-                          (inventory||[]).filter(i=>i.category==='Productos Terminados').forEach(i=>{
+                          (inventory||[]).filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i=>{
                             const cid=(i.displayId||(i.id||'')).split('___')[0].replace(/_inv$/i,'');
                             if(!ptConsolidated[cid]) ptConsolidated[cid]={cid,desc:i.desc||'',subcategory:i.subcategory||getItemSubcategory(i)||'Otros Terminados',unit:i.unit||'und',totalStock:0,cost:parseNum(i.cost||0),warehouses:[],_invId:i.id};
                             ptConsolidated[cid].totalStock+=parseNum(i.stock||0);
@@ -16752,7 +16791,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
     // ── Stock PT por subcategoría ──
     const ptSubMap={};
-    safeInventory.filter(i=>i.category==='Productos Terminados').forEach(i=>{
+    safeInventory.filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i=>{
       const sub = getItemSubcategory(i)||'Otros Terminados';
       if(!ptSubMap[sub]) ptSubMap[sub]={name:sub,stock:0};
       ptSubMap[sub].stock+=parseNum(i.stock||0);
@@ -18920,7 +18959,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       fgGrps[gk].stk += fg.tipoProducto==='TERMOENCOGIBLE' ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
                     });
                     // Add inventory items with category='Productos Terminados'
-                    (inventory||[]).filter(i=>i.category==='Productos Terminados').forEach(i=>{
+                    (inventory||[]).filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i=>{
                       const cleanId = i.displayId||(i.id||'').split('___')[0];
                       const gk = `INV-PT-${cleanId}`;
                       if(!fgGrps[gk]) fgGrps[gk]={key:gk, label:i.desc||cleanId, esTermo:(i.unit||'').toUpperCase()==='KG', stk:0, unit:i.unit||'und', _isInvPT:true, _invCleanId:cleanId};
