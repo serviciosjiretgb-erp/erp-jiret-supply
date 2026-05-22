@@ -729,9 +729,9 @@ export default function App() {
       </tr></thead>
       <tbody>`;
 
-    // ── INVENTARIO GENERAL agrupado por categoría ──
+    // ── INVENTARIO GENERAL agrupado por categoría, luego subcategoría ──
     const catGroups = {};
-    inventory.forEach(item => {
+    inventory.filter(i=>i.activo!==false).forEach(item => {
       const cat = item.category || 'Otros';
       if (!catGroups[cat]) catGroups[cat] = [];
       catGroups[cat].push(item);
@@ -752,7 +752,27 @@ export default function App() {
       const items = catGroups[cat] || [];
       if (items.length === 0) continue;
       html += sectionHeader(`📦 ${cat.toUpperCase()} (${items.length} artículo${items.length!==1?'s':''})`, catColors[cat]||'#374151');
-      items.forEach((item, i) => { html += itemRow(item.id, item.desc, item.unit, item.stock, i%2===1?'background-color:#f9f9f9;':''); });
+      // Group by subcategory within this category
+      const subGroupsGen = {};
+      items.forEach(item => {
+        const sub = item.subcategory || getItemSubcategory(item) || '';
+        const key = sub || '__NONE__';
+        if(!subGroupsGen[key]) subGroupsGen[key] = [];
+        subGroupsGen[key].push(item);
+      });
+      const SUB_ORDER_GEN = ['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles'];
+      const SUB_COLORS_GEN = {'Bolsas Plásticas':'#1d4ed8','Termoencogibles':'#15803d','Stretch Film':'#7c3aed','Cintas':'#92400e','Papel Kraft':'#78350f','Dispensadores':'#9d174d','Empaques Flexibles':'#4338ca'};
+      const hasSubs = Object.keys(subGroupsGen).some(k=>k!=='__NONE__');
+      const orderedSubsGen = hasSubs
+        ? [...SUB_ORDER_GEN.filter(s=>subGroupsGen[s]), ...Object.keys(subGroupsGen).filter(s=>!SUB_ORDER_GEN.includes(s)&&s!=='__NONE__'), ...(subGroupsGen['__NONE__']?['__NONE__']:[])]
+        : ['__NONE__'];
+      orderedSubsGen.forEach(subKey => {
+        const subItems = (subGroupsGen[subKey]||[]).sort((a,b)=>(a.id||'').localeCompare(b.id||''));
+        if(hasSubs && subKey !== '__NONE__') {
+          html += `<tr><td colspan="10" style="background:${SUB_COLORS_GEN[subKey]||'#374151'};color:#fff;font-weight:bold;padding:3px 8px;font-size:9px;">  ↳ ${subKey.toUpperCase()} — ${subItems.length} art.</td></tr>`;
+        }
+        subItems.forEach((item, i) => { html += itemRow(item.id, item.desc, item.unit, item.stock, i%2===1?'background-color:#f9f9f9;':''); });
+      });
     }
 
     // ── WIP ──
@@ -795,28 +815,72 @@ export default function App() {
     // Consolidate inventory PT items by clean code
     const ptByCodeExcel = {};
     inventory.filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i => {
-      const cleanCode = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+      // Strip all suffixes and get the canonical clean code
+      const rawId = i.displayId||(i.id||'').split('___')[0];
+      let cleanCode = rawId
+        .replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'')
+        .replace(/_inv$/i,'').trim();
       if(!cleanCode) return;
       const qty = parseNum(i.stock||0);
-      if(!ptByCodeExcel[cleanCode]) ptByCodeExcel[cleanCode] = {id:cleanCode,desc:i.desc||'',unit:i.unit||'und',subcategory:i.subcategory||'',stock:0,warehouses:{}};
-      const almNom = i.almacen || (i.id||'').split('___')[1]?.replace(/-/g,' ') || '';
-      if(!ptByCodeExcel[cleanCode].warehouses[almNom] || qty > ptByCodeExcel[cleanCode].warehouses[almNom]) ptByCodeExcel[cleanCode].warehouses[almNom]=qty;
-      if(i.desc && i.desc.length > ptByCodeExcel[cleanCode].desc.length) ptByCodeExcel[cleanCode].desc = i.desc;
+      const resolvedSub = i.subcategory || getItemSubcategory(i) || getItemSubcategory({id:cleanCode,desc:i.desc||'',category:'Productos Terminados'}) || 'Otros Terminados';
+      if(!ptByCodeExcel[cleanCode]) ptByCodeExcel[cleanCode] = {
+        id:cleanCode, desc:i.desc||'', unit:i.unit||'und',
+        subcategory: resolvedSub, stock:0, warehouses:{}
+      };
+      const almNom = i.almacen || rawId.split('___')[1]?.replace(/-/g,' ') || '';
+      // Keep highest stock per warehouse (SET, not accumulate)
+      if(!ptByCodeExcel[cleanCode].warehouses[almNom] || qty > ptByCodeExcel[cleanCode].warehouses[almNom]) {
+        ptByCodeExcel[cleanCode].warehouses[almNom] = qty;
+      }
+      // Prefer shorter, cleaner description (the one without ×dims× suffix)
+      const curDesc = ptByCodeExcel[cleanCode].desc || '';
+      const newDesc = i.desc || '';
+      // Pick the desc that does NOT contain '×' (those are legacy format docs)
+      if(newDesc && !newDesc.includes('×') && curDesc.includes('×')) {
+        ptByCodeExcel[cleanCode].desc = newDesc;
+      } else if(newDesc && !newDesc.includes('×') && newDesc.length >= curDesc.length) {
+        ptByCodeExcel[cleanCode].desc = newDesc;
+      }
+      if((i.almacen||'').includes('ZI') && resolvedSub !== 'Otros Terminados') ptByCodeExcel[cleanCode].subcategory = resolvedSub;
     });
     Object.values(ptByCodeExcel).forEach(p => {
       const hasNamed = Object.keys(p.warehouses).some(a=>a.trim()!=='');
       if(hasNamed && p.warehouses['']!==undefined) delete p.warehouses[''];
       p.stock = Object.values(p.warehouses).reduce((s,v)=>s+v,0);
+      // Final subcategory fallback using detectSubcategory on the code+desc
+      if(!p.subcategory || p.subcategory==='Otros Terminados') {
+        const detected = detectSubcategory(p.id, p.desc);
+        if(detected) p.subcategory = detected;
+      }
     });
-    // Also FG production lots
+    // Also FG production lots — deduplicate against ptByCodeExcel
+    // Match by: exact code OR by desc similarity (FG categoria+dims may differ slightly from inventory ID)
+    const existingPTCodes = new Set(Object.keys(ptByCodeExcel).map(k=>k.toUpperCase()));
+    // Build a normalized description set for fuzzy matching
+    const existingPTDescs = new Set(
+      Object.values(ptByCodeExcel).map(p=>(p.desc||'').toUpperCase().replace(/[×x\s\-\.]/g,'').substring(0,20))
+    );
     const fgPTExcel = (finishedGoodsInventory||[]).filter(fg=>parseNum(fg.kgProducidos)>0||parseNum(fg.millares)>0).map(fg => {
       const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
       const cleanCode = `FG-${(fg.categoria||fg.producto||'PT').replace(/[\s_\-\/\|]/g,'').substring(0,14).toUpperCase()}-${fg.ancho||0}x${fg.largo||0}x${fg.micras||0}`;
-      return {id:cleanCode, desc:formatFGLabel(fg), unit:esTermo?'KG':'Millares', subcategory:esTermo?'Termoencogibles':'Bolsas Plásticas', stock:esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)};
-    });
-    const allPTExcel = [...Object.values(ptByCodeExcel), ...fgPTExcel];
+      const detectedSub = detectSubcategory(cleanCode, fg.categoria||fg.producto||'') || (esTermo?'Termoencogibles':'Bolsas Plásticas');
+      const fgDesc = formatFGLabel(fg);
+      const fgDescNorm = fgDesc.toUpperCase().replace(/[×x\s\-\.]/g,'').substring(0,20);
+      return {id:cleanCode, desc:fgDesc, unit:esTermo?'KG':'Millares', subcategory:detectedSub, stock:esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares), _descNorm:fgDescNorm};
+    }).filter(fg =>
+      !existingPTCodes.has(fg.id.toUpperCase()) &&
+      !existingPTDescs.has(fg._descNorm)          // skip if matching desc already in inventory PT
+    );
 
-    // Group PT by subcategory
+    // Final combined list — hard dedup by cleanCode (case-insensitive), keep highest stock
+    const allPTExcelMap = {};
+    [...Object.values(ptByCodeExcel), ...fgPTExcel].forEach(item => {
+      const key = item.id.toUpperCase();
+      if(!allPTExcelMap[key] || item.stock > allPTExcelMap[key].stock) {
+        allPTExcelMap[key] = item;
+      }
+    });
+    const allPTExcel = Object.values(allPTExcelMap);
     const SUB_ORDER_EXCEL = ['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
     const SUB_COLORS_EXCEL = {'Bolsas Plásticas':'#1d4ed8','Termoencogibles':'#15803d','Stretch Film':'#7c3aed','Cintas':'#92400e','Papel Kraft':'#78350f','Dispensadores':'#9d174d','Empaques Flexibles':'#4338ca','Otros Terminados':'#374151'};
     const ptSubGroupsExcel = {};
@@ -5969,7 +6033,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         ptByCode[cleanCode].warehouses[almNom] = {almacen: almNom, stock: qty, docId: i.id};
                       }
                       if(parseNum(i.cost||0)>0 && (isZI||ptByCode[cleanCode].cost===0)) ptByCode[cleanCode].cost = parseNum(i.cost);
-                      if(i.desc && i.desc.length > (ptByCode[cleanCode].desc||'').length) ptByCode[cleanCode].desc = i.desc;
+                      // Prefer clean desc without × (legacy format)
+                      const curD2 = ptByCode[cleanCode].desc||'';
+                      const newD2 = i.desc||'';
+                      if(newD2 && !newD2.includes('×') && (curD2.includes('×') || newD2.length >= curD2.length)) ptByCode[cleanCode].desc = newD2;
                       if(isZI && i.subcategory) ptByCode[cleanCode].subcategory = i.subcategory || getItemSubcategory(i) || 'Otros Terminados';
                     });
                     // Post-process: if named warehouses exist, remove the empty-almacen fallback doc
@@ -6664,9 +6731,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               // Consolidate inventory PT items by clean code (strip ___ALMACEN suffix)
               const ptByCode = {};
               inventory.filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i => {
-                const cleanCode = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                const rawId = i.displayId||(i.id||'').split('___')[0];
+                const cleanCode = rawId.replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
                 if(!cleanCode) return;
-                const almNom = i.almacen || (i.id||'').split('___')[1]?.replace(/-/g,' ') || '';
+                const almNom = i.almacen || rawId.split('___')[1]?.replace(/-/g,' ') || '';
                 const qty = parseNum(i.stock||0);
                 if(!ptByCode[cleanCode]) {
                   ptByCode[cleanCode] = {
@@ -6675,12 +6743,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     cost: parseNum(i.cost||0), stock: 0, warehouses: {}
                   };
                 }
-                // SET per warehouse (max), not accumulate
                 if(!ptByCode[cleanCode].warehouses[almNom] || qty > ptByCode[cleanCode].warehouses[almNom]) {
                   ptByCode[cleanCode].warehouses[almNom] = qty;
                 }
                 if(parseNum(i.cost||0)>0) ptByCode[cleanCode].cost = parseNum(i.cost);
-                if(i.desc && i.desc.length > ptByCode[cleanCode].desc.length) ptByCode[cleanCode].desc = i.desc;
+                // Prefer clean desc (without × legacy format)
+                const curD = ptByCode[cleanCode].desc||'';
+                const newD = i.desc||'';
+                if(newD && !newD.includes('×') && (curD.includes('×') || newD.length >= curD.length)) ptByCode[cleanCode].desc = newD;
+                if((i.almacen||'').includes('ZI') && (i.subcategory||getItemSubcategory(i))) {
+                  ptByCode[cleanCode].subcategory = i.subcategory||getItemSubcategory(i)||'Otros Terminados';
+                }
               });
               // Remove empty almacen key if named ones exist
               Object.values(ptByCode).forEach(p => {
