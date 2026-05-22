@@ -681,7 +681,7 @@ export default function App() {
   const exportTomaFisicaExcel = () => {
     const today = getTodayDate();
     const sectionHeader = (label, color='#2d3748') =>
-      `<tr><td colspan="7" style="background-color:${color};color:#fff;font-weight:bold;text-align:center;padding:6px;font-size:11px;">${label}</td></tr>`;
+      `<tr><td colspan="10" style="background-color:${color};color:#fff;font-weight:bold;text-align:center;padding:6px;font-size:11px;">${label}</td></tr>`;
 
     const itemRow = (id, desc, unit, stock, altBg='') => `<tr>
       <td style="${altBg}">${id}</td>
@@ -690,6 +690,9 @@ export default function App() {
       <td style="text-align:right;${altBg}">${formatNum(stock)}</td>
       <td style="background-color:#ffffcc;"></td>
       <td style="background-color:#ffffcc;"></td>
+      <td style="background-color:#ffffcc;"></td>
+      <td style="background-color:#ffffcc;"></td>
+      <td></td>
       <td></td>
     </tr>`;
 
@@ -710,12 +713,12 @@ export default function App() {
     <table>
       <thead><tr>
         <th style="width:11%">Código</th>
-        <th style="width:30%">Descripción</th>
-        <th style="width:7%">Unidad</th>
-        <th style="width:12%">Stock Sistema</th>
-        <th style="width:8%">Conteo ZI</th><th style="width:8%">Conteo BQTO</th><th style="width:8%">Conteo C2</th><th style="width:8%">Conteo MCY</th>
-        <th style="width:12%">Diferencia</th>
-        <th style="width:16%">Observaciones</th>
+        <th style="width:28%">Descripción</th>
+        <th style="width:6%">Unidad</th>
+        <th style="width:10%">Stock Sistema</th>
+        <th style="width:7%">Conteo ZI</th><th style="width:7%">Conteo BQTO</th><th style="width:7%">Conteo C2</th><th style="width:7%">Conteo MCY</th>
+        <th style="width:10%">Diferencia</th>
+        <th style="width:7%">Por Almacén</th>
       </tr></thead>
       <tbody>`;
 
@@ -768,6 +771,9 @@ export default function App() {
             <td style="text-align:right">${formatNum(restante)}</td>
             <td style="background-color:#d1fae5"></td>
             <td style="background-color:#d1fae5"></td>
+            <td style="background-color:#d1fae5"></td>
+            <td style="background-color:#d1fae5"></td>
+            <td></td>
             <td></td>
           </tr>`;
         }
@@ -778,54 +784,63 @@ export default function App() {
       html += wipRows;
     }
 
-    // ── PRODUCTOS TERMINADOS ──
-    const termItems = [
-      ...(finishedGoodsInventory||[]),  // Todos los PT
-      // Items de inventario general con stock > 0 (aparecen como inventario inicial)
-      ...(()=>{
-        const seen = new Set();
-        return (inventory||[]).filter(i=>{
-          const cid = i.displayId||(i.id||'').split('___')[0];
-          if(seen.has(cid)||parseNum(i.stock||0)<=0) return false;
-          seen.add(cid); return true;
-        }).map(i=>({
-          ...i,
-          _fromInventory:true,
-          id:'INV::'+( i.displayId||(i.id||'').split('___')[0]),
-          producto: i.displayId||(i.id||'').split('___')[0],
-          tipoProducto:'INVENTARIO_GENERAL',
-          millares: 0,
-          kgProducidos: parseNum(i.stock||0),
-          costoUnitario: parseNum(i.cost||0),
-        }));
-      })(),
-    ];
-    if(termItems.length>0){
-      html += sectionHeader('✅ PRODUCTOS TERMINADOS','#065f46');
-      termItems.forEach((fg,i)=>{
-        const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
-        const stock=esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
-        const unit=esTermo?'KG':'Millares';
-        const label=`${fg.categoria||fg.producto||'PT'} — ${fg.cliente||''}`;
-        html+=`<tr style="${i%2===1?'background-color:#f0fff4':''}">
-          <td>${fg.id}</td><td>${label.toUpperCase()}</td>
-          <td style="text-align:center">${unit}</td>
-          <td style="text-align:right">${formatNum(stock)}</td>
-          <td style="background-color:#ffffcc"></td>
-          <td style="background-color:#ffffcc"></td>
-          <td></td>
-        </tr>`;
-      });
-      // Inventory PT items
-      (catGroups['Productos Terminados']||[]).forEach((item,i)=>{
-        html+=`<tr style="${i%2===1?'background-color:#f0fff4':''}">
-          <td>${item.id}</td><td>${(item.desc||'').toUpperCase()}</td>
-          <td style="text-align:center">${item.unit||'KG'}</td>
-          <td style="text-align:right">${formatNum(item.stock)}</td>
-          <td style="background-color:#ffffcc"></td>
-          <td style="background-color:#ffffcc"></td>
-          <td></td>
-        </tr>`;
+    // ── PRODUCTOS TERMINADOS — por subcategoría, código limpio ──
+    // Consolidate inventory PT items by clean code
+    const ptByCodeExcel = {};
+    inventory.filter(i=>i.category==='Productos Terminados').forEach(i => {
+      const cleanCode = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+      if(!cleanCode) return;
+      const qty = parseNum(i.stock||0);
+      if(!ptByCodeExcel[cleanCode]) ptByCodeExcel[cleanCode] = {id:cleanCode,desc:i.desc||'',unit:i.unit||'und',subcategory:i.subcategory||'',stock:0,warehouses:{}};
+      const almNom = i.almacen || (i.id||'').split('___')[1]?.replace(/-/g,' ') || '';
+      if(!ptByCodeExcel[cleanCode].warehouses[almNom] || qty > ptByCodeExcel[cleanCode].warehouses[almNom]) ptByCodeExcel[cleanCode].warehouses[almNom]=qty;
+      if(i.desc && i.desc.length > ptByCodeExcel[cleanCode].desc.length) ptByCodeExcel[cleanCode].desc = i.desc;
+    });
+    Object.values(ptByCodeExcel).forEach(p => {
+      const hasNamed = Object.keys(p.warehouses).some(a=>a.trim()!=='');
+      if(hasNamed && p.warehouses['']!==undefined) delete p.warehouses[''];
+      p.stock = Object.values(p.warehouses).reduce((s,v)=>s+v,0);
+    });
+    // Also FG production lots
+    const fgPTExcel = (finishedGoodsInventory||[]).filter(fg=>parseNum(fg.kgProducidos)>0||parseNum(fg.millares)>0).map(fg => {
+      const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
+      const cleanCode = `FG-${(fg.categoria||fg.producto||'PT').replace(/[\s_\-\/\|]/g,'').substring(0,14).toUpperCase()}-${fg.ancho||0}x${fg.largo||0}x${fg.micras||0}`;
+      return {id:cleanCode, desc:formatFGLabel(fg), unit:esTermo?'KG':'Millares', subcategory:esTermo?'Termoencogibles':'Bolsas Plásticas', stock:esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)};
+    });
+    const allPTExcel = [...Object.values(ptByCodeExcel), ...fgPTExcel];
+
+    // Group PT by subcategory
+    const SUB_ORDER_EXCEL = ['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
+    const SUB_COLORS_EXCEL = {'Bolsas Plásticas':'#1d4ed8','Termoencogibles':'#15803d','Stretch Film':'#7c3aed','Cintas':'#92400e','Papel Kraft':'#78350f','Dispensadores':'#9d174d','Empaques Flexibles':'#4338ca','Otros Terminados':'#374151'};
+    const ptSubGroupsExcel = {};
+    allPTExcel.forEach(item => {
+      const sub = item.subcategory || 'Otros Terminados';
+      if(!ptSubGroupsExcel[sub]) ptSubGroupsExcel[sub] = [];
+      ptSubGroupsExcel[sub].push(item);
+    });
+    const orderedSubsExcel = [...SUB_ORDER_EXCEL.filter(s=>ptSubGroupsExcel[s]),...Object.keys(ptSubGroupsExcel).filter(s=>!SUB_ORDER_EXCEL.includes(s))];
+
+    if(allPTExcel.length > 0) {
+      html += sectionHeader(`✅ PRODUCTOS TERMINADOS — ${allPTExcel.length} ARTÍCULOS CONSOLIDADOS`, '#065f46');
+      orderedSubsExcel.forEach(sub => {
+        const subItems = (ptSubGroupsExcel[sub]||[]).sort((a,b)=>a.id.localeCompare(b.id));
+        const subColor = SUB_COLORS_EXCEL[sub]||'#374151';
+        html += `<tr><td colspan="10" style="background:${subColor};color:#fff;font-weight:bold;padding:4px 8px;font-size:10px;">↳ ${sub.toUpperCase()} — ${subItems.length} artículo${subItems.length!==1?'s':''}</td></tr>`;
+        subItems.forEach((item,i) => {
+          const almLabel = item.warehouses ? Object.entries(item.warehouses).map(([a,q])=>(a||'').replace('ALMACEN ','')+':'+formatNum(q)).join(' | ') : '';
+          html += `<tr style="${i%2===1?'background-color:#f0fff4':''}">
+            <td style="font-weight:900;color:#065f46">${item.id}</td>
+            <td>${(item.desc||'').toUpperCase()}</td>
+            <td style="text-align:center">${item.unit||'und'}</td>
+            <td style="text-align:right">${formatNum(item.stock)}</td>
+            <td style="background-color:#ffffcc;text-align:center"></td>
+            <td style="background-color:#ffffcc;text-align:center"></td>
+            <td style="background-color:#ffffcc;text-align:center"></td>
+            <td style="background-color:#ffffcc;text-align:center"></td>
+            <td></td>
+            <td style="font-size:8px;color:#6b7280">${almLabel}</td>
+          </tr>`;
+        });
       });
     }
 
@@ -6567,10 +6582,135 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               renderTFSection('🔄 Semielaborados / Bobinas (en proceso)', 'bg-indigo-600',
                 inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0), false, false, true, true)}
             {renderTFSection('⚙ En Proceso (WIP) — Remanente de Materia Prima', 'bg-blue-600', wipItems, false, false, true)}
-            {renderTFSection('✅ Productos Terminados', 'bg-green-700', [
-              ...tfFGList.map(g=>({...g, id:`FG-TF-${g.key}`, unit:g.esTermo?'KG':'Millares'})),
-              ...inventory.filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0).map(i=>({...i, id:`INV-PT-${i.id}`, unit:i.unit||'KG', totalStock:i.stock, _isInvItem:true}))
-            ], false, true)}
+
+            {/* ── PRODUCTOS TERMINADOS — por subcategoría, consolidados por código limpio ── */}
+            {(() => {
+              // Consolidate inventory PT items by clean code (strip ___ALMACEN suffix)
+              const ptByCode = {};
+              inventory.filter(i=>i.category==='Productos Terminados').forEach(i => {
+                const cleanCode = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                if(!cleanCode) return;
+                const almNom = i.almacen || (i.id||'').split('___')[1]?.replace(/-/g,' ') || '';
+                const qty = parseNum(i.stock||0);
+                if(!ptByCode[cleanCode]) {
+                  ptByCode[cleanCode] = {
+                    id: cleanCode, desc: i.desc||'', unit: i.unit||'und',
+                    subcategory: i.subcategory||getItemSubcategory(i)||'Otros Terminados',
+                    cost: parseNum(i.cost||0), stock: 0, warehouses: {}
+                  };
+                }
+                // SET per warehouse (max), not accumulate
+                if(!ptByCode[cleanCode].warehouses[almNom] || qty > ptByCode[cleanCode].warehouses[almNom]) {
+                  ptByCode[cleanCode].warehouses[almNom] = qty;
+                }
+                if(parseNum(i.cost||0)>0) ptByCode[cleanCode].cost = parseNum(i.cost);
+                if(i.desc && i.desc.length > ptByCode[cleanCode].desc.length) ptByCode[cleanCode].desc = i.desc;
+              });
+              // Remove empty almacen key if named ones exist
+              Object.values(ptByCode).forEach(p => {
+                const hasNamed = Object.keys(p.warehouses).some(a=>a.trim()!=='');
+                if(hasNamed && p.warehouses['']!==undefined) delete p.warehouses[''];
+                p.stock = Object.values(p.warehouses).reduce((s,v)=>s+v, 0);
+              });
+              const allPTItems = Object.values(ptByCode);
+
+              // Also include FG items from finishedGoodsInventory (production lots)
+              const fgPTItems = tfFGList.map(g => ({
+                id: `FG-${(g.categoria||g.producto||'PT').replace(/[\s_\-\/\|]/g,'').substring(0,14).toUpperCase()}-${g.ancho||0}x${g.largo||0}x${g.micras||0}`,
+                desc: formatFGLabel(g),
+                unit: g.esTermo ? 'KG' : 'Millares',
+                subcategory: getItemSubcategory({id:'FG', desc: g.categoria||g.producto||'', category:'Productos Terminados'}) || (g.esTermo?'Termoencogibles':'Bolsas Plásticas'),
+                stock: g.totalStock,
+                warehouses: {'ALMACEN ZI': g.totalStock},
+                _isFGItem: true, _fgGroup: g
+              }));
+
+              const combined = [...allPTItems, ...fgPTItems];
+
+              // Group by subcategory
+              const SUB_ORDER_PT = ['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
+              const SUB_CLR = {'Bolsas Plásticas':'bg-blue-700','Termoencogibles':'bg-green-700','Stretch Film':'bg-purple-700','Cintas':'bg-yellow-700','Papel Kraft':'bg-amber-700','Dispensadores':'bg-pink-700','Empaques Flexibles':'bg-indigo-700','Otros Terminados':'bg-gray-600'};
+              const subGroups = {};
+              combined.forEach(item => {
+                const sub = item.subcategory || 'Otros Terminados';
+                if(!subGroups[sub]) subGroups[sub] = [];
+                subGroups[sub].push(item);
+              });
+              const orderedSubs = [...SUB_ORDER_PT.filter(s=>subGroups[s]), ...Object.keys(subGroups).filter(s=>!SUB_ORDER_PT.includes(s))];
+              if(combined.length === 0) return null;
+
+              return (
+                <div className="mb-6">
+                  <div className="bg-green-800 text-white px-4 py-2 rounded-t-xl font-black text-[10px] uppercase tracking-widest flex justify-between items-center">
+                    <span>✅ Productos Terminados por Subcategoría</span>
+                    <span className="text-green-300 text-[9px]">{combined.length} artículo{combined.length!==1?'s':''} consolidados</span>
+                  </div>
+                  <div className="border border-gray-200 rounded-b-xl overflow-hidden">
+                    {orderedSubs.map(sub => {
+                      const subItems = (subGroups[sub]||[]).sort((a,b)=>a.id.localeCompare(b.id));
+                      const subHdrClass = SUB_CLR[sub] || 'bg-gray-600';
+                      return (
+                        <div key={sub}>
+                          <div className={`${subHdrClass} text-white px-4 py-1.5 text-[9px] font-black uppercase tracking-widest flex justify-between`}>
+                            <span>↳ {sub}</span>
+                            <span className="opacity-70">{subItems.length} artículo{subItems.length!==1?'s':''}</span>
+                          </div>
+                          <table className="w-full text-left text-xs">
+                            <thead className="bg-gray-50 border-b border-gray-200">
+                              <tr className="uppercase font-black text-[9px] tracking-widest text-gray-500">
+                                <th className="py-2 px-4 border-r">Código / Descripción</th>
+                                <th className="py-2 px-4 border-r text-center">U.M.</th>
+                                <th className="py-2 px-4 border-r text-center">Stock Sistema</th>
+                                <th className="py-2 px-3 border-r text-center bg-orange-50 text-[8px]">Conteo Físico</th>
+                                <th className="py-2 px-4 text-center">Diferencia</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {subItems.map(item => {
+                                const pfId = item.id;
+                                const sysStock = item.stock;
+                                const physVal = physicalCounts[pfId];
+                                const totalPhysical = physVal!==undefined && physVal!=='' ? parseNum(physVal) : null;
+                                const diff = totalPhysical !== null ? totalPhysical - sysStock : null;
+                                return (
+                                  <tr key={pfId} className="hover:bg-gray-50">
+                                    <td className="py-2 px-4 border-r">
+                                      <div className="font-black text-[10px] text-orange-600">{pfId}</div>
+                                      <div className="text-[9px] text-gray-600 font-bold uppercase">{item.desc}</div>
+                                      {Object.keys(item.warehouses).length > 1 && (
+                                        <div className="flex gap-2 mt-0.5 flex-wrap">
+                                          {Object.entries(item.warehouses).map(([alm,qty])=>(
+                                            <span key={alm} className="text-[8px] text-gray-400 font-bold">{(alm||'').replace('ALMACEN ','')}: {formatNum(qty)}</span>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td className="py-2 px-4 border-r text-center font-bold text-gray-500">{item.unit}</td>
+                                    <td className="py-2 px-4 border-r text-center font-black text-blue-600">{formatNum(sysStock)}</td>
+                                    <td className="py-1.5 px-2 border-r bg-orange-50/30">
+                                      <input type="number" step="0.01" value={physicalCounts[pfId]??''}
+                                        onChange={e=>setPhysicalCounts({...physicalCounts,[pfId]:e.target.value})}
+                                        className="w-full border-2 border-orange-200 rounded-lg p-1.5 text-center font-black outline-none focus:border-orange-500 bg-white text-xs text-black" placeholder="-"/>
+                                    </td>
+                                    <td className="py-2 px-4 text-center">
+                                      {diff !== null ? (
+                                        <span className={`font-black text-[10px] px-2 py-0.5 rounded ${diff===0?'text-gray-500':diff>0?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>
+                                          {diff>0?'+':''}{formatNum(diff)}
+                                        </span>
+                                      ) : <span className="text-gray-300 text-[10px]">—</span>}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       );
