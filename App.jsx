@@ -1942,21 +1942,81 @@ export default function App() {
     if (almacenOrigen === almacenDestino) return setDialog({ title: 'Aviso', text: 'El almacén origen y destino deben ser diferentes.', type: 'alert' });
     const cantQty = parseNum(qty);
     if (cantQty <= 0) return setDialog({ title: 'Aviso', text: 'La cantidad debe ser mayor a cero.', type: 'alert' });
-    const item = (inventory || []).find(i => i.id === itemId);
-    if (!item) return setDialog({ title: 'Error', text: 'Artículo no encontrado.', type: 'alert' });
+
+    // The itemId here is the cleanCode (from the consolidated selector)
+    const cleanCode = itemId;
+
+    // Find ALL docs for this cleanCode across all warehouses
+    const allDocs = (inventory||[]).filter(i => {
+      const cc = (i.displayId||(i.id||'').split('___')[0])
+        .replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
+      return cc === cleanCode;
+    });
+
+    // Find the doc for almacenOrigen
+    const origenDoc = allDocs.find(i => (i.almacen||'') === almacenOrigen || (i.id||'').includes(almacenOrigen.replace('ALMACEN ','').replace(/ /g,'-')));
+    // Find the doc for almacenDestino
+    const destinoDoc = allDocs.find(i => (i.almacen||'') === almacenDestino || (i.id||'').includes(almacenDestino.replace('ALMACEN ','').replace(/ /g,'-')));
+
+    const stockOrigen = parseNum(origenDoc?.stock||0);
+    if(cantQty > stockOrigen) return setDialog({ title: 'Stock insuficiente', text: `El almacén ${almacenOrigen} solo tiene ${formatNum(stockOrigen)} ${origenDoc?.unit||''}. No puede trasladar ${formatNum(cantQty)}.`, type: 'alert' });
+
+    // Representative doc for metadata
+    const repDoc = origenDoc || allDocs[0];
+    if (!repDoc) return setDialog({ title: 'Error', text: 'Artículo no encontrado en el sistema.', type: 'alert' });
+
     try {
       const batch = writeBatch(db);
       const ts = Date.now();
-      const idSal = `TSAL-${ts}`;
-      const idEnt = `TENT-${ts + 1}`;
-      const movBase = { itemId: item.id, itemName: item.desc, qty: cantQty, unitCost: item.cost, totalValue: cantQty * item.cost, date, reference: `TRASLADO`, notes: `TRASLADO: ${almacenOrigen} → ${almacenDestino}${notes ? ' | ' + notes.toUpperCase() : ''}`, user: appUser?.name || 'Admin' };
-      batch.set(getDocRef('inventoryMovements', idSal), { ...movBase, id: idSal, type: 'SALIDA_TRASLADO', almacen: almacenOrigen, almacenDestino, timestamp: ts });
-      batch.set(getDocRef('inventoryMovements', idEnt), { ...movBase, id: idEnt, type: 'ENTRADA_TRASLADO', almacen: almacenDestino, almacenOrigen, timestamp: ts + 1 });
-      // Stock total del item no cambia (solo cambia la ubicación)
+
+      // 1. Deduct from origen doc
+      if(origenDoc) {
+        batch.update(getDocRef('inventory', origenDoc.id), {
+          stock: Math.max(0, stockOrigen - cantQty),
+          timestamp: ts
+        });
+      }
+
+      // 2. Add to destino doc (or create it if it doesn't exist)
+      if(destinoDoc) {
+        batch.update(getDocRef('inventory', destinoDoc.id), {
+          stock: parseNum(destinoDoc.stock||0) + cantQty,
+          timestamp: ts + 1
+        });
+      } else {
+        // Create a new doc for this item in the destination warehouse
+        const newDocId = `${cleanCode}___${almacenDestino.replace(/\s+/g,'-')}`;
+        batch.set(getDocRef('inventory', newDocId), {
+          id: newDocId,
+          displayId: cleanCode,
+          desc: repDoc.desc,
+          category: repDoc.category,
+          subcategory: repDoc.subcategory || '',
+          unit: repDoc.unit,
+          cost: repDoc.cost,
+          stock: cantQty,
+          almacen: almacenDestino,
+          activo: true,
+          timestamp: ts + 1
+        });
+      }
+
+      // 3. Log movements
+      const movBase = {
+        itemId: cleanCode, itemName: repDoc.desc,
+        qty: cantQty, unitCost: repDoc.cost,
+        totalValue: cantQty * (repDoc.cost||0),
+        date, reference: 'TRASLADO',
+        notes: `TRASLADO: ${almacenOrigen} → ${almacenDestino}${notes ? ' | ' + notes.toUpperCase() : ''}`,
+        user: appUser?.name || 'Admin'
+      };
+      batch.set(getDocRef('inventoryMovements', `TSAL-${ts}`), { ...movBase, id: `TSAL-${ts}`, type: 'SALIDA_TRASLADO', almacen: almacenOrigen, almacenDestino, timestamp: ts });
+      batch.set(getDocRef('inventoryMovements', `TENT-${ts+1}`), { ...movBase, id: `TENT-${ts+1}`, type: 'ENTRADA_TRASLADO', almacen: almacenDestino, almacenOrigen, timestamp: ts + 1 });
+
       await batch.commit();
       setTrasladoForm(initialTrasladoForm);
       setShowTrasladoModal(false); setTrasladoSearch('');
-      setDialog({ title: '✅ Traslado Registrado', text: `${formatNum(cantQty)} ${item.unit} de ${item.id} trasladados de ${almacenOrigen} a ${almacenDestino}.`, type: 'alert' });
+      setDialog({ title: '✅ Traslado Registrado', text: `${formatNum(cantQty)} ${repDoc.unit} de "${cleanCode}" trasladados de ${almacenOrigen} → ${almacenDestino}.`, type: 'alert' });
     } catch (err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
 
@@ -7414,115 +7474,184 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                )}
             </div>
         {/* ── MODAL TRASLADO ENTRE ALMACENES ── */}
-            {showTrasladoModal && (
+            {showTrasladoModal && (() => {
+              // Build consolidated item list: one entry per cleanCode, from ALL inventory docs
+              // Grouped by category → subcategory
+              const consolidated = {};
+              (inventory||[]).filter(i=>i.activo!==false).forEach(i => {
+                const rawId = i.displayId||(i.id||'').split('___')[0];
+                const cleanCode = rawId.replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
+                if(!cleanCode) return;
+                const qty = parseNum(i.stock||0);
+                if(!consolidated[cleanCode]) {
+                  consolidated[cleanCode] = {
+                    cleanCode, desc: i.desc||'', unit: i.unit||'und',
+                    category: i.category||'Otros',
+                    subcategory: i.subcategory||getItemSubcategory(i)||'',
+                    totalStock: 0, warehouses: {}
+                  };
+                }
+                const almNom = i.almacen || rawId.split('___')[1]?.replace(/-/g,' ') || '';
+                if(!consolidated[cleanCode].warehouses[almNom] || qty > (consolidated[cleanCode].warehouses[almNom]||0)) {
+                  consolidated[cleanCode].warehouses[almNom] = qty;
+                }
+                // Prefer clean desc without ×
+                const curD = consolidated[cleanCode].desc||'';
+                const newD = i.desc||'';
+                if(newD && !newD.includes('×') && (curD.includes('×') || newD.length >= curD.length)) consolidated[cleanCode].desc = newD;
+              });
+              // Compute total stock, remove empty almacen if named ones exist
+              Object.values(consolidated).forEach(c => {
+                const hasNamed = Object.keys(c.warehouses).some(a=>a.trim()!=='');
+                if(hasNamed && c.warehouses['']!==undefined) delete c.warehouses[''];
+                c.totalStock = Object.values(c.warehouses).reduce((s,v)=>s+v,0);
+              });
+
+              // Filter by search
+              const s = (trasladoSearch||'').toUpperCase();
+              const filteredItems = Object.values(consolidated).filter(c => {
+                if(!s) return true;
+                return c.cleanCode.toUpperCase().includes(s) || (c.desc||'').toUpperCase().includes(s);
+              });
+
+              // Group by category → subcategory
+              const CAT_ORDER = ['Productos Terminados','Materia Prima','Semielaborados','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+              const SUB_ORDER = ['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
+              const catGroups = {};
+              filteredItems.forEach(c => {
+                const cat = c.category;
+                if(!catGroups[cat]) catGroups[cat] = {};
+                const sub = c.subcategory || '__NONE__';
+                if(!catGroups[cat][sub]) catGroups[cat][sub] = [];
+                catGroups[cat][sub].push(c);
+              });
+              const sortedCats = [...CAT_ORDER.filter(c=>catGroups[c]), ...Object.keys(catGroups).filter(c=>!CAT_ORDER.includes(c))];
+
+              // Stock in selected origen for selected item
+              const selItem = trasladoForm.itemId ? consolidated[trasladoForm.itemId] : null;
+              const stockOrigen = selItem ? (selItem.warehouses[trasladoForm.almacenOrigen]||0) : 0;
+
+              return (
               <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl border-t-4 border-indigo-500">
-                  <div className="flex justify-between items-center mb-6">
+                <div className="bg-white rounded-3xl p-6 max-w-2xl w-full shadow-2xl border-t-4 border-indigo-500 max-h-[90vh] overflow-y-auto">
+                  <div className="flex justify-between items-center mb-5">
                     <h3 className="text-lg font-black uppercase flex items-center gap-2"><ArrowRightLeft size={20} className="text-indigo-600"/> Traslado entre Almacenes</h3>
                     <button onClick={()=>setShowTrasladoModal(false)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
                   </div>
                   <div className="space-y-4">
+                    {/* Almacenes */}
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
-                        <select value={trasladoForm.almacenOrigen} onChange={e=>setTrasladoForm({...trasladoForm,almacenOrigen:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                        <select value={trasladoForm.almacenOrigen} onChange={e=>setTrasladoForm({...trasladoForm,almacenOrigen:e.target.value})}
+                          className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
                           {depositos.map(a=><option key={a} value={a}>{a}</option>)}
                         </select>
                       </div>
                       <div>
                         <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Destino</label>
-                        <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm({...trasladoForm,almacenDestino:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                        <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm({...trasladoForm,almacenDestino:e.target.value})}
+                          className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
                           {depositos.map(a=><option key={a} value={a}>{a}</option>)}
                         </select>
                       </div>
                     </div>
+                    {/* Buscador */}
                     <div>
                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
-                      <input
-                        type="text"
-                        placeholder="🔍 Buscar por código o descripción..."
-                        value={trasladoSearch||''}
-                        onChange={e=>setTrasladoSearch(e.target.value.toUpperCase())}
-                        className="w-full border-2 border-indigo-200 bg-indigo-50 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-500 focus:bg-white mb-2 uppercase transition-colors"
-                      />
-                      <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm({...trasladoForm,itemId:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                      <input type="text" placeholder="🔍 Buscar por código o descripción..."
+                        value={trasladoSearch||''} onChange={e=>setTrasladoSearch(e.target.value.toUpperCase())}
+                        className="w-full border-2 border-indigo-200 bg-indigo-50 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-500 focus:bg-white mb-2 uppercase"/>
+                      <select value={trasladoForm.itemId}
+                        onChange={e=>setTrasladoForm({...trasladoForm, itemId: e.target.value})}
+                        className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white"
+                        size={1}>
                         <option value="">— Seleccionar artículo —</option>
-                        <optgroup label="── Materia Prima / Consumibles ──">
-                          {(inventory||[])
-                            .filter(i=>i.category!=='Semielaborados')
-                            .filter(i=>{
-                              if(!trasladoSearch) return true;
-                              const s=trasladoSearch.toUpperCase();
-                              const cid=(i.displayId||(i.id||'').split('___')[0]).toUpperCase();
-                              return cid.includes(s)||(i.desc||'').toUpperCase().includes(s);
-                            })
-                            .sort((a,b)=>(a.displayId||a.id||'').localeCompare(b.displayId||b.id||''))
-                            .map(i=>{
-                              const cid=i.displayId||(i.id||'').split('___')[0];
-                              const a=i.almacen?` [${i.almacen.replace('ALMACEN ','')}]`:'';
-                              return <option key={i.id} value={i.id}>{cid}{a} — {i.desc} ({formatNum(i.stock)} {i.unit})</option>;
-                            })}
-                        </optgroup>
-                        <optgroup label="── Semielaborados / Bobinas ──">
-                          {(inventory||[])
-                            .filter(i=>i.category==='Semielaborados')
-                            .sort((a,b)=>(a.id||'').localeCompare(b.id||''))
-                            .map(i=>{
-                              const a=i.almacen?` [${i.almacen.replace('ALMACEN ','')}]`:'';
-                              return <option key={i.id} value={`SEM::${i.id}`}>{i.id}{a} — {i.desc} ({formatNum(i.stock)} KG)</option>;
-                            })}
-                        </optgroup>
-                        <optgroup label="── Productos Terminados (FG) ──">
-                          {(finishedGoodsInventory||[])
-                            .filter(fg => {
-                              const stk = parseNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares);
-                              if(stk < 0) return false;
-                              if(!trasladoSearch) return true;
-                              return (fg.producto||fg.id||'').toUpperCase().includes(trasladoSearch)||(fg.cliente||'').toUpperCase().includes(trasladoSearch);
-                            })
-                            .sort((a,b)=>(a.producto||'').localeCompare(b.producto||''))
-                            .map(fg=>{
-                              const esTermo = fg.tipoProducto==='TERMOENCOGIBLE';
-                              const stk = parseNum(esTermo?fg.kgProducidos:fg.millares);
-                              const unit = esTermo?'KG':'Mill.';
-                              const label = (fg.producto||fg.id||'').toUpperCase().trim();
-                              return (
-                                <option key={fg.id} value={'FG::'+fg.id}>
-                                  {label} {fg.cliente?'['+fg.cliente+']':''} — {formatNum(stk)} {unit}
-                                </option>
-                              );
-                            })
+                        {sortedCats.map(cat => {
+                          const subMap = catGroups[cat] || {};
+                          const subKeys = [...SUB_ORDER.filter(s=>subMap[s]),...Object.keys(subMap).filter(s=>!SUB_ORDER.includes(s)&&s!=='__NONE__'),...(subMap['__NONE__']?['__NONE__']:[])];
+                          const hasSubs = subKeys.some(k=>k!=='__NONE__');
+                          if(!hasSubs) {
+                            return [
+                              <option key={`cat-${cat}`} disabled>── {cat.toUpperCase()} ──</option>,
+                              ...(subMap['__NONE__']||[]).sort((a,b)=>a.cleanCode.localeCompare(b.cleanCode)).map(c=>{
+                                const whLabel = Object.entries(c.warehouses).filter(([,v])=>v>0).map(([a,v])=>`${a.replace('ALMACEN ','')}:${formatNum(v)}`).join(' ');
+                                return <option key={c.cleanCode} value={c.cleanCode}>{c.cleanCode} — {c.desc} ({whLabel||formatNum(c.totalStock)} {c.unit})</option>;
+                              })
+                            ];
                           }
-                        </optgroup>
+                          return subKeys.flatMap(sub => {
+                            const subItems = (subMap[sub]||[]).sort((a,b)=>a.cleanCode.localeCompare(b.cleanCode));
+                            const label = sub==='__NONE__' ? `── ${cat.toUpperCase()} ──` : `── ${cat.toUpperCase()} / ${sub.toUpperCase()} ──`;
+                            return [
+                              <option key={`sub-${cat}-${sub}`} disabled>{label}</option>,
+                              ...subItems.map(c=>{
+                                const whLabel = Object.entries(c.warehouses).filter(([,v])=>v>0).map(([a,v])=>`${a.replace('ALMACEN ','')}:${formatNum(v)}`).join(' ');
+                                return <option key={c.cleanCode} value={c.cleanCode}>{c.cleanCode} — {c.desc} ({whLabel||formatNum(c.totalStock)} {c.unit})</option>;
+                              })
+                            ];
+                          });
+                        })}
                       </select>
                     </div>
+                    {/* Stock info */}
+                    {selItem && (
+                      <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-200">
+                        <p className="text-[10px] font-black text-indigo-700 uppercase mb-1">{selItem.cleanCode} — {selItem.desc}</p>
+                        <div className="flex flex-wrap gap-2">
+                          {Object.entries(selItem.warehouses).filter(([,v])=>v>0).map(([alm,v])=>(
+                            <span key={alm} className={`text-[9px] font-black px-2 py-1 rounded-lg ${alm===trasladoForm.almacenOrigen?'bg-orange-200 text-orange-800':'bg-white text-gray-600 border border-gray-200'}`}>
+                              {alm.replace('ALMACEN ','')} : {formatNum(v)} {selItem.unit}
+                              {alm===trasladoForm.almacenOrigen?' (ORIGEN)':''}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-[9px] text-indigo-600 font-bold mt-1">
+                          Disponible en {trasladoForm.almacenOrigen}: <span className="font-black">{formatNum(stockOrigen)} {selItem.unit}</span>
+                        </p>
+                      </div>
+                    )}
+                    {/* Cantidad y fecha */}
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
-                        <input type="number" step="0.01" min="0.01" value={trasladoForm.qty} onChange={e=>setTrasladoForm({...trasladoForm,qty:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-400" placeholder="0.00"/>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
+                          Cantidad {selItem ? `(máx. ${formatNum(stockOrigen)} ${selItem.unit})` : ''}
+                        </label>
+                        <input type="number" step="0.01" min="0.01" max={stockOrigen||undefined}
+                          value={trasladoForm.qty} onChange={e=>setTrasladoForm({...trasladoForm,qty:e.target.value})}
+                          className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-400" placeholder="0.00"/>
                       </div>
                       <div>
                         <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                        <input type="date" value={trasladoForm.date} onChange={e=>setTrasladoForm({...trasladoForm,date:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400"/>
+                        <input type="date" value={trasladoForm.date} onChange={e=>setTrasladoForm({...trasladoForm,date:e.target.value})}
+                          className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400"/>
                       </div>
                     </div>
                     <div>
                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones (opcional)</label>
-                      <input type="text" value={trasladoForm.notes} onChange={e=>setTrasladoForm({...trasladoForm,notes:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 uppercase" placeholder="Ej: INSUMOS PARA PRODUCCIÓN LÍNEA 2"/>
+                      <input type="text" value={trasladoForm.notes} onChange={e=>setTrasladoForm({...trasladoForm,notes:e.target.value.toUpperCase()})}
+                        className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 uppercase"
+                        placeholder="Ej: INSUMOS PARA PRODUCCIÓN LÍNEA 2"/>
                     </div>
                     {trasladoForm.almacenOrigen === trasladoForm.almacenDestino && (
                       <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
                     )}
+                    {selItem && parseNum(trasladoForm.qty) > stockOrigen && (
+                      <p className="text-xs text-red-500 font-bold text-center">⚠ Stock insuficiente en {trasladoForm.almacenOrigen} (disponible: {formatNum(stockOrigen)} {selItem.unit})</p>
+                    )}
                     <div className="flex justify-end gap-3 pt-2">
                       <button onClick={()=>setShowTrasladoModal(false)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
-                      <button onClick={handleSaveTraslado} className="bg-indigo-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-indigo-700 flex items-center gap-2">
+                      <button onClick={handleSaveTraslado}
+                        disabled={!trasladoForm.itemId || !trasladoForm.qty || trasladoForm.almacenOrigen===trasladoForm.almacenDestino || parseNum(trasladoForm.qty)>stockOrigen}
+                        className="bg-indigo-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-indigo-700 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
                         <ArrowRightLeft size={14}/> Registrar Traslado
                       </button>
                     </div>
                   </div>
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             <div id="pdf-content" className="p-8 print:p-0 bg-white">
                <div className="hidden pdf-header mb-8">
