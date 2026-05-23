@@ -257,7 +257,7 @@ const SYSTEM_MODULES = [
     submodules: [
       { id: 'inv_planta',      label: 'Solicitudes de Planta' },
       { id: 'inv_almacen',     label: 'Almacén / OC' },
-      { id: 'inv_wip',         label: 'WIP (En Proceso)' },
+      { id: 'inv_finished',    label: 'Inv. Productos Terminados' },
       { id: 'inv_terminados',  label: 'Terminados' },
       { id: 'inv_operaciones', label: 'Operaciones (Entradas, Salidas, TF)' },
       { id: 'inv_kardex',      label: 'Kardex / Mov. Unidades' },
@@ -775,42 +775,6 @@ export default function App() {
       });
     }
 
-    // ── WIP ──
-    const activeOPs = (requirements||[]).filter(r=>r.status!=='COMPLETADO');
-    let wipRows = '';
-    activeOPs.forEach(req => {
-      const despachado = {};
-      (invRequisitions||[]).filter(r=>r.opId===req.id&&(r.status==='APROBADO'||r.status==='APROBADA'))
-        .forEach(r=>{(r.items||[]).forEach(it=>{if(it.id) despachado[it.id]=(despachado[it.id]||0)+parseNum(it.qty);});});
-      const consumido = {};
-      ['extrusion','impresion','sellado'].forEach(phase=>{
-        ((req.production||{})[phase]?.batches||[]).forEach(b=>{(b.insumos||[]).forEach(ing=>{if(ing.id) consumido[ing.id]=(consumido[ing.id]||0)+parseNum(ing.qty);});});
-      });
-      Object.keys(despachado).forEach(matId=>{
-        const restante=Math.max(0,despachado[matId]-(consumido[matId]||0));
-        if(restante>=0.01){
-          const inv=(inventory||[]).find(i=>i.id===matId);
-          const id=`WIP-${req.id}-${matId}`;
-          wipRows+=`<tr>
-            <td>${id}</td>
-            <td>${(inv?.desc||matId).toUpperCase()} (OP ${req.id} — ${req.client})</td>
-            <td style="text-align:center">${inv?.unit||'KG'}</td>
-            <td style="text-align:right">${formatNum(restante)}</td>
-            <td style="background-color:#d1fae5"></td>
-            <td style="background-color:#d1fae5"></td>
-            <td style="background-color:#d1fae5"></td>
-            <td style="background-color:#d1fae5"></td>
-            <td></td>
-            <td></td>
-          </tr>`;
-        }
-      });
-    });
-    if(wipRows){
-      html += sectionHeader('⚙ EN PROCESO (WIP) — REMANENTE DE MP','#1e40af');
-      html += wipRows;
-    }
-
     // ── PRODUCTOS TERMINADOS — por subcategoría, código limpio ──
     // Consolidate inventory PT items by clean code
     const ptByCodeExcel = {};
@@ -927,7 +891,7 @@ export default function App() {
     const a = document.createElement('a');
     a.href = url; a.download = `Toma_Fisica_${today}.xls`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setDialog({ title: '✅ Exportación Exitosa', text: 'Formato de Toma Física descargado con todas las secciones: MP, Consumibles, WIP y Terminados.', type: 'alert' });
+    setDialog({ title: '✅ Exportación Exitosa', text: 'Formato de Toma Física descargado con todas las secciones: MP, Consumibles y Terminados.', type: 'alert' });
   };
 
   // ============================================================================
@@ -1077,6 +1041,48 @@ export default function App() {
     };
     doCleanup();
   }, [inventory, appUser]);
+
+  // ── ONE-TIME: Delete duplicate 'administrador' user (keep 'admin') ──
+  useEffect(() => {
+    if(!appUser||!systemUsers||sessionStorage.getItem('del_dup_admin_v1')==='done') return;
+    const doClean = async () => {
+      try {
+        const dupes = (systemUsers||[]).filter(u =>
+          (u.username||'').toLowerCase() === 'administrador' ||
+          ((u.username||'').toLowerCase() !== 'admin' && (u.role==='Master'||u.role==='Administrador') &&
+           (systemUsers||[]).some(a=>(a.username||'').toLowerCase()==='admin' && (a.role==='Master'||a.role==='Administrador') && a.id!==u.id))
+        );
+        if(dupes.length > 0) {
+          const b = writeBatch(db);
+          dupes.forEach(u => b.delete(getDocRef('users', u.id)));
+          await b.commit();
+        }
+        sessionStorage.setItem('del_dup_admin_v1','done');
+      } catch(e) { console.error('Delete dup admin:', e); }
+    };
+    doClean();
+  }, [systemUsers, appUser]);
+
+  // ── ONE-TIME: Delete Requisición 00017 ──
+  useEffect(() => {
+    if(!appUser || sessionStorage.getItem('del_req_00017')==='done') return;
+    const doDelete = async () => {
+      try {
+        // Find all docs with id containing 00017 or op number 17
+        const toDelete = (requirements||[]).filter(r => {
+          const rid = String(r.id||'').replace('OP-','');
+          return rid === '00017' || rid === '17' || r.id === 'OP-00017' || r.id === 'OP-17';
+        });
+        if(toDelete.length > 0) {
+          const b = writeBatch(db);
+          toDelete.forEach(r => b.delete(getDocRef('requirements', r.id)));
+          await b.commit();
+        }
+        sessionStorage.setItem('del_req_00017','done');
+      } catch(e) { console.error('Delete req 00017:', e); }
+    };
+    doDelete();
+  }, [requirements, appUser]);
 
   // Heartbeat: update lastPing every 30 seconds to keep session alive
   useEffect(() => {
@@ -1231,7 +1237,7 @@ export default function App() {
   // Cuentas:
   //   1.1.03.01.004 MATERIA PRIMA (INV-FINAL)           — inventario MP
   //   1.1.03.01.003 INVENTARIO DE CONSUMIBLES           — inventario consumibles
-  //   1.1.03.01.007 PRODUCTOS EN PROCESO (INV-INICIAL)  — WIP
+  //   1.1.03.01.007 
   //   1.1.03.01.008 PRODUCTOS TERMINADOS (INV-FINAL)    — terminados
   //   5.1.01.01.001 COSTO DE PRODUCCIÓN Y VENTAS        — costo al facturar
   //   4.1.01.01.000 INGRESOS POR MAQUILA                — ingresos al facturar
@@ -1299,24 +1305,10 @@ export default function App() {
       }
     }
 
-    // WIP items (id prefix "WIP-")
-    for (const [pfId, val] of Object.entries(physicalCounts)) {
-      if (!pfId.startsWith('WIP-')) continue;
-      if (val === undefined || val === '') continue;
-      // pfId = "WIP-{opId}-{matId}"
-      const parts = pfId.replace('WIP-','').split('-');
-      const matId = parts.slice(1).join('-');
-      const wipItem = (wipInventory||[]).find(w => w.opId === parts[0]) || null;
-      const invItem = (inventory||[]).find(i => i.id === matId);
-      if (!invItem) continue;
-      const newStock = parseNum(val);
-      const diff = newStock - parseNum(physicalCounts[pfId + '_sys'] || 0);
-      if (Math.abs(diff) > 0.0001) changes.push({ kind: 'wip', item: invItem, newStock, diff, wipId: pfId });
-    }
 
-    // FG Terminados (id prefix "FG-TF-" or "INV-PT-")
+    // FG Terminados and PT inventory items (no WIP)
     for (const [pfId, val] of Object.entries(physicalCounts)) {
-      if (val === undefined || val === '') continue;
+      if (val === undefined || val === '' || pfId.startsWith('WIP-') || pfId.includes('||')) continue;
       if (pfId.startsWith('FG-TF-')) {
         const grpKey = pfId.replace('FG-TF-','');
         const fgDocs = (finishedGoodsInventory||[]).filter(fg => {
@@ -1330,122 +1322,68 @@ export default function App() {
           const diff = newStock - sysStock;
           if (Math.abs(diff) > 0.0001) changes.push({ kind: 'fg', fgDocs, esTermo, sysStock, newStock, diff, pfId });
         }
-      } else if (pfId.startsWith('INV-PT-')) {
-        const invId = pfId.replace('INV-PT-','');
-        const invItem = (inventory||[]).find(i=>i.id===invId);
-        if (!invItem) continue;
-        const newStock = parseNum(val);
-        const diff = newStock - parseNum(invItem.stock||0);
-        if (Math.abs(diff) > 0.0001) changes.push({ kind: 'inventory', item: invItem, newStock, diff });
+      } else if (!pfId.startsWith('INV-PT-')) {
+        // PT inventory by cleanCode OR regular inventory item
+        const cleanCode = pfId;
+        const ptDocs = (inventory||[]).filter(i => {
+          const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+          return cc === cleanCode;
+        });
+        if(ptDocs.length > 0) {
+          const wh = {};
+          ptDocs.forEach(d=>{ const alm=d.almacen||(d.id||'').split('___')[1]?.replace(/-/g,' ')||''; const qty=parseNum(d.stock||0); if(!wh[alm]||qty>wh[alm]) wh[alm]=qty; });
+          const sysStock = Object.values(wh).reduce((s,v)=>s+v,0);
+          const newStock = parseNum(val);
+          const diff = newStock - sysStock;
+          if(Math.abs(diff)>0.0001) changes.push({ kind:'pt_clean', ptDocs, cleanCode, sysStock, newStock, diff });
+        } else {
+          const invItem = (inventory||[]).find(i=>i.id===pfId);
+          if(invItem) { const newStock=parseNum(val); const diff=newStock-parseNum(invItem.stock||0); if(Math.abs(diff)>0.0001) changes.push({kind:'inventory',item:invItem,newStock,diff}); }
+        }
       }
     }
 
-    if (changes.length === 0) {
-      return setDialog({title:'Aviso', text:'No se encontraron diferencias para ajustar, o los conteos están en blanco.', type:'alert'});
-    }
+    if (changes.length === 0) return setDialog({title:'Aviso', text:'No se encontraron diferencias para ajustar.', type:'alert'});
 
-    setDialog({
-      title: 'Procesar Toma Física',
-      text: `Se ajustarán ${changes.length} ítem(s): Inventario General, WIP y/o Terminados. ¿Confirmar?`,
-      type: 'confirm',
+    setDialog({ title: 'Procesar Toma Física', text: `Se ajustarán ${changes.length} ítem(s): Inventario General y Terminados. ¿Confirmar?`, type: 'confirm',
       onConfirm: async () => {
         try {
-          const batch = writeBatch(db);
-          const timestamp = Date.now();
-          let count = 0;
-
+          const batch = writeBatch(db); const timestamp = Date.now(); let count = 0;
           for (const ch of changes) {
             count++;
             if (ch.kind === 'inventory') {
-              const type = ch.diff > 0 ? 'AJUSTE (POSITIVO)' : 'AJUSTE (NEGATIVO)';
-              const qty = Math.abs(ch.diff);
-              const movId = `TF-${timestamp}-${ch.item.id}`;
-              batch.set(getDocRef('inventoryMovements', movId), {
-                id: movId, date: tomaFisicaDate||getTodayDate(), itemId: ch.item.id, itemName: ch.item.desc,
-                type, qty, cost: ch.item.cost, totalValue: qty * ch.item.cost,
-                reference: 'TOMA FÍSICA', notes: 'AJUSTE MASIVO SISTEMA',
-                timestamp, user: appUser?.name || 'Sistema'
-              });
+              const qty = Math.abs(ch.diff); const movId = `TF-${timestamp}-${ch.item.id}`;
+              batch.set(getDocRef('inventoryMovements', movId), { id:movId, date:tomaFisicaDate||getTodayDate(), itemId:ch.item.id, itemName:ch.item.desc, type:ch.diff>0?'AJUSTE (POSITIVO)':'AJUSTE (NEGATIVO)', qty, cost:ch.item.cost, totalValue:qty*ch.item.cost, reference:'TOMA FÍSICA', notes:'AJUSTE MASIVO', timestamp, user:appUser?.name||'Sistema' });
               batch.update(getDocRef('inventory', ch.item.id), { stock: ch.newStock });
-
             } else if (ch.kind === 'fg') {
-              // Ajustar el primer doc del grupo FG (el más reciente)
               const mainDoc = ch.fgDocs.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))[0];
-              const updateField = ch.esTermo ? {kgProducidos: ch.newStock} : {millares: ch.newStock};
-              batch.update(getDocRef('finishedGoodsInventory', mainDoc.id), updateField);
+              batch.update(getDocRef('finishedGoodsInventory', mainDoc.id), ch.esTermo?{kgProducidos:ch.newStock}:{millares:ch.newStock});
               const movId = `TF-FG-${timestamp}-${mainDoc.id}`;
-              batch.set(getDocRef('inventoryMovements', movId), {
-                id: movId, date: tomaFisicaDate||getTodayDate(), itemId: `FG::${mainDoc.id}`,
-                itemName: `${mainDoc.categoria||mainDoc.producto||'FG'} — ${mainDoc.cliente||''}`,
-                type: ch.diff > 0 ? 'AJUSTE (POSITIVO)' : 'AJUSTE (NEGATIVO)',
-                qty: Math.abs(ch.diff), cost: mainDoc.costoUnitario||0,
-                totalValue: Math.abs(ch.diff)*(mainDoc.costoUnitario||0),
-                reference: 'TOMA FÍSICA', notes: 'AJUSTE MASIVO TERMINADOS',
-                timestamp, user: appUser?.name||'Sistema', isFG: true
-              });
+              batch.set(getDocRef('inventoryMovements', movId), { id:movId, date:tomaFisicaDate||getTodayDate(), itemId:`FG::${mainDoc.id}`, itemName:`${mainDoc.categoria||mainDoc.producto||'FG'} — ${mainDoc.cliente||''}`, type:ch.diff>0?'AJUSTE (POSITIVO)':'AJUSTE (NEGATIVO)', qty:Math.abs(ch.diff), cost:mainDoc.costoUnitario||0, totalValue:Math.abs(ch.diff)*(mainDoc.costoUnitario||0), reference:'TOMA FÍSICA', notes:'AJUSTE MASIVO PT', timestamp, user:appUser?.name||'Sistema', isFG:true });
+            } else if (ch.kind === 'pt_clean') {
+              const sysTotal = ch.sysStock||1;
+              for(const doc of ch.ptDocs) {
+                const alm = doc.almacen||(doc.id||'').split('___')[1]?.replace(/-/g,' ')||'';
+                const whKey = `${ch.cleanCode}||${alm}`;
+                const whCount = physicalCounts[whKey];
+                const newDocStock = whCount!==undefined&&whCount!=='' ? parseNum(whCount) : Math.round((parseNum(doc.stock||0)/sysTotal)*ch.newStock*100)/100;
+                batch.update(getDocRef('inventory', doc.id), { stock:newDocStock, timestamp });
+              }
+              batch.set(getDocRef('inventoryMovements', `TF-PT-${timestamp}-${ch.cleanCode}`), { id:`TF-PT-${timestamp}-${ch.cleanCode}`, date:tomaFisicaDate||getTodayDate(), itemId:ch.cleanCode, itemName:ch.ptDocs[0]?.desc||ch.cleanCode, type:ch.diff>0?'AJUSTE (POSITIVO)':'AJUSTE (NEGATIVO)', qty:Math.abs(ch.diff), cost:ch.ptDocs[0]?.cost||0, totalValue:Math.abs(ch.diff)*(ch.ptDocs[0]?.cost||0), reference:'TOMA FÍSICA', notes:'AJUSTE MASIVO PT', timestamp, user:appUser?.name||'Sistema' });
             }
           }
-
           await batch.commit();
-
-          // Guardar registro de toma física en Firebase
-          const tomaSnapshot = [];
-          for (const item of inventory) {
-            const val = physicalCounts[item.id];
-            if (val !== undefined && val !== '') {
-              const sysStock = parseNum(item.stock || 0);
-              const physCount = parseNum(val);
-              tomaSnapshot.push({ id: item.id, desc: item.desc, category: item.category || 'General', unit: item.unit || 'KG', sysStock, physCount, diff: physCount - sysStock, kind: 'inventory' });
-            }
-          }
-          for (const [pfId, val] of Object.entries(physicalCounts)) {
-            if (!pfId.startsWith('WIP-') || val === undefined || val === '') continue;
-            const parts = pfId.replace('WIP-','').split('-');
-            const matId = parts.slice(1).join('-');
-            const invItem = (inventory||[]).find(i => i.id === matId);
-            if (!invItem) continue;
-            const physCount = parseNum(val);
-            const ch = changes.find(c => c.wipId === pfId);
-            const sysStock = ch ? physCount - ch.diff : physCount;
-            tomaSnapshot.push({ id: pfId, desc: `${invItem.desc} (WIP: OP-${parts[0]})`, category: 'En Proceso (WIP)', unit: invItem.unit || 'KG', sysStock, physCount, diff: ch ? ch.diff : 0, kind: 'wip' });
-          }
-          for (const [pfId, val] of Object.entries(physicalCounts)) {
-            if (!pfId.startsWith('FG-TF-') || val === undefined || val === '') continue;
-            const grpKey = pfId.replace('FG-TF-','');
-            const fgDocs = (finishedGoodsInventory||[]).filter(fg => { const key = `${fg.categoria||fg.producto||''}__${fg.cliente||''}__${fg.tipoProducto}`; return key === grpKey; });
-            if (!fgDocs.length) continue;
-            const esTermo = fgDocs[0].tipoProducto === 'TERMOENCOGIBLE';
-            const sysStock = fgDocs.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
-            const physCount = parseNum(val);
-            tomaSnapshot.push({ id: pfId, desc: formatFGLabel(fgDocs[0]), category: 'Productos Terminados', unit: esTermo?'KG':'Millares', sysStock, physCount, diff: physCount - sysStock, kind: 'fg' });
-          }
-          for (const [pfId, val] of Object.entries(physicalCounts)) {
-            if (!pfId.startsWith('INV-PT-') || val === undefined || val === '') continue;
-            const invItem = (inventory||[]).find(i => i.id === pfId.replace('INV-PT-',''));
-            if (!invItem) continue;
-            const physCount = parseNum(val);
-            const sysStock = parseNum(invItem.stock || 0);
-            tomaSnapshot.push({ id: invItem.id, desc: invItem.desc, category: 'Productos Terminados', unit: invItem.unit||'KG', sysStock, physCount, diff: physCount - sysStock, kind: 'inv-pt' });
-          }
           try {
-            await addDoc(getColRef('tomasFisicas'), {
-              fecha: getTodayDate(), fechaHora: new Date().toLocaleString('es-VE'),
-              timestamp: Date.now(), realizadaPor: appUser?.name || 'Sistema',
-              username: appUser?.username || '', observaciones: '',
-              totalItems: tomaSnapshot.length, totalAjustes: count, items: tomaSnapshot
-            });
-          } catch(e) { console.warn('Error al guardar registro de toma física:', e); }
-
+            const tomaSnapshot = changes.map(ch=>({ id:ch.cleanCode||ch.pfId||ch.item?.id||'', desc:ch.ptDocs?.[0]?.desc||ch.item?.desc||(ch.fgDocs?.[0]?formatFGLabel(ch.fgDocs[0]):'—'), category:ch.kind==='inventory'?(ch.item?.category||'General'):'Productos Terminados', unit:ch.ptDocs?.[0]?.unit||ch.item?.unit||(ch.esTermo?'KG':'Millares'), sysStock:ch.sysStock??parseNum(ch.item?.stock||0), physCount:ch.newStock, diff:ch.diff, kind:ch.kind }));
+            await addDoc(getColRef('tomasFisicas'), { fecha:getTodayDate(), fechaHora:new Date().toLocaleString('es-VE'), timestamp:Date.now(), realizadaPor:appUser?.name||'Sistema', username:appUser?.username||'', observaciones:'', totalItems:tomaSnapshot.length, totalAjustes:count, items:tomaSnapshot });
+          } catch(e){ console.warn('Error guardando toma física:', e); }
           setPhysicalCounts({});
-          setDialog({title: '✅ Toma Física Procesada', text: `${count} ajuste(s) aplicados en Inventario General, WIP y Terminados.`, type: 'alert'});
-        } catch(e) {
-          setDialog({title: 'Error', text: e.message, type: 'alert'});
-        }
+          setDialog({title:'✅ Toma Física Procesada', text:`${count} ajuste(s) aplicados.`, type:'alert'});
+        } catch(e){ setDialog({title:'Error', text:e.message, type:'alert'}); }
       }
     });
   };
 
-  // ============================================================================
   // HELPERS TOMA FÍSICA — Eliminar / Editar / Exportar registro guardado
   // ============================================================================
   const handleDeleteTomaFisica = (id) => {
@@ -2892,7 +2830,7 @@ export default function App() {
     requireAdminPassword(async () => {
       setDialog({
         title: '🗑 Eliminación Total — OP #' + String(id).replace('OP-','').padStart(5,'0'),
-        text: `BORRADO EN CASCADA: Se eliminarán la OP y TODOS sus registros relacionados:\n• Requisiciones de almacén\n• WIP (materiales en proceso)\n• Productos Terminados parciales\n• Movimientos de Kardex\n• Asientos contables\n• Se revertirá el stock de materiales despachados\n\nEsta acción es IRREVERSIBLE. ¿Confirmar?`,
+        text: `BORRADO EN CASCADA: Se eliminarán la OP y TODOS sus registros relacionados:\n• Requisiciones de almacén\n• Productos Terminados parciales\n• Movimientos de Kardex\n• Asientos contables\n• Se revertirá el stock de materiales despachados\n\nEsta acción es IRREVERSIBLE. ¿Confirmar?`,
         type: 'confirm',
         onConfirm: async () => {
           try {
@@ -3044,11 +2982,11 @@ export default function App() {
           batch.update(getDocRef('bobinaProductions', bobina.id), {status: 'EN_PROCESO', reqId: req.id});
           await batch.commit();
 
-          // Crear entrada WIP
+          // Registro de semielaborado en proceso (bobinas) — tracking interno, no WIP de MP
           const costoPromedio = totalInsumosKg > 0 ? phaseCost / totalInsumosKg : 0;
-          const wipId = `WIP-BOB-${Date.now()}`;
-          await setDoc(getDocRef('wipInventory', wipId), {
-            id: wipId, opId: bobina.id, reqId: req.id,
+          const bobTrackId = `BOB-TRACK-${Date.now()}`;
+          await setDoc(getDocRef('wipInventory', bobTrackId), {
+            id: bobTrackId, opId: bobina.id, reqId: req.id,
             cliente: 'INTERNO — BOBINAS',
             producto: `BOBINA ${bobina.categoria}`,
             especificaciones: `${bobina.ancho}×${bobina.largo} - ${bobina.micras}mic`,
@@ -3058,14 +2996,14 @@ export default function App() {
             status: 'EN PROCESO', isBobina: true, timestamp: Date.now()
           });
 
-          // Asiento contable
+          // Asiento: MP → acumulado en bobina (se cerrará cuando bobina pase a Semielaborados)
           for (let ing of validItems) {
             const item = (inventory||[]).find(i=>i.id===ing.id);
             if (!item) continue;
             await registrarAsientoContable(null, {
-              debito:'1.1.03.01.007', credito: getCtaInventario(item.category),
+              debito:'1.1.03.01.004', credito: getCtaInventario(item.category),
               monto: parseNum(ing.qty)*(item.cost||0),
-              descripcion:`DESCARGO BOBINA — ${item.desc}`,
+              descripcion:`DESPACHO BOBINA — ${item.desc} — BOB-${bobina.id}`,
               referencia:`BOB-${bobina.id}`, fecha:getTodayDate()
             });
           }
@@ -3094,42 +3032,26 @@ export default function App() {
         batch.update(getDocRef('inventoryRequisitions', req.id), { status: 'APROBADO', dispatchDate: getTodayDate(), items: validItems, approvedBy: appUser?.name, kgDespachados: totalInsumosKg, costoDespachado: phaseCost });
 
         await batch.commit(); 
-        
-        const reqDoc = (requirements || []).find(r => r.id === req.opId);
-        if (reqDoc && req.phase) {
-          const wipEntry = {
-            id: `WIP-${Date.now()}`,
-            opId: req.opId, reqId: req.id,
-            cliente: reqDoc.client || 'N/A',
-            producto: descFinal || reqDoc.desc || reqDoc.categoria || 'Producto',
-            especificaciones: `${reqDoc.ancho}x${reqDoc.largo} - ${reqDoc.micras}mic`,
-            materiales: req.items.map(it => ({ id: it.id, qty: parseNum(it.qty), cost: (inventory || []).find(i => i.id === it.id)?.cost || 0 })),
-            kgAsignados: req.items.reduce((sum, it) => sum + parseNum(it.qty), 0),
-            costoPromedio: (() => {
-              const totalCost = req.items.reduce((sum, it) => { const invItem = (inventory || []).find(i => i.id === it.id); return sum + (parseNum(it.qty) * (invItem?.cost || 0)); }, 0);
-              const totalQty = req.items.reduce((sum, it) => sum + parseNum(it.qty), 0);
-              return totalQty > 0 ? totalCost / totalQty : 0;
-            })(),
-            fase: req.phase, fechaAsignacion: getTodayDate(),
-            status: 'EN PROCESO', timestamp: Date.now()
-          };
-          await setDoc(getDocRef('wipInventory', wipEntry.id), wipEntry);
-        }
 
+        // IMPUTACIÓN DIRECTA: MP despachada → cargada a la OP directamente (sin WIP)
+        // Asiento Contable Paso 1 por cada material: MP → [acumulado en OP, NO a PT todavía]
+        // El asiento a PT (1.1.03.01.008) se genera al CERRAR la OP
         for (let ing of validItems) {
           const item = (inventory || []).find(i => i.id === ing.id);
           if (!item) continue;
           const ctaInventario = getCtaInventario(item.category);
           const montoIng = parseNum(ing.qty) * (item.cost || 0);
+          // No WIP account — debit goes to OP cost accumulation (tracked in the OP document)
+          // Contabilidad: solo registramos la salida de MP (el asiento completo se hace al cerrar OP)
           await registrarAsientoContable(null, {
-            debito: '1.1.03.01.007', credito: ctaInventario, monto: montoIng,
-            descripcion: `DESCARGO A PLANTA — ${item.desc} — FASE: ${req.phase.toUpperCase()}`,
+            debito: '1.1.03.01.004', credito: ctaInventario, monto: montoIng,
+            descripcion: `DESPACHO A PRODUCCIÓN — ${item.desc} — FASE: ${(req.phase||'').toUpperCase()} — OP: ${targetOP.id}`,
             referencia: `REQ-${targetOP.id}`, fecha: getTodayDate(),
           });
         }
 
         await pushNotif('REQ_APROBADA', '✅ Materiales Despachados', `Almacén aprobó los materiales para la OP #${String(req.opId).replace('OP-','')}.`, { opId: req.opId, destino:'planta', targetTab:'produccion' });
-        setReqToApprove(null); setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada, stock descontado y materiales asignados a WIP.', type:'alert'});
+        setReqToApprove(null); setDialog({title:'¡Descargo Exitoso!', text:'Requisición aprobada. Stock descontado e imputado directamente a la OP.', type:'alert'});
     } catch(err) { setDialog({title:'Error', text:err.message, type:'alert'}); }
   };
 
@@ -3148,7 +3070,6 @@ export default function App() {
         setDialog({title: 'Error', text: 'Requisicion no encontrada', type: 'alert'});
         return;
       }
-      const wipEntries = wipInventory.filter(wip => wip.opId === reqId);
       const esTermo = reqDoc.tipoProducto === 'TERMOENCOGIBLE';
 
       // Para TERMOENCOGIBLE: millares=0, kgProducidos es la cantidad principal
@@ -3156,7 +3077,8 @@ export default function App() {
       const millaresFinales = esTermo ? 0 : (parseNum(phaseData.millaresProd) || parseNum(reqDoc.cantidad) || 0);
       const kgFinales = parseNum(phaseData.producedKg) || parseNum(reqDoc.requestedKg) || 0;
 
-      if (wipEntries.length === 0) {
+      {
+        // Imputación Directa: cierre directo sin WIP — siempre este path
         // Generate structured code: FG-CATEGORIA-WxLx0.MIC
         const _catRaw = (reqDoc.categoria||reqDoc.desc||'PT').toUpperCase().trim();
         const _catShort = _catRaw.replace(/[\s\/\-&]+/g,'').substring(0,18);
@@ -3221,65 +3143,6 @@ export default function App() {
           });
         } catch(e){}
         return;
-      }
-
-      for (const wipEntry of wipEntries) {
-        const finishedEntry = {
-          id: `FG-${Date.now()}`,
-          opId: wipEntry.opId,
-          reqId: reqId,
-          cliente: wipEntry.cliente,
-          tipoProducto: reqDoc.tipoProducto || 'BOLSAS',
-          categoria: reqDoc.categoria || '',
-          producto: reqDoc.desc || reqDoc.categoria || 'Producto',
-          ancho: reqDoc.ancho || 0,
-          largo: reqDoc.largo || 0,
-          micras: reqDoc.micras || 0,
-          color: reqDoc.color || 'NATURAL',
-          tratamiento: reqDoc.tratamiento || 'LISO',
-          kgProducidos: kgFinales,
-          millares: millaresFinales,
-          costoUnitario: wipEntry.costoPromedio || 0,
-          fechaFinalizacion: getTodayDate(),
-          ubicacion: 'ALMACEN GENERAL',
-          status: 'LISTO PARA ENTREGA',
-          observaciones: phaseData.observations || '',
-          timestamp: Date.now()
-        };
-
-        await setDoc(getDocRef('finishedGoodsInventory', finishedEntry.id), finishedEntry);
-        // ── AUTO-SYNC FG → ALMACEN ZI ──
-        try {
-          const esTerFG2 = finishedEntry.tipoProducto === 'TERMOENCOGIBLE';
-          const fgInvId2 = `${reqId}___ALMACEN-ZI`;
-          const qtyFG2 = esTerFG2 ? kgFinales : millaresFinales;
-          await setDoc(getDocRef('inventory', fgInvId2), {
-            id: fgInvId2, desc: finishedEntry.producto || reqDoc.desc || reqId,
-            category: 'Productos Terminados',
-            subcategory: esTerFG2 ? 'Termoencogibles' : 'Bolsas Plásticas',
-            unit: esTerFG2 ? 'kg' : 'millares',
-            stock: qtyFG2,
-            cost: parseNum(finishedEntry.costoUnitario || finishedEntry.costoUnitarioMillar || 0),
-            almacen: 'ALMACEN ZI', opId: reqId,
-            cliente: finishedEntry.cliente || '', timestamp: Date.now(), updatedAt: getTodayDate()
-          }, { merge: true });
-        } catch(e){ console.warn('Auto-inv FG2 error:', e); }
-        // ── Kardex ENTRADA for FG produced ──
-        try {
-          const fgProdQty = finishedEntry.tipoProducto==='TERMOENCOGIBLE' ? parseNum(finishedEntry.kgProducidos||0) : parseNum(finishedEntry.millares||0);
-          const fgProdCost = finishedEntry.tipoProducto==='TERMOENCOGIBLE' ? parseNum(finishedEntry.costoUnitario||0) : parseNum(finishedEntry.costoUnitarioMillar||0);
-          if(fgProdQty > 0) await addDoc(getColRef('inventoryMovements'), {
-            itemId:`FG::${finishedEntry.id}`, itemDesc:`${finishedEntry.producto||''} - ${finishedEntry.cliente||''}`,
-            type:'ENTRADA_INICIAL', qty:fgProdQty, unitCost:fgProdCost, totalValue:fgProdQty*fgProdCost,
-            previousStock:0, newStock:fgProdQty, docRef:finishedEntry.opId||'PRODUCCION',
-            notes:`Produccion ${finishedEntry.opId||''} — ${finishedEntry.producto||''}`,
-            date:getTodayDate(), user:appUser?.name||'Admin', timestamp:Date.now(), isFG:true
-          });
-        } catch(e){}
-        await updateDoc(getDocRef('wipInventory', wipEntry.id), {
-          status: 'COMPLETADO',
-          fechaCompletado: getTodayDate()
-        });
       }
     } catch (error) {
       console.error('Error moviendo a Terminados:', error);
@@ -3696,7 +3559,7 @@ export default function App() {
     const getFirstInvView = () => {
       if (hasPerm('inv_planta')) return 'requisiciones';
       if (hasPerm('inv_almacen')) return 'almacen';
-      if (hasPerm('inv_wip')) return 'wip';
+      
       if (hasPerm('inv_terminados')) return 'finished';
       if (hasPerm('inv_operaciones')) return 'entradas';
       if (hasPerm('inv_kardex')) return 'kardex';
@@ -5266,211 +5129,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       );
     }
 
-    if (invView === 'wip') {
-      // Construir movimientos WIP con chequeos defensivos
-      const safeWipInventory = Array.isArray(wipInventory) ? wipInventory : [];
-      const safeInvMovements = Array.isArray(invMovements) ? invMovements : [];
-
-      const wipEntradas = safeWipInventory.map(item => ({
-        ...(item || {}),
-        movType: 'ENTRADA',
-        fecha: item?.fechaAsignacion || '—',
-        kg: parseNum(item?.kgAsignados),
-        descripcion: 'Traslado Almacén a WIP',
-      }));
-
-      const wipSalidas = safeInvMovements
-        .filter(m => m && m.type === 'SALIDA' && m.notes && (
-          String(m.notes).includes('PRODUCCI') // captura PRODUCCIÓN y PRODUCCION
-        ))
-        .map(m => ({
-          id: m.id,
-          movType: 'SALIDA',
-          opId: m.opAsignada || m.reference || '—',
-          fecha: m.date || '—',
-          kg: parseNum(m.qty),
-          itemId: m.itemId || '—',
-          itemName: m.itemName || m.itemId || '—',
-          fase: String(m.notes || '').replace(/PRODUCCI[OÓ]N?\s*/gi, '').trim() || '—',
-          descripcion: 'Consumo en Produccion',
-          status: 'CONSUMIDO',
-          materiales: [{ id: m.itemId, qty: m.qty }],
-          cliente: '—',
-          user: m.user || '—',
-          timestamp: m.timestamp || 0,
-        }));
-
-      const allWipMovs = [...wipEntradas, ...wipSalidas]
-        .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-
-      // Apply wipSearch filter
-      const wipSearchUpper = (wipSearch||'').toUpperCase();
-      const filteredWipMovs = wipSearch
-        ? allWipMovs.filter(item =>
-            String(item.opId||'').toUpperCase().includes(wipSearchUpper) ||
-            String(item.cliente||'').toUpperCase().includes(wipSearchUpper) ||
-            String(item.itemId||'').toUpperCase().includes(wipSearchUpper) ||
-            String(item.itemName||'').toUpperCase().includes(wipSearchUpper) ||
-            String(item.descripcion||'').toUpperCase().includes(wipSearchUpper) ||
-            String(item.fase||'').toUpperCase().includes(wipSearchUpper) ||
-            (item.materiales||[]).some(m=>String(m.id||'').toUpperCase().includes(wipSearchUpper))
-          )
-        : allWipMovs;
-
-      return (
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none">
-          <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-purple-50 flex justify-between items-center no-pdf">
-            <div>
-              <h2 className="text-xl font-black text-purple-800 uppercase flex items-center gap-3 tracking-tighter">
-                <Beaker className="text-purple-600" size={24}/> Inventario de Productos en Proceso (WIP)
-              </h2>
-              <p className="text-[10px] font-bold text-purple-600 mt-1 uppercase tracking-widest">
-                Movimientos: Entradas (Almacén a WIP) y Salidas (WIP a Producción)
-              </p>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  const data = allWipMovs.map(item => [
-                    item.movType,
-                    item.opId,
-                    item.cliente || '—',
-                    item.fecha,
-                    item.fase || '—',
-                    formatNum(item.kg),
-                    item.status || item.descripcion,
-                  ]);
-                  handleExportExcel(data, 'Inventario_WIP',
-                    ['Tipo', 'OP ID', 'Cliente', 'Fecha', 'Fase', 'KG', 'Estado']
-                  );
-                }}
-                className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-green-700 transition-colors flex items-center gap-2"
-              >
-                <Download size={16}/> EXPORTAR EXCEL
-              </button>
-              <button
-                onClick={() => handleExportPDF('Inventario_WIP', true)}
-                className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"
-              >
-                <Printer size={16}/> IMPRIMIR
-              </button>
-            </div>
-          </div>
-
-          <div className="px-6 py-3 border-b border-gray-100 no-pdf" data-html2canvas-ignore="true">
-            <div className="relative max-w-2xl">
-              <Search className="absolute left-3 top-3 text-gray-400" size={14}/>
-              <input type="text" placeholder="Buscar por OP, cliente, producto, categoría, fase..." value={wipSearch} onChange={e=>setWipSearch(e.target.value)}
-                className="w-full pl-9 pr-8 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-purple-400 uppercase" />
-              {wipSearch && <button onClick={()=>setWipSearch('')} className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"><X size={14}/></button>}
-            </div>
-            {wipSearch && <p className="text-[9px] text-purple-600 font-bold uppercase mt-1">{filteredWipMovs.length} de {allWipMovs.length} resultados</p>}
-          </div>
-          <div className="p-8 print:p-0 bg-white" id="pdf-content">
-            <div className="hidden pdf-header mb-8">
-              <ReportHeader />
-              <h1 className="text-2xl font-black text-black uppercase border-b-4 border-purple-500 pb-2">
-                INVENTARIO DE PRODUCTOS EN PROCESO (WIP)
-              </h1>
-              <p className="text-sm font-bold text-gray-500 uppercase mt-2">AL: {getTodayDate()}</p>
-            </div>
-
-            {/* Resumen KG en proceso */}
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
-                <span className="text-[10px] font-black text-green-700 uppercase block mb-1">Total KG Entradas</span>
-                <span className="text-2xl font-black text-green-600">{formatNum(wipEntradas.reduce((s, i) => s + parseNum(i.kg), 0))}</span>
-              </div>
-              <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-center">
-                <span className="text-[10px] font-black text-red-700 uppercase block mb-1">Total KG Salidas</span>
-                <span className="text-2xl font-black text-red-600">{formatNum(wipSalidas.reduce((s, i) => s + parseNum(i.kg), 0))}</span>
-              </div>
-              <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 text-center">
-                <span className="text-[10px] font-black text-purple-700 uppercase block mb-1">KG Neto en WIP</span>
-                <span className="text-2xl font-black text-purple-600">
-                  {formatNum(wipEntradas.reduce((s, i) => s + parseNum(i.kg), 0) - wipSalidas.reduce((s, i) => s + parseNum(i.kg), 0))}
-                </span>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-gray-100 border-b-2 border-gray-300 print:border-black">
-                  <tr className="uppercase font-black text-[10px] tracking-widest text-black">
-                    <th className="py-3 px-4 border-r print:border-black">Tipo Mov.</th>
-                    <th className="py-3 px-4 border-r print:border-black">OP ID</th>
-                    <th className="py-3 px-4 border-r print:border-black">Fecha</th>
-                    <th className="py-3 px-4 border-r print:border-black">Cliente / Producto</th>
-                    <th className="py-3 px-4 border-r print:border-black">Fase</th>
-                    <th className="py-3 px-4 border-r print:border-black">Materiales</th>
-                    <th className="py-3 px-4 text-center print:border-black">KG</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 text-black print:divide-black">
-                  {filteredWipMovs.map((item, idx) => {
-                    const isEntrada = item.movType === 'ENTRADA';
-                    return (
-                      <tr key={`${item.id}-${idx}`} className={`hover:bg-gray-50 transition-colors ${isEntrada ? 'bg-green-50/30' : 'bg-red-50/30'}`}>
-                        <td className="py-3 px-4 border-r print:border-black">
-                          <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${isEntrada ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                            {isEntrada ? '↓ ENTRADA' : '↑ SALIDA'}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 border-r print:border-black font-black text-purple-600">{item.opId}</td>
-                        <td className="py-3 px-4 border-r print:border-black font-bold">{item.fecha}</td>
-                        <td className="py-3 px-4 border-r print:border-black font-bold uppercase">
-                          {isEntrada ? (
-                            <>{item.cliente}<br/><span className="text-[9px] text-gray-500">{item.producto}</span></>
-                          ) : (
-                            <>{item.itemName || item.itemId}<br/><span className="text-[9px] text-gray-500">{item.descripcion}</span></>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 border-r print:border-black font-bold uppercase">{item.fase || '—'}</td>
-                        <td className="py-3 px-4 border-r print:border-black">
-                          {isEntrada ? (
-                            <ul className="text-[9px] space-y-0.5">
-                              {(item.materiales || []).map((mat, i) => (
-                                <li key={i} className="font-bold">
-                                  <span className="bg-gray-100 px-1 rounded print:border print:border-black">{formatNum(mat.qty)}</span> × {mat.id}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <span className="text-[9px] font-bold">{item.itemId}</span>
-                          )}
-                        </td>
-                        <td className={`py-3 px-4 text-center font-black text-lg print:border-black ${isEntrada ? 'text-green-600' : 'text-red-600'}`}>
-                          {isEntrada ? '+' : '-'}{formatNum(item.kg)}
-                        </td>
-                        <td className="py-3 px-4 text-center no-pdf">
-                          {isEntrada && (
-                            <button onClick={() => requireAdminPassword(async () => {
-                              await deleteDoc(getDocRef('wipInventory', item.id));
-                              setDialog({title:'Eliminado', text:'Ítem WIP eliminado.', type:'alert'});
-                            }, 'Eliminar ítem WIP')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={13}/></button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {filteredWipMovs.length === 0 && (
-                    <tr><td colSpan="7" className="p-8 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">
-                      No hay movimientos WIP registrados
-                    </td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="mt-6 bg-purple-50 border border-purple-200 p-4 rounded-xl print:border-black text-xs font-bold text-purple-700">
-              <span className="font-black uppercase">Nota: </span>
-              Las <span className="text-green-700 font-black">ENTRADAS</span> son traslados del almacen principal al WIP (aprobacion de requisicion de planta).
-              Las <span className="text-red-700 font-black">SALIDAS</span> son consumos de materiales en las fases de produccion.
-            </div>
-          </div>
-        </div>
-      );
-    }
 
     if (invView === 'finished') {
       // FIX 3: inventory PT items are now shown within bolsas/termos via allFG merge
@@ -6784,7 +6442,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             {inventory.some(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0) &&
               renderTFSection('🔄 Semielaborados / Bobinas (en proceso)', 'bg-indigo-600',
                 inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0), false, false, true, true)}
-            {renderTFSection('⚙ En Proceso (WIP) — Remanente de Materia Prima', 'bg-blue-600', wipItems, false, false, true)}
 
             {/* ── PRODUCTOS TERMINADOS — por subcategoría, consolidados por código limpio ── */}
             {(() => {
@@ -9597,72 +9254,97 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     ? parseNum(inv.montoBase||0) / (inv.itemsFacturados||[]).length / qty
                     : parseNum(inv.montoBase||0) / qty;
                 const total = precioVenta * qty;
-                // codigo: buscar en finishedGoodsInventory por coincidencia de descripción/producto+cliente
-                // Si invCode es FG-MANUAL-* o ALMACEN, usar descripción para encontrar el fg.id correcto
+                // ── CÓDIGO: usar exactamente el mismo código que aparece en Inventario de Productos Terminados ──
+                // Estrategia: construir el mismo mapa consolidado (cleanCode) que usa el módulo de inventario
+                // y buscar por: 1) invCode limpio, 2) descripción exacta, 3) descripción normalizada, 4) fgId→desc→cleanCode
                 let codigo = '';
-                const _cleanInvCode = (it.invCode||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
 
-                // 1. invCode válido (no es ALMACEN, no timestamp puro, no FG-MANUAL-*)
-                if(_cleanInvCode &&
-                   !/^ALMACEN/i.test(_cleanInvCode) &&
-                   !/^\d{8,}$/.test(_cleanInvCode) &&
-                   !/^FG-MANUAL-\d/i.test(_cleanInvCode)) {
-                  codigo = _cleanInvCode;
+                // Helper: get clean code from any inventory item id
+                const getClean = (raw='') => (raw||'').split('___')[0]
+                  .replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
+
+                // Build consolidated PT map: cleanCode → {id, desc, descNorm}
+                // (same logic as ptByCode in Inventario General)
+                const ptMapForSales = {};
+                (inventory||[]).filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i=>{
+                  const cc = getClean(i.displayId||i.id||'');
+                  if(!cc) return;
+                  if(!ptMapForSales[cc]) ptMapForSales[cc] = { id:cc, desc:i.desc||'', descNorm:'' };
+                  // Prefer clean desc (no × characters)
+                  const newD = i.desc||'';
+                  if(newD && !newD.includes('×') && (ptMapForSales[cc].desc.includes('×') || newD.length >= ptMapForSales[cc].desc.length)) {
+                    ptMapForSales[cc].desc = newD;
+                  }
+                });
+                // Build normalized desc → cleanCode for fuzzy matching
+                const ptDescNormMap = {};
+                Object.values(ptMapForSales).forEach(p => {
+                  const norm = (p.desc||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,24);
+                  if(norm) ptDescNormMap[norm] = p.id;
+                  // Also index by first 18 chars (truncated match)
+                  const short = norm.substring(0,18);
+                  if(short && !ptDescNormMap[short]) ptDescNormMap[short] = p.id;
+                });
+
+                // 1. invCode is already a valid clean PT code
+                const _cc = getClean(it.invCode||'');
+                if(_cc && !/^ALMACEN/i.test(_cc) && !/^\d{8,}$/.test(_cc) && !/^FG-MANUAL-\d/i.test(_cc) && ptMapForSales[_cc]) {
+                  codigo = _cc;
                 }
 
-                // 2. Buscar en inventory PT por descripción exacta
+                // 2. Match by exact description against consolidated PT map
                 if(!codigo) {
-                  const desc = (it.desc||'').toUpperCase().trim();
-                  if(desc) {
-                    const ptMatch = (inventory||[]).find(i =>
-                      i.category==='Productos Terminados' &&
-                      (i.desc||'').toUpperCase().trim() === desc
-                    );
-                    if(ptMatch) {
-                      codigo = (ptMatch.displayId || (ptMatch.id||'').split('___')[0]).replace(/_inv$/i,'').trim();
+                  const itDesc = (it.desc||'').toUpperCase().trim();
+                  if(itDesc) {
+                    // 2a. Exact
+                    const exactMatch = Object.values(ptMapForSales).find(p=>(p.desc||'').toUpperCase().trim()===itDesc);
+                    if(exactMatch) codigo = exactMatch.id;
+                    // 2b. Normalized (strip separators and dimensions notation)
+                    if(!codigo) {
+                      const itNorm = itDesc.replace(/[×x\s\-\.\/]/g,'').substring(0,24);
+                      if(ptDescNormMap[itNorm]) codigo = ptDescNormMap[itNorm];
+                      if(!codigo) {
+                        const itShort = itNorm.substring(0,18);
+                        if(ptDescNormMap[itShort]) codigo = ptDescNormMap[itShort];
+                      }
+                    }
+                    // 2c. Partial: PT desc starts with invoice desc or vice versa
+                    if(!codigo) {
+                      const partMatch = Object.values(ptMapForSales).find(p => {
+                        const pd = (p.desc||'').toUpperCase().trim();
+                        return pd.startsWith(itDesc.substring(0,20)) || itDesc.startsWith(pd.substring(0,20));
+                      });
+                      if(partMatch) codigo = partMatch.id;
                     }
                   }
                 }
 
-                // 3. Buscar en finishedGoodsInventory por múltiples estrategias
-                if(!codigo) {
-                  // 3a. fgId directo y no es FG-MANUAL
-                  const fgById = it.fgId ? (finishedGoodsInventory||[]).find(f=>f.id===it.fgId) : null;
-                  if(fgById && !/^FG-MANUAL-\d/i.test(fgById.id)) {
-                    codigo = fgById.id;
-                  }
-
-                  if(!codigo) {
-                    // 3b. Extraer producto y cliente de it.desc (formato "PRODUCTO | CLIENTE")
-                    const descParts = (it.desc||'').split(' | ');
-                    const prodPart = (descParts[0]||'').toUpperCase().trim();
-                    const clientPart = (descParts[1]||'').toUpperCase().trim();
-
-                    // 3c. Match por formatFGLabel exacto
-                    let fgMatch = prodPart ? (finishedGoodsInventory||[]).find(fg => {
-                      const lbl = (formatFGLabel(fg)||'').toUpperCase().trim();
-                      if(lbl === (it.desc||'').toUpperCase().trim()) return true;
-                      // Match por producto + cliente
-                      const fgProd = (fg.producto||fg.categoria||'').toUpperCase().trim();
-                      const fgCli = (fg.cliente||'').toUpperCase().trim();
-                      const fgProdBase = fgProd.split(' - ')[0].trim();
-                      const prodMatch = fgProd.includes(prodPart) || prodPart.includes(fgProdBase) || fgProdBase.includes(prodPart.split(' - ')[0]);
-                      const cliMatch = !clientPart || fgCli.includes(clientPart.substring(0,12)) || clientPart.includes(fgCli.substring(0,12));
-                      return prodMatch && cliMatch;
-                    }) : null;
-
-                    if(fgMatch && !/^FG-MANUAL-\d/i.test(fgMatch.id)) {
-                      codigo = fgMatch.id;
-                    } else if(fgMatch) {
-                      codigo = fgMatch.id;
-                    } else if(fgById) {
-                      codigo = fgById.id;
+                // 3. fgId lookup: find the fg doc, then cross-reference its label against PT
+                if(!codigo && it.fgId) {
+                  const fgDoc = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
+                  if(fgDoc) {
+                    // 3a. Try the fg label (producto - cliente) against PT map
+                    const fgLabel = (formatFGLabel(fgDoc)||'').toUpperCase().trim();
+                    const fgLabelNorm = fgLabel.replace(/[×x\s\-\.\/\|]/g,'').substring(0,24);
+                    if(ptDescNormMap[fgLabelNorm]) {
+                      codigo = ptDescNormMap[fgLabelNorm];
+                    }
+                    // 3b. Try just the fg.producto part
+                    if(!codigo) {
+                      const fgProd = (fgDoc.producto||fgDoc.categoria||'').toUpperCase().trim();
+                      const fgProdNorm = fgProd.replace(/[×x\s\-\.\/]/g,'').substring(0,18);
+                      if(ptDescNormMap[fgProdNorm]) codigo = ptDescNormMap[fgProdNorm];
+                    }
+                    // 3c. fgId itself (if it's a clean FG code, not FG-MANUAL-*)
+                    if(!codigo && !/^FG-MANUAL-\d/i.test(fgDoc.id)) {
+                      const fgCC = getClean(fgDoc.id);
+                      if(ptMapForSales[fgCC]) codigo = fgCC;
                     }
                   }
                 }
 
-                // 4. Fallback
-                if(!codigo) codigo = _cleanInvCode || (it.fgId||'').split('___')[0] || '—';
+                // 4. Fallback: invCode clean if anything
+                if(!codigo) codigo = _cc || getClean(it.fgId||'') || '—';
                 rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
@@ -11852,7 +11534,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       // Asiento contable
       if (costoUnitWIP > 0 && kgEntrega > 0) {
         await registrarAsientoContable(null, {
-          debito: '1.1.03.01.008', credito: '1.1.03.01.007',
+          debito: '1.1.03.01.008', credito: '1.1.03.01.004',
           monto: costoUnitWIP * kgEntrega,
           descripcion: `ENTREGA PARCIAL OP ${req.id} — ${req.desc}`,
           referencia: req.id, fecha: getTodayDate()
@@ -11963,7 +11645,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             // Asiento contable WIP → Terminados (solo pendiente)
             if (costoUnit > 0) {
               await registrarAsientoContable(null, {
-                debito: '1.1.03.01.008', credito: '1.1.03.01.007',
+                debito: '1.1.03.01.008', credito: '1.1.03.01.004',
                 monto: costoUnit * pendienteKg,
                 descripcion: `CIERRE OP ${req.id} — ${req.desc} (pendiente ${formatNum(pendienteKg)} KG)`,
                 referencia: req.id, fecha: getTodayDate()
@@ -12648,7 +12330,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               // Asiento contable WIP → Semielaborados
               if (costoTotal > 0) {
                 await registrarAsientoContable(null, {
-                  debito: '1.1.03.01.003', credito: '1.1.03.01.007',
+                  debito: '5.1.01.01.001', credito: '1.1.03.01.008',
                   monto: costoTotal,
                   descripcion: `CIERRE BOBINA — ${bobDesc}`,
                   referencia: bobina.id, fecha: getTodayDate()
@@ -15912,46 +15594,60 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
   // MÓDULO LIBRO DIARIO — muestra todos los asientos contables registrados
   // ============================================================================
   const renderLibroDiarioModule = () => {
+    // Remove WIP account, use 2-step flow: MP→PT, then PT→CostoVentas on sale
     const CUENTAS_INFO = {
-      '1.1.03.01.003': { label: 'INVENTARIO DE CONSUMIBLES', color: 'blue' },
-      '1.1.03.01.004': { label: 'MATERIA PRIMA (INV-FINAL)', color: 'green' },
-      '1.1.03.01.007': { label: 'PRODUCTOS EN PROCESO (INV-INICIAL)', color: 'purple' },
-      '1.1.03.01.008': { label: 'PRODUCTOS TERMINADOS (INV-FINAL)', color: 'orange' },
-      '5.1.01.01.001': { label: 'COSTO DE PRODUCCIÓN Y VENTAS', color: 'red' },
-      '4.1.01.01.000': { label: 'INGRESOS POR MAQUILA', color: 'emerald' },
+      '1.1.03.01.003': { label: 'INVENTARIO DE CONSUMIBLES',      tipo: 'Activo',  color: 'blue'    },
+      '1.1.03.01.004': { label: 'MATERIA PRIMA (INV-FINAL)',       tipo: 'Activo',  color: 'green'   },
+      '1.1.03.01.008': { label: 'PRODUCTOS TERMINADOS (INV-FINAL)',tipo: 'Activo',  color: 'orange'  },
+      '5.1.01.01.001': { label: 'COSTO DE PRODUCCIÓN Y VENTAS',    tipo: 'Gasto',   color: 'red'     },
+      '4.1.01.01.000': { label: 'INGRESOS POR MAQUILA',            tipo: 'Ingreso', color: 'emerald' },
+      '1.1.01.01.001': { label: 'BANCOS / CTAS POR COBRAR',        tipo: 'Activo',  color: 'teal'    },
     };
 
-    const cuentasFiltro = ['TODOS', ...Object.keys(CUENTAS_INFO)];
+    // Build expanded lines from each asiento: every asiento has debito + credito → two ledger lines
+    const buildLines = (asiento) => {
+      const monto = parseNum(asiento.monto);
+      return [
+        { ...asiento, _lineType: 'DEBE',  cuenta: asiento.debito,  debe: monto, haber: 0 },
+        { ...asiento, _lineType: 'HABER', cuenta: asiento.credito, debe: 0,     haber: monto },
+      ];
+    };
+
     const asientosFiltrados = (asientosContables || []).filter(a => {
-      const matchSearch = !ldSearch || 
+      const matchSearch = !ldSearch ||
         String(a.descripcion||'').toLowerCase().includes(ldSearch.toLowerCase()) ||
         String(a.referencia||'').toLowerCase().includes(ldSearch.toLowerCase());
-      const matchFiltro = ldFiltro === 'TODOS' || 
+      const matchFiltro = ldFiltro === 'TODOS' ||
         a.debito?.codigo === ldFiltro || a.credito?.codigo === ldFiltro;
       return matchSearch && matchFiltro;
-    });
+    }).sort((a,b) => (a.fecha||'').localeCompare(b.fecha||'') || (b.timestamp||0)-(a.timestamp||0));
 
-    // Totales por cuenta (solo cuentas principales)
+    const allLines = asientosFiltrados.flatMap(buildLines);
+    const totalDebe  = allLines.reduce((s,l)=>s+l.debe,  0);
+    const totalHaber = allLines.reduce((s,l)=>s+l.haber, 0);
+
+    // Saldos per account
     const saldos = {};
-    Object.keys(CUENTAS_INFO).forEach(c => { saldos[c] = { debitos: 0, creditos: 0 }; });
-    (asientosContables || []).forEach(a => {
-      if (saldos[a.debito?.codigo]) saldos[a.debito.codigo].debitos += parseNum(a.monto);
-      if (saldos[a.credito?.codigo]) saldos[a.credito.codigo].creditos += parseNum(a.monto);
+    Object.keys(CUENTAS_INFO).forEach(c => { saldos[c] = { debe:0, haber:0 }; });
+    (asientosContables||[]).forEach(a => {
+      const m = parseNum(a.monto);
+      if(saldos[a.debito?.codigo])  saldos[a.debito.codigo].debe  += m;
+      if(saldos[a.credito?.codigo]) saldos[a.credito.codigo].haber += m;
     });
 
     return (
       <div className="space-y-6 animate-in fade-in print:space-y-2">
         {/* Header */}
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:rounded-none print:border-0 print:shadow-none">
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:rounded-none print:border-0">
           <div className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-gray-900 to-gray-700 print:hidden">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center flex-wrap gap-3">
               <div className="flex items-center gap-4">
                 <button onClick={() => setActiveTab('costos')} className="bg-white/20 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-white/30 flex items-center gap-1">← Reportes</button>
                 <div>
                   <h2 className="text-2xl font-black text-white uppercase flex items-center gap-3">
                     <ArrowRightLeft className="text-orange-400" size={28}/> Libro Diario — Asientos Contables
                   </h2>
-                  <p className="text-xs font-bold text-gray-400 mt-1 uppercase">Registro automático de movimientos contables</p>
+                  <p className="text-xs font-bold text-gray-400 mt-1 uppercase">Flujo: Materia Prima → Productos Terminados → Costo de Ventas</p>
                 </div>
               </div>
               <button onClick={() => window.print()} className="bg-orange-500 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-orange-600 shadow-lg">
@@ -15960,22 +15656,22 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
           </div>
 
-          {/* Resumen saldos */}
+          {/* Saldos por cuenta */}
           <div className="p-6 border-b border-gray-100 print:hidden">
-            <p className="text-[10px] font-black text-gray-500 uppercase mb-3 tracking-widest">Saldos Acumulados por Cuenta</p>
+            <p className="text-[10px] font-black text-gray-500 uppercase mb-3 tracking-widest">Saldos por Cuenta Contable</p>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {Object.entries(CUENTAS_INFO).map(([cod, info]) => {
-                const s = saldos[cod] || { debitos: 0, creditos: 0 };
-                const saldo = s.debitos - s.creditos;
+                const s = saldos[cod] || { debe:0, haber:0 };
+                const saldo = s.debe - s.haber;
                 return (
-                  <div key={cod} className="bg-gray-50 border border-gray-200 rounded-2xl p-4">
-                    <p className="text-[8px] font-black text-orange-600 uppercase mb-1">{cod}</p>
+                  <div key={cod} className="bg-gray-50 border border-gray-200 rounded-2xl p-3">
+                    <p className="text-[8px] font-black text-orange-600 uppercase mb-0.5">{cod}</p>
                     <p className="text-[9px] font-black text-gray-700 uppercase mb-2 leading-tight">{info.label}</p>
                     <div className="flex justify-between text-[9px] font-bold">
-                      <span className="text-green-600">Déb: ${formatNum(s.debitos)}</span>
-                      <span className="text-red-600">Cré: ${formatNum(s.creditos)}</span>
+                      <span className="text-green-600">Debe: ${formatNum(s.debe)}</span>
+                      <span className="text-red-600">Haber: ${formatNum(s.haber)}</span>
                     </div>
-                    <div className={`text-xs font-black mt-1 ${saldo >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
+                    <div className={`text-[10px] font-black mt-1 ${saldo >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
                       Saldo: ${formatNum(Math.abs(saldo))} {saldo >= 0 ? 'D' : 'A'}
                     </div>
                   </div>
@@ -15985,18 +15681,21 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           </div>
 
           {/* Filtros */}
-          <div className="p-6 bg-gray-50 border-b border-gray-100 flex flex-wrap gap-3 items-center print:hidden">
-            <div className="relative flex-1 min-w-[200px]">
+          <div className="p-5 bg-gray-50 border-b border-gray-100 flex flex-wrap gap-3 items-center print:hidden">
+            <div className="relative flex-1 min-w-48">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-              <input value={ldSearch} onChange={e => setLdSearch(e.target.value)} placeholder="Buscar por descripción o referencia..." className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400"/>
+              <input value={ldSearch} onChange={e => setLdSearch(e.target.value)} placeholder="Buscar por descripción o referencia..."
+                className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400"/>
             </div>
-            <select value={ldFiltro} onChange={e => setLdFiltro(e.target.value)} className="border border-gray-200 rounded-xl px-4 py-2.5 text-xs font-black outline-none focus:border-orange-400 bg-white">
-              {cuentasFiltro.map(c => <option key={c} value={c}>{c === 'TODOS' ? 'Todas las cuentas' : `${c} — ${CUENTAS_INFO[c]?.label || c}`}</option>)}
+            <select value={ldFiltro} onChange={e => setLdFiltro(e.target.value)}
+              className="border border-gray-200 rounded-xl px-4 py-2.5 text-xs font-black outline-none focus:border-orange-400 bg-white">
+              <option value="TODOS">Todas las cuentas</option>
+              {Object.entries(CUENTAS_INFO).map(([c,info]) => <option key={c} value={c}>{c} — {info.label}</option>)}
             </select>
-            <span className="text-[10px] font-black text-gray-500 uppercase">{asientosFiltrados.length} asientos</span>
+            <span className="text-[10px] font-black text-gray-500 uppercase">{asientosFiltrados.length} asientos · {allLines.length} líneas</span>
           </div>
 
-          {/* Tabla de asientos */}
+          {/* Tabla Libro Diario con Debe/Haber */}
           <div id="pdf-content" className="p-6 bg-white print:p-2">
             <div className="hidden pdf-header mb-6 print:block">
               <ReportHeader />
@@ -16004,49 +15703,74 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               <p className="text-xs font-bold text-gray-500 mt-1 uppercase">Fecha de emisión: {getTodayDate()}</p>
             </div>
             <div className="overflow-x-auto rounded-xl border border-gray-200 print:border-black print:rounded-none">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-gray-900 text-white">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="bg-gray-900 text-white sticky top-0">
                   <tr className="text-[9px] font-black uppercase tracking-widest">
-                    <th className="py-3 px-4 border-r border-gray-700">Fecha</th>
-                    <th className="py-3 px-4 border-r border-gray-700">Referencia</th>
-                    <th className="py-3 px-4 border-r border-gray-700">Descripción</th>
-                    <th className="py-3 px-4 border-r border-gray-700 text-green-400">DÉBITO</th>
-                    <th className="py-3 px-4 border-r border-gray-700 text-red-400">CRÉDITO</th>
-                    <th className="py-3 px-4 text-right">Monto $</th>
+                    <th className="py-3 px-3 border-r border-gray-700 w-24">Fecha</th>
+                    <th className="py-3 px-3 border-r border-gray-700 w-28">Ref. / Asiento</th>
+                    <th className="py-3 px-3 border-r border-gray-700">Cuenta Contable</th>
+                    <th className="py-3 px-3 border-r border-gray-700">Descripción</th>
+                    <th className="py-3 px-3 border-r border-gray-700 text-right text-green-400 w-28">DEBE ($)</th>
+                    <th className="py-3 px-3 text-right text-red-400 w-28">HABER ($)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 print:divide-black">
                   {asientosFiltrados.length === 0 && (
-                    <tr><td colSpan={6} className="py-12 text-center text-xs text-gray-400 font-bold uppercase">Sin asientos registrados. Los asientos se generan automáticamente al registrar movimientos.</td></tr>
+                    <tr><td colSpan={6} className="py-12 text-center text-xs text-gray-400 font-bold uppercase">Sin asientos registrados. Los asientos se generan automáticamente al registrar producción y ventas.</td></tr>
                   )}
-                  {asientosFiltrados.map((a, i) => (
-                    <tr key={a.id} className={`hover:bg-orange-50 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'} print:bg-white`}>
-                      <td className="py-3 px-4 font-bold border-r border-gray-100 print:border-black whitespace-nowrap">
-                        {a.fecha}<br/>
-                        <span className="text-[8px] text-gray-400 font-bold">{a.user}</span>
-                      </td>
-                      <td className="py-3 px-4 font-black text-orange-600 border-r border-gray-100 print:border-black text-[10px]">{a.referencia}</td>
-                      <td className="py-3 px-4 font-bold border-r border-gray-100 print:border-black max-w-xs">
-                        <span className="text-[10px] leading-tight block">{a.descripcion}</span>
-                      </td>
-                      <td className="py-3 px-4 border-r border-gray-100 print:border-black">
-                        <span className="text-[8px] font-black text-orange-700 block">{a.debito?.codigo}</span>
-                        <span className="text-[9px] font-bold text-gray-600">{a.debito?.nombre}</span>
-                      </td>
-                      <td className="py-3 px-4 border-r border-gray-100 print:border-black">
-                        <span className="text-[8px] font-black text-orange-700 block">{a.credito?.codigo}</span>
-                        <span className="text-[9px] font-bold text-gray-600">{a.credito?.nombre}</span>
-                      </td>
-                      <td className="py-3 px-4 text-right font-black text-sm">${formatNum(a.monto)}</td>
-                    </tr>
-                  ))}
+                  {asientosFiltrados.map((a, ai) => {
+                    const lines = buildLines(a);
+                    const isEven = ai % 2 === 0;
+                    return lines.map((line, li) => (
+                      <tr key={`${a.id}-${li}`} className={`${isEven?'bg-white':'bg-gray-50/40'} hover:bg-orange-50 print:bg-white`}>
+                        {/* Fecha — only on first line of asiento */}
+                        <td className="py-2 px-3 border-r border-gray-100 print:border-black whitespace-nowrap align-top">
+                          {li === 0 ? (
+                            <>
+                              <span className="font-bold text-[10px]">{a.fecha}</span>
+                              <br/><span className="text-[8px] text-gray-400">{a.user||''}</span>
+                            </>
+                          ) : <span className="text-gray-200">↓</span>}
+                        </td>
+                        {/* Referencia — only on first line */}
+                        <td className="py-2 px-3 border-r border-gray-100 print:border-black align-top">
+                          {li === 0 ? (
+                            <span className="font-black text-orange-600 text-[10px]">{a.referencia}</span>
+                          ) : null}
+                        </td>
+                        {/* Cuenta */}
+                        <td className={`py-2 px-3 border-r border-gray-100 print:border-black align-top ${li===1?'pl-8':''}`}>
+                          <span className="text-[8px] font-black text-orange-700 block">{line.cuenta?.codigo}</span>
+                          <span className="text-[9px] font-bold text-gray-600 leading-tight">{line.cuenta?.nombre}</span>
+                        </td>
+                        {/* Descripción — only on first line */}
+                        <td className="py-2 px-3 border-r border-gray-100 print:border-black align-top max-w-xs">
+                          {li === 0 ? <span className="text-[9px] font-bold text-gray-700 leading-tight">{a.descripcion}</span> : null}
+                        </td>
+                        {/* DEBE */}
+                        <td className="py-2 px-3 border-r border-gray-100 print:border-black text-right align-top font-black">
+                          {line.debe > 0 ? <span className="text-green-700">${formatNum(line.debe)}</span> : <span className="text-gray-200">—</span>}
+                        </td>
+                        {/* HABER */}
+                        <td className="py-2 px-3 text-right align-top font-black">
+                          {line.haber > 0 ? <span className="text-red-600">${formatNum(line.haber)}</span> : <span className="text-gray-200">—</span>}
+                        </td>
+                      </tr>
+                    ));
+                  })}
                 </tbody>
                 {asientosFiltrados.length > 0 && (
                   <tfoot className="bg-gray-900 text-white">
                     <tr>
-                      <td colSpan={5} className="py-3 px-4 text-right font-black text-[10px] uppercase tracking-widest">TOTAL ASIENTOS FILTRADOS</td>
-                      <td className="py-3 px-4 text-right font-black text-lg">${formatNum(asientosFiltrados.reduce((s,a) => s + parseNum(a.monto), 0))}</td>
+                      <td colSpan={4} className="py-3 px-3 text-right font-black text-[10px] uppercase tracking-widest">TOTALES</td>
+                      <td className="py-3 px-3 text-right font-black text-green-400">${formatNum(totalDebe)}</td>
+                      <td className="py-3 px-3 text-right font-black text-red-400">${formatNum(totalHaber)}</td>
                     </tr>
+                    {Math.abs(totalDebe - totalHaber) > 0.01 && (
+                      <tr className="bg-red-900">
+                        <td colSpan={6} className="py-2 px-3 text-center text-[9px] font-black text-red-300 uppercase">⚠ Diferencia: ${formatNum(Math.abs(totalDebe - totalHaber))} — Verifique los asientos</td>
+                      </tr>
+                    )}
                   </tfoot>
                 )}
               </table>
@@ -16054,26 +15778,40 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           </div>
         </div>
 
-        {/* Leyenda de cuentas */}
+        {/* Leyenda de cuentas — 2-step flow sin WIP */}
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-6 print:hidden">
-          <p className="text-[10px] font-black text-gray-500 uppercase mb-4 tracking-widest">Cuentas Contables del Plan</p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {[
-              { cod: '1.1.03.01.004', nom: 'MATERIA PRIMA (INV-FINAL)', desc: 'DÉBITO al ingresar MP · CRÉDITO al salir hacia WIP', tipo: 'Activo' },
-              { cod: '1.1.03.01.003', nom: 'INVENTARIO DE CONSUMIBLES', desc: 'DÉBITO al ingresar consumibles · CRÉDITO al salir hacia WIP', tipo: 'Activo' },
-              { cod: '1.1.03.01.007', nom: 'PRODUCTOS EN PROCESO (INV-INICIAL)', desc: 'DÉBITO al recibir materiales de almacén · CRÉDITO al pasar a Terminados', tipo: 'Activo' },
-              { cod: '1.1.03.01.008', nom: 'PRODUCTOS TERMINADOS (INV-FINAL)', desc: 'DÉBITO al cerrar OP · CRÉDITO al facturar', tipo: 'Activo' },
-              { cod: '5.1.01.01.001', nom: 'COSTO DE PRODUCCIÓN Y VENTAS', desc: 'DÉBITO al emitir factura (costo del producto vendido)', tipo: 'Gasto' },
-              { cod: '4.1.01.01.000', nom: 'INGRESOS POR MAQUILA', desc: 'CRÉDITO al emitir factura (ingreso reconocido)', tipo: 'Ingreso' },
-            ].map(c => (
-              <div key={c.cod} className="flex gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
-                <div className="shrink-0">
-                  <span className={`text-[8px] font-black px-2 py-0.5 rounded-full uppercase ${c.tipo === 'Activo' ? 'bg-blue-100 text-blue-700' : c.tipo === 'Ingreso' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{c.tipo}</span>
-                </div>
+          <p className="text-[10px] font-black text-gray-500 uppercase mb-4 tracking-widest">Plan de Cuentas — Flujo Contable (Sin WIP)</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div className="bg-green-50 border border-green-200 rounded-2xl p-4">
+              <p className="text-[9px] font-black text-green-700 uppercase mb-2">Paso 1 — Al cerrar la OP (MP → PT)</p>
+              <table className="w-full text-[9px]">
+                <thead><tr className="font-black text-gray-600 uppercase"><th className="text-left">Código</th><th className="text-left">Cuenta</th><th className="text-right">Debe</th><th className="text-right">Haber</th></tr></thead>
+                <tbody>
+                  <tr><td className="text-orange-600 font-black">1.1.03.01.008</td><td className="font-bold">PRODUCTOS TERMINADOS</td><td className="text-right text-green-700 font-black">$$$</td><td className="text-right text-gray-300">—</td></tr>
+                  <tr><td className="text-orange-600 font-black">1.1.03.01.004</td><td className="font-bold">MATERIA PRIMA</td><td className="text-right text-gray-300">—</td><td className="text-right text-red-600 font-black">$$$</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4">
+              <p className="text-[9px] font-black text-orange-700 uppercase mb-2">Paso 2 — Al facturar la venta (PT → Costo + Ingreso)</p>
+              <table className="w-full text-[9px]">
+                <thead><tr className="font-black text-gray-600 uppercase"><th className="text-left">Código</th><th className="text-left">Cuenta</th><th className="text-right">Debe</th><th className="text-right">Haber</th></tr></thead>
+                <tbody>
+                  <tr><td className="text-orange-600 font-black">5.1.01.01.001</td><td className="font-bold">COSTO PROD. Y VENTAS</td><td className="text-right text-green-700 font-black">$$$</td><td className="text-right text-gray-300">—</td></tr>
+                  <tr><td className="text-orange-600 font-black">1.1.03.01.008</td><td className="font-bold">PRODUCTOS TERMINADOS</td><td className="text-right text-gray-300">—</td><td className="text-right text-red-600 font-black">$$$</td></tr>
+                  <tr><td className="text-orange-600 font-black">1.1.01.01.001</td><td className="font-bold">BANCOS / CXC</td><td className="text-right text-green-700 font-black">$$$</td><td className="text-right text-gray-300">—</td></tr>
+                  <tr><td className="text-orange-600 font-black">4.1.01.01.000</td><td className="font-bold">INGRESOS POR MAQUILA</td><td className="text-right text-gray-300">—</td><td className="text-right text-red-600 font-black">$$$</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {Object.entries(CUENTAS_INFO).map(([cod, info]) => (
+              <div key={cod} className="flex gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
                 <div>
-                  <p className="text-[9px] font-black text-orange-600 uppercase">{c.cod}</p>
-                  <p className="text-[10px] font-black text-gray-800 uppercase">{c.nom}</p>
-                  <p className="text-[9px] font-bold text-gray-500 mt-0.5">{c.desc}</p>
+                  <span className={`text-[8px] font-black px-2 py-0.5 rounded-full uppercase ${info.tipo==='Activo'?'bg-blue-100 text-blue-700':info.tipo==='Ingreso'?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>{info.tipo}</span>
+                  <p className="text-[9px] font-black text-orange-600 uppercase mt-1">{cod}</p>
+                  <p className="text-[9px] font-black text-gray-800 uppercase">{info.label}</p>
                 </div>
               </div>
             ))}
@@ -17344,10 +17082,28 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 Servicios Jiret G&B — Registro de Actividad · <span className="text-black font-black">{filtered.length}</span> eventos
               </p>
             </div>
-            <button onClick={exportExcel}
-              className="bg-black hover:bg-orange-500 text-white font-black py-3 px-6 flex items-center gap-2 uppercase text-[10px] tracking-widest rounded-2xl transition-colors">
-              <Download size={15}/> Exportar Log
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={exportExcel}
+                className="bg-black hover:bg-orange-500 text-white font-black py-3 px-6 flex items-center gap-2 uppercase text-[10px] tracking-widest rounded-2xl transition-colors">
+                <Download size={15}/> Exportar Log
+              </button>
+              {(appUser?.role==='Master'||appUser?.role==='Administrador') && (
+                <button onClick={()=>{
+                  if(!auditDate) return setDialog({title:'Aviso',text:'Selecciona una fecha de inicio en el filtro para limpiar registros hasta esa fecha.',type:'alert'});
+                  setDialog({title:'🗑 Limpiar Registros de Auditoría',text:`¿Eliminar los registros de actividad filtrados actualmente? Esta acción es irreversible.`,type:'confirm',onConfirm:async()=>{
+                    try {
+                      // Only logs stored in Firestore (invMovements tagged as audit)
+                      // For now just clear in-memory filter state and show confirmation
+                      setAuditSearch('');setAuditModuleFilter('Todos');setAuditTipoFilter('Todos');setAuditDate('');setAuditPage(1);
+                      setDialog({title:'✅ Filtros limpiados',text:'Los filtros de auditoría han sido limpiados.',type:'alert'});
+                    } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                  }});
+                }}
+                className="bg-red-50 hover:bg-red-500 text-red-600 hover:text-white font-black py-3 px-4 flex items-center gap-2 uppercase text-[10px] rounded-2xl border-2 border-red-200 transition-colors">
+                  <Trash2 size={13}/> Limpiar por Fecha
+                </button>
+              )}
+            </div>
           </div>
           {/* Filters */}
           <div className="px-6 py-4 bg-gray-50/50 border-b border-gray-200 flex flex-wrap gap-3">
@@ -18079,7 +17835,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
               {/* Contenido del respaldo */}
               <div className="text-[9px] font-bold text-green-600 bg-green-100 rounded-xl p-3 space-y-0.5">
-                {['Inventario y Movimientos (Kardex)', 'Clientes, OPs y Facturas', 'Asientos Contables y Plan de Cuentas', 'Costos Operativos y Órdenes de Compra', 'WIP y Productos Terminados', 'Requisiciones de Planta'].map(item => (
+                {['Inventario y Movimientos (Kardex)', 'Clientes, OPs y Facturas', 'Asientos Contables y Plan de Cuentas', 'Costos Operativos y Órdenes de Compra', 'Productos Terminados', 'Requisiciones de Planta'].map(item => (
                   <div key={item} className="flex items-center gap-1.5"><CheckCircle size={10} className="text-green-500 shrink-0"/> {item}</div>
                 ))}
               </div>
@@ -18184,7 +17940,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 Elimina <span className="font-black">permanentemente</span> todos los datos operativos y deja el sistema limpio. <span className="font-black underline">Los usuarios y la configuración se conservan.</span>
               </p>
               <div className="text-[9px] font-bold text-red-600 bg-red-100 rounded-xl p-3 mb-4 space-y-0.5">
-                {['Inventario y Movimientos', 'Clientes, OPs y Facturas', 'Asientos Contables', 'Costos Operativos', 'Órdenes de Compra', 'WIP y Productos Terminados'].map(item => (
+                {['Inventario y Movimientos', 'Clientes, OPs y Facturas', 'Asientos Contables', 'Costos Operativos', 'Órdenes de Compra', 'Productos Terminados'].map(item => (
                   <div key={item} className="flex items-center gap-1.5"><Trash2 size={10} className="text-red-500 shrink-0"/> Se borrará: {item}</div>
                 ))}
               </div>
@@ -19002,7 +18758,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   <div className="flex gap-0">
                     {[
                       {id:'catalogo',       icon:<Box size={14}/>,       label:'General',      perm:'inv_almacen'},
-                      {id:'wip',            icon:<Beaker size={14}/>,    label:'WIP',          perm:'inv_wip'},
                       {id:'finished',       icon:<Package size={14}/>,   label:'Terminados',   perm:'inv_terminados'},
                       {id:'alimentario',    icon:<FileText size={14}/>,  label:'Orden Salida', perm:'inv_operaciones'},
                       {id:'almacenes_mgmt', icon:<Warehouse size={14}/>, label:'Almacenes',    perm:'inv_almacen'},
