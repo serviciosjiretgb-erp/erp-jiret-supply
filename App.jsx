@@ -195,7 +195,7 @@ const getSafeDate = (ts) => {
 // ============================================================================
 // CONSTANTE DE SEGURIDAD - CLAVE ADMIN
 // ============================================================================
-const ADMIN_PASSWORD = '1234';
+const ADMIN_PASSWORD = 'Supply2026.Admin';
 
 // ============================================================================
 // CATEGORÍAS DE COSTOS OPERATIVOS
