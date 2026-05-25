@@ -347,6 +347,10 @@ export default function App() {
   const initialCotizForm = { fecha: '', clientRif: '', clientName: '', documento: '', descripcion: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', validez: '15', condicionId: '', observaciones: '', condicionPago: 'CONTADO', diasCredito: '', porcentajeAnticipo: '', tiempoEntrega: '', formaPago: 'BS A TASA BCV' };
   const [newCotizForm, setNewCotizForm] = useState({...initialCotizForm, fecha: getTodayDate()});
   const [cotizItems, setCotizItems] = useState([]);
+  const [cotizSelectedProduct, setCotizSelectedProduct] = useState('');
+  const [cotizAddDesc, setCotizAddDesc] = useState('');
+  const [cotizAddQty, setCotizAddQty] = useState('');
+  const [cotizAddPrecio, setCotizAddPrecio] = useState('');
   const [cotizSearchTerm, setCotizSearchTerm] = useState('');
   const [condicionesCotiz, setCondicionesCotiz] = useState([{'id': 'cond1', 'nombre': 'Contado / Entrega Inmediata', 'detalle': 'Condiciones de Pago: De contado. | Forma de Pago: Bolívares al tipo de cambio BCV vigente a la fecha de pago. | Tiempo de Entrega: Inmediata. | Validez: 1 día calendario.'}, {'id': 'cond2', 'nombre': 'Crédito Estándar (Stock Disponible)', 'detalle': 'Condiciones de Pago: Financiamiento a 7/15 días continuos. | Forma de Pago: Bolívares al tipo de cambio BCV vigente. | Tiempo de Entrega: Inmediata o 2–3 días hábiles tras confirmación de OC. | Validez: 1 día calendario.'}, {'id': 'cond3', 'nombre': 'Fabricación Nacional con Anticipo', 'detalle': 'Condiciones de Pago: Anticipo del 30%/50% con la OC; saldo a 7/21 días desde entrega. | Formas de Pago: Bolívares (BCV) o Divisas (efectivo/transferencia). | Entrega: 10 a 12 días hábiles desde OC + anticipo. | Variación: ±4–8% cantidad despachada. | Reclamos: 7 días hábiles desde recepción.'}, {'id': 'cond4', 'nombre': 'Proyectos Especiales / Importación', 'detalle': 'Condiciones de Pago: 50% anticipo al procesar OC; 50% contra entrega. | Formas de Pago: Bolívares (BCV) o Divisas (efectivo/Zelle). | Tiempo de Entrega: 60–70 días continuos aprox., sujeto a tránsito y aduana.'}]);
   const [showCondManager, setShowCondManager] = useState(false);
@@ -8876,139 +8880,102 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       <input type="text" value={newCotizForm.descripcion} onChange={e=>setNewCotizForm({...newCotizForm,descripcion:e.target.value.toUpperCase()})} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 uppercase" placeholder="Ej: COTIZACIÓN BOLSAS PLÁSTICAS"/>
                     </div>
 
-                    {/* ── SELECTOR DE PRODUCTOS (Referencia — sin impacto en inventario) ── */}
-                    <div className="border-2 border-blue-100 rounded-2xl p-4 bg-blue-50/30">
-                      <h4 className="text-[10px] font-black text-blue-700 uppercase mb-3 flex items-center gap-2">
-                        <Package size={13}/> Seleccionar Producto
-                        <span className="ml-auto text-[8px] font-bold text-blue-400 bg-blue-100 px-2 py-0.5 rounded-full uppercase">Solo referencia · No afecta inventario</span>
+                    {/* ── AGREGAR PRODUCTO ── */}
+                    <div className="border-2 border-orange-200 rounded-2xl p-4 bg-orange-50/30">
+                      <h4 className="text-[10px] font-black text-orange-700 uppercase mb-3 flex items-center gap-2">
+                        <Package size={13}/> Agregar Producto
+                        <span className="ml-auto text-[8px] text-orange-400 font-bold bg-orange-100 px-2 py-0.5 rounded-full uppercase">Solo referencia · No afecta inventario</span>
                       </h4>
 
-                      {/* Search + Category filter */}
-                      <div className="flex gap-2 mb-3 flex-wrap">
-                        <div className="relative flex-1 min-w-48">
-                          <Search className="absolute left-3 top-2.5 text-gray-400" size={13}/>
-                          <input type="text" placeholder="Buscar código o descripción..."
-                            value={cotizSearchTerm} onChange={e=>setCotizSearchTerm(e.target.value.toUpperCase())}
-                            className="w-full pl-9 pr-8 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400 bg-white"/>
-                          {cotizSearchTerm && <button onClick={()=>setCotizSearchTerm('')} className="absolute right-2 top-2 text-gray-400 hover:text-red-500"><X size={13}/></button>}
-                        </div>
+                      {/* Step 1: Select product */}
+                      <div className="mb-3">
+                        <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">1. Inventario General / Productos Terminados — Categoría / Producto</label>
+                        <select
+                          value={cotizSelectedProduct}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setCotizSelectedProduct(val);
+                            if(val) {
+                              // Build consolidated map
+                              const consolidated = {};
+                              (inventory||[]).filter(i=>i.activo!==false).forEach(i=>{
+                                const cc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                                if(!cc) return;
+                                if(!consolidated[cc]||parseNum(i.stock)>consolidated[cc].stock) consolidated[cc]={cc,desc:i.desc||'',unit:i.unit||'und',category:i.category||'Otros',subcategory:i.subcategory||getItemSubcategory(i)||'',cost:parseNum(i.cost||0),stock:parseNum(i.stock||0)};
+                                const d=i.desc||''; if(d&&!d.includes('×')&&(consolidated[cc].desc.includes('×')||d.length>=consolidated[cc].desc.length)) consolidated[cc].desc=d;
+                              });
+                              const item = consolidated[val];
+                              if(item) {
+                                setCotizAddDesc(`${item.cc} — ${item.desc}`);
+                                setCotizAddPrecio(item.cost > 0 ? String(item.cost) : '');
+                              }
+                            }
+                          }}
+                          className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-500 bg-white mb-2">
+                          <option value="">— Seleccionar producto —</option>
+                          {(()=>{
+                            const consolidated = {};
+                            (inventory||[]).filter(i=>i.activo!==false).forEach(i=>{
+                              const cc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                              if(!cc) return;
+                              if(!consolidated[cc]||parseNum(i.stock)>consolidated[cc].stock) consolidated[cc]={cc,desc:i.desc||'',unit:i.unit||'und',category:i.category||'Otros',subcategory:i.subcategory||getItemSubcategory(i)||''};
+                              const d=i.desc||''; if(d&&!d.includes('×')&&(consolidated[cc].desc.includes('×')||d.length>=consolidated[cc].desc.length)) consolidated[cc].desc=d;
+                            });
+                            const CAT_ORDER=['Productos Terminados','Materia Prima','Semielaborados','Consumibles','Pigmentos','Tintas','Químicos','Herramientas','Seguridad Industrial','Otros'];
+                            const SUB_ORDER=['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles'];
+                            const catGroups={};
+                            Object.values(consolidated).forEach(c=>{
+                              const cat=c.category; if(!catGroups[cat])catGroups[cat]={};
+                              const sub=c.subcategory||'__NONE__'; if(!catGroups[cat][sub])catGroups[cat][sub]=[];
+                              catGroups[cat][sub].push(c);
+                            });
+                            const sortedCats=[...CAT_ORDER.filter(c=>catGroups[c]),...Object.keys(catGroups).filter(c=>!CAT_ORDER.includes(c))];
+                            return sortedCats.flatMap(cat=>{
+                              const subMap=catGroups[cat]||{};
+                              const subKeys=[...SUB_ORDER.filter(s=>subMap[s]),...Object.keys(subMap).filter(s=>!SUB_ORDER.includes(s)&&s!=='__NONE__'),...(subMap['__NONE__']?['__NONE__']:[])];
+                              const hasSubs=subKeys.some(k=>k!=='__NONE__');
+                              if(!hasSubs) return [
+                                <option key={`h-${cat}`} disabled>── {cat.toUpperCase()} ──</option>,
+                                ...(subMap['__NONE__']||[]).sort((a,b)=>a.cc.localeCompare(b.cc)).map(c=><option key={c.cc} value={c.cc}>&nbsp;&nbsp;{c.cc} — {c.desc}</option>)
+                              ];
+                              return subKeys.flatMap(sub=>[
+                                <option key={`h-${cat}-${sub}`} disabled>{sub==='__NONE__'?`── ${cat.toUpperCase()} ──`:`── ${cat.toUpperCase()} / ${sub.toUpperCase()} ──`}</option>,
+                                ...(subMap[sub]||[]).sort((a,b)=>a.cc.localeCompare(b.cc)).map(c=><option key={c.cc} value={c.cc}>&nbsp;&nbsp;&nbsp;&nbsp;{c.cc} — {c.desc}</option>)
+                              ]);
+                            });
+                          })()}
+                        </select>
                       </div>
 
-                      {/* Grouped dropdown selector */}
-                      {(()=>{
-                        // Build consolidated list (same as Inventario General)
-                        const consolidated = {};
-                        (inventory||[]).filter(i=>i.activo!==false).forEach(i=>{
-                          const rawId = i.displayId||(i.id||'').split('___')[0];
-                          const cc = rawId.replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
-                          if(!cc) return;
-                          const qty = parseNum(i.stock||0);
-                          if(!consolidated[cc]) consolidated[cc] = {
-                            cc, desc:i.desc||'', unit:i.unit||'und',
-                            category: i.category||'Otros',
-                            subcategory: i.subcategory||getItemSubcategory(i)||'',
-                            stock: 0, cost: parseNum(i.cost||0)
-                          };
-                          consolidated[cc].stock = Math.max(consolidated[cc].stock, qty);
-                          const d = i.desc||'';
-                          if(d && !d.includes('×') && (consolidated[cc].desc.includes('×') || d.length >= consolidated[cc].desc.length)) consolidated[cc].desc = d;
-                          if(parseNum(i.cost||0)>0) consolidated[cc].cost = parseNum(i.cost||0);
-                        });
-
-                        const s = cotizSearchTerm.toUpperCase();
-                        const items = Object.values(consolidated).filter(c=>
-                          !s || c.cc.toUpperCase().includes(s) || (c.desc||'').toUpperCase().includes(s) || (c.subcategory||'').toUpperCase().includes(s)
-                        );
-
-                        const CAT_ORDER = ['Productos Terminados','Materia Prima','Semielaborados','Consumibles','Pigmentos','Tintas','Químicos','Herramientas','Seguridad Industrial','Otros'];
-                        const SUB_ORDER = ['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles'];
-                        const SUB_CLR = {'Bolsas Plásticas':'#1d4ed8','Termoencogibles':'#15803d','Stretch Film':'#7c3aed','Cintas':'#92400e','Papel Kraft':'#78350f','Dispensadores':'#be185d','Empaques Flexibles':'#4338ca'};
-
-                        const catGroups = {};
-                        items.forEach(c=>{ const cat=c.category; if(!catGroups[cat])catGroups[cat]={}; const sub=c.subcategory||'__NONE__'; if(!catGroups[cat][sub])catGroups[cat][sub]=[]; catGroups[cat][sub].push(c); });
-                        const sortedCats = [...CAT_ORDER.filter(c=>catGroups[c]),...Object.keys(catGroups).filter(c=>!CAT_ORDER.includes(c))];
-
-                        if(items.length===0 && s) return <div className="text-[9px] text-gray-400 font-bold py-3 text-center">Sin resultados para "{cotizSearchTerm}"</div>;
-
-                        return (
-                          <select
-                            size={Math.min(12, items.length+sortedCats.length+3)}
-                            className="w-full border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400 bg-white"
-                            onChange={e=>{
-                              const val = e.target.value;
-                              if(!val) return;
-                              const item = consolidated[val];
-                              if(!item) return;
-                              // Determine suggested delivery time based on subcategory
-                              const sub = (item.subcategory||'').toLowerCase();
-                              const entrega = sub.includes('stretch')||sub.includes('cinta')||sub.includes('kraft')||sub.includes('dispens') ? 'De 2 a 3 días hábiles' : 'De 10 a 12 días hábiles';
-                              setCotizItems(prev=>[...prev,{
-                                desc:`${item.cc} — ${item.desc}`,
-                                code: item.cc,
-                                cantidad: 1,
-                                precioUnit: item.cost,
-                                total: item.cost,
-                                unit: item.unit,
-                                _ref: true   // mark as reference-only, no inventory impact
-                              }]);
-                              setNewCotizForm(f=>({...f, tiempoEntrega: f.tiempoEntrega||entrega}));
-                              e.target.value = ''; // reset after selection
-                            }}>
-                            <option value="">— Seleccionar producto —</option>
-                            {sortedCats.map(cat=>{
-                              const subMap = catGroups[cat]||{};
-                              const subKeys = [...SUB_ORDER.filter(s=>subMap[s]),...Object.keys(subMap).filter(s=>!SUB_ORDER.includes(s)&&s!=='__NONE__'),...(subMap['__NONE__']?['__NONE__']:[])];
-                              const hasSubs = subKeys.some(k=>k!=='__NONE__');
-                              if(!hasSubs) return [
-                                <option key={`cat-${cat}`} disabled style={{background:'#1f2937',color:'#fff',fontWeight:900}}>── {cat.toUpperCase()} ──</option>,
-                                ...(subMap['__NONE__']||[]).sort((a,b)=>a.cc.localeCompare(b.cc)).map(c=>(
-                                  <option key={c.cc} value={c.cc}>{c.cc} — {c.desc} | {formatNum(c.stock)} {c.unit} | ${formatNum(c.cost)}</option>
-                                ))
-                              ];
-                              return subKeys.flatMap(sub=>{
-                                const subItems=(subMap[sub]||[]).sort((a,b)=>a.cc.localeCompare(b.cc));
-                                const subLabel = sub==='__NONE__' ? `── ${cat.toUpperCase()} ──` : `── ${cat.toUpperCase()} / ${sub.toUpperCase()} ──`;
-                                return [
-                                  <option key={`${cat}-${sub}`} disabled style={{background:sub!=='__NONE__'?(SUB_CLR[sub]||'#374151'):'#1f2937',color:'#fff',fontWeight:900}}>{subLabel}</option>,
-                                  ...subItems.map(c=>(
-                                    <option key={c.cc} value={c.cc}>&nbsp;&nbsp;{c.cc} — {c.desc} | {formatNum(c.stock)} {c.unit} | ${formatNum(c.cost)}</option>
-                                  ))
-                                ];
-                              });
-                            })}
-                          </select>
-                        );
-                      })()}
-                    </div>
-
-                    {/* ── AGREGAR ÍTEM MANUAL ── */}
-                    <div className="border-2 border-dashed border-gray-200 rounded-2xl p-4 bg-gray-50/50">
-                      <h4 className="text-[10px] font-black text-gray-600 uppercase mb-3">Agregar Ítem Manual</h4>
-                      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                        <div className="md:col-span-2">
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Descripción</label>
-                          <input type="text" id="mitem-desc" className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-gray-400 uppercase bg-white" placeholder="Ej: BOLSA 28X75 - EMBUTIDOS"/>
+                      {/* Step 2: Qty + Price + Agregar */}
+                      <div className="grid grid-cols-3 gap-3 items-end">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">2. Cantidad</label>
+                          <input type="number" step="0.01" min="0" value={cotizAddQty}
+                            onChange={e=>setCotizAddQty(e.target.value)}
+                            className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400 bg-white"
+                            placeholder="0"/>
                         </div>
                         <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
-                          <input type="number" step="0.01" id="mitem-qty" className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-gray-400 bg-white" placeholder="0"/>
+                          <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">3. Precio U. (USD)</label>
+                          <input type="number" step="0.01" min="0" value={cotizAddPrecio}
+                            onChange={e=>setCotizAddPrecio(e.target.value)}
+                            className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500 bg-orange-50"
+                            placeholder="0.00"/>
                         </div>
-                        <div>
-                          <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Precio U. (USD)</label>
-                          <input type="number" step="0.01" id="mitem-precio" className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500 bg-orange-50" placeholder="0.00"/>
-                        </div>
-                        <div className="flex items-end">
-                          <button type="button" onClick={()=>{
-                            const desc=(document.getElementById('mitem-desc')?.value||'').toUpperCase();
-                            const qty=parseNum(document.getElementById('mitem-qty')?.value||0);
-                            const precio=parseNum(document.getElementById('mitem-precio')?.value||0);
-                            if(!desc||qty<=0||precio<=0) return;
-                            setCotizItems(prev=>[...prev,{desc,cantidad:qty,precioUnit:precio,total:qty*precio}]);
-                            ['mitem-desc','mitem-qty','mitem-precio'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
-                          }} className="w-full bg-gray-700 text-white px-3 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-gray-900 flex items-center gap-1 justify-center">
-                            <Plus size={13}/> Agregar
-                          </button>
-                        </div>
+                        <button type="button" onClick={()=>{
+                          const desc = cotizAddDesc || cotizSelectedProduct;
+                          const qty = parseNum(cotizAddQty);
+                          const precio = parseNum(cotizAddPrecio);
+                          if(!desc || qty <= 0 || precio <= 0) return;
+                          setCotizItems(prev=>[...prev,{desc,cantidad:qty,precioUnit:precio,total:qty*precio}]);
+                          setCotizSelectedProduct('');
+                          setCotizAddDesc('');
+                          setCotizAddQty('');
+                          setCotizAddPrecio('');
+                        }} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase flex items-center gap-2 justify-center transition-colors shadow-sm">
+                          <Plus size={14}/> Agregar
+                        </button>
                       </div>
                     </div>
 
@@ -9025,10 +8992,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         <tbody>
                           {cotizItems.length>0 ? cotizItems.map((it,i)=>(
                             <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                              <td className="py-2 px-3 font-bold text-gray-800">{it.desc}</td>
-                              <td className="py-2 px-3 text-center font-black">{formatNum(it.cantidad)}</td>
-                              <td className="py-2 px-3 text-right font-black">${formatNum(it.precioUnit)}</td>
-                              <td className="py-2 px-3 text-right font-black text-green-700">${formatNum(it.total)}</td>
+                              <td className="py-2 px-3 font-bold text-gray-800 text-[10px]">{it.desc}</td>
+                              <td className="py-2 px-3 text-center font-black text-[10px]">{formatNum(it.cantidad)}</td>
+                              <td className="py-2 px-3 text-right font-black text-[10px]">${formatNum(it.precioUnit)}</td>
+                              <td className="py-2 px-3 text-right font-black text-green-700 text-[10px]">${formatNum(it.total)}</td>
                               <td className="py-2 px-3 text-center"><button onClick={()=>setCotizItems(p=>p.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={13}/></button></td>
                             </tr>
                           )) : Array.from({length:5}).map((_,i)=>(
