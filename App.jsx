@@ -8915,34 +8915,24 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           <option value="">— Seleccionar producto —</option>
                           {(()=>{
                             const consolidated = {};
-                            (inventory||[]).filter(i=>i.activo!==false).forEach(i=>{
+                            (inventory||[]).filter(i=>i.activo!==false && i.category==='Productos Terminados').forEach(i=>{
                               const cc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
                               if(!cc) return;
-                              if(!consolidated[cc]||parseNum(i.stock)>consolidated[cc].stock) consolidated[cc]={cc,desc:i.desc||'',unit:i.unit||'und',category:i.category||'Otros',subcategory:i.subcategory||getItemSubcategory(i)||''};
+                              if(!consolidated[cc]||parseNum(i.stock)>consolidated[cc].stock) consolidated[cc]={cc,desc:i.desc||'',unit:i.unit||'und',subcategory:i.subcategory||getItemSubcategory(i)||'Otros Terminados',cost:parseNum(i.cost||0),stock:parseNum(i.stock||0)};
                               const d=i.desc||''; if(d&&!d.includes('×')&&(consolidated[cc].desc.includes('×')||d.length>=consolidated[cc].desc.length)) consolidated[cc].desc=d;
                             });
-                            const CAT_ORDER=['Productos Terminados','Materia Prima','Semielaborados','Consumibles','Pigmentos','Tintas','Químicos','Herramientas','Seguridad Industrial','Otros'];
-                            const SUB_ORDER=['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles'];
-                            const catGroups={};
+                            const SUB_ORDER=['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
+                            const subGroups={};
                             Object.values(consolidated).forEach(c=>{
-                              const cat=c.category; if(!catGroups[cat])catGroups[cat]={};
-                              const sub=c.subcategory||'__NONE__'; if(!catGroups[cat][sub])catGroups[cat][sub]=[];
-                              catGroups[cat][sub].push(c);
+                              const sub=c.subcategory||'Otros Terminados';
+                              if(!subGroups[sub])subGroups[sub]=[];
+                              subGroups[sub].push(c);
                             });
-                            const sortedCats=[...CAT_ORDER.filter(c=>catGroups[c]),...Object.keys(catGroups).filter(c=>!CAT_ORDER.includes(c))];
-                            return sortedCats.flatMap(cat=>{
-                              const subMap=catGroups[cat]||{};
-                              const subKeys=[...SUB_ORDER.filter(s=>subMap[s]),...Object.keys(subMap).filter(s=>!SUB_ORDER.includes(s)&&s!=='__NONE__'),...(subMap['__NONE__']?['__NONE__']:[])];
-                              const hasSubs=subKeys.some(k=>k!=='__NONE__');
-                              if(!hasSubs) return [
-                                <option key={`h-${cat}`} disabled>── {cat.toUpperCase()} ──</option>,
-                                ...(subMap['__NONE__']||[]).sort((a,b)=>a.cc.localeCompare(b.cc)).map(c=><option key={c.cc} value={c.cc}>&nbsp;&nbsp;{c.cc} — {c.desc}</option>)
-                              ];
-                              return subKeys.flatMap(sub=>[
-                                <option key={`h-${cat}-${sub}`} disabled>{sub==='__NONE__'?`── ${cat.toUpperCase()} ──`:`── ${cat.toUpperCase()} / ${sub.toUpperCase()} ──`}</option>,
-                                ...(subMap[sub]||[]).sort((a,b)=>a.cc.localeCompare(b.cc)).map(c=><option key={c.cc} value={c.cc}>&nbsp;&nbsp;&nbsp;&nbsp;{c.cc} — {c.desc}</option>)
-                              ]);
-                            });
+                            const sortedSubs=[...SUB_ORDER.filter(s=>subGroups[s]),...Object.keys(subGroups).filter(s=>!SUB_ORDER.includes(s))];
+                            return sortedSubs.flatMap(sub=>[
+                              <option key={`h-${sub}`} disabled>── {sub.toUpperCase()} ──</option>,
+                              ...(subGroups[sub]||[]).sort((a,b)=>a.cc.localeCompare(b.cc)).map(c=><option key={c.cc} value={c.cc}>&nbsp;&nbsp;{c.cc} — {c.desc}</option>)
+                            ]);
                           })()}
                         </select>
                       </div>
@@ -9675,24 +9665,34 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 <span className="text-[10px] font-black uppercase tracking-wider">🛒 Productos Seleccionados ({fgItems.length})</span>
                                 <span className="text-[9px] font-bold opacity-80">Haz clic en ✕ para quitar un producto</span>
                               </div>
-                              <table className="w-full text-xs">
+                              <div className="overflow-x-auto">
+                              <table className="w-full text-xs" style={{minWidth:680,tableLayout:'fixed'}}>
+                                <colgroup>
+                                  <col style={{width:140}}/>
+                                  <col/>
+                                  <col style={{width:100}}/>
+                                  <col style={{width:90}}/>
+                                  <col style={{width:90}}/>
+                                  <col style={{width:70}}/>
+                                  <col style={{width:52}}/>
+                                </colgroup>
                                 <thead>
                                   <tr className="font-black text-[9px] uppercase bg-gray-50 border-b-2 border-green-200">
-                                    <th className="p-2.5 text-left" style={{width:120}}>Código</th>
+                                    <th className="p-2.5 text-left">Código</th>
                                     <th className="p-2.5 text-left">Producto / Descripción</th>
-                                    <th className="p-2.5 text-center" style={{width:90}}>Cant. Total</th>
-                                    <th className="p-2.5 text-right" style={{width:90}}>Precio U.</th>
-                                    <th className="p-2.5 text-right" style={{width:90}}>Total</th>
-                                    <th className="p-2.5 text-center" style={{width:70}}>Alm.</th>
-                                    <th className="p-2.5 text-center" style={{width:60}}>Quitar</th>
+                                    <th className="p-2.5 text-center">Cant. Total</th>
+                                    <th className="p-2.5 text-right">Precio U.</th>
+                                    <th className="p-2.5 text-right">Total</th>
+                                    <th className="p-2.5 text-center">Alm.</th>
+                                    <th className="p-2.5 text-center">✕</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-green-100">
                                   {fgItems.map((item, idx) => (
                                     <tr key={idx} className="hover:bg-red-50 group">
-                                      <td className="p-2.5 font-black text-orange-600 text-[9px]" style={{width:120}}>{item.invCode||cleanFGCode(item.fgId||'')}</td>
-                                      <td className="p-2.5 font-bold text-gray-800 text-[10px]">{item.desc}</td>
-                                      <td className="p-2.5 text-center font-black text-green-700 text-[10px]">{formatNum(item.cantidad)} <span className="text-[8px] text-gray-400">{item.unidad}</span></td>
+                                      <td className="p-2.5 font-black text-orange-600 text-[9px] truncate">{item.invCode||cleanFGCode(item.fgId||'')}</td>
+                                      <td className="p-2.5 font-bold text-gray-800 text-[10px] leading-tight">{item.desc}</td>
+                                      <td className="p-2.5 text-center font-black text-green-700 text-[10px]">{formatNum(item.cantidad)}<br/><span className="text-[8px] text-gray-400 font-normal">{item.unidad}</span></td>
                                       <td className="p-2.5 text-right font-black text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
                                       <td className="p-2.5 text-right font-black text-gray-800 text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
                                       <td className="p-2.5 text-center relative">
@@ -9704,7 +9704,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                           const asgn=Object.values(disp).reduce((s,v)=>s+parseNum(v),0);
                                           const need=parseNum(item.cantidad);
                                           const ok=Math.abs(asgn-need)<0.01&&asgn>0;
-                                          return <button type="button" onClick={()=>setShowMwPanel(showMwPanel===code?null:code)} className={`text-[8px] font-black px-2 py-1 rounded-lg ${ok?'bg-green-100 text-green-700':'bg-orange-100 text-orange-600'}`}>{ok?'✓ OK':`⚠ ${whs.length} alm`}</button>;
+                                          return <button type="button" onClick={()=>setShowMwPanel(showMwPanel===code?null:code)} className={`text-[8px] font-black px-2 py-1 rounded-lg ${ok?'bg-green-100 text-green-700':'bg-orange-100 text-orange-600'}`}>{ok?'✓':(`⚠ ${whs.length}`)}</button>;
                                         })()}
                                         {showMwPanel===(item.invCode||(item.fgId||'').split('___')[0]) && (()=>{
                                           const code=item.invCode||(item.fgId||'').split('___')[0];
@@ -9722,7 +9722,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                       </td>
                                       <td className="p-2.5 text-center">
                                         <button type="button" onClick={()=>setFgItems(p=>p.filter((_,i)=>i!==idx))}
-                                          className="bg-red-100 hover:bg-red-500 text-red-500 hover:text-white p-1.5 rounded-lg transition-all font-black text-xs" title="Quitar producto">
+                                          className="bg-red-100 hover:bg-red-500 text-red-500 hover:text-white p-1.5 rounded-lg transition-all" title="Quitar producto">
                                           <X size={13}/>
                                         </button>
                                       </td>
@@ -9730,6 +9730,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                   ))}
                                 </tbody>
                               </table>
+                              </div>
                             </div>
                           )}
                         </div>
