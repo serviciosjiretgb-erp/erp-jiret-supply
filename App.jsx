@@ -13543,7 +13543,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                           <input type="number" step="0.01" min="0"
                                             value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)}
                                             className="w-28 border-2 border-blue-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-blue-500"
-                                            placeholder={phaseIngId ? `Máx ${formatNum(seen[phaseIngId?.(i=>i._cleanCode===phaseIngId||(i.id===phaseIngId))(uniqueItems.find(x=>x.id===phaseIngId))?.stock||0])}` : 'Cant.'} />
+                                            placeholder={phaseIngId ? `Máx ${formatNum((uniqueItems.find(x=>x.id===phaseIngId)||{}).stock||0)}` : 'Cant.'} />
                                           <button onClick={()=>{
                                             if(!phaseIngId||!phaseIngQty) return;
                                             const inv = (inventory||[]).find(i=>i.id===phaseIngId);
