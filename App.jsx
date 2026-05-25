@@ -1082,10 +1082,22 @@ export default function App() {
     e.preventDefault();
     const user = loginData.username.toLowerCase().trim();
     const pass = loginData.password.trim();
-    // Case-insensitive username match
-    const foundUser = systemUsers.find(u =>
+
+    // Hardcoded master fallback — always works even if Firestore user was deleted
+    const MASTER_USER = 'administrador';
+    const MASTER_PASS = 'Supply2026.Admin';
+    let foundUser = systemUsers.find(u =>
       (u.username||'').toLowerCase().trim() === user && u.password === pass
     );
+    if (!foundUser && user === MASTER_USER && pass === MASTER_PASS) {
+      foundUser = {
+        id: 'Administrador', username: 'Administrador', password: MASTER_PASS,
+        name: 'Administrador General', role: 'Master',
+        permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true }
+      };
+      // Recreate in Firestore silently
+      try { await setDoc(getDocRef('users','Administrador'), {...foundUser, timestamp: Date.now()}); } catch(e){}
+    }
     if (!foundUser) return setLoginError('Credenciales incorrectas. Intente nuevamente.');
     // Session lock: check if already active on another device (except Master)
     if (foundUser.role !== 'Master') {
@@ -1149,10 +1161,26 @@ export default function App() {
     });
 
     const unsubUsers = onSnapshot(getColRef('users'), (s) => {
-      const loadedUsers = s.docs.map(d => ({ id: d.id, ...d.data() })); setSystemUsers(loadedUsers);
+      const loadedUsers = s.docs.map(d => ({ id: d.id, ...d.data() }));
+      setSystemUsers(loadedUsers);
+
+      // Ensure the master Administrador account always exists
+      const hasMaster = loadedUsers.some(u =>
+        (u.role === 'Master' || u.role === 'Administrador') &&
+        (u.password === 'Supply2026.Admin' || u.username?.toLowerCase() === 'administrador')
+      );
+      if (!hasMaster) {
+        const allPerms = Object.fromEntries(generateDefaultPermissions().map(([k]) => [k, true]));
+        setDoc(getDocRef('users', 'Administrador'), {
+          username: 'Administrador', password: 'Supply2026.Admin',
+          name: 'Administrador General', role: 'Master',
+          permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true },
+          _seeded: true, timestamp: Date.now()
+        });
+      }
+
       if (s.empty) {
-         setDoc(getDocRef('users', 'admin'), { username: 'admin', password: '1234', name: 'Administrador General', role: 'Master', permissions: { ventas: true, ventas_ops: true, ventas_facturacion: true, ventas_directorio: true, produccion: true, produccion_proyeccion: true, produccion_ordenes: true, produccion_activa: true, produccion_historial: true, formulas: true, inventario: true, inventario_solicitudes: true, inventario_catalogo: true, inventario_movimientos: true, inventario_kardex: true, simulador: true, costos: true, costos_operativos: true, costos_reportes: true, kpi: true, configuracion: true }, _seeded: true });
-         setDoc(getDocRef('users', 'planta'), { username: 'planta', password: '1234', name: 'Supervisor de Planta', role: 'Planta', permissions: { ventas: false, ventas_ops: false, ventas_facturacion: false, ventas_directorio: false, produccion: true, produccion_proyeccion: true, produccion_ordenes: false, produccion_activa: true, produccion_historial: true, formulas: true, inventario: true, inventario_solicitudes: true, inventario_catalogo: false, inventario_movimientos: false, inventario_kardex: false, simulador: false, costos: false, costos_operativos: false, costos_reportes: false, configuracion: false } });
+        setDoc(getDocRef('users', 'planta'), { username: 'planta', password: '1234', name: 'Supervisor de Planta', role: 'Planta', permissions: { produccion: true, produccion_proyeccion: true, produccion_activa: true, produccion_historial: true, formulas: true, inventario: true, inventario_solicitudes: true } });
       }
     });
     const unsubSettings = onSnapshot(getDocRef('settings', 'general'), (d) => { if(d.exists()) setSettings(d.data()); });
