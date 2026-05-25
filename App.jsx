@@ -13332,6 +13332,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               ) : (
                 <div className="space-y-4">
                   {activoFiltered.map(req => {
+                    const prod = req.production || {};
                     const lotes = getLotes(req);
                     const activeLote = lotes[activeLoteIndex] || lotes[lotes.length-1] || {};
                     const phaseStatus = (phase) => {
