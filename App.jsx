@@ -12888,13 +12888,23 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           </tr></thead>
                           <tbody className="divide-y divide-gray-100">
                             {(b.insumos||[]).map((ing,i)=>{
-                              const invItem=(inventory||[]).find(x=>x.id===ing.id);
-                              const uc=parseNum(ing.unitCost||invItem?.cost||0);
+                              // Fix 3: Cross-reference cost — try exact id, then cleanCode match
+                              let invItem = (inventory||[]).find(x=>x.id===ing.id);
+                              if(!invItem) {
+                                const cc = (ing.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                                invItem = (inventory||[]).find(x=>{
+                                  const xcc = (x.displayId||(x.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                                  return xcc === cc;
+                                });
+                              }
+                              // Priority: stored unitCost → live inventory cost → 0
+                              const uc = parseNum(ing.unitCost) > 0 ? parseNum(ing.unitCost) : parseNum(invItem?.cost||0);
+                              const lt = parseNum(ing.qty) * uc;
                               return <tr key={i} className="hover:bg-gray-50">
-                                <td className="p-3 border-r font-black text-orange-600 uppercase">{ing.id} — {ing.desc||invItem?.desc||''}</td>
+                                <td className="p-3 border-r font-black text-orange-600 uppercase">{(ing.id||'').split('___')[0]} — {ing.desc||invItem?.desc||''}</td>
                                 <td className="p-3 border-r text-center font-black">{formatNum(ing.qty)} KG</td>
                                 <td className="p-3 border-r text-right font-bold">${formatNum(uc)}</td>
-                                <td className="p-3 text-right font-black">${formatNum(parseNum(ing.qty)*uc)}</td>
+                                <td className="p-3 text-right font-black text-green-700">${formatNum(lt)}</td>
                               </tr>;
                             })}
                           </tbody>
@@ -13322,15 +13332,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               ) : (
                 <div className="space-y-4">
                   {activoFiltered.map(req => {
-                    const prod = req.production || {};
+                    const lotes = getLotes(req);
+                    const activeLote = lotes[activeLoteIndex] || lotes[lotes.length-1] || {};
                     const phaseStatus = (phase) => {
-                      if (prod[phase]?.isClosed) return { icon: '✓', cls: 'border-green-300 bg-green-50 text-green-700' };
-                      if ((prod[phase]?.batches||[]).length > 0) return { icon: '⏳', cls: 'border-yellow-300 bg-yellow-50 text-yellow-700' };
+                      // Check current active lote's phase status
+                      const phaseData = activeLote?.[phase];
+                      if (phaseData?.isClosed) return { icon: '✓', cls: 'border-green-300 bg-green-50 text-green-700' };
+                      if ((phaseData?.batches||[]).length > 0) return { icon: '⏳', cls: 'border-yellow-300 bg-yellow-50 text-yellow-700' };
                       return { icon: '—', cls: 'border-gray-200 bg-white text-gray-400' };
                     };
                     const isOpen = selectedPhaseReqId === req.id;
-                    // Calcular total insumos para auto-merma
-                    const totalInsumosActual = (phaseForm?.insumos || []).reduce((s, ing) => s + parseNum(ing.qty), 0);
+                    const totalInsumosActual = (phaseForm?.insumos || []).reduce((s, ing) => s + parseNum(ing?.qty||0), 0);
                     return (
                       <div key={req.id} className="bg-gray-50 border border-gray-200 rounded-2xl overflow-hidden">
                         <div className="flex justify-between items-center p-5 bg-white border-b border-gray-100">
@@ -13339,11 +13351,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             <p className="text-[10px] font-bold text-gray-500 mt-1">{req.desc} | {req.ancho}cm×{req.largo}cm | {req.micras}mic | {formatNum(req.requestedKg)} KG</p>
                             {/* Resumen entregas parciales */}
                             {(req.entregasParciales||[]).length > 0 && (() => {
-                              const prod = req.production || {};
-                              const fr = b => b.operator!=='ALMACÉN (DESPACHO)' && parseNum(b.producedKg)>0;
-                              const sB=(prod.sellado?.batches||[]).filter(fr);
-                              const iB=(prod.impresion?.batches||[]).filter(fr);
-                              const eB=(prod.extrusion?.batches||[]).filter(fr);
+                              const allLotes = getLotes(req);
+                              const fr = b => b?.operator!=='ALMACÉN (DESPACHO)' && parseNum(b?.producedKg)>0;
+                              const sB = allLotes.flatMap(l=>(l?.sellado?.batches||[]).filter(fr));
+                              const iB = allLotes.flatMap(l=>(l?.impresion?.batches||[]).filter(fr));
+                              const eB = allLotes.flatMap(l=>(l?.extrusion?.batches||[]).filter(fr));
                               const lastB = sB.length>0?sB:iB.length>0?iB:eB;
                               const totalProd = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
                               const totalEntregado = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0);
@@ -15106,9 +15118,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               </tr></thead>
                               <tbody className="divide-y divide-gray-100">
                                 {(b.insumos||[]).map((ing,j)=>{
-                                  const inv=(inventory||[]).find(x=>x.id===ing.id);
-                                  const uc=parseNum(ing.unitCost||inv?.cost||0);
-                                  return <tr key={j}><td className="p-2 border-r font-bold text-orange-600">{ing.id}</td><td className="p-2 border-r text-center font-black">{formatNum(ing.qty)}</td><td className="p-2 border-r text-right">${formatNum(uc)}</td><td className="p-2 text-right font-black">${formatNum(parseNum(ing.qty)*uc)}</td></tr>;
+                                  let inv = (inventory||[]).find(x=>x.id===ing.id);
+                                  if(!inv) {
+                                    const cc=(ing.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                                    inv=(inventory||[]).find(x=>{const xcc=(x.displayId||(x.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim(); return xcc===cc;});
+                                  }
+                                  const uc=parseNum(ing.unitCost)>0?parseNum(ing.unitCost):parseNum(inv?.cost||0);
+                                  const cc=(ing.id||'').split('___')[0];
+                                  return <tr key={j}><td className="p-2 border-r font-bold text-orange-600">{cc}<br/><span className="text-gray-500 font-normal text-[8px]">{ing.desc||inv?.desc||''}</span></td><td className="p-2 border-r text-center font-black">{formatNum(ing.qty)}</td><td className="p-2 border-r text-right">${formatNum(uc)}</td><td className="p-2 text-right font-black text-green-700">${formatNum(parseNum(ing.qty)*uc)}</td></tr>;
                                 })}
                               </tbody>
                               <tfoot className="bg-gray-50 border-t"><tr className="font-black text-[9px]"><td colSpan="3" className="p-2 text-right">Costo Total:</td><td className="p-2 text-right text-orange-600">${formatNum(b.costoTotal||0)}</td></tr></tfoot>
