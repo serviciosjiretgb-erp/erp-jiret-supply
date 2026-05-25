@@ -11777,7 +11777,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
     // ── IMPUTACIÓN DIRECTA: KG despachados → todos imputados a la OP ──
     // Merma AUTO = Total KG despachados a la OP − KG que resultaron de extrusión
-    const kgDespachadoTotal = totalDespachado; // all approved kg for this OP
+    const totalDespachado = approvedIds.reduce((s, id) => s + parseNum(groupedApproved[id]), 0);
+    const kgDespachadoTotal = totalDespachado;
     const prodKgEntrada = parseNum(phaseForm.producedKg);
     const mermaAuto = kgDespachadoTotal > 0 && prodKgEntrada >= 0
       ? Math.max(0, kgDespachadoTotal - prodKgEntrada)
