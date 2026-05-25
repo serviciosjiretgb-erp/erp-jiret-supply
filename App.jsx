@@ -3033,12 +3033,34 @@ export default function App() {
         const batch = writeBatch(db); let phaseCost = 0; let totalInsumosKg = 0;
 
         for (let ing of validItems) {
-           const item = (inventory || []).find(i => i.id === ing.id);
-           if (!item) throw new Error(`Ítem ${ing.id} no encontrado en catálogo.`);
-           phaseCost += (item.cost * ing.qty); totalInsumosKg += parseFloat(ing.qty);
-           batch.update(getDocRef('inventory', item.id), { stock: (item.stock || 0) - ing.qty });
-           const movId = Date.now().toString() + Math.floor(Math.random()*1000);
-           batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: getTodayDate(), itemId: item.id, itemName: item.desc, type: 'SALIDA', qty: ing.qty, cost: item.cost, totalValue: ing.qty * item.cost, reference: `REQ-${targetOP.id}-${req.phase.substring(0,3).toUpperCase()}`, opAsignada: targetOP.id, notes: 'DESPACHO ALMACÉN', timestamp: Date.now(), user: appUser?.name || 'Almacén' });
+           // Find the specific ALMACEN ZI doc for this item (try by id first, then by cleanCode)
+           let item = (inventory || []).find(i => i.id === ing.id);
+           if (!item) {
+             // Try to find by cleanCode matching any ALMACEN ZI doc
+             const cleanCode = (ing._cleanCode || ing.id || '').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+             item = (inventory || []).find(i => {
+               const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+               const alm = i.almacen || (i.id||'').split('___')[1]?.replace(/-/g,' ') || '';
+               return cc === cleanCode && (alm.includes('ZI') || alm === '');
+             });
+           }
+           if (!item) throw new Error(`Ítem ${ing.id} no encontrado en Almacén ZI.`);
+           const qty = parseNum(ing.qty);
+           if(qty > parseNum(item.stock||0) + 0.001) throw new Error(`Stock insuficiente en ZI para ${item.desc}: disponible ${formatNum(item.stock)} ${item.unit}, solicitado ${formatNum(qty)}.`);
+           phaseCost += (item.cost * qty); totalInsumosKg += qty;
+           // Deduct from the specific ALMACEN ZI doc
+           batch.update(getDocRef('inventory', item.id), { stock: Math.max(0, (item.stock || 0) - qty), timestamp: Date.now() });
+           // Kardex movement
+           const movId = `REQ-${Date.now()}-${Math.floor(Math.random()*9999)}`;
+           batch.set(getDocRef('inventoryMovements', movId), {
+             id: movId, date: getTodayDate(),
+             itemId: item.displayId||(item.id||'').split('___')[0], itemName: item.desc,
+             type: 'SALIDA', qty, cost: item.cost, totalValue: qty * item.cost,
+             reference: `REQ-${targetOP.id}-${(req.phase||'EXT').substring(0,3).toUpperCase()}`,
+             opAsignada: targetOP.id, almacen: item.almacen || 'ALMACEN ZI',
+             notes: `DESPACHO A PRODUCCIÓN — ${(req.phase||'').toUpperCase()} — ${targetOP.client||''}`,
+             timestamp: Date.now(), user: appUser?.name || 'Almacén'
+           });
         }
 
         batch.update(getDocRef('inventoryRequisitions', req.id), { status: 'APROBADO', dispatchDate: getTodayDate(), items: validItems, approvedBy: appUser?.name, kgDespachados: totalInsumosKg, costoDespachado: phaseCost });
@@ -13458,26 +13480,88 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
                                   {/* Agregar materiales */}
                                   <div className="bg-white rounded-xl border border-blue-200 p-4 mb-4">
-                                    <h5 className="text-[9px] font-black text-gray-700 uppercase mb-3">Materiales a Solicitar</h5>
-                                    <div className="flex gap-2 mb-3">
-                                      <select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
-                                        <option value="">Seleccione material...</option>
-                                        <optgroup label="📌 MATERIA PRIMA">
-                                          {(inventory||[]).filter(i=>i.category==='Materia Prima'||i.category==='Pigmentos').map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
-                                        </optgroup>
-                                        <optgroup label="🔄 SEMIELABORADOS / BOBINAS">
-                                          {(inventory||[]).filter(i=>i.category==='Semielaborados').map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} (Stock: {formatNum(i.stock)} KG)</option>)}
-                                        </optgroup>
-                                        <optgroup label="📦 CONSUMIBLES / HERRAMIENTAS">
-                                          {(inventory||[]).filter(i=>i.category==='Consumibles'||i.category==='Herramientas'||i.category==='Tintas'||i.category==='Químicos'||i.category==='Seguridad Industrial').map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
-                                        </optgroup>
-                                        <optgroup label="📂 OTROS">
-                                          {(inventory||[]).filter(i=>!['Materia Prima','Pigmentos','Semielaborados','Consumibles','Herramientas','Tintas','Químicos','Seguridad Industrial'].includes(i.category)).map(i=><option key={i.id} value={i.id}>{i.id} - {i.desc} (Stock: {formatNum(i.stock)} {i.unit})</option>)}
-                                        </optgroup>
-                                      </select>
-                                      <input type="number" step="0.01" value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)} className="w-24 border border-gray-200 rounded-lg p-2 text-xs font-bold text-center outline-none" placeholder="Cant." />
-                                      <button onClick={()=>{ if(!phaseIngId||!phaseIngQty) return; setPhaseForm({...phaseForm, insumos:[...(phaseForm.insumos||[]),{id:phaseIngId,qty:parseFloat(phaseIngQty)}]}); setPhaseIngId(''); setPhaseIngQty(''); }} className="bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-blue-600 flex items-center"><Plus size={14}/></button>
-                                    </div>
+                                    <h5 className="text-[9px] font-black text-gray-700 uppercase mb-3 flex items-center gap-2">
+                                      Materiales a Solicitar
+                                      <span className="text-[8px] font-bold text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full">Almacén ZI</span>
+                                    </h5>
+                                    {/* Phase-appropriate categories */}
+                                    {(()=>{
+                                      // Determine which categories are valid for this phase
+                                      const phaseCats = activePhaseTab === 'extrusion'
+                                        ? ['Materia Prima','Pigmentos','Consumibles','Herramientas','Seguridad Industrial']
+                                        : activePhaseTab === 'impresion'
+                                        ? ['Tintas','Químicos','Consumibles','Seguridad Industrial']
+                                        : ['Semielaborados','Consumibles','Herramientas']; // sellado
+
+                                      // Consolidate from ALMACEN ZI — cleanCode per item, dedup
+                                      const ziDocs = (inventory||[]).filter(i => {
+                                        if(i.activo===false) return false;
+                                        if(!phaseCats.includes(i.category)) return false;
+                                        const alm = i.almacen || (i.id||'').split('___')[1]?.replace(/-/g,' ') || '';
+                                        return alm.includes('ZI') || alm === '' || alm.includes('ALMACEN ZI');
+                                      });
+
+                                      // Deduplicate by cleanCode (keep highest stock per code)
+                                      const seen = {};
+                                      const uniqueItems = [];
+                                      ziDocs.forEach(i => {
+                                        const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                                        if(!cc) return;
+                                        if(!seen[cc] || parseNum(i.stock) > parseNum(seen[cc].stock)) {
+                                          seen[cc] = {...i, _cleanCode: cc};
+                                        }
+                                      });
+                                      Object.values(seen).forEach(i => uniqueItems.push(i));
+                                      uniqueItems.sort((a,b)=>(a._cleanCode||'').localeCompare(b._cleanCode||''));
+
+                                      // Group by category
+                                      const catGroups = {};
+                                      uniqueItems.forEach(i=>{ const c=i.category||'Otros'; if(!catGroups[c])catGroups[c]=[]; catGroups[c].push(i); });
+
+                                      return (
+                                        <div className="flex gap-2 mb-3">
+                                          <div className="relative flex-1">
+                                            <select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)}
+                                              className="w-full border-2 border-blue-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-500 bg-white">
+                                              <option value="">— Seleccionar material de Almacén ZI —</option>
+                                              {phaseCats.map(cat => {
+                                                const items = catGroups[cat] || [];
+                                                if(items.length === 0) return null;
+                                                return (
+                                                  <optgroup key={cat} label={`── ${cat.toUpperCase()} ──`}>
+                                                    {items.map(i => (
+                                                      <option key={i.id} value={i.id}
+                                                        disabled={parseNum(i.stock)<=0}>
+                                                        {i._cleanCode} — {i.desc} | Stock ZI: {formatNum(i.stock)} {i.unit}{parseNum(i.stock)<=0?' ⚠ SIN STOCK':''}
+                                                      </option>
+                                                    ))}
+                                                  </optgroup>
+                                                );
+                                              })}
+                                            </select>
+                                          </div>
+                                          <input type="number" step="0.01" min="0"
+                                            value={phaseIngQty} onChange={e=>setPhaseIngQty(e.target.value)}
+                                            className="w-28 border-2 border-blue-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-blue-500"
+                                            placeholder={phaseIngId ? `Máx ${formatNum(seen[phaseIngId?.(i=>i._cleanCode===phaseIngId||(i.id===phaseIngId))(uniqueItems.find(x=>x.id===phaseIngId))?.stock||0])}` : 'Cant.'} />
+                                          <button onClick={()=>{
+                                            if(!phaseIngId||!phaseIngQty) return;
+                                            const inv = (inventory||[]).find(i=>i.id===phaseIngId);
+                                            const cleanCode = inv ? (inv.displayId||(inv.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim() : phaseIngId;
+                                            const qty = parseNum(phaseIngQty);
+                                            if(qty<=0) return;
+                                            // Check not already added
+                                            const existing = (phaseForm.insumos||[]).find(ins=>ins.id===phaseIngId||(ins._cleanCode&&ins._cleanCode===cleanCode));
+                                            if(existing) {
+                                              setPhaseForm({...phaseForm, insumos:(phaseForm.insumos||[]).map(ins=>ins.id===phaseIngId?{...ins,qty:ins.qty+qty}:ins)});
+                                            } else {
+                                              setPhaseForm({...phaseForm, insumos:[...(phaseForm.insumos||[]),{id:phaseIngId,_cleanCode:cleanCode,desc:inv?.desc||'',qty,unit:inv?.unit||'kg'}]});
+                                            }
+                                            setPhaseIngId(''); setPhaseIngQty('');
+                                          }} className="bg-blue-600 text-white px-4 py-2.5 rounded-xl font-black text-xs hover:bg-blue-700 flex items-center"><Plus size={14}/></button>
+                                        </div>
+                                      );
+                                    })()}
                                     {/* Mostrar insumos agrupados por categoría */}
                                     {(()=>{
                                       const ingList = phaseForm.insumos||[];
