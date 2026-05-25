@@ -8854,51 +8854,107 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       <input type="text" value={newCotizForm.descripcion} onChange={e=>setNewCotizForm({...newCotizForm,descripcion:e.target.value.toUpperCase()})} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 uppercase" placeholder="Ej: COTIZACIÓN BOLSAS PLÁSTICAS"/>
                     </div>
 
-                    {/* ── SELECTOR DE PRODUCTOS TERMINADOS (Inventario General) ── */}
-                    <div className="border-2 border-blue-100 rounded-2xl p-4 bg-blue-50/50">
-                      <h4 className="text-[10px] font-black text-blue-700 uppercase mb-3 flex items-center gap-2"><Package size={13}/> Seleccionar Producto del Inventario General</h4>
-                      <div className="flex gap-2 mb-2">
-                        <div className="relative flex-1">
+                    {/* ── SELECTOR DE PRODUCTOS (Referencia — sin impacto en inventario) ── */}
+                    <div className="border-2 border-blue-100 rounded-2xl p-4 bg-blue-50/30">
+                      <h4 className="text-[10px] font-black text-blue-700 uppercase mb-3 flex items-center gap-2">
+                        <Package size={13}/> Seleccionar Producto
+                        <span className="ml-auto text-[8px] font-bold text-blue-400 bg-blue-100 px-2 py-0.5 rounded-full uppercase">Solo referencia · No afecta inventario</span>
+                      </h4>
+
+                      {/* Search + Category filter */}
+                      <div className="flex gap-2 mb-3 flex-wrap">
+                        <div className="relative flex-1 min-w-48">
                           <Search className="absolute left-3 top-2.5 text-gray-400" size={13}/>
-                          <input type="text" placeholder="Buscar por código o descripción..." value={cotizSearchTerm}
-                            onChange={e=>setCotizSearchTerm(e.target.value.toUpperCase())}
+                          <input type="text" placeholder="Buscar código o descripción..."
+                            value={cotizSearchTerm} onChange={e=>setCotizSearchTerm(e.target.value.toUpperCase())}
                             className="w-full pl-9 pr-8 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400 bg-white"/>
                           {cotizSearchTerm && <button onClick={()=>setCotizSearchTerm('')} className="absolute right-2 top-2 text-gray-400 hover:text-red-500"><X size={13}/></button>}
                         </div>
                       </div>
-                      {/* Results dropdown */}
-                      {cotizSearchTerm.length>0 && (()=>{
-                        const ptResults = (inventory||[]).filter(i=>{
-                          if(i.category!=='Productos Terminados') return false;
-                          const code=(i.displayId||(i.id||'').split('___')[0]).toUpperCase();
-                          const desc=(i.desc||'').toUpperCase();
-                          return code.includes(cotizSearchTerm)||desc.includes(cotizSearchTerm);
+
+                      {/* Grouped dropdown selector */}
+                      {(()=>{
+                        // Build consolidated list (same as Inventario General)
+                        const consolidated = {};
+                        (inventory||[]).filter(i=>i.activo!==false).forEach(i=>{
+                          const rawId = i.displayId||(i.id||'').split('___')[0];
+                          const cc = rawId.replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
+                          if(!cc) return;
+                          const qty = parseNum(i.stock||0);
+                          if(!consolidated[cc]) consolidated[cc] = {
+                            cc, desc:i.desc||'', unit:i.unit||'und',
+                            category: i.category||'Otros',
+                            subcategory: i.subcategory||getItemSubcategory(i)||'',
+                            stock: 0, cost: parseNum(i.cost||0)
+                          };
+                          consolidated[cc].stock = Math.max(consolidated[cc].stock, qty);
+                          const d = i.desc||'';
+                          if(d && !d.includes('×') && (consolidated[cc].desc.includes('×') || d.length >= consolidated[cc].desc.length)) consolidated[cc].desc = d;
+                          if(parseNum(i.cost||0)>0) consolidated[cc].cost = parseNum(i.cost||0);
                         });
-                        if(ptResults.length===0) return <div className="text-[9px] text-gray-400 font-bold py-2 text-center">Sin resultados para "{cotizSearchTerm}"</div>;
+
+                        const s = cotizSearchTerm.toUpperCase();
+                        const items = Object.values(consolidated).filter(c=>
+                          !s || c.cc.toUpperCase().includes(s) || (c.desc||'').toUpperCase().includes(s) || (c.subcategory||'').toUpperCase().includes(s)
+                        );
+
+                        const CAT_ORDER = ['Productos Terminados','Materia Prima','Semielaborados','Consumibles','Pigmentos','Tintas','Químicos','Herramientas','Seguridad Industrial','Otros'];
+                        const SUB_ORDER = ['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles'];
+                        const SUB_CLR = {'Bolsas Plásticas':'#1d4ed8','Termoencogibles':'#15803d','Stretch Film':'#7c3aed','Cintas':'#92400e','Papel Kraft':'#78350f','Dispensadores':'#be185d','Empaques Flexibles':'#4338ca'};
+
+                        const catGroups = {};
+                        items.forEach(c=>{ const cat=c.category; if(!catGroups[cat])catGroups[cat]={}; const sub=c.subcategory||'__NONE__'; if(!catGroups[cat][sub])catGroups[cat][sub]=[]; catGroups[cat][sub].push(c); });
+                        const sortedCats = [...CAT_ORDER.filter(c=>catGroups[c]),...Object.keys(catGroups).filter(c=>!CAT_ORDER.includes(c))];
+
+                        if(items.length===0 && s) return <div className="text-[9px] text-gray-400 font-bold py-3 text-center">Sin resultados para "{cotizSearchTerm}"</div>;
+
                         return (
-                          <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-xl bg-white shadow-sm divide-y divide-gray-50">
-                            {ptResults.map(item=>{
-                              const code=(item.displayId||(item.id||'').split('___')[0]).replace(/_inv$/i,'');
-                              const sub=item.subcategory||getItemSubcategory(item)||'';
-                              const isStretch=sub.toLowerCase().includes('stretch')||sub.toLowerCase().includes('cinta')||sub.toLowerCase().includes('kraft');
-                              const entrega=isStretch?'De 2 a 3 días hábiles':'De 10 a 12 días hábiles';
-                              return (
-                                <div key={item.id} onClick={()=>{
-                                  const qty=1; const precio=parseNum(item.cost||0);
-                                  setCotizItems(prev=>[...prev,{desc:`${code} — ${item.desc||''}`,code,cantidad:qty,precioUnit:precio,total:qty*precio}]);
-                                  setNewCotizForm(f=>({...f, tiempoEntrega:f.tiempoEntrega||entrega}));
-                                  setCotizSearchTerm('');
-                                }} className="flex justify-between items-center p-2.5 hover:bg-orange-50 cursor-pointer transition-colors">
-                                  <div>
-                                    <span className="font-black text-orange-600 text-[10px]">{code}</span>
-                                    <span className="text-[9px] text-gray-600 ml-2">{item.desc}</span>
-                                    <span className="text-[8px] text-gray-400 ml-2">({formatNum(item.stock)} {item.unit||'und'})</span>
-                                  </div>
-                                  <span className="text-orange-500 font-black text-[10px] ml-4">${formatNum(item.cost)}</span>
-                                </div>
-                              );
+                          <select
+                            size={Math.min(12, items.length+sortedCats.length+3)}
+                            className="w-full border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400 bg-white"
+                            onChange={e=>{
+                              const val = e.target.value;
+                              if(!val) return;
+                              const item = consolidated[val];
+                              if(!item) return;
+                              // Determine suggested delivery time based on subcategory
+                              const sub = (item.subcategory||'').toLowerCase();
+                              const entrega = sub.includes('stretch')||sub.includes('cinta')||sub.includes('kraft')||sub.includes('dispens') ? 'De 2 a 3 días hábiles' : 'De 10 a 12 días hábiles';
+                              setCotizItems(prev=>[...prev,{
+                                desc:`${item.cc} — ${item.desc}`,
+                                code: item.cc,
+                                cantidad: 1,
+                                precioUnit: item.cost,
+                                total: item.cost,
+                                unit: item.unit,
+                                _ref: true   // mark as reference-only, no inventory impact
+                              }]);
+                              setNewCotizForm(f=>({...f, tiempoEntrega: f.tiempoEntrega||entrega}));
+                              e.target.value = ''; // reset after selection
+                            }}>
+                            <option value="">— Seleccionar producto —</option>
+                            {sortedCats.map(cat=>{
+                              const subMap = catGroups[cat]||{};
+                              const subKeys = [...SUB_ORDER.filter(s=>subMap[s]),...Object.keys(subMap).filter(s=>!SUB_ORDER.includes(s)&&s!=='__NONE__'),...(subMap['__NONE__']?['__NONE__']:[])];
+                              const hasSubs = subKeys.some(k=>k!=='__NONE__');
+                              if(!hasSubs) return [
+                                <option key={`cat-${cat}`} disabled style={{background:'#1f2937',color:'#fff',fontWeight:900}}>── {cat.toUpperCase()} ──</option>,
+                                ...(subMap['__NONE__']||[]).sort((a,b)=>a.cc.localeCompare(b.cc)).map(c=>(
+                                  <option key={c.cc} value={c.cc}>{c.cc} — {c.desc} | {formatNum(c.stock)} {c.unit} | ${formatNum(c.cost)}</option>
+                                ))
+                              ];
+                              return subKeys.flatMap(sub=>{
+                                const subItems=(subMap[sub]||[]).sort((a,b)=>a.cc.localeCompare(b.cc));
+                                const subLabel = sub==='__NONE__' ? `── ${cat.toUpperCase()} ──` : `── ${cat.toUpperCase()} / ${sub.toUpperCase()} ──`;
+                                return [
+                                  <option key={`${cat}-${sub}`} disabled style={{background:sub!=='__NONE__'?(SUB_CLR[sub]||'#374151'):'#1f2937',color:'#fff',fontWeight:900}}>{subLabel}</option>,
+                                  ...subItems.map(c=>(
+                                    <option key={c.cc} value={c.cc}>&nbsp;&nbsp;{c.cc} — {c.desc} | {formatNum(c.stock)} {c.unit} | ${formatNum(c.cost)}</option>
+                                  ))
+                                ];
+                              });
                             })}
-                          </div>
+                          </select>
                         );
                       })()}
                     </div>
@@ -11729,168 +11785,97 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       );
     }
 
-    // Calcular KG totales despachados y usados para merma automática
-    const totalDespachado = approvedIds.reduce((s, id) => s + parseNum(groupedApproved[id]), 0);
-    const totalConsumidoAntes = approvedIds.reduce((s, id) => s + parseNum(consumidoAnteriores[id]||0), 0);
-    const totalUsadoActual = (phaseForm.insumos || []).reduce((s, ing) => s + parseNum(ing.qty), 0);
-    const totalDisponible = Math.max(0, totalDespachado - totalConsumidoAntes - totalUsadoActual);
-    const prodKg = parseNum(phaseForm.producedKg);
-    const mermaAuto = totalUsadoActual > 0 ? Math.max(0, totalUsadoActual - prodKg) : 0;
-    const mermaPorc = totalUsadoActual > 0 ? ((mermaAuto / totalUsadoActual) * 100).toFixed(1) : '0.0';
+    // ── IMPUTACIÓN DIRECTA: KG despachados → todos imputados a la OP ──
+    // Merma AUTO = Total KG despachados a la OP − KG que resultaron de extrusión
+    const kgDespachadoTotal = totalDespachado; // all approved kg for this OP
+    const prodKgEntrada = parseNum(phaseForm.producedKg);
+    const mermaAuto = kgDespachadoTotal > 0 && prodKgEntrada >= 0
+      ? Math.max(0, kgDespachadoTotal - prodKgEntrada)
+      : 0;
+    const mermaPct = kgDespachadoTotal > 0 ? ((mermaAuto / kgDespachadoTotal) * 100).toFixed(1) : '0.0';
 
     return (
-      <div>
-        {/* ── PROGRESO GLOBAL DE LA OP ── */}
-        <div className="bg-gray-800 text-white rounded-xl p-3 mb-3">
-          <p className="text-[9px] font-black uppercase mb-2 text-orange-400">📊 Progreso de Consumo — OP {req.id}</p>
-          <div className="grid grid-cols-4 gap-2 text-center">
-            <div><div className="text-[8px] text-gray-400">Total Despachado</div><div className="font-black text-blue-300">{formatNum(totalDespachado)} KG</div></div>
-            <div><div className="text-[8px] text-gray-400">Ya Consumido</div><div className="font-black text-orange-300">{formatNum(totalConsumidoAntes)} KG</div></div>
-            <div><div className="text-[8px] text-gray-400">Este Lote</div><div className="font-black text-yellow-300">{formatNum(totalUsadoActual)} KG</div></div>
-            <div><div className="text-[8px] text-gray-400">Disponible</div><div className={`font-black ${totalDisponible<=0?'text-red-400':'text-green-300'}`}>{formatNum(totalDisponible)} KG</div></div>
+      <div className="space-y-4">
+        {/* ── RESUMEN KG DESPACHADOS (solo lectura — ya imputados a la OP) ── */}
+        <div className="bg-gray-800 text-white rounded-xl p-4">
+          <p className="text-[9px] font-black uppercase mb-3 text-orange-400 flex items-center gap-2">
+            📦 Materiales Imputados a la OP — Solicitud Almacén aprobada
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            {approvedIds.map(id => {
+              const invItem = (inventory || []).find(i => i && i.id === id);
+              const desp = parseNum(groupedApproved[id]);
+              return (
+                <div key={id} className="bg-gray-700 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-gray-400 font-bold truncate">{invItem?.desc || id}</div>
+                  <div className="font-black text-blue-300 text-sm">{formatNum(desp)}</div>
+                  <div className="text-[8px] text-gray-400">{invItem?.unit || 'KG'}</div>
+                </div>
+              );
+            })}
           </div>
-          {totalDespachado > 0 && (
-            <div className="mt-2">
-              <div className="w-full bg-gray-700 rounded-full h-1.5">
-                <div className="bg-orange-400 h-1.5 rounded-full" style={{width:`${Math.min(100,((totalConsumidoAntes+totalUsadoActual)/totalDespachado)*100)}%`}}></div>
+          <div className="border-t border-gray-600 pt-2 flex justify-between items-center">
+            <span className="text-[9px] font-black text-gray-400 uppercase">Total KG despachados a esta OP:</span>
+            <span className="font-black text-orange-400 text-base">{formatNum(kgDespachadoTotal)} KG</span>
+          </div>
+          <p className="text-[8px] text-gray-500 mt-1">✓ Todos los KG fueron imputados en su totalidad al proceso. No hay devolución al almacén.</p>
+        </div>
+
+        {/* ── KG PRODUCIDOS: el operador ingresa el resultado real de la extrusión ── */}
+        <div className="bg-green-50 border-2 border-green-300 rounded-xl p-4">
+          <h4 className="text-[10px] font-black text-green-700 uppercase mb-3 flex items-center gap-2">
+            ⚙ KG Producidos (Extrusión) — Resultado Real
+          </h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">
+                KG que resultaron de la extrusión <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="number" step="0.01" min="0" max={kgDespachadoTotal}
+                value={phaseForm.producedKg}
+                onChange={e => {
+                  const kg = parseNum(e.target.value);
+                  const merma = kgDespachadoTotal > 0 ? Math.max(0, kgDespachadoTotal - kg) : 0;
+                  setPhaseForm({ ...phaseForm, producedKg: e.target.value, mermaKg: merma.toFixed(2) });
+                }}
+                className="w-full border-2 border-green-300 rounded-xl p-3 text-lg font-black text-center outline-none focus:border-green-500 bg-white"
+                placeholder={`Máx. ${formatNum(kgDespachadoTotal)} KG`}
+              />
+              <p className="text-[8px] text-gray-500 mt-1">Ingrese los KG que físicamente salieron de la extrusora.</p>
+            </div>
+
+            {/* Merma automática */}
+            <div>
+              <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">
+                Merma KG (Auto) — Se imputa al proceso
+              </label>
+              <div className={`w-full border-2 rounded-xl p-3 text-lg font-black text-center ${mermaAuto > 0 ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 bg-gray-50 text-gray-400'}`}>
+                {prodKgEntrada > 0 || phaseForm.producedKg ? formatNum(mermaAuto) : '—'} KG
+                {mermaAuto > 0 && <span className="text-[10px] font-bold block mt-0.5">({mermaPct}%)</span>}
               </div>
-              <div className="text-[8px] text-gray-400 text-right mt-0.5">{(((totalConsumidoAntes+totalUsadoActual)/totalDespachado)*100).toFixed(1)}% consumido</div>
+              <p className="text-[8px] text-gray-500 mt-1">
+                Merma = {formatNum(kgDespachadoTotal)} KG despachados − {formatNum(prodKgEntrada)} KG producidos
+              </p>
+            </div>
+          </div>
+
+          {/* Visual merma bar */}
+          {kgDespachadoTotal > 0 && prodKgEntrada > 0 && (
+            <div className="mt-3">
+              <div className="flex justify-between text-[9px] font-bold mb-1">
+                <span className="text-green-700">✓ Producidos: {formatNum(prodKgEntrada)} KG ({((prodKgEntrada/kgDespachadoTotal)*100).toFixed(1)}%)</span>
+                {mermaAuto > 0 && <span className="text-red-600">Merma: {formatNum(mermaAuto)} KG ({mermaPct}%)</span>}
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                <div className="h-3 rounded-full flex">
+                  <div className="bg-green-500 h-full" style={{width:`${Math.min(100,(prodKgEntrada/kgDespachadoTotal)*100)}%`}}/>
+                  {mermaAuto > 0 && <div className="bg-red-400 h-full" style={{width:`${Math.min(100,(mermaAuto/kgDespachadoTotal)*100)}%`}}/>}
+                </div>
+              </div>
             </div>
           )}
         </div>
-
-        {/* Banner por material */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
-          <p className="text-[9px] font-black text-blue-700 uppercase mb-2">📦 Materiales — Despacho vs Consumo acumulado:</p>
-          {approvedIds.map(id => {
-            const invItem = (inventory || []).find(i => i && i.id === id);
-            const desp = parseNum(groupedApproved[id]);
-            const consAnt = parseNum(consumidoAnteriores[id]||0);
-            const consActual = (phaseForm.insumos||[]).filter(ing=>ing.id===id).reduce((s,ing)=>s+parseNum(ing.qty),0);
-            const disp = Math.max(0, desp - consAnt - consActual);
-            const pctUsado = desp > 0 ? ((consAnt+consActual)/desp*100) : 0;
-            return (
-              <div key={id} className="mb-2 bg-white rounded px-2 py-1.5 border border-blue-100">
-                <div className="flex justify-between items-center text-[9px] font-bold text-blue-600 mb-1">
-                  <span className="font-black text-gray-800">{invItem ? invItem.desc : id}</span>
-                  <div className="flex gap-2 text-right text-[8px]">
-                    <span className="text-blue-700">Desp: {formatNum(desp)}</span>
-                    {consAnt>0&&<span className="text-orange-600">Ant: {formatNum(consAnt)}</span>}
-                    {consActual>0&&<span className="text-yellow-600">Este: {formatNum(consActual)}</span>}
-                    <span className={disp<=0?'text-red-600 font-black':'text-green-600 font-black'}>Disp: {formatNum(disp)} {disp<=0?'⚠':''}</span>
-                  </div>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-1">
-                  <div className={`h-1 rounded-full ${pctUsado>90?'bg-red-500':pctUsado>70?'bg-orange-400':'bg-green-500'}`} style={{width:`${Math.min(100,pctUsado)}%`}}></div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Selector de insumo */}
-        <p className="text-[9px] font-black text-gray-600 uppercase mb-1">Registrar KG Usados en Este Lote:</p>
-        {phaseIngId && (() => {
-          const disponible = getDisponible(phaseIngId);
-          const consAnt = parseNum(consumidoAnteriores[phaseIngId]||0);
-          const maxDesp = parseNum(groupedApproved[phaseIngId]||0);
-          return (
-            <div className="mb-2 bg-orange-50 border border-orange-200 rounded-xl p-2 flex gap-3 text-[9px] font-bold flex-wrap">
-              <span>Total: <span className="font-black text-blue-700">{formatNum(maxDesp)} KG</span></span>
-              {consAnt>0&&<span>Lotes ant.: <span className="font-black text-orange-600">-{formatNum(consAnt)} KG</span></span>}
-              <span className={disponible<=0?'text-red-600 font-black':'text-green-700 font-black'}>
-                Para este lote: <span className="font-black">{formatNum(disponible)} KG</span> {disponible<=0?'⚠ AGOTADO':'✓'}
-              </span>
-            </div>
-          );
-        })()}
-        <div className="flex gap-2 mb-3">
-          <select value={phaseIngId} onChange={e => setPhaseIngId(e.target.value)} className="flex-1 border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
-            <option value="">Seleccione material...</option>
-            {approvedIds.map(id => {
-              const invItem = (inventory || []).find(i => i && i.id === id);
-              if (!invItem) return null;
-              const disp = getDisponible(id);
-              return (
-                <option key={id} value={id} disabled={disp <= 0}>
-                  {id} - {invItem.desc} | Disponible: {formatNum(disp)} KG {disp<=0?'(AGOTADO)':''}
-                </option>
-              );
-            })}
-          </select>
-          <input
-            type="number" step="0.01" value={phaseIngQty}
-            onChange={e => setPhaseIngQty(e.target.value)}
-            className="w-24 border border-gray-200 rounded-lg p-2 text-xs font-bold text-center outline-none"
-            placeholder="KG usados"
-          />
-          <button
-            onClick={() => {
-              if (!phaseIngId || !phaseIngQty) return;
-              const maxDesp = parseNum(groupedApproved[phaseIngId] || 0);
-              const consAnteriores = approvedIds.includes(phaseIngId)
-                ? (['extrusion','impresion','sellado'].reduce((s,ph)=>{
-                    const phProd = req.production || {};
-                    return s + (phProd[ph]?.batches||[]).reduce((ss,b)=>ss+(b.insumos||[]).filter(i=>i.id===phaseIngId).reduce((sss,i)=>sss+parseNum(i.qty),0),0);
-                  },0))
-                : 0;
-              const yaUsado = (phaseForm.insumos || []).filter(ing => ing.id === phaseIngId).reduce((s, ing) => s + parseNum(ing.qty), 0);
-              const disponible = Math.max(0, maxDesp - consAnteriores - yaUsado);
-              const kgIngresado = parseFloat(phaseIngQty);
-              if (kgIngresado > disponible + 0.001) {
-                return setDialog({ title: 'Aviso', text: `Disponible para este lote: ${formatNum(disponible)} KG.\nDespachado total: ${formatNum(maxDesp)} KG.\nYa consumido en lotes anteriores: ${formatNum(consAnteriores)} KG.`, type: 'alert' });
-              }
-              const newIns = [...(phaseForm.insumos || []), { id: phaseIngId, qty: kgIngresado }];
-              const nuevoTotalUsado = newIns.reduce((s, ing) => s + parseNum(ing.qty), 0);
-              const prodKgLocal = parseNum(phaseForm.producedKg);
-              const nuevaMerma = prodKgLocal > 0 ? Math.max(0, nuevoTotalUsado - prodKgLocal) : 0;
-              setPhaseForm({ ...phaseForm, insumos: newIns, mermaKg: nuevaMerma > 0 ? nuevaMerma.toFixed(2) : phaseForm.mermaKg });
-              setPhaseIngId(''); setPhaseIngQty('');
-            }}
-            className="bg-orange-500 text-white px-3 py-2 rounded-lg text-xs font-black hover:bg-orange-600"
-          >
-            <Plus size={14} />
-          </button>
-        </div>
-
-        {/* Lista insumos usados */}
-        {(phaseForm.insumos || []).length > 0 && (
-          <div className="mb-3">
-            {(phaseForm.insumos || []).map((ins, i) => {
-              const invItem = (inventory || []).find(iv => iv.id === ins.id);
-              return (
-                <div key={i} className="flex justify-between items-center bg-green-50 p-2 rounded-lg border border-green-200 mb-1">
-                  <span className="text-xs font-black text-green-700">{invItem?.desc || ins.id}</span>
-                  <span className="text-xs font-black text-green-800">{formatNum(ins.qty)} KG usados</span>
-                  <button onClick={() => {
-                    const nuevoIns = (phaseForm.insumos || []).filter((_, j) => j !== i);
-                    const nuevoTotal = nuevoIns.reduce((s, ing) => s + parseNum(ing.qty), 0);
-                    const nuevaMerma = prodKg > 0 ? Math.max(0, nuevoTotal - prodKg) : 0;
-                    setPhaseForm({ ...phaseForm, insumos: nuevoIns, mermaKg: nuevaMerma > 0 ? nuevaMerma.toFixed(2) : '' });
-                  }} className="text-red-400 hover:text-red-600"><X size={12} /></button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Indicadores merma automática */}
-        {totalUsadoActual > 0 && (
-          <div className="grid grid-cols-3 gap-2 mt-2">
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 text-center">
-              <span className="text-[8px] font-black text-blue-600 uppercase block">KG Usados</span>
-              <span className="text-sm font-black text-blue-700">{formatNum(totalUsadoActual)}</span>
-            </div>
-            <div className="bg-red-50 border border-red-200 rounded-lg p-2 text-center">
-              <span className="text-[8px] font-black text-red-600 uppercase block">Merma Auto</span>
-              <span className="text-sm font-black text-red-700">{formatNum(mermaAuto)} KG ({mermaPorc}%)</span>
-            </div>
-            <div className="bg-orange-50 border border-orange-200 rounded-lg p-2 text-center">
-              <span className="text-[8px] font-black text-orange-600 uppercase block">Disponible WIP</span>
-              <span className="text-sm font-black text-orange-700">{formatNum(totalDisponible)} KG</span>
-            </div>
-          </div>
-        )}
       </div>
     );
   };
