@@ -11734,6 +11734,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
   const renderInsumosPhasePanel = (req, phase) => {
     if (!req || !phase) return null;
 
+    // ── Determine current lote from activeLoteIndex ──
+    const lotes = getLotes(req);
+    const currentLoteObj = lotes[activeLoteIndex] || lotes[lotes.length - 1];
+    const currentLoteNum = activeLoteIndex + 1;
+    const currentLoteLabel = currentLoteObj?.nombre || `Lote ${currentLoteNum}`;
+
     // ── All approved requisitions for this OP ──
     const approved = (invRequisitions || [])
       .filter(r => r.opId === req.id && (r.status === 'APROBADA' || r.status === 'APROBADO'))
@@ -11748,25 +11754,36 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       );
     }
 
-    // ── All batches already saved for this phase ──
-    const savedBatches = (req.production?.[phase]?.batches || []);
-    // Each batch has a reqId (if set) or we match by order
-    // Determine which requisition belongs to the CURRENT lote (the new one being entered)
-    // The current lote number is savedBatches.length + 1
-    const currentLoteNum = savedBatches.length + 1;
-    // The latest approved req not yet assigned to a batch is the current lote's MP
-    // Heuristic: reqs that haven't been "used" yet (compare count)
-    const reqsUsedInBatches = savedBatches.map(b => b.reqId).filter(Boolean);
-    const currentLoteReq = approved.find(r => !reqsUsedInBatches.includes(r.id)) || approved[approved.length - 1];
+    // ── Saved batches for this phase in THIS lote ──
+    const savedBatchesThisPhase = (currentLoteObj?.[phase]?.batches || []);
+    const savedBatchesAllPhases = ['extrusion','impresion','sellado']
+      .flatMap(ph => (currentLoteObj?.[ph]?.batches || []).map(b => ({...b, _phase: ph})));
 
-    // ── MP del lote actual (de la requisición actual) ──
+    // ── MP linked to THIS lote: find req tagged with this lote, or fallback to approved reqs not used in other lotes ──
+    const loteReqId = currentLoteObj?.reqId || null;
+    let currentLoteReq;
+    if(loteReqId) {
+      currentLoteReq = approved.find(r => r.id === loteReqId);
+    }
+    if(!currentLoteReq) {
+      // Find approved req whose loteIndex matches, or first unassigned
+      const reqsUsedByOtherLotes = lotes
+        .filter((l, li) => li !== activeLoteIndex && l.reqId)
+        .map(l => l.reqId);
+      currentLoteReq = approved.find(r => !reqsUsedByOtherLotes.includes(r.id) && r.loteIndex === activeLoteIndex)
+        || approved.find(r => !reqsUsedByOtherLotes.includes(r.id))
+        || approved[activeLoteIndex]
+        || approved[approved.length - 1];
+    }
+
+    // ── MP del lote actual ──
     const loteItems = {};
     (currentLoteReq?.items || []).forEach(it => {
       if(it?.id) { loteItems[it.id] = (loteItems[it.id]||0) + parseNum(it.qty); }
     });
     const kgLoteActual = Object.values(loteItems).reduce((s,v)=>s+v, 0);
 
-    // ── Historial total OP (todas las requisiciones) ──
+    // ── Historial total OP ──
     const historialItems = {};
     approved.forEach(r => {
       (r.items||[]).forEach(it => {
@@ -11774,12 +11791,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       });
     });
     const kgTotalOP = Object.values(historialItems).reduce((s,v)=>s+v, 0);
+    const kgProducidosAnteriores = lotes.flatMap(l => (l[phase]?.batches||[])).reduce((s,b)=>s+parseNum(b.producedKg||0), 0);
+    const mermaAnteriores = lotes.flatMap(l => (l[phase]?.batches||[])).reduce((s,b)=>s+parseNum(b.mermaKg||0), 0);
 
-    // ── KG ya producidos en lotes anteriores ──
-    const kgProducidosAnteriores = savedBatches.reduce((s,b)=>s+parseNum(b.producedKg||0), 0);
-    const mermaAnteriores = savedBatches.reduce((s,b)=>s+parseNum(b.mermaKg||0), 0);
-
-    // ── Merma del lote ACTUAL: basada en la MP del lote, no de toda la OP ──
+    // ── Merma del lote ACTUAL ──
     const prodKgEntrada = parseNum(phaseForm.producedKg);
     const mermaLoteAuto = kgLoteActual > 0 && prodKgEntrada >= 0
       ? Math.max(0, kgLoteActual - prodKgEntrada) : 0;
@@ -11838,7 +11853,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         <div className="bg-gray-800 text-white rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
             <p className="text-[9px] font-black uppercase text-orange-400">
-              📦 MP Imputada — Lote {currentLoteNum} (Solicitud actual)
+              📦 MP Imputada — {currentLoteLabel} (Solicitud actual)
             </p>
             <span className="text-[8px] text-blue-300 font-bold bg-gray-700 px-2 py-0.5 rounded-full">
               {formatNum(kgLoteActual)} KG → este lote
@@ -11864,7 +11879,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         {/* ── KG PRODUCIDOS EN ESTE LOTE + MERMA AUTO ── */}
         <div className="bg-green-50 border-2 border-green-300 rounded-xl p-4">
           <h4 className="text-[10px] font-black text-green-700 uppercase mb-3 flex items-center gap-2">
-            ⚙ KG Producidos — Lote {currentLoteNum}
+            ⚙ KG Producidos — {currentLoteLabel}
           </h4>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -11886,7 +11901,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
             <div>
               <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">
-                Merma KG (Auto) — Lote {currentLoteNum}
+                Merma KG (Auto) — {currentLoteLabel}
               </label>
               <div className={`w-full border-2 rounded-xl p-3 text-lg font-black text-center ${mermaLoteAuto > 0 ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 bg-gray-50 text-gray-400'}`}>
                 {prodKgEntrada > 0 ? formatNum(mermaLoteAuto) : '—'} KG
@@ -13497,6 +13512,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                     <h5 className="text-[9px] font-black text-gray-700 uppercase mb-3 flex items-center gap-2">
                                       Materiales a Solicitar
                                       <span className="text-[8px] font-bold text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full">Almacén ZI</span>
+                                      <span className="ml-auto text-[8px] font-black text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full border border-orange-200">
+                                        Para: {getLotes(req)[activeLoteIndex]?.nombre || `Lote ${activeLoteIndex+1}`}
+                                      </span>
                                     </h5>
                                     {/* Phase-appropriate categories */}
                                     {(()=>{
@@ -13508,11 +13526,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                         : ['Semielaborados','Consumibles','Herramientas']; // sellado
 
                                       // Consolidate from ALMACEN ZI — cleanCode per item, dedup
+                                      // Show items from ZI or those with no almacén (general stock)
                                       const ziDocs = (inventory||[]).filter(i => {
                                         if(i.activo===false) return false;
                                         if(!phaseCats.includes(i.category)) return false;
-                                        const alm = i.almacen || (i.id||'').split('___')[1]?.replace(/-/g,' ') || '';
-                                        return alm.includes('ZI') || alm === '' || alm.includes('ALMACEN ZI');
+                                        const rawId = i.id||'';
+                                        const alm = (i.almacen||rawId.split('___')[1]?.replace(/-/g,' ')||'').toUpperCase();
+                                        // Include: ALMACEN ZI, no almacen (empty), or items with stock in any ZI variant
+                                        return alm.includes('ZI') || alm === '' || alm === 'ALMACEN ZI' || !rawId.includes('___');
                                       });
 
                                       // Deduplicate by cleanCode (keep highest stock per code)
@@ -13609,7 +13630,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                     <button onClick={async ()=>{
                                       if(!phaseForm.insumos||phaseForm.insumos.length===0) return setDialog({title:'Aviso',text:'Agregue al menos un material.',type:'alert'});
                                       const notes = document.getElementById(`req-notes-${req.id}`)?.value || '';
-                                      const newReq = { opId: req.id, phase: activePhaseTab, items: phaseForm.insumos, status:'PENDIENTE', timestamp:Date.now(), date:getTodayDate(), user:appUser?.name||'Planta', notes };
+                                      const newReq = { opId: req.id, phase: activePhaseTab, items: phaseForm.insumos, status:'PENDIENTE', timestamp:Date.now(), date:getTodayDate(), user:appUser?.name||'Planta', notes,
+                                        loteIndex: activeLoteIndex,
+                                        loteLabel: getLotes(req)[activeLoteIndex]?.nombre || `Lote ${activeLoteIndex+1}`
+                                      };
                                       try {
                                         await addDoc(getColRef('inventoryRequisitions'), newReq);
                                         setPhaseForm({...phaseForm, insumos:[]});
@@ -13627,8 +13651,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                       {(invRequisitions||[]).filter(r=>r.opId===req.id).map(r=>(
                                         <div key={r.id} className="flex justify-between items-center bg-white p-2 rounded-lg border border-blue-100 mb-1 text-xs">
                                           <span className="font-black uppercase text-blue-600">{r.phase}</span>
+                                          {r.loteLabel && <span className="text-[8px] font-black text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">{r.loteLabel}</span>}
                                           <span className="font-bold">{r.date}</span>
-                                          <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${r.status==='APROBADA'?'bg-green-100 text-green-700':r.status==='RECHAZADO'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'}`}>{r.status}</span>
+                                          <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${r.status==='APROBADA'||r.status==='APROBADO'?'bg-green-100 text-green-700':r.status==='RECHAZADO'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'}`}>{r.status}</span>
                                         </div>
                                       ))}
                                     </div>
