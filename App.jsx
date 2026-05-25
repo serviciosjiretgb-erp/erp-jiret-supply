@@ -195,7 +195,7 @@ const getSafeDate = (ts) => {
 // ============================================================================
 // CONSTANTE DE SEGURIDAD - CLAVE ADMIN
 // ============================================================================
-const ADMIN_PASSWORD = 'Supply2026.Admin';
+const ADMIN_PASSWORD = '1234';
 
 // ============================================================================
 // CATEGORÍAS DE COSTOS OPERATIVOS
@@ -1042,27 +1042,6 @@ export default function App() {
     doCleanup();
   }, [inventory, appUser]);
 
-  // ── ONE-TIME: Delete duplicate 'administrador' user (keep 'admin') ──
-  useEffect(() => {
-    if(!appUser||!systemUsers||sessionStorage.getItem('del_dup_admin_v1')==='done') return;
-    const doClean = async () => {
-      try {
-        const dupes = (systemUsers||[]).filter(u =>
-          (u.username||'').toLowerCase() === 'administrador' ||
-          ((u.username||'').toLowerCase() !== 'admin' && (u.role==='Master'||u.role==='Administrador') &&
-           (systemUsers||[]).some(a=>(a.username||'').toLowerCase()==='admin' && (a.role==='Master'||a.role==='Administrador') && a.id!==u.id))
-        );
-        if(dupes.length > 0) {
-          const b = writeBatch(db);
-          dupes.forEach(u => b.delete(getDocRef('users', u.id)));
-          await b.commit();
-        }
-        sessionStorage.setItem('del_dup_admin_v1','done');
-      } catch(e) { console.error('Delete dup admin:', e); }
-    };
-    doClean();
-  }, [systemUsers, appUser]);
-
   // ── ONE-TIME: Delete Requisición 00017 ──
   useEffect(() => {
     if(!appUser || sessionStorage.getItem('del_req_00017')==='done') return;
@@ -1100,8 +1079,13 @@ export default function App() {
     return () => { clearInterval(interval); window.removeEventListener('beforeunload', cleanup); };
   }, [appUser]);
   const handleLogin = async (e) => {
-    e.preventDefault(); const user = loginData.username.toLowerCase().trim(); const pass = loginData.password.trim();
-    const foundUser = systemUsers.find(u => u.username === user && u.password === pass);
+    e.preventDefault();
+    const user = loginData.username.toLowerCase().trim();
+    const pass = loginData.password.trim();
+    // Case-insensitive username match
+    const foundUser = systemUsers.find(u =>
+      (u.username||'').toLowerCase().trim() === user && u.password === pass
+    );
     if (!foundUser) return setLoginError('Credenciales incorrectas. Intente nuevamente.');
     // Session lock: check if already active on another device (except Master)
     if (foundUser.role !== 'Master') {
