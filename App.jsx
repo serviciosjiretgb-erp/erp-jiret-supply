@@ -11725,78 +11725,171 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     if (!req) return;
     setDialog({
       title: 'Cierre de OP ' + String(req.id).replace('OP-', '').padStart(5, '0'),
-      text: 'Se cerrará la OP completa. Solo se cargará la producción PENDIENTE a Terminados (lo ya entregado parcialmente no se duplica). ¿Continuar?',
+      text: 'Se cerrará la OP completa y se cargará la producción pendiente a Inventario de Terminados (ALMACEN ZI). ¿Continuar?',
       type: 'confirm',
       onConfirm: async () => {
         try {
           const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
-          const prod = req.production || {};
-          const filterReal = (b) => b.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b.producedKg) > 0;
-          const selBatch = (prod.sellado?.batches||[]).filter(filterReal);
-          const impBatch = (prod.impresion?.batches||[]).filter(filterReal);
-          const extBatch = (prod.extrusion?.batches||[]).filter(filterReal);
+
+          // ── Read batches from lotes structure (new) OR flat structure (legacy) ──
+          const allLotes = getLotes(req);
+          const filterReal = b => b?.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b?.producedKg) > 0;
+
+          let selBatch = [], impBatch = [], extBatch = [];
+          if(allLotes.length > 0) {
+            selBatch = allLotes.flatMap(l => (l?.sellado?.batches||[]).filter(filterReal));
+            impBatch = allLotes.flatMap(l => (l?.impresion?.batches||[]).filter(filterReal));
+            extBatch = allLotes.flatMap(l => (l?.extrusion?.batches||[]).filter(filterReal));
+          } else {
+            // Legacy flat structure
+            const prod = req.production || {};
+            selBatch = (prod.sellado?.batches||[]).filter(filterReal);
+            impBatch = (prod.impresion?.batches||[]).filter(filterReal);
+            extBatch = (prod.extrusion?.batches||[]).filter(filterReal);
+          }
+
           const lastBatches = selBatch.length>0 ? selBatch : impBatch.length>0 ? impBatch : extBatch;
-          const totalKgProd = lastBatches.reduce((s, b) => s + parseNum(b.producedKg), 0);
+          const totalKgProd = lastBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
           const totalMillares = selBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
             || impBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-            || extBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+            || extBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+            || (esTermo ? 0 : (extBatch.reduce((s,b)=>s+parseNum(b.millaresProd||b.millaresTeóricos||0),0)));
 
-          // Calcular ya entregado parcialmente
-          const yaEntregadoKg = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0);
-          const yaEntregadoMill = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0);
-          const pendienteKg = Math.max(0, totalKgProd - yaEntregadoKg);
-          const pendienteMill = Math.max(0, totalMillares - yaEntregadoMill);
+          const pendienteKg   = Math.max(0, totalKgProd - (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0));
+          const pendienteMill = esTermo ? 0 : Math.max(0, totalMillares - (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0));
+          const qtyFinal = esTermo ? pendienteKg : pendienteMill;
 
-          // Marcar fases como cerradas
-          const updatedProd = { ...prod };
-          ['extrusion', 'impresion', 'sellado'].forEach(phase => {
-            if (updatedProd[phase] && !updatedProd[phase].isClosed) {
-              updatedProd[phase] = { ...updatedProd[phase], isClosed: true };
+          // ── Cost from approved requisitions × inventory unit cost ──
+          const allApprovedReqs = (invRequisitions||[]).filter(r => r.opId===req.id && (r.status==='APROBADA'||r.status==='APROBADO'));
+          let totalCostMP = 0, totalKgMP = 0;
+          allApprovedReqs.forEach(r => {
+            (r.items||[]).forEach(it => {
+              const inv = (inventory||[]).find(i => {
+                if(i.id === it.id) return true;
+                const icc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                const itcc = (it.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                return icc === itcc;
+              });
+              const q = parseNum(it.qty||0);
+              const c = parseNum(inv?.cost||0);
+              totalCostMP += q * c;
+              totalKgMP += q;
+            });
+          });
+          // Also sum from batch insumos (if already stored with unitCost)
+          const allBatches = [...extBatch, ...impBatch, ...selBatch];
+          let batchCostTotal = allBatches.reduce((s,b)=>{
+            const bInsCost = (b.insumos||[]).reduce((ss,ing)=>{
+              const uc = parseNum(ing.unitCost) > 0 ? parseNum(ing.unitCost) : parseNum((inventory||[]).find(i=>i.id===ing.id)?.cost||0);
+              return ss + parseNum(ing.qty)*uc;
+            },0);
+            return s + (bInsCost > 0 ? bInsCost : parseNum(b.cost||0));
+          },0);
+          const costBase = Math.max(totalCostMP, batchCostTotal);
+          const costoUnit = qtyFinal > 0 && costBase > 0 ? costBase / qtyFinal : 0;
+
+          // ── Mark all phases closed ──
+          if(allLotes.length > 0) {
+            const updatedLotes = allLotes.map(l => ({
+              ...l,
+              extrusion: {...(l.extrusion||{}), isClosed:true},
+              impresion: {...(l.impresion||{}), isClosed:true},
+              sellado:   {...(l.sellado||{}), isClosed:true},
+              cerrado: true, fechaCierre: getTodayDate()
+            }));
+            await updateDoc(getDocRef('requirements', req.id), {
+              'production.lotes': updatedLotes,
+              status: 'COMPLETADO', fechaCierre: getTodayDate()
+            });
+          } else {
+            await updateDoc(getDocRef('requirements', req.id), {
+              status: 'COMPLETADO', fechaCierre: getTodayDate()
+            });
+          }
+
+          // ── Only sync if there's something to add ──
+          const qtyToAdd = esTermo ? pendienteKg : (pendienteMill > 0 ? pendienteMill : pendienteKg);
+          if(qtyToAdd > 0) {
+            const unit = esTermo ? 'kg' : 'millares';
+            const subcategory = esTermo ? 'Termoencogibles' : 'Bolsas Plásticas';
+            const descFG = formatFGLabel(req) || req.desc || req.categoria || 'Producto';
+
+            // ── Generate cleanCode for this product ──
+            const catShort = (req.categoria||req.desc||'PT').toUpperCase().replace(/[\s\/\-&]+/g,'').substring(0,18);
+            const w = parseFloat(req.ancho||0), l = parseFloat(req.largo||0), m = parseFloat(req.micras||0);
+            const dims = (w>0||l>0) ? `${w}x${l}x${m}` : '';
+            const cleanCode = dims ? `FG-${catShort}-${dims}` : `FG-${catShort}`;
+
+            // ── Find existing PT inventory doc ──
+            const descNorm = descFG.toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
+            const ptDocs = (inventory||[]).filter(i => i.category==='Productos Terminados' && i.activo!==false);
+            let existingDoc = ptDocs.find(i => {
+              const iNorm = (i.desc||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
+              return iNorm === descNorm;
+            }) || ptDocs.find(i => {
+              const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+              return cc === cleanCode;
+            });
+
+            if(existingDoc) {
+              // ── ADD to existing stock, weighted average cost ──
+              const prevStock = parseNum(existingDoc.stock||0);
+              const newStock = prevStock + qtyToAdd;
+              const prevCost = parseNum(existingDoc.cost||0);
+              const newCost = costoUnit > 0
+                ? ((prevStock * prevCost) + (qtyToAdd * costoUnit)) / newStock
+                : prevCost;
+              await setDoc(getDocRef('inventory', existingDoc.id), {
+                ...existingDoc, stock: newStock, cost: newCost,
+                timestamp: Date.now(), updatedAt: getTodayDate()
+              }, { merge: true });
+            } else {
+              // ── Create new PT doc ──
+              const newId = `${cleanCode}___ALMACEN-ZI`;
+              await setDoc(getDocRef('inventory', newId), {
+                id: newId, displayId: cleanCode, desc: descFG,
+                category: 'Productos Terminados', subcategory, unit,
+                stock: qtyToAdd, cost: costoUnit,
+                almacen: 'ALMACEN ZI', activo: true,
+                opId: req.id, cliente: req.client||'',
+                timestamp: Date.now(), updatedAt: getTodayDate()
+              });
             }
-          });
-          await updateDoc(getDocRef('requirements', req.id), {
-            production: updatedProd, status: 'COMPLETADO', fechaCierre: getTodayDate(),
-          });
 
-          // Solo cargar la diferencia pendiente (no lo que ya fue entregado parcialmente)
-          if (pendienteKg > 0) {
-            const wipAsoc = (wipInventory||[]).filter(w => w.opId === req.id);
-            const totalWIPKg = wipAsoc.reduce((s,w)=>s+parseNum(w.kgAsignados),0);
-            const totalWIPCost = wipAsoc.reduce((s,w)=>s+parseNum(w.costoPromedio)*parseNum(w.kgAsignados),0);
-            const costoUnit = totalWIPKg > 0 ? totalWIPCost / totalWIPKg : 0;
-
-            // FG entry solo por lo pendiente
-            const fgId = `FG-${Date.now()}`;
+            // ── finishedGoodsInventory entry ──
+            const fgId = `FG-${req.id}-${Date.now()}`;
             await setDoc(getDocRef('finishedGoodsInventory', fgId), {
               id: fgId, opId: req.id, reqId: req.id,
               cliente: req.client||'N/A', tipoProducto: req.tipoProducto||'BOLSAS',
-              categoria: req.categoria||'', producto: formatFGLabel(req)||req.desc||'Producto', // auto: CATEGORIA - MEDIDA
+              categoria: req.categoria||'', producto: descFG,
               ancho: req.ancho||0, largo: req.largo||0, micras: req.micras||0,
               color: req.color||'NATURAL', tratamiento: req.tratamiento||'LISO',
               kgProducidos: pendienteKg, millares: esTermo ? 0 : pendienteMill,
-              costoUnitario: costoUnit, costoTotal: costoUnit * pendienteKg,
-              fechaFinalizacion: getTodayDate(), ubicacion: 'ALMACEN GENERAL',
+              costoUnitario: esTermo ? costoUnit : 0,
+              costoUnitarioMillar: !esTermo ? costoUnit : 0,
+              costoTotal: costoUnit * qtyToAdd,
+              fechaFinalizacion: getTodayDate(), ubicacion: 'ALMACEN ZI',
               status: 'LISTO PARA ENTREGA', esCierreFinal: true,
-              observaciones: `CIERRE OP — ${formatNum(pendienteKg)} KG (pendiente tras ${formatNum(yaEntregadoKg)} KG entregados)`,
               timestamp: Date.now()
             });
 
-            // Kardex del FG de cierre
+            // ── Kardex ENTRADA ──
             await addDoc(getColRef('inventoryMovements'), {
-              itemId: `FG::${fgId}`, itemDesc: `${req.desc||''} — ${req.client||''}`,
-              type: 'ENTRADA', qty: esTermo ? pendienteKg : pendienteMill,
-              unitCost: costoUnit, totalValue: pendienteKg * costoUnit,
-              previousStock: 0, newStock: esTermo ? pendienteKg : pendienteMill,
-              docRef: req.id, notes: `CIERRE OP ${req.id} — PENDIENTE`,
-              date: getTodayDate(), user: appUser?.name||'Sistema', timestamp: Date.now(), isFG: true
+              itemId: cleanCode, itemDesc: `${descFG} — ${req.client||''}`,
+              type: 'ENTRADA', qty: qtyToAdd, unitCost: costoUnit,
+              totalValue: qtyToAdd * costoUnit,
+              reference: `CIERRE-${req.id}`,
+              notes: `CIERRE OP #${String(req.id).replace('OP-','').padStart(5,'0')} — ${descFG}`,
+              date: getTodayDate(), user: appUser?.name||'Sistema',
+              timestamp: Date.now(), isFG: true, almacen: 'ALMACEN ZI'
             });
 
-            // Asiento contable WIP → Terminados (solo pendiente)
-            if (costoUnit > 0) {
+            // ── Asiento contable Paso 1: MP → PT ──
+            if(costoUnit > 0) {
               await registrarAsientoContable(null, {
                 debito: '1.1.03.01.008', credito: '1.1.03.01.004',
-                monto: costoUnit * pendienteKg,
-                descripcion: `CIERRE OP ${req.id} — ${req.desc} (pendiente ${formatNum(pendienteKg)} KG)`,
+                monto: costoUnit * qtyToAdd,
+                descripcion: `CIERRE OP ${req.id} — ${descFG} — ${req.client||''}`,
                 referencia: req.id, fecha: getTodayDate()
               });
             }
@@ -11804,14 +11897,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
           setSelectedPhaseReqId(null);
           setDialog({
-            title: 'OP Cerrada ✅',
-            text: yaEntregadoKg > 0
-              ? `OP cerrada. Ya entregado: ${formatNum(yaEntregadoKg)} KG. Pendiente cargado ahora: ${formatNum(pendienteKg)} KG. No se duplicó nada.`
-              : `OP cerrada. ${formatNum(totalKgProd)} KG cargados a Inventario de Terminados.`,
+            title: '✅ OP Cerrada',
+            text: `OP #${String(req.id).replace('OP-','').padStart(5,'0')} cerrada.\n${esTermo ? `${formatNum(pendienteKg)} KG` : `${formatNum(pendienteMill || pendienteKg)} Millares`} cargados a Inventario de Terminados (ALMACEN ZI).\nCosto unitario: $${formatNum(costoUnit)} / ${esTermo?'KG':'Millar'}.`,
             type: 'alert'
           });
         } catch (err) {
-          setDialog({ title: 'Error', text: err.message, type: 'alert' });
+          setDialog({ title: 'Error al cerrar OP', text: err.message, type: 'alert' });
         }
       }
     });
