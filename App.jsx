@@ -993,19 +993,16 @@ export default function App() {
     doRestore();
   }, [inventory, appUser]);
 
-  // ── ONE-TIME CLEANUP: delete MP-0240 (ESENTTIA) + FG duplicate docs ──
+  // ── ONE-TIME cleanup: FG duplicate docs only ──
   useEffect(() => {
     if(!inventory || !appUser || sessionStorage.getItem('cleanup_mp0240_fg_v1')==='done') return;
     const doCleanup = async () => {
       try {
         const b = writeBatch(db);
         let count = 0;
+        // (MP-0240 no longer deleted — user re-created it)
 
-        // 1. Delete all docs with id starting with MP-0240
-        const mp0240Docs = (inventory||[]).filter(i => (i.id||'').startsWith('MP-0240'));
-        mp0240Docs.forEach(i => { b.delete(getDocRef('inventory', i.id)); count++; });
-
-        // 2. Delete FG PT duplicate docs — keep highest-stock doc per (cleanCode + almacén)
+        // Delete FG PT duplicate docs
         // The 7 affected codes
         const FG_CODES = [
           'FG-TERMOPINTURASD-70x0x0.012','FG-AFSGRIS-60x82x0.030',
@@ -11732,10 +11729,19 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
   // ── HELPER: Panel de insumos filtrado por requisiciones aprobadas ──────────
   const renderInsumosPhasePanel = (req, phase) => {
+    try {
     if (!req || !phase) return null;
 
     // ── Determine current lote from activeLoteIndex ──
     const lotes = getLotes(req);
+    if (!lotes || lotes.length === 0) {
+      return (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
+          <p className="text-[10px] font-black text-blue-700 uppercase">Sin lotes creados</p>
+          <p className="text-[9px] font-bold text-blue-600 mt-1">Crea un lote primero o solicita insumos a almacén</p>
+        </div>
+      );
+    }
     const currentLoteObj = lotes[activeLoteIndex] || lotes[lotes.length - 1];
     const currentLoteNum = activeLoteIndex + 1;
     const currentLoteLabel = currentLoteObj?.nombre || `Lote ${currentLoteNum}`;
@@ -11929,10 +11935,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         </div>
       </div>
     );
+    } catch(e) {
+      console.error('renderInsumosPhasePanel error:', e);
+      return <div className="text-[9px] text-gray-400 p-2 text-center">Sin datos de MP para este lote aún.</div>;
+    }
   };
-
-  // ============================================================================
-  // MÓDULO FÓRMULAS / RECETAS DE PRODUCCIÓN
   // ============================================================================
   const handleSaveFormula = async (e) => {
     e.preventDefault();
@@ -13919,10 +13926,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                     </div>
                                   )}
 
-                                  {/* Insumos */}
+                                  {/* Historial MP imputada al lote */}
                                   <div className="bg-white rounded-xl border border-orange-200 p-4">
-                                    <h4 className="text-[9px] font-black text-gray-700 uppercase mb-3">Insumos Consumidos en esta Fase</h4>
-                                    {renderInsumosPhasePanel(req, activePhaseTab)}
+                                    <h4 className="text-[9px] font-black text-gray-700 uppercase mb-3">MP Imputada / Historial del Lote</h4>
+                                    {(() => { try { return renderInsumosPhasePanel(req, activePhaseTab); } catch(e) { return <div className="text-[9px] text-gray-400 p-2">Sin historial de MP para este lote.</div>; } })()}
                                   </div>
 
                                   {/* ── BOTONES DE FASE ── */}
