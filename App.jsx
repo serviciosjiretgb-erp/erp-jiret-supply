@@ -10930,7 +10930,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     const selB = (prod.sellado?.batches||[]).filter(filterR);
     const allB = [...extB,...impB,...selB];
     const lastB = selB.length>0?selB:impB.length>0?impB:extB;
-    const mpKg = extB.reduce((s,b)=>{ const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0); return s+(ins>0?ins:parseNum(b.kgRecibidos||0)); },0) || selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0);
+    const normOp = (id) => String(id||'').replace(/^OP-/i,'').trim();
+    const approvedReqs = (invRequisitions||[]).filter(r=>['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status) && normOp(r.opId)===normOp(req.id));
+    const mpKg = approvedReqs.length > 0
+      ? approvedReqs.reduce((s,r)=>s+(r.items||[]).reduce((ss,it)=>{ const inv=(inventory||[]).find(i=>i.id===it.id); const u=(inv?.unit||'kg').toLowerCase(); if(u.startsWith('mill')||u==='und') return ss; return ss+parseNum(it.qty||0); },0),0)
+      : (extB.reduce((s,b)=>{ const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0); return s+(ins>0?ins:parseNum(b.kgRecibidos||0)); },0) || selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0));
     const kgFinal = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
     const millFinal = selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
     const mermaTotal = allB.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
@@ -11079,15 +11083,27 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     const selBatches = filterRealBatches(prod.sellado?.batches).map(b=>({...b,fase:'SELLADO'}));
     const allBatches = [...extBatches, ...impBatches, ...selBatches];
 
-    // ── LÓGICA CORRECTA: SUMA DE MERMAS INDIVIDUALES POR LOTE ─────────────
-    // La merma total = SUMA de mermas de cada lote en TODAS las fases
-    // KG Producidos finales = suma de la ÚLTIMA fase activa (sellado → imp → ext)
-    // MP Inyectada = insumos reales de extrusión
-    const mpInyectadaKg = extBatches.reduce((s,b)=>{
-      const insumosUsados = (b.insumos||[]).reduce((ss,ing)=>ss+parseNum(ing.qty),0);
-      return s + (insumosUsados > 0 ? insumosUsados : parseNum(b.kgRecibidos||b.totalInsumosKg||0));
-    },0) || impBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0)
-         || selBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0);
+    // ── MP Inyectada = sum from ALL approved requisitions for this OP ──
+    // This is the authoritative source — what almacén actually dispatched
+    const norm = (id) => String(id||'').replace(/^OP-/i,'').trim();
+    const approvedReqsForOP = (invRequisitions||[]).filter(r =>
+      norm(r.opId) === norm(req.id) &&
+      ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status)
+    );
+    const mpInyectadaKg = approvedReqsForOP.length > 0
+      ? approvedReqsForOP.reduce((s,r)=>{
+          return s + (r.items||[]).reduce((ss,it)=>{
+            const inv=(inventory||[]).find(i=>i.id===it.id);
+            const unit=(inv?.unit||it.unit||'kg').toLowerCase();
+            if(unit.startsWith('mill')||unit==='und'||unit==='unidad'||unit==='m'||unit==='mts') return ss;
+            return ss + parseNum(it.qty||0);
+          },0);
+        },0)
+      : (extBatches.reduce((s,b)=>{
+          const insumosUsados=(b.insumos||[]).reduce((ss,ing)=>ss+parseNum(ing.qty),0);
+          return s+(insumosUsados>0?insumosUsados:parseNum(b.kgRecibidos||b.totalInsumosKg||0));
+        },0) || impBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0)
+           || selBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0));
 
     // KG producidos finales = suma de la ÚLTIMA fase activa
     const lastActiveBatches = selBatches.length>0 ? selBatches : impBatches.length>0 ? impBatches : extBatches;
@@ -12130,6 +12146,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     }
     const kgLote = Object.values(loteItems).reduce((s,v)=>s+v,0);
 
+    // Check if the current lote's phase is already closed or has batches saved
+    const phaseIsClosed = currentLoteObj?.[phase]?.isClosed === true;
+    const phaseHasBatches = (currentLoteObj?.[phase]?.batches||[]).length > 0;
+    const phaseAlreadyDone = phaseIsClosed || phaseHasBatches;
+
     // Previously produced across all lotes
     const kgProducidosAnt = lotes.flatMap(l=>(l?.[phase]?.batches||[])).reduce((s,b)=>s+parseNum(b?.producedKg||0),0);
     const mermaAnt = lotes.flatMap(l=>(l?.[phase]?.batches||[])).reduce((s,b)=>s+parseNum(b?.mermaKg||0),0);
@@ -12186,20 +12207,29 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         <div className="bg-gray-800 text-white rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
             <p className="text-[9px] font-black uppercase text-orange-400">📦 MP — {lotes.length>1?currentLoteLabel:'Esta OP'}</p>
-            <span className="text-[8px] text-blue-300 font-bold bg-gray-700 px-2 py-0.5 rounded-full">{formatNum(kgLote)} KG</span>
+            <span className={`text-[8px] font-bold px-2 py-0.5 rounded-full ${phaseAlreadyDone?'bg-green-800 text-green-300':'text-blue-300 bg-gray-700'}`}>
+              {phaseAlreadyDone ? '✓ Fase registrada — 0 KG pendientes' : `${formatNum(kgLote)} KG`}
+            </span>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            {Object.entries(loteItems).map(([id,qty])=>{
-              const inv=(inventory||[]).find(i=>i.id===id);
-              return (
-                <div key={id} className="bg-gray-700 rounded-lg p-2 text-center">
-                  <div className="text-[8px] text-gray-400 font-bold truncate">{inv?.desc||id}</div>
-                  <div className="font-black text-blue-300 text-sm">{formatNum(qty)}</div>
-                  <div className="text-[8px] text-gray-400">{inv?.unit||'KG'}</div>
-                </div>
-              );
-            })}
-          </div>
+          {phaseAlreadyDone ? (
+            <div className="text-center py-3">
+              <p className="text-[9px] font-bold text-green-400">La MP de este lote ya fue consumida en esta fase.</p>
+              <p className="text-[8px] text-gray-500 mt-1">Para usar más MP en otro lote, solicita insumos adicionales al almacén.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {Object.entries(loteItems).map(([id,qty])=>{
+                const inv=(inventory||[]).find(i=>i.id===id);
+                return (
+                  <div key={id} className="bg-gray-700 rounded-lg p-2 text-center">
+                    <div className="text-[8px] text-gray-400 font-bold truncate">{inv?.desc||id}</div>
+                    <div className="font-black text-blue-300 text-sm">{formatNum(qty)}</div>
+                    <div className="text-[8px] text-gray-400">{inv?.unit||'KG'}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           <p className="text-[8px] text-gray-500 mt-2">✓ KG imputados al proceso. No hay devolución.</p>
         </div>
 
