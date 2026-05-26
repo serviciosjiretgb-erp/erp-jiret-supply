@@ -3331,7 +3331,7 @@ export default function App() {
             if(activePhaseTab === 'sellado') techParams = { operador: phaseForm?.operadorSel, kgRecibidos: phaseForm?.kgRecibidosSel, impresa: phaseForm?.impresa, tipoSello: phaseForm?.tipoSello, tempCabezalA: phaseForm?.tempCabezalA, tempCabezalB: phaseForm?.tempCabezalB, tempPisoA: phaseForm?.tempPisoA, tempPisoB: phaseForm?.tempPisoB, velServo: phaseForm?.velServo, millares: phaseForm?.millaresProd, troquel: phaseForm?.troquelSel };
 
             // newBatch: insumos almacena también unitCost y category para trazabilidad completa de costos
-            const _approvedForReqId = (invRequisitions||[]).filter(r=>r.opId===req.id&&(r.status==='APROBADA'||r.status==='APROBADO')).sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
+            const _approvedForReqId = (invRequisitions||[]).filter(r=>String(r.opId||'').replace(/^OP-/i,'').trim()===String(req.id||'').replace(/^OP-/i,'').trim()&&(r.status==='APROBADA'||r.status==='APROBADO'||r.status==='PROCESADA'||r.status==='PROCESADO')).sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
             const _batchReqIds = (currentPhase.batches||[]).map(b=>b.reqId).filter(Boolean);
             const _currentLoteReq = _approvedForReqId.find(r=>!_batchReqIds.includes(r.id)) || _approvedForReqId[_approvedForReqId.length-1];
             const newBatch = {
@@ -6368,7 +6368,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       activeOPsWip.forEach(req => {
         const despachado = {};
         (invRequisitions||[])
-          .filter(r => r.opId === req.id && (r.status === 'APROBADO' || r.status === 'APROBADA'))
+          .filter(r => String(r.opId||'').replace(/^OP-/i,'').trim()===String(req.id||'').replace(/^OP-/i,'').trim()&&(r.status==='APROBADA'||r.status==='APROBADO'||r.status==='PROCESADA'||r.status==='PROCESADO'))
           .forEach(r => { (r.items||[]).forEach(it => { if(it.id){ despachado[it.id] = (despachado[it.id]||0) + parseNum(it.qty); } }); });
         const consumido = {};
         const prod = req.production || {};
@@ -12019,194 +12019,109 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
   // ── HELPER: Panel de insumos filtrado por requisiciones aprobadas ──────────
   const renderInsumosPhasePanel = (req, phase) => {
-    try {
     if (!req || !phase) return null;
+    const norm = (id) => String(id||'').replace(/^OP-/i,'').trim();
 
-    // ── Determine current lote from activeLoteIndex ──
+    // All approved reqs for this OP
+    const approved = (invRequisitions||[])
+      .filter(r => norm(r.opId)===norm(req.id) &&
+        ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status))
+      .sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
+
+    // Total MP from all approved reqs
+    const allItems = {};
+    approved.forEach(r => (r.items||[]).forEach(it => {
+      if(it?.id) allItems[it.id] = (allItems[it.id]||0) + parseNum(it.qty);
+    }));
+    const kgTotalOP = Object.values(allItems).reduce((s,v)=>s+v, 0);
+
+    if(approved.length === 0) return (
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
+        <p className="text-[10px] font-black text-yellow-700 uppercase">Sin requisición aprobada</p>
+        <p className="text-[9px] text-yellow-600 font-bold mt-1">Solicite insumos a almacén primero</p>
+      </div>
+    );
+
+    // Lotes
     const lotes = getLotes(req);
-    if (!lotes || lotes.length === 0) {
-      return (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
-          <p className="text-[10px] font-black text-blue-700 uppercase">Sin lotes creados</p>
-          <p className="text-[9px] font-bold text-blue-600 mt-1">Crea un lote primero o solicita insumos a almacén</p>
-        </div>
-      );
-    }
-    const currentLoteObj = lotes[activeLoteIndex] || lotes[lotes.length - 1];
-    const currentLoteNum = activeLoteIndex + 1;
-    const currentLoteLabel = currentLoteObj?.nombre || `Lote ${currentLoteNum}`;
+    const currentLoteObj = lotes[activeLoteIndex] || lotes[lotes.length-1] || {};
+    const currentLoteLabel = currentLoteObj?.nombre || `Lote ${activeLoteIndex+1}`;
 
-    // ── All approved requisitions for this OP (check BEFORE lotes guard) ──
-    const approved = (invRequisitions || [])
-      .filter(r => r.opId === req.id && (r.status === 'APROBADA' || r.status === 'APROBADO'))
-      .sort((a,b) => (a.timestamp||0) - (b.timestamp||0));
-
-    // ── No lotes yet — show all approved MP as flat history + KG produced input ──
-    if (!lotes || lotes.length === 0) {
-      // Build total items from all approved reqs
-      const allItems = {};
-      approved.forEach(r => {
-        (r.items||[]).forEach(it => {
-          if(it?.id) allItems[it.id] = (allItems[it.id]||0) + parseNum(it.qty);
-        });
+    // MP for current lote — if multiple lotes, assign req per lote; else all items belong to this lote
+    let loteItems = {};
+    if(lotes.length <= 1) {
+      loteItems = {...allItems};
+    } else {
+      const loteReqId = currentLoteObj?.reqId;
+      const usedByOthers = lotes.filter((_,li)=>li!==activeLoteIndex).map(l=>l.reqId).filter(Boolean);
+      const loteReq = approved.find(r=>r.id===loteReqId)
+        || approved.find(r=>r.loteIndex===activeLoteIndex)
+        || approved.find(r=>!usedByOthers.includes(r.id))
+        || approved[Math.min(activeLoteIndex, approved.length-1)];
+      (loteReq?.items||[]).forEach(it=>{
+        if(it?.id) loteItems[it.id]=(loteItems[it.id]||0)+parseNum(it.qty);
       });
-      const kgTotal = Object.values(allItems).reduce((s,v)=>s+v,0);
-      const prodKgVal = parseNum(phaseForm.producedKg);
-      const mermaVal = kgTotal > 0 && prodKgVal > 0 ? Math.max(0, kgTotal - prodKgVal) : 0;
-
-      if(approved.length === 0) return (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
-          <p className="text-[10px] font-black text-yellow-700 uppercase">Sin requisición aprobada para esta OP</p>
-          <p className="text-[9px] font-bold text-yellow-600 mt-1">Solicite insumos a almacén antes de registrar el lote</p>
-        </div>
-      );
-
-      return (
-        <div className="space-y-3">
-          <div className="bg-gray-800 text-white rounded-xl p-4">
-            <p className="text-[9px] font-black uppercase text-orange-400 mb-3">📦 MP Imputada a la OP — Almacén aprobado</p>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
-              {Object.entries(allItems).map(([id,qty])=>{
-                const inv=(inventory||[]).find(i=>i.id===id);
-                return <div key={id} className="bg-gray-700 rounded-lg p-2 text-center">
-                  <div className="text-[8px] text-gray-400 truncate">{inv?.desc||id}</div>
-                  <div className="font-black text-blue-300">{formatNum(qty)}</div>
-                  <div className="text-[8px] text-gray-400">{inv?.unit||'KG'}</div>
-                </div>;
-              })}
-            </div>
-            <div className="border-t border-gray-600 pt-2 flex justify-between">
-              <span className="text-[9px] text-gray-400 font-black uppercase">Total KG imputados:</span>
-              <span className="font-black text-orange-400">{formatNum(kgTotal)} KG</span>
-            </div>
-          </div>
-          <div className="bg-green-50 border-2 border-green-300 rounded-xl p-4">
-            <h4 className="text-[10px] font-black text-green-700 uppercase mb-3">⚙ KG Producidos</h4>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG salidos de extrusión</label>
-                <input type="number" step="0.01" min="0" value={phaseForm.producedKg}
-                  onChange={e=>{const kg=parseNum(e.target.value);const m=kgTotal>0?Math.max(0,kgTotal-kg):0;setPhaseForm({...phaseForm,producedKg:e.target.value,mermaKg:m.toFixed(2)});}}
-                  className="w-full border-2 border-green-300 rounded-xl p-3 text-lg font-black text-center outline-none focus:border-green-500 bg-white"
-                  placeholder={kgTotal>0?`Máx. ${formatNum(kgTotal)} KG`:'0.00'}/>
-              </div>
-              <div>
-                <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Merma KG (Auto)</label>
-                <div className={`w-full border-2 rounded-xl p-3 text-lg font-black text-center ${mermaVal>0?'border-red-300 bg-red-50 text-red-700':'border-gray-200 bg-gray-50 text-gray-400'}`}>
-                  {prodKgVal>0?formatNum(mermaVal):'—'} KG
-                  {mermaVal>0&&kgTotal>0&&<span className="text-[10px] block">({((mermaVal/kgTotal)*100).toFixed(1)}%)</span>}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      );
+      if(Object.keys(loteItems).length===0) loteItems = {...allItems};
     }
+    const kgLote = Object.values(loteItems).reduce((s,v)=>s+v,0);
 
-    // ── Saved batches for this phase in THIS lote ──
-    const savedBatchesThisPhase = (currentLoteObj?.[phase]?.batches || []);
-    const savedBatchesAllPhases = ['extrusion','impresion','sellado']
-      .flatMap(ph => (currentLoteObj?.[ph]?.batches || []).map(b => ({...b, _phase: ph})));
+    // Previously produced across all lotes
+    const kgProducidosAnt = lotes.flatMap(l=>(l?.[phase]?.batches||[])).reduce((s,b)=>s+parseNum(b?.producedKg||0),0);
+    const mermaAnt = lotes.flatMap(l=>(l?.[phase]?.batches||[])).reduce((s,b)=>s+parseNum(b?.mermaKg||0),0);
 
-    // ── MP linked to THIS lote: find req tagged with this lote, or fallback to approved reqs not used in other lotes ──
-    const loteReqId = currentLoteObj?.reqId || null;
-    let currentLoteReq;
-    if(loteReqId) {
-      currentLoteReq = approved.find(r => r.id === loteReqId);
-    }
-    if(!currentLoteReq) {
-      // Find approved req whose loteIndex matches, or first unassigned
-      const reqsUsedByOtherLotes = lotes
-        .filter((l, li) => li !== activeLoteIndex && l.reqId)
-        .map(l => l.reqId);
-      currentLoteReq = approved.find(r => !reqsUsedByOtherLotes.includes(r.id) && r.loteIndex === activeLoteIndex)
-        || approved.find(r => !reqsUsedByOtherLotes.includes(r.id))
-        || approved[activeLoteIndex]
-        || approved[approved.length - 1];
-    }
-
-    // ── MP del lote actual ──
-    const loteItems = {};
-    (currentLoteReq?.items || []).forEach(it => {
-      if(it?.id) { loteItems[it.id] = (loteItems[it.id]||0) + parseNum(it.qty); }
-    });
-    const kgLoteActual = Object.values(loteItems).reduce((s,v)=>s+v, 0);
-
-    // ── Historial total OP ──
-    const historialItems = {};
-    approved.forEach(r => {
-      (r.items||[]).forEach(it => {
-        if(it?.id) { historialItems[it.id] = (historialItems[it.id]||0) + parseNum(it.qty); }
-      });
-    });
-    const kgTotalOP = Object.values(historialItems).reduce((s,v)=>s+v, 0);
-    const kgProducidosAnteriores = lotes.flatMap(l => (l[phase]?.batches||[])).reduce((s,b)=>s+parseNum(b.producedKg||0), 0);
-    const mermaAnteriores = lotes.flatMap(l => (l[phase]?.batches||[])).reduce((s,b)=>s+parseNum(b.mermaKg||0), 0);
-
-    // ── Merma del lote ACTUAL ──
-    const prodKgEntrada = parseNum(phaseForm.producedKg);
-    const mermaLoteAuto = kgLoteActual > 0 && prodKgEntrada >= 0
-      ? Math.max(0, kgLoteActual - prodKgEntrada) : 0;
-    const mermaPct = kgLoteActual > 0 && prodKgEntrada > 0
-      ? ((mermaLoteAuto / kgLoteActual) * 100).toFixed(1) : '0.0';
-
-    // Sync mermaKg into phaseForm when producedKg changes (handled in onChange below)
+    // Merma for current lote
+    const prodKg = parseNum(phaseForm.producedKg);
+    const mermaAuto = kgLote > 0 && prodKg >= 0 ? Math.max(0, kgLote - prodKg) : 0;
+    const mermaPct = kgLote > 0 && prodKg > 0 ? ((mermaAuto/kgLote)*100).toFixed(1) : '0.0';
 
     return (
       <div className="space-y-3">
-        {/* ── HISTORIAL MP IMPUTADA A LA OP (colapsable) ── */}
-        <details className="group">
-          <summary className="cursor-pointer bg-gray-800 text-white rounded-xl px-4 py-2.5 flex justify-between items-center list-none">
-            <div className="flex items-center gap-2">
-              <span className="text-[9px] font-black uppercase text-orange-400">📋 Historial MP Imputada a la OP</span>
-              <span className="text-[8px] bg-gray-600 text-gray-300 px-2 py-0.5 rounded-full">{approved.length} solicitud{approved.length!==1?'es':''} · {formatNum(kgTotalOP)} KG total</span>
-            </div>
-            <span className="text-gray-400 text-[9px] group-open:rotate-180 transition-transform">▼</span>
-          </summary>
-          <div className="bg-gray-900 rounded-b-xl px-4 pb-3 pt-2 space-y-2">
-            {approved.map((r, ri) => {
-              const rItems = {};
-              (r.items||[]).forEach(it=>{ if(it?.id) rItems[it.id]=(rItems[it.id]||0)+parseNum(it.qty); });
-              const rTotal = Object.values(rItems).reduce((s,v)=>s+v,0);
-              const matchBatch = savedBatches.find(b=>b.reqId===r.id);
-              return (
-                <div key={r.id} className="bg-gray-800 rounded-lg px-3 py-2">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-[9px] font-black text-orange-300">Solicitud #{ri+1} · {r.date}</span>
-                    <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${matchBatch ? 'bg-green-800 text-green-300' : 'bg-blue-800 text-blue-300'}`}>
-                      {matchBatch ? `→ Lote ${savedBatches.indexOf(matchBatch)+1}` : 'Lote actual'}
-                    </span>
+        {/* Collapsible history */}
+        {approved.length > 0 && (
+          <details className="group">
+            <summary className="cursor-pointer bg-gray-800 text-white rounded-xl px-4 py-2.5 flex justify-between items-center list-none">
+              <span className="text-[9px] font-black uppercase text-orange-400">
+                📋 Historial MP Imputada a la OP · {approved.length} solicitud{approved.length!==1?'es':''}
+                <span className="ml-2 text-gray-400 font-bold">Total: {formatNum(kgTotalOP)} KG</span>
+              </span>
+              <span className="text-gray-400 text-[9px]">▼</span>
+            </summary>
+            <div className="bg-gray-900 rounded-b-xl px-4 pb-3 pt-2 space-y-2">
+              {approved.map((r,ri)=>{
+                const rItems = {};
+                (r.items||[]).forEach(it=>{ if(it?.id) rItems[it.id]=(rItems[it.id]||0)+parseNum(it.qty); });
+                const rTotal = Object.values(rItems).reduce((s,v)=>s+v,0);
+                return (
+                  <div key={r.id} className="bg-gray-800 rounded-lg px-3 py-2">
+                    <div className="flex justify-between mb-1">
+                      <span className="text-[9px] font-black text-orange-300">Solicitud #{ri+1} · {r.date||''}</span>
+                      <span className="text-[8px] text-gray-300 font-bold">{formatNum(rTotal)} KG</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(rItems).map(([id,qty])=>{
+                        const inv=(inventory||[]).find(i=>i.id===id);
+                        return <span key={id} className="text-[8px] text-gray-300 font-bold"><span className="text-blue-400">{inv?.desc||id}</span>: {formatNum(qty)} {inv?.unit||'KG'}</span>;
+                      })}
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {Object.entries(rItems).map(([id,qty])=>{
-                      const inv=(inventory||[]).find(i=>i.id===id);
-                      return <span key={id} className="text-[8px] text-gray-300 font-bold"><span className="text-blue-400">{inv?.desc||id}</span>: {formatNum(qty)} {inv?.unit||'KG'}</span>;
-                    })}
-                  </div>
-                  <div className="text-[8px] text-gray-500 mt-1 text-right">Total: <span className="font-black text-gray-300">{formatNum(rTotal)} KG</span></div>
+                );
+              })}
+              {lotes.length > 1 && (
+                <div className="border-t border-gray-700 pt-2 grid grid-cols-3 gap-2 text-center">
+                  <div><div className="text-[8px] text-gray-500">Total OP</div><div className="text-[10px] font-black text-blue-300">{formatNum(kgTotalOP)} KG</div></div>
+                  <div><div className="text-[8px] text-gray-500">Producidos</div><div className="text-[10px] font-black text-green-300">{formatNum(kgProducidosAnt)} KG</div></div>
+                  <div><div className="text-[8px] text-gray-500">Merma Acum.</div><div className="text-[10px] font-black text-red-300">{formatNum(mermaAnt)} KG</div></div>
                 </div>
-              );
-            })}
-            {/* Summary across all lotes */}
-            {savedBatches.length > 0 && (
-              <div className="border-t border-gray-700 pt-2 grid grid-cols-3 gap-2 text-center">
-                <div><div className="text-[8px] text-gray-500">KG Despachados OP</div><div className="text-[10px] font-black text-blue-300">{formatNum(kgTotalOP)}</div></div>
-                <div><div className="text-[8px] text-gray-500">KG Producidos</div><div className="text-[10px] font-black text-green-300">{formatNum(kgProducidosAnteriores)}</div></div>
-                <div><div className="text-[8px] text-gray-500">Merma Acum.</div><div className="text-[10px] font-black text-red-300">{formatNum(mermaAnteriores)}</div></div>
-              </div>
-            )}
-          </div>
-        </details>
+              )}
+            </div>
+          </details>
+        )}
 
-        {/* ── MP IMPUTADA AL LOTE ACTUAL ── */}
+        {/* Current lote MP */}
         <div className="bg-gray-800 text-white rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-[9px] font-black uppercase text-orange-400">
-              📦 MP Imputada — {currentLoteLabel} (Solicitud actual)
-            </p>
-            <span className="text-[8px] text-blue-300 font-bold bg-gray-700 px-2 py-0.5 rounded-full">
-              {formatNum(kgLoteActual)} KG → este lote
-            </span>
+            <p className="text-[9px] font-black uppercase text-orange-400">📦 MP — {lotes.length>1?currentLoteLabel:'Esta OP'}</p>
+            <span className="text-[8px] text-blue-300 font-bold bg-gray-700 px-2 py-0.5 rounded-full">{formatNum(kgLote)} KG</span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
             {Object.entries(loteItems).map(([id,qty])=>{
@@ -12220,68 +12135,45 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               );
             })}
           </div>
-          <div className="border-t border-gray-600 pt-2 mt-2 text-[8px] text-gray-500">
-            ✓ Todos los KG de este lote imputados directamente al proceso. No hay devolución.
-          </div>
+          <p className="text-[8px] text-gray-500 mt-2">✓ KG imputados al proceso. No hay devolución.</p>
         </div>
 
-        {/* ── KG PRODUCIDOS EN ESTE LOTE + MERMA AUTO ── */}
+        {/* KG Produced + Auto Merma */}
         <div className="bg-green-50 border-2 border-green-300 rounded-xl p-4">
-          <h4 className="text-[10px] font-black text-green-700 uppercase mb-3 flex items-center gap-2">
-            ⚙ KG Producidos — {currentLoteLabel}
-          </h4>
+          <h4 className="text-[10px] font-black text-green-700 uppercase mb-3">⚙ KG Producidos — {lotes.length>1?currentLoteLabel:'Lote'}</h4>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">
-                KG que salieron de la extrusora en este lote <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="number" step="0.01" min="0" max={kgLoteActual||undefined}
-                value={phaseForm.producedKg}
-                onChange={e => {
-                  const kg = parseNum(e.target.value);
-                  const merma = kgLoteActual > 0 ? Math.max(0, kgLoteActual - kg) : 0;
-                  setPhaseForm({ ...phaseForm, producedKg: e.target.value, mermaKg: merma.toFixed(2) });
-                }}
+              <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG salidos de extrusión <span className="text-red-500">*</span></label>
+              <input type="number" step="0.01" min="0" value={phaseForm.producedKg}
+                onChange={e=>{const kg=parseNum(e.target.value);const m=kgLote>0?Math.max(0,kgLote-kg):0;setPhaseForm({...phaseForm,producedKg:e.target.value,mermaKg:m.toFixed(2)});}}
                 className="w-full border-2 border-green-300 rounded-xl p-3 text-lg font-black text-center outline-none focus:border-green-500 bg-white"
-                placeholder={kgLoteActual > 0 ? `Máx. ${formatNum(kgLoteActual)} KG` : '0.00'}
-              />
-              <p className="text-[8px] text-gray-500 mt-1">MP de este lote: <span className="font-black text-orange-600">{formatNum(kgLoteActual)} KG</span></p>
+                placeholder={kgLote>0?`Máx. ${formatNum(kgLote)} KG`:'0.00'}/>
+              <p className="text-[8px] text-gray-500 mt-1">MP de este lote: <span className="font-black text-orange-600">{formatNum(kgLote)} KG</span></p>
             </div>
             <div>
-              <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">
-                Merma KG (Auto) — {currentLoteLabel}
-              </label>
-              <div className={`w-full border-2 rounded-xl p-3 text-lg font-black text-center ${mermaLoteAuto > 0 ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 bg-gray-50 text-gray-400'}`}>
-                {prodKgEntrada > 0 ? formatNum(mermaLoteAuto) : '—'} KG
-                {mermaLoteAuto > 0 && <span className="text-[10px] font-bold block mt-0.5">({mermaPct}%)</span>}
+              <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Merma KG (Auto)</label>
+              <div className={`w-full border-2 rounded-xl p-3 text-lg font-black text-center ${mermaAuto>0?'border-red-300 bg-red-50 text-red-700':'border-gray-200 bg-gray-50 text-gray-400'}`}>
+                {prodKg>0?formatNum(mermaAuto):'—'} KG
+                {mermaAuto>0&&<span className="text-[10px] font-bold block">({mermaPct}%)</span>}
               </div>
-              <p className="text-[8px] text-gray-500 mt-1">
-                {formatNum(kgLoteActual)} KG lote − {formatNum(prodKgEntrada)} KG producidos
-              </p>
+              <p className="text-[8px] text-gray-500 mt-1">{formatNum(kgLote)} − {formatNum(prodKg)} = {formatNum(mermaAuto)} KG</p>
             </div>
           </div>
-          {kgLoteActual > 0 && prodKgEntrada > 0 && (
+          {kgLote>0&&prodKg>0&&(
             <div className="mt-3">
               <div className="flex justify-between text-[9px] font-bold mb-1">
-                <span className="text-green-700">✓ Producidos: {formatNum(prodKgEntrada)} KG ({((prodKgEntrada/kgLoteActual)*100).toFixed(1)}%)</span>
-                {mermaLoteAuto > 0 && <span className="text-red-600">Merma: {formatNum(mermaLoteAuto)} KG ({mermaPct}%)</span>}
+                <span className="text-green-700">✓ {formatNum(prodKg)} KG ({((prodKg/kgLote)*100).toFixed(1)}%)</span>
+                {mermaAuto>0&&<span className="text-red-600">Merma: {formatNum(mermaAuto)} KG ({mermaPct}%)</span>}
               </div>
-              <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                <div className="h-3 rounded-full flex">
-                  <div className="bg-green-500 h-full" style={{width:`${Math.min(100,(prodKgEntrada/kgLoteActual)*100)}%`}}/>
-                  {mermaLoteAuto > 0 && <div className="bg-red-400 h-full" style={{width:`${Math.min(100,(mermaLoteAuto/kgLoteActual)*100)}%`}}/>}
-                </div>
+              <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden flex">
+                <div className="bg-green-500 h-full" style={{width:`${Math.min(100,(prodKg/kgLote)*100)}%`}}/>
+                {mermaAuto>0&&<div className="bg-red-400 h-full" style={{width:`${Math.min(100,(mermaAuto/kgLote)*100)}%`}}/>}
               </div>
             </div>
           )}
         </div>
       </div>
     );
-    } catch(e) {
-      console.error('renderInsumosPhasePanel error:', e);
-      return <div className="text-[9px] text-gray-400 p-2 text-center">Sin datos de MP para este lote aún.</div>;
-    }
   };
   // ============================================================================
   const handleSaveFormula = async (e) => {
@@ -14266,7 +14158,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                   {/* Historial MP imputada al lote */}
                                   <div className="bg-white rounded-xl border border-orange-200 p-4">
                                     <h4 className="text-[9px] font-black text-gray-700 uppercase mb-3">MP Imputada / Historial del Lote</h4>
-                                    {(() => { try { return renderInsumosPhasePanel(req, activePhaseTab); } catch(e) { return <div className="text-[9px] text-gray-400 p-2">Sin historial de MP para este lote.</div>; } })()}
+                                    {renderInsumosPhasePanel(req, activePhaseTab)}
                                   </div>
 
                                   {/* ── BOTONES DE FASE ── */}
@@ -14474,7 +14366,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 allBatches.forEach(b=>(b.insumos||[]).forEach(ing=>{matsConsumidos[ing.id]=(matsConsumidos[ing.id]||0)+parseNum(ing.qty);}));
                 // Materiales despachados
                 const matsDespachados={};
-                (invRequisitions||[]).filter(r=>r.opId===req.id&&(r.status==='APROBADO'||r.status==='APROBADA')).flatMap(r=>r.items||[]).forEach(it=>{if(it?.id)matsDespachados[it.id]=(matsDespachados[it.id]||0)+parseNum(it.qty);});
+                (invRequisitions||[]).filter(r=>{const a=String(r.opId||'').replace(/^OP-/i,'').trim();const b2=String(req.id||'').replace(/^OP-/i,'').trim();return a===b2&&(r.status==='APROBADO'||r.status==='APROBADA'||r.status==='PROCESADA'||r.status==='PROCESADO');}).flatMap(r=>r.items||[]).forEach(it=>{if(it?.id)matsDespachados[it.id]=(matsDespachados[it.id]||0)+parseNum(it.qty);});
                 // Costos
                 const costoMP=allBatches.reduce((s,b)=>s+parseNum(b.cost||0),0);
                 const costoXkg=kgProd>0?costoMP/kgProd:0;
