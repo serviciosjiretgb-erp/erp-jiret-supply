@@ -9554,11 +9554,54 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-6 border-b bg-white flex justify-between items-center">
               <h2 className="text-xl font-black uppercase flex items-center gap-3"><Users className="text-orange-500" /> DIRECTORIO DE CLIENTES</h2>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap items-center">
                 <button onClick={()=>{setShowAddClientForm(v=>!v); setEditingClientId(null); setNewClientForm(initialClientForm);}}
                   className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${showAddClientForm?'bg-gray-200 text-gray-700':'bg-black text-white hover:bg-gray-800'}`}>
                   {showAddClientForm ? <><X size={13}/> Cancelar</> : <><Plus size={13}/> Agregar Cliente</>}
                 </button>
+                <label className="cursor-pointer px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase bg-green-600 text-white hover:bg-green-700 flex items-center gap-2 transition-all">
+                  <Download size={13}/> Importar Excel
+                  <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={async(e)=>{
+                    const file = e.target.files?.[0];
+                    if(!file) return;
+                    e.target.value='';
+                    try {
+                      const text = await file.text();
+                      // Parse CSV or fall back to basic row split
+                      let rows = [];
+                      if(file.name.endsWith('.csv')) {
+                        const lines = text.split(/\r?\n/).filter(l=>l.trim());
+                        const headers = lines[0].split(/[,;\t]/).map(h=>h.trim().replace(/^"|"$/g,''));
+                        rows = lines.slice(1).map(line=>{
+                          const vals = line.split(/[,;\t]/).map(v=>v.trim().replace(/^"|"$/g,''));
+                          const obj={};
+                          headers.forEach((h,i)=>{ obj[h]=vals[i]||''; });
+                          return obj;
+                        });
+                      } else {
+                        setDialog({title:'Aviso',text:'Para importar Excel (.xlsx), súbelo primero como CSV (Guardar como → CSV UTF-8 en Excel). La importación CSV funciona perfectamente con las columnas: Descripción, Dirección, RIF, Teléfono.',type:'alert'});
+                        return;
+                      }
+                      if(!rows.length){ setDialog({title:'Aviso',text:'Archivo vacío o sin datos.',type:'alert'}); return; }
+                      let imported=0, skipped=0;
+                      for(const row of rows){
+                        const razonSocial = (row['Descripción']||row['Descripcion']||row['DESCRIPCIÓN']||row['Nombre']||row['NOMBRE']||'').toString().toUpperCase().trim();
+                        const direccion   = (row['Dirección']||row['Direccion']||row['DIRECCIÓN']||row['Direc']||'').toString().toUpperCase().trim();
+                        const rif         = (row['RIF']||row['Rif']||row['rif']||'').toString().toUpperCase().trim().replace(/\s+/g,'');
+                        const telefono    = (row['Teléfono']||row['Telefono']||row['TELÉFONO']||row['Tel']||'').toString().trim();
+                        if(!razonSocial && !rif){ skipped++; continue; }
+                        const docId = rif||razonSocial.replace(/[^A-Z0-9]/g,'').substring(0,20)||`CLI-${Date.now()}`;
+                        await setDoc(getDocRef('clientes',docId),{
+                          name:razonSocial, razonSocial, direccion, rif:rif||docId,
+                          telefono, personaContacto:'', vendedor:'',
+                          timestamp:Date.now(), _imported:true
+                        },{merge:true});
+                        imported++;
+                      }
+                      setDialog({title:'✅ Importación completa',text:`${imported} cliente${imported!==1?'s':''} importado${imported!==1?'s':''}${skipped>0?` · ${skipped} filas vacías omitidas`:''}`,type:'alert'});
+                    } catch(err){ setDialog({title:'Error al importar',text:err.message,type:'alert'}); }
+                  }}/>
+                </label>
                 <button onClick={()=>setShowClientReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50">IMPRIMIR</button>
               </div>
             </div>
