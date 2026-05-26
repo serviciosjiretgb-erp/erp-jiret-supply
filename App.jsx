@@ -6979,14 +6979,70 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                            {r.status === 'RECHAZADO' && <span className="bg-red-100 text-red-700 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border border-red-200">RECHAZADO</span>}
                          </td>
                          <td className="py-4 px-4 text-center">
-                           {r.status === 'PENDIENTE' ? (
-                             <div className="flex justify-center gap-2">
+                           <div className="flex justify-center gap-2">
+                             {r.status === 'PENDIENTE' && (
                                <button onClick={() => setReqToApprove(JSON.parse(JSON.stringify(r)))} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase shadow-sm hover:bg-slate-800 transition-all flex items-center gap-1"><CheckCircle2 size={14}/> GESTIONAR</button>
-                               <button onClick={() => handleRejectRequisition(r.id)} className="bg-red-50 text-red-500 px-3 py-2 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button>
-                             </div>
-                           ) : (
-                             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Procesado</span>
-                           )}
+                             )}
+                             {(r.status === 'APROBADO' || r.status === 'APROBADA') && (
+                               <span className="text-[9px] font-black text-green-600 uppercase tracking-widest bg-green-50 px-2 py-1 rounded-lg border border-green-200">Procesado</span>
+                             )}
+                             <button onClick={()=>setDialog({
+                               title:'Eliminar Requisición',
+                               text: (r.status==='APROBADO'||r.status==='APROBADA')
+                                 ? `⚠ Esta requisición ya fue APROBADA. Al eliminarla:\n• Se borrará el registro de la requisición\n• Se REVERTIRÁ el stock descontado del almacén (se devuelve la MP al inventario)\n• Se eliminará de la MP Imputada de la OP #${String(r.opId||'').replace('OP-','').padStart(5,'0')}\n\n¿Continuar?`
+                                 : `¿Eliminar esta requisición PENDIENTE de la OP #${String(r.opId||'').replace('OP-','').padStart(5,'0')}?`,
+                               type:'confirm',
+                               onConfirm: async()=>{
+                                 try {
+                                   const b = writeBatch(db);
+                                   // 1. Delete the requisition doc
+                                   b.delete(getDocRef('inventoryRequisitions', r.id));
+                                   // 2. If approved, revert stock to inventory
+                                   if(r.status==='APROBADO'||r.status==='APROBADA') {
+                                     for(const it of (r.items||[])) {
+                                       if(!it?.id) continue;
+                                       const qty = parseNum(it.qty||0);
+                                       if(qty <= 0) continue;
+                                       // Find the inventory doc — prefer ALMACEN ZI
+                                       const norm = (id) => String(id||'').replace(/^OP-/i,'').trim();
+                                       const invItem = (inventory||[]).find(i => {
+                                         if(i.id===it.id) return true;
+                                         const cc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                                         const itcc=(it.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                                         return cc===itcc && (i.almacen||i.id||'').toUpperCase().includes('ZI');
+                                       }) || (inventory||[]).find(i=>{
+                                         const cc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                                         const itcc=(it.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                                         return cc===itcc;
+                                       });
+                                       if(invItem) {
+                                         b.update(getDocRef('inventory', invItem.id), {
+                                           stock: parseNum(invItem.stock||0) + qty,
+                                           timestamp: Date.now()
+                                         });
+                                         // Log reversal in kardex
+                                         b.set(getDocRef('inventoryMovements', `REV-${Date.now()}-${invItem.id}`), {
+                                           itemId: invItem.displayId||(invItem.id||'').split('___')[0],
+                                           itemName: invItem.desc,
+                                           type: 'ENTRADA',
+                                           qty, cost: invItem.cost||0,
+                                           totalValue: qty*(invItem.cost||0),
+                                           reference: `REVERSO-REQ-${r.id}`,
+                                           notes: `REVERSO REQUISICIÓN ELIMINADA — OP ${r.opId||''}`,
+                                           date: getTodayDate(), timestamp: Date.now(),
+                                           user: appUser?.name||'Sistema', almacen: invItem.almacen||'ALMACEN ZI'
+                                         });
+                                       }
+                                     }
+                                   }
+                                   await b.commit();
+                                   setDialog({title:'✅ Eliminada',text:'Requisición eliminada'+(r.status==='APROBADO'||r.status==='APROBADA'?' y stock revertido al inventario.':'.'),type:'alert'});
+                                 } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+                               }
+                             })} className="bg-red-50 text-red-500 px-3 py-2 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar requisición">
+                               <Trash2 size={16}/>
+                             </button>
+                           </div>
                          </td>
                        </tr>
                        );
@@ -13626,7 +13682,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                       <option key={l.id} value={i}>{l.nombre} {l.cerrado?'✓':''}</option>
                                     ))}
                                   </select>
-                                  <button onClick={()=>handleCrearNuevoLote(req)}
+                                  <button onClick={()=>setDialog({
+                                    title:`Crear Lote ${lotes.length+1}`,
+                                    text:`¿Deseas crear el Lote ${lotes.length+1} para esta OP?\n\nEsto abrirá un nuevo lote de producción. Podrás cancelar antes de registrar cualquier dato.`,
+                                    type:'confirm',
+                                    onConfirm:()=>handleCrearNuevoLote(req)
+                                  })}
                                     className="bg-green-500 text-white px-2 py-0.5 rounded-lg text-[9px] font-black hover:bg-green-600 flex items-center gap-1">
                                     <Plus size={10}/> NUEVO LOTE
                                   </button>
@@ -13945,6 +14006,30 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                   <div className="flex gap-2 ml-auto">
                                     <button onClick={()=>setProdSubMode('requisicion')} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1"><ClipboardList size={12}/> SOLICITAR A ALMACÉN</button>
                                     <button onClick={()=>{setProdSubMode('requisicion');setPhaseForm({...phaseForm, insumos:[]});}} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 flex items-center gap-1"><Plus size={12}/> ADICIONAL ALMACÉN</button>
+                                    {/* Cancelar Lote: only show if current lote is empty (no batches) */}
+                                    {(()=>{
+                                      const lotes = getLotes(req);
+                                      const curLote = lotes[activeLoteIndex];
+                                      const hasAnyBatches = ['extrusion','impresion','sellado'].some(ph=>(curLote?.[ph]?.batches||[]).length>0);
+                                      if(!curLote || hasAnyBatches || activeLoteIndex===0) return null;
+                                      return (
+                                        <button onClick={()=>setDialog({
+                                          title:`Cancelar Lote ${activeLoteIndex+1}`,
+                                          text:`¿Deseas cancelar y eliminar el Lote ${activeLoteIndex+1}? No tiene datos registrados, se eliminará y volverás al Lote ${activeLoteIndex}.`,
+                                          type:'confirm',
+                                          onConfirm:async()=>{
+                                            try {
+                                              const newLotes = lotes.filter((_,i)=>i!==activeLoteIndex);
+                                              await updateDoc(getDocRef('requirements',req.id),{'production.lotes':newLotes});
+                                              setActiveLoteIndex(Math.max(0,activeLoteIndex-1));
+                                              setPhaseForm({...initialPhaseForm,date:getTodayDate()});
+                                            } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+                                          }
+                                        })} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 flex items-center gap-1">
+                                          <X size={12}/> CANCELAR LOTE
+                                        </button>
+                                      );
+                                    })()}
                                   </div>
                                   </div>
                                   );
