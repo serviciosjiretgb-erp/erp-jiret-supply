@@ -1043,12 +1043,6 @@ export default function App() {
     doCleanup();
   }, [inventory, appUser]);
 
-  // ── ONE-TIME: Seed 411 clients from Base_De_Clientes_Final.csv ──
-  useEffect(() => {
-    if(!appUser || sessionStorage.getItem('seed_clients_v1')==='done') return;
-    const doSeed = async () => {
-      try {
-        const CLIENTES_SEED = 
   useEffect(() => {
     if(!appUser || sessionStorage.getItem('del_req_00017')==='done') return;
     const doDelete = async () => {
