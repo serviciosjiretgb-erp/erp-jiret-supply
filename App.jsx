@@ -1043,7 +1043,12 @@ export default function App() {
     doCleanup();
   }, [inventory, appUser]);
 
-  // ── ONE-TIME: Delete Requisición 00017 ──
+  // ── ONE-TIME: Seed 411 clients from Base_De_Clientes_Final.csv ──
+  useEffect(() => {
+    if(!appUser || sessionStorage.getItem('seed_clients_v1')==='done') return;
+    const doSeed = async () => {
+      try {
+        const CLIENTES_SEED = 
   useEffect(() => {
     if(!appUser || sessionStorage.getItem('del_req_00017')==='done') return;
     const doDelete = async () => {
@@ -9567,38 +9572,37 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     e.target.value='';
                     try {
                       const text = await file.text();
-                      // Parse CSV or fall back to basic row split
-                      let rows = [];
-                      if(file.name.endsWith('.csv')) {
-                        const lines = text.split(/\r?\n/).filter(l=>l.trim());
-                        const headers = lines[0].split(/[,;\t]/).map(h=>h.trim().replace(/^"|"$/g,''));
-                        rows = lines.slice(1).map(line=>{
-                          const vals = line.split(/[,;\t]/).map(v=>v.trim().replace(/^"|"$/g,''));
-                          const obj={};
-                          headers.forEach((h,i)=>{ obj[h]=vals[i]||''; });
-                          return obj;
-                        });
-                      } else {
-                        setDialog({title:'Aviso',text:'Para importar Excel (.xlsx), súbelo primero como CSV (Guardar como → CSV UTF-8 en Excel). La importación CSV funciona perfectamente con las columnas: Descripción, Dirección, RIF, Teléfono.',type:'alert'});
-                        return;
-                      }
-                      if(!rows.length){ setDialog({title:'Aviso',text:'Archivo vacío o sin datos.',type:'alert'}); return; }
-                      let imported=0, skipped=0;
+                      const lines = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n').filter(l=>l.trim());
+                      if(!lines.length){ setDialog({title:'Aviso',text:'Archivo vacío.',type:'alert'}); return; }
+                      // Auto-detect delimiter: semicolon or comma or tab
+                      const firstLine = lines[0];
+                      const delim = firstLine.includes(';') ? ';' : firstLine.includes('\t') ? '\t' : ',';
+                      const parseRow = line => line.split(delim).map(v=>v.trim().replace(/^"|"$/g,'').replace(/^\uFEFF/,''));
+                      const headers = parseRow(firstLine);
+                      const rows = lines.slice(1).map(line=>{ const vals=parseRow(line); const obj={}; headers.forEach((h,i)=>{obj[h]=vals[i]||'';}); return obj; }).filter(r=>Object.values(r).some(v=>v.trim()));
+                      if(!rows.length){ setDialog({title:'Aviso',text:'Sin datos.',type:'alert'}); return; }
+                      let imported=0;
+                      const batch = writeBatch(db);
                       for(const row of rows){
-                        const razonSocial = (row['Descripción']||row['Descripcion']||row['DESCRIPCIÓN']||row['Nombre']||row['NOMBRE']||'').toString().toUpperCase().trim();
-                        const direccion   = (row['Dirección']||row['Direccion']||row['DIRECCIÓN']||row['Direc']||'').toString().toUpperCase().trim();
-                        const rif         = (row['RIF']||row['Rif']||row['rif']||'').toString().toUpperCase().trim().replace(/\s+/g,'');
-                        const telefono    = (row['Teléfono']||row['Telefono']||row['TELÉFONO']||row['Tel']||'').toString().trim();
-                        if(!razonSocial && !rif){ skipped++; continue; }
-                        const docId = rif||razonSocial.replace(/[^A-Z0-9]/g,'').substring(0,20)||`CLI-${Date.now()}`;
-                        await setDoc(getDocRef('clientes',docId),{
-                          name:razonSocial, razonSocial, direccion, rif:rif||docId,
-                          telefono, personaContacto:'', vendedor:'',
-                          timestamp:Date.now(), _imported:true
+                        const name = (row['Razón Social']||row['Razon Social']||row['RAZÓN SOCIAL']||row['Descripción']||row['Descripcion']||row['DESCRIPCIÓN']||row['Nombre']||'').toString().toUpperCase().trim();
+                        const dir_ = (row['Dirección Fiscal']||row['Direccion Fiscal']||row['Dirección']||row['Direccion']||'').toString().toUpperCase().trim();
+                        const rif  = (row['RIF']||row['Rif']||row['rif']||'').toString().toUpperCase().trim().replace(/\s+/g,'');
+                        const tel  = (row['Teléfono']||row['Telefono']||row['TELÉFONO']||row['Tel']||'').toString().trim();
+                        const vend = (row['Vendedor Asignado']||row['Vendedor']||'').toString().trim().toLowerCase();
+                        if(!name && !rif) continue;
+                        const docId = (rif && rif!=='N/A') ? rif : name.replace(/[^A-Z0-9\-]/g,'').substring(0,24)||`CLI-${Date.now()}`;
+                        batch.set(getDocRef('clientes',docId),{
+                          name, razonSocial:name,
+                          direccion: dir_!=='N/A'?dir_:'',
+                          rif: rif!=='N/A'?rif:'',
+                          telefono: tel!=='N/A'?tel:'',
+                          vendedor: vend!=='n/a'?vend:'',
+                          personaContacto:'', timestamp:Date.now(), _imported:true
                         },{merge:true});
                         imported++;
                       }
-                      setDialog({title:'✅ Importación completa',text:`${imported} cliente${imported!==1?'s':''} importado${imported!==1?'s':''}${skipped>0?` · ${skipped} filas vacías omitidas`:''}`,type:'alert'});
+                      await batch.commit();
+                      setDialog({title:'✅ Importación completa',text:`${imported} cliente${imported!==1?'s':''} importados/actualizados en Firestore.`,type:'alert'});
                     } catch(err){ setDialog({title:'Error al importar',text:err.message,type:'alert'}); }
                   }}/>
                 </label>
