@@ -16,7 +16,7 @@ import {
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
   ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing, Upload,
   Menu, ChevronLeft, Smartphone, Wifi, WifiOff,
-  Activity, Timer, Award, PackageCheck, Calendar} from 'lucide-react';
+  Activity, Timer, Award, PackageCheck, Calendar, ChevronDown} from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
@@ -6945,11 +6945,19 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                        const loteMatch = (r.lote||r.batch||'').toUpperCase().includes(reqFilter);
                        return opMatch || prodMatch || phaseMatch || loteMatch;
                      }).map(r => {
-                       // Calc total KG from items
+                       // Calc total KG — sum all items (MP requisitions are always in KG)
                        const totalKg = (r.items||[]).reduce((s,it)=>{
-                         const invIt=(inventory||[]).find(inv=>inv.id===it.id);
-                         const unit=(invIt?.unit||'').toUpperCase();
-                         if(unit==='KG'||unit==='K'||unit.includes('KG')) return s+parseNum(it.qty||it.quantity||0);
+                         const qty = parseNum(it.qty||it.quantity||0);
+                         const invIt = (inventory||[]).find(inv=>inv.id===it.id);
+                         const unit = (invIt?.unit||it.unit||'kg').toLowerCase();
+                         // Exclude non-KG items (millares, und, m, etc.)
+                         if(unit.startsWith('mill')||unit==='und'||unit==='unidad'||unit==='m'||unit==='mts') return s;
+                         return s + qty;
+                       },0);
+                       const totalUnidades = (r.items||[]).reduce((s,it)=>{
+                         const invIt = (inventory||[]).find(inv=>inv.id===it.id);
+                         const unit = (invIt?.unit||it.unit||'kg').toLowerCase();
+                         if(unit.startsWith('mill')||unit==='und'||unit==='unidad') return s + parseNum(it.qty||0);
                          return s;
                        },0);
                        return (
@@ -6972,6 +6980,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                              ))}
                            </ul>
                            {totalKg > 0 && <div className="mt-1.5 text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded inline-block">⚖ Total KG: {formatNum(totalKg)}</div>}
+                           {totalUnidades > 0 && <div className="mt-1 ml-1 text-[9px] font-black text-purple-600 bg-purple-50 px-2 py-1 rounded inline-block">+ {formatNum(totalUnidades)} und</div>}
                          </td>
                          <td className="py-4 px-4 text-center border-r">
                            {r.status === 'PENDIENTE' && <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border border-orange-200">PENDIENTE</span>}
@@ -13634,117 +13643,166 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     const lotes = getLotes(req);
                     const activeLote = lotes[activeLoteIndex] || lotes[lotes.length-1] || {};
                     const phaseStatus = (phase) => {
-                      // Check current active lote's phase status
                       const phaseData = activeLote?.[phase];
-                      if (phaseData?.isClosed) return { icon: '✓', cls: 'border-green-300 bg-green-50 text-green-700' };
-                      if ((phaseData?.batches||[]).length > 0) return { icon: '⏳', cls: 'border-yellow-300 bg-yellow-50 text-yellow-700' };
-                      return { icon: '—', cls: 'border-gray-200 bg-white text-gray-400' };
+                      if (phaseData?.isClosed) return 'done';
+                      if ((phaseData?.batches||[]).length > 0) return 'inprogress';
+                      return 'pending';
                     };
                     const isOpen = selectedPhaseReqId === req.id;
                     const totalInsumosActual = (phaseForm?.insumos || []).reduce((s, ing) => s + parseNum(ing?.qty||0), 0);
+
+                    // Phase config — only show phases from formula
+                    const matchFormula = (formulas||[]).find(f=>f.categoria?.toUpperCase()===(req.categoria||'').toUpperCase());
+                    const fasesActivas = matchFormula?.fases || {extrusion:true, impresion:true, sellado:true};
+                    const phases = [
+                      {key:'extrusion', label:'Extrusión', n:1},
+                      {key:'impresion', label:'Impresión', n:2},
+                      {key:'sellado', label:'Sellado/Corte', n:3},
+                    ].filter(p=>fasesActivas[p.key]);
+
+                    // Current phase in progress
+                    const currentPhaseKey = phases.find(p=>phaseStatus(p.key)==='inprogress')?.key
+                      || phases.find(p=>phaseStatus(p.key)==='pending')?.key
+                      || phases[phases.length-1]?.key;
+
+                    // Phase pct for inprogress phases
+                    const getPhasePct = (key) => {
+                      const allB = lotes.flatMap(l=>(l?.[key]?.batches||[]));
+                      const produced = allB.reduce((s,b)=>s+parseNum(b.producedKg||0),0);
+                      const requested = parseNum(req.requestedKg||req.cantidad||0);
+                      return requested>0 ? Math.min(100,Math.round((produced/requested)*100)) : 0;
+                    };
+
+                    // Spec bullets
+                    const specs = [req.tipoProducto, req.desc, req.color||'NATURAL', `${req.ancho}cm×${req.largo}cm`, req.micras?`${req.micras}mic`:null, req.requestedKg?`${formatNum(req.requestedKg)} KG`:null].filter(Boolean);
+
                     return (
-                      <div key={req.id} className="bg-gray-50 border border-gray-200 rounded-2xl overflow-hidden">
-                        <div className="flex justify-between items-center p-5 bg-white border-b border-gray-100">
-                          <div>
-                            <h3 className="font-black text-black text-sm uppercase">OP #{String(req.id).replace('OP-','').padStart(5,'0')} — {req.client}</h3>
-                            <p className="text-[10px] font-bold text-gray-500 mt-1">{req.desc} | {req.ancho}cm×{req.largo}cm | {req.micras}mic | {formatNum(req.requestedKg)} KG</p>
-                            {/* Resumen entregas parciales */}
-                            {(req.entregasParciales||[]).length > 0 && (() => {
-                              const allLotes = getLotes(req);
-                              const fr = b => b?.operator!=='ALMACÉN (DESPACHO)' && parseNum(b?.producedKg)>0;
-                              const sB = allLotes.flatMap(l=>(l?.sellado?.batches||[]).filter(fr));
-                              const iB = allLotes.flatMap(l=>(l?.impresion?.batches||[]).filter(fr));
-                              const eB = allLotes.flatMap(l=>(l?.extrusion?.batches||[]).filter(fr));
-                              const lastB = sB.length>0?sB:iB.length>0?iB:eB;
-                              const totalProd = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
-                              const totalEntregado = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0);
-                              const pendiente = Math.max(0, totalProd - totalEntregado);
-                              return (
-                                <div className="flex gap-3 mt-2 flex-wrap">
-                                  <span className="text-[9px] font-black bg-blue-100 text-blue-700 px-2 py-0.5 rounded-lg">📦 Prod: {formatNum(totalProd)} KG</span>
-                                  <span className="text-[9px] font-black bg-green-100 text-green-700 px-2 py-0.5 rounded-lg">✓ Entregado: {formatNum(totalEntregado)} KG ({(req.entregasParciales||[]).length} parcial{(req.entregasParciales||[]).length!==1?'es':''})</span>
-                                  {pendiente > 0 && <span className="text-[9px] font-black bg-orange-100 text-orange-700 px-2 py-0.5 rounded-lg">⏳ Pendiente: {formatNum(pendiente)} KG</span>}
-                                </div>
-                              );
-                            })()}
+                      <div key={req.id} className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+                        {/* ── CARD HEADER ── */}
+                        <div className="p-5 flex gap-4 items-start">
+                          {/* Left: OP info */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <span className="font-black text-gray-900 text-base">OP #{String(req.id).replace('OP-','').padStart(5,'0')} —</span>
+                              <span className="font-black text-gray-900 text-base">{req.client}</span>
+                              <span className="bg-green-100 text-green-700 text-[8px] font-black px-2 py-0.5 rounded-full uppercase">EN PROCESO</span>
+                            </div>
+                            <p className="text-[10px] text-gray-500 font-bold mb-2">{req.desc} | {req.ancho}cm×{req.largo}cm | {req.micras}mic | {formatNum(req.requestedKg)} KG</p>
+                            <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+                              {specs.map((s,i)=><span key={i} className="text-[10px] text-gray-600 font-bold before:content-['•'] before:mr-1 before:text-gray-400">{s}</span>)}
+                            </div>
+                            {/* Tags: fórmula, sub-producto */}
+                            {req.categoria && <span className="mt-2 inline-block bg-orange-100 text-orange-700 text-[8px] font-black px-2 py-0.5 rounded-full uppercase">{req.categoria}</span>}
                           </div>
-                          <div className="flex gap-2 flex-wrap justify-end">
-                            {/* SELECTOR DE LOTE */}
-                            {(() => {
-                              const lotes = getLotes(req);
-                              if (lotes.length === 0) return null;
-                              return (
-                                <div className="flex items-center gap-2 bg-gray-100 rounded-xl px-3 py-1.5">
-                                  <span className="text-[9px] font-black text-gray-500 uppercase">Lote:</span>
-                                  <select value={activeLoteIndex} onChange={e=>setActiveLoteIndex(parseInt(e.target.value))}
-                                    className="bg-transparent text-[10px] font-black text-black outline-none">
-                                    {lotes.map((l,i)=>(
-                                      <option key={l.id} value={i}>{l.nombre} {l.cerrado?'✓':''}</option>
-                                    ))}
-                                  </select>
-                                  <button onClick={()=>setDialog({
-                                    title:`Crear Lote ${lotes.length+1}`,
-                                    text:`¿Deseas crear el Lote ${lotes.length+1} para esta OP?\n\nEsto abrirá un nuevo lote de producción. Podrás cancelar antes de registrar cualquier dato.`,
-                                    type:'confirm',
-                                    onConfirm:()=>handleCrearNuevoLote(req)
-                                  })}
-                                    className="bg-green-500 text-white px-2 py-0.5 rounded-lg text-[9px] font-black hover:bg-green-600 flex items-center gap-1">
-                                    <Plus size={10}/> NUEVO LOTE
-                                  </button>
-                                </div>
-                              );
-                            })()}
-                            <button onClick={()=>setShowOrdenTrabajo(req.id)} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-gray-800 text-white hover:bg-black flex items-center gap-1 transition-all"><FileText size={13}/> ORDEN DE TRABAJO</button>
-                            <button onClick={() => {
-                              if (isOpen) { setSelectedPhaseReqId(null); setProdSubMode('fase'); }
-                              else {
-                                // Inicializar lotes si no existen
-                                const lotes = getLotes(req);
-                                if (lotes.length === 0) {
-                                  handleCrearNuevoLote(req).then(() => {
-                                    setSelectedPhaseReqId(req.id); setProdSubMode('requisicion'); setActivePhaseTab('extrusion'); setPhaseForm({...initialPhaseForm, date: getTodayDate()});
-                                  });
-                                } else {
-                                  setSelectedPhaseReqId(req.id); setProdSubMode('requisicion'); setActivePhaseTab('extrusion'); setPhaseForm({...initialPhaseForm, date: getTodayDate()});
-                                }
+                          {/* Right: Lote selector + buttons */}
+                          <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+                            {/* Lote selector */}
+                            {lotes.length > 0 && (
+                              <div className="flex items-center gap-1.5 bg-gray-100 rounded-xl px-3 py-1.5">
+                                <span className="text-[8px] font-black text-gray-500 uppercase">LOTE:</span>
+                                <select value={activeLoteIndex} onChange={e=>setActiveLoteIndex(parseInt(e.target.value))}
+                                  className="bg-transparent text-[10px] font-black text-black outline-none">
+                                  {lotes.map((l,i)=><option key={l.id} value={i}>{l.nombre}{l.cerrado?' ✓':''}</option>)}
+                                </select>
+                                <button onClick={()=>setDialog({
+                                  title:`Crear Lote ${lotes.length+1}`,
+                                  text:`¿Crear el Lote ${lotes.length+1}? Podrás cancelar si no registras datos.`,
+                                  type:'confirm', onConfirm:()=>handleCrearNuevoLote(req)
+                                })} className="bg-green-500 text-white w-5 h-5 rounded-full flex items-center justify-center hover:bg-green-600" title="Nuevo lote">
+                                  <Plus size={10}/>
+                                </button>
+                              </div>
+                            )}
+                            {/* Registrar Fase button */}
+                            <button onClick={()=>{
+                              if(isOpen){setSelectedPhaseReqId(null);setProdSubMode('fase');}
+                              else{
+                                const lts=getLotes(req);
+                                if(lts.length===0){handleCrearNuevoLote(req).then(()=>{setSelectedPhaseReqId(req.id);setProdSubMode('requisicion');setActivePhaseTab('extrusion');setPhaseForm({...initialPhaseForm,date:getTodayDate()});});}
+                                else{setSelectedPhaseReqId(req.id);setProdSubMode('requisicion');setActivePhaseTab('extrusion');setPhaseForm({...initialPhaseForm,date:getTodayDate()});}
                               }
-                            }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${isOpen ? 'bg-gray-200 text-gray-700' : 'bg-orange-500 text-white hover:bg-orange-600 shadow-md'}`}>{isOpen ? <X size={14}/> : <Plus size={14}/>}{isOpen ? 'CERRAR' : 'REGISTRAR FASE'}</button>
-                            {/* BOTÓN ENTREGA PARCIAL */}
-                            <button
-                              onClick={() => { setShowPartialModal(req); setPartialKg(''); setPartialMillares(''); }}
-                              className="px-5 py-2 rounded-xl text-[10px] font-black uppercase bg-blue-600 text-white hover:bg-blue-700 shadow-md flex items-center gap-1 transition-all"
-                              title="Mover producción parcial a Terminados sin cerrar la OP"
-                            >
-                              <ArrowUpFromLine size={14}/> ENTREGA PARCIAL
+                            }} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-1.5 ${isOpen?'bg-gray-200 text-gray-700':'bg-orange-500 text-white hover:bg-orange-600 shadow-sm'}`}>
+                              {isOpen?<X size={13}/>:<Plus size={13}/>}
+                              {isOpen?'CERRAR':'+ REGISTRAR FASE'}
                             </button>
-                            {/* BOTÓN CIERRE OP — destaca en rojo */}
-                            <button
-                              onClick={() => handleCloseOP(req)}
-                              className="px-5 py-2 rounded-xl text-[10px] font-black uppercase bg-red-600 text-white hover:bg-red-700 shadow-md flex items-center gap-1 transition-all"
-                              title="Cerrar la OP completa y mover a Inventario de Terminados"
-                            >
-                              <CheckCircle size={14}/> CIERRE OP
-                            </button>
+                            {/* Más acciones dropdown */}
+                            <div className="relative">
+                              <button onClick={()=>setExpandedOPs(p=>({...p,[`menu-${req.id}`]:!p[`menu-${req.id}`]}))}
+                                className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1">
+                                Más Acciones... <ChevronDown size={11}/>
+                              </button>
+                              {expandedOPs[`menu-${req.id}`] && (
+                                <>
+                                  <div className="fixed inset-0 z-30" onClick={()=>setExpandedOPs(p=>({...p,[`menu-${req.id}`]:false}))}/>
+                                  <div className="absolute right-0 top-full mt-1 z-40 bg-white border border-gray-200 rounded-xl shadow-xl min-w-36 overflow-hidden">
+                                    <button onClick={()=>{setExpandedOPs(p=>({...p,[`menu-${req.id}`]:false}));setDialog({title:`Crear Lote ${lotes.length+1}`,text:`¿Crear el Lote ${lotes.length+1}?`,type:'confirm',onConfirm:()=>handleCrearNuevoLote(req)});}}
+                                      className="w-full text-left px-4 py-2.5 text-[10px] font-black uppercase hover:bg-gray-50">NUEVO LOTE</button>
+                                    <button onClick={()=>{setExpandedOPs(p=>({...p,[`menu-${req.id}`]:false}));setShowOrdenTrabajo(req.id);}}
+                                      className="w-full text-left px-4 py-2.5 text-[10px] font-black uppercase hover:bg-gray-50">ORDEN DE TRABAJO</button>
+                                    <button onClick={()=>{setExpandedOPs(p=>({...p,[`menu-${req.id}`]:false}));setShowPartialModal(req);setPartialKg('');setPartialMillares('');}}
+                                      className="w-full text-left px-4 py-2.5 text-[10px] font-black uppercase hover:bg-orange-50 text-orange-600">ENTREGA PARCIAL</button>
+                                    <button onClick={()=>{setExpandedOPs(p=>({...p,[`menu-${req.id}`]:false}));handleCloseOP(req);}}
+                                      className="w-full text-left px-4 py-2.5 text-[10px] font-black uppercase hover:bg-red-50 text-red-600 border-t border-gray-100">CIERRE OP</button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-3 p-4">
-                          {[['Extrusión','extrusion'],['Impresión','impresion'],['Sellado/Corte','sellado']].map(([label, key]) => {
-                            const st = phaseStatus(key);
-                            const batches = prod[key]?.batches || [];
-                            const isSkipped = prod[key]?.skipped;
+                        {/* ── PHASE PROGRESS BAR ── */}
+                        <div className="px-6 pb-5">
+                          <div className="flex items-center gap-0">
+                            {phases.map((p, pi) => {
+                              const st = phaseStatus(p.key);
+                              const pct = st==='inprogress' ? getPhasePct(p.key) : 0;
+                              const isActive = isOpen && activePhaseTab===p.key;
+                              return (
+                                <React.Fragment key={p.key}>
+                                  {/* Connector line before */}
+                                  {pi > 0 && (
+                                    <div className={`flex-1 h-1 rounded-full ${phaseStatus(phases[pi-1].key)==='done'?'bg-green-400':'bg-gray-200'}`}/>
+                                  )}
+                                  {/* Phase circle */}
+                                  <div className="flex flex-col items-center cursor-pointer"
+                                    onClick={()=>{if(isOpen&&prodSubMode==='fase'){setActivePhaseTab(p.key);setPhaseForm({...initialPhaseForm,date:getTodayDate()});}}}>
+                                    <div className={`w-12 h-12 rounded-full flex items-center justify-center border-2 font-black text-sm relative transition-all ${
+                                      st==='done' ? 'bg-green-500 border-green-500 text-white shadow-md' :
+                                      st==='inprogress' ? 'bg-orange-500 border-orange-500 text-white shadow-md' :
+                                      'bg-white border-gray-200 text-gray-300'
+                                    } ${isActive?'ring-2 ring-orange-400 ring-offset-2':''}`}>
+                                      {st==='done' ? <CheckCircle size={20}/> :
+                                       st==='inprogress' ? (pct > 0 ? `${pct}%` : <Loader2 size={16} className="animate-spin"/>) :
+                                       <span className="text-[10px] font-black">{p.n}</span>}
+                                    </div>
+                                    <span className={`text-[9px] font-black uppercase mt-1 ${st==='done'?'text-green-600':st==='inprogress'?'text-orange-600':'text-gray-400'}`}>{p.n}. {p.label}</span>
+                                    {st==='done' && (()=>{const allB=lotes.flatMap(l=>(l?.[p.key]?.batches||[]));const last=allB[allB.length-1];return last?.date?<span className="text-[7px] text-gray-400 font-bold">Completado el {last.date}</span>:null;})()}
+                                  </div>
+                                </React.Fragment>
+                              );
+                            })}
+                            {/* Trailing line */}
+                            <div className="flex-1 h-1 rounded-full bg-gray-200"/>
+                          </div>
+
+                          {/* Current phase tooltip-style info */}
+                          {currentPhaseKey && (()=>{
+                            const allB = lotes.flatMap(l=>(l?.[currentPhaseKey]?.batches||[]));
+                            const st = phaseStatus(currentPhaseKey);
+                            const label = phases.find(p=>p.key===currentPhaseKey)?.label||currentPhaseKey;
+                            if(st==='done') return null;
+                            const msg = st==='inprogress'
+                              ? `FASE ACTUAL: ${label.toUpperCase()} (En Proceso). ${allB.length} lote(s) registrado(s).`
+                              : `FASE ACTUAL: ${label.toUpperCase()} (Pendiente de inicio).`;
                             return (
-                              <div key={key} className={`p-3 rounded-xl border-2 text-center cursor-pointer transition-all ${st.cls} ${isOpen && activePhaseTab===key?'ring-2 ring-orange-400':''}`}
-                                onClick={()=>{ if(isOpen && prodSubMode==='fase') { setActivePhaseTab(key); let nf={...initialPhaseForm,date:getTodayDate()}; if(key==='impresion'){const ekg=(prod.extrusion?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg),0); nf.kgRecibidosImp=ekg>0?ekg.toFixed(2):'';} if(key==='sellado'){const ipb=prod.impresion?.batches||[]; const ikg=ipb.length>0?ipb.reduce((s,b)=>s+parseNum(b.producedKg),0):(prod.extrusion?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg),0); nf.kgRecibidosSel=ikg>0?ikg.toFixed(2):'';} setPhaseForm(nf); } }}>
-                                <div className="text-xl font-black">{isSkipped ? '⊘' : st.icon}</div>
-                                <div className="text-[9px] font-black uppercase mt-1">{label}</div>
-                                {batches.length > 0 && <div className="text-[8px] text-gray-500">{batches.length} lote(s)</div>}
-                                {isSkipped && <div className="text-[8px] text-red-500 font-black">OMITIDA</div>}
+                              <div className="mt-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 text-[9px] font-bold text-orange-700">
+                                {msg}
                               </div>
                             );
-                          })}
+                          })()}
                         </div>
 
+                        {/* ── OPEN PANEL ── */}
                         {isOpen && (
                           <div className="border-t border-gray-200 bg-white">
                             {/* MODO REQUISICIÓN */}
@@ -14208,35 +14266,21 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                     </div>
                                   )}
 
-                                  {activePhaseTab === 'extrusion' && (
-                                    <div className="grid grid-cols-2 gap-3">
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Ext.</label><input type="text" value={phaseForm.operadorExt} onChange={e=>setPhaseForm({...phaseForm, operadorExt: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Motor Ext.</label><input type="number" step="0.1" value={phaseForm.motorExt} onChange={e=>setPhaseForm({...phaseForm, motorExt: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tratado</label><select value={phaseForm.tratado} onChange={e=>setPhaseForm({...phaseForm, tratado: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white"><option value="">Sin tratado</option><option value="1 CARA">1 CARA</option><option value="2 CARAS">2 CARAS</option></select></div>
-                                    </div>
-                                  )}
-
                                   {activePhaseTab === 'impresion' && (
-                                    <div className="grid grid-cols-2 gap-3">
-                                      <div className="col-span-2 bg-blue-50 border border-blue-200 rounded-xl p-3">
+                                    <div className="grid grid-cols-1 gap-3">
+                                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
                                         <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">KG Recibidos de Extrusión</label>
                                         <input type="number" step="0.01" value={phaseForm.kgRecibidosImp} onChange={e=>{const kr=e.target.value;const pd=parseNum(phaseForm.producedKg);const m=pd>0?Math.max(0,parseNum(kr)-pd).toFixed(2):phaseForm.mermaKg;setPhaseForm({...phaseForm,kgRecibidosImp:kr,mermaKg:m});}} className="w-full border-2 border-blue-300 rounded-xl p-2 text-sm font-black outline-none bg-white text-blue-700 text-center" />
                                       </div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Imp.</label><input type="text" value={phaseForm.operadorImp} onChange={e=>setPhaseForm({...phaseForm, operadorImp: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cant. Colores</label><input type="number" value={phaseForm.cantColores} onChange={e=>setPhaseForm({...phaseForm, cantColores: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Relación Imp.</label><input type="number" step="0.01" value={phaseForm.relacionImp} onChange={e=>setPhaseForm({...phaseForm, relacionImp: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
                                     </div>
                                   )}
 
                                   {activePhaseTab === 'sellado' && (
-                                    <div className="grid grid-cols-2 gap-3">
-                                      <div className="col-span-2 bg-green-50 border border-green-200 rounded-xl p-3">
+                                    <div className="grid grid-cols-1 gap-3">
+                                      <div className="bg-green-50 border border-green-200 rounded-xl p-3">
                                         <label className="text-[9px] font-black text-green-700 uppercase block mb-1">KG Recibidos de Impresión/Extrusión</label>
                                         <input type="number" step="0.01" value={phaseForm.kgRecibidosSel} onChange={e=>{const kr=e.target.value;const pd=parseNum(phaseForm.producedKg);const m=pd>0?Math.max(0,parseNum(kr)-pd).toFixed(2):phaseForm.mermaKg;setPhaseForm({...phaseForm,kgRecibidosSel:kr,mermaKg:m});}} className="w-full border-2 border-green-300 rounded-xl p-2 text-sm font-black outline-none bg-white text-green-700 text-center" />
                                       </div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Operador Sell.</label><input type="text" value={phaseForm.operadorSel} onChange={e=>setPhaseForm({...phaseForm, operadorSel: e.target.value.toUpperCase()})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white uppercase" /></div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Tipo Sello</label><select value={phaseForm.tipoSello} onChange={e=>setPhaseForm({...phaseForm, tipoSello: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white"><option>Sello FC</option><option>Sello SC</option><option>Lateral</option><option>Doble Sello</option></select></div>
-                                      <div><label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Temp. Cabezal A</label><input type="number" value={phaseForm.tempCabezalA} onChange={e=>setPhaseForm({...phaseForm, tempCabezalA: e.target.value})} className="w-full border border-gray-200 rounded-xl p-2 text-xs font-bold outline-none bg-white text-center" /></div>
                                     </div>
                                   )}
 
