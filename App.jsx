@@ -13538,40 +13538,34 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                     </h5>
                                     {/* Phase-appropriate categories */}
                                     {(()=>{
-                                      // Determine which categories are valid for this phase
-                                      const phaseCats = activePhaseTab === 'extrusion'
-                                        ? ['Materia Prima','Pigmentos','Consumibles','Herramientas','Seguridad Industrial']
-                                        : activePhaseTab === 'impresion'
-                                        ? ['Tintas','Químicos','Consumibles','Seguridad Industrial']
-                                        : ['Semielaborados','Consumibles','Herramientas']; // sellado
+                                      // Show ALL categories — user selects what is needed for this phase
+                                      // The categorization is just for grouping in the dropdown
+                                      const ALL_CATS = ['Materia Prima','Pigmentos','Tintas','Químicos','Semielaborados','Consumibles','Herramientas','Seguridad Industrial','Otros'];
 
-                                      // Consolidate from ALMACEN ZI — cleanCode per item, dedup
-                                      // Show items from ZI or those with no almacén (general stock)
-                                      const ziDocs = (inventory||[]).filter(i => {
-                                        if(i.activo===false) return false;
-                                        if(!phaseCats.includes(i.category)) return false;
-                                        const rawId = i.id||'';
-                                        const alm = (i.almacen||rawId.split('___')[1]?.replace(/-/g,' ')||'').toUpperCase();
-                                        // Include: ALMACEN ZI, no almacen (empty), or items with stock in any ZI variant
-                                        return alm.includes('ZI') || alm === '' || alm === 'ALMACEN ZI' || !rawId.includes('___');
-                                      });
-
-                                      // Deduplicate by cleanCode (keep highest stock per code)
+                                      // Consolidate ALL inventory items (prefer ALMACEN ZI stock, show all with stock > 0)
                                       const seen = {};
-                                      const uniqueItems = [];
-                                      ziDocs.forEach(i => {
-                                        const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                                      (inventory||[]).filter(i => i.activo !== false && ALL_CATS.includes(i.category||'Otros')).forEach(i => {
+                                        const rawId = i.id||'';
+                                        const alm = (i.almacen || rawId.split('___')[1]?.replace(/-/g,' ') || '').toUpperCase();
+                                        const isZI = alm.includes('ZI') || alm === '' || !rawId.includes('___');
+                                        const cc = (i.displayId||rawId.split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
                                         if(!cc) return;
-                                        if(!seen[cc] || parseNum(i.stock) > parseNum(seen[cc].stock)) {
-                                          seen[cc] = {...i, _cleanCode: cc};
+                                        const qty = parseNum(i.stock||0);
+                                        // Prefer ZI doc, then any doc with highest stock
+                                        if(!seen[cc]) {
+                                          seen[cc] = {...i, _cleanCode: cc, _isZI: isZI};
+                                        } else if(isZI && !seen[cc]._isZI) {
+                                          seen[cc] = {...i, _cleanCode: cc, _isZI: true};
+                                        } else if(isZI === seen[cc]._isZI && qty > parseNum(seen[cc].stock||0)) {
+                                          seen[cc] = {...i, _cleanCode: cc, _isZI: isZI};
                                         }
                                       });
-                                      Object.values(seen).forEach(i => uniqueItems.push(i));
-                                      uniqueItems.sort((a,b)=>(a._cleanCode||'').localeCompare(b._cleanCode||''));
+                                      const uniqueItems = Object.values(seen).sort((a,b)=>(a._cleanCode||'').localeCompare(b._cleanCode||''));
 
                                       // Group by category
                                       const catGroups = {};
                                       uniqueItems.forEach(i=>{ const c=i.category||'Otros'; if(!catGroups[c])catGroups[c]=[]; catGroups[c].push(i); });
+                                      const catOrder = ['Materia Prima','Pigmentos','Tintas','Químicos','Semielaborados','Consumibles','Herramientas','Seguridad Industrial','Otros'];
 
                                       return (
                                         <div className="flex gap-2 mb-3">
@@ -13579,7 +13573,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                             <select value={phaseIngId} onChange={e=>setPhaseIngId(e.target.value)}
                                               className="w-full border-2 border-blue-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-500 bg-white">
                                               <option value="">— Seleccionar material de Almacén ZI —</option>
-                                              {phaseCats.map(cat => {
+                                              {catOrder.map(cat => {
                                                 const items = catGroups[cat] || [];
                                                 if(items.length === 0) return null;
                                                 return (
