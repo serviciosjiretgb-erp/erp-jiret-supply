@@ -436,7 +436,9 @@ export default function App() {
   const [movItems, setMovItems] = useState([]); // [{itemId, qty, unitCost, desc, unit}]
 
   const [dialog, setDialog] = useState(null);
-  const [clientSearchTerm, setClientSearchTerm] = useState(''); 
+  const [clientSearchTerm, setClientSearchTerm] = useState('');
+  const [invClientSearch, setInvClientSearch] = useState('');
+  const [showInvClientDropdown, setShowInvClientDropdown] = useState(false);
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
   const [invSearchTerm, setInvSearchTerm] = useState('');
   const [kardexProductId, setKardexProductId] = useState(''); // for kardex product filter
@@ -9870,10 +9872,76 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
                       <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
-                        <select required value={newInvoiceForm.clientRif} onChange={e=>handleInvoiceFormChange('clientRif', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
-                          <option value="">Seleccione...</option>
-                          {(clients || []).map(c=><option key={c?.rif} value={c?.rif}>{c?.name}</option>)}
-                        </select>
+                        <div className="relative">
+                          <div className="flex gap-2">
+                            {/* Search input */}
+                            <div className="relative flex-1">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14}/>
+                              <input
+                                type="text"
+                                placeholder="Buscar por RIF o Razón Social..."
+                                value={invClientSearch}
+                                onChange={e=>{
+                                  setInvClientSearch(e.target.value);
+                                  setShowInvClientDropdown(true);
+                                  // Clear selection if user types
+                                  if(!e.target.value) setNewInvoiceForm(f=>({...f, clientRif:'', clientName:''}));
+                                }}
+                                onFocus={()=>setShowInvClientDropdown(true)}
+                                className="w-full pl-9 pr-4 py-3 bg-gray-100 border-2 border-transparent rounded-xl text-xs font-bold outline-none focus:bg-white focus:border-orange-500 text-black"
+                                autoComplete="off"
+                              />
+                              {/* Clear button */}
+                              {invClientSearch && (
+                                <button type="button" onClick={()=>{setInvClientSearch('');setShowInvClientDropdown(false);setNewInvoiceForm(f=>({...f,clientRif:'',clientName:''}));}}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500">
+                                  <X size={13}/>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Selected client badge */}
+                          {newInvoiceForm.clientRif && (
+                            <div className="mt-1.5 flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-xl px-3 py-1.5">
+                              <span className="text-[9px] font-black text-orange-700 uppercase flex-1 truncate">{newInvoiceForm.clientName}</span>
+                              <span className="text-[8px] text-orange-500 font-bold">{newInvoiceForm.clientRif}</span>
+                              <button type="button" onClick={()=>{setNewInvoiceForm(f=>({...f,clientRif:'',clientName:''}));setInvClientSearch('');}}
+                                className="text-orange-400 hover:text-red-500 ml-1"><X size={11}/></button>
+                            </div>
+                          )}
+
+                          {/* Dropdown results */}
+                          {showInvClientDropdown && invClientSearch.length >= 1 && (
+                            <div className="absolute z-50 w-full mt-1 bg-white border-2 border-orange-200 rounded-xl shadow-2xl max-h-56 overflow-y-auto">
+                              {(()=>{
+                                const s = invClientSearch.toUpperCase();
+                                const filtered = (clients||[]).filter(c =>
+                                  (c?.name||'').toUpperCase().includes(s) ||
+                                  (c?.razonSocial||'').toUpperCase().includes(s) ||
+                                  (c?.rif||'').toUpperCase().includes(s)
+                                ).slice(0,30);
+                                if(filtered.length===0) return <div className="p-3 text-[10px] text-gray-400 font-bold text-center uppercase">Sin resultados para "{invClientSearch}"</div>;
+                                return filtered.map(c=>(
+                                  <button key={c.rif||c.name} type="button"
+                                    onMouseDown={e=>{
+                                      e.preventDefault();
+                                      setNewInvoiceForm(f=>({...f, clientRif:c.rif||'', clientName:c.name||c.razonSocial||'', clientAddress:c.direccion||''}));
+                                      setInvClientSearch(c.name||c.razonSocial||'');
+                                      setShowInvClientDropdown(false);
+                                    }}
+                                    className="w-full text-left px-4 py-2.5 hover:bg-orange-50 border-b border-gray-50 last:border-0 transition-colors">
+                                    <div className="font-black text-[10px] text-gray-900 uppercase">{c.name||c.razonSocial}</div>
+                                    <div className="text-[8px] font-bold text-orange-600">{c.rif} {c.telefono?`· ${c.telefono}`:''}</div>
+                                    {c.direccion && <div className="text-[8px] text-gray-400 truncate">{c.direccion}</div>}
+                                  </button>
+                                ));
+                              })()}
+                            </div>
+                          )}
+                        </div>
+                        {/* Overlay to close dropdown on outside click */}
+                        {showInvClientDropdown && <div className="fixed inset-0 z-40" onClick={()=>setShowInvClientDropdown(false)}/>}
                       </div>
                       
                       <div>
@@ -11968,16 +12036,69 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     const currentLoteNum = activeLoteIndex + 1;
     const currentLoteLabel = currentLoteObj?.nombre || `Lote ${currentLoteNum}`;
 
-    // ── All approved requisitions for this OP ──
+    // ── All approved requisitions for this OP (check BEFORE lotes guard) ──
     const approved = (invRequisitions || [])
       .filter(r => r.opId === req.id && (r.status === 'APROBADA' || r.status === 'APROBADO'))
       .sort((a,b) => (a.timestamp||0) - (b.timestamp||0));
 
-    if (approved.length === 0) {
-      return (
+    // ── No lotes yet — show all approved MP as flat history + KG produced input ──
+    if (!lotes || lotes.length === 0) {
+      // Build total items from all approved reqs
+      const allItems = {};
+      approved.forEach(r => {
+        (r.items||[]).forEach(it => {
+          if(it?.id) allItems[it.id] = (allItems[it.id]||0) + parseNum(it.qty);
+        });
+      });
+      const kgTotal = Object.values(allItems).reduce((s,v)=>s+v,0);
+      const prodKgVal = parseNum(phaseForm.producedKg);
+      const mermaVal = kgTotal > 0 && prodKgVal > 0 ? Math.max(0, kgTotal - prodKgVal) : 0;
+
+      if(approved.length === 0) return (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
           <p className="text-[10px] font-black text-yellow-700 uppercase">Sin requisición aprobada para esta OP</p>
           <p className="text-[9px] font-bold text-yellow-600 mt-1">Solicite insumos a almacén antes de registrar el lote</p>
+        </div>
+      );
+
+      return (
+        <div className="space-y-3">
+          <div className="bg-gray-800 text-white rounded-xl p-4">
+            <p className="text-[9px] font-black uppercase text-orange-400 mb-3">📦 MP Imputada a la OP — Almacén aprobado</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
+              {Object.entries(allItems).map(([id,qty])=>{
+                const inv=(inventory||[]).find(i=>i.id===id);
+                return <div key={id} className="bg-gray-700 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-gray-400 truncate">{inv?.desc||id}</div>
+                  <div className="font-black text-blue-300">{formatNum(qty)}</div>
+                  <div className="text-[8px] text-gray-400">{inv?.unit||'KG'}</div>
+                </div>;
+              })}
+            </div>
+            <div className="border-t border-gray-600 pt-2 flex justify-between">
+              <span className="text-[9px] text-gray-400 font-black uppercase">Total KG imputados:</span>
+              <span className="font-black text-orange-400">{formatNum(kgTotal)} KG</span>
+            </div>
+          </div>
+          <div className="bg-green-50 border-2 border-green-300 rounded-xl p-4">
+            <h4 className="text-[10px] font-black text-green-700 uppercase mb-3">⚙ KG Producidos</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG salidos de extrusión</label>
+                <input type="number" step="0.01" min="0" value={phaseForm.producedKg}
+                  onChange={e=>{const kg=parseNum(e.target.value);const m=kgTotal>0?Math.max(0,kgTotal-kg):0;setPhaseForm({...phaseForm,producedKg:e.target.value,mermaKg:m.toFixed(2)});}}
+                  className="w-full border-2 border-green-300 rounded-xl p-3 text-lg font-black text-center outline-none focus:border-green-500 bg-white"
+                  placeholder={kgTotal>0?`Máx. ${formatNum(kgTotal)} KG`:'0.00'}/>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Merma KG (Auto)</label>
+                <div className={`w-full border-2 rounded-xl p-3 text-lg font-black text-center ${mermaVal>0?'border-red-300 bg-red-50 text-red-700':'border-gray-200 bg-gray-50 text-gray-400'}`}>
+                  {prodKgVal>0?formatNum(mermaVal):'—'} KG
+                  {mermaVal>0&&kgTotal>0&&<span className="text-[10px] block">({((mermaVal/kgTotal)*100).toFixed(1)}%)</span>}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       );
     }
