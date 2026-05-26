@@ -3147,36 +3147,126 @@ export default function App() {
           timestamp: Date.now()
         };
         await setDoc(getDocRef('finishedGoodsInventory', finishedEntry.id), finishedEntry);
-        // ── AUTO-SYNC FG → ALMACEN ZI (Inventario General) ──
+        // ── AUTO-SYNC FG → Inventario Terminados (ALMACEN ZI) ──
+        // Find the EXISTING inventory PT doc for this product (match by cleanCode from finishedGoodsInventory)
+        // Use the same cleanCode logic as the rest of the system
         try {
           const esTerFG = finishedEntry.tipoProducto === 'TERMOENCOGIBLE';
-          const fgInvId = `${reqId}___ALMACEN-ZI`;
-          const fgInvDoc = {
-            id: fgInvId, desc: finishedEntry.producto || reqDoc.desc || reqId,
-            category: 'Productos Terminados',
-            subcategory: esTerFG ? 'Termoencogibles' : 'Bolsas Plásticas',
-            unit: esTerFG ? 'kg' : 'millares',
-            stock: esTerFG ? kgFinales : millaresFinales,
-            cost: parseNum(finishedEntry.costoUnitario || finishedEntry.costoUnitarioMillar || 0),
-            almacen: 'ALMACEN ZI',
-            opId: reqId, cliente: finishedEntry.cliente || '',
-            timestamp: Date.now(), updatedAt: getTodayDate()
-          };
-          await setDoc(getDocRef('inventory', fgInvId), fgInvDoc, { merge: true });
-        } catch(e){ console.warn('Auto-inv FG error:', e); }
+          const newQty = esTerFG ? kgFinales : millaresFinales;
+          const unit = esTerFG ? 'kg' : 'millares';
+          const subcategory = esTerFG ? 'Termoencogibles' : 'Bolsas Plásticas';
+          const descFG = finishedEntry.producto || reqDoc.desc || reqId;
+
+          // Compute cost from all materials used in this OP
+          const allApprovedReqs = (invRequisitions||[]).filter(r => r.opId === reqId && (r.status==='APROBADA'||r.status==='APROBADO'));
+          let totalCostMP = 0, totalKgMP = 0;
+          allApprovedReqs.forEach(r => {
+            (r.items||[]).forEach(it => {
+              const invItem = (inventory||[]).find(i => {
+                const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                const itcc = (it.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                return i.id===it.id || cc===itcc;
+              });
+              const qty = parseNum(it.qty||0);
+              const cost = parseNum(invItem?.cost||0);
+              totalCostMP += qty * cost;
+              totalKgMP += qty;
+            });
+          });
+          // costoUnitario = total MP cost / qty produced
+          const costoUnitario = newQty > 0 && totalCostMP > 0 ? totalCostMP / newQty : 0;
+
+          // ── Find the existing PT inventory doc to update ──
+          // Match strategy: (1) exact cleanCode match against finishedGoodsInventory, 
+          // (2) description match, (3) create new with structured code
+          let existingInvDoc = null;
+          const descNorm = descFG.toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
+
+          // Try to find existing inventory PT doc by description similarity
+          const ptInvDocs = (inventory||[]).filter(i => i.category==='Productos Terminados' && i.activo!==false);
+          existingInvDoc = ptInvDocs.find(i => {
+            const iNorm = (i.desc||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
+            return iNorm === descNorm;
+          }) || ptInvDocs.find(i => {
+            // match by cleanCode without ALMACEN suffix
+            const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+            const fgCC = _codigoFinal.replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+            return cc === fgCC;
+          });
+
+          if(existingInvDoc) {
+            // ── ADD to existing stock, update cost ──
+            const existingCleanId = existingInvDoc.displayId || existingInvDoc.id.split('___')[0];
+            // Find all docs for this cleanCode (all warehouses)
+            const allDocsForCode = (inventory||[]).filter(i => {
+              const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+              return cc === existingCleanId;
+            });
+            // Update the ZI doc specifically (or the first one found)
+            const ziDoc = allDocsForCode.find(i => (i.almacen||i.id||'').toUpperCase().includes('ZI')) || allDocsForCode[0];
+            if(ziDoc) {
+              const prevStock = parseNum(ziDoc.stock||0);
+              const newStock = prevStock + newQty;
+              // Weighted average cost
+              const newCost = costoUnitario > 0
+                ? ((prevStock * parseNum(ziDoc.cost||0)) + (newQty * costoUnitario)) / newStock
+                : parseNum(ziDoc.cost||0);
+              await setDoc(getDocRef('inventory', ziDoc.id), {
+                ...ziDoc,
+                stock: newStock,
+                cost: newCost,
+                timestamp: Date.now(),
+                updatedAt: getTodayDate()
+              }, { merge: true });
+            }
+          } else {
+            // ── Create new PT inventory doc with structured cleanCode ──
+            const fgInvId = `${_codigoFinal}___ALMACEN-ZI`;
+            await setDoc(getDocRef('inventory', fgInvId), {
+              id: fgInvId, displayId: _codigoFinal,
+              desc: descFG,
+              category: 'Productos Terminados',
+              subcategory,
+              unit,
+              stock: newQty,
+              cost: costoUnitario,
+              almacen: 'ALMACEN ZI',
+              opId: reqId, cliente: finishedEntry.cliente || '',
+              activo: true,
+              timestamp: Date.now(), updatedAt: getTodayDate()
+            });
+          }
+
+          // Also update costoUnitario on finishedGoodsInventory entry
+          if(costoUnitario > 0) {
+            await setDoc(getDocRef('finishedGoodsInventory', finishedEntry.id), {
+              ...finishedEntry,
+              costoUnitario: esTerFG ? costoUnitario : 0,
+              costoUnitarioMillar: !esTerFG ? costoUnitario : 0,
+              timestamp: Date.now()
+            }, { merge: true });
+          }
+        } catch(e){ console.warn('Auto-inv FG error:', e.message); }
         await pushNotif('OP_CERRADA', '🏁 OP Finalizada', `La OP #${reqId.replace('OP-','')} fue completada y movida a Terminados.`, { opId: reqId, destino:'ventas', targetTab:'ventas' });
         // ── Kardex ENTRADA for FG produced ──
         try {
-          const fgProdQty = finishedEntry.tipoProducto==='TERMOENCOGIBLE' ? parseNum(finishedEntry.kgProducidos||0) : parseNum(finishedEntry.millares||0);
-          const fgProdCost = finishedEntry.tipoProducto==='TERMOENCOGIBLE' ? parseNum(finishedEntry.costoUnitario||0) : parseNum(finishedEntry.costoUnitarioMillar||0);
+          const esTerKdx = finishedEntry.tipoProducto==='TERMOENCOGIBLE';
+          const fgProdQty = esTerKdx ? parseNum(finishedEntry.kgProducidos||0) : parseNum(finishedEntry.millares||0);
+          // Recompute cost for kardex
+          const allReqsKdx = (invRequisitions||[]).filter(r => r.opId === reqId && (r.status==='APROBADA'||r.status==='APROBADO'));
+          let kdxCostTotal = 0, kdxQtyTotal = 0;
+          allReqsKdx.forEach(r => { (r.items||[]).forEach(it => { const itInv=(inventory||[]).find(i=>i.id===it.id||(i.displayId||(i.id||'').split('___')[0])===((it.id||'').split('___')[0])); const q=parseNum(it.qty||0); kdxCostTotal+=q*parseNum(itInv?.cost||0); kdxQtyTotal+=q; }); });
+          const kdxCostUnit = fgProdQty > 0 && kdxCostTotal > 0 ? kdxCostTotal / fgProdQty : 0;
           if(fgProdQty > 0) await addDoc(getColRef('inventoryMovements'), {
-            itemId:`FG::${finishedEntry.id}`, itemDesc:`${finishedEntry.producto||''} - ${finishedEntry.cliente||''}`,
-            type:'ENTRADA_INICIAL', qty:fgProdQty, unitCost:fgProdCost, totalValue:fgProdQty*fgProdCost,
-            previousStock:0, newStock:fgProdQty, docRef:finishedEntry.opId||'PRODUCCION',
-            notes:`Produccion ${finishedEntry.opId||''} — ${finishedEntry.producto||''}`,
-            date:getTodayDate(), user:appUser?.name||'Admin', timestamp:Date.now(), isFG:true
+            itemId: _codigoFinal,
+            itemDesc:`${finishedEntry.producto||''} — ${finishedEntry.cliente||''}`,
+            type:'ENTRADA', qty:fgProdQty, unitCost:kdxCostUnit, totalValue:fgProdQty*kdxCostUnit,
+            reference:`OP-CIERRE-${reqId}`,
+            notes:`OP #${reqId.replace('OP-','')} cerrada — ${finishedEntry.producto||''} — ${finishedEntry.cliente||''}`,
+            date:getTodayDate(), user:appUser?.name||'Admin', timestamp:Date.now(), isFG:true,
+            almacen:'ALMACEN ZI'
           });
-        } catch(e){}
+        } catch(e){ console.warn('Kardex FG error:', e.message); }
         return;
       }
     } catch (error) {
