@@ -13815,21 +13815,20 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             <div className="flex-1 h-1 rounded-full bg-gray-200"/>
                           </div>
 
-                          {/* Current phase tooltip-style info */}
-                          {currentPhaseKey && (()=>{
-                            const allB = lotes.flatMap(l=>(l?.[currentPhaseKey]?.batches||[]));
-                            const st = phaseStatus(currentPhaseKey);
-                            const label = phases.find(p=>p.key===currentPhaseKey)?.label||currentPhaseKey;
-                            if(st==='done') return null;
-                            const msg = st==='inprogress'
-                              ? `FASE ACTUAL: ${label.toUpperCase()} (En Proceso). ${allB.length} lote(s) registrado(s).`
-                              : `FASE ACTUAL: ${label.toUpperCase()} (Pendiente de inicio).`;
-                            return (
-                              <div className="mt-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 text-[9px] font-bold text-orange-700">
-                                {msg}
-                              </div>
-                            );
-                          })()}
+                        {/* Phase status note — only for non-done phases */}
+                        {currentPhaseKey && phaseStatus(currentPhaseKey) !== 'done' && (()=>{
+                          const allB = lotes.flatMap(l=>(l?.[currentPhaseKey]?.batches||[]));
+                          const st = phaseStatus(currentPhaseKey);
+                          const label = phases.find(p=>p.key===currentPhaseKey)?.label||currentPhaseKey;
+                          const msg = st==='inprogress'
+                            ? `${label.toUpperCase()} en proceso — ${allB.length} lote(s) registrado(s).`
+                            : `${label.toUpperCase()} pendiente de inicio.`;
+                          return (
+                            <div className="mt-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 text-[9px] font-bold text-orange-700">
+                              {msg}
+                            </div>
+                          );
+                        })()}
                         </div>
 
                         {/* ── OPEN PANEL ── */}
@@ -14505,13 +14504,62 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 <div className="text-center py-12 text-gray-400"><Gauge size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">No hay OPs en proceso</p></div>
               ) : filteredOPs.map(req => {
                 const prod = req.production || {};
+                const norm2 = (id) => String(id||'').replace(/^OP-/i,'').trim();
                 const filterReal = b=>b.operator!=='ALMACÉN (DESPACHO)' && (parseNum(b.producedKg)>0||(b.insumos||[]).length>0);
-                const extB=(prod.extrusion?.batches||[]).filter(filterReal);
-                const impB=(prod.impresion?.batches||[]).filter(filterReal);
-                const selB=(prod.sellado?.batches||[]).filter(filterReal);
-                const allBatches=[...extB.map(b=>({...b,fase:'EXTRUSIÓN'})),...impB.map(b=>({...b,fase:'IMPRESIÓN'})),...selB.map(b=>({...b,fase:'SELLADO'}))];
+
+                // Read batches from LOTES structure (new) OR flat (legacy)
+                const allLotes = getLotes(req);
+                let extB, impB, selB;
+                if(allLotes.length > 0) {
+                  extB = allLotes.flatMap(l=>(l?.extrusion?.batches||[]).filter(filterReal)).map(b=>({...b,fase:'EXTRUSIÓN'}));
+                  impB = allLotes.flatMap(l=>(l?.impresion?.batches||[]).filter(filterReal)).map(b=>({...b,fase:'IMPRESIÓN'}));
+                  selB = allLotes.flatMap(l=>(l?.sellado?.batches||[]).filter(filterReal)).map(b=>({...b,fase:'SELLADO'}));
+                } else {
+                  extB=(prod.extrusion?.batches||[]).filter(filterReal).map(b=>({...b,fase:'EXTRUSIÓN'}));
+                  impB=(prod.impresion?.batches||[]).filter(filterReal).map(b=>({...b,fase:'IMPRESIÓN'}));
+                  selB=(prod.sellado?.batches||[]).filter(filterReal).map(b=>({...b,fase:'SELLADO'}));
+                }
+                const allBatches=[...extB,...impB,...selB];
                 const lastB=selB.length>0?selB:impB.length>0?impB:extB;
-                const mpInjectada=extB.reduce((s,b)=>{const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);return s+(ins>0?ins:parseNum(b.kgRecibidos||b.totalInsumosKg||0));},0)||impB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0)||selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0);
+
+                // ── MP Inyectada from approved requisitions (authoritative) ──
+                const approvedReqsOP = (invRequisitions||[]).filter(r=>
+                  ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status) &&
+                  norm2(r.opId)===norm2(req.id)
+                );
+                const mpInjectada = approvedReqsOP.length > 0
+                  ? approvedReqsOP.reduce((s,r)=>s+(r.items||[]).reduce((ss,it)=>{
+                      const inv=(inventory||[]).find(i=>i.id===it.id);
+                      const u=(inv?.unit||'kg').toLowerCase();
+                      if(u.startsWith('mill')||u==='und'||u==='unidad'||u==='m'||u==='mts') return ss;
+                      return ss+parseNum(it.qty||0);
+                    },0),0)
+                  : extB.reduce((s,b)=>{ const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0); return s+(ins>0?ins:parseNum(b.kgRecibidos||b.totalInsumosKg||0)); },0);
+
+                // Build per-lote req mapping for entKg column
+                const loteReqMap = {};
+                allLotes.forEach((l,li)=>{
+                  const reqId = l.reqId;
+                  const usedByOthers = allLotes.filter((_,xi)=>xi!==li).map(x=>x.reqId).filter(Boolean);
+                  const loteReq = approvedReqsOP.find(r=>r.id===reqId)
+                    || approvedReqsOP.find(r=>r.loteIndex===li)
+                    || approvedReqsOP.find(r=>!usedByOthers.includes(r.id))
+                    || approvedReqsOP[Math.min(li,approvedReqsOP.length-1)];
+                  const kgLote = (loteReq?.items||[]).reduce((s,it)=>{
+                    const inv=(inventory||[]).find(i=>i.id===it.id);
+                    const u=(inv?.unit||'kg').toLowerCase();
+                    if(u.startsWith('mill')||u==='und') return s;
+                    return s+parseNum(it.qty||0);
+                  },0);
+                  loteReqMap[li] = kgLote || mpInjectada; // fallback to total if can't split
+                });
+                // For flat (no lotes) — all batches use total mpInjectada
+                const getEntKgForBatch = (b, batchLoteIdx) => {
+                  if(allLotes.length > 0 && loteReqMap[batchLoteIdx] > 0) return loteReqMap[batchLoteIdx];
+                  const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);
+                  return ins>0 ? ins : (mpInjectada>0 ? mpInjectada : parseNum(b.kgRecibidos||b.totalInsumosKg||0));
+                };
+
                 const kgProd=lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
                 const millProd=selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
                 const mermaTotal=allBatches.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
@@ -14520,16 +14568,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 const solicitado=esTermo?parseNum(req.requestedKg):parseNum(req.cantidad);
                 const producido=esTermo?kgProd:millProd;
                 const pctAvance=solicitado>0?Math.min(100,(producido/solicitado)*100):0;
-                // Materiales consumidos
-                const matsConsumidos={};
-                allBatches.forEach(b=>(b.insumos||[]).forEach(ing=>{matsConsumidos[ing.id]=(matsConsumidos[ing.id]||0)+parseNum(ing.qty);}));
-                // Materiales despachados
-                const matsDespachados={};
-                (invRequisitions||[]).filter(r=>{const a=String(r.opId||'').replace(/^OP-/i,'').trim();const b2=String(req.id||'').replace(/^OP-/i,'').trim();return a===b2&&(r.status==='APROBADO'||r.status==='APROBADA'||r.status==='PROCESADA'||r.status==='PROCESADO');}).flatMap(r=>r.items||[]).forEach(it=>{if(it?.id)matsDespachados[it.id]=(matsDespachados[it.id]||0)+parseNum(it.qty);});
-                // Costos
                 const costoMP=allBatches.reduce((s,b)=>s+parseNum(b.cost||0),0);
                 const costoXkg=kgProd>0?costoMP/kgProd:0;
                 const costoXmill=millProd>0?costoMP/millProd:0;
+                // Insumos from approved reqs (authoritative)
+                const matsConsumidos={};
+                approvedReqsOP.forEach(r=>(r.items||[]).forEach(it=>{
+                  if(it?.id) matsConsumidos[it.id]=(matsConsumidos[it.id]||0)+parseNum(it.qty);
+                }));
                 return (
                   <div key={req.id} className="border-2 border-orange-200 rounded-2xl overflow-hidden mb-6">
                     {/* Header OP — siempre visible */}
@@ -14656,11 +14702,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                   if (!fasesLote.length) continue;
                                   fasesLote.forEach((f, fi) => {
                                     const { label, b, colorCls } = f;
-                                    const insKg = (b.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
-                                    const entKg = label==='EXTRUSIÓN' && insKg>0 ? insKg : parseNum(b.kgRecibidos||b.totalInsumosKg||0);
+                                    // entKg = KG from requisition for this lote, not from batch
+                                    const entKg = getEntKgForBatch(b, li);
                                     const pctM = entKg>0 ? ((parseNum(b.mermaKg)/entKg)*100).toFixed(1) : '0.0';
                                     const millBatch = parseNum(b.techParams?.millares||0);
-                                    // Millares solo en fases que no son extrusión (bolsas) o siempre (termo)
                                     const showMillCol = esTermo || impB.length > 0 || selB.length > 0;
                                     const millVal = esTermo
                                       ? (label==='EXTRUSIÓN' ? formatNum(parseNum(b.producedKg))+' KG' : '—')
@@ -14699,31 +14744,37 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         </div>
                       )}
 
-                      {/* 4. Balance de materiales */}
-                      {Object.keys(matsDespachados).length > 0 && (
+                      {/* 4. Insumos despachados por almacén (from requisitions) */}
+                      {Object.keys(matsConsumidos).length > 0 && (
                         <div>
-                          <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">4. Balance de Materiales — Despachado vs Consumido</h4>
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                            {Object.entries(matsDespachados).map(([id,desp])=>{
-                              const inv=(inventory||[]).find(i=>i.id===id);
-                              const cons=parseNum(matsConsumidos[id]||0);
-                              const pct=desp>0?(cons/desp*100):0;
-                              const rest=Math.max(0,desp-cons);
-                              return (
-                                <div key={id} className="bg-white border border-gray-200 rounded-xl p-3">
-                                  <div className="font-black text-[10px] text-gray-800 mb-1">{inv?.desc||id}</div>
-                                  <div className="flex justify-between text-[9px] mb-1">
-                                    <span className="text-blue-600">Desp: {formatNum(desp)} KG</span>
-                                    <span className="text-orange-600">Cons: {formatNum(cons)} KG</span>
-                                  </div>
-                                  <div className="w-full bg-gray-200 rounded-full h-1.5 mb-1">
-                                    <div className={`h-1.5 rounded-full ${pct>90?'bg-red-500':pct>60?'bg-orange-400':'bg-green-500'}`} style={{width:`${Math.min(100,pct)}%`}}></div>
-                                  </div>
-                                  <div className={`text-[9px] font-black text-right ${rest<=0?'text-red-600':'text-green-600'}`}>Rest: {formatNum(rest)} KG</div>
-                                </div>
-                              );
-                            })}
-                          </div>
+                          <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">4. Insumos Despachados a Planta</h4>
+                          <table className="w-full text-xs border-collapse">
+                            <thead><tr className="bg-gray-100 text-[9px] font-black uppercase">
+                              <th className="p-2 border text-left">Material</th>
+                              <th className="p-2 border text-center">KG Despachados</th>
+                              <th className="p-2 border text-center">Costo Unit.</th>
+                              <th className="p-2 border text-center">Costo Total</th>
+                            </tr></thead>
+                            <tbody>
+                              {Object.entries(matsConsumidos).map(([id,qty])=>{
+                                let inv=(inventory||[]).find(i=>i.id===id);
+                                if(!inv){const cc=(id||'').split('___')[0].replace(/-RESTORE$/i,'').trim();inv=(inventory||[]).find(i=>{const xcc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').trim();return xcc===cc;});}
+                                const cu=parseNum(inv?.cost||0);
+                                return (<tr key={id} className="hover:bg-gray-50">
+                                  <td className="p-2 border font-black text-blue-700">{(id||'').split('___')[0]}<span className="text-[9px] text-gray-400 font-normal ml-1">{inv?.desc||''}</span></td>
+                                  <td className="p-2 border text-center font-black text-blue-700">{formatNum(qty)} kg</td>
+                                  <td className="p-2 border text-center font-bold">${formatNum(cu)}</td>
+                                  <td className="p-2 border text-center font-black text-orange-700">${formatNum(qty*cu)}</td>
+                                </tr>);
+                              })}
+                            </tbody>
+                            <tfoot><tr className="bg-gray-100 font-black text-[10px]">
+                              <td className="p-2 border text-right uppercase">Total:</td>
+                              <td className="p-2 border text-center text-blue-700">{formatNum(mpInjectada)} kg</td>
+                              <td className="p-2 border"></td>
+                              <td className="p-2 border text-center text-orange-700">${formatNum(Object.entries(matsConsumidos).reduce((s,[id,qty])=>{let inv=(inventory||[]).find(i=>i.id===id);if(!inv){const cc=(id||'').split('___')[0];inv=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===cc);}return s+qty*parseNum(inv?.cost||0);},0))}</td>
+                            </tr></tfoot>
+                          </table>
                         </div>
                       )}
 
