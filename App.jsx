@@ -3350,20 +3350,45 @@ export default function App() {
         }
         if (isClose) currentPhase.isClosed = true;
     }
-    const newProd = { ...(req.production || {}), [activePhaseTab]: currentPhase }; let newStatus = (activePhaseTab === 'sellado' && currentPhase.isClosed) ? 'COMPLETADO' : 'EN PROCESO';
+    const newProd = { ...(req.production || {}), [activePhaseTab]: currentPhase };
+    let newStatus = (activePhaseTab === 'sellado' && currentPhase.isClosed) ? 'COMPLETADO' : 'EN PROCESO';
     
     if (newStatus === 'COMPLETADO' && isClose) {
         await handleFinishProduction(req.id, { producedKg: prodKg, millaresProd: phaseForm?.millaresProd, observations: 'Finalizado' });
     }
 
-    await updateDoc(getDocRef('requirements', req.id), { production: newProd, status: newStatus }); setPhaseForm({ ...initialPhaseForm, date: getTodayDate() }); setDialog({ title: 'Éxito', text: 'Reporte guardado.', type: 'alert' });
+    // If the OP uses the new lotes structure, save the batch INTO the active lote instead of flat
+    const existingLotes = req.production?.lotes;
+    if (Array.isArray(existingLotes) && existingLotes.length > 0) {
+      const updatedLotes = existingLotes.map((l, li) => {
+        if(li !== activeLoteIndex) return l;
+        return {
+          ...l,
+          [activePhaseTab]: currentPhase
+        };
+      });
+      await updateDoc(getDocRef('requirements', req.id), {
+        'production.lotes': updatedLotes,
+        status: newStatus
+      });
+    } else {
+      await updateDoc(getDocRef('requirements', req.id), { production: newProd, status: newStatus });
+    }
+    setPhaseForm({ ...initialPhaseForm, date: getTodayDate() });
+    setDialog({ title: 'Éxito', text: 'Reporte guardado.', type: 'alert' });
   };
 
   const handleDeleteBatch = async (reqId, phase, batchId) => {
     setDialog({ title: `ELIMINAR LOTE`, text: `¿Seguro que desea eliminar este lote parcial?`, type: 'confirm', onConfirm: async () => {
         const req = (requirements || []).find(r => r?.id === reqId); let currentPhase = { ...(req?.production?.[phase] || {}) }; const bIdx = (currentPhase.batches || []).findIndex(b => b?.id === batchId);
         if (bIdx >= 0) { const batch = currentPhase.batches[bIdx]; const fbBatch = writeBatch(db); for (let ing of (batch.insumos || [])) { const item = (inventory || []).find(i => i?.id === ing?.id); if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (ing?.qty || 0) }); } await fbBatch.commit(); currentPhase.batches.splice(bIdx, 1); }
-        await updateDoc(getDocRef('requirements', reqId), { production: { ...(req?.production || {}), [phase]: currentPhase } });
+        const existingLotes2 = req?.production?.lotes;
+        if(Array.isArray(existingLotes2) && existingLotes2.length > 0) {
+          const updatedL = existingLotes2.map((l,li)=>li===activeLoteIndex?{...l,[phase]:currentPhase}:l);
+          await updateDoc(getDocRef('requirements', reqId), {'production.lotes':updatedL});
+        } else {
+          await updateDoc(getDocRef('requirements', reqId), { production: { ...(req?.production || {}), [phase]: currentPhase } });
+        }
     }});
   };
 
