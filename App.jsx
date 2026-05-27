@@ -14505,7 +14505,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               ) : filteredOPs.map(req => {
                 const prod = req.production || {};
                 const norm2 = (id) => String(id||'').replace(/^OP-/i,'').trim();
-                const filterReal = b=>b.operator!=='ALMACÉN (DESPACHO)' && (parseNum(b.producedKg)>0||(b.insumos||[]).length>0);
+                const filterReal = b => b && b.operator!=='ALMACÉN (DESPACHO)' && (b.id || b.date); // any saved batch
 
                 // Read batches from LOTES structure (new) OR flat (legacy)
                 const allLotes = getLotes(req);
@@ -14675,7 +14675,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       )}
 
                       {/* 3. Detalle de fases */}
-                      {(extB.length > 0 || impB.length > 0 || selB.length > 0) && (
+                      {(extB.length > 0 || impB.length > 0 || selB.length > 0 || approvedReqsOP.length > 0) && (
                         <div>
                           <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">3. Detalle por Fase / Lote</h4>
                           <table className="w-full text-xs border-collapse">
