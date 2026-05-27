@@ -14505,7 +14505,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               ) : filteredOPs.map(req => {
                 const prod = req.production || {};
                 const norm2 = (id) => String(id||'').replace(/^OP-/i,'').trim();
-                const filterReal = b => b && b.operator!=='ALMACÉN (DESPACHO)' && (b.id || b.date); // any saved batch
+                const filterReal = b => b && b.operator!=='ALMACÉN (DESPACHO)'; // accept any valid batch
 
                 // Read batches from LOTES structure (new) OR flat (legacy)
                 const allLotes = getLotes(req);
@@ -14555,9 +14555,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 });
                 // For flat (no lotes) — all batches use total mpInjectada
                 const getEntKgForBatch = (b, batchLoteIdx) => {
+                  // For new OPs: use KG from requisition for this lote
                   if(allLotes.length > 0 && loteReqMap[batchLoteIdx] > 0) return loteReqMap[batchLoteIdx];
-                  const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);
-                  return ins>0 ? ins : (mpInjectada>0 ? mpInjectada : parseNum(b.kgRecibidos||b.totalInsumosKg||0));
+                  // For old OPs: use batch's stored insumos sum, then kgRecibidos, then mpInjectada
+                  const ins=(b?.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);
+                  if(ins > 0) return ins;
+                  const kr = parseNum(b?.kgRecibidos||b?.kgRecibidosImp||b?.kgRecibidosSel||b?.totalInsumosKg||0);
+                  if(kr > 0) return kr;
+                  return mpInjectada > 0 ? mpInjectada : 0;
                 };
 
                 const kgProd=lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
@@ -14571,11 +14576,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 const costoMP=allBatches.reduce((s,b)=>s+parseNum(b.cost||0),0);
                 const costoXkg=kgProd>0?costoMP/kgProd:0;
                 const costoXmill=millProd>0?costoMP/millProd:0;
-                // Insumos from approved reqs (authoritative)
+                // Insumos: primary = approved reqs, fallback = batch insumos
                 const matsConsumidos={};
                 approvedReqsOP.forEach(r=>(r.items||[]).forEach(it=>{
                   if(it?.id) matsConsumidos[it.id]=(matsConsumidos[it.id]||0)+parseNum(it.qty);
                 }));
+                // Also add from batch insumos if not already in approved reqs (legacy OPs)
+                if(Object.keys(matsConsumidos).length===0) {
+                  allBatches.forEach(b=>(b.insumos||[]).forEach(ing=>{
+                    if(ing?.id) matsConsumidos[ing.id]=(matsConsumidos[ing.id]||0)+parseNum(ing.qty);
+                  }));
+                }
                 return (
                   <div key={req.id} className="border-2 border-orange-200 rounded-2xl overflow-hidden mb-6">
                     {/* Header OP — siempre visible */}
