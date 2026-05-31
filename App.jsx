@@ -5452,7 +5452,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 {(fgSearch||fgCatFilter!=='TODAS') && <button onClick={()=>{setFgSearch('');setFgCatFilter('TODAS');}} className="px-3 py-2 rounded-xl text-[9px] font-black text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 uppercase">✕ Limpiar</button>}
               </div>
 
-              <button onClick={handleRecalcularPTdesdeOPs} className="px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all bg-orange-500 text-white hover:bg-orange-600" title="Carga costo y existencia desde las OPs cerradas"><RefreshCw size={14}/> RECALCULAR DESDE OPs</button>
+              <button onClick={handleRecalcularPTdesdeOPs} className="px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all bg-orange-500 text-white hover:bg-orange-600" title="Carga la producción de las OPs cerradas a inventario (sin duplicar ni tocar lo facturado)"><RefreshCw size={14}/> CARGAR OPs CERRADAS</button>
               <button onClick={()=>setShowCargarProducto(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showCargarProducto?'bg-red-500 text-white':'bg-green-600 text-white hover:bg-green-700'}`}><Plus size={14}/> {showCargarProducto?'CANCELAR':'CARGAR PRODUCTO'}</button>
               <button onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
             </div>
@@ -11942,8 +11942,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
   // y crea los que falten (ej. termoencogibles / venilac). NO toca OPs ni avances.
   const handleRecalcularPTdesdeOPs = () => {
     setDialog({
-      title: 'Recalcular Productos Terminados',
-      text: 'Se revisarán las OPs CERRADAS (COMPLETADO) y se cargará el COSTO y la EXISTENCIA faltantes a los Productos Terminados.\n\n• Solo se actualizan los que están en 0 (los que ya tienen valor NO se tocan).\n• Los productos sin documento se crean (termoencogibles, venilac, etc.).\n• No modifica las OPs ni los avances de producción.\n\n¿Continuar?',
+      title: 'Cargar OPs cerradas a Inventario',
+      text: 'Se revisarán las OPs CERRADAS (COMPLETADO) y se cargará su producción a Productos Terminados:\n\n• Cada OP se cuenta UNA sola vez (se registra en el producto).\n• Productos que faltan se crean (termoencogibles, venilac, etc.).\n• Productos en 0 se rellenan con su costo y existencia.\n• Productos que YA tienen datos o stock facturado NO se modifican.\n• Es seguro pulsarlo de nuevo: no duplica ni restaura stock vendido.\n\nNo modifica las OPs ni los avances de producción. ¿Continuar?',
       type: 'confirm',
       onConfirm: async () => {
         try {
@@ -12007,56 +12007,80 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               subcategory: esTermo?'Termoencogibles':'Bolsas Plásticas', unit: esTermo?'kg':'millares' };
           };
 
-          // 1) Agregar producción de TODAS las OPs cerradas por (dims + tipo)
+          // 1) Agrupar producción de las OPs CERRADAS por producto (dims + tipo)
           const closed = (requirements||[]).filter(r => r.status==='COMPLETADO');
-          const agg = {}; // key: dims|T/B -> {qty, costTotal, meta}
+          const groups = {}; // key -> {qty, costTotal, opIds:[], meta}
           closed.forEach(req => {
             const c = compOP(req);
             if(!c.dims || c.qty<=0) return;
             const key = `${c.dims}|${c.esTermo?'T':'B'}`;
-            if(!agg[key]) agg[key] = { qty:0, costTotal:0, meta:c };
-            agg[key].qty += c.qty;
-            agg[key].costTotal += c.costTotal;
+            if(!groups[key]) groups[key] = { qty:0, costTotal:0, opIds:[], meta:c };
+            groups[key].qty += c.qty;
+            groups[key].costTotal += c.costTotal;
+            groups[key].opIds.push({ id:req.id, qty:c.qty, costTotal:c.costTotal });
           });
 
-          // 2) Aplicar a inventario: actualizar 0/0 existentes o crear faltantes
-          let updated = 0, created = 0;
-          for(const key of Object.keys(agg)){
-            const a = agg[key];
-            if(a.qty<=0) continue;
-            const costUnit = a.costTotal>0 ? a.costTotal / a.qty : 0;
-            const m = a.meta;
+          // 2) Cargar a inventario de forma SEGURA e idempotente
+          let creados = 0, llenados = 0, marcados = 0, yaCargadas = 0;
+          for(const key of Object.keys(groups)){
+            const g = groups[key];
+            const m = g.meta;
             const ptDocs = (inventory||[]).filter(i => i.category==='Productos Terminados' && i.activo!==false);
-            let doc = ptDocs.find(i => {
-              const esT = (i.subcategory==='Termoencogibles') || (i.unit||'').toLowerCase()==='kg';
-              return dimsFromCode(i.displayId||i.id)===m.dims && esT===m.esTermo;
-            }) || ptDocs.find(i => (i.displayId||(i.id||'').split('___')[0]) === m.cleanCode);
+            const descN = m.descFG.toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
+            let doc = ptDocs.find(i => (i.desc||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22) === descN)
+              || ptDocs.find(i => (i.displayId||(i.id||'').split('___')[0]) === m.cleanCode)
+              || ptDocs.find(i => {
+                   const esT=(i.subcategory==='Termoencogibles')||(i.unit||'').toLowerCase()==='kg';
+                   return dimsFromCode(i.displayId||i.id)===m.dims && esT===m.esTermo;
+                 });
 
-            if(doc){
-              const curStock = parseNum(doc.stock), curCost = parseNum(doc.cost);
-              if(curStock>0 && curCost>0) continue; // ya tiene datos: no tocar
-              await setDoc(getDocRef('inventory', doc.id), {
-                ...doc,
-                stock: curStock>0 ? curStock : a.qty,
-                cost:  curCost>0  ? curCost  : costUnit,
-                timestamp: Date.now(), updatedAt: getTodayDate()
-              }, { merge: true });
-              updated++;
-            } else {
+            if(!doc){
+              // No existe documento → producto nunca cargado: crear con costo + existencia
+              const costUnit = g.costTotal>0 ? g.costTotal/g.qty : 0;
               const newId = `${m.cleanCode}___ALMACEN-ZI`;
               await setDoc(getDocRef('inventory', newId), {
                 id:newId, displayId:m.cleanCode, desc:m.descFG,
                 category:'Productos Terminados', subcategory:m.subcategory, unit:m.unit,
-                stock:a.qty, cost:costUnit, almacen:'ALMACEN ZI', activo:true,
+                stock:g.qty, cost:costUnit, opsAplicadas:g.opIds.map(o=>o.id),
+                almacen:'ALMACEN ZI', activo:true,
                 timestamp:Date.now(), updatedAt:getTodayDate()
               });
-              created++;
+              creados++;
+              continue;
+            }
+
+            // Documento existe → cargar SOLO las OPs aún no aplicadas
+            const aplicadas = Array.isArray(doc.opsAplicadas) ? doc.opsAplicadas : [];
+            const nuevas = g.opIds.filter(o => !aplicadas.includes(o.id));
+            if(nuevas.length === 0){ yaCargadas++; continue; } // todas ya cargadas: no tocar
+
+            const curStock = parseNum(doc.stock||0), curCost = parseNum(doc.cost||0);
+            const qtyNuevas = nuevas.reduce((s,o)=>s+o.qty,0);
+            const costNuevas = nuevas.reduce((s,o)=>s+o.costTotal,0);
+            const costUnitNuevas = qtyNuevas>0 ? costNuevas/qtyNuevas : 0;
+
+            if(curStock<=0 && curCost<=0){
+              // Documento vacío (nunca recibió su producción) → cargar existencia + costo
+              await setDoc(getDocRef('inventory', doc.id), {
+                ...doc, stock:qtyNuevas, cost:costUnitNuevas,
+                opsAplicadas:[...aplicadas, ...nuevas.map(o=>o.id)],
+                timestamp:Date.now(), updatedAt:getTodayDate()
+              }, { merge:true });
+              llenados++;
+            } else {
+              // Ya tiene existencia/costo (carga previa o stock facturado): NO se suma,
+              // solo se marca para que esta OP no se vuelva a contar nunca.
+              await setDoc(getDocRef('inventory', doc.id), {
+                ...doc, opsAplicadas:[...aplicadas, ...nuevas.map(o=>o.id)],
+                timestamp:Date.now(), updatedAt:getTodayDate()
+              }, { merge:true });
+              marcados++;
             }
           }
 
           setDialog({
-            title: '✅ Recálculo Completado',
-            text: `Productos actualizados: ${updated}\nProductos creados: ${created}\n\nEl costo y la existencia de las OPs cerradas ya están cargados en Productos Terminados.`,
+            title: '✅ Carga Completada',
+            text: `Productos creados: ${creados}\nProductos rellenados (estaban en 0): ${llenados}\nProductos ya con datos (solo marcados, sin sumar): ${marcados}\nGrupos ya cargados (omitidos): ${yaCargadas}\n\nCada OP cerrada se cuenta UNA sola vez. Puedes pulsar el botón otra vez sin riesgo: no recarga OPs ya aplicadas ni modifica el stock que ya facturaste.`,
             type: 'alert'
           });
         } catch(err){
@@ -12167,6 +12191,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
             // ── Find existing PT inventory doc ──
             const descNorm = descFG.toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
+            const _normDims = (s)=>{const p=String(s||'').toLowerCase().split('x').map(x=>parseFloat(x)||0);return p.length>=3?`${p[0]}x${p[1]}x${p[2]}`:'';};
+            const opDims = _normDims(dims);
             const ptDocs = (inventory||[]).filter(i => i.category==='Productos Terminados' && i.activo!==false);
             let existingDoc = ptDocs.find(i => {
               const iNorm = (i.desc||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
@@ -12174,20 +12200,29 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             }) || ptDocs.find(i => {
               const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
               return cc === cleanCode;
-            });
+            }) || (opDims ? ptDocs.find(i => {
+              const esT = (i.subcategory==='Termoencogibles') || (i.unit||'').toLowerCase()==='kg';
+              const cc = (i.displayId||(i.id||'').split('___')[0]).split('___')[0].split('-').pop();
+              return _normDims(cc) === opDims && esT === esTermo;
+            }) : null);
 
             if(existingDoc) {
-              // ── ADD to existing stock, weighted average cost ──
-              const prevStock = parseNum(existingDoc.stock||0);
-              const newStock = prevStock + qtyToAdd;
-              const prevCost = parseNum(existingDoc.cost||0);
-              const newCost = costoUnit > 0
-                ? ((prevStock * prevCost) + (qtyToAdd * costoUnit)) / newStock
-                : prevCost;
-              await setDoc(getDocRef('inventory', existingDoc.id), {
-                ...existingDoc, stock: newStock, cost: newCost,
-                timestamp: Date.now(), updatedAt: getTodayDate()
-              }, { merge: true });
+              // ── Evitar doble carga de la MISMA OP a este producto ──
+              const aplicadas = Array.isArray(existingDoc.opsAplicadas) ? existingDoc.opsAplicadas : [];
+              if(!aplicadas.includes(req.id)) {
+                // ── SUMA a la existencia + costo PROMEDIO PONDERADO ──
+                const prevStock = parseNum(existingDoc.stock||0);
+                const newStock = prevStock + qtyToAdd;
+                const prevCost = parseNum(existingDoc.cost||0);
+                const newCost = costoUnit > 0
+                  ? ((prevStock * prevCost) + (qtyToAdd * costoUnit)) / newStock
+                  : prevCost;
+                await setDoc(getDocRef('inventory', existingDoc.id), {
+                  ...existingDoc, stock: newStock, cost: newCost,
+                  opsAplicadas: [...aplicadas, req.id],
+                  timestamp: Date.now(), updatedAt: getTodayDate()
+                }, { merge: true });
+              }
             } else {
               // ── Create new PT doc ──
               const newId = `${cleanCode}___ALMACEN-ZI`;
@@ -12195,6 +12230,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 id: newId, displayId: cleanCode, desc: descFG,
                 category: 'Productos Terminados', subcategory, unit,
                 stock: qtyToAdd, cost: costoUnit,
+                opsAplicadas: [req.id],
                 almacen: 'ALMACEN ZI', activo: true,
                 opId: req.id, cliente: req.client||'',
                 timestamp: Date.now(), updatedAt: getTodayDate()
