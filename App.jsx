@@ -995,6 +995,117 @@ export default function App() {
     doRestore();
   }, [inventory, appUser]);
 
+  // ── RECONCILIAR PT con COSTO/EXISTENCIA 0 desde OPs CERRADAS (idempotente) ──
+  // Repuebla stock y costo de los Productos Terminados que quedaron en 0/0 pero
+  // que sí tienen OPs finalizadas (COMPLETADO). Usa la misma lógica del Finiquito.
+  useEffect(() => {
+    if(!inventory || !requirements || !appUser) return;
+    if(sessionStorage.getItem('reconcile_fg_from_ops_v1')==='done') return;
+
+    const normDims = (s) => {
+      const p = String(s||'').toLowerCase().split('x').map(x=>parseFloat(x)||0);
+      return p.length>=3 ? `${p[0]}x${p[1]}x${p[2]}` : '';
+    };
+    const dimsFromCode = (code) => {
+      const cc = String(code||'').split('___')[0]
+        .replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+      const segs = cc.split('-');
+      return normDims(segs[segs.length-1]);
+    };
+    const filterReal = b => b?.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b?.producedKg) > 0;
+
+    // Calcula qty pendiente + costo de una OP (igual que handleCloseOP)
+    const compOP = (req) => {
+      const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
+      const allLotes = getLotes(req);
+      let selB=[], impB=[], extB=[];
+      if(allLotes.length > 0){
+        selB = allLotes.flatMap(l=>(l?.sellado?.batches||[]).filter(filterReal));
+        impB = allLotes.flatMap(l=>(l?.impresion?.batches||[]).filter(filterReal));
+        extB = allLotes.flatMap(l=>(l?.extrusion?.batches||[]).filter(filterReal));
+      } else {
+        const prod = req.production || {};
+        selB = (prod.sellado?.batches||[]).filter(filterReal);
+        impB = (prod.impresion?.batches||[]).filter(filterReal);
+        extB = (prod.extrusion?.batches||[]).filter(filterReal);
+      }
+      const lastB = selB.length>0 ? selB : impB.length>0 ? impB : extB;
+      const totalKg = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+      const totalMill = selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+        || impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+        || extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+        || (esTermo ? 0 : extB.reduce((s,b)=>s+parseNum(b.millaresProd||b.millaresTeóricos||0),0));
+      const pendKg   = Math.max(0, totalKg   - (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0));
+      const pendMill = esTermo ? 0 : Math.max(0, totalMill - (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0));
+      const qty = esTermo ? pendKg : (pendMill>0?pendMill:pendKg);
+
+      // Costo: requisiciones aprobadas × costo inventario  ó  costo de batches
+      const norm = (id)=>String(id||'').replace(/^OP-/i,'').trim();
+      const apr = (invRequisitions||[]).filter(r => norm(r.opId)===norm(req.id) && ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status));
+      let costMP = 0;
+      apr.forEach(r => (r.items||[]).forEach(it => {
+        const inv = (inventory||[]).find(i => {
+          if(i.id===it.id) return true;
+          const icc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+          const itcc=(it.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+          return icc===itcc;
+        });
+        costMP += parseNum(it.qty||0) * parseNum(inv?.cost||0);
+      }));
+      const allB = [...extB, ...impB, ...selB];
+      const batchCost = allB.reduce((s,b)=>{
+        const ins=(b.insumos||[]).reduce((ss,ing)=>{
+          const uc = parseNum(ing.unitCost)>0 ? parseNum(ing.unitCost) : parseNum((inventory||[]).find(i=>i.id===ing.id)?.cost||0);
+          return ss + parseNum(ing.qty)*uc;
+        },0);
+        return s + (ins>0?ins:parseNum(b.cost||0));
+      },0);
+      const costBase = Math.max(costMP, batchCost);
+      const w=parseFloat(req.ancho||0), l=parseFloat(req.largo||0), m=parseFloat(req.micras||0);
+      return { qty, costTotal: costBase, dims: normDims(`${w}x${l}x${m}`), esTermo };
+    };
+
+    const doReconcile = async () => {
+      try {
+        // Agrupar producción de OPs CERRADAS por (dims + tipo)
+        const closed = (requirements||[]).filter(r => r.status==='COMPLETADO');
+        const agg = {}; // key: dims|tipo -> {qty, costTotal}
+        closed.forEach(req => {
+          const c = compOP(req);
+          if(!c.dims || c.qty<=0) return;
+          const key = `${c.dims}|${c.esTermo?'T':'B'}`;
+          if(!agg[key]) agg[key] = { qty:0, costTotal:0 };
+          agg[key].qty += c.qty;
+          agg[key].costTotal += c.costTotal;
+        });
+
+        // PT docs en 0/0 con producción acumulada coincidente
+        const ptDocs = (inventory||[]).filter(i => i.category==='Productos Terminados' && i.activo!==false
+          && (parseNum(i.stock)<=0 || parseNum(i.cost)<=0));
+
+        let fixed = 0;
+        for(const doc of ptDocs){
+          const dDims = dimsFromCode(doc.displayId || doc.id);
+          if(!dDims) continue;
+          const esTermo = (doc.subcategory==='Termoencogibles') || (doc.unit||'').toLowerCase()==='kg';
+          const a = agg[`${dDims}|${esTermo?'T':'B'}`];
+          if(!a || a.qty<=0) continue;
+          const newCost = a.qty>0 ? a.costTotal / a.qty : 0;
+          await setDoc(getDocRef('inventory', doc.id), {
+            ...doc,
+            stock: parseNum(doc.stock)>0 ? parseNum(doc.stock) : a.qty,
+            cost:  parseNum(doc.cost)>0  ? parseNum(doc.cost)  : newCost,
+            timestamp: Date.now(), updatedAt: getTodayDate()
+          }, { merge: true });
+          fixed++;
+        }
+        console.log(`Reconciliación PT desde OPs cerradas: ${fixed} productos actualizados.`);
+        sessionStorage.setItem('reconcile_fg_from_ops_v1','done');
+      } catch(e){ console.error('Reconcile FG error:', e); }
+    };
+    doReconcile();
+  }, [inventory, requirements, invRequisitions, appUser]);
+
   // ── ONE-TIME cleanup: FG duplicate docs only ──
   useEffect(() => {
     if(!inventory || !appUser || sessionStorage.getItem('cleanup_mp0240_fg_v1')==='done') return;
