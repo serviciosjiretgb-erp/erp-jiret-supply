@@ -14694,9 +14694,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 const solicitado=esTermo?parseNum(req.requestedKg):parseNum(req.cantidad);
                 const producido=esTermo?kgProd:millProd;
                 const pctAvance=solicitado>0?Math.min(100,(producido/solicitado)*100):0;
-                const costoMP=allBatches.reduce((s,b)=>s+parseNum(b.cost||0),0);
-                const costoXkg=kgProd>0?costoMP/kgProd:0;
-                const costoXmill=millProd>0?costoMP/millProd:0;
                 // Insumos: primary = approved reqs, fallback = batch insumos
                 const matsConsumidos={};
                 approvedReqsOP.forEach(r=>(r.items||[]).forEach(it=>{
@@ -14708,6 +14705,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     if(ing?.id) matsConsumidos[ing.id]=(matsConsumidos[ing.id]||0)+parseNum(ing.qty);
                   }));
                 }
+                // Costo MP: desde insumos consumidos × costo de inventario; si no, suma de lotes
+                const costoMPreq=Object.entries(matsConsumidos).reduce((s,[id,qty])=>{
+                  const inv=(inventory||[]).find(i=>i.id===id);
+                  return s+parseNum(qty)*parseNum(inv?.cost||0);
+                },0);
+                const costoMP=costoMPreq>0?costoMPreq:allBatches.reduce((s,b)=>s+parseNum(b.cost||0),0);
+                const costoXkg=kgProd>0?costoMP/kgProd:0;
+                const costoXmill=millProd>0?costoMP/millProd:0;
                 return (
                   <div key={req.id} className="border-2 border-orange-200 rounded-2xl overflow-hidden mb-6">
                     {/* Header OP — siempre visible */}
@@ -14750,7 +14755,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       {/* Detail sections — visible only when expanded */}
                       {expandedOPs[req.id] && (<>
                       {/* 1. Desglose de MP consumida */}
-                      {allBatches.some(b=>(b.insumos||[]).length>0) && (
+                      {Object.keys(matsConsumidos).length > 0 && (
                         <div>
                           <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">1. Insumos Consumidos (MP)</h4>
                           <table className="w-full text-xs border-collapse">
