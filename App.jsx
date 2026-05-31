@@ -995,142 +995,89 @@ export default function App() {
     doRestore();
   }, [inventory, appUser]);
 
-  // ── AUTO-CORRECCIÓN: cargar producción de OPs CERRADAS a Productos Terminados ──
-  // Se ejecuta sola (sin botones), una vez por sesión e idempotente:
-  //   • Rellena costo + existencia de los PT que estén en 0 y nunca recibieron su OP.
-  //   • Crea los PT que no existen (termoencogibles, venilac, etc.).
-  //   • NO suma a productos que ya tienen datos ni restaura stock ya facturado.
-  //   • Marca cada OP aplicada (opsAplicadas) para no duplicar nunca.
+
+  // ── AUTO-CORRECCIÓN (sin botones): refleja FG Producción en el catálogo de PT ──
+  // Toma la existencia y el costo que ya están en "Productos Terminados (FG Producción)"
+  // y los carga en los documentos de inventario que el catálogo / almacén / toma física
+  // / movimientos usan, para que dejen de aparecer en 0. Se ejecuta sola, una vez.
+  //   • Solo rellena documentos que estén en 0 (no toca los que ya tienen existencia, p.ej. CHUPETA).
+  //   • Crea los que faltan (p.ej. VENILAC - TERMO).
+  //   • Como toma el saldo ACTUAL de FG Producción, nunca restaura lo ya facturado.
   useEffect(() => {
-    if(!inventory || !requirements || !appUser) return;
-    if(sessionStorage.getItem('auto_fg_from_ops_v2')==='done') return;
-    sessionStorage.setItem('auto_fg_from_ops_v2','done'); // marcar de inmediato (evita re-ejecución por re-render)
+    if(!inventory || !finishedGoodsInventory || !appUser) return;
+    if(sessionStorage.getItem('auto_fg_mirror_v3')==='done') return;
+    sessionStorage.setItem('auto_fg_mirror_v3','done');
 
-    const filterReal = b => b?.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b?.producedKg) > 0;
-    const normDims = (s) => { const p=String(s||'').toLowerCase().split('x').map(x=>parseFloat(x)||0); return p.length>=3?`${p[0]}x${p[1]}x${p[2]}`:''; };
-    const dimsFromCode = (code) => { const cc=String(code||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim(); const segs=cc.split('-'); return normDims(segs[segs.length-1]); };
-
-    const compOP = (req) => {
-      const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
-      const allLotes = getLotes(req);
-      let selB=[], impB=[], extB=[];
-      if(allLotes.length > 0){
-        selB = allLotes.flatMap(l=>(l?.sellado?.batches||[]).filter(filterReal));
-        impB = allLotes.flatMap(l=>(l?.impresion?.batches||[]).filter(filterReal));
-        extB = allLotes.flatMap(l=>(l?.extrusion?.batches||[]).filter(filterReal));
-      } else {
-        const prod = req.production || {};
-        selB = (prod.sellado?.batches||[]).filter(filterReal);
-        impB = (prod.impresion?.batches||[]).filter(filterReal);
-        extB = (prod.extrusion?.batches||[]).filter(filterReal);
-      }
-      const lastB = selB.length>0 ? selB : impB.length>0 ? impB : extB;
-      const totalKg = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
-      const totalMill = selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-        || impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-        || extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-        || (esTermo ? 0 : extB.reduce((s,b)=>s+parseNum(b.millaresProd||b.millaresTeóricos||0),0));
-      const pendKg   = Math.max(0, totalKg   - (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0));
-      const pendMill = esTermo ? 0 : Math.max(0, totalMill - (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0));
-      const qty = esTermo ? pendKg : (pendMill>0?pendMill:pendKg);
-
-      const norm = (id)=>String(id||'').replace(/^OP-/i,'').trim();
-      const apr = (invRequisitions||[]).filter(r => norm(r.opId)===norm(req.id) && ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status));
-      let costMP = 0;
-      apr.forEach(r => (r.items||[]).forEach(it => {
-        const inv = (inventory||[]).find(i => {
-          if(i.id===it.id) return true;
-          const icc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
-          const itcc=(it.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
-          return icc===itcc;
-        });
-        costMP += parseNum(it.qty||0) * parseNum(inv?.cost||0);
-      }));
-      const allB = [...extB, ...impB, ...selB];
-      const batchCost = allB.reduce((s,b)=>{
-        const ins=(b.insumos||[]).reduce((ss,ing)=>{
-          const uc = parseNum(ing.unitCost)>0 ? parseNum(ing.unitCost) : parseNum((inventory||[]).find(i=>i.id===ing.id)?.cost||0);
-          return ss + parseNum(ing.qty)*uc;
-        },0);
-        return s + (ins>0?ins:parseNum(b.cost||0));
-      },0);
-      const costTotal = Math.max(costMP, batchCost);
-
-      const descFG = formatFGLabel(req) || req.desc || req.categoria || 'Producto';
-      const catShort = (req.categoria||req.desc||'PT').toUpperCase().replace(/[\s\/\-&]+/g,'').substring(0,18);
-      const w=parseFloat(req.ancho||0), l=parseFloat(req.largo||0), m=parseFloat(req.micras||0);
-      const dimsRaw = (w>0||l>0) ? `${w}x${l}x${m}` : '';
-      const cleanCode = dimsRaw ? `FG-${catShort}-${dimsRaw}` : `FG-${catShort}`;
-      return { qty, costTotal, dims: normDims(dimsRaw), esTermo, descFG, cleanCode,
-        subcategory: esTermo?'Termoencogibles':'Bolsas Plásticas', unit: esTermo?'kg':'millares' };
+    const r2 = (n) => Math.round(parseNum(n)*100)/100;
+    const dimsFromCode = (code) => {
+      const cc=String(code||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+      const seg=cc.split('-').pop()||'';
+      const p=seg.toLowerCase().split('x').map(x=>parseFloat(x)||0);
+      return { ancho:p[0]||0, largo:p[1]||0 };
     };
 
-    const doAutoBackfill = async () => {
+    const doMirror = async () => {
       try {
-        // Agrupar producción de OPs CERRADAS por producto (dims + tipo)
-        const closed = (requirements||[]).filter(r => r.status==='COMPLETADO');
-        const groups = {}; // key -> {opIds:[{id,qty,costTotal}], meta}
-        closed.forEach(req => {
-          const c = compOP(req);
-          if(!c.dims || c.qty<=0) return;
-          const key = `${c.dims}|${c.esTermo?'T':'B'}`;
-          if(!groups[key]) groups[key] = { opIds:[], meta:c };
-          groups[key].opIds.push({ id:req.id, qty:c.qty, costTotal:c.costTotal });
+        // 1) Agrupar FG Producción por tipo + ancho + largo (saldo actual y costo)
+        const groups = {}; // key -> {esTermo, qty, costTotal, sample}
+        (finishedGoodsInventory||[]).forEach(fg => {
+          const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+          const entregado = fg.status === 'ENTREGADO';
+          const qty = entregado ? 0 : (esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares));
+          if(qty <= 0) return;
+          const cu = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+          const key = `${esTermo?'T':'B'}|${r2(fg.ancho)}|${r2(fg.largo)}`;
+          if(!groups[key]) groups[key] = { esTermo, qty:0, costTotal:0, sample:fg };
+          groups[key].qty += qty;
+          groups[key].costTotal += qty*cu;
         });
 
         for(const key of Object.keys(groups)){
           const g = groups[key];
-          const m = g.meta;
+          const fg = g.sample;
+          const qtyTot = g.qty;
+          const costUnit = qtyTot>0 ? g.costTotal/qtyTot : 0;
+
+          // 2) Buscar el documento de inventario que corresponde (mismo tipo + ancho + largo)
           const ptDocs = (inventory||[]).filter(i => i.category==='Productos Terminados' && i.activo!==false);
-          const descN = m.descFG.toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
-          let doc = ptDocs.find(i => (i.desc||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22) === descN)
-            || ptDocs.find(i => (i.displayId||(i.id||'').split('___')[0]) === m.cleanCode)
-            || ptDocs.find(i => {
-                 const esT=(i.subcategory==='Termoencogibles')||(i.unit||'').toLowerCase()==='kg';
-                 return dimsFromCode(i.displayId||i.id)===m.dims && esT===m.esTermo;
-               });
+          const doc = ptDocs.find(i => {
+            const esT = (i.subcategory==='Termoencogibles') || (i.unit||'').toLowerCase()==='kg';
+            const d = dimsFromCode(i.displayId||i.id);
+            return esT===g.esTermo && r2(d.ancho)===r2(fg.ancho) && r2(d.largo)===r2(fg.largo);
+          });
 
-          if(!doc){
-            // No existe → producto nunca cargado: crear con costo + existencia
-            const qtyTot = g.opIds.reduce((s,o)=>s+o.qty,0);
-            const costTot = g.opIds.reduce((s,o)=>s+o.costTotal,0);
-            const newId = `${m.cleanCode}___ALMACEN-ZI`;
-            await setDoc(getDocRef('inventory', newId), {
-              id:newId, displayId:m.cleanCode, desc:m.descFG,
-              category:'Productos Terminados', subcategory:m.subcategory, unit:m.unit,
-              stock:qtyTot, cost: qtyTot>0?costTot/qtyTot:0, opsAplicadas:g.opIds.map(o=>o.id),
-              almacen:'ALMACEN ZI', activo:true, timestamp:Date.now(), updatedAt:getTodayDate()
-            });
-            continue;
-          }
-
-          const aplicadas = Array.isArray(doc.opsAplicadas) ? doc.opsAplicadas : [];
-          const nuevas = g.opIds.filter(o => !aplicadas.includes(o.id));
-          if(nuevas.length === 0) continue; // todo ya aplicado
-
-          const curStock = parseNum(doc.stock||0), curCost = parseNum(doc.cost||0);
-          const qtyNew = nuevas.reduce((s,o)=>s+o.qty,0);
-          const costNew = nuevas.reduce((s,o)=>s+o.costTotal,0);
-
-          if(curStock<=0 && curCost<=0){
-            // Documento vacío → rellenar existencia + costo
+          if(doc){
+            // Solo rellenar si está en 0 (no pisar los que ya tienen existencia correcta)
+            if(parseNum(doc.stock) > 0) continue;
             await setDoc(getDocRef('inventory', doc.id), {
-              ...doc, stock:qtyNew, cost: qtyNew>0?costNew/qtyNew:0,
-              opsAplicadas:[...aplicadas, ...nuevas.map(o=>o.id)],
-              timestamp:Date.now(), updatedAt:getTodayDate()
+              ...doc, stock: qtyTot, cost: parseNum(doc.cost)>0 ? parseNum(doc.cost) : costUnit,
+              timestamp: Date.now(), updatedAt: getTodayDate()
             }, { merge:true });
           } else {
-            // Ya tiene datos / stock facturado → solo marcar (NO sumar, NO restaurar)
-            await setDoc(getDocRef('inventory', doc.id), {
-              ...doc, opsAplicadas:[...aplicadas, ...nuevas.map(o=>o.id)],
+            // 3) Crear el documento que falta (p.ej. VENILAC - TERMO)
+            const desc = formatFGLabel(fg) || fg.producto || 'Producto';
+            const catShort = (fg.categoria||fg.producto||'PT').toUpperCase().replace(/[\s\/\-&]+/g,'').substring(0,18);
+            const w=parseFloat(fg.ancho||0), l=parseFloat(fg.largo||0), m=parseFloat(fg.micras||0);
+            const cleanCode = `FG-${catShort}-${w}x${l}x${m}`;
+            const newId = `${cleanCode}___ALMACEN-ZI`;
+            // Evitar duplicar si por alguna razón ya existe ese id
+            if((inventory||[]).some(i => i.id===newId || (i.id||'').split('___')[0]===cleanCode)) continue;
+            await setDoc(getDocRef('inventory', newId), {
+              id:newId, displayId:cleanCode, desc,
+              category:'Productos Terminados',
+              subcategory: g.esTermo?'Termoencogibles':'Bolsas Plásticas',
+              unit: g.esTermo?'KG':'Millares',
+              stock: qtyTot, cost: costUnit,
+              almacen:'ALMACEN ZI', activo:true,
               timestamp:Date.now(), updatedAt:getTodayDate()
-            }, { merge:true });
+            });
           }
         }
-      } catch(e){ console.error('Auto-backfill FG error:', e); }
+      } catch(e){ console.error('Auto-mirror FG error:', e); }
     };
-    doAutoBackfill();
-  }, [inventory, requirements, invRequisitions, appUser]);
+    doMirror();
+  }, [inventory, finishedGoodsInventory, appUser]);
+
 
   // ── ONE-TIME cleanup: FG duplicate docs only ──
   useEffect(() => {
