@@ -995,6 +995,143 @@ export default function App() {
     doRestore();
   }, [inventory, appUser]);
 
+  // ── AUTO-CORRECCIÓN: cargar producción de OPs CERRADAS a Productos Terminados ──
+  // Se ejecuta sola (sin botones), una vez por sesión e idempotente:
+  //   • Rellena costo + existencia de los PT que estén en 0 y nunca recibieron su OP.
+  //   • Crea los PT que no existen (termoencogibles, venilac, etc.).
+  //   • NO suma a productos que ya tienen datos ni restaura stock ya facturado.
+  //   • Marca cada OP aplicada (opsAplicadas) para no duplicar nunca.
+  useEffect(() => {
+    if(!inventory || !requirements || !appUser) return;
+    if(sessionStorage.getItem('auto_fg_from_ops_v2')==='done') return;
+    sessionStorage.setItem('auto_fg_from_ops_v2','done'); // marcar de inmediato (evita re-ejecución por re-render)
+
+    const filterReal = b => b?.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b?.producedKg) > 0;
+    const normDims = (s) => { const p=String(s||'').toLowerCase().split('x').map(x=>parseFloat(x)||0); return p.length>=3?`${p[0]}x${p[1]}x${p[2]}`:''; };
+    const dimsFromCode = (code) => { const cc=String(code||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim(); const segs=cc.split('-'); return normDims(segs[segs.length-1]); };
+
+    const compOP = (req) => {
+      const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
+      const allLotes = getLotes(req);
+      let selB=[], impB=[], extB=[];
+      if(allLotes.length > 0){
+        selB = allLotes.flatMap(l=>(l?.sellado?.batches||[]).filter(filterReal));
+        impB = allLotes.flatMap(l=>(l?.impresion?.batches||[]).filter(filterReal));
+        extB = allLotes.flatMap(l=>(l?.extrusion?.batches||[]).filter(filterReal));
+      } else {
+        const prod = req.production || {};
+        selB = (prod.sellado?.batches||[]).filter(filterReal);
+        impB = (prod.impresion?.batches||[]).filter(filterReal);
+        extB = (prod.extrusion?.batches||[]).filter(filterReal);
+      }
+      const lastB = selB.length>0 ? selB : impB.length>0 ? impB : extB;
+      const totalKg = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
+      const totalMill = selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+        || impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+        || extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
+        || (esTermo ? 0 : extB.reduce((s,b)=>s+parseNum(b.millaresProd||b.millaresTeóricos||0),0));
+      const pendKg   = Math.max(0, totalKg   - (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0));
+      const pendMill = esTermo ? 0 : Math.max(0, totalMill - (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0));
+      const qty = esTermo ? pendKg : (pendMill>0?pendMill:pendKg);
+
+      const norm = (id)=>String(id||'').replace(/^OP-/i,'').trim();
+      const apr = (invRequisitions||[]).filter(r => norm(r.opId)===norm(req.id) && ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status));
+      let costMP = 0;
+      apr.forEach(r => (r.items||[]).forEach(it => {
+        const inv = (inventory||[]).find(i => {
+          if(i.id===it.id) return true;
+          const icc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+          const itcc=(it.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+          return icc===itcc;
+        });
+        costMP += parseNum(it.qty||0) * parseNum(inv?.cost||0);
+      }));
+      const allB = [...extB, ...impB, ...selB];
+      const batchCost = allB.reduce((s,b)=>{
+        const ins=(b.insumos||[]).reduce((ss,ing)=>{
+          const uc = parseNum(ing.unitCost)>0 ? parseNum(ing.unitCost) : parseNum((inventory||[]).find(i=>i.id===ing.id)?.cost||0);
+          return ss + parseNum(ing.qty)*uc;
+        },0);
+        return s + (ins>0?ins:parseNum(b.cost||0));
+      },0);
+      const costTotal = Math.max(costMP, batchCost);
+
+      const descFG = formatFGLabel(req) || req.desc || req.categoria || 'Producto';
+      const catShort = (req.categoria||req.desc||'PT').toUpperCase().replace(/[\s\/\-&]+/g,'').substring(0,18);
+      const w=parseFloat(req.ancho||0), l=parseFloat(req.largo||0), m=parseFloat(req.micras||0);
+      const dimsRaw = (w>0||l>0) ? `${w}x${l}x${m}` : '';
+      const cleanCode = dimsRaw ? `FG-${catShort}-${dimsRaw}` : `FG-${catShort}`;
+      return { qty, costTotal, dims: normDims(dimsRaw), esTermo, descFG, cleanCode,
+        subcategory: esTermo?'Termoencogibles':'Bolsas Plásticas', unit: esTermo?'kg':'millares' };
+    };
+
+    const doAutoBackfill = async () => {
+      try {
+        // Agrupar producción de OPs CERRADAS por producto (dims + tipo)
+        const closed = (requirements||[]).filter(r => r.status==='COMPLETADO');
+        const groups = {}; // key -> {opIds:[{id,qty,costTotal}], meta}
+        closed.forEach(req => {
+          const c = compOP(req);
+          if(!c.dims || c.qty<=0) return;
+          const key = `${c.dims}|${c.esTermo?'T':'B'}`;
+          if(!groups[key]) groups[key] = { opIds:[], meta:c };
+          groups[key].opIds.push({ id:req.id, qty:c.qty, costTotal:c.costTotal });
+        });
+
+        for(const key of Object.keys(groups)){
+          const g = groups[key];
+          const m = g.meta;
+          const ptDocs = (inventory||[]).filter(i => i.category==='Productos Terminados' && i.activo!==false);
+          const descN = m.descFG.toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
+          let doc = ptDocs.find(i => (i.desc||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22) === descN)
+            || ptDocs.find(i => (i.displayId||(i.id||'').split('___')[0]) === m.cleanCode)
+            || ptDocs.find(i => {
+                 const esT=(i.subcategory==='Termoencogibles')||(i.unit||'').toLowerCase()==='kg';
+                 return dimsFromCode(i.displayId||i.id)===m.dims && esT===m.esTermo;
+               });
+
+          if(!doc){
+            // No existe → producto nunca cargado: crear con costo + existencia
+            const qtyTot = g.opIds.reduce((s,o)=>s+o.qty,0);
+            const costTot = g.opIds.reduce((s,o)=>s+o.costTotal,0);
+            const newId = `${m.cleanCode}___ALMACEN-ZI`;
+            await setDoc(getDocRef('inventory', newId), {
+              id:newId, displayId:m.cleanCode, desc:m.descFG,
+              category:'Productos Terminados', subcategory:m.subcategory, unit:m.unit,
+              stock:qtyTot, cost: qtyTot>0?costTot/qtyTot:0, opsAplicadas:g.opIds.map(o=>o.id),
+              almacen:'ALMACEN ZI', activo:true, timestamp:Date.now(), updatedAt:getTodayDate()
+            });
+            continue;
+          }
+
+          const aplicadas = Array.isArray(doc.opsAplicadas) ? doc.opsAplicadas : [];
+          const nuevas = g.opIds.filter(o => !aplicadas.includes(o.id));
+          if(nuevas.length === 0) continue; // todo ya aplicado
+
+          const curStock = parseNum(doc.stock||0), curCost = parseNum(doc.cost||0);
+          const qtyNew = nuevas.reduce((s,o)=>s+o.qty,0);
+          const costNew = nuevas.reduce((s,o)=>s+o.costTotal,0);
+
+          if(curStock<=0 && curCost<=0){
+            // Documento vacío → rellenar existencia + costo
+            await setDoc(getDocRef('inventory', doc.id), {
+              ...doc, stock:qtyNew, cost: qtyNew>0?costNew/qtyNew:0,
+              opsAplicadas:[...aplicadas, ...nuevas.map(o=>o.id)],
+              timestamp:Date.now(), updatedAt:getTodayDate()
+            }, { merge:true });
+          } else {
+            // Ya tiene datos / stock facturado → solo marcar (NO sumar, NO restaurar)
+            await setDoc(getDocRef('inventory', doc.id), {
+              ...doc, opsAplicadas:[...aplicadas, ...nuevas.map(o=>o.id)],
+              timestamp:Date.now(), updatedAt:getTodayDate()
+            }, { merge:true });
+          }
+        }
+      } catch(e){ console.error('Auto-backfill FG error:', e); }
+    };
+    doAutoBackfill();
+  }, [inventory, requirements, invRequisitions, appUser]);
+
   // ── ONE-TIME cleanup: FG duplicate docs only ──
   useEffect(() => {
     if(!inventory || !appUser || sessionStorage.getItem('cleanup_mp0240_fg_v1')==='done') return;
@@ -5452,7 +5589,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 {(fgSearch||fgCatFilter!=='TODAS') && <button onClick={()=>{setFgSearch('');setFgCatFilter('TODAS');}} className="px-3 py-2 rounded-xl text-[9px] font-black text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 uppercase">✕ Limpiar</button>}
               </div>
 
-              <button onClick={handleRecalcularPTdesdeOPs} className="px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all bg-orange-500 text-white hover:bg-orange-600" title="Carga la producción de las OPs cerradas a inventario (sin duplicar ni tocar lo facturado)"><RefreshCw size={14}/> CARGAR OPs CERRADAS</button>
               <button onClick={()=>setShowCargarProducto(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm flex items-center gap-2 transition-all ${showCargarProducto?'bg-red-500 text-white':'bg-green-600 text-white hover:bg-green-700'}`}><Plus size={14}/> {showCargarProducto?'CANCELAR':'CARGAR PRODUCTO'}</button>
               <button onClick={() => handleExportPDF('Inventario_Productos_Terminados', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
             </div>
@@ -11935,159 +12071,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     } catch (err) {
       setDialog({ title: 'Error', text: err.message, type: 'alert' });
     }
-  };
-
-  // ── RECALCULAR PT (costo + existencia) DESDE OPs CERRADAS ──────────────
-  // Acción manual y segura: solo rellena Productos Terminados que estén en 0
-  // y crea los que falten (ej. termoencogibles / venilac). NO toca OPs ni avances.
-  const handleRecalcularPTdesdeOPs = () => {
-    setDialog({
-      title: 'Cargar OPs cerradas a Inventario',
-      text: 'Se revisarán las OPs CERRADAS (COMPLETADO) y se cargará su producción a Productos Terminados:\n\n• Cada OP se cuenta UNA sola vez (se registra en el producto).\n• Productos que faltan se crean (termoencogibles, venilac, etc.).\n• Productos en 0 se rellenan con su costo y existencia.\n• Productos que YA tienen datos o stock facturado NO se modifican.\n• Es seguro pulsarlo de nuevo: no duplica ni restaura stock vendido.\n\nNo modifica las OPs ni los avances de producción. ¿Continuar?',
-      type: 'confirm',
-      onConfirm: async () => {
-        try {
-          const filterReal = b => b?.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b?.producedKg) > 0;
-          const normDims = (s) => { const p=String(s||'').toLowerCase().split('x').map(x=>parseFloat(x)||0); return p.length>=3?`${p[0]}x${p[1]}x${p[2]}`:''; };
-          const dimsFromCode = (code) => { const cc=String(code||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim(); const segs=cc.split('-'); return normDims(segs[segs.length-1]); };
-
-          // Calcula qty pendiente + costo de una OP (misma lógica del Finiquito / Cierre)
-          const compOP = (req) => {
-            const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
-            const allLotes = getLotes(req);
-            let selB=[], impB=[], extB=[];
-            if(allLotes.length > 0){
-              selB = allLotes.flatMap(l=>(l?.sellado?.batches||[]).filter(filterReal));
-              impB = allLotes.flatMap(l=>(l?.impresion?.batches||[]).filter(filterReal));
-              extB = allLotes.flatMap(l=>(l?.extrusion?.batches||[]).filter(filterReal));
-            } else {
-              const prod = req.production || {};
-              selB = (prod.sellado?.batches||[]).filter(filterReal);
-              impB = (prod.impresion?.batches||[]).filter(filterReal);
-              extB = (prod.extrusion?.batches||[]).filter(filterReal);
-            }
-            const lastB = selB.length>0 ? selB : impB.length>0 ? impB : extB;
-            const totalKg = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
-            const totalMill = selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-              || impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-              || extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-              || (esTermo ? 0 : extB.reduce((s,b)=>s+parseNum(b.millaresProd||b.millaresTeóricos||0),0));
-            const pendKg   = Math.max(0, totalKg   - (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0));
-            const pendMill = esTermo ? 0 : Math.max(0, totalMill - (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0));
-            const qty = esTermo ? pendKg : (pendMill>0?pendMill:pendKg);
-
-            const norm = (id)=>String(id||'').replace(/^OP-/i,'').trim();
-            const apr = (invRequisitions||[]).filter(r => norm(r.opId)===norm(req.id) && ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status));
-            let costMP = 0;
-            apr.forEach(r => (r.items||[]).forEach(it => {
-              const inv = (inventory||[]).find(i => {
-                if(i.id===it.id) return true;
-                const icc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
-                const itcc=(it.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
-                return icc===itcc;
-              });
-              costMP += parseNum(it.qty||0) * parseNum(inv?.cost||0);
-            }));
-            const allB = [...extB, ...impB, ...selB];
-            const batchCost = allB.reduce((s,b)=>{
-              const ins=(b.insumos||[]).reduce((ss,ing)=>{
-                const uc = parseNum(ing.unitCost)>0 ? parseNum(ing.unitCost) : parseNum((inventory||[]).find(i=>i.id===ing.id)?.cost||0);
-                return ss + parseNum(ing.qty)*uc;
-              },0);
-              return s + (ins>0?ins:parseNum(b.cost||0));
-            },0);
-            const costTotal = Math.max(costMP, batchCost);
-
-            const descFG = formatFGLabel(req) || req.desc || req.categoria || 'Producto';
-            const catShort = (req.categoria||req.desc||'PT').toUpperCase().replace(/[\s\/\-&]+/g,'').substring(0,18);
-            const w=parseFloat(req.ancho||0), l=parseFloat(req.largo||0), m=parseFloat(req.micras||0);
-            const dimsRaw = (w>0||l>0) ? `${w}x${l}x${m}` : '';
-            const cleanCode = dimsRaw ? `FG-${catShort}-${dimsRaw}` : `FG-${catShort}`;
-            return { qty, costTotal, dims: normDims(dimsRaw), esTermo, descFG, cleanCode,
-              subcategory: esTermo?'Termoencogibles':'Bolsas Plásticas', unit: esTermo?'kg':'millares' };
-          };
-
-          // 1) Agrupar producción de las OPs CERRADAS por producto (dims + tipo)
-          const closed = (requirements||[]).filter(r => r.status==='COMPLETADO');
-          const groups = {}; // key -> {qty, costTotal, opIds:[], meta}
-          closed.forEach(req => {
-            const c = compOP(req);
-            if(!c.dims || c.qty<=0) return;
-            const key = `${c.dims}|${c.esTermo?'T':'B'}`;
-            if(!groups[key]) groups[key] = { qty:0, costTotal:0, opIds:[], meta:c };
-            groups[key].qty += c.qty;
-            groups[key].costTotal += c.costTotal;
-            groups[key].opIds.push({ id:req.id, qty:c.qty, costTotal:c.costTotal });
-          });
-
-          // 2) Cargar a inventario de forma SEGURA e idempotente
-          let creados = 0, llenados = 0, marcados = 0, yaCargadas = 0;
-          for(const key of Object.keys(groups)){
-            const g = groups[key];
-            const m = g.meta;
-            const ptDocs = (inventory||[]).filter(i => i.category==='Productos Terminados' && i.activo!==false);
-            const descN = m.descFG.toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
-            let doc = ptDocs.find(i => (i.desc||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22) === descN)
-              || ptDocs.find(i => (i.displayId||(i.id||'').split('___')[0]) === m.cleanCode)
-              || ptDocs.find(i => {
-                   const esT=(i.subcategory==='Termoencogibles')||(i.unit||'').toLowerCase()==='kg';
-                   return dimsFromCode(i.displayId||i.id)===m.dims && esT===m.esTermo;
-                 });
-
-            if(!doc){
-              // No existe documento → producto nunca cargado: crear con costo + existencia
-              const costUnit = g.costTotal>0 ? g.costTotal/g.qty : 0;
-              const newId = `${m.cleanCode}___ALMACEN-ZI`;
-              await setDoc(getDocRef('inventory', newId), {
-                id:newId, displayId:m.cleanCode, desc:m.descFG,
-                category:'Productos Terminados', subcategory:m.subcategory, unit:m.unit,
-                stock:g.qty, cost:costUnit, opsAplicadas:g.opIds.map(o=>o.id),
-                almacen:'ALMACEN ZI', activo:true,
-                timestamp:Date.now(), updatedAt:getTodayDate()
-              });
-              creados++;
-              continue;
-            }
-
-            // Documento existe → cargar SOLO las OPs aún no aplicadas
-            const aplicadas = Array.isArray(doc.opsAplicadas) ? doc.opsAplicadas : [];
-            const nuevas = g.opIds.filter(o => !aplicadas.includes(o.id));
-            if(nuevas.length === 0){ yaCargadas++; continue; } // todas ya cargadas: no tocar
-
-            const curStock = parseNum(doc.stock||0), curCost = parseNum(doc.cost||0);
-            const qtyNuevas = nuevas.reduce((s,o)=>s+o.qty,0);
-            const costNuevas = nuevas.reduce((s,o)=>s+o.costTotal,0);
-            const costUnitNuevas = qtyNuevas>0 ? costNuevas/qtyNuevas : 0;
-
-            if(curStock<=0 && curCost<=0){
-              // Documento vacío (nunca recibió su producción) → cargar existencia + costo
-              await setDoc(getDocRef('inventory', doc.id), {
-                ...doc, stock:qtyNuevas, cost:costUnitNuevas,
-                opsAplicadas:[...aplicadas, ...nuevas.map(o=>o.id)],
-                timestamp:Date.now(), updatedAt:getTodayDate()
-              }, { merge:true });
-              llenados++;
-            } else {
-              // Ya tiene existencia/costo (carga previa o stock facturado): NO se suma,
-              // solo se marca para que esta OP no se vuelva a contar nunca.
-              await setDoc(getDocRef('inventory', doc.id), {
-                ...doc, opsAplicadas:[...aplicadas, ...nuevas.map(o=>o.id)],
-                timestamp:Date.now(), updatedAt:getTodayDate()
-              }, { merge:true });
-              marcados++;
-            }
-          }
-
-          setDialog({
-            title: '✅ Carga Completada',
-            text: `Productos creados: ${creados}\nProductos rellenados (estaban en 0): ${llenados}\nProductos ya con datos (solo marcados, sin sumar): ${marcados}\nGrupos ya cargados (omitidos): ${yaCargadas}\n\nCada OP cerrada se cuenta UNA sola vez. Puedes pulsar el botón otra vez sin riesgo: no recarga OPs ya aplicadas ni modifica el stock que ya facturaste.`,
-            type: 'alert'
-          });
-        } catch(err){
-          setDialog({ title:'Error al recalcular', text: err.message, type:'alert' });
-        }
-      }
-    });
   };
 
   const handleCloseOP = (req) => {
