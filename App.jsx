@@ -121,8 +121,6 @@ const getTodayDate = () => {
 };
 
 const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
-// Tasa de cambio: hasta 4 decimales (mínimo 2)
-const formatTasa = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(num || 0);
 
 // Format finished goods label: PRODUCTO ANCHO×LARGO×MICMiC - CLIENTE
 // Video de login: se carga desde Firebase settings.loginVideo
@@ -367,9 +365,6 @@ export default function App() {
   const [fgCatFilter, setFgCatFilter] = useState('TODAS');
   const [selectedOpId, setSelectedOpId] = useState('');
   const [fgItems, setFgItems] = useState([]); // [{fgId, cantidad, desc, unidad, maxCant}]
-  const [editingFgIdx, setEditingFgIdx] = useState(null);
-  const [descuentoTipo, setDescuentoTipo] = useState('monto'); // 'monto' | 'pct'
-  const [descuentoVal, setDescuentoVal] = useState('');
   const [showCargarProducto, setShowCargarProducto] = useState(false);
   const [fgCorrectionDone, setFgCorrectionDone] = useState(false);
 
@@ -457,6 +452,24 @@ export default function App() {
 
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
   const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
+  const [editingFgIdx, setEditingFgIdx] = useState(null);
+  const [descuentoTipo, setDescuentoTipo] = useState('monto');
+  const [descuentoVal, setDescuentoVal] = useState('');
+  const [fichaVend, setFichaVend] = useState(null);
+  const [fichaData, setFichaData] = useState({});
+  const [fichaGuardando, setFichaGuardando] = useState(false);
+  const [nuevoNombreVend, setNuevoNombreVend] = useState('');
+  const [mostrarNuevoVend, setMostrarNuevoVend] = useState(false);
+  const [dashMes, setDashMes] = useState(new Date().getMonth()+1);
+  const [dashAnio, setDashAnio] = useState(new Date().getFullYear());
+  const [dashVendFiltro, setDashVendFiltro] = useState('todos');
+  const [dashClienteFiltro, setDashClienteFiltro] = useState('todos');
+  const [dashBusqueda, setDashBusqueda] = useState('');
+  const [comVendedor, setComVendedor] = useState('');
+  const [comMes, setComMes] = useState(new Date().getMonth()+1);
+  const [comAnio, setComAnio] = useState(new Date().getFullYear());
+  const [comCobranza, setComCobranza] = useState([]);
+  const [comBonos, setComBonos] = useState(null);
   const [showGeneralInvoicesReport, setShowGeneralInvoicesReport] = useState(false);
   const [showClientReport, setShowClientReport] = useState(false);
   const [showReqReport, setShowReqReport] = useState(false);
@@ -513,13 +526,6 @@ export default function App() {
   const [editingReqId, setEditingReqId] = useState(null);
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', nroFiscal: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
-  // ── Cálculos de totales en tiempo real (usados en el formulario de factura) ──
-  const _invBase = fgItems&&fgItems.length>0 ? fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0) : parseNum(newInvoiceForm?.montoBase||0);
-  const _invDv   = parseNum(descuentoVal||0);
-  const _invDa   = descuentoTipo==='pct' ? parseFloat((_invBase*(_invDv/100)).toFixed(2)) : _invDv;
-  const _invSub  = parseFloat(Math.max(0,_invBase-_invDa).toFixed(2));
-  const _invIva  = (newInvoiceForm?.aplicaIva||'SI')==='SI' ? parseFloat((_invSub*0.16).toFixed(2)) : 0;
-  const _invTot  = parseFloat((_invSub+_invIva).toFixed(2));
 
   // Formularios Producción
   const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '', mermaTroquelTransp: '', mermaTroquelPigm: '', mermaTorta: '', observaciones: '', pesoMillarReal: '', operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '', zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '', operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '', operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: '' };
@@ -610,24 +616,6 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
   const [selectedMonths, setSelectedMonths] = useState([]); // multi-month filter for Rentabilidad
   const [pvClienteFilter, setPvClienteFilter] = useState('TODOS');
-  // ── Comisiones de vendedores ──
-  const [comVendedor, setComVendedor] = useState('');
-  const [comMes, setComMes] = useState(new Date().getMonth()+1);
-  const [comAnio, setComAnio] = useState(new Date().getFullYear());
-  const [comCobranza, setComCobranza] = useState([]); // tabla manual de cobranza (estado de edición)
-  const [comBonos, setComBonos] = useState(null); // bonos editables del vendedor/mes
-  // ── Dashboard de ventas ──
-  const [dashMes, setDashMes] = useState(new Date().getMonth()+1);
-  const [dashAnio, setDashAnio] = useState(new Date().getFullYear());
-  const [dashVendFiltro, setDashVendFiltro] = useState('todos');
-  const [dashClienteFiltro, setDashClienteFiltro] = useState('todos');
-  const [dashBusqueda, setDashBusqueda] = useState('');
-  // ── Ficha de vendedores ──
-  const [fichaVend, setFichaVend] = useState(null);
-  const [fichaData, setFichaData] = useState({});
-  const [fichaGuardando, setFichaGuardando] = useState(false);
-  const [nuevoNombreVend, setNuevoNombreVend] = useState('');
-  const [mostrarNuevoVend, setMostrarNuevoVend] = useState(false);
   const [selectedInvItems, setSelectedInvItems] = useState(new Set()); // bulk delete
   const [pvProductoFilter, setPvProductoFilter] = useState('TODOS');
   const [prodActivoSearch, setProdActivoSearch] = useState('');
@@ -1024,90 +1012,6 @@ export default function App() {
     };
     doRestore();
   }, [inventory, appUser]);
-
-
-  // ── AUTO-CORRECCIÓN (sin botones): refleja FG Producción en el catálogo de PT ──
-  // Toma la existencia y el costo que ya están en "Productos Terminados (FG Producción)"
-  // y los carga en los documentos de inventario que el catálogo / almacén / toma física
-  // / movimientos usan, para que dejen de aparecer en 0. Se ejecuta sola, una vez.
-  //   • Solo rellena documentos que estén en 0 (no toca los que ya tienen existencia, p.ej. CHUPETA).
-  //   • Crea los que faltan (p.ej. VENILAC - TERMO).
-  //   • Como toma el saldo ACTUAL de FG Producción, nunca restaura lo ya facturado.
-  useEffect(() => {
-    if(!inventory || !finishedGoodsInventory || !appUser) return;
-    if(sessionStorage.getItem('auto_fg_mirror_v3')==='done') return;
-    sessionStorage.setItem('auto_fg_mirror_v3','done');
-
-    const r2 = (n) => Math.round(parseNum(n)*100)/100;
-    const dimsFromCode = (code) => {
-      const cc=String(code||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
-      const seg=cc.split('-').pop()||'';
-      const p=seg.toLowerCase().split('x').map(x=>parseFloat(x)||0);
-      return { ancho:p[0]||0, largo:p[1]||0 };
-    };
-
-    const doMirror = async () => {
-      try {
-        // 1) Agrupar FG Producción por tipo + ancho + largo (saldo actual y costo)
-        const groups = {}; // key -> {esTermo, qty, costTotal, sample}
-        (finishedGoodsInventory||[]).forEach(fg => {
-          const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-          const entregado = fg.status === 'ENTREGADO';
-          const qty = entregado ? 0 : (esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares));
-          if(qty <= 0) return;
-          const cu = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-          const key = `${esTermo?'T':'B'}|${r2(fg.ancho)}|${r2(fg.largo)}`;
-          if(!groups[key]) groups[key] = { esTermo, qty:0, costTotal:0, sample:fg };
-          groups[key].qty += qty;
-          groups[key].costTotal += qty*cu;
-        });
-
-        for(const key of Object.keys(groups)){
-          const g = groups[key];
-          const fg = g.sample;
-          const qtyTot = g.qty;
-          const costUnit = qtyTot>0 ? g.costTotal/qtyTot : 0;
-
-          // 2) Buscar el documento de inventario que corresponde (mismo tipo + ancho + largo)
-          const ptDocs = (inventory||[]).filter(i => i.category==='Productos Terminados' && i.activo!==false);
-          const doc = ptDocs.find(i => {
-            const esT = (i.subcategory==='Termoencogibles') || (i.unit||'').toLowerCase()==='kg';
-            const d = dimsFromCode(i.displayId||i.id);
-            return esT===g.esTermo && r2(d.ancho)===r2(fg.ancho) && r2(d.largo)===r2(fg.largo);
-          });
-
-          if(doc){
-            // Solo rellenar si está en 0 (no pisar los que ya tienen existencia correcta)
-            if(parseNum(doc.stock) > 0) continue;
-            await setDoc(getDocRef('inventory', doc.id), {
-              ...doc, stock: qtyTot, cost: parseNum(doc.cost)>0 ? parseNum(doc.cost) : costUnit,
-              timestamp: Date.now(), updatedAt: getTodayDate()
-            }, { merge:true });
-          } else {
-            // 3) Crear el documento que falta (p.ej. VENILAC - TERMO)
-            const desc = formatFGLabel(fg) || fg.producto || 'Producto';
-            const catShort = (fg.categoria||fg.producto||'PT').toUpperCase().replace(/[\s\/\-&]+/g,'').substring(0,18);
-            const w=parseFloat(fg.ancho||0), l=parseFloat(fg.largo||0), m=parseFloat(fg.micras||0);
-            const cleanCode = `FG-${catShort}-${w}x${l}x${m}`;
-            const newId = `${cleanCode}___ALMACEN-ZI`;
-            // Evitar duplicar si por alguna razón ya existe ese id
-            if((inventory||[]).some(i => i.id===newId || (i.id||'').split('___')[0]===cleanCode)) continue;
-            await setDoc(getDocRef('inventory', newId), {
-              id:newId, displayId:cleanCode, desc,
-              category:'Productos Terminados',
-              subcategory: g.esTermo?'Termoencogibles':'Bolsas Plásticas',
-              unit: g.esTermo?'KG':'Millares',
-              stock: qtyTot, cost: costUnit,
-              almacen:'ALMACEN ZI', activo:true,
-              timestamp:Date.now(), updatedAt:getTodayDate()
-            });
-          }
-        }
-      } catch(e){ console.error('Auto-mirror FG error:', e); }
-    };
-    doMirror();
-  }, [inventory, finishedGoodsInventory, appUser]);
-
 
   // ── ONE-TIME cleanup: FG duplicate docs only ──
   useEffect(() => {
@@ -2617,12 +2521,9 @@ export default function App() {
     });
 
     // ── Calculate totals from fgItems (not from stale form state) ──
-    const computedBaseRaw = fgItems.length > 0
+    const computedBase = fgItems.length > 0
       ? fgItems.reduce((s,it)=>s + parseNum(it.precioUnit||0)*parseNum(it.cantidad||0), 0)
       : parseNum(newInvoiceForm.montoBase||0);
-    const dVal = parseNum(descuentoVal||0);
-    const descuentoAmt = descuentoTipo==='pct' ? computedBaseRaw*(dVal/100) : dVal;
-    const computedBase = Math.max(0, computedBaseRaw - descuentoAmt);
     const aplicaIvaFinal = newInvoiceForm.aplicaIva || 'SI';
     const computedIva = aplicaIvaFinal==='SI' ? parseFloat((computedBase*0.16).toFixed(2)) : 0;
     const computedTotal = parseFloat((computedBase + computedIva).toFixed(2));
@@ -2632,7 +2533,7 @@ export default function App() {
         ...newInvoiceForm, id, documento: id,
         nroFiscal: newInvoiceForm.nroFiscal||'',
         tasa: parseNum(newInvoiceForm.tasa||settings?.tasaBCV||0),
-        descuentoTipo, descuentoVal: parseNum(descuentoVal||0), descuentoAmt,
+        descuentoTipo, descuentoVal: parseNum(descuentoVal||0),
         montoBase: computedBase,
         iva: computedIva,
         total: computedTotal,
@@ -2665,64 +2566,51 @@ export default function App() {
 
       // ── MULTI-WAREHOUSE DEDUCTION from inventory (Inventario General) ──
       // For items from Inventario General (not finishedGoodsInventory),
-      // use the mwDispatch assignments to deduct from each warehouse document.
-      // En edición: items ya guardados solo ajustan la DIFERENCIA de cantidad
-      // (positiva = descontar más; negativa = devolver al stock). Si no cambió, no toca nada.
-      const itemsWithInvCode = itemsToProcess.filter(it => (it.invCode || (it._isInvPT)));
+      // use the mwDispatch assignments to deduct from each warehouse document
+      const itemsWithInvCode = itemsToProcess.filter(it => it.invCode || (it._isInvPT));
       if(itemsWithInvCode.length > 0) {
         const batch = writeBatch(db);
         for(const item of itemsWithInvCode) {
           const code = item.invCode || (item.fgId||'').split('___')[0];
-          // Cantidad a mover: nuevos = total; guardados = delta vs original
-          const cantTotal = item._savedItem
-            ? parseNum(item.cantidad) - parseNum(item._origCantidad||0)
-            : parseNum(item.cantidad);
-          if(Math.abs(cantTotal) <= 0.0001) continue;
+          const cantTotal = parseNum(item.cantidad);
+          if(cantTotal <= 0) continue;
 
+          const dispatch = mwDispatch[code] || {};
+          const hasDispatch = Object.values(dispatch).some(v=>parseNum(v)>0);
+          
           // Get all warehouse docs for this product
           const whDocs = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code);
-
-          if(cantTotal > 0){
-            const dispatch = mwDispatch[code] || {};
-            const hasDispatch = Object.values(dispatch).some(v=>parseNum(v)>0);
-            if(hasDispatch && !item._savedItem) {
-              // Use explicit warehouse assignments (solo en alta nueva)
-              for(const [almNom, qty] of Object.entries(dispatch)) {
-                const qtyNum = parseNum(qty);
-                if(qtyNum <= 0) continue;
-                const whDoc = whDocs.find(i=>(i.almacen||'').toUpperCase()===almNom.toUpperCase() || (i.id||'').includes(almNom.replace(/\s+/g,'-')));
-                if(!whDoc) continue;
-                const newStock = Math.max(0, parseNum(whDoc.stock||0) - qtyNum);
-                batch.update(getDocRef('inventory', whDoc.id), {stock: newStock, timestamp: Date.now()});
-                await addDoc(getColRef('inventoryMovements'), {
-                  itemId: whDoc.id, itemDesc: item.desc||code, almacen: almNom,
-                  type: 'SALIDA', qty: qtyNum, unitCost: parseNum(item.costoUnit||0),
-                  totalValue: qtyNum * parseNum(item.costoUnit||0),
-                  previousStock: parseNum(whDoc.stock||0), newStock,
-                  docRef: id, notes: `VENTA ${id} — Almacén: ${almNom}`,
-                  date: newInvoiceForm.fecha||getTodayDate(), user: appUser?.name||'Admin', timestamp: Date.now()
-                });
-              }
-            } else {
-              // Auto: descontar de almacenes con stock (menor stock primero)
-              let remaining = cantTotal;
-              const sorted = [...whDocs].sort((a,b)=>parseNum(a.stock||0)-parseNum(b.stock||0));
-              for(const wh of sorted) {
-                if(remaining<=0) break;
-                const avail = parseNum(wh.stock||0);
-                if(avail<=0) continue;
-                const deduct = Math.min(remaining, avail);
-                remaining -= deduct;
-                const newStock = Math.max(0, avail - deduct);
-                batch.update(getDocRef('inventory', wh.id), {stock: newStock, timestamp: Date.now()});
-              }
+          
+          if(hasDispatch) {
+            // Use explicit warehouse assignments
+            for(const [almNom, qty] of Object.entries(dispatch)) {
+              const qtyNum = parseNum(qty);
+              if(qtyNum <= 0) continue;
+              const whDoc = whDocs.find(i=>(i.almacen||'').toUpperCase()===almNom.toUpperCase() || (i.id||'').includes(almNom.replace(/\s+/g,'-')));
+              if(!whDoc) continue;
+              const newStock = Math.max(0, parseNum(whDoc.stock||0) - qtyNum);
+              batch.update(getDocRef('inventory', whDoc.id), {stock: newStock, timestamp: Date.now()});
+              // Kardex entry
+              await addDoc(getColRef('inventoryMovements'), {
+                itemId: whDoc.id, itemDesc: item.desc||code, almacen: almNom,
+                type: 'SALIDA', qty: qtyNum, unitCost: parseNum(item.costoUnit||0),
+                totalValue: qtyNum * parseNum(item.costoUnit||0),
+                previousStock: parseNum(whDoc.stock||0), newStock,
+                docRef: id, notes: `VENTA ${id} — Almacén: ${almNom}`,
+                date: newInvoiceForm.fecha||getTodayDate(), user: appUser?.name||'Admin', timestamp: Date.now()
+              });
             }
           } else {
-            // Delta negativo (se redujo la cantidad al editar): DEVOLVER al stock
-            const devolver = Math.abs(cantTotal);
-            const wh = whDocs[0];
-            if(wh){
-              const newStock = parseNum(wh.stock||0) + devolver;
+            // Auto: deduct from warehouses with stock (FIFO by smallest stock first)
+            let remaining = cantTotal;
+            const sorted = [...whDocs].sort((a,b)=>parseNum(a.stock||0)-parseNum(b.stock||0));
+            for(const wh of sorted) {
+              if(remaining<=0) break;
+              const avail = parseNum(wh.stock||0);
+              if(avail<=0) continue;
+              const deduct = Math.min(remaining, avail);
+              remaining -= deduct;
+              const newStock = Math.max(0, avail - deduct);
               batch.update(getDocRef('inventory', wh.id), {stock: newStock, timestamp: Date.now()});
             }
           }
@@ -2732,49 +2620,30 @@ export default function App() {
       }
 
       // ── Descontar cada item del inventario de terminados (FIFO por lote) ──
-      // Nuevos: descuenta toda la cantidad. Guardados: solo ajusta la diferencia.
-      const itemsToDeduct = itemsToProcess.filter(it => !it._isInvPT && !it.invCode);
+      // Only deduct items that are NEW (not already saved from a previous invoice save)
+      const itemsToDeduct = itemsToProcess.filter(it => !it._savedItem);
 
       for (const item of itemsToDeduct) {
-        // Nuevos: descuenta toda la cantidad. Guardados: solo la diferencia vs original.
-        const cantFacturada = item._savedItem
-          ? parseNum(item.cantidad) - parseNum(item._origCantidad||0)
-          : parseNum(item.cantidad);
-        if (Math.abs(cantFacturada) <= 0.0001) continue;
+        const cantFacturada = parseNum(item.cantidad);
+        if (cantFacturada <= 0) continue;
 
-        // Resolver lotes FG frescos
-        let lotesRef = [];
+        // Always use FRESH FG data from current state (not stale grpLotes from click time)
+        // Find all FG items that match this product (by fgId or by grpKey)
+        let lotesADescontar = [];
         if(item.grpLotes && item.grpLotes.length > 0) {
-          lotesRef = item.grpLotes.map(g => (finishedGoodsInventory||[]).find(f=>f.id===g.id)).filter(Boolean);
+          // Re-fetch fresh data for each lote
+          lotesADescontar = item.grpLotes.map(g => (finishedGoodsInventory||[]).find(f=>f.id===g.id)).filter(Boolean);
         }
-        if(!lotesRef.length && item.fgId) {
+        if(!lotesADescontar.length && item.fgId) {
           const fg = (finishedGoodsInventory||[]).find(f => f.id === item.fgId);
-          if(fg) lotesRef = [fg];
+          if(fg) lotesADescontar = [fg];
         }
-        if (!lotesRef.length) { console.warn('No FG lotes found for item:', item.fgId, item.fgGrpKey); continue; }
-        const esTermoD = item.esTermo ?? (lotesRef[0]?.tipoProducto === 'TERMOENCOGIBLE');
-
-        // Delta negativo (se redujo la cantidad al editar): DEVOLVER al primer lote
-        if(cantFacturada < 0){
-          const devolver = Math.abs(cantFacturada);
-          const fg = (finishedGoodsInventory||[]).find(f=>f.id===lotesRef[0].id) || lotesRef[0];
-          const stockActual = esTermoD ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-          const restaurado = stockActual + devolver;
-          await updateDoc(getDocRef('finishedGoodsInventory', fg.id),
-            esTermoD ? {kgProducidos: restaurado, status:'LISTO PARA ENTREGA'} : {millares: restaurado, status:'LISTO PARA ENTREGA'});
-          const costoUnit = esTermoD ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-          await addDoc(getColRef('inventoryMovements'), {
-            itemId: `FG::${fg.id}`, itemDesc: formatFGLabel(fg)||fg.producto||fg.id,
-            type: 'ENTRADA', qty: devolver, unitCost: costoUnit,
-            totalValue: devolver*costoUnit, previousStock: stockActual, newStock: restaurado,
-            docRef: id, notes: `AJUSTE EDICIÓN FAC ${id} (devolución)`,
-            date: newInvoiceForm.fecha||getTodayDate(), user: appUser?.name||'Admin', timestamp: Date.now(), isFG: true
-          });
+        if (!lotesADescontar.length) {
+          console.warn('No FG lotes found for item:', item.fgId, item.fgGrpKey);
           continue;
         }
 
-        const lotesADescontar = lotesRef;
-        const esTermo = esTermoD;
+        const esTermo = item.esTermo ?? (lotesADescontar[0]?.tipoProducto === 'TERMOENCOGIBLE');
 
         let porDescontar = cantFacturada;
         for (const fgOld of lotesADescontar) {
@@ -2823,7 +2692,7 @@ export default function App() {
         });
       }
 
-      setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm); setFgItems([]); setDescuentoVal(''); setDescuentoTipo('monto');
+      setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm); setFgItems([]); setDescuentoVal(""); setDescuentoTipo("monto"); setEditingFgIdx(null);
       setDialog({title: '✅ Éxito', text: editingInvoiceId ? `Factura ${id} actualizada y stock descontado.` : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
     } catch(err) { setDialog({title: 'Error al guardar factura', text: err.message, type: 'alert'}); }
   };
@@ -2907,7 +2776,7 @@ export default function App() {
             desc: it.desc || formatFGLabel(fg)||fg.producto||fg.id,
             unidad: it.unidad||(esTermo?'KG':'Mill.'),
             maxCant: parseNum(it.cantidad||0) + currentStock,
-            esTermo, grpLotes: [fg], _savedItem: true, _isInvPT: false, _origCantidad: parseNum(it.cantidad||0)
+            esTermo, grpLotes: [fg], _savedItem: true, _isInvPT: false
           });
         } else {
           // From inventory PT (non-FG items)
@@ -2921,7 +2790,7 @@ export default function App() {
             desc: it.desc || invItem?.desc || it.invCode || '—',
             unidad: it.unidad||invItem?.unit||'und',
             maxCant: parseNum(it.cantidad||0)+(parseNum(invItem?.stock||0)),
-            esTermo: false, grpLotes: [], _savedItem: true, _isInvPT: true, _origCantidad: parseNum(it.cantidad||0)
+            esTermo: false, grpLotes: [], _savedItem: true, _isInvPT: true
           });
         }
       });
@@ -8651,7 +8520,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    </div>
                    <div>
                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa de Cambio (Bs/$)</label>
-                     <input type="number" step="0.0001" min="0" id="tasaCambio177" defaultValue={settings.tasaCambio||''} onBlur={async e=>{await setDoc(getDocRef('settings','general'),{tasaCambio:parseNum(e.target.value)},{merge:true});}} className="w-40 border-2 border-orange-300 bg-orange-50 rounded-xl p-3 font-black text-xs outline-none text-center focus:border-orange-500" placeholder="Ej: 90.5042"/>
+                     <input type="number" step="0.01" min="0" id="tasaCambio177" defaultValue={settings.tasaCambio||''} onBlur={async e=>{await setDoc(getDocRef('settings','general'),{tasaCambio:parseNum(e.target.value)},{merge:true});}} className="w-40 border-2 border-orange-300 bg-orange-50 rounded-xl p-3 font-black text-xs outline-none text-center focus:border-orange-500" placeholder="Ej: 90.50"/>
                      <p className="text-[8px] text-gray-400 font-bold mt-0.5">Si se ingresa, los costos se muestran en Bs</p>
                    </div>
                  </div>
@@ -8659,11 +8528,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  <div className="hidden pdf-header mb-6">
                    <ReportHeader />
                    <h1 className="text-xl font-black text-black uppercase border-b-2 border-orange-500 pb-1">MOVIMIENTO POR UNIDADES — INVENTARIO</h1>
-                   <p className="text-xs font-bold text-gray-500 uppercase mt-1">PERÍODO: {reportMonth.toString().padStart(2, '0')} / {reportYear}{settings.tasaCambio ? ` | TASA: Bs ${formatTasa(settings.tasaCambio)}/$` : ''}</p>
+                   <p className="text-xs font-bold text-gray-500 uppercase mt-1">PERÍODO: {reportMonth.toString().padStart(2, '0')} / {reportYear}{settings.tasaCambio ? ` | TASA: Bs ${formatNum(settings.tasaCambio)}/$` : ''}</p>
                  </div>
 
                  <div className="border border-gray-300 rounded-xl overflow-hidden shadow-sm">
-                   {tc > 0 && <div className="bg-orange-50 border-b border-orange-200 px-4 py-1.5 text-[9px] font-black text-orange-800 uppercase">Tasa de Cambio: Bs {formatTasa(tc)} / $ — Valores en Bolívares</div>}
+                   {tc > 0 && <div className="bg-orange-50 border-b border-orange-200 px-4 py-1.5 text-[9px] font-black text-orange-800 uppercase">Tasa de Cambio: Bs {formatNum(tc)} / $ — Valores en Bolívares</div>}
                    <table id="reporte-177-table" className="w-full text-[10px] border-collapse text-black bg-white">
                      <thead>
                        <tr className="bg-white">
@@ -8791,8 +8660,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             <div className="text-right">
               <p className="text-[10px] text-gray-500 font-black">FECHA EMISIÓN:</p>
               <p>{inv.fecha}</p>
-              {inv.nroFiscal && <p className="text-xs font-bold text-gray-600 mt-1">NRO. FISCAL: <span className="text-black">{inv.nroFiscal}</span></p>}
-              {parseNum(inv.tasa)>0 && <p className="text-xs font-bold text-gray-600 mt-1">TASA Bs/$: <span className="text-black">{formatTasa(inv.tasa)}</span></p>}
               <p className="text-xs font-bold text-gray-600 mt-1">VENDEDOR: {inv.vendedor || 'N/A'}</p>
               {inv.opAsignada && <p className="text-[10px] text-orange-600 font-black mt-1">OP RELACIONADA: #{String(inv.opAsignada).replace('OP-','').padStart(5,'0')}</p>}
             </div>
@@ -8863,7 +8730,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   <div className="flex justify-between font-bold text-sm"><span>SUBTOTAL:</span><span>${formatNum(base)}</span></div>
                   {inv.aplicaIva === 'SI' && <div className="flex justify-between font-bold text-sm"><span>IVA (16%):</span><span>${formatNum(ivaAmt)}</span></div>}
                   <div className="flex justify-between font-black text-2xl border-t-2 border-black pt-2 text-orange-600"><span>TOTAL:</span><span>${formatNum(totalFinal)}</span></div>
-                  {parseNum(inv.tasa)>0 && <div className="flex justify-between font-bold text-xs text-gray-600 pt-1"><span>TOTAL Bs (Tasa {formatTasa(inv.tasa)}):</span><span>Bs {formatNum(totalFinal*parseNum(inv.tasa))}</span></div>}
                 </>);
               })()}
             </div>
@@ -8959,8 +8825,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               if(costoU <= 0 && fg) costoU = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
               soldItems.push({
                 factura: inv.documento||inv.id,
-                nroFiscal: inv.nroFiscal||'',
-                vendedor: inv.vendedor||'',
                 fecha: inv.fecha,
                 cliente: inv.clientName||inv.clientRif||'—',
                 producto: it.desc || (fg ? (formatFGLabel(fg)||fg.producto||fg.id) : (it.fgId||'—')),
@@ -9016,17 +8880,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   {(pvFiltCliente !== 'TODOS' || pvFiltProducto !== 'TODOS') && (
                     <button onClick={()=>{pvSetCliente('TODOS');pvSetProducto('TODOS');}} className="text-[9px] font-black text-red-500 uppercase hover:underline mt-4">✕ Limpiar</button>
                   )}
-                  <button onClick={()=>{
-                    const periodo = pvFilter&&pvFilter!=='general'?pvFilter:'General';
-                    const fmtOp = (op)=>op&&op!=='—'?('#'+String(op).replace('OP-','').padStart(5,'0')):'—';
-                    const thead=['Factura','Nro. Fiscal','OP Relacionada','Fecha','Vendedor','Cliente','Producto','Medida','Cantidad','Costo Unit. USD','Costo Total USD'];
-                    const tbody=pvFiltered.map(s=>[s.factura,s.nroFiscal||'—',fmtOp(s.opId),s.fecha,s.vendedor||'—',s.cliente,s.producto,s.medida,formatNum(s.cantidad),formatNum(s.costoUnd),formatNum(s.cantidad*s.costoUnd)]);
-                    const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=8?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');
-                    const totCant=pvFiltered.reduce((a,r)=>a+r.cantidad,0);
-                    const totCosto=pvFiltered.reduce((a,r)=>a+r.cantidad*r.costoUnd,0);
-                    const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE DE PRODUCTOS VENDIDOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="8" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES (${pvFiltered.length} líneas)</td><td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${formatNum(totCant)}</td><td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;"></td><td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${formatNum(totCosto)}</td></tr></tfoot></table></body></html>`;
-                    const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Productos_Vendidos_${periodo}_${getTodayDate()}.xls`;a.click();
-                  }} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 mt-4"><Download size={13}/> Excel</button>
                   <button onClick={()=>handleExportPDF('Productos_Vendidos',true)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 mt-4"><Printer size={13}/> Imprimir</button>
                 </div>
               </div>
@@ -9036,10 +8889,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   <thead className="bg-gray-800 text-white">
                     <tr className="uppercase font-black text-[9px] tracking-widest">
                       <th className="py-3 px-4 border-r border-gray-700 text-left">Factura</th>
-                      <th className="py-3 px-4 border-r border-gray-700 text-left">Nro. Fiscal</th>
-                      <th className="py-3 px-4 border-r border-gray-700 text-center">OP Relacionada</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-center">Fecha</th>
-                      <th className="py-3 px-4 border-r border-gray-700 text-center">Vendedor</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-left">Cliente</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-left">Producto</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-center">Medida</th>
@@ -9050,14 +8900,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {pvFiltered.length === 0 ? (
-                      <tr><td colSpan="11" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas para los filtros seleccionados.</td></tr>
+                      <tr><td colSpan="8" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas para los filtros seleccionados.</td></tr>
                     ) : pvFiltered.map((s,i) => (
                       <tr key={i} className="hover:bg-gray-50">
                         <td className="py-3 px-4 border-r font-black text-orange-600">{s.factura}</td>
-                        <td className="py-3 px-4 border-r font-bold text-gray-600 text-[10px]">{s.nroFiscal||'—'}</td>
-                        <td className="py-3 px-4 border-r text-center font-black text-orange-600 text-[10px]">{s.opId&&s.opId!=='—'?('#'+String(s.opId).replace('OP-','').padStart(5,'0')):'—'}</td>
                         <td className="py-3 px-4 border-r text-center font-bold text-gray-600">{s.fecha}</td>
-                        <td className="py-3 px-4 border-r text-center font-black text-blue-700 text-[10px] uppercase">{s.vendedor||'—'}</td>
+                        <td className="py-3 px-4 border-r font-bold uppercase text-[10px]">{s.cliente}</td>
                         <td className="py-3 px-4 border-r font-black text-[10px]">{s.producto}</td>
                         <td className="py-3 px-4 border-r text-center"><span className="bg-blue-100 text-blue-700 font-black text-[9px] px-2 py-0.5 rounded">{s.medida}</span></td>
                         <td className="py-3 px-4 border-r text-right font-black">{formatNum(s.cantidad)}</td>
@@ -9069,7 +8917,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   {pvFiltered.length > 0 && (
                     <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-black">
                       <tr>
-                        <td colSpan="8" className="py-3 px-4 text-[10px] uppercase text-gray-500">Total filtrado: {pvFiltered.length} líneas</td>
+                        <td colSpan="5" className="py-3 px-4 text-[10px] uppercase text-gray-500">Total filtrado: {pvFiltered.length} líneas</td>
                         <td className="py-3 px-4 text-right">{formatNum(pvFiltered.reduce((s,r)=>s+r.cantidad,0))}</td>
                         <td></td>
                         <td className="py-3 px-4 text-right text-orange-600">${formatNum(pvFiltered.reduce((s,r)=>s+r.cantidad*r.costoUnd,0))}</td>
@@ -9413,7 +9261,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px;font-size:11px">
                                 <div><b>Cliente:</b> ${cot.clientName||'—'}</div><div><b>Fecha:</b> ${cot.fecha}</div>
                                 <div><b>Vendedor:</b> ${cot.vendedor||'—'}</div><div><b>Validez:</b> ${cot.validez||15} días</div>
-                                ${cot.tasa>0?`<div><b>Tasa Bs/$:</b> ${formatTasa(cot.tasa)}</div>`:''} 
+                                ${cot.tasa>0?`<div><b>Tasa Bs/$:</b> ${formatNum(cot.tasa)}</div>`:''} 
                               </div>
                               <table><thead><tr><th>Descripción</th><th>Cantidad</th><th>Precio Unit.</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>
                               <div style="text-align:right;margin-top:20px;font-size:13px">
@@ -9632,7 +9480,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           filtInvs.forEach(inv=>{
             const items = inv.itemsFacturados||[];
             if(items.length===0){
-              rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+              rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
             } else {
               items.forEach(it=>{
                 const qty=parseNum(it.cantidad||1);
@@ -9745,7 +9593,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
                 // 4. Fallback: invCode clean if anything
                 if(!codigo) codigo = _cc || getClean(it.fgId||'') || '—';
-                rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+                rows.push({fecha:inv.fecha,doc:inv.documento,cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
           });
@@ -9765,7 +9613,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <option value="general">📊 General (Todo)</option>
                     {Array.from(new Set((invoices||[]).filter(Boolean).map(i=>(i.fecha||'').substring(0,7)).filter(ym=>ym&&ym.length===7))).sort().map(ym=>{const [y,m]=ym.split('-');const label=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1]+' '+y;return <option key={ym} value={ym}>{label}</option>;})}
                   </select>
-                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=rows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.nroFiscal||'—',r.op||'—',r.vendedor||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=9&&ci<=14?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="9" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
+                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=rows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatNum(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=6&&ci<=11?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="6" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
                   <button onClick={()=>handleExportPDF('Reporte_Ventas_Costos', true)} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Printer size={12}/> Imprimir</button>
                 </div>
               </div>
@@ -9775,865 +9623,38 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 ))}
               </div>
               <div className="overflow-x-auto rounded-xl border border-gray-100">
-                <table className="w-full border-collapse text-[8px]">
-                  <thead><tr className="bg-black text-white">{['Fecha','Documento','Nro. Fiscal','OP','Vendedor','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','T. Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2 px-1.5 text-left font-black uppercase text-[7px] leading-tight">{h}</th>)}</tr></thead>
+                <table className="w-full border-collapse text-[9px]" style={{minWidth:900}}>
+                  <thead><tr className="bg-black text-white">{['Fecha','Documento','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','Total Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2.5 px-3 text-left font-black uppercase text-[8px] whitespace-nowrap">{h}</th>)}</tr></thead>
                   <tbody>
                     {rows.map((r,i)=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return(
                       <tr key={i} className={`border-b border-gray-50 ${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
-                        <td className="py-1 px-1.5 font-bold text-gray-500 whitespace-nowrap">{r.fecha}</td>
-                        <td className="py-1 px-1.5 font-black text-orange-600 whitespace-nowrap">{r.doc}</td>
-                        <td className="py-1 px-1.5 font-bold text-gray-600 whitespace-nowrap">{r.nroFiscal||'—'}</td>
-                        <td className="py-1 px-1.5 font-black text-orange-600 whitespace-nowrap">{r.op||'—'}</td>
-                        <td className="py-1 px-1.5 font-black text-blue-700 uppercase whitespace-nowrap">{r.vendedor||'—'}</td>
-                        <td className="py-1 px-1.5 font-bold max-w-[90px] truncate" title={r.cliente}>{r.cliente}</td>
-                        <td className="py-1 px-1.5 font-black text-indigo-600 whitespace-nowrap">{r.codigo}</td>
-                        <td className="py-1 px-1.5 font-bold" style={{minWidth:110,maxWidth:170,whiteSpace:'normal',wordBreak:'break-word'}}>{r.producto}</td>
-                        <td className="py-1 px-1.5 font-bold text-center">{formatNum(r.qty)}</td>
-                        <td className="py-1 px-1.5 font-bold text-right whitespace-nowrap">{formatNum(r.precio)}</td>
-                        <td className="py-1 px-1.5 font-black text-right whitespace-nowrap">{formatNum(r.total)}</td>
-                        <td className="py-1 px-1.5 font-bold text-right text-gray-500 whitespace-nowrap">{formatNum(r.costo)}</td>
-                        <td className="py-1 px-1.5 font-bold text-right text-gray-500 whitespace-nowrap">{formatNum(r.costoTotal)}</td>
-                        <td className={`py-1 px-1.5 font-black text-right whitespace-nowrap ${util>=0?'text-green-600':'text-red-500'}`}>{formatNum(util)}</td>
-                        <td className={`py-1 px-1.5 font-black text-center ${pct>=30?'text-green-600':pct>=15?'text-yellow-600':'text-red-500'}`}>{pct}%</td>
-                        <td className="py-1 px-1.5 font-bold text-right text-gray-400 whitespace-nowrap">{r.tasa>0?formatTasa(r.tasa):'—'}</td>
+                        <td className="py-1.5 px-3 font-bold text-gray-500 whitespace-nowrap">{r.fecha}</td>
+                        <td className="py-1.5 px-3 font-black text-orange-600 whitespace-nowrap">{r.doc}</td>
+                        <td className="py-1.5 px-3 font-bold max-w-[120px] truncate" title={r.cliente}>{r.cliente}</td>
+                        <td className="py-1.5 px-3 font-black text-indigo-600 whitespace-nowrap">{r.codigo}</td>
+                        <td className="py-1.5 px-3 font-bold" style={{minWidth:160,maxWidth:220,whiteSpace:'normal',wordBreak:'break-word'}}>{r.producto}</td>
+                        <td className="py-1.5 px-3 font-bold text-center">{formatNum(r.qty)}</td>
+                        <td className="py-1.5 px-3 font-bold text-right whitespace-nowrap">USD {formatNum(r.precio)}</td>
+                        <td className="py-1.5 px-3 font-black text-right whitespace-nowrap">USD {formatNum(r.total)}</td>
+                        <td className="py-1.5 px-3 font-bold text-right text-gray-500 whitespace-nowrap">USD {formatNum(r.costo)}</td>
+                        <td className="py-1.5 px-3 font-bold text-right text-gray-500 whitespace-nowrap">USD {formatNum(r.costoTotal)}</td>
+                        <td className={`py-1.5 px-3 font-black text-right whitespace-nowrap ${util>=0?'text-green-600':'text-red-500'}`}>USD {formatNum(util)}</td>
+                        <td className={`py-1.5 px-3 font-black text-center ${pct>=30?'text-green-600':pct>=15?'text-yellow-600':'text-red-500'}`}>{pct}%</td>
+                        <td className="py-1.5 px-3 font-bold text-right text-gray-400 whitespace-nowrap">{r.tasa>0?formatNum(r.tasa):'—'}</td>
                       </tr>
                     );})}
-                    {rows.length===0 && <tr><td colSpan={16} className="py-8 text-center text-gray-400 font-bold">Sin datos en el período seleccionado</td></tr>}
+                    {rows.length===0 && <tr><td colSpan={13} className="py-8 text-center text-gray-400 font-bold">Sin datos en el período seleccionado</td></tr>}
                   </tbody>
-                  {rows.length>0 && <tfoot><tr className="bg-black text-white font-black text-[8px]">
-                    <td colSpan={8} className="py-2 px-1.5 uppercase">TOTALES</td>
-                    <td className="py-2 px-1.5 text-right">{formatNum(rows.reduce((s,r)=>s+r.qty,0))}</td>
+                  {rows.length>0 && <tfoot><tr className="bg-black text-white font-black">
+                    <td colSpan={5} className="py-2.5 px-3 text-[8px] uppercase">TOTALES</td>
+                    <td className="py-2.5 px-3 text-right font-black">{formatNum(rows.reduce((s,r)=>s+r.qty,0))}</td>
                     <td/>
-                    <td className="py-2 px-1.5 text-right whitespace-nowrap">{formatNum(totalVentas)}</td>
-                    <td/><td className="py-2 px-1.5 text-right whitespace-nowrap">{formatNum(totalCosto)}</td>
-                    <td className="py-2 px-1.5 text-right whitespace-nowrap text-green-400">{formatNum(totalUtil)}</td>
-                    <td className="py-2 px-1.5 text-center text-orange-400">{pctUtil}%</td><td/>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">USD {formatNum(totalVentas)}</td>
+                    <td/><td className="py-2.5 px-3 text-right whitespace-nowrap">USD {formatNum(totalCosto)}</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap text-green-400">USD {formatNum(totalUtil)}</td>
+                    <td className="py-2.5 px-3 text-center text-orange-400">{pctUtil}%</td><td/>
                   </tr></tfoot>}
                 </table>
-              </div>
-            </div>
-          );
-        })()}
-
-        {ventasView === 'dashboard' && (() => {
-          const ymD = `${dashAnio}-${String(dashMes).padStart(2,'0')}`;
-          const mesLabelD = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][dashMes-1];
-          const facts = (invoices||[]).filter(inv => (inv.fecha||'').startsWith(ymD));
-
-          // Filas detalladas (una por item facturado)
-          const detalle = [];
-          facts.forEach(inv => {
-            const vend = (inv.vendedor||'—').toUpperCase();
-            const items = inv.itemsFacturados||[];
-            if(items.length===0){
-              detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:inv.productoMaquilado||'—', cant:1, precio:parseNum(inv.montoBase||0), monto:parseNum(inv.montoBase||inv.total||0)});
-            } else {
-              items.forEach(it=>{
-                const cant=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0);
-                detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:it.desc||it.invCode||it.fgId||'—', cant, precio, monto:precio*cant});
-              });
-            }
-          });
-
-          // Totales por vendedor
-          const porVend = {};
-          facts.forEach(inv=>{
-            const v=(inv.vendedor||'—').toUpperCase();
-            porVend[v]=(porVend[v]||0)+parseNum(inv.montoBase||inv.total||0);
-          });
-          const vendArr = Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
-          const totalVentas = vendArr.reduce((s,v)=>s+v.monto,0);
-          const mejorVend = vendArr[0];
-          const ventaMasGrande = facts.reduce((mx,inv)=>{const m=parseNum(inv.montoBase||inv.total||0);return m>mx.m?{m,inv}:mx;},{m:0,inv:null});
-          const colores=['bg-blue-500','bg-cyan-500','bg-purple-500','bg-emerald-500','bg-amber-500','bg-rose-500','bg-indigo-500'];
-
-          // % de comisión por vendedor según escalón de meta (mismo de Comisiones)
-          const metaTabla = (settings?.comisionesConfig?.metaTabla) || [
-            {min:15000,max:49999,pct:0.20},{min:50000,max:99999,pct:0.30},{min:100000,max:149999,pct:0.35},{min:150000,max:199999,pct:0.40},{min:200000,max:275000,pct:0.45}
-          ];
-          const pctVend = {};
-          vendArr.forEach(v=>{const e=metaTabla.find(x=>v.monto>=x.min&&v.monto<=x.max);pctVend[v.vend]=e?e.pct:0;});
-          // Comisión por línea = monto × % del vendedor
-          detalle.forEach(d=>{ d.pctCom = pctVend[d.vend]||0; d.comision = d.monto*(d.pctCom/100); });
-
-          // Filtros tabla
-          const vendUnicos = ['todos', ...Array.from(new Set(detalle.map(d=>d.vend)))];
-          const cliUnicos = ['todos', ...Array.from(new Set(detalle.map(d=>d.cliente))).sort()];
-          const detalleFilt = detalle.filter(d=>
-            (dashVendFiltro==='todos'||d.vend===dashVendFiltro) &&
-            (dashClienteFiltro==='todos'||d.cliente===dashClienteFiltro) &&
-            (!dashBusqueda || JSON.stringify(d).toLowerCase().includes(dashBusqueda.toLowerCase()))
-          );
-          const totCantF=detalleFilt.reduce((s,d)=>s+d.cant,0);
-          const totMontoF=detalleFilt.reduce((s,d)=>s+d.monto,0);
-          const totComF=detalleFilt.reduce((s,d)=>s+d.comision,0);
-
-          const exportDashExcel = () => {
-            const td=(c,r=false,b=false)=>`<td style="padding:5px 8px;border:1px solid #ccc;font-size:10px;${r?'text-align:right;':''}${b?'font-weight:900;':''}">${c}</td>`;
-            const rowsH=detalleFilt.map((d,i)=>`<tr style="${i%2?'background:#f9fafb;':''}">${td(d.vend)}${td(d.fecha)}${td(d.cliente)}${td(d.producto)}${td(formatNum(d.cant),true)}${td('$'+formatNum(d.precio),true)}${td('$'+formatNum(d.monto),true,true)}${td(formatNum(d.pctCom)+'%',true)}${td('$'+formatNum(d.comision),true,true)}</tr>`).join('');
-            const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 8px;border:1px solid #000;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #6366f1;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#6366f1;font-weight:900;">DASHBOARD DE VENTAS — DETALLE</h3><p style="font-size:10px;">Período: ${mesLabelD} ${dashAnio} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${['Vendedor','Fecha','Cliente','Producto','Cant.','Precio','Monto','% Com.','Comisión'].map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsH}</tbody><tfoot><tr style="background:#111;color:#fff;"><td colspan="6" style="padding:6px 8px;font-weight:900;">TOTALES (${detalleFilt.length} líneas)</td><td style="padding:6px 8px;text-align:right;font-weight:900;">$${formatNum(totMontoF)}</td><td></td><td style="padding:6px 8px;text-align:right;font-weight:900;">$${formatNum(totComF)}</td></tr></tfoot></table></body></html>`;
-            const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Dashboard_Ventas_${ymD}.xls`;a.click();
-          };
-
-          return (
-            <div className="space-y-6 animate-in fade-in">
-              {/* Header */}
-              <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-6 flex justify-between items-center flex-wrap gap-3">
-                <div>
-                  <h2 className="text-2xl font-black text-gray-800 flex items-center gap-3"><BarChart3 className="text-indigo-500" size={26}/> Dashboard de Ventas</h2>
-                  <span className="inline-block mt-1 text-[11px] font-bold text-indigo-600 bg-indigo-50 rounded-full py-1 px-4 uppercase">Período: {mesLabelD} {dashAnio}</span>
-                </div>
-                <div className="flex gap-3 items-end">
-                  <button onClick={exportDashExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1"><Download size={13}/> Excel</button>
-                  <button onClick={()=>window.print()} className="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1"><Printer size={13}/> Imprimir</button>
-                  <div><label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Mes</label><select value={dashMes} onChange={e=>setDashMes(parseInt(e.target.value))} className="border-2 border-indigo-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white">{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'].map((m,i)=><option key={i} value={i+1}>{m}</option>)}</select></div>
-                  <div><label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Año</label><input type="number" value={dashAnio} onChange={e=>setDashAnio(parseInt(e.target.value)||dashAnio)} className="border-2 border-indigo-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white w-24 text-center"/></div>
-                </div>
-              </div>
-
-              {/* Tarjetas resumen */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
-                  <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center mb-2"><DollarSign className="text-green-600" size={20}/></div>
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase">Mejor Vendedor</h3>
-                  <p className="text-lg font-black text-gray-800">{mejorVend?mejorVend.vend:'—'}</p>
-                  <p className="text-[11px] text-gray-500 font-bold">{mejorVend&&totalVentas>0?`${formatNum(mejorVend.monto/totalVentas*100)}% del total`:'Sin datos'}</p>
-                </div>
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
-                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center mb-2"><ArrowUpFromLine className="text-blue-600" size={20}/></div>
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase">Venta más Grande</h3>
-                  <p className="text-lg font-black text-gray-800">${formatNum(ventaMasGrande.m)}</p>
-                  <p className="text-[11px] text-gray-500 font-bold truncate max-w-full">{ventaMasGrande.inv?(ventaMasGrande.inv.clientName||'—'):'—'}</p>
-                </div>
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
-                  <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center mb-2"><Receipt className="text-indigo-600" size={20}/></div>
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase"># Facturas</h3>
-                  <p className="text-lg font-black text-gray-800">{facts.length}</p>
-                  <p className="text-[11px] text-gray-500 font-bold">{detalle.length} líneas</p>
-                </div>
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
-                  <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center mb-2"><BarChart3 className="text-amber-600" size={20}/></div>
-                  <h3 className="text-[10px] font-black text-gray-500 uppercase">Ventas Totales</h3>
-                  <p className="text-lg font-black text-gray-800">${formatNum(totalVentas)}</p>
-                  <p className="text-[11px] text-gray-500 font-bold">{mesLabelD} {dashAnio}</p>
-                </div>
-              </div>
-
-              {/* Barras por vendedor */}
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-                <h2 className="text-lg font-black text-gray-800 mb-4 flex items-center gap-2"><Users className="text-indigo-500" size={20}/> Volumen por Vendedor — Total ${formatNum(totalVentas)}</h2>
-                <div className="space-y-4">
-                  {vendArr.length===0 && <p className="text-gray-400 text-sm font-bold text-center py-4">Sin ventas en este período.</p>}
-                  {vendArr.map((v,i)=>{const pct=totalVentas>0?(v.monto/totalVentas*100):0;return(
-                    <div key={v.vend}>
-                      <div className="flex justify-between items-center mb-1"><span className="font-black text-gray-700 text-sm uppercase">{v.vend}</span><span className="text-sm font-black text-gray-600">${formatNum(v.monto)} <span className="text-[10px] text-gray-400">({formatNum(pct)}%)</span></span></div>
-                      <div className="w-full bg-gray-100 rounded-full h-4"><div className={`${colores[i%colores.length]} h-4 rounded-full transition-all`} style={{width:`${Math.max(pct,1)}%`}}></div></div>
-                    </div>
-                  );})}
-                </div>
-              </div>
-
-              {/* Tarjetas por vendedor */}
-              {vendArr.length>0 && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {vendArr.map((v,i)=>{
-                    const facturasV=facts.filter(inv=>(inv.vendedor||'—').toUpperCase()===v.vend);
-                    const clientesV=new Set(facturasV.map(inv=>(inv.clientName||inv.client||'—'))).size;
-                    return (
-                      <div key={v.vend} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow">
-                        <h3 className="text-lg font-black text-gray-800 border-b pb-2 mb-3 flex items-center gap-2"><span className={`w-3 h-3 rounded-full ${colores[i%colores.length]}`}></span>{v.vend}</h3>
-                        <div className="grid grid-cols-2 gap-3 text-center">
-                          <div className="bg-gray-50 p-3 rounded-xl"><div className="text-[9px] font-black text-gray-500 uppercase">Ventas</div><div className="text-lg font-black text-green-600">${formatNum(v.monto)}</div></div>
-                          <div className="bg-gray-50 p-3 rounded-xl"><div className="text-[9px] font-black text-gray-500 uppercase">Facturas</div><div className="text-lg font-black text-blue-600">{facturasV.length}</div></div>
-                          <div className="bg-gray-50 p-3 rounded-xl"><div className="text-[9px] font-black text-gray-500 uppercase">Clientes</div><div className="text-lg font-black text-indigo-600">{clientesV}</div></div>
-                          <div className="bg-gray-50 p-3 rounded-xl"><div className="text-[9px] font-black text-gray-500 uppercase">% del total</div><div className="text-lg font-black text-amber-600">{totalVentas>0?formatNum(v.monto/totalVentas*100):0}%</div></div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Tabla detallada */}
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-                <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-3">
-                  <h2 className="text-lg font-black text-gray-800 flex items-center gap-2 shrink-0"><FileText className="text-blue-500" size={20}/> Detalle de Ventas</h2>
-                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-                    <select value={dashVendFiltro} onChange={e=>setDashVendFiltro(e.target.value)} className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-400">{vendUnicos.map(v=><option key={v} value={v}>{v==='todos'?'Todos los Vendedores':v}</option>)}</select>
-                    <select value={dashClienteFiltro} onChange={e=>setDashClienteFiltro(e.target.value)} className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-400">{cliUnicos.map(c=><option key={c} value={c}>{c==='todos'?'Todos los Clientes':c}</option>)}</select>
-                    <input type="text" value={dashBusqueda} onChange={e=>setDashBusqueda(e.target.value)} placeholder="Buscar..." className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-400"/>
-                  </div>
-                </div>
-                <div className="overflow-x-auto border border-gray-100 rounded-xl">
-                  <table className="w-full text-xs text-left">
-                    <thead className="text-[9px] text-gray-600 uppercase bg-gray-100 font-black"><tr>
-                      <th className="px-3 py-2.5">Vendedor</th><th className="px-3 py-2.5">Fecha</th><th className="px-3 py-2.5">Cliente</th><th className="px-3 py-2.5">Producto</th><th className="px-3 py-2.5 text-right">Cant.</th><th className="px-3 py-2.5 text-right">Precio</th><th className="px-3 py-2.5 text-right">Monto</th><th className="px-3 py-2.5 text-right">% Com.</th><th className="px-3 py-2.5 text-right">Comisión</th>
-                    </tr></thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {detalleFilt.length===0 ? (
-                        <tr><td colSpan="9" className="py-8 text-center text-gray-400 font-bold uppercase text-[10px]">Sin ventas para los filtros seleccionados.</td></tr>
-                      ) : detalleFilt.map((d,i)=>(
-                        <tr key={i} className="hover:bg-indigo-50">
-                          <td className="px-3 py-2 font-black text-indigo-700 uppercase text-[10px]">{d.vend}</td>
-                          <td className="px-3 py-2 text-gray-500 font-bold whitespace-nowrap">{d.fecha}</td>
-                          <td className="px-3 py-2 font-bold text-gray-800 uppercase text-[10px]">{d.cliente}</td>
-                          <td className="px-3 py-2 text-gray-600 text-[10px]">{d.producto}</td>
-                          <td className="px-3 py-2 text-right font-bold">{formatNum(d.cant)}</td>
-                          <td className="px-3 py-2 text-right font-bold whitespace-nowrap">${formatNum(d.precio)}</td>
-                          <td className="px-3 py-2 text-right font-black text-gray-800 whitespace-nowrap">${formatNum(d.monto)}</td>
-                          <td className="px-3 py-2 text-right font-bold text-gray-400">{formatNum(d.pctCom)}%</td>
-                          <td className="px-3 py-2 text-right font-black text-green-700 whitespace-nowrap">${formatNum(d.comision)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot className="bg-gray-100 font-black text-gray-900 text-xs"><tr className="border-t-2 border-gray-300">
-                      <td className="px-3 py-2.5 uppercase" colSpan="4">Total (filtrado): {detalleFilt.length} líneas</td>
-                      <td className="px-3 py-2.5 text-right">{formatNum(totCantF)}</td><td className="px-3 py-2.5 text-right">—</td><td className="px-3 py-2.5 text-right text-gray-800">${formatNum(totMontoF)}</td><td className="px-3 py-2.5 text-right">—</td><td className="px-3 py-2.5 text-right text-green-700">${formatNum(totComF)}</td>
-                    </tr></tfoot>
-                  </table>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-
-        {ventasView === 'vendedores' && (() => {
-          const ESTADOS_VE = [
-            'Amazonas','Anzoátegui','Apure','Aragua','Barinas','Bolívar','Carabobo',
-            'Cojedes','Delta Amacuro','Falcón','Guárico','Lara','Mérida','Miranda',
-            'Monagas','Nueva Esparta','Portuguesa','Sucre','Táchira','Trujillo',
-            'La Guaira (Vargas)','Yaracuy','Zulia',
-            'Distrito Capital','Dependencias Federales'
-          ];
-          const REGIONES = [
-            {id:'centro', label:'Centro', estados:['Aragua','Carabobo','Miranda','Distrito Capital','La Guaira (Vargas)']},
-            {id:'llanos', label:'Llanos', estados:['Apure','Barinas','Cojedes','Guárico','Portuguesa']},
-            {id:'occidente', label:'Occidente', estados:['Falcón','Lara','Mérida','Táchira','Trujillo','Yaracuy','Zulia']},
-            {id:'oriente', label:'Oriente', estados:['Anzoátegui','Delta Amacuro','Monagas','Nueva Esparta','Sucre']},
-            {id:'sur', label:'Sur', estados:['Amazonas','Bolívar']},
-          ];
-
-          const vendedores = (settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[];
-          const vendedoresInfo = settings?.vendedoresInfo||{};
-
-          // Estado de ficha gestionado a nivel de componente (no hooks dentro de IIFE)
-          const setNuevoNombre = setNuevoNombreVend;
-          const nuevoNombre = nuevoNombreVend;
-          const mostrarNuevo = mostrarNuevoVend;
-          const setMostrarNuevo = setMostrarNuevoVend;
-
-          const abrirFicha = (nombre) => {
-            const info = vendedoresInfo[nombre.toUpperCase()]||{};
-            setFichaVend(nombre);
-            setFichaData({
-              nombre: info.nombre||nombre,
-              cargo: info.cargo||'VENDEDOR',
-              fechaIngreso: info.fechaIngreso||'',
-              telefono: info.telefono||'',
-              email: info.email||'',
-              region: info.region||'',
-              estados: info.estados||[],
-              salarioBase: info.salarioBase??300,
-              bonoVehiculo: info.bonoVehiculo??200,
-              activo: info.activo!==false,
-              observaciones: info.observaciones||''
-            });
-          };
-
-          const guardarFicha = async () => {
-            if(!fichaVend) return;
-            setFichaGuardando(true);
-            try {
-              const info = {...vendedoresInfo, [fichaVend.toUpperCase()]: fichaData};
-              // Si cambió el nombre, actualizar la lista de vendedores
-              const nombreNuevo = (fichaData.nombre||fichaVend).toUpperCase();
-              let lista = [...vendedores];
-              if(nombreNuevo !== fichaVend.toUpperCase()){
-                lista = lista.map(v=>v.toUpperCase()===fichaVend.toUpperCase()?nombreNuevo:v);
-                info[nombreNuevo] = {...fichaData};
-                delete info[fichaVend.toUpperCase()];
-              }
-              await setDoc(getDocRef('settings','general'),{vendedores:lista, vendedoresInfo:info},{merge:true});
-              setFichaVend(null);
-              setDialog({title:'✅ Guardado',text:'Ficha del vendedor actualizada.',type:'alert'});
-            } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
-            setFichaGuardando(false);
-          };
-
-          const crearVendedor = async () => {
-            const n=nuevoNombre.toUpperCase().trim();
-            if(!n) return;
-            const lista=Array.from(new Set([...vendedores,n]));
-            await setDoc(getDocRef('settings','general'),{vendedores:lista},{merge:true});
-            setNuevoNombre(''); setMostrarNuevo(false);
-            abrirFicha(n);
-          };
-
-          const eliminarVendedor = async (nombre) => {
-            if(!window.confirm(`¿Eliminar a ${nombre}? Se quitará de la lista de vendedores.`)) return;
-            const lista=vendedores.filter(v=>v.toUpperCase()!==nombre.toUpperCase());
-            const info={...vendedoresInfo};
-            delete info[nombre.toUpperCase()];
-            await setDoc(getDocRef('settings','general'),{vendedores:lista,vendedoresInfo:info},{merge:true});
-            if(fichaVend===nombre) setFichaVend(null);
-          };
-
-          const toggleEstado = (est) => {
-            const cur = fichaData.estados||[];
-            setFichaData({...fichaData, estados: cur.includes(est)?cur.filter(e=>e!==est):[...cur,est]});
-          };
-          const toggleRegion = (reg) => {
-            const estActuales = fichaData.estados||[];
-            const todosSeleccionados = reg.estados.every(e=>estActuales.includes(e));
-            let nuevos;
-            if(todosSeleccionados) nuevos = estActuales.filter(e=>!reg.estados.includes(e));
-            else nuevos = Array.from(new Set([...estActuales,...reg.estados]));
-            setFichaData({...fichaData, estados:nuevos});
-          };
-
-          // ── PDF FICHA INDIVIDUAL ──
-          const pdfFicha = (nombre) => {
-            const info = vendedoresInfo[nombre.toUpperCase()]||{};
-            const nEst = (info.estados||[]).length;
-            const ym2 = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
-            const factsMes = (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(ym2)&&(inv.vendedor||'').toUpperCase()===nombre.toUpperCase());
-            const totalMes = factsMes.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
-            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ficha ${nombre}</title><style>body{font-family:Arial,sans-serif;margin:0;padding:24px;color:#111;}.header{border-bottom:4px solid #4f46e5;padding-bottom:12px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-end;}.logo h2{margin:0;font-size:16px;font-weight:900;text-transform:uppercase;}.logo p{margin:2px 0;font-size:11px;}.ftitle{text-align:right;font-size:13px;font-weight:900;color:#4f46e5;text-transform:uppercase;}.av{width:52px;height:52px;border-radius:50%;background:#e0e7ff;display:inline-flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#4f46e5;margin-right:14px;vertical-align:middle;}.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:10px;font-weight:900;text-transform:uppercase;margin-left:8px;}.activo{background:#d1fae5;color:#065f46;}.inactivo{background:#fee2e2;color:#991b1b;}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0;}.field{background:#f9fafb;border-radius:8px;padding:9px 12px;}.fl{font-size:9px;font-weight:900;color:#6b7280;text-transform:uppercase;margin-bottom:2px;}.fv{font-size:12px;font-weight:700;}.sec{margin-top:18px;border-top:2px solid #e5e7eb;padding-top:10px;}.st{font-size:10px;font-weight:900;color:#4f46e5;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;}.ests{display:flex;flex-wrap:wrap;gap:4px;}.est{background:#e0e7ff;color:#3730a3;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;}.kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px;}.kc{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;text-align:center;}.kv{font-size:18px;font-weight:900;color:#16a34a;}.kl{font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-top:2px;}@media print{body{padding:0;}}</style></head><body><div class="header"><div class="logo"><h2>SERVICIOS JIRET G&amp;B, C.A.</h2><p>RIF: J-412309374</p></div><div class="ftitle">Ficha Técnica de Vendedor<br><span style="font-size:10px;color:#6b7280;font-weight:400;">Generado: ${getTodayDate()}</span></div></div><div style="margin-bottom:14px;"><span class="av">${(info.nombre||nombre).charAt(0)}</span><div style="display:inline-block;vertical-align:middle;"><div><strong style="font-size:20px;text-transform:uppercase;">${info.nombre||nombre}</strong><span class="badge ${info.activo!==false?'activo':'inactivo'}">${info.activo!==false?'ACTIVO':'INACTIVO'}</span></div><div style="font-size:11px;color:#6b7280;font-weight:700;text-transform:uppercase;">${info.cargo||'VENDEDOR'} · Ingreso: ${info.fechaIngreso||'No registrado'}</div></div></div><div class="grid2"><div class="field"><div class="fl">Teléfono</div><div class="fv">${info.telefono||'—'}</div></div><div class="field"><div class="fl">Email</div><div class="fv">${info.email||'—'}</div></div><div class="field"><div class="fl">Región Principal</div><div class="fv">${info.region||'—'}</div></div><div class="field"><div class="fl">Estados Asignados</div><div class="fv">${nEst} estado(s)</div></div><div class="field"><div class="fl">Salario Garantizado</div><div class="fv">$${formatNum(info.salarioBase??300)} <span style="font-size:9px;color:#9ca3af;">(3 meses)</span></div></div><div class="field"><div class="fl">Bono Vehículo</div><div class="fv">$${formatNum(info.bonoVehiculo??200)}</div></div></div>${nEst>0?`<div class="sec"><div class="st">Zona de Ventas — ${nEst} Estado(s)</div><div class="ests">${(info.estados||[]).map(e=>`<span class="est">${e}</span>`).join('')}</div></div>`:''} ${info.observaciones?`<div class="sec"><div class="st">Observaciones</div><p style="font-size:11px;color:#374151;margin:0;">${info.observaciones}</p></div>`:''}<div class="sec"><div class="st">Rendimiento — ${new Date().toLocaleString('es-VE',{month:'long',year:'numeric'})}</div><div class="kpi"><div class="kc"><div class="kv">$${formatNum(totalMes)}</div><div class="kl">Ventas del mes</div></div><div class="kc"><div class="kv">${factsMes.length}</div><div class="kl">Facturas</div></div><div class="kc"><div class="kv">${new Set(factsMes.map(i=>i.clientName||'')).size}</div><div class="kl">Clientes</div></div></div></div><script>window.onload=()=>window.print();</script></body></html>`;
-            const w=window.open('','_blank');w.document.write(html);w.document.close();
-          };
-
-          // ── PDF REPORTE GENERAL ──
-          const pdfReporteGeneral = () => {
-            const ym2=`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
-            const mesLabel2=new Date().toLocaleString('es-VE',{month:'long',year:'numeric'});
-            const rows=vendedores.map(nombre=>{
-              const info=vendedoresInfo[nombre.toUpperCase()]||{};
-              const factsMes=(invoices||[]).filter(inv=>(inv.fecha||'').startsWith(ym2)&&(inv.vendedor||'').toUpperCase()===nombre.toUpperCase());
-              const totalMes=factsMes.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
-              return {nombre:info.nombre||nombre,cargo:info.cargo||'VENDEDOR',fechaIngreso:info.fechaIngreso||'—',region:info.region||'—',nEstados:(info.estados||[]).length,telefono:info.telefono||'—',activo:info.activo!==false,salarioBase:info.salarioBase??300,bonoVehiculo:info.bonoVehiculo??200,totalMes,nFacturas:factsMes.length,nClientes:new Set(factsMes.map(i=>i.clientName||'')).size};
-            });
-            const td=(c,r,b)=>`<td style="padding:5px 8px;border:1px solid #e5e7eb;font-size:10px;${r?'text-align:right;':''}${b?'font-weight:900;':''}">${c}</td>`;
-            const rowsHtml=rows.map((r,i)=>`<tr style="${i%2?'background:#f9fafb;':''}">${td(`<strong style="text-transform:uppercase;">${r.nombre}</strong><br><span style="font-size:9px;color:#6b7280;">${r.cargo}</span>`)}${td(r.fechaIngreso)}${td(r.region)}${td(r.nEstados,true)}${td(r.telefono)}${td(`<span style="padding:1px 7px;border-radius:10px;font-size:9px;font-weight:900;background:${r.activo?'#d1fae5':'#fee2e2'};color:${r.activo?'#065f46':'#991b1b'}">${r.activo?'ACTIVO':'INACT.'}</span>`)}${td('$'+formatNum(r.salarioBase),true)}${td('$'+formatNum(r.bonoVehiculo),true)}${td('$'+formatNum(r.totalMes),true,true)}${td(r.nFacturas,true)}${td(r.nClientes,true)}</tr>`).join('');
-            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Reporte Vendedores</title><style>body{font-family:Arial,sans-serif;margin:0;padding:24px;color:#111;}.header{border-bottom:4px solid #4f46e5;padding-bottom:12px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-end;}h2{margin:0;font-size:16px;font-weight:900;text-transform:uppercase;}h3{margin:2px 0;font-size:14px;color:#4f46e5;font-weight:900;}table{border-collapse:collapse;width:100%;}th{background:#111;color:#fff;font-size:9px;text-transform:uppercase;padding:6px 8px;border:1px solid #111;}@media print{body{padding:0;}}</style></head><body><div class="header"><div><h2>SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:2px 0;font-size:11px;">RIF: J-412309374</p></div><div style="text-align:right;"><h3>Reporte General de Vendedores</h3><p style="font-size:10px;color:#6b7280;margin:0;">Período: ${mesLabel2} · Generado: ${getTodayDate()}</p></div></div><table><thead><tr><th>Vendedor / Cargo</th><th>Ingreso</th><th>Región</th><th>Estados</th><th>Teléfono</th><th>Estatus</th><th>Salario</th><th>B.Veh.</th><th>Ventas Mes</th><th>Facturas</th><th>Clientes</th></tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="8" style="padding:6px 8px;font-weight:900;border:1px solid #111;background:#111;color:#fff;">TOTALES</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">$${formatNum(rows.reduce((s,r)=>s+r.totalMes,0))}</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">${rows.reduce((s,r)=>s+r.nFacturas,0)}</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">${rows.reduce((s,r)=>s+r.nClientes,0)}</td></tr></tfoot></table><script>window.onload=()=>window.print();</script></body></html>`;
-            const w=window.open('','_blank');w.document.write(html);w.document.close();
-          };
-
-
-          return (
-            <div className="space-y-6 animate-in fade-in">
-              {/* Header */}
-              <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-                <div className="px-8 py-5 border-b bg-gradient-to-r from-indigo-50 to-blue-50 flex justify-between items-center flex-wrap gap-3">
-                  <div>
-                    <h2 className="text-xl font-black text-indigo-900 uppercase flex items-center gap-3"><Users className="text-indigo-600" size={24}/> Equipo de Vendedores</h2>
-                    <p className="text-[10px] font-bold text-indigo-600 mt-0.5">{vendedores.length} vendedor(es) registrado(s) · Gestión de fichas, zonas y comisiones</p>
-                  </div>
-                  <div className="flex gap-2 items-center flex-wrap">
-                    <button onClick={pdfReporteGeneral} className="px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm bg-white border-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50"><Printer size={14}/> Reporte General</button>
-                    <button onClick={()=>setMostrarNuevo(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm ${mostrarNuevo?'bg-red-500 text-white':'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
-                      <Plus size={14}/>{mostrarNuevo?'CANCELAR':'NUEVO VENDEDOR'}
-                    </button>
-                  </div>
-                </div>
-
-                {mostrarNuevo && (
-                  <div className="px-8 py-4 bg-indigo-50 border-b flex items-center gap-3">
-                    <input type="text" value={nuevoNombre} onChange={e=>setNuevoNombre(e.target.value.toUpperCase())}
-                      onKeyDown={e=>e.key==='Enter'&&crearVendedor()}
-                      placeholder="Nombre del vendedor (ej: CARLOS PÉREZ)"
-                      className="flex-1 border-2 border-indigo-200 rounded-xl px-4 py-2.5 text-xs font-black uppercase outline-none focus:border-indigo-500 bg-white"/>
-                    <button onClick={crearVendedor} className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl text-xs font-black uppercase">Crear y editar ficha</button>
-                  </div>
-                )}
-
-                {/* Grid de tarjetas */}
-                <div className="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {vendedores.map(v => {
-                    const info = vendedoresInfo[v.toUpperCase()]||{};
-                    const nEst = (info.estados||[]).length;
-                    const activo = info.activo!==false;
-                    return (
-                      <div key={v} className={`rounded-2xl border-2 p-4 hover:shadow-md transition-all cursor-pointer ${fichaVend===v?'border-indigo-500 bg-indigo-50':'border-gray-100 bg-white'}`}
-                        onClick={()=>fichaVend===v?setFichaVend(null):abrirFicha(v)}>
-                        <div className="flex justify-between items-start mb-3">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center font-black text-indigo-700 text-sm">{(info.nombre||v).charAt(0)}</div>
-                              <div>
-                                <div className="font-black text-gray-900 text-sm uppercase">{info.nombre||v}</div>
-                                <div className="text-[9px] font-bold text-gray-500 uppercase">{info.cargo||'VENDEDOR'}</div>
-                              </div>
-                            </div>
-                          </div>
-                          <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${activo?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{activo?'ACTIVO':'INACTIVO'}</span>
-                        </div>
-                        <div className="space-y-1 text-[10px] text-gray-600">
-                          {info.fechaIngreso && <div className="flex items-center gap-1.5"><span className="text-gray-400">📅</span> Ingreso: <b>{info.fechaIngreso}</b></div>}
-                          {info.region && <div className="flex items-center gap-1.5"><span className="text-gray-400">🗺</span> Región: <b className="uppercase">{info.region}</b></div>}
-                          {nEst>0 && <div className="flex items-center gap-1.5"><span className="text-gray-400">📍</span> <b>{nEst}</b> estado(s) asignado(s)</div>}
-                          {info.telefono && <div className="flex items-center gap-1.5"><span className="text-gray-400">📞</span>{info.telefono}</div>}
-                        </div>
-                        <div className="mt-3 flex justify-between items-center">
-                          <button onClick={e=>{e.stopPropagation();abrirFicha(v);}} className="text-[9px] font-black text-indigo-600 hover:underline">✏ Editar ficha</button>
-                          <div className="flex gap-2">
-                            <button onClick={e=>{e.stopPropagation();pdfFicha(v);}} className="text-[9px] font-black text-gray-500 hover:text-indigo-600">🖨 PDF</button>
-                            <button onClick={e=>{e.stopPropagation();eliminarVendedor(v);}} className="text-[9px] font-black text-red-400 hover:text-red-600">🗑 Eliminar</button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {vendedores.length===0 && <p className="col-span-3 text-center text-gray-400 font-bold py-8 text-xs uppercase">Sin vendedores registrados. Crea el primero.</p>}
-                </div>
-              </div>
-
-              {/* Panel de ficha técnica */}
-              {fichaVend && (
-                <div className="bg-white rounded-3xl shadow-sm border-2 border-indigo-200 overflow-hidden">
-                  <div className="px-8 py-4 bg-indigo-600 text-white flex justify-between items-center">
-                    <h3 className="font-black text-sm uppercase flex items-center gap-2"><User size={16}/> Ficha Técnica — {fichaVend}</h3>
-                    <button onClick={()=>setFichaVend(null)} className="text-white/70 hover:text-white"><X size={18}/></button>
-                  </div>
-
-                  <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Col izquierda: datos personales */}
-                    <div className="space-y-4">
-                      <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest border-b pb-2">Datos Personales</h4>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre Completo</label>
-                          <input type="text" value={fichaData.nombre||''} onChange={e=>setFichaData({...fichaData,nombre:e.target.value.toUpperCase()})}
-                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 uppercase"/>
-                        </div>
-                        <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cargo</label>
-                          <select value={fichaData.cargo||'VENDEDOR'} onChange={e=>setFichaData({...fichaData,cargo:e.target.value})}
-                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500">
-                            {['VENDEDOR','SUPERVISOR DE VENTAS','EJECUTIVO DE CUENTAS','COORDINADOR','GERENTE DE VENTAS'].map(c=><option key={c}>{c}</option>)}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha de Ingreso</label>
-                          <input type="date" value={fichaData.fechaIngreso||''} onChange={e=>setFichaData({...fichaData,fechaIngreso:e.target.value})}
-                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"/>
-                          <div className="text-[8px] text-gray-400 mt-0.5">Controla el Salario Garantizado (3 meses)</div>
-                        </div>
-                        <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Estatus</label>
-                          <select value={fichaData.activo?'activo':'inactivo'} onChange={e=>setFichaData({...fichaData,activo:e.target.value==='activo'})}
-                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500">
-                            <option value="activo">✅ Activo</option>
-                            <option value="inactivo">⛔ Inactivo</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Teléfono</label>
-                          <input type="text" value={fichaData.telefono||''} onChange={e=>setFichaData({...fichaData,telefono:e.target.value})}
-                            placeholder="0414-0000000"
-                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"/>
-                        </div>
-                        <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Email</label>
-                          <input type="email" value={fichaData.email||''} onChange={e=>setFichaData({...fichaData,email:e.target.value})}
-                            placeholder="vendedor@email.com"
-                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"/>
-                        </div>
-                      </div>
-
-                      <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest border-b pb-2 mt-4">Compensación Base</h4>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Salario Garantizado ($)</label>
-                          <input type="number" value={fichaData.salarioBase??''} onChange={e=>setFichaData({...fichaData,salarioBase:e.target.value===''?'':parseNum(e.target.value)})}
-                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 text-right"/>
-                          <div className="text-[8px] text-gray-400 mt-0.5">Solo aplica primeros 3 meses</div>
-                        </div>
-                        <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Bono Vehículo ($)</label>
-                          <input type="number" value={fichaData.bonoVehiculo??''} onChange={e=>setFichaData({...fichaData,bonoVehiculo:e.target.value===''?'':parseNum(e.target.value)})}
-                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 text-right"/>
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Observaciones</label>
-                        <textarea rows={3} value={fichaData.observaciones||''} onChange={e=>setFichaData({...fichaData,observaciones:e.target.value})}
-                          placeholder="Notas adicionales sobre el vendedor..."
-                          className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 resize-none"/>
-                      </div>
-                    </div>
-
-                    {/* Col derecha: zona de ventas */}
-                    <div className="space-y-4">
-                      <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest border-b pb-2">Zona de Ventas — Estados Asignados</h4>
-                      <div>
-                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Región Principal</label>
-                        <div className="flex flex-wrap gap-2">
-                          {REGIONES.map(r=>(
-                            <button key={r.id} type="button"
-                              onClick={()=>setFichaData({...fichaData,region:fichaData.region===r.label?'':r.label})}
-                              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase transition-all ${fichaData.region===r.label?'bg-indigo-600 text-white':'bg-gray-100 text-gray-600 hover:bg-indigo-100'}`}>
-                              {r.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="flex justify-between items-center mb-2">
-                          <label className="text-[9px] font-black text-gray-500 uppercase">Estados (tilda los asignados)</label>
-                          <span className="text-[9px] font-black text-indigo-600">{(fichaData.estados||[]).length} seleccionado(s)</span>
-                        </div>
-                        {/* Botones por región para seleccionar todos */}
-                        <div className="flex flex-wrap gap-1.5 mb-3">
-                          {REGIONES.map(r=>{
-                            const todosSelec=r.estados.every(e=>(fichaData.estados||[]).includes(e));
-                            return (
-                              <button key={r.id} type="button" onClick={()=>toggleRegion(r)}
-                                className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase border transition-all ${todosSelec?'border-indigo-500 bg-indigo-100 text-indigo-700':'border-gray-200 text-gray-500 hover:border-indigo-300'}`}>
-                                {todosSelec?'✓':''} {r.label} ({r.estados.length})
-                              </button>
-                            );
-                          })}
-                        </div>
-                        {/* Checkboxes de estados */}
-                        <div className="grid grid-cols-2 gap-1 max-h-64 overflow-y-auto border border-gray-100 rounded-xl p-3">
-                          {ESTADOS_VE.map(est=>{
-                            const sel=(fichaData.estados||[]).includes(est);
-                            return (
-                              <label key={est} className={`flex items-center gap-2 cursor-pointer px-2 py-1.5 rounded-lg text-[10px] font-bold transition-all ${sel?'bg-indigo-50 text-indigo-800':'text-gray-600 hover:bg-gray-50'}`}>
-                                <input type="checkbox" checked={sel} onChange={()=>toggleEstado(est)} className="accent-indigo-600"/>
-                                {est}
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Footer con botones */}
-                  <div className="px-6 py-4 bg-gray-50 border-t flex justify-between items-center">
-                    <div className="flex gap-2">
-                      <button onClick={()=>setFichaVend(null)} className="text-gray-500 hover:text-red-500 font-black text-xs uppercase">Cancelar</button>
-                      <button onClick={()=>pdfFicha(fichaVend)} className="border-2 border-indigo-200 text-indigo-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-50 flex items-center gap-2"><Printer size={13}/> PDF Ficha</button>
-                    </div>
-                    <button onClick={guardarFicha} disabled={fichaGuardando}
-                      className="bg-indigo-600 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2">
-                      {fichaGuardando?<><RefreshCw size={13} className="animate-spin"/> Guardando...</>:<><Save size={13}/> Guardar Ficha</>}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })()}
-
-        {ventasView === 'comisiones' && (() => {
-          const vendedores = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : [];
-          const ym = `${comAnio}-${String(comMes).padStart(2,'0')}`;
-          const mesLabel = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][comMes-1];
-
-          // Configuración de comisiones (persistida en settings.comisionesConfig)
-          const cfgDefault = {
-            metaTabla: [
-              {min:15000, max:49999, pct:0.20},
-              {min:50000, max:99999, pct:0.30},
-              {min:100000, max:149999, pct:0.35},
-              {min:150000, max:199999, pct:0.40},
-              {min:200000, max:275000, pct:0.45},
-            ],
-            mixTabla: [ {cat:4, monto:100}, {cat:6, monto:150}, {cat:8, monto:200} ],
-            cobranzaEscala: [
-              {dMin:0, dMax:7, pct:1.50},
-              {dMin:8, dMax:14, pct:1.30},
-              {dMin:15, dMax:21, pct:1.00},
-              {dMin:22, dMax:30, pct:0.75},
-            ],
-          };
-          const cfg = settings?.comisionesConfig || cfgDefault;
-
-          // Ventas del vendedor en el mes (desde facturas)
-          const facturasMes = (invoices||[]).filter(inv =>
-            (inv.fecha||'').startsWith(ym) &&
-            (!comVendedor || (inv.vendedor||'').toUpperCase()===comVendedor.toUpperCase())
-          );
-          const totalVentasVend = facturasMes.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
-
-          // Total ventas de TODA la empresa en el mes (para Mix de Categoría)
-          const facturasMesEmpresa = (invoices||[]).filter(inv => (inv.fecha||'').startsWith(ym));
-
-          // Subcategorías vendidas por toda la empresa en el mes
-          const subcatsVendidas = new Set();
-          facturasMesEmpresa.forEach(inv => (inv.itemsFacturados||[]).forEach(it => {
-            const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
-            const invItem = (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode);
-            const sub = invItem?.subcategory || getItemSubcategory(invItem||{}) || (fg?'Productos Terminados':'');
-            if(sub) subcatsVendidas.add(sub);
-          }));
-          const nSubcats = subcatsVendidas.size;
-
-          // 1. Comisión por meta de facturación
-          const escMeta = (cfg.metaTabla||[]).find(e=>totalVentasVend>=e.min && totalVentasVend<=e.max);
-          const comisionMeta = escMeta ? totalVentasVend*(escMeta.pct/100) : 0;
-
-          // 2. Mix de categoría — según subcategorías vendidas por la empresa
-          const mixOrden = [...(cfg.mixTabla||[])].sort((a,b)=>b.cat-a.cat);
-          const mixAplica = mixOrden.find(m=>nSubcats>=m.cat);
-          const montoMix = mixAplica ? mixAplica.monto : 0;
-
-          // 3. Cobranza manual
-          const calcRango = (dias) => {
-            const e = (cfg.cobranzaEscala||[]).find(x=>dias>=x.dMin && dias<=x.dMax);
-            return e || null;
-          };
-          const cobranzaCalc = (comCobranza||[]).map(r => {
-            const dias = parseNum(r.diasRetraso);
-            const esc = calcRango(dias<0?0:dias); // retraso negativo (adelantado) = mejor rango
-            const pct = esc ? esc.pct : 0;
-            const rango = esc ? (cfg.cobranzaEscala.indexOf(esc)+1) : '—';
-            const montoPagar = parseNum(r.monto)*(pct/100);
-            return {...r, pct, rango, montoPagar};
-          });
-          const totalCobranza = cobranzaCalc.reduce((s,r)=>s+r.montoPagar,0);
-
-          // ── Detección automática: clientes nuevos y recuperados ──
-          // Helper: meses entre dos fechas YYYY-MM-DD
-          const mesesEntre = (d1,d2) => {
-            const a=new Date(d1), b=new Date(d2);
-            return (b.getFullYear()-a.getFullYear())*12 + (b.getMonth()-a.getMonth()) - (b.getDate()<a.getDate()?1:0);
-          };
-          // Facturas de TODO el histórico ordenadas, para detectar primera compra / inactividad
-          const fechaFactura = (inv)=> inv.fecha||'';
-          // Clientes facturados por este vendedor en el mes
-          const clientesMesVend = {};
-          facturasMes.forEach(inv=>{
-            const cl=(inv.clientName||inv.clientRif||'').toUpperCase();
-            if(!cl) return;
-            const f=fechaFactura(inv);
-            if(!clientesMesVend[cl] || f<clientesMesVend[cl]) clientesMesVend[cl]=f;
-          });
-          let nuevosCount=0, recuperadosCount=0;
-          const recuperadosLista=[], nuevosLista=[];
-          Object.entries(clientesMesVend).forEach(([cl, primeraFechaMes])=>{
-            // Facturas históricas de ese cliente CON ESTE VENDEDOR (atribución por vendedor de la factura)
-            const histCliVend=(invoices||[]).filter(inv=>
-              (inv.clientName||inv.clientRif||'').toUpperCase()===cl &&
-              (!comVendedor || (inv.vendedor||'').toUpperCase()===comVendedor.toUpperCase()) &&
-              fechaFactura(inv));
-            const fechasPrevias=histCliVend.map(fechaFactura).filter(f=>f<primeraFechaMes).sort();
-            if(fechasPrevias.length===0){
-              // Sin facturas previas de este cliente con este vendedor → NUEVO para el vendedor
-              nuevosCount++; nuevosLista.push(cl);
-            } else {
-              const ultimaPrevia=fechasPrevias[fechasPrevias.length-1];
-              if(mesesEntre(ultimaPrevia, primeraFechaMes) > 6){
-                recuperadosCount++; recuperadosLista.push(cl);
-              }
-            }
-          });
-
-          // ── Salario Garantizado: solo primeros 3 meses desde ingreso ──
-          const vendInfo=(settings?.vendedoresInfo||{})[(comVendedor||'').toUpperCase()]||{};
-          const fechaIngreso=vendInfo.fechaIngreso||'';
-          const mesesDesdeIngreso = fechaIngreso ? mesesEntre(fechaIngreso, ym+'-01') : 999;
-          const salarioAplica = fechaIngreso && mesesDesdeIngreso < 3;
-          // Valores base desde la ficha del vendedor (editables si cambian)
-          const salarioBaseFicha = parseNum(vendInfo.salarioBase??300);
-          const bonoVehiculoFicha = parseNum(vendInfo.bonoVehiculo??200); // meses 0,1,2
-
-          // Bonos (editables, persistidos por vendedor+mes). Montos por defecto configurables.
-          const bonosKey = `${comVendedor||'GENERAL'}_${ym}`;
-          const bonosGuardados = (settings?.comisionesBonos||{})[bonosKey] || {};
-          const montoCaptacion = parseNum((settings?.comisionesConfig?.montoCaptacion) ?? 30);
-          const minClientesCaptacion = parseNum((settings?.comisionesConfig?.minClientesCaptacion) ?? 2);
-          const montoRecuperacion = parseNum((settings?.comisionesConfig?.montoRecuperacion) ?? 30);
-          const captacionAuto = nuevosCount >= minClientesCaptacion ? montoCaptacion : 0;
-          const recuperacionAuto = recuperadosCount >= 1 ? montoRecuperacion : 0;
-          const bonos = comBonos!==null ? comBonos : {
-            bonoVehiculo: parseNum(bonosGuardados.bonoVehiculo ?? bonoVehiculoFicha),
-            salarioGarantizado: salarioAplica ? parseNum(bonosGuardados.salarioGarantizado ?? salarioBaseFicha) : 0,
-            captacion: parseNum(bonosGuardados.captacion ?? captacionAuto),
-            recuperacion: parseNum(bonosGuardados.recuperacion ?? recuperacionAuto),
-          };
-
-          const comisionTotalVenta = comisionMeta + montoMix;
-          const compensacionTotal = bonos.bonoVehiculo + bonos.salarioGarantizado + bonos.captacion + bonos.recuperacion + comisionTotalVenta + totalCobranza;
-          const pctSobreVentas = totalVentasVend>0 ? (compensacionTotal/totalVentasVend)*100 : 0;
-
-          const guardarBonos = async () => {
-            const nuevos = {...(settings?.comisionesBonos||{}), [bonosKey]: bonos};
-            await setDoc(getDocRef('settings','general'), {comisionesBonos:nuevos}, {merge:true});
-            setDialog({title:'✅ Guardado', text:'Bonos guardados para '+(comVendedor||'GENERAL')+' — '+mesLabel+' '+comAnio, type:'alert'});
-          };
-
-          const exportComisionesExcel = () => {
-            const td=(c,r=false,b=false)=>`<td style="padding:5px 9px;border:1px solid #ccc;font-size:11px;${r?'text-align:right;':''}${b?'font-weight:900;':''}">${c}</td>`;
-            const fila=(desc,estatus,monto)=>`<tr>${td(desc)}${td(estatus)}${td('$'+formatNum(monto),true,true)}</tr>`;
-            const conceptos=[
-              fila('Bono por Vehículo','Fijo',bonos.bonoVehiculo),
-              fila('Salario Garantizado',salarioAplica?`Aplica (mes ${mesesDesdeIngreso+1}/3)`:'No aplica',bonos.salarioGarantizado),
-              fila(`Captación de Cliente (≥${minClientesCaptacion})`,`${nuevosCount} nuevo(s)`,bonos.captacion),
-              fila('Recuperación de Cliente (+6m)',`${recuperadosCount} recuperado(s)`,bonos.recuperacion),
-              fila(`Mix de Categoría (${nSubcats} subcat.)`,mixAplica?`Cumple ${mixAplica.cat}+`:'No alcanzado',montoMix),
-              fila('Comisión por Meta de Venta',escMeta?`${escMeta.pct}%`:'No alcanzado',comisionMeta),
-              fila('Comisión por Cobranza',`${cobranzaCalc.length} pagos`,totalCobranza),
-            ].join('');
-            const cobrRows=cobranzaCalc.map(r=>`<tr>${td(r.fecha)}${td(r.cliente)}${td('$'+formatNum(r.monto),true)}${td(r.condicion+'d')}${td(r.vencimiento)}${td(r.fechaPago)}${td(formatNum(r.diasRetraso),true)}${td(r.rango)}${td(formatNum(r.pct)+'%',true)}${td('$'+formatNum(r.montoPagar),true,true)}</tr>`).join('');
-            const metaRows=(cfg.metaTabla||[]).map(e=>{const a=totalVentasVend>=e.min&&totalVentasVend<=e.max;return`<tr>${td('$'+formatNum(e.min)+' a $'+formatNum(e.max))}${td(e.pct+'%',true)}${td(a?'✓ Alcanzado':'No alcanzado')}${td('$'+formatNum(a?totalVentasVend*(e.pct/100):0),true)}</tr>`;}).join('');
-            const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;margin-bottom:14px;}th{background:#000;color:#fff;font-size:10px;text-transform:uppercase;padding:6px 9px;border:1px solid #000;}h3{color:#f97316;font-size:13px;margin:10px 0 4px;}</style></head><body>
-            <div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #16a34a;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:15px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="color:#16a34a;font-size:14px;">RECIBO DE COMISIONES — ${comVendedor||'GENERAL'}</h3><p style="font-size:11px;">Período: ${mesLabel} ${comAnio} | Generado: ${getTodayDate()}</p></div>
-            <h3>Conceptos y Bonos</h3><table><thead><tr><th>Descripción</th><th>Estatus</th><th>Devengado</th></tr></thead><tbody>${conceptos}</tbody><tfoot><tr style="background:#111;color:#fff;"><td colspan="2" style="padding:6px 9px;font-weight:900;">COMPENSACIÓN TOTAL</td><td style="padding:6px 9px;text-align:right;font-weight:900;font-size:13px;">$${formatNum(compensacionTotal)}</td></tr></tfoot></table>
-            <h3>1. Cumplimiento de Meta — Total Ventas: $${formatNum(totalVentasVend)}</h3><table><thead><tr><th>Rango</th><th>%</th><th>Estatus</th><th>Aplicado</th></tr></thead><tbody>${metaRows}</tbody></table>
-            <h3>3. Comisión por Cobranza</h3><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Monto</th><th>Cond.</th><th>Vencim.</th><th>Fecha Pago</th><th>Días Retr.</th><th>Rango</th><th>%</th><th>A Pagar</th></tr></thead><tbody>${cobrRows||'<tr><td colspan="10" style="padding:8px;text-align:center;color:#999;">Sin registros</td></tr>'}</tbody><tfoot><tr style="background:#111;color:#fff;"><td colspan="9" style="padding:6px 9px;font-weight:900;">TOTAL COBRANZA</td><td style="padding:6px 9px;text-align:right;font-weight:900;">$${formatNum(totalCobranza)}</td></tr></tfoot></table>
-            <table><tr style="background:#16a34a;color:#fff;"><td style="padding:10px;font-weight:900;font-size:13px;">TOTAL A PAGAR</td><td style="padding:10px;text-align:right;font-weight:900;font-size:16px;">$${formatNum(compensacionTotal)}</td></tr></table>
-            </body></html>`;
-            const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Comisiones_${(comVendedor||'GENERAL').replace(/\s+/g,'_')}_${ym}.xls`;a.click();
-          };
-          const imprimirComisiones = () => window.print();
-
-          const addCobranza = () => setComCobranza([...(comCobranza||[]), {fecha:getTodayDate(), cliente:'', monto:'', condicion:'7', vencimiento:'', fechaPago:'', diasRetraso:''}]);
-          const updCobranza = (i,campo,val) => setComCobranza((comCobranza||[]).map((r,idx)=>idx===i?{...r,[campo]:val}:r));
-          const delCobranza = (i) => setComCobranza((comCobranza||[]).filter((_,idx)=>idx!==i));
-
-          return (
-            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
-              <div className="px-8 py-6 border-b bg-gradient-to-r from-green-50 to-emerald-50 flex justify-between items-center flex-wrap gap-3">
-                <h2 className="text-xl font-black text-green-900 uppercase flex items-center gap-3"><DollarSign className="text-green-600" size={24}/> Comisiones de Vendedores</h2>
-                <div className="flex gap-3 items-end flex-wrap">
-                  <button onClick={exportComisionesExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1 mb-0.5"><Download size={13}/> Excel</button>
-                  <button onClick={imprimirComisiones} className="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1 mb-0.5"><Printer size={13}/> Imprimir</button>
-                  <div>
-                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Vendedor</label>
-                    <select value={comVendedor} onChange={e=>{setComVendedor(e.target.value);setComBonos(null);}} className="border-2 border-green-200 rounded-xl px-3 py-2 text-xs font-black uppercase outline-none bg-white min-w-36">
-                      <option value="">— Todos —</option>
-                      {vendedores.map(v=><option key={v} value={v}>{v}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Mes</label>
-                    <select value={comMes} onChange={e=>{setComMes(parseInt(e.target.value));setComBonos(null);}} className="border-2 border-green-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white">
-                      {['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'].map((m,i)=><option key={i} value={i+1}>{m}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Año</label>
-                    <input type="number" value={comAnio} onChange={e=>{setComAnio(parseInt(e.target.value)||comAnio);setComBonos(null);}} className="border-2 border-green-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white w-24 text-center"/>
-                  </div>
-                  {comVendedor && (
-                    <div>
-                      <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Fecha Ingreso ({comVendedor})</label>
-                      <input type="date" value={(settings?.vendedoresInfo||{})[comVendedor.toUpperCase()]?.fechaIngreso||''}
-                        onChange={async e=>{const info={...(settings?.vendedoresInfo||{}), [comVendedor.toUpperCase()]:{...(settings?.vendedoresInfo||{})[comVendedor.toUpperCase()], fechaIngreso:e.target.value}};await setDoc(getDocRef('settings','general'),{vendedoresInfo:info},{merge:true});setComBonos(null);}}
-                        className="border-2 border-blue-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-blue-50 w-36"/>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="p-6 space-y-6">
-                {/* RESUMEN SUPERIOR */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Conceptos / Bonos */}
-                  <div className="border-2 border-gray-100 rounded-2xl overflow-hidden">
-                    <div className="bg-gray-800 text-white px-4 py-2 text-[10px] font-black uppercase tracking-widest">Conceptos y Bonos — {comVendedor||'GENERAL'} · {mesLabel} {comAnio}</div>
-                    <table className="w-full text-xs">
-                      <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500"><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-right">Base / Editable</th><th className="px-3 py-2 text-right">Devengado</th></tr></thead>
-                      <tbody className="divide-y divide-gray-50">
-                        <tr><td className="px-3 py-2 font-bold">Bono por Vehículo</td><td className="px-3 py-2 text-right"><input type="number" value={bonos.bonoVehiculo||''} onChange={e=>setComBonos({...bonos,bonoVehiculo:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.bonoVehiculo)}</td></tr>
-                        <tr><td className="px-3 py-2 font-bold">Salario Garantizado <span className="text-[8px] text-gray-400">(primeros 3 meses)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.salarioGarantizado||''} onChange={e=>setComBonos({...bonos,salarioGarantizado:parseNum(e.target.value)})} disabled={!salarioAplica} className={`w-24 border rounded-lg px-2 py-1 text-right font-black text-xs ${!salarioAplica?'bg-gray-100 text-gray-400':''}`} placeholder="0"/><div className="text-[7px] text-gray-400 mt-0.5">{fechaIngreso?(salarioAplica?`Aplica (mes ${mesesDesdeIngreso+1}/3)`:`Vencido (${fechaIngreso})`):'Sin fecha ingreso'}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.salarioGarantizado)}</td></tr>
-                        <tr><td className="px-3 py-2 font-bold">Captación de Cliente <span className="text-[8px] text-gray-400">(≥{minClientesCaptacion} nuevos)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.captacion||''} onChange={e=>setComBonos({...bonos,captacion:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/><div className="text-[7px] text-gray-400 mt-0.5">{nuevosCount} nuevo(s){nuevosCount>0?`: ${nuevosLista.slice(0,3).join(', ')}${nuevosLista.length>3?'…':''}`:''}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.captacion)}</td></tr>
-                        <tr><td className="px-3 py-2 font-bold">Recuperación de Cliente <span className="text-[8px] text-gray-400">(+6 meses inactivo)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.recuperacion||''} onChange={e=>setComBonos({...bonos,recuperacion:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/><div className="text-[7px] text-gray-400 mt-0.5">{recuperadosCount} recuperado(s){recuperadosCount>0?`: ${recuperadosLista.slice(0,3).join(', ')}${recuperadosLista.length>3?'…':''}`:''}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.recuperacion)}</td></tr>
-                        <tr className="bg-blue-50"><td className="px-3 py-2 font-bold">Mix de Categoría ({nSubcats} subcat. vendidas)</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{mixAplica?`Cumple ${mixAplica.cat}+`:'No alcanzado'}</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(montoMix)}</td></tr>
-                        <tr className="bg-orange-50"><td className="px-3 py-2 font-bold">Comisión por Meta de Venta</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{escMeta?`${escMeta.pct}%`:'No alcanzado'}</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(comisionMeta)}</td></tr>
-                        <tr className="bg-orange-50"><td className="px-3 py-2 font-bold">Comisión por Cobranza</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{cobranzaCalc.length} pagos</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(totalCobranza)}</td></tr>
-                      </tbody>
-                      <tfoot className="bg-gray-900 text-white font-black">
-                        <tr><td className="px-3 py-2.5 uppercase text-[10px]" colSpan="2">Compensación Total</td><td className="px-3 py-2.5 text-right text-base">${formatNum(compensacionTotal)}</td></tr>
-                      </tfoot>
-                    </table>
-                    <div className="px-4 py-3 bg-gray-50 flex justify-between items-center">
-                      <span className="text-[9px] font-bold text-gray-500 uppercase">% sobre ventas: <b className="text-orange-600">{formatNum(pctSobreVentas)}%</b></span>
-                      <button onClick={guardarBonos} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Save size={12}/> Guardar Bonos</button>
-                    </div>
-                  </div>
-
-                  {/* Cumplimiento de meta */}
-                  <div className="space-y-4">
-                    <div className="border-2 border-gray-100 rounded-2xl overflow-hidden">
-                      <div className="bg-orange-500 text-white px-4 py-2 text-[10px] font-black uppercase tracking-widest">1. Cumplimiento de Meta por Facturación</div>
-                      <div className="px-4 py-3 bg-orange-50 flex justify-between items-center">
-                        <span className="text-[10px] font-black text-gray-600 uppercase">Total Ventas del Vendedor</span>
-                        <span className="text-lg font-black text-orange-700">${formatNum(totalVentasVend)}</span>
-                      </div>
-                      <table className="w-full text-xs">
-                        <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500"><th className="px-3 py-2 text-left">Rango</th><th className="px-3 py-2 text-center">%</th><th className="px-3 py-2 text-center">Estatus</th><th className="px-3 py-2 text-right">Aplicado</th></tr></thead>
-                        <tbody className="divide-y divide-gray-50">
-                          {(cfg.metaTabla||[]).map((e,i)=>{const aplica=totalVentasVend>=e.min&&totalVentasVend<=e.max;return(
-                            <tr key={i} className={aplica?'bg-green-50':''}><td className="px-3 py-1.5 font-bold">${formatNum(e.min)} a ${formatNum(e.max)}</td><td className="px-3 py-1.5 text-center font-black">{e.pct}%</td><td className={`px-3 py-1.5 text-center font-black text-[9px] ${aplica?'text-green-600':'text-gray-400'}`}>{aplica?'✓ Alcanzado':'No alcanzado'}</td><td className="px-3 py-1.5 text-right font-black">${formatNum(aplica?totalVentasVend*(e.pct/100):0)}</td></tr>
-                          );})}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="border-2 border-gray-100 rounded-2xl overflow-hidden">
-                      <div className="bg-blue-600 text-white px-4 py-2 text-[10px] font-black uppercase tracking-widest">2. Mix de Categoría (subcategorías vendidas por la empresa)</div>
-                      <div className="px-4 py-2 bg-blue-50 text-[9px] font-bold text-gray-600 uppercase">Subcategorías vendidas este mes: <b className="text-blue-700">{nSubcats}</b> {nSubcats>0?`(${Array.from(subcatsVendidas).join(', ')})`:''}</div>
-                      <table className="w-full text-xs">
-                        <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500"><th className="px-3 py-2 text-left">Categorías</th><th className="px-3 py-2 text-center">Estatus</th><th className="px-3 py-2 text-right">Monto</th></tr></thead>
-                        <tbody className="divide-y divide-gray-50">
-                          {(cfg.mixTabla||[]).map((m,i)=>{const aplica=nSubcats>=m.cat&&(mixAplica&&mixAplica.cat===m.cat);const cumple=nSubcats>=m.cat;return(
-                            <tr key={i} className={aplica?'bg-green-50':''}><td className="px-3 py-1.5 font-bold">{m.cat} categorías</td><td className={`px-3 py-1.5 text-center font-black text-[9px] ${cumple?'text-green-600':'text-gray-400'}`}>{cumple?'✓':'No alcanzado'}</td><td className="px-3 py-1.5 text-right font-black">${formatNum(aplica?m.monto:0)}</td></tr>
-                          );})}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-
-                {/* COBRANZA MANUAL */}
-                <div className="border-2 border-gray-100 rounded-2xl overflow-hidden">
-                  <div className="bg-gray-800 text-white px-4 py-2 flex justify-between items-center">
-                    <span className="text-[10px] font-black uppercase tracking-widest">3. Comisión por Cobranza (carga manual)</span>
-                    <button onClick={addCobranza} className="bg-white text-gray-800 px-3 py-1 rounded-lg text-[9px] font-black uppercase">+ Agregar fila</button>
-                  </div>
-                  <div className="px-4 py-2 bg-gray-50 text-[8px] font-bold text-gray-500 uppercase">Escala: {(cfg.cobranzaEscala||[]).map((e,i)=>`Rango ${i+1} (${e.dMin}-${e.dMax}d): ${e.pct}%`).join('  ·  ')}</div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500"><th className="px-2 py-2 text-left">Fecha</th><th className="px-2 py-2 text-left">Cliente</th><th className="px-2 py-2 text-right">Monto</th><th className="px-2 py-2 text-center">Cond. (días)</th><th className="px-2 py-2 text-center">Vencimiento</th><th className="px-2 py-2 text-center">Fecha Pago</th><th className="px-2 py-2 text-center">Días Retraso</th><th className="px-2 py-2 text-center">Rango</th><th className="px-2 py-2 text-center">%</th><th className="px-2 py-2 text-right">A Pagar</th><th className="px-2 py-2"></th></tr></thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {cobranzaCalc.length===0 ? (
-                          <tr><td colSpan="11" className="py-6 text-center text-gray-400 font-bold uppercase text-[10px]">Sin registros de cobranza. Usa "+ Agregar fila".</td></tr>
-                        ) : cobranzaCalc.map((r,i)=>(
-                          <tr key={i} className="hover:bg-gray-50">
-                            <td className="px-2 py-1.5"><input type="date" value={r.fecha||''} onChange={e=>updCobranza(i,'fecha',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-28"/></td>
-                            <td className="px-2 py-1.5"><input type="text" value={r.cliente||''} onChange={e=>updCobranza(i,'cliente',e.target.value.toUpperCase())} className="border rounded px-1 py-0.5 text-[10px] w-32 uppercase" placeholder="Cliente"/></td>
-                            <td className="px-2 py-1.5 text-right"><input type="number" value={r.monto||''} onChange={e=>updCobranza(i,'monto',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-20 text-right" placeholder="0"/></td>
-                            <td className="px-2 py-1.5 text-center"><input type="number" value={r.condicion||''} onChange={e=>updCobranza(i,'condicion',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-14 text-center" placeholder="7"/></td>
-                            <td className="px-2 py-1.5 text-center"><input type="date" value={r.vencimiento||''} onChange={e=>updCobranza(i,'vencimiento',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-28"/></td>
-                            <td className="px-2 py-1.5 text-center"><input type="date" value={r.fechaPago||''} onChange={e=>updCobranza(i,'fechaPago',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-28"/></td>
-                            <td className="px-2 py-1.5 text-center"><input type="number" value={r.diasRetraso||''} onChange={e=>updCobranza(i,'diasRetraso',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-16 text-center font-black" placeholder="0"/></td>
-                            <td className="px-2 py-1.5 text-center font-black text-blue-700">{r.rango}</td>
-                            <td className="px-2 py-1.5 text-center font-black">{formatNum(r.pct)}%</td>
-                            <td className="px-2 py-1.5 text-right font-black text-green-700">${formatNum(r.montoPagar)}</td>
-                            <td className="px-2 py-1.5 text-center"><button onClick={()=>delCobranza(i)} className="text-red-400 hover:text-red-600"><X size={13}/></button></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      {cobranzaCalc.length>0 && <tfoot className="bg-gray-100 font-black"><tr><td colSpan="2" className="px-2 py-2 uppercase text-[9px]">Total Cobranza</td><td className="px-2 py-2 text-right">${formatNum(cobranzaCalc.reduce((s,r)=>s+parseNum(r.monto),0))}</td><td colSpan="6"></td><td className="px-2 py-2 text-right text-green-700">${formatNum(totalCobranza)}</td><td></td></tr></tfoot>}
-                    </table>
-                  </div>
-                  <div className="px-4 py-2 bg-amber-50 text-[8px] font-bold text-amber-700 uppercase">⚠ La tabla de cobranza es manual y no se guarda al cambiar de mes/vendedor. Anota o exporta antes de cambiar.</div>
-                </div>
-
-                {/* TOTAL A PAGAR */}
-                <div className="bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-2xl px-8 py-5 flex justify-between items-center">
-                  <div>
-                    <div className="text-[10px] font-black uppercase opacity-80 tracking-widest">Total a Pagar — {comVendedor||'GENERAL'} · {mesLabel} {comAnio}</div>
-                    <div className="text-[9px] font-bold opacity-70 mt-1">Bonos ${formatNum(bonos.bonoVehiculo+bonos.salarioGarantizado+bonos.captacion+bonos.recuperacion)} + Comisión Venta ${formatNum(comisionTotalVenta)} + Cobranza ${formatNum(totalCobranza)}</div>
-                  </div>
-                  <div className="text-3xl font-black">${formatNum(compensacionTotal)}</div>
-                </div>
               </div>
             </div>
           );
@@ -10740,7 +9761,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
              <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Receipt className="text-orange-500" size={24}/> Facturación de Venta</h2><div className="flex gap-2"><button onClick={()=>setShowGeneralInvoicesReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors">REPORTE GENERAL</button><button onClick={()=>{setShowNewInvoicePanel(!showNewInvoicePanel); setNewInvoiceForm(initialInvoiceForm);}} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-slate-800 transition-colors">{showNewInvoicePanel ? 'CANCELAR' : 'NUEVA FACTURA'}</button></div></div>
              {showNewInvoicePanel && (
                 <div className="p-8 bg-gray-50/50 border-b">
-                  <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
+                  <form onSubmit={handleCreateInvoice} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
                     <div className="flex justify-between items-center border-b border-gray-100 pb-4 mb-6">
                       <h3 className="text-sm font-black uppercase text-black tracking-widest">{editingInvoiceId ? `Editando Factura: ${editingInvoiceId}` : 'Registrar Factura de Venta'}</h3>
                       <div className="flex items-center gap-4">
@@ -10880,7 +9901,84 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         })()}
                       </div>
 
-                      </div>
+                      {/* Carrito de lotes agregados */}
+                          {fgItems.length > 0 && (
+                            <div className="bg-white rounded-xl border-2 border-green-300 overflow-hidden mt-2">
+                              <div className="flex items-center justify-between px-4 py-2 bg-green-600 text-white">
+                                <span className="text-[10px] font-black uppercase tracking-wider">🛒 Productos Seleccionados ({fgItems.length})</span>
+                                <span className="text-[9px] font-bold opacity-80">Haz clic en ✕ para quitar un producto</span>
+                              </div>
+                              <div className="overflow-x-auto">
+                              <table className="w-full text-xs" style={{minWidth:680,tableLayout:'fixed'}}>
+                                <colgroup>
+                                  <col style={{width:140}}/>
+                                  <col/>
+                                  <col style={{width:100}}/>
+                                  <col style={{width:90}}/>
+                                  <col style={{width:90}}/>
+                                  <col style={{width:70}}/>
+                                  <col style={{width:52}}/>
+                                </colgroup>
+                                <thead>
+                                  <tr className="font-black text-[9px] uppercase bg-gray-50 border-b-2 border-green-200">
+                                    <th className="p-2.5 text-left">Código</th>
+                                    <th className="p-2.5 text-left">Producto / Descripción</th>
+                                    <th className="p-2.5 text-center">Cant. Total</th>
+                                    <th className="p-2.5 text-right">Precio U.</th>
+                                    <th className="p-2.5 text-right">Total</th>
+                                    <th className="p-2.5 text-center">Alm.</th>
+                                    <th className="p-2.5 text-center">✕</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-green-100">
+                                  {fgItems.map((item, idx) => (
+                                    <tr key={idx} className="hover:bg-red-50 group">
+                                      <td className="p-2.5 font-black text-orange-600 text-[9px] truncate">{item.invCode||cleanFGCode(item.fgId||'')}</td>
+                                      <td className="p-2.5 font-bold text-gray-800 text-[10px] leading-tight">{item.desc}</td>
+                                      <td className="p-2.5 text-center font-black text-green-700 text-[10px]">{formatNum(item.cantidad)}<br/><span className="text-[8px] text-gray-400 font-normal">{item.unidad}</span></td>
+                                      <td className="p-2.5 text-right font-black text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
+                                      <td className="p-2.5 text-right font-black text-gray-800 text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
+                                      <td className="p-2.5 text-center relative">
+                                        {(()=>{
+                                          const code=item.invCode||(item.fgId||'').split('___')[0];
+                                          const whs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
+                                          if(whs.length<=1) return null;
+                                          const disp=mwDispatch[code]||{};
+                                          const asgn=Object.values(disp).reduce((s,v)=>s+parseNum(v),0);
+                                          const need=parseNum(item.cantidad);
+                                          const ok=Math.abs(asgn-need)<0.01&&asgn>0;
+                                          return <button type="button" onClick={()=>setShowMwPanel(showMwPanel===code?null:code)} className={`text-[8px] font-black px-2 py-1 rounded-lg ${ok?'bg-green-100 text-green-700':'bg-orange-100 text-orange-600'}`}>{ok?'✓':(`⚠ ${whs.length}`)}</button>;
+                                        })()}
+                                        {showMwPanel===(item.invCode||(item.fgId||'').split('___')[0]) && (()=>{
+                                          const code=item.invCode||(item.fgId||'').split('___')[0];
+                                          const whs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
+                                          const disp=mwDispatch[code]||{};
+                                          const asgn=Object.values(disp).reduce((s,v)=>s+parseNum(v),0);
+                                          const need=parseNum(item.cantidad);
+                                          return <div className="absolute z-50 right-0 top-full mt-1 w-56 bg-white rounded-xl shadow-2xl border border-orange-200 p-3 text-left">
+                                            <div className="flex justify-between mb-2"><span className="text-[9px] font-black text-orange-700 uppercase">Almacenes</span><button onClick={()=>setShowMwPanel(null)} className="text-gray-400 hover:text-red-500"><X size={11}/></button></div>
+                                            <div className="text-[8px] text-gray-500 mb-2">Nec: <b className="text-orange-600">{formatNum(need)} {item.unidad}</b></div>
+                                            {whs.map(wh=>{const alm=wh.almacen||(wh.id||'').split('___')[1]?.replace(/-/g,' ')||'';const mx=parseNum(wh.stock||0);const v=disp[alm]||'';return<div key={wh.id} className="flex items-center gap-2 mb-1.5"><div className="flex-1 min-w-0"><div className="text-[8px] font-black truncate">{alm}</div><div className="text-[7px] text-green-600">Disp:{formatNum(mx)}</div></div><input type="number" step="0.01" min="0" max={mx} value={v} onChange={e=>{const nv=Math.min(parseNum(e.target.value),mx);setMwDispatch(p=>({...p,[code]:{...(p[code]||{}),[alm]:nv||''}}));}} className="w-16 border-2 border-orange-200 rounded-lg px-1.5 py-1 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0"/></div>;})}
+                                            <div className={`mt-1.5 text-[8px] font-black text-center py-1 rounded-lg ${Math.abs(asgn-need)<0.01&&asgn>0?'bg-green-100 text-green-700':'bg-orange-50 text-orange-600'}`}>{formatNum(asgn)}/{formatNum(need)}</div>
+                                          </div>;
+                                        })()}
+                                      </td>
+                                      <td className="p-2.5 text-center">
+                                        <button type="button" onClick={()=>setFgItems(p=>p.filter((_,i)=>i!==idx))}
+                                          className="bg-red-100 hover:bg-red-500 text-red-500 hover:text-white p-1.5 rounded-lg transition-all" title="Quitar producto">
+                                          <X size={13}/>
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
                         <div className="relative">
@@ -11004,36 +10102,24 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 <th className="py-2.5 px-2 text-center font-black uppercase text-[8px] w-20">Cant.</th>
                                 <th className="py-2.5 px-2 text-right font-black uppercase text-[8px] w-24">Precio U.</th>
                                 <th className="py-2.5 px-2 text-right font-black uppercase text-[8px] w-24">Total</th>
-                                <th className="py-2.5 px-1 text-center font-black uppercase text-[8px] w-16">Acc.</th>
                               </tr>
                             </thead>
                             <tbody>
                               {fgItems.length > 0 ? fgItems.map((item,i)=>(
-                                <tr key={i} className={`${i%2===0?'bg-white':'bg-gray-50'} ${editingFgIdx===i?'ring-2 ring-inset ring-orange-400':''}`}>
-                                  {editingFgIdx===i ? (<>
-                                    <td className="py-1.5 px-2 font-black text-orange-600 text-[9px]">{item.invCode?cleanFGCode(item.invCode):cleanFGCode(item.fgId||'')}</td>
-                                    <td className="py-1.5 px-2 text-[10px] font-bold text-gray-700">{item.desc}</td>
-                                    <td className="py-1.5 px-1 text-center w-20"><input type="number" step="0.01" min="0.01" value={item.cantidad} onChange={e=>setFgItems(p=>p.map((it,ix)=>ix===i?{...it,cantidad:parseNum(e.target.value)||it.cantidad}:it))} className="w-16 border-2 border-orange-300 rounded-lg px-1 py-1 text-center font-black text-xs outline-none focus:border-orange-500"/></td>
-                                    <td className="py-1.5 px-1 w-24"><input type="number" step="0.01" min="0" value={item.precioUnit||''} onChange={e=>setFgItems(p=>p.map((it,ix)=>ix===i?{...it,precioUnit:parseNum(e.target.value),totalUSD:parseNum(e.target.value)*(it.cantidad||1)}:it))} className="w-20 border-2 border-orange-300 rounded-lg px-1 py-1 text-right font-black text-xs outline-none focus:border-orange-500"/></td>
-                                    <td className="py-1.5 px-2 text-right font-black text-green-700 text-[10px]">${formatNum((item.precioUnit||0)*(item.cantidad||1))}</td>
-                                    <td className="py-1.5 px-1 text-center w-16"><button type="button" onClick={()=>setEditingFgIdx(null)} className="bg-green-100 hover:bg-green-500 text-green-600 hover:text-white p-1 rounded-lg transition-all" title="OK"><CheckCircle size={13}/></button></td>
-                                  </>) : (<>
-                                    <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode?cleanFGCode(item.invCode):cleanFGCode(item.fgId||'').replace(/^FG-\d{10,}$/,'')}</td>
-                                    <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{wordBreak:'break-word',lineHeight:1.3}}>{item.desc}</td>
-                                    <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
-                                    <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
-                                    <td className="py-2 px-2 text-right font-black text-green-700 text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
-                                    <td className="py-2 px-1 text-center w-16"><div className="flex items-center justify-center gap-1"><button type="button" onClick={()=>setEditingFgIdx(i)} className="bg-blue-50 hover:bg-blue-500 text-blue-500 hover:text-white p-1 rounded-lg transition-all" title="Editar"><Edit size={12}/></button><button type="button" onClick={()=>{setFgItems(p=>p.filter((_,ix)=>ix!==i));if(editingFgIdx===i)setEditingFgIdx(null);}} className="bg-red-50 hover:bg-red-500 text-red-500 hover:text-white p-1 rounded-lg transition-all" title="Eliminar"><Trash2 size={12}/></button></div></td>
-                                  </>)}
+                                <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
+                                  <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode ? cleanFGCode(item.invCode) : cleanFGCode(item.fgId||'').replace(/^FG-\d{10,}$/,'')}</td>
+                                  <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{wordBreak:"break-word",lineHeight:1.3}}>{item.desc}</td>
+                                  <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
+                                  <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:"—"}</td>
+                                  <td className="py-2 px-2 text-right font-black text-green-700 text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:"—"}</td>
                                 </tr>
                               )) : Array.from({length:8}).map((_,i)=>(
                                 <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                                  <td className="py-2.5 px-2 w-28 text-gray-200">—</td>
-                                  <td className="py-2.5 px-2"></td>
-                                  <td className="py-2.5 px-2 text-right text-gray-200 w-20">0,00</td>
-                                  <td className="py-2.5 px-2 text-right text-gray-200 w-24">0,00</td>
-                                  <td className="py-2.5 px-2 text-right text-gray-200 w-24">0,00</td>
-                                  <td className="py-2.5 px-2 w-16"></td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100 w-28">&nbsp;</td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100">&nbsp;</td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-300 w-20">0,00</td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-300 w-24">0,00</td>
+                                  <td className="py-2.5 px-2 text-right text-gray-300 w-24">0,00</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -11047,26 +10133,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               <div className="space-y-1 text-right min-w-52">
                                 {[
                                   ['TOTAL PARCIAL', `$${formatNum(fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0))}`],
-                                  ['DESCUENTO_LABEL',''],
+                                  ['__DESC__',''],
                                   ['SUBTOTAL MENOS DESCUENTO', `$${formatNum(fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||parseNum(newInvoiceForm.montoBase||0))}`],
                                   ['__IVA__', ''],
                                   ['TOTAL IMPUESTOS', `$${formatNum(parseNum(newInvoiceForm.iva||0))}`],
                                   ['ENVÍO/MANIPULACIÓN','$0,00'],
                                 ].map(([k,v])=>{
                                   if(k==='__IVA__') return null;
-                                  if(k==='DESCUENTO_LABEL') return (
-                                    <div key="desc" className="bg-orange-50 border border-orange-200 rounded-xl px-2 py-1.5">
-                                      <div className="text-[9px] font-black text-orange-700 uppercase mb-1">Descuento</div>
-                                      <div className="flex items-center gap-1 mb-1">
-                                        <select value={descuentoTipo} onChange={e=>{setDescuentoTipo(e.target.value);setDescuentoVal('');}} className="border border-orange-300 rounded px-1 py-0.5 text-[8px] font-black outline-none bg-white flex-1">
-                                          <option value="monto">$ Monto fijo</option>
-                                          <option value="pct">% Porcentaje</option>
-                                        </select>
-                                        <input type="number" step="0.01" min="0" value={descuentoVal} onChange={e=>setDescuentoVal(e.target.value)} placeholder={descuentoTipo==='pct'?'5':'0.00'} className="w-20 border border-orange-300 rounded px-1.5 py-0.5 text-right font-black text-[9px] outline-none bg-white"/>
-                                      </div>
-                                      {parseNum(descuentoVal||0)>0 && <div className="text-right text-[8px] font-black text-red-600">-${formatNum(descuentoTipo==='pct'?_invBase*(parseNum(descuentoVal)/100):parseNum(descuentoVal))} {descuentoTipo==='pct'?'('+descuentoVal+'%)':'(fijo)'}</div>}
-                                    </div>
-                                  );
+                                  if(k==='__DESC__') return (<div key="d" className="bg-orange-50 border border-orange-200 rounded-xl px-2 py-1.5"><div className="text-[9px] font-black text-orange-700 uppercase mb-1">Descuento</div><div className="flex items-center gap-1"><select value={descuentoTipo} onChange={e=>{setDescuentoTipo(e.target.value);setDescuentoVal('');}} className="border border-orange-300 rounded px-1 py-0.5 text-[8px] font-black outline-none bg-white flex-1"><option value="monto">$ Monto fijo</option><option value="pct">% Porcentaje</option></select><input type="number" step="0.01" min="0" value={descuentoVal} onChange={e=>setDescuentoVal(e.target.value)} placeholder={descuentoTipo==='pct'?'5':'0'} className="w-20 border border-orange-300 rounded px-1.5 py-0.5 text-right font-black text-[9px] outline-none bg-white"/></div></div>);
                                   return <div key={k} className="flex justify-between gap-8"><span className="font-black text-gray-600 uppercase">{k}</span><span className="font-black">{v}</span></div>;
                                 })}
                                 <div className="flex justify-between gap-8 items-center">
@@ -11094,8 +10168,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         </div>
                       </div>
                     
-                    <div className="flex justify-end pt-4"><button type="button" onClick={handleCreateInvoice} className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR FACTURA DE VENTA</button></div>
-                  </div>
+                    <div className="flex justify-end pt-4"><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR FACTURA DE VENTA</button></div>
+                  </form>
                 </div>
              )}
              <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR FACTURA O CLIENTE..." value={invoiceSearchTerm} onChange={e=>setInvoiceSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">OP N°</th><th className="py-4 px-4 text-black">Cliente / Producto</th><th className="py-4 px-4 text-right text-black w-32">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{(invoices || []).map(inv=>{
@@ -12984,8 +12058,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
             // ── Find existing PT inventory doc ──
             const descNorm = descFG.toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
-            const _normDims = (s)=>{const p=String(s||'').toLowerCase().split('x').map(x=>parseFloat(x)||0);return p.length>=3?`${p[0]}x${p[1]}x${p[2]}`:'';};
-            const opDims = _normDims(dims);
             const ptDocs = (inventory||[]).filter(i => i.category==='Productos Terminados' && i.activo!==false);
             let existingDoc = ptDocs.find(i => {
               const iNorm = (i.desc||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
@@ -12993,29 +12065,20 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             }) || ptDocs.find(i => {
               const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
               return cc === cleanCode;
-            }) || (opDims ? ptDocs.find(i => {
-              const esT = (i.subcategory==='Termoencogibles') || (i.unit||'').toLowerCase()==='kg';
-              const cc = (i.displayId||(i.id||'').split('___')[0]).split('___')[0].split('-').pop();
-              return _normDims(cc) === opDims && esT === esTermo;
-            }) : null);
+            });
 
             if(existingDoc) {
-              // ── Evitar doble carga de la MISMA OP a este producto ──
-              const aplicadas = Array.isArray(existingDoc.opsAplicadas) ? existingDoc.opsAplicadas : [];
-              if(!aplicadas.includes(req.id)) {
-                // ── SUMA a la existencia + costo PROMEDIO PONDERADO ──
-                const prevStock = parseNum(existingDoc.stock||0);
-                const newStock = prevStock + qtyToAdd;
-                const prevCost = parseNum(existingDoc.cost||0);
-                const newCost = costoUnit > 0
-                  ? ((prevStock * prevCost) + (qtyToAdd * costoUnit)) / newStock
-                  : prevCost;
-                await setDoc(getDocRef('inventory', existingDoc.id), {
-                  ...existingDoc, stock: newStock, cost: newCost,
-                  opsAplicadas: [...aplicadas, req.id],
-                  timestamp: Date.now(), updatedAt: getTodayDate()
-                }, { merge: true });
-              }
+              // ── ADD to existing stock, weighted average cost ──
+              const prevStock = parseNum(existingDoc.stock||0);
+              const newStock = prevStock + qtyToAdd;
+              const prevCost = parseNum(existingDoc.cost||0);
+              const newCost = costoUnit > 0
+                ? ((prevStock * prevCost) + (qtyToAdd * costoUnit)) / newStock
+                : prevCost;
+              await setDoc(getDocRef('inventory', existingDoc.id), {
+                ...existingDoc, stock: newStock, cost: newCost,
+                timestamp: Date.now(), updatedAt: getTodayDate()
+              }, { merge: true });
             } else {
               // ── Create new PT doc ──
               const newId = `${cleanCode}___ALMACEN-ZI`;
@@ -13023,7 +12086,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 id: newId, displayId: cleanCode, desc: descFG,
                 category: 'Productos Terminados', subcategory, unit,
                 stock: qtyToAdd, cost: costoUnit,
-                opsAplicadas: [req.id],
                 almacen: 'ALMACEN ZI', activo: true,
                 opId: req.id, cliente: req.client||'',
                 timestamp: Date.now(), updatedAt: getTodayDate()
@@ -16818,7 +15880,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   <div className="flex flex-col gap-3">
                     <div>
                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Período: {efaLabel}</label>
-                      <input type="number" step="0.0001" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-28 text-center" />
+                      <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-28 text-center" />
                       <label className="text-[9px] font-bold text-gray-400 block mt-0.5">Tasa Bs/$</label>
                     </div>
                     <button onClick={()=>handleExportPDF('Estado_Resultado_Integral', false)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir</button>
@@ -17652,7 +16714,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     </div>
                   </div>
                   <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa (Bs/$)</label>
-                    <input type="number" step="0.0001" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-32 text-center" />
+                    <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-32 text-center" />
                   </div>
                   <button onClick={()=>handleExportPDF('Estado_Resultado', false)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir</button>
                 </div>
