@@ -457,13 +457,6 @@ export default function App() {
 
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
   const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
-  // ── Cálculos de totales en tiempo real para el formulario de factura ──
-  const _invBase = fgItems&&fgItems.length>0 ? fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0) : parseNum(newInvoiceForm?.montoBase||0);
-  const _invDv = parseNum(descuentoVal||0);
-  const _invDa = descuentoTipo==='pct' ? parseFloat((_invBase*(_invDv/100)).toFixed(2)) : _invDv;
-  const _invSub = parseFloat(Math.max(0,_invBase-_invDa).toFixed(2));
-  const _invIva = (newInvoiceForm?.aplicaIva||'SI')==='SI' ? parseFloat((_invSub*0.16).toFixed(2)) : 0;
-  const _invTot = parseFloat((_invSub+_invIva).toFixed(2));
   const [showGeneralInvoicesReport, setShowGeneralInvoicesReport] = useState(false);
   const [showClientReport, setShowClientReport] = useState(false);
   const [showReqReport, setShowReqReport] = useState(false);
@@ -520,6 +513,13 @@ export default function App() {
   const [editingReqId, setEditingReqId] = useState(null);
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', nroFiscal: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
+  // ── Cálculos de totales en tiempo real (usados en el formulario de factura) ──
+  const _invBase = fgItems&&fgItems.length>0 ? fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0) : parseNum(newInvoiceForm?.montoBase||0);
+  const _invDv   = parseNum(descuentoVal||0);
+  const _invDa   = descuentoTipo==='pct' ? parseFloat((_invBase*(_invDv/100)).toFixed(2)) : _invDv;
+  const _invSub  = parseFloat(Math.max(0,_invBase-_invDa).toFixed(2));
+  const _invIva  = (newInvoiceForm?.aplicaIva||'SI')==='SI' ? parseFloat((_invSub*0.16).toFixed(2)) : 0;
+  const _invTot  = parseFloat((_invSub+_invIva).toFixed(2));
 
   // Formularios Producción
   const initialPhaseForm = { date: getTodayDate(), insumos: [], producedKg: '', mermaKg: '', mermaTroquelTransp: '', mermaTroquelPigm: '', mermaTorta: '', observaciones: '', pesoMillarReal: '', operadorExt: '', tratado: '', motorExt: '', ventilador: '', jalador: '', zona1: '', zona2: '', zona3: '', zona4: '', zona5: '', zona6: '', cabezalA: '', cabezalB: '', operadorImp: '', kgRecibidosImp: '', cantColores: '', relacionImp: '', motorImp: '', tensores: '', tempImp: '', solvente: '', operadorSel: '', kgRecibidosSel: '', impresa: 'NO', tipoSello: 'Sello FC', tempCabezalA: '', tempCabezalB: '', tempPisoA: '', tempPisoB: '', velServo: '', millaresProd: '', troquelSel: '' };
