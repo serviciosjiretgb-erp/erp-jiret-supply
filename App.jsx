@@ -10733,7 +10733,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
              <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Receipt className="text-orange-500" size={24}/> Facturación de Venta</h2><div className="flex gap-2"><button onClick={()=>setShowGeneralInvoicesReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors">REPORTE GENERAL</button><button onClick={()=>{setShowNewInvoicePanel(!showNewInvoicePanel); setNewInvoiceForm(initialInvoiceForm);}} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-slate-800 transition-colors">{showNewInvoicePanel ? 'CANCELAR' : 'NUEVA FACTURA'}</button></div></div>
              {showNewInvoicePanel && (
                 <div className="p-8 bg-gray-50/50 border-b">
-                  <form onSubmit={handleCreateInvoice} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
+                  <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
                     <div className="flex justify-between items-center border-b border-gray-100 pb-4 mb-6">
                       <h3 className="text-sm font-black uppercase text-black tracking-widest">{editingInvoiceId ? `Editando Factura: ${editingInvoiceId}` : 'Registrar Factura de Venta'}</h3>
                       <div className="flex items-center gap-4">
@@ -11032,63 +11032,29 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           </table>
                           {/* Totales */}
                           <div className="border-t-2 border-gray-200 bg-gray-50 px-4 py-3">
-                            <div className="flex justify-between items-center text-[10px] mb-2">
-                              <textarea rows={2} placeholder="Observaciones / Instrucciones de pago:"
+                            <div className="flex justify-between items-start gap-4 text-[10px]">
+                              <textarea rows={3} placeholder="Observaciones / Instrucciones de pago:"
                                 value={newInvoiceForm.observaciones||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm, observaciones:e.target.value})}
-                                className="border border-gray-200 rounded-lg p-2 text-[9px] font-bold flex-1 mr-6 outline-none resize-none"/>
-                              <div className="space-y-1 text-right min-w-52">
-                                {[
-                                  ['TOTAL PARCIAL', `$${formatNum(fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0))}`],
-                                  ['__DESCUENTO__',''],
-                                  ['SUBTOTAL MENOS DESCUENTO', `$${formatNum(fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||parseNum(newInvoiceForm.montoBase||0))}`],
-                                  ['__IVA__', ''],
-                                  ['TOTAL IMPUESTOS', `$${formatNum(parseNum(newInvoiceForm.iva||0))}`],
-                                  ['ENVÍO/MANIPULACIÓN','$0,00'],
-                                ].map(([k,v])=>{
-                                  if(k==='__IVA__') return null;
-                                  if(k==='__DESCUENTO__') return (
-                                    <div key="desc" className="bg-orange-50 border border-orange-200 rounded-xl px-2 py-1.5 space-y-1">
-                                      <div className="text-[9px] font-black text-orange-700 uppercase">Descuento</div>
-                                      <div className="flex items-center gap-1">
-                                        <select value={descuentoTipo} onChange={e=>{setDescuentoTipo(e.target.value);setDescuentoVal('');}} className="border border-orange-300 rounded px-1 py-0.5 text-[8px] font-black outline-none bg-white flex-1">
-                                          <option value="monto">$ Monto</option>
-                                          <option value="pct">% Pct</option>
-                                        </select>
-                                        <input type="number" step="0.01" min="0" value={descuentoVal} onChange={e=>setDescuentoVal(e.target.value)} placeholder={descuentoTipo==='pct'?'ej: 5':'ej: 10'} className="w-20 border border-orange-300 rounded px-1.5 py-0.5 text-right font-black text-[9px] outline-none bg-white"/>
-                                      </div>
-                                      {parseNum(descuentoVal||0)>0 && <div className="text-right text-[9px] font-black text-red-600">-${formatNum(descuentoTipo==='pct'?(fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0))*(parseNum(descuentoVal||0)/100):parseNum(descuentoVal||0))} {descuentoTipo==='pct'?`(${descuentoVal}%)`:'(fijo)'}</div>}
-                                    </div>
-                                  );
-                                  return <div key={k} className="flex justify-between gap-8"><span className="font-black text-gray-600 uppercase">{k}</span><span className="font-black">{v}</span></div>;
-                                })}
-                                <div className="flex justify-between gap-8 items-center">
-                                  <span className="font-black text-gray-600 uppercase flex items-center gap-2">TASA DE IMPUESTO
-                                    <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva',e.target.value)} className="border border-gray-200 rounded px-1.5 py-0.5 text-[9px] font-black outline-none ml-1">
-                                      <option value="SI">+ IVA 16%</option>
-                                      <option value="NO">EXENTO</option>
-                                    </select>
-                                  </span>
-                                  <span className="font-black">{newInvoiceForm.aplicaIva==='SI'?'16,00%':'0,00%'}</span>
-                                </div>
-                                <div className="flex justify-between gap-8 border-t-2 border-gray-400 pt-2 mt-2">
-                                  <span className="font-black text-gray-900 uppercase text-sm">Saldo adeudado</span>
-                                  <span className="font-black text-orange-600 text-xl">$ {(()=>{
-                                    const base=fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0);
-                                    const dv=parseNum(descuentoVal||0);const da=descuentoTipo==='pct'?base*(dv/100):dv;
-                                    const sub=Math.max(0,base-da);
-                                    const iva=newInvoiceForm.aplicaIva==='SI'?parseFloat((sub*0.16).toFixed(2)):0;
-                                    return formatNum(sub+iva);
-                                  })()}</span>
-                                </div>
+                                className="border border-gray-200 rounded-lg p-2 text-[9px] font-bold flex-1 outline-none resize-none"/>
+                              <div className="space-y-2 min-w-[260px] text-right">
+                                <TotalesFactura
+                                  fgItems={fgItems}
+                                  montoBase={newInvoiceForm.montoBase}
+                                  aplicaIva={newInvoiceForm.aplicaIva}
+                                  descuentoTipo={descuentoTipo}
+                                  descuentoVal={descuentoVal}
+                                  setDescuentoTipo={setDescuentoTipo}
+                                  setDescuentoVal={setDescuentoVal}
+                                  handleInvoiceFormChange={handleInvoiceFormChange}
+                                />
                               </div>
                             </div>
-
                           </div>
                         </div>
                       </div>
                     
-                    <div className="flex justify-end pt-4"><button type="submit" className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR FACTURA DE VENTA</button></div>
-                  </form>
+                    <div className="flex justify-end pt-4"><button type="button" onClick={handleCreateInvoice} className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR FACTURA DE VENTA</button></div>
+                  </div>
                 </div>
              )}
              <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR FACTURA O CLIENTE..." value={invoiceSearchTerm} onChange={e=>setInvoiceSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">OP N°</th><th className="py-4 px-4 text-black">Cliente / Producto</th><th className="py-4 px-4 text-right text-black w-32">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{(invoices || []).map(inv=>{
