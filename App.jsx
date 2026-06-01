@@ -367,6 +367,9 @@ export default function App() {
   const [fgCatFilter, setFgCatFilter] = useState('TODAS');
   const [selectedOpId, setSelectedOpId] = useState('');
   const [fgItems, setFgItems] = useState([]); // [{fgId, cantidad, desc, unidad, maxCant}]
+  const [editingFgIdx, setEditingFgIdx] = useState(null);
+  const [descuentoTipo, setDescuentoTipo] = useState('monto'); // 'monto' | 'pct'
+  const [descuentoVal, setDescuentoVal] = useState('');
   const [showCargarProducto, setShowCargarProducto] = useState(false);
   const [fgCorrectionDone, setFgCorrectionDone] = useState(false);
 
@@ -606,6 +609,18 @@ export default function App() {
   const [comAnio, setComAnio] = useState(new Date().getFullYear());
   const [comCobranza, setComCobranza] = useState([]); // tabla manual de cobranza (estado de edición)
   const [comBonos, setComBonos] = useState(null); // bonos editables del vendedor/mes
+  // ── Dashboard de ventas ──
+  const [dashMes, setDashMes] = useState(new Date().getMonth()+1);
+  const [dashAnio, setDashAnio] = useState(new Date().getFullYear());
+  const [dashVendFiltro, setDashVendFiltro] = useState('todos');
+  const [dashClienteFiltro, setDashClienteFiltro] = useState('todos');
+  const [dashBusqueda, setDashBusqueda] = useState('');
+  // ── Ficha de vendedores ──
+  const [fichaVend, setFichaVend] = useState(null);
+  const [fichaData, setFichaData] = useState({});
+  const [fichaGuardando, setFichaGuardando] = useState(false);
+  const [nuevoNombreVend, setNuevoNombreVend] = useState('');
+  const [mostrarNuevoVend, setMostrarNuevoVend] = useState(false);
   const [selectedInvItems, setSelectedInvItems] = useState(new Set()); // bulk delete
   const [pvProductoFilter, setPvProductoFilter] = useState('TODOS');
   const [prodActivoSearch, setProdActivoSearch] = useState('');
@@ -2595,9 +2610,12 @@ export default function App() {
     });
 
     // ── Calculate totals from fgItems (not from stale form state) ──
-    const computedBase = fgItems.length > 0
+    const computedBaseRaw = fgItems.length > 0
       ? fgItems.reduce((s,it)=>s + parseNum(it.precioUnit||0)*parseNum(it.cantidad||0), 0)
       : parseNum(newInvoiceForm.montoBase||0);
+    const dVal = parseNum(descuentoVal||0);
+    const descuentoAmt = descuentoTipo==='pct' ? computedBaseRaw*(dVal/100) : dVal;
+    const computedBase = Math.max(0, computedBaseRaw - descuentoAmt);
     const aplicaIvaFinal = newInvoiceForm.aplicaIva || 'SI';
     const computedIva = aplicaIvaFinal==='SI' ? parseFloat((computedBase*0.16).toFixed(2)) : 0;
     const computedTotal = parseFloat((computedBase + computedIva).toFixed(2));
@@ -2607,6 +2625,7 @@ export default function App() {
         ...newInvoiceForm, id, documento: id,
         nroFiscal: newInvoiceForm.nroFiscal||'',
         tasa: parseNum(newInvoiceForm.tasa||settings?.tasaBCV||0),
+        descuentoTipo, descuentoVal: parseNum(descuentoVal||0), descuentoAmt,
         montoBase: computedBase,
         iva: computedIva,
         total: computedTotal,
@@ -2797,7 +2816,7 @@ export default function App() {
         });
       }
 
-      setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm); setFgItems([]);
+      setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm); setFgItems([]); setDescuentoVal(''); setDescuentoTipo('monto');
       setDialog({title: '✅ Éxito', text: editingInvoiceId ? `Factura ${id} actualizada y stock descontado.` : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
     } catch(err) { setDialog({title: 'Error al guardar factura', text: err.message, type: 'alert'}); }
   };
@@ -9749,39 +9768,39 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 ))}
               </div>
               <div className="overflow-x-auto rounded-xl border border-gray-100">
-                <table className="w-full border-collapse text-[9px]" style={{minWidth:900}}>
-                  <thead><tr className="bg-black text-white">{['Fecha','Documento','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','Total Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2.5 px-3 text-left font-black uppercase text-[8px] whitespace-nowrap">{h}</th>)}</tr></thead>
+                <table className="w-full border-collapse text-[8px]">
+                  <thead><tr className="bg-black text-white">{['Fecha','Documento','Nro. Fiscal','OP','Vendedor','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','T. Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2 px-1.5 text-left font-black uppercase text-[7px] leading-tight">{h}</th>)}</tr></thead>
                   <tbody>
                     {rows.map((r,i)=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return(
                       <tr key={i} className={`border-b border-gray-50 ${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
-                        <td className="py-1.5 px-3 font-bold text-gray-500 whitespace-nowrap">{r.fecha}</td>
-                        <td className="py-1.5 px-3 font-black text-orange-600 whitespace-nowrap">{r.doc}</td>
-                        <td className="py-1.5 px-3 font-bold text-gray-600 whitespace-nowrap">{r.nroFiscal||'—'}</td>
-                        <td className="py-1.5 px-3 font-black text-orange-600 whitespace-nowrap">{r.op||'—'}</td>
-                        <td className="py-1.5 px-3 font-black text-blue-700 uppercase whitespace-nowrap">{r.vendedor||'—'}</td>
-                        <td className="py-1.5 px-3 font-bold max-w-[120px] truncate" title={r.cliente}>{r.cliente}</td>
-                        <td className="py-1.5 px-3 font-black text-indigo-600 whitespace-nowrap">{r.codigo}</td>
-                        <td className="py-1.5 px-3 font-bold" style={{minWidth:160,maxWidth:220,whiteSpace:'normal',wordBreak:'break-word'}}>{r.producto}</td>
-                        <td className="py-1.5 px-3 font-bold text-center">{formatNum(r.qty)}</td>
-                        <td className="py-1.5 px-3 font-bold text-right whitespace-nowrap">USD {formatNum(r.precio)}</td>
-                        <td className="py-1.5 px-3 font-black text-right whitespace-nowrap">USD {formatNum(r.total)}</td>
-                        <td className="py-1.5 px-3 font-bold text-right text-gray-500 whitespace-nowrap">USD {formatNum(r.costo)}</td>
-                        <td className="py-1.5 px-3 font-bold text-right text-gray-500 whitespace-nowrap">USD {formatNum(r.costoTotal)}</td>
-                        <td className={`py-1.5 px-3 font-black text-right whitespace-nowrap ${util>=0?'text-green-600':'text-red-500'}`}>USD {formatNum(util)}</td>
-                        <td className={`py-1.5 px-3 font-black text-center ${pct>=30?'text-green-600':pct>=15?'text-yellow-600':'text-red-500'}`}>{pct}%</td>
-                        <td className="py-1.5 px-3 font-bold text-right text-gray-400 whitespace-nowrap">{r.tasa>0?formatTasa(r.tasa):'—'}</td>
+                        <td className="py-1 px-1.5 font-bold text-gray-500 whitespace-nowrap">{r.fecha}</td>
+                        <td className="py-1 px-1.5 font-black text-orange-600 whitespace-nowrap">{r.doc}</td>
+                        <td className="py-1 px-1.5 font-bold text-gray-600 whitespace-nowrap">{r.nroFiscal||'—'}</td>
+                        <td className="py-1 px-1.5 font-black text-orange-600 whitespace-nowrap">{r.op||'—'}</td>
+                        <td className="py-1 px-1.5 font-black text-blue-700 uppercase whitespace-nowrap">{r.vendedor||'—'}</td>
+                        <td className="py-1 px-1.5 font-bold max-w-[90px] truncate" title={r.cliente}>{r.cliente}</td>
+                        <td className="py-1 px-1.5 font-black text-indigo-600 whitespace-nowrap">{r.codigo}</td>
+                        <td className="py-1 px-1.5 font-bold" style={{minWidth:110,maxWidth:170,whiteSpace:'normal',wordBreak:'break-word'}}>{r.producto}</td>
+                        <td className="py-1 px-1.5 font-bold text-center">{formatNum(r.qty)}</td>
+                        <td className="py-1 px-1.5 font-bold text-right whitespace-nowrap">{formatNum(r.precio)}</td>
+                        <td className="py-1 px-1.5 font-black text-right whitespace-nowrap">{formatNum(r.total)}</td>
+                        <td className="py-1 px-1.5 font-bold text-right text-gray-500 whitespace-nowrap">{formatNum(r.costo)}</td>
+                        <td className="py-1 px-1.5 font-bold text-right text-gray-500 whitespace-nowrap">{formatNum(r.costoTotal)}</td>
+                        <td className={`py-1 px-1.5 font-black text-right whitespace-nowrap ${util>=0?'text-green-600':'text-red-500'}`}>{formatNum(util)}</td>
+                        <td className={`py-1 px-1.5 font-black text-center ${pct>=30?'text-green-600':pct>=15?'text-yellow-600':'text-red-500'}`}>{pct}%</td>
+                        <td className="py-1 px-1.5 font-bold text-right text-gray-400 whitespace-nowrap">{r.tasa>0?formatTasa(r.tasa):'—'}</td>
                       </tr>
                     );})}
                     {rows.length===0 && <tr><td colSpan={16} className="py-8 text-center text-gray-400 font-bold">Sin datos en el período seleccionado</td></tr>}
                   </tbody>
-                  {rows.length>0 && <tfoot><tr className="bg-black text-white font-black">
-                    <td colSpan={5} className="py-2.5 px-3 text-[8px] uppercase">TOTALES</td>
-                    <td className="py-2.5 px-3 text-right font-black">{formatNum(rows.reduce((s,r)=>s+r.qty,0))}</td>
+                  {rows.length>0 && <tfoot><tr className="bg-black text-white font-black text-[8px]">
+                    <td colSpan={8} className="py-2 px-1.5 uppercase">TOTALES</td>
+                    <td className="py-2 px-1.5 text-right">{formatNum(rows.reduce((s,r)=>s+r.qty,0))}</td>
                     <td/>
-                    <td className="py-2.5 px-3 text-right whitespace-nowrap">USD {formatNum(totalVentas)}</td>
-                    <td/><td className="py-2.5 px-3 text-right whitespace-nowrap">USD {formatNum(totalCosto)}</td>
-                    <td className="py-2.5 px-3 text-right whitespace-nowrap text-green-400">USD {formatNum(totalUtil)}</td>
-                    <td className="py-2.5 px-3 text-center text-orange-400">{pctUtil}%</td><td/>
+                    <td className="py-2 px-1.5 text-right whitespace-nowrap">{formatNum(totalVentas)}</td>
+                    <td/><td className="py-2 px-1.5 text-right whitespace-nowrap">{formatNum(totalCosto)}</td>
+                    <td className="py-2 px-1.5 text-right whitespace-nowrap text-green-400">{formatNum(totalUtil)}</td>
+                    <td className="py-2 px-1.5 text-center text-orange-400">{pctUtil}%</td><td/>
                   </tr></tfoot>}
                 </table>
               </div>
@@ -9789,8 +9808,523 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           );
         })()}
 
+        {ventasView === 'dashboard' && (() => {
+          const ymD = `${dashAnio}-${String(dashMes).padStart(2,'0')}`;
+          const mesLabelD = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][dashMes-1];
+          const facts = (invoices||[]).filter(inv => (inv.fecha||'').startsWith(ymD));
+
+          // Filas detalladas (una por item facturado)
+          const detalle = [];
+          facts.forEach(inv => {
+            const vend = (inv.vendedor||'—').toUpperCase();
+            const items = inv.itemsFacturados||[];
+            if(items.length===0){
+              detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:inv.productoMaquilado||'—', cant:1, precio:parseNum(inv.montoBase||0), monto:parseNum(inv.montoBase||inv.total||0)});
+            } else {
+              items.forEach(it=>{
+                const cant=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0);
+                detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:it.desc||it.invCode||it.fgId||'—', cant, precio, monto:precio*cant});
+              });
+            }
+          });
+
+          // Totales por vendedor
+          const porVend = {};
+          facts.forEach(inv=>{
+            const v=(inv.vendedor||'—').toUpperCase();
+            porVend[v]=(porVend[v]||0)+parseNum(inv.montoBase||inv.total||0);
+          });
+          const vendArr = Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
+          const totalVentas = vendArr.reduce((s,v)=>s+v.monto,0);
+          const mejorVend = vendArr[0];
+          const ventaMasGrande = facts.reduce((mx,inv)=>{const m=parseNum(inv.montoBase||inv.total||0);return m>mx.m?{m,inv}:mx;},{m:0,inv:null});
+          const colores=['bg-blue-500','bg-cyan-500','bg-purple-500','bg-emerald-500','bg-amber-500','bg-rose-500','bg-indigo-500'];
+
+          // % de comisión por vendedor según escalón de meta (mismo de Comisiones)
+          const metaTabla = (settings?.comisionesConfig?.metaTabla) || [
+            {min:15000,max:49999,pct:0.20},{min:50000,max:99999,pct:0.30},{min:100000,max:149999,pct:0.35},{min:150000,max:199999,pct:0.40},{min:200000,max:275000,pct:0.45}
+          ];
+          const pctVend = {};
+          vendArr.forEach(v=>{const e=metaTabla.find(x=>v.monto>=x.min&&v.monto<=x.max);pctVend[v.vend]=e?e.pct:0;});
+          // Comisión por línea = monto × % del vendedor
+          detalle.forEach(d=>{ d.pctCom = pctVend[d.vend]||0; d.comision = d.monto*(d.pctCom/100); });
+
+          // Filtros tabla
+          const vendUnicos = ['todos', ...Array.from(new Set(detalle.map(d=>d.vend)))];
+          const cliUnicos = ['todos', ...Array.from(new Set(detalle.map(d=>d.cliente))).sort()];
+          const detalleFilt = detalle.filter(d=>
+            (dashVendFiltro==='todos'||d.vend===dashVendFiltro) &&
+            (dashClienteFiltro==='todos'||d.cliente===dashClienteFiltro) &&
+            (!dashBusqueda || JSON.stringify(d).toLowerCase().includes(dashBusqueda.toLowerCase()))
+          );
+          const totCantF=detalleFilt.reduce((s,d)=>s+d.cant,0);
+          const totMontoF=detalleFilt.reduce((s,d)=>s+d.monto,0);
+          const totComF=detalleFilt.reduce((s,d)=>s+d.comision,0);
+
+          const exportDashExcel = () => {
+            const td=(c,r=false,b=false)=>`<td style="padding:5px 8px;border:1px solid #ccc;font-size:10px;${r?'text-align:right;':''}${b?'font-weight:900;':''}">${c}</td>`;
+            const rowsH=detalleFilt.map((d,i)=>`<tr style="${i%2?'background:#f9fafb;':''}">${td(d.vend)}${td(d.fecha)}${td(d.cliente)}${td(d.producto)}${td(formatNum(d.cant),true)}${td('$'+formatNum(d.precio),true)}${td('$'+formatNum(d.monto),true,true)}${td(formatNum(d.pctCom)+'%',true)}${td('$'+formatNum(d.comision),true,true)}</tr>`).join('');
+            const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 8px;border:1px solid #000;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #6366f1;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#6366f1;font-weight:900;">DASHBOARD DE VENTAS — DETALLE</h3><p style="font-size:10px;">Período: ${mesLabelD} ${dashAnio} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${['Vendedor','Fecha','Cliente','Producto','Cant.','Precio','Monto','% Com.','Comisión'].map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsH}</tbody><tfoot><tr style="background:#111;color:#fff;"><td colspan="6" style="padding:6px 8px;font-weight:900;">TOTALES (${detalleFilt.length} líneas)</td><td style="padding:6px 8px;text-align:right;font-weight:900;">$${formatNum(totMontoF)}</td><td></td><td style="padding:6px 8px;text-align:right;font-weight:900;">$${formatNum(totComF)}</td></tr></tfoot></table></body></html>`;
+            const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Dashboard_Ventas_${ymD}.xls`;a.click();
+          };
+
+          return (
+            <div className="space-y-6 animate-in fade-in">
+              {/* Header */}
+              <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-6 flex justify-between items-center flex-wrap gap-3">
+                <div>
+                  <h2 className="text-2xl font-black text-gray-800 flex items-center gap-3"><BarChart3 className="text-indigo-500" size={26}/> Dashboard de Ventas</h2>
+                  <span className="inline-block mt-1 text-[11px] font-bold text-indigo-600 bg-indigo-50 rounded-full py-1 px-4 uppercase">Período: {mesLabelD} {dashAnio}</span>
+                </div>
+                <div className="flex gap-3 items-end">
+                  <button onClick={exportDashExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1"><Download size={13}/> Excel</button>
+                  <button onClick={()=>window.print()} className="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1"><Printer size={13}/> Imprimir</button>
+                  <div><label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Mes</label><select value={dashMes} onChange={e=>setDashMes(parseInt(e.target.value))} className="border-2 border-indigo-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white">{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'].map((m,i)=><option key={i} value={i+1}>{m}</option>)}</select></div>
+                  <div><label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Año</label><input type="number" value={dashAnio} onChange={e=>setDashAnio(parseInt(e.target.value)||dashAnio)} className="border-2 border-indigo-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white w-24 text-center"/></div>
+                </div>
+              </div>
+
+              {/* Tarjetas resumen */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
+                  <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center mb-2"><DollarSign className="text-green-600" size={20}/></div>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase">Mejor Vendedor</h3>
+                  <p className="text-lg font-black text-gray-800">{mejorVend?mejorVend.vend:'—'}</p>
+                  <p className="text-[11px] text-gray-500 font-bold">{mejorVend&&totalVentas>0?`${formatNum(mejorVend.monto/totalVentas*100)}% del total`:'Sin datos'}</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
+                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center mb-2"><ArrowUpFromLine className="text-blue-600" size={20}/></div>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase">Venta más Grande</h3>
+                  <p className="text-lg font-black text-gray-800">${formatNum(ventaMasGrande.m)}</p>
+                  <p className="text-[11px] text-gray-500 font-bold truncate max-w-full">{ventaMasGrande.inv?(ventaMasGrande.inv.clientName||'—'):'—'}</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
+                  <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center mb-2"><Receipt className="text-indigo-600" size={20}/></div>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase"># Facturas</h3>
+                  <p className="text-lg font-black text-gray-800">{facts.length}</p>
+                  <p className="text-[11px] text-gray-500 font-bold">{detalle.length} líneas</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
+                  <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center mb-2"><BarChart3 className="text-amber-600" size={20}/></div>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase">Ventas Totales</h3>
+                  <p className="text-lg font-black text-gray-800">${formatNum(totalVentas)}</p>
+                  <p className="text-[11px] text-gray-500 font-bold">{mesLabelD} {dashAnio}</p>
+                </div>
+              </div>
+
+              {/* Barras por vendedor */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <h2 className="text-lg font-black text-gray-800 mb-4 flex items-center gap-2"><Users className="text-indigo-500" size={20}/> Volumen por Vendedor — Total ${formatNum(totalVentas)}</h2>
+                <div className="space-y-4">
+                  {vendArr.length===0 && <p className="text-gray-400 text-sm font-bold text-center py-4">Sin ventas en este período.</p>}
+                  {vendArr.map((v,i)=>{const pct=totalVentas>0?(v.monto/totalVentas*100):0;return(
+                    <div key={v.vend}>
+                      <div className="flex justify-between items-center mb-1"><span className="font-black text-gray-700 text-sm uppercase">{v.vend}</span><span className="text-sm font-black text-gray-600">${formatNum(v.monto)} <span className="text-[10px] text-gray-400">({formatNum(pct)}%)</span></span></div>
+                      <div className="w-full bg-gray-100 rounded-full h-4"><div className={`${colores[i%colores.length]} h-4 rounded-full transition-all`} style={{width:`${Math.max(pct,1)}%`}}></div></div>
+                    </div>
+                  );})}
+                </div>
+              </div>
+
+              {/* Tarjetas por vendedor */}
+              {vendArr.length>0 && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {vendArr.map((v,i)=>{
+                    const facturasV=facts.filter(inv=>(inv.vendedor||'—').toUpperCase()===v.vend);
+                    const clientesV=new Set(facturasV.map(inv=>(inv.clientName||inv.client||'—'))).size;
+                    return (
+                      <div key={v.vend} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow">
+                        <h3 className="text-lg font-black text-gray-800 border-b pb-2 mb-3 flex items-center gap-2"><span className={`w-3 h-3 rounded-full ${colores[i%colores.length]}`}></span>{v.vend}</h3>
+                        <div className="grid grid-cols-2 gap-3 text-center">
+                          <div className="bg-gray-50 p-3 rounded-xl"><div className="text-[9px] font-black text-gray-500 uppercase">Ventas</div><div className="text-lg font-black text-green-600">${formatNum(v.monto)}</div></div>
+                          <div className="bg-gray-50 p-3 rounded-xl"><div className="text-[9px] font-black text-gray-500 uppercase">Facturas</div><div className="text-lg font-black text-blue-600">{facturasV.length}</div></div>
+                          <div className="bg-gray-50 p-3 rounded-xl"><div className="text-[9px] font-black text-gray-500 uppercase">Clientes</div><div className="text-lg font-black text-indigo-600">{clientesV}</div></div>
+                          <div className="bg-gray-50 p-3 rounded-xl"><div className="text-[9px] font-black text-gray-500 uppercase">% del total</div><div className="text-lg font-black text-amber-600">{totalVentas>0?formatNum(v.monto/totalVentas*100):0}%</div></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Tabla detallada */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-3">
+                  <h2 className="text-lg font-black text-gray-800 flex items-center gap-2 shrink-0"><FileText className="text-blue-500" size={20}/> Detalle de Ventas</h2>
+                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                    <select value={dashVendFiltro} onChange={e=>setDashVendFiltro(e.target.value)} className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-400">{vendUnicos.map(v=><option key={v} value={v}>{v==='todos'?'Todos los Vendedores':v}</option>)}</select>
+                    <select value={dashClienteFiltro} onChange={e=>setDashClienteFiltro(e.target.value)} className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-400">{cliUnicos.map(c=><option key={c} value={c}>{c==='todos'?'Todos los Clientes':c}</option>)}</select>
+                    <input type="text" value={dashBusqueda} onChange={e=>setDashBusqueda(e.target.value)} placeholder="Buscar..." className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-400"/>
+                  </div>
+                </div>
+                <div className="overflow-x-auto border border-gray-100 rounded-xl">
+                  <table className="w-full text-xs text-left">
+                    <thead className="text-[9px] text-gray-600 uppercase bg-gray-100 font-black"><tr>
+                      <th className="px-3 py-2.5">Vendedor</th><th className="px-3 py-2.5">Fecha</th><th className="px-3 py-2.5">Cliente</th><th className="px-3 py-2.5">Producto</th><th className="px-3 py-2.5 text-right">Cant.</th><th className="px-3 py-2.5 text-right">Precio</th><th className="px-3 py-2.5 text-right">Monto</th><th className="px-3 py-2.5 text-right">% Com.</th><th className="px-3 py-2.5 text-right">Comisión</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {detalleFilt.length===0 ? (
+                        <tr><td colSpan="9" className="py-8 text-center text-gray-400 font-bold uppercase text-[10px]">Sin ventas para los filtros seleccionados.</td></tr>
+                      ) : detalleFilt.map((d,i)=>(
+                        <tr key={i} className="hover:bg-indigo-50">
+                          <td className="px-3 py-2 font-black text-indigo-700 uppercase text-[10px]">{d.vend}</td>
+                          <td className="px-3 py-2 text-gray-500 font-bold whitespace-nowrap">{d.fecha}</td>
+                          <td className="px-3 py-2 font-bold text-gray-800 uppercase text-[10px]">{d.cliente}</td>
+                          <td className="px-3 py-2 text-gray-600 text-[10px]">{d.producto}</td>
+                          <td className="px-3 py-2 text-right font-bold">{formatNum(d.cant)}</td>
+                          <td className="px-3 py-2 text-right font-bold whitespace-nowrap">${formatNum(d.precio)}</td>
+                          <td className="px-3 py-2 text-right font-black text-gray-800 whitespace-nowrap">${formatNum(d.monto)}</td>
+                          <td className="px-3 py-2 text-right font-bold text-gray-400">{formatNum(d.pctCom)}%</td>
+                          <td className="px-3 py-2 text-right font-black text-green-700 whitespace-nowrap">${formatNum(d.comision)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-gray-100 font-black text-gray-900 text-xs"><tr className="border-t-2 border-gray-300">
+                      <td className="px-3 py-2.5 uppercase" colSpan="4">Total (filtrado): {detalleFilt.length} líneas</td>
+                      <td className="px-3 py-2.5 text-right">{formatNum(totCantF)}</td><td className="px-3 py-2.5 text-right">—</td><td className="px-3 py-2.5 text-right text-gray-800">${formatNum(totMontoF)}</td><td className="px-3 py-2.5 text-right">—</td><td className="px-3 py-2.5 text-right text-green-700">${formatNum(totComF)}</td>
+                    </tr></tfoot>
+                  </table>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {ventasView === 'vendedores' && (() => {
+          const ESTADOS_VE = [
+            'Amazonas','Anzoátegui','Apure','Aragua','Barinas','Bolívar','Carabobo',
+            'Cojedes','Delta Amacuro','Falcón','Guárico','Lara','Mérida','Miranda',
+            'Monagas','Nueva Esparta','Portuguesa','Sucre','Táchira','Trujillo',
+            'La Guaira (Vargas)','Yaracuy','Zulia',
+            'Distrito Capital','Dependencias Federales'
+          ];
+          const REGIONES = [
+            {id:'centro', label:'Centro', estados:['Aragua','Carabobo','Miranda','Distrito Capital','La Guaira (Vargas)']},
+            {id:'llanos', label:'Llanos', estados:['Apure','Barinas','Cojedes','Guárico','Portuguesa']},
+            {id:'occidente', label:'Occidente', estados:['Falcón','Lara','Mérida','Táchira','Trujillo','Yaracuy','Zulia']},
+            {id:'oriente', label:'Oriente', estados:['Anzoátegui','Delta Amacuro','Monagas','Nueva Esparta','Sucre']},
+            {id:'sur', label:'Sur', estados:['Amazonas','Bolívar']},
+          ];
+
+          const vendedores = (settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[];
+          const vendedoresInfo = settings?.vendedoresInfo||{};
+
+          // Estado de ficha gestionado a nivel de componente (no hooks dentro de IIFE)
+          const setNuevoNombre = setNuevoNombreVend;
+          const nuevoNombre = nuevoNombreVend;
+          const mostrarNuevo = mostrarNuevoVend;
+          const setMostrarNuevo = setMostrarNuevoVend;
+
+          const abrirFicha = (nombre) => {
+            const info = vendedoresInfo[nombre.toUpperCase()]||{};
+            setFichaVend(nombre);
+            setFichaData({
+              nombre: info.nombre||nombre,
+              cargo: info.cargo||'VENDEDOR',
+              fechaIngreso: info.fechaIngreso||'',
+              telefono: info.telefono||'',
+              email: info.email||'',
+              region: info.region||'',
+              estados: info.estados||[],
+              salarioBase: info.salarioBase??300,
+              bonoVehiculo: info.bonoVehiculo??200,
+              activo: info.activo!==false,
+              observaciones: info.observaciones||''
+            });
+          };
+
+          const guardarFicha = async () => {
+            if(!fichaVend) return;
+            setFichaGuardando(true);
+            try {
+              const info = {...vendedoresInfo, [fichaVend.toUpperCase()]: fichaData};
+              // Si cambió el nombre, actualizar la lista de vendedores
+              const nombreNuevo = (fichaData.nombre||fichaVend).toUpperCase();
+              let lista = [...vendedores];
+              if(nombreNuevo !== fichaVend.toUpperCase()){
+                lista = lista.map(v=>v.toUpperCase()===fichaVend.toUpperCase()?nombreNuevo:v);
+                info[nombreNuevo] = {...fichaData};
+                delete info[fichaVend.toUpperCase()];
+              }
+              await setDoc(getDocRef('settings','general'),{vendedores:lista, vendedoresInfo:info},{merge:true});
+              setFichaVend(null);
+              setDialog({title:'✅ Guardado',text:'Ficha del vendedor actualizada.',type:'alert'});
+            } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+            setFichaGuardando(false);
+          };
+
+          const crearVendedor = async () => {
+            const n=nuevoNombre.toUpperCase().trim();
+            if(!n) return;
+            const lista=Array.from(new Set([...vendedores,n]));
+            await setDoc(getDocRef('settings','general'),{vendedores:lista},{merge:true});
+            setNuevoNombre(''); setMostrarNuevo(false);
+            abrirFicha(n);
+          };
+
+          const eliminarVendedor = async (nombre) => {
+            if(!window.confirm(`¿Eliminar a ${nombre}? Se quitará de la lista de vendedores.`)) return;
+            const lista=vendedores.filter(v=>v.toUpperCase()!==nombre.toUpperCase());
+            const info={...vendedoresInfo};
+            delete info[nombre.toUpperCase()];
+            await setDoc(getDocRef('settings','general'),{vendedores:lista,vendedoresInfo:info},{merge:true});
+            if(fichaVend===nombre) setFichaVend(null);
+          };
+
+          const toggleEstado = (est) => {
+            const cur = fichaData.estados||[];
+            setFichaData({...fichaData, estados: cur.includes(est)?cur.filter(e=>e!==est):[...cur,est]});
+          };
+          const toggleRegion = (reg) => {
+            const estActuales = fichaData.estados||[];
+            const todosSeleccionados = reg.estados.every(e=>estActuales.includes(e));
+            let nuevos;
+            if(todosSeleccionados) nuevos = estActuales.filter(e=>!reg.estados.includes(e));
+            else nuevos = Array.from(new Set([...estActuales,...reg.estados]));
+            setFichaData({...fichaData, estados:nuevos});
+          };
+
+          // ── PDF FICHA INDIVIDUAL ──
+          const pdfFicha = (nombre) => {
+            const info = vendedoresInfo[nombre.toUpperCase()]||{};
+            const nEst = (info.estados||[]).length;
+            const ym2 = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
+            const factsMes = (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(ym2)&&(inv.vendedor||'').toUpperCase()===nombre.toUpperCase());
+            const totalMes = factsMes.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
+            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ficha ${nombre}</title><style>body{font-family:Arial,sans-serif;margin:0;padding:24px;color:#111;}.header{border-bottom:4px solid #4f46e5;padding-bottom:12px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-end;}.logo h2{margin:0;font-size:16px;font-weight:900;text-transform:uppercase;}.logo p{margin:2px 0;font-size:11px;}.ftitle{text-align:right;font-size:13px;font-weight:900;color:#4f46e5;text-transform:uppercase;}.av{width:52px;height:52px;border-radius:50%;background:#e0e7ff;display:inline-flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#4f46e5;margin-right:14px;vertical-align:middle;}.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:10px;font-weight:900;text-transform:uppercase;margin-left:8px;}.activo{background:#d1fae5;color:#065f46;}.inactivo{background:#fee2e2;color:#991b1b;}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0;}.field{background:#f9fafb;border-radius:8px;padding:9px 12px;}.fl{font-size:9px;font-weight:900;color:#6b7280;text-transform:uppercase;margin-bottom:2px;}.fv{font-size:12px;font-weight:700;}.sec{margin-top:18px;border-top:2px solid #e5e7eb;padding-top:10px;}.st{font-size:10px;font-weight:900;color:#4f46e5;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;}.ests{display:flex;flex-wrap:wrap;gap:4px;}.est{background:#e0e7ff;color:#3730a3;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;}.kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px;}.kc{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;text-align:center;}.kv{font-size:18px;font-weight:900;color:#16a34a;}.kl{font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-top:2px;}@media print{body{padding:0;}}</style></head><body><div class="header"><div class="logo"><h2>SERVICIOS JIRET G&amp;B, C.A.</h2><p>RIF: J-412309374</p></div><div class="ftitle">Ficha Técnica de Vendedor<br><span style="font-size:10px;color:#6b7280;font-weight:400;">Generado: ${getTodayDate()}</span></div></div><div style="margin-bottom:14px;"><span class="av">${(info.nombre||nombre).charAt(0)}</span><div style="display:inline-block;vertical-align:middle;"><div><strong style="font-size:20px;text-transform:uppercase;">${info.nombre||nombre}</strong><span class="badge ${info.activo!==false?'activo':'inactivo'}">${info.activo!==false?'ACTIVO':'INACTIVO'}</span></div><div style="font-size:11px;color:#6b7280;font-weight:700;text-transform:uppercase;">${info.cargo||'VENDEDOR'} · Ingreso: ${info.fechaIngreso||'No registrado'}</div></div></div><div class="grid2"><div class="field"><div class="fl">Teléfono</div><div class="fv">${info.telefono||'—'}</div></div><div class="field"><div class="fl">Email</div><div class="fv">${info.email||'—'}</div></div><div class="field"><div class="fl">Región Principal</div><div class="fv">${info.region||'—'}</div></div><div class="field"><div class="fl">Estados Asignados</div><div class="fv">${nEst} estado(s)</div></div><div class="field"><div class="fl">Salario Garantizado</div><div class="fv">$${formatNum(info.salarioBase??300)} <span style="font-size:9px;color:#9ca3af;">(3 meses)</span></div></div><div class="field"><div class="fl">Bono Vehículo</div><div class="fv">$${formatNum(info.bonoVehiculo??200)}</div></div></div>${nEst>0?`<div class="sec"><div class="st">Zona de Ventas — ${nEst} Estado(s)</div><div class="ests">${(info.estados||[]).map(e=>`<span class="est">${e}</span>`).join('')}</div></div>`:''} ${info.observaciones?`<div class="sec"><div class="st">Observaciones</div><p style="font-size:11px;color:#374151;margin:0;">${info.observaciones}</p></div>`:''}<div class="sec"><div class="st">Rendimiento — ${new Date().toLocaleString('es-VE',{month:'long',year:'numeric'})}</div><div class="kpi"><div class="kc"><div class="kv">$${formatNum(totalMes)}</div><div class="kl">Ventas del mes</div></div><div class="kc"><div class="kv">${factsMes.length}</div><div class="kl">Facturas</div></div><div class="kc"><div class="kv">${new Set(factsMes.map(i=>i.clientName||'')).size}</div><div class="kl">Clientes</div></div></div></div><script>window.onload=()=>window.print();</script></body></html>`;
+            const w=window.open('','_blank');w.document.write(html);w.document.close();
+          };
+
+          // ── PDF REPORTE GENERAL ──
+          const pdfReporteGeneral = () => {
+            const ym2=`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
+            const mesLabel2=new Date().toLocaleString('es-VE',{month:'long',year:'numeric'});
+            const rows=vendedores.map(nombre=>{
+              const info=vendedoresInfo[nombre.toUpperCase()]||{};
+              const factsMes=(invoices||[]).filter(inv=>(inv.fecha||'').startsWith(ym2)&&(inv.vendedor||'').toUpperCase()===nombre.toUpperCase());
+              const totalMes=factsMes.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
+              return {nombre:info.nombre||nombre,cargo:info.cargo||'VENDEDOR',fechaIngreso:info.fechaIngreso||'—',region:info.region||'—',nEstados:(info.estados||[]).length,telefono:info.telefono||'—',activo:info.activo!==false,salarioBase:info.salarioBase??300,bonoVehiculo:info.bonoVehiculo??200,totalMes,nFacturas:factsMes.length,nClientes:new Set(factsMes.map(i=>i.clientName||'')).size};
+            });
+            const td=(c,r,b)=>`<td style="padding:5px 8px;border:1px solid #e5e7eb;font-size:10px;${r?'text-align:right;':''}${b?'font-weight:900;':''}">${c}</td>`;
+            const rowsHtml=rows.map((r,i)=>`<tr style="${i%2?'background:#f9fafb;':''}">${td(`<strong style="text-transform:uppercase;">${r.nombre}</strong><br><span style="font-size:9px;color:#6b7280;">${r.cargo}</span>`)}${td(r.fechaIngreso)}${td(r.region)}${td(r.nEstados,true)}${td(r.telefono)}${td(`<span style="padding:1px 7px;border-radius:10px;font-size:9px;font-weight:900;background:${r.activo?'#d1fae5':'#fee2e2'};color:${r.activo?'#065f46':'#991b1b'}">${r.activo?'ACTIVO':'INACT.'}</span>`)}${td('$'+formatNum(r.salarioBase),true)}${td('$'+formatNum(r.bonoVehiculo),true)}${td('$'+formatNum(r.totalMes),true,true)}${td(r.nFacturas,true)}${td(r.nClientes,true)}</tr>`).join('');
+            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Reporte Vendedores</title><style>body{font-family:Arial,sans-serif;margin:0;padding:24px;color:#111;}.header{border-bottom:4px solid #4f46e5;padding-bottom:12px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-end;}h2{margin:0;font-size:16px;font-weight:900;text-transform:uppercase;}h3{margin:2px 0;font-size:14px;color:#4f46e5;font-weight:900;}table{border-collapse:collapse;width:100%;}th{background:#111;color:#fff;font-size:9px;text-transform:uppercase;padding:6px 8px;border:1px solid #111;}@media print{body{padding:0;}}</style></head><body><div class="header"><div><h2>SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:2px 0;font-size:11px;">RIF: J-412309374</p></div><div style="text-align:right;"><h3>Reporte General de Vendedores</h3><p style="font-size:10px;color:#6b7280;margin:0;">Período: ${mesLabel2} · Generado: ${getTodayDate()}</p></div></div><table><thead><tr><th>Vendedor / Cargo</th><th>Ingreso</th><th>Región</th><th>Estados</th><th>Teléfono</th><th>Estatus</th><th>Salario</th><th>B.Veh.</th><th>Ventas Mes</th><th>Facturas</th><th>Clientes</th></tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="8" style="padding:6px 8px;font-weight:900;border:1px solid #111;background:#111;color:#fff;">TOTALES</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">$${formatNum(rows.reduce((s,r)=>s+r.totalMes,0))}</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">${rows.reduce((s,r)=>s+r.nFacturas,0)}</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">${rows.reduce((s,r)=>s+r.nClientes,0)}</td></tr></tfoot></table><script>window.onload=()=>window.print();</script></body></html>`;
+            const w=window.open('','_blank');w.document.write(html);w.document.close();
+          };
+
+
+          return (
+            <div className="space-y-6 animate-in fade-in">
+              {/* Header */}
+              <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+                <div className="px-8 py-5 border-b bg-gradient-to-r from-indigo-50 to-blue-50 flex justify-between items-center flex-wrap gap-3">
+                  <div>
+                    <h2 className="text-xl font-black text-indigo-900 uppercase flex items-center gap-3"><Users className="text-indigo-600" size={24}/> Equipo de Vendedores</h2>
+                    <p className="text-[10px] font-bold text-indigo-600 mt-0.5">{vendedores.length} vendedor(es) registrado(s) · Gestión de fichas, zonas y comisiones</p>
+                  </div>
+                  <div className="flex gap-2 items-center flex-wrap">
+                    <button onClick={pdfReporteGeneral} className="px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm bg-white border-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50"><Printer size={14}/> Reporte General</button>
+                    <button onClick={()=>setMostrarNuevo(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm ${mostrarNuevo?'bg-red-500 text-white':'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
+                      <Plus size={14}/>{mostrarNuevo?'CANCELAR':'NUEVO VENDEDOR'}
+                    </button>
+                  </div>
+                </div>
+
+                {mostrarNuevo && (
+                  <div className="px-8 py-4 bg-indigo-50 border-b flex items-center gap-3">
+                    <input type="text" value={nuevoNombre} onChange={e=>setNuevoNombre(e.target.value.toUpperCase())}
+                      onKeyDown={e=>e.key==='Enter'&&crearVendedor()}
+                      placeholder="Nombre del vendedor (ej: CARLOS PÉREZ)"
+                      className="flex-1 border-2 border-indigo-200 rounded-xl px-4 py-2.5 text-xs font-black uppercase outline-none focus:border-indigo-500 bg-white"/>
+                    <button onClick={crearVendedor} className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl text-xs font-black uppercase">Crear y editar ficha</button>
+                  </div>
+                )}
+
+                {/* Grid de tarjetas */}
+                <div className="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {vendedores.map(v => {
+                    const info = vendedoresInfo[v.toUpperCase()]||{};
+                    const nEst = (info.estados||[]).length;
+                    const activo = info.activo!==false;
+                    return (
+                      <div key={v} className={`rounded-2xl border-2 p-4 hover:shadow-md transition-all cursor-pointer ${fichaVend===v?'border-indigo-500 bg-indigo-50':'border-gray-100 bg-white'}`}
+                        onClick={()=>fichaVend===v?setFichaVend(null):abrirFicha(v)}>
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center font-black text-indigo-700 text-sm">{(info.nombre||v).charAt(0)}</div>
+                              <div>
+                                <div className="font-black text-gray-900 text-sm uppercase">{info.nombre||v}</div>
+                                <div className="text-[9px] font-bold text-gray-500 uppercase">{info.cargo||'VENDEDOR'}</div>
+                              </div>
+                            </div>
+                          </div>
+                          <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${activo?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{activo?'ACTIVO':'INACTIVO'}</span>
+                        </div>
+                        <div className="space-y-1 text-[10px] text-gray-600">
+                          {info.fechaIngreso && <div className="flex items-center gap-1.5"><span className="text-gray-400">📅</span> Ingreso: <b>{info.fechaIngreso}</b></div>}
+                          {info.region && <div className="flex items-center gap-1.5"><span className="text-gray-400">🗺</span> Región: <b className="uppercase">{info.region}</b></div>}
+                          {nEst>0 && <div className="flex items-center gap-1.5"><span className="text-gray-400">📍</span> <b>{nEst}</b> estado(s) asignado(s)</div>}
+                          {info.telefono && <div className="flex items-center gap-1.5"><span className="text-gray-400">📞</span>{info.telefono}</div>}
+                        </div>
+                        <div className="mt-3 flex justify-between items-center">
+                          <button onClick={e=>{e.stopPropagation();abrirFicha(v);}} className="text-[9px] font-black text-indigo-600 hover:underline">✏ Editar ficha</button>
+                          <div className="flex gap-2">
+                            <button onClick={e=>{e.stopPropagation();pdfFicha(v);}} className="text-[9px] font-black text-gray-500 hover:text-indigo-600">🖨 PDF</button>
+                            <button onClick={e=>{e.stopPropagation();eliminarVendedor(v);}} className="text-[9px] font-black text-red-400 hover:text-red-600">🗑 Eliminar</button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {vendedores.length===0 && <p className="col-span-3 text-center text-gray-400 font-bold py-8 text-xs uppercase">Sin vendedores registrados. Crea el primero.</p>}
+                </div>
+              </div>
+
+              {/* Panel de ficha técnica */}
+              {fichaVend && (
+                <div className="bg-white rounded-3xl shadow-sm border-2 border-indigo-200 overflow-hidden">
+                  <div className="px-8 py-4 bg-indigo-600 text-white flex justify-between items-center">
+                    <h3 className="font-black text-sm uppercase flex items-center gap-2"><User size={16}/> Ficha Técnica — {fichaVend}</h3>
+                    <button onClick={()=>setFichaVend(null)} className="text-white/70 hover:text-white"><X size={18}/></button>
+                  </div>
+
+                  <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Col izquierda: datos personales */}
+                    <div className="space-y-4">
+                      <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest border-b pb-2">Datos Personales</h4>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre Completo</label>
+                          <input type="text" value={fichaData.nombre||''} onChange={e=>setFichaData({...fichaData,nombre:e.target.value.toUpperCase()})}
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 uppercase"/>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cargo</label>
+                          <select value={fichaData.cargo||'VENDEDOR'} onChange={e=>setFichaData({...fichaData,cargo:e.target.value})}
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500">
+                            {['VENDEDOR','SUPERVISOR DE VENTAS','EJECUTIVO DE CUENTAS','COORDINADOR','GERENTE DE VENTAS'].map(c=><option key={c}>{c}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha de Ingreso</label>
+                          <input type="date" value={fichaData.fechaIngreso||''} onChange={e=>setFichaData({...fichaData,fechaIngreso:e.target.value})}
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"/>
+                          <div className="text-[8px] text-gray-400 mt-0.5">Controla el Salario Garantizado (3 meses)</div>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Estatus</label>
+                          <select value={fichaData.activo?'activo':'inactivo'} onChange={e=>setFichaData({...fichaData,activo:e.target.value==='activo'})}
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500">
+                            <option value="activo">✅ Activo</option>
+                            <option value="inactivo">⛔ Inactivo</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Teléfono</label>
+                          <input type="text" value={fichaData.telefono||''} onChange={e=>setFichaData({...fichaData,telefono:e.target.value})}
+                            placeholder="0414-0000000"
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"/>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Email</label>
+                          <input type="email" value={fichaData.email||''} onChange={e=>setFichaData({...fichaData,email:e.target.value})}
+                            placeholder="vendedor@email.com"
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"/>
+                        </div>
+                      </div>
+
+                      <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest border-b pb-2 mt-4">Compensación Base</h4>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Salario Garantizado ($)</label>
+                          <input type="number" value={fichaData.salarioBase??''} onChange={e=>setFichaData({...fichaData,salarioBase:e.target.value===''?'':parseNum(e.target.value)})}
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 text-right"/>
+                          <div className="text-[8px] text-gray-400 mt-0.5">Solo aplica primeros 3 meses</div>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Bono Vehículo ($)</label>
+                          <input type="number" value={fichaData.bonoVehiculo??''} onChange={e=>setFichaData({...fichaData,bonoVehiculo:e.target.value===''?'':parseNum(e.target.value)})}
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 text-right"/>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Observaciones</label>
+                        <textarea rows={3} value={fichaData.observaciones||''} onChange={e=>setFichaData({...fichaData,observaciones:e.target.value})}
+                          placeholder="Notas adicionales sobre el vendedor..."
+                          className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 resize-none"/>
+                      </div>
+                    </div>
+
+                    {/* Col derecha: zona de ventas */}
+                    <div className="space-y-4">
+                      <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest border-b pb-2">Zona de Ventas — Estados Asignados</h4>
+                      <div>
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Región Principal</label>
+                        <div className="flex flex-wrap gap-2">
+                          {REGIONES.map(r=>(
+                            <button key={r.id} type="button"
+                              onClick={()=>setFichaData({...fichaData,region:fichaData.region===r.label?'':r.label})}
+                              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase transition-all ${fichaData.region===r.label?'bg-indigo-600 text-white':'bg-gray-100 text-gray-600 hover:bg-indigo-100'}`}>
+                              {r.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="text-[9px] font-black text-gray-500 uppercase">Estados (tilda los asignados)</label>
+                          <span className="text-[9px] font-black text-indigo-600">{(fichaData.estados||[]).length} seleccionado(s)</span>
+                        </div>
+                        {/* Botones por región para seleccionar todos */}
+                        <div className="flex flex-wrap gap-1.5 mb-3">
+                          {REGIONES.map(r=>{
+                            const todosSelec=r.estados.every(e=>(fichaData.estados||[]).includes(e));
+                            return (
+                              <button key={r.id} type="button" onClick={()=>toggleRegion(r)}
+                                className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase border transition-all ${todosSelec?'border-indigo-500 bg-indigo-100 text-indigo-700':'border-gray-200 text-gray-500 hover:border-indigo-300'}`}>
+                                {todosSelec?'✓':''} {r.label} ({r.estados.length})
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {/* Checkboxes de estados */}
+                        <div className="grid grid-cols-2 gap-1 max-h-64 overflow-y-auto border border-gray-100 rounded-xl p-3">
+                          {ESTADOS_VE.map(est=>{
+                            const sel=(fichaData.estados||[]).includes(est);
+                            return (
+                              <label key={est} className={`flex items-center gap-2 cursor-pointer px-2 py-1.5 rounded-lg text-[10px] font-bold transition-all ${sel?'bg-indigo-50 text-indigo-800':'text-gray-600 hover:bg-gray-50'}`}>
+                                <input type="checkbox" checked={sel} onChange={()=>toggleEstado(est)} className="accent-indigo-600"/>
+                                {est}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Footer con botones */}
+                  <div className="px-6 py-4 bg-gray-50 border-t flex justify-between items-center">
+                    <div className="flex gap-2">
+                      <button onClick={()=>setFichaVend(null)} className="text-gray-500 hover:text-red-500 font-black text-xs uppercase">Cancelar</button>
+                      <button onClick={()=>pdfFicha(fichaVend)} className="border-2 border-indigo-200 text-indigo-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-50 flex items-center gap-2"><Printer size={13}/> PDF Ficha</button>
+                    </div>
+                    <button onClick={guardarFicha} disabled={fichaGuardando}
+                      className="bg-indigo-600 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2">
+                      {fichaGuardando?<><RefreshCw size={13} className="animate-spin"/> Guardando...</>:<><Save size={13}/> Guardar Ficha</>}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {ventasView === 'comisiones' && (() => {
-          const vendedores = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : ['OFICINA','NELSON','LIANNY'];
+          const vendedores = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : [];
           const ym = `${comAnio}-${String(comMes).padStart(2,'0')}`;
           const mesLabel = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][comMes-1];
 
@@ -9897,7 +10431,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           const vendInfo=(settings?.vendedoresInfo||{})[(comVendedor||'').toUpperCase()]||{};
           const fechaIngreso=vendInfo.fechaIngreso||'';
           const mesesDesdeIngreso = fechaIngreso ? mesesEntre(fechaIngreso, ym+'-01') : 999;
-          const salarioAplica = fechaIngreso && mesesDesdeIngreso < 3; // meses 0,1,2
+          const salarioAplica = fechaIngreso && mesesDesdeIngreso < 3;
+          // Valores base desde la ficha del vendedor (editables si cambian)
+          const salarioBaseFicha = parseNum(vendInfo.salarioBase??300);
+          const bonoVehiculoFicha = parseNum(vendInfo.bonoVehiculo??200); // meses 0,1,2
 
           // Bonos (editables, persistidos por vendedor+mes). Montos por defecto configurables.
           const bonosKey = `${comVendedor||'GENERAL'}_${ym}`;
@@ -9908,8 +10445,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           const captacionAuto = nuevosCount >= minClientesCaptacion ? montoCaptacion : 0;
           const recuperacionAuto = recuperadosCount >= 1 ? montoRecuperacion : 0;
           const bonos = comBonos!==null ? comBonos : {
-            bonoVehiculo: parseNum(bonosGuardados.bonoVehiculo ?? 200),
-            salarioGarantizado: salarioAplica ? parseNum(bonosGuardados.salarioGarantizado ?? 300) : 0,
+            bonoVehiculo: parseNum(bonosGuardados.bonoVehiculo ?? bonoVehiculoFicha),
+            salarioGarantizado: salarioAplica ? parseNum(bonosGuardados.salarioGarantizado ?? salarioBaseFicha) : 0,
             captacion: parseNum(bonosGuardados.captacion ?? captacionAuto),
             recuperacion: parseNum(bonosGuardados.recuperacion ?? recuperacionAuto),
           };
@@ -10336,74 +10873,6 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         })()}
                       </div>
 
-                      {/* Carrito de lotes agregados */}
-                          {fgItems.length > 0 && (
-                            <div className="bg-white rounded-xl border-2 border-green-300 overflow-hidden mt-2">
-                              <div className="flex items-center justify-between px-4 py-2 bg-green-600 text-white">
-                                <span className="text-[10px] font-black uppercase tracking-wider">🛒 Productos Seleccionados ({fgItems.length})</span>
-                                <span className="text-[9px] font-bold opacity-80">Haz clic en ✕ para quitar un producto</span>
-                              </div>
-                              <div className="w-full">
-                              <table className="w-full text-xs" style={{tableLayout:'auto'}}>
-                                <thead>
-                                  <tr className="font-black text-[9px] uppercase bg-gray-50 border-b-2 border-green-200">
-                                    <th className="px-2 py-2 text-left whitespace-nowrap">Código</th>
-                                    <th className="px-2 py-2 text-left" style={{width:'40%'}}>Producto / Descripción</th>
-                                    <th className="px-2 py-2 text-center whitespace-nowrap">Cant.</th>
-                                    <th className="px-2 py-2 text-right whitespace-nowrap">Precio U.</th>
-                                    <th className="px-2 py-2 text-right whitespace-nowrap">Total</th>
-                                    <th className="px-2 py-2 text-center">Alm.</th>
-                                    <th className="px-2 py-2 text-center">✕</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-green-100">
-                                  {fgItems.map((item, idx) => (
-                                    <tr key={idx} className="hover:bg-red-50 group">
-                                      <td className="px-2 py-2 font-black text-orange-600 text-[9px] whitespace-nowrap">{item.invCode||cleanFGCode(item.fgId||'')}</td>
-                                      <td className="px-2 py-2 font-bold text-gray-800 text-[10px] leading-tight">{item.desc}</td>
-                                      <td className="px-2 py-2 text-center font-black text-green-700 text-[10px]">{formatNum(item.cantidad)}<br/><span className="text-[8px] text-gray-400 font-normal">{item.unidad}</span></td>
-                                      <td className="px-2 py-2 text-right font-black text-[10px] whitespace-nowrap">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
-                                      <td className="px-2 py-2 text-right font-black text-gray-800 text-[10px] whitespace-nowrap">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
-                                      <td className="px-2 py-2 text-center relative">
-                                        {(()=>{
-                                          const code=item.invCode||(item.fgId||'').split('___')[0];
-                                          const whs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
-                                          if(whs.length<=1) return null;
-                                          const disp=mwDispatch[code]||{};
-                                          const asgn=Object.values(disp).reduce((s,v)=>s+parseNum(v),0);
-                                          const need=parseNum(item.cantidad);
-                                          const ok=Math.abs(asgn-need)<0.01&&asgn>0;
-                                          return <button type="button" onClick={()=>setShowMwPanel(showMwPanel===code?null:code)} className={`text-[8px] font-black px-2 py-1 rounded-lg ${ok?'bg-green-100 text-green-700':'bg-orange-100 text-orange-600'}`}>{ok?'✓':(`⚠ ${whs.length}`)}</button>;
-                                        })()}
-                                        {showMwPanel===(item.invCode||(item.fgId||'').split('___')[0]) && (()=>{
-                                          const code=item.invCode||(item.fgId||'').split('___')[0];
-                                          const whs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
-                                          const disp=mwDispatch[code]||{};
-                                          const asgn=Object.values(disp).reduce((s,v)=>s+parseNum(v),0);
-                                          const need=parseNum(item.cantidad);
-                                          return <div className="absolute z-50 right-0 top-full mt-1 w-56 bg-white rounded-xl shadow-2xl border border-orange-200 p-3 text-left">
-                                            <div className="flex justify-between mb-2"><span className="text-[9px] font-black text-orange-700 uppercase">Almacenes</span><button onClick={()=>setShowMwPanel(null)} className="text-gray-400 hover:text-red-500"><X size={11}/></button></div>
-                                            <div className="text-[8px] text-gray-500 mb-2">Nec: <b className="text-orange-600">{formatNum(need)} {item.unidad}</b></div>
-                                            {whs.map(wh=>{const alm=wh.almacen||(wh.id||'').split('___')[1]?.replace(/-/g,' ')||'';const mx=parseNum(wh.stock||0);const v=disp[alm]||'';return<div key={wh.id} className="flex items-center gap-2 mb-1.5"><div className="flex-1 min-w-0"><div className="text-[8px] font-black truncate">{alm}</div><div className="text-[7px] text-green-600">Disp:{formatNum(mx)}</div></div><input type="number" step="0.01" min="0" max={mx} value={v} onChange={e=>{const nv=Math.min(parseNum(e.target.value),mx);setMwDispatch(p=>({...p,[code]:{...(p[code]||{}),[alm]:nv||''}}));}} className="w-16 border-2 border-orange-200 rounded-lg px-1.5 py-1 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0"/></div>;})}
-                                            <div className={`mt-1.5 text-[8px] font-black text-center py-1 rounded-lg ${Math.abs(asgn-need)<0.01&&asgn>0?'bg-green-100 text-green-700':'bg-orange-50 text-orange-600'}`}>{formatNum(asgn)}/{formatNum(need)}</div>
-                                          </div>;
-                                        })()}
-                                      </td>
-                                      <td className="px-2 py-2 text-center">
-                                        <button type="button" onClick={()=>setFgItems(p=>p.filter((_,i)=>i!==idx))}
-                                          className="bg-red-100 hover:bg-red-500 text-red-500 hover:text-white p-1.5 rounded-lg transition-all" title="Quitar producto">
-                                          <X size={13}/>
-                                        </button>
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
 
                       <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
@@ -10482,32 +10951,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       <div>
                         <label className="text-[9px] font-black text-gray-600 uppercase mb-1 block">Vendedor</label>
                         {(()=>{
-                          const vendedores = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : ['OFICINA','NELSON','LIANNY'];
-                          const actual = (newInvoiceForm.vendedor||'').toUpperCase();
-                          const enLista = !actual || vendedores.includes(actual);
-                          return (
-                            <select value={enLista?actual:'__OTRO__'}
-                              onChange={async e=>{
-                                if(e.target.value==='__NUEVO__'){
-                                  const nv=(prompt('Nombre del nuevo vendedor:')||'').toUpperCase().trim();
-                                  if(nv){
-                                    const fi=(prompt('Fecha de ingreso del vendedor (AAAA-MM-DD)\\nSe usa para el Salario Garantizado (primeros 3 meses):', getTodayDate())||'').trim();
-                                    const lista=Array.from(new Set([...vendedores,nv]));
-                                    const info={...(settings?.vendedoresInfo||{}), [nv]:{fechaIngreso:fi||''}};
-                                    await setDoc(getDocRef('settings','general'),{vendedores:lista, vendedoresInfo:info},{merge:true});
-                                    setNewInvoiceForm({...newInvoiceForm, vendedor:nv});
-                                  }
-                                } else {
-                                  setNewInvoiceForm({...newInvoiceForm, vendedor:e.target.value});
-                                }
-                              }}
-                              className="w-36 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black uppercase">
-                              <option value="">— Seleccionar —</option>
-                              {vendedores.map(v=><option key={v} value={v}>{v}</option>)}
-                              {!enLista && actual && <option value="__OTRO__">{actual}</option>}
-                              <option value="__NUEVO__">➕ Crear nuevo…</option>
-                            </select>
-                          );
+                          const vendedores=(settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[];
+                          const activos=vendedores.filter(v=>(settings?.vendedoresInfo||{})[v.toUpperCase()]?.activo!==false);
+                          const actual=(newInvoiceForm.vendedor||'').toUpperCase();
+                          const enLista=!actual||activos.includes(actual);
+                          return(<select value={enLista?actual:'__OTRO__'} onChange={e=>setNewInvoiceForm({...newInvoiceForm,vendedor:e.target.value==='__OTRO__'?actual:e.target.value})} className="w-36 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black uppercase"><option value="">— Seleccionar —</option>{activos.map(v=><option key={v} value={v}>{v}</option>)}{!enLista&&actual&&<option value="__OTRO__">{actual}</option>}</select>);
                         })()}
                       </div>
 
@@ -10560,66 +11008,99 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 <th className="py-2.5 px-2 text-center font-black uppercase text-[8px] w-20">Cant.</th>
                                 <th className="py-2.5 px-2 text-right font-black uppercase text-[8px] w-24">Precio U.</th>
                                 <th className="py-2.5 px-2 text-right font-black uppercase text-[8px] w-24">Total</th>
+                                <th className="py-2.5 px-1 text-center font-black uppercase text-[8px] w-16">Acc.</th>
                               </tr>
                             </thead>
                             <tbody>
                               {fgItems.length > 0 ? fgItems.map((item,i)=>(
-                                <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                                  <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode ? cleanFGCode(item.invCode) : cleanFGCode(item.fgId||'').replace(/^FG-\d{10,}$/,'')}</td>
-                                  <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{wordBreak:"break-word",lineHeight:1.3}}>{item.desc}</td>
-                                  <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
-                                  <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:"—"}</td>
-                                  <td className="py-2 px-2 text-right font-black text-green-700 text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:"—"}</td>
+                                <tr key={i} className={`${i%2===0?'bg-white':'bg-gray-50'} ${editingFgIdx===i?'ring-2 ring-inset ring-orange-400':''}`}>
+                                  {editingFgIdx===i ? (<>
+                                    <td className="py-1.5 px-2 font-black text-orange-600 text-[9px]">{item.invCode?cleanFGCode(item.invCode):cleanFGCode(item.fgId||'')}</td>
+                                    <td className="py-1.5 px-2 font-bold text-gray-700 text-[10px]">{item.desc}</td>
+                                    <td className="py-1.5 px-1 w-20 text-center"><input type="number" step="0.01" min="0.01" value={item.cantidad} onChange={e=>setFgItems(p=>p.map((it,idx)=>idx===i?{...it,cantidad:parseNum(e.target.value)||it.cantidad}:it))} className="w-16 border-2 border-orange-300 rounded-lg px-1 py-1 text-center font-black text-xs outline-none focus:border-orange-500"/></td>
+                                    <td className="py-1.5 px-1 w-24"><input type="number" step="0.01" min="0" value={item.precioUnit||''} onChange={e=>setFgItems(p=>p.map((it,idx)=>idx===i?{...it,precioUnit:parseNum(e.target.value),totalUSD:parseNum(e.target.value)*(it.cantidad||1)}:it))} className="w-20 border-2 border-orange-300 rounded-lg px-1 py-1 text-right font-black text-xs outline-none focus:border-orange-500"/></td>
+                                    <td className="py-1.5 px-2 text-right font-black text-green-700 text-[10px]">${formatNum((item.precioUnit||0)*(item.cantidad||1))}</td>
+                                    <td className="py-1.5 px-1 text-center w-16"><button type="button" onClick={()=>setEditingFgIdx(null)} className="bg-green-100 hover:bg-green-500 text-green-600 hover:text-white p-1 rounded-lg transition-all"><CheckCircle size={13}/></button></td>
+                                  </>) : (<>
+                                    <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode?cleanFGCode(item.invCode):cleanFGCode(item.fgId||'').replace(/^FG-\d{10,}$/,'')}</td>
+                                    <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{wordBreak:'break-word',lineHeight:1.3}}>{item.desc}</td>
+                                    <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
+                                    <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
+                                    <td className="py-2 px-2 text-right font-black text-green-700 text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
+                                    <td className="py-2 px-1 text-center w-16"><div className="flex items-center justify-center gap-1"><button type="button" onClick={()=>setEditingFgIdx(i)} className="bg-blue-50 hover:bg-blue-500 text-blue-500 hover:text-white p-1 rounded-lg transition-all"><Edit size={12}/></button><button type="button" onClick={()=>{setFgItems(p=>p.filter((_,idx)=>idx!==i));if(editingFgIdx===i)setEditingFgIdx(null);}} className="bg-red-50 hover:bg-red-500 text-red-500 hover:text-white p-1 rounded-lg transition-all"><Trash2 size={12}/></button></div></td>
+                                  </>)}
                                 </tr>
-                              )) : Array.from({length:8}).map((_,i)=>(
+                              )) : Array.from({length:6}).map((_,i)=>(
                                 <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                                  <td className="py-2.5 px-2 border-r border-gray-100 w-28">&nbsp;</td>
-                                  <td className="py-2.5 px-2 border-r border-gray-100">&nbsp;</td>
-                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-300 w-20">0,00</td>
-                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-300 w-24">0,00</td>
-                                  <td className="py-2.5 px-2 text-right text-gray-300 w-24">0,00</td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100 w-28 text-gray-200 text-[9px]">—</td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100"></td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-200 w-20">0,00</td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-200 w-24">0,00</td>
+                                  <td className="py-2.5 px-2 text-right text-gray-200 w-24">0,00</td>
+                                  <td className="py-2.5 px-2 w-16"></td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
                           {/* Totales */}
                           <div className="border-t-2 border-gray-200 bg-gray-50 px-4 py-3">
-                            <div className="flex justify-between items-center text-[10px] mb-2">
+                            <div className="flex justify-between items-start text-[10px] mb-2">
                               <textarea rows={2} placeholder="Observaciones / Instrucciones de pago:"
                                 value={newInvoiceForm.observaciones||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm, observaciones:e.target.value})}
                                 className="border border-gray-200 rounded-lg p-2 text-[9px] font-bold flex-1 mr-6 outline-none resize-none"/>
-                              <div className="space-y-1 text-right min-w-52">
-                                {[
-                                  ['TOTAL PARCIAL', `$${formatNum(fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0))}`],
-                                  ['DESCUENTO','$0,00'],
-                                  ['SUBTOTAL MENOS DESCUENTO', `$${formatNum(fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||parseNum(newInvoiceForm.montoBase||0))}`],
-                                  ['__IVA__', ''],
-                                  ['TOTAL IMPUESTOS', `$${formatNum(parseNum(newInvoiceForm.iva||0))}`],
-                                  ['ENVÍO/MANIPULACIÓN','$0,00'],
-                                ].map(([k,v])=>{
-                                  if(k==='__IVA__') return null;
-                                  return <div key={k} className="flex justify-between gap-8"><span className="font-black text-gray-600 uppercase">{k}</span><span className="font-black">{v}</span></div>;
-                                })}
-                                <div className="flex justify-between gap-8 items-center">
-                                  <span className="font-black text-gray-600 uppercase flex items-center gap-2">TASA DE IMPUESTO
-                                    <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva',e.target.value)} className="border border-gray-200 rounded px-1.5 py-0.5 text-[9px] font-black outline-none ml-1">
-                                      <option value="SI">+ IVA 16%</option>
-                                      <option value="NO">EXENTO</option>
-                                    </select>
-                                  </span>
-                                  <span className="font-black">{newInvoiceForm.aplicaIva==='SI'?'16,00%':'0,00%'}</span>
-                                </div>
-                                <div className="flex justify-between gap-8 border-t-2 border-gray-400 pt-2 mt-2">
-                                  <span className="font-black text-gray-900 uppercase text-sm">Saldo adeudado</span>
-                                  <span className="font-black text-orange-600 text-xl">$ {(()=>{
-                                    const base=fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0);
-                                    const iva=newInvoiceForm.aplicaIva==='SI'?base*0.16:0;
-                                    return formatNum(base+iva);
-                                  })()}</span>
-                                </div>
+                              <div className="space-y-1.5 text-right min-w-52">
+                                {(()=>{
+                                  const base = fgItems.length>0
+                                    ? fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)
+                                    : parseNum(newInvoiceForm.montoBase||0);
+                                  const dVal = parseNum(descuentoVal||0);
+                                  const descuento = descuentoTipo==='pct' ? base*(dVal/100) : dVal;
+                                  const subtotal = Math.max(0, base - descuento);
+                                  const ivaAmt = newInvoiceForm.aplicaIva==='SI' ? subtotal*0.16 : 0;
+                                  const total = subtotal + ivaAmt;
+                                  return (<>
+                                    <div className="flex justify-between gap-8">
+                                      <span className="font-black text-gray-600 uppercase">Total Parcial</span>
+                                      <span className="font-black">${formatNum(base)}</span>
+                                    </div>
+                                    {/* DESCUENTO EDITABLE */}
+                                    <div className="flex justify-between gap-4 items-center">
+                                      <span className="font-black text-gray-600 uppercase">Descuento</span>
+                                      <div className="flex items-center gap-1">
+                                        <select value={descuentoTipo} onChange={e=>{setDescuentoTipo(e.target.value);setDescuentoVal('');}}
+                                          className="border border-gray-200 rounded px-1 py-0.5 text-[8px] font-black outline-none focus:border-orange-400">
+                                          <option value="monto">$</option>
+                                          <option value="pct">%</option>
+                                        </select>
+                                        <input type="number" step="0.01" min="0"
+                                          value={descuentoVal}
+                                          onChange={e=>setDescuentoVal(e.target.value)}
+                                          placeholder="0"
+                                          className="w-20 border border-gray-200 rounded px-1.5 py-0.5 text-right font-black text-[10px] outline-none focus:border-orange-400"/>
+                                        {dVal>0 && <span className="font-black text-red-500">-${formatNum(descuento)}</span>}
+                                      </div>
+                                    </div>
+                                    <div className="flex justify-between gap-8">
+                                      <span className="font-black text-gray-600 uppercase">Subtotal</span>
+                                      <span className="font-black">${formatNum(subtotal)}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-8 items-center">
+                                      <span className="font-black text-gray-600 uppercase flex items-center gap-1">IVA
+                                        <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva',e.target.value)} className="border border-gray-200 rounded px-1 py-0.5 text-[8px] font-black outline-none ml-1">
+                                          <option value="SI">16%</option>
+                                          <option value="NO">Exento</option>
+                                        </select>
+                                      </span>
+                                      <span className="font-black">${formatNum(ivaAmt)}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-8 border-t-2 border-gray-400 pt-2 mt-1">
+                                      <span className="font-black text-gray-900 uppercase text-sm">Total</span>
+                                      <span className="font-black text-orange-600 text-xl">${formatNum(total)}</span>
+                                    </div>
+                                  </>);
+                                })()}
                               </div>
                             </div>
-
                           </div>
                         </div>
                       </div>
@@ -19833,6 +20314,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
               <div className="max-w-7xl mx-auto flex gap-4 px-4 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  {[ 
+                   {id:'dashboard',          icon:<BarChart3 size={16}/>, label:'Dashboard',        perm:'ventas_facturacion'},
                    {id:'facturacion',        icon:<Receipt size={16}/>,  label:'Facturación',       perm:'ventas_facturacion'}, 
                    {id:'cotizaciones',       icon:<FileText size={16}/>, label:'Cotizaciones',      perm:'ventas_facturacion'},
                    {id:'clientes',           icon:<Users size={16}/>,    label:'Directorio',        perm:'ventas_directorio'}, 
@@ -19840,6 +20322,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    {id:'productos_vendidos', icon:<Package size={16}/>,  label:'Productos Vendidos',perm:'ventas_productos_vendidos'},
                    {id:'reporte_ventas',     icon:<BarChart3 size={16}/>, label:'Reporte Ventas',    perm:'ventas_facturacion'},
                    {id:'comisiones',         icon:<DollarSign size={16}/>, label:'Comisiones',       perm:'ventas_facturacion'},
+                   {id:'vendedores',          icon:<Users size={16}/>,      label:'Vendedores',        perm:'ventas_facturacion'},
                  ].filter(t=>hasPerm(t.perm)||hasPerm('ventas')||appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
