@@ -9755,39 +9755,39 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 ))}
               </div>
               <div className="overflow-x-auto rounded-xl border border-gray-100">
-                <table className="w-full border-collapse text-[9px]" style={{minWidth:900}}>
-                  <thead><tr className="bg-black text-white">{['Fecha','Documento','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','Total Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2.5 px-3 text-left font-black uppercase text-[8px] whitespace-nowrap">{h}</th>)}</tr></thead>
+                <table className="w-full border-collapse text-[8px]">
+                  <thead><tr className="bg-black text-white">{['Fecha','Documento','Nro. Fiscal','OP','Vendedor','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','T. Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2 px-1.5 text-left font-black uppercase text-[7px] leading-tight">{h}</th>)}</tr></thead>
                   <tbody>
                     {rows.map((r,i)=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return(
                       <tr key={i} className={`border-b border-gray-50 ${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
-                        <td className="py-1.5 px-3 font-bold text-gray-500 whitespace-nowrap">{r.fecha}</td>
-                        <td className="py-1.5 px-3 font-black text-orange-600 whitespace-nowrap">{r.doc}</td>
-                        <td className="py-1.5 px-3 font-bold text-gray-600 whitespace-nowrap">{r.nroFiscal||'—'}</td>
-                        <td className="py-1.5 px-3 font-black text-orange-600 whitespace-nowrap">{r.op||'—'}</td>
-                        <td className="py-1.5 px-3 font-black text-blue-700 uppercase whitespace-nowrap">{r.vendedor||'—'}</td>
-                        <td className="py-1.5 px-3 font-bold max-w-[120px] truncate" title={r.cliente}>{r.cliente}</td>
-                        <td className="py-1.5 px-3 font-black text-indigo-600 whitespace-nowrap">{r.codigo}</td>
-                        <td className="py-1.5 px-3 font-bold" style={{minWidth:160,maxWidth:220,whiteSpace:'normal',wordBreak:'break-word'}}>{r.producto}</td>
-                        <td className="py-1.5 px-3 font-bold text-center">{formatNum(r.qty)}</td>
-                        <td className="py-1.5 px-3 font-bold text-right whitespace-nowrap">USD {formatNum(r.precio)}</td>
-                        <td className="py-1.5 px-3 font-black text-right whitespace-nowrap">USD {formatNum(r.total)}</td>
-                        <td className="py-1.5 px-3 font-bold text-right text-gray-500 whitespace-nowrap">USD {formatNum(r.costo)}</td>
-                        <td className="py-1.5 px-3 font-bold text-right text-gray-500 whitespace-nowrap">USD {formatNum(r.costoTotal)}</td>
-                        <td className={`py-1.5 px-3 font-black text-right whitespace-nowrap ${util>=0?'text-green-600':'text-red-500'}`}>USD {formatNum(util)}</td>
-                        <td className={`py-1.5 px-3 font-black text-center ${pct>=30?'text-green-600':pct>=15?'text-yellow-600':'text-red-500'}`}>{pct}%</td>
-                        <td className="py-1.5 px-3 font-bold text-right text-gray-400 whitespace-nowrap">{r.tasa>0?formatTasa(r.tasa):'—'}</td>
+                        <td className="py-1 px-1.5 font-bold text-gray-500 whitespace-nowrap">{r.fecha}</td>
+                        <td className="py-1 px-1.5 font-black text-orange-600 whitespace-nowrap">{r.doc}</td>
+                        <td className="py-1 px-1.5 font-bold text-gray-600 whitespace-nowrap">{r.nroFiscal||'—'}</td>
+                        <td className="py-1 px-1.5 font-black text-orange-600 whitespace-nowrap">{r.op||'—'}</td>
+                        <td className="py-1 px-1.5 font-black text-blue-700 uppercase whitespace-nowrap">{r.vendedor||'—'}</td>
+                        <td className="py-1 px-1.5 font-bold max-w-[90px] truncate" title={r.cliente}>{r.cliente}</td>
+                        <td className="py-1 px-1.5 font-black text-indigo-600 whitespace-nowrap">{r.codigo}</td>
+                        <td className="py-1 px-1.5 font-bold" style={{minWidth:110,maxWidth:170,whiteSpace:'normal',wordBreak:'break-word'}}>{r.producto}</td>
+                        <td className="py-1 px-1.5 font-bold text-center">{formatNum(r.qty)}</td>
+                        <td className="py-1 px-1.5 font-bold text-right whitespace-nowrap">{formatNum(r.precio)}</td>
+                        <td className="py-1 px-1.5 font-black text-right whitespace-nowrap">{formatNum(r.total)}</td>
+                        <td className="py-1 px-1.5 font-bold text-right text-gray-500 whitespace-nowrap">{formatNum(r.costo)}</td>
+                        <td className="py-1 px-1.5 font-bold text-right text-gray-500 whitespace-nowrap">{formatNum(r.costoTotal)}</td>
+                        <td className={`py-1 px-1.5 font-black text-right whitespace-nowrap ${util>=0?'text-green-600':'text-red-500'}`}>{formatNum(util)}</td>
+                        <td className={`py-1 px-1.5 font-black text-center ${pct>=30?'text-green-600':pct>=15?'text-yellow-600':'text-red-500'}`}>{pct}%</td>
+                        <td className="py-1 px-1.5 font-bold text-right text-gray-400 whitespace-nowrap">{r.tasa>0?formatTasa(r.tasa):'—'}</td>
                       </tr>
                     );})}
                     {rows.length===0 && <tr><td colSpan={16} className="py-8 text-center text-gray-400 font-bold">Sin datos en el período seleccionado</td></tr>}
                   </tbody>
-                  {rows.length>0 && <tfoot><tr className="bg-black text-white font-black">
-                    <td colSpan={5} className="py-2.5 px-3 text-[8px] uppercase">TOTALES</td>
-                    <td className="py-2.5 px-3 text-right font-black">{formatNum(rows.reduce((s,r)=>s+r.qty,0))}</td>
+                  {rows.length>0 && <tfoot><tr className="bg-black text-white font-black text-[8px]">
+                    <td colSpan={8} className="py-2 px-1.5 uppercase">TOTALES</td>
+                    <td className="py-2 px-1.5 text-right">{formatNum(rows.reduce((s,r)=>s+r.qty,0))}</td>
                     <td/>
-                    <td className="py-2.5 px-3 text-right whitespace-nowrap">USD {formatNum(totalVentas)}</td>
-                    <td/><td className="py-2.5 px-3 text-right whitespace-nowrap">USD {formatNum(totalCosto)}</td>
-                    <td className="py-2.5 px-3 text-right whitespace-nowrap text-green-400">USD {formatNum(totalUtil)}</td>
-                    <td className="py-2.5 px-3 text-center text-orange-400">{pctUtil}%</td><td/>
+                    <td className="py-2 px-1.5 text-right whitespace-nowrap">{formatNum(totalVentas)}</td>
+                    <td/><td className="py-2 px-1.5 text-right whitespace-nowrap">{formatNum(totalCosto)}</td>
+                    <td className="py-2 px-1.5 text-right whitespace-nowrap text-green-400">{formatNum(totalUtil)}</td>
+                    <td className="py-2 px-1.5 text-center text-orange-400">{pctUtil}%</td><td/>
                   </tr></tfoot>}
                 </table>
               </div>
