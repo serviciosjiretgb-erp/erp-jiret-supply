@@ -8928,6 +8928,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               soldItems.push({
                 factura: inv.documento||inv.id,
                 nroFiscal: inv.nroFiscal||'',
+                vendedor: inv.vendedor||'',
                 fecha: inv.fecha,
                 cliente: inv.clientName||inv.clientRif||'—',
                 producto: it.desc || (fg ? (formatFGLabel(fg)||fg.producto||fg.id) : (it.fgId||'—')),
@@ -8986,12 +8987,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   <button onClick={()=>{
                     const periodo = pvFilter&&pvFilter!=='general'?pvFilter:'General';
                     const fmtOp = (op)=>op&&op!=='—'?('#'+String(op).replace('OP-','').padStart(5,'0')):'—';
-                    const thead=['Factura','Nro. Fiscal','OP Relacionada','Fecha','Cliente','Producto','Medida','Cantidad','Costo Unit. USD','Costo Total USD'];
-                    const tbody=pvFiltered.map(s=>[s.factura,s.nroFiscal||'—',fmtOp(s.opId),s.fecha,s.cliente,s.producto,s.medida,formatNum(s.cantidad),formatNum(s.costoUnd),formatNum(s.cantidad*s.costoUnd)]);
-                    const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=7?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');
+                    const thead=['Factura','Nro. Fiscal','OP Relacionada','Fecha','Vendedor','Cliente','Producto','Medida','Cantidad','Costo Unit. USD','Costo Total USD'];
+                    const tbody=pvFiltered.map(s=>[s.factura,s.nroFiscal||'—',fmtOp(s.opId),s.fecha,s.vendedor||'—',s.cliente,s.producto,s.medida,formatNum(s.cantidad),formatNum(s.costoUnd),formatNum(s.cantidad*s.costoUnd)]);
+                    const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=8?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');
                     const totCant=pvFiltered.reduce((a,r)=>a+r.cantidad,0);
                     const totCosto=pvFiltered.reduce((a,r)=>a+r.cantidad*r.costoUnd,0);
-                    const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE DE PRODUCTOS VENDIDOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="7" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES (${pvFiltered.length} líneas)</td><td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${formatNum(totCant)}</td><td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;"></td><td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${formatNum(totCosto)}</td></tr></tfoot></table></body></html>`;
+                    const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE DE PRODUCTOS VENDIDOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="8" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES (${pvFiltered.length} líneas)</td><td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${formatNum(totCant)}</td><td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;"></td><td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${formatNum(totCosto)}</td></tr></tfoot></table></body></html>`;
                     const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Productos_Vendidos_${periodo}_${getTodayDate()}.xls`;a.click();
                   }} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 mt-4"><Download size={13}/> Excel</button>
                   <button onClick={()=>handleExportPDF('Productos_Vendidos',true)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 mt-4"><Printer size={13}/> Imprimir</button>
@@ -9006,6 +9007,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       <th className="py-3 px-4 border-r border-gray-700 text-left">Nro. Fiscal</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-center">OP Relacionada</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-center">Fecha</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-center">Vendedor</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-left">Cliente</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-left">Producto</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-center">Medida</th>
@@ -9016,14 +9018,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {pvFiltered.length === 0 ? (
-                      <tr><td colSpan="10" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas para los filtros seleccionados.</td></tr>
+                      <tr><td colSpan="11" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas para los filtros seleccionados.</td></tr>
                     ) : pvFiltered.map((s,i) => (
                       <tr key={i} className="hover:bg-gray-50">
                         <td className="py-3 px-4 border-r font-black text-orange-600">{s.factura}</td>
                         <td className="py-3 px-4 border-r font-bold text-gray-600 text-[10px]">{s.nroFiscal||'—'}</td>
                         <td className="py-3 px-4 border-r text-center font-black text-orange-600 text-[10px]">{s.opId&&s.opId!=='—'?('#'+String(s.opId).replace('OP-','').padStart(5,'0')):'—'}</td>
                         <td className="py-3 px-4 border-r text-center font-bold text-gray-600">{s.fecha}</td>
-                        <td className="py-3 px-4 border-r font-bold uppercase text-[10px]">{s.cliente}</td>
+                        <td className="py-3 px-4 border-r text-center font-black text-blue-700 text-[10px] uppercase">{s.vendedor||'—'}</td>
                         <td className="py-3 px-4 border-r font-black text-[10px]">{s.producto}</td>
                         <td className="py-3 px-4 border-r text-center"><span className="bg-blue-100 text-blue-700 font-black text-[9px] px-2 py-0.5 rounded">{s.medida}</span></td>
                         <td className="py-3 px-4 border-r text-right font-black">{formatNum(s.cantidad)}</td>
@@ -9035,7 +9037,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   {pvFiltered.length > 0 && (
                     <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-black">
                       <tr>
-                        <td colSpan="7" className="py-3 px-4 text-[10px] uppercase text-gray-500">Total filtrado: {pvFiltered.length} líneas</td>
+                        <td colSpan="8" className="py-3 px-4 text-[10px] uppercase text-gray-500">Total filtrado: {pvFiltered.length} líneas</td>
                         <td className="py-3 px-4 text-right">{formatNum(pvFiltered.reduce((s,r)=>s+r.cantidad,0))}</td>
                         <td></td>
                         <td className="py-3 px-4 text-right text-orange-600">${formatNum(pvFiltered.reduce((s,r)=>s+r.cantidad*r.costoUnd,0))}</td>
@@ -9598,7 +9600,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           filtInvs.forEach(inv=>{
             const items = inv.itemsFacturados||[];
             if(items.length===0){
-              rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+              rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
             } else {
               items.forEach(it=>{
                 const qty=parseNum(it.cantidad||1);
@@ -9711,7 +9713,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
                 // 4. Fallback: invCode clean if anything
                 if(!codigo) codigo = _cc || getClean(it.fgId||'') || '—';
-                rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+                rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
           });
@@ -9731,7 +9733,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <option value="general">📊 General (Todo)</option>
                     {Array.from(new Set((invoices||[]).filter(Boolean).map(i=>(i.fecha||'').substring(0,7)).filter(ym=>ym&&ym.length===7))).sort().map(ym=>{const [y,m]=ym.split('-');const label=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1]+' '+y;return <option key={ym} value={ym}>{label}</option>;})}
                   </select>
-                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','Nro. Fiscal','OP Relacionada','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=rows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.nroFiscal||'—',r.op||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=8&&ci<=13?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="8" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
+                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=rows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.nroFiscal||'—',r.op||'—',r.vendedor||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=9&&ci<=14?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="9" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
                   <button onClick={()=>handleExportPDF('Reporte_Ventas_Costos', true)} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Printer size={12}/> Imprimir</button>
                 </div>
               </div>
@@ -9742,7 +9744,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               </div>
               <div className="overflow-x-auto rounded-xl border border-gray-100">
                 <table className="w-full border-collapse text-[9px]" style={{minWidth:900}}>
-                  <thead><tr className="bg-black text-white">{['Fecha','Documento','Nro. Fiscal','OP Relacionada','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','Total Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2.5 px-3 text-left font-black uppercase text-[8px] whitespace-nowrap">{h}</th>)}</tr></thead>
+                  <thead><tr className="bg-black text-white">{['Fecha','Documento','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','Total Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2.5 px-3 text-left font-black uppercase text-[8px] whitespace-nowrap">{h}</th>)}</tr></thead>
                   <tbody>
                     {rows.map((r,i)=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return(
                       <tr key={i} className={`border-b border-gray-50 ${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
@@ -9750,6 +9752,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         <td className="py-1.5 px-3 font-black text-orange-600 whitespace-nowrap">{r.doc}</td>
                         <td className="py-1.5 px-3 font-bold text-gray-600 whitespace-nowrap">{r.nroFiscal||'—'}</td>
                         <td className="py-1.5 px-3 font-black text-orange-600 whitespace-nowrap">{r.op||'—'}</td>
+                        <td className="py-1.5 px-3 font-black text-blue-700 uppercase whitespace-nowrap">{r.vendedor||'—'}</td>
                         <td className="py-1.5 px-3 font-bold max-w-[120px] truncate" title={r.cliente}>{r.cliente}</td>
                         <td className="py-1.5 px-3 font-black text-indigo-600 whitespace-nowrap">{r.codigo}</td>
                         <td className="py-1.5 px-3 font-bold" style={{minWidth:160,maxWidth:220,whiteSpace:'normal',wordBreak:'break-word'}}>{r.producto}</td>
@@ -9763,7 +9766,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         <td className="py-1.5 px-3 font-bold text-right text-gray-400 whitespace-nowrap">{r.tasa>0?formatTasa(r.tasa):'—'}</td>
                       </tr>
                     );})}
-                    {rows.length===0 && <tr><td colSpan={15} className="py-8 text-center text-gray-400 font-bold">Sin datos en el período seleccionado</td></tr>}
+                    {rows.length===0 && <tr><td colSpan={16} className="py-8 text-center text-gray-400 font-bold">Sin datos en el período seleccionado</td></tr>}
                   </tbody>
                   {rows.length>0 && <tfoot><tr className="bg-black text-white font-black">
                     <td colSpan={5} className="py-2.5 px-3 text-[8px] uppercase">TOTALES</td>
@@ -10029,36 +10032,27 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 <span className="text-[9px] font-bold opacity-80">Haz clic en ✕ para quitar un producto</span>
                               </div>
                               <div className="w-full">
-                              <table className="w-full text-xs" style={{tableLayout:'fixed'}}>
-                                <colgroup>
-                                  <col style={{width:'15%'}}/>
-                                  <col/>
-                                  <col style={{width:'13%'}}/>
-                                  <col style={{width:'11%'}}/>
-                                  <col style={{width:'11%'}}/>
-                                  <col style={{width:'9%'}}/>
-                                  <col style={{width:'7%'}}/>
-                                </colgroup>
+                              <table className="w-full text-xs" style={{tableLayout:'auto'}}>
                                 <thead>
                                   <tr className="font-black text-[9px] uppercase bg-gray-50 border-b-2 border-green-200">
-                                    <th className="p-2.5 text-left">Código</th>
-                                    <th className="p-2.5 text-left">Producto / Descripción</th>
-                                    <th className="p-2.5 text-center">Cant. Total</th>
-                                    <th className="p-2.5 text-right">Precio U.</th>
-                                    <th className="p-2.5 text-right">Total</th>
-                                    <th className="p-2.5 text-center">Alm.</th>
-                                    <th className="p-2.5 text-center">✕</th>
+                                    <th className="px-2 py-2 text-left whitespace-nowrap">Código</th>
+                                    <th className="px-2 py-2 text-left" style={{width:'40%'}}>Producto / Descripción</th>
+                                    <th className="px-2 py-2 text-center whitespace-nowrap">Cant.</th>
+                                    <th className="px-2 py-2 text-right whitespace-nowrap">Precio U.</th>
+                                    <th className="px-2 py-2 text-right whitespace-nowrap">Total</th>
+                                    <th className="px-2 py-2 text-center">Alm.</th>
+                                    <th className="px-2 py-2 text-center">✕</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-green-100">
                                   {fgItems.map((item, idx) => (
                                     <tr key={idx} className="hover:bg-red-50 group">
-                                      <td className="p-2.5 font-black text-orange-600 text-[9px] truncate">{item.invCode||cleanFGCode(item.fgId||'')}</td>
-                                      <td className="p-2.5 font-bold text-gray-800 text-[10px] leading-tight">{item.desc}</td>
-                                      <td className="p-2.5 text-center font-black text-green-700 text-[10px]">{formatNum(item.cantidad)}<br/><span className="text-[8px] text-gray-400 font-normal">{item.unidad}</span></td>
-                                      <td className="p-2.5 text-right font-black text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
-                                      <td className="p-2.5 text-right font-black text-gray-800 text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
-                                      <td className="p-2.5 text-center relative">
+                                      <td className="px-2 py-2 font-black text-orange-600 text-[9px] whitespace-nowrap">{item.invCode||cleanFGCode(item.fgId||'')}</td>
+                                      <td className="px-2 py-2 font-bold text-gray-800 text-[10px] leading-tight">{item.desc}</td>
+                                      <td className="px-2 py-2 text-center font-black text-green-700 text-[10px]">{formatNum(item.cantidad)}<br/><span className="text-[8px] text-gray-400 font-normal">{item.unidad}</span></td>
+                                      <td className="px-2 py-2 text-right font-black text-[10px] whitespace-nowrap">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
+                                      <td className="px-2 py-2 text-right font-black text-gray-800 text-[10px] whitespace-nowrap">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
+                                      <td className="px-2 py-2 text-center relative">
                                         {(()=>{
                                           const code=item.invCode||(item.fgId||'').split('___')[0];
                                           const whs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
@@ -10083,7 +10077,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                           </div>;
                                         })()}
                                       </td>
-                                      <td className="p-2.5 text-center">
+                                      <td className="px-2 py-2 text-center">
                                         <button type="button" onClick={()=>setFgItems(p=>p.filter((_,i)=>i!==idx))}
                                           className="bg-red-100 hover:bg-red-500 text-red-500 hover:text-white p-1.5 rounded-lg transition-all" title="Quitar producto">
                                           <X size={13}/>
@@ -10173,6 +10167,36 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         {showInvClientDropdown && <div className="fixed inset-0 z-40" onClick={()=>setShowInvClientDropdown(false)}/>}
                       </div>
                       
+                      <div>
+                        <label className="text-[9px] font-black text-gray-600 uppercase mb-1 block">Vendedor</label>
+                        {(()=>{
+                          const vendedores = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : ['OFICINA','NELSON','LIANNY'];
+                          const actual = (newInvoiceForm.vendedor||'').toUpperCase();
+                          const enLista = !actual || vendedores.includes(actual);
+                          return (
+                            <select value={enLista?actual:'__OTRO__'}
+                              onChange={async e=>{
+                                if(e.target.value==='__NUEVO__'){
+                                  const nv=(prompt('Nombre del nuevo vendedor:')||'').toUpperCase().trim();
+                                  if(nv){
+                                    const lista=Array.from(new Set([...vendedores,nv]));
+                                    await setDoc(getDocRef('settings','general'),{vendedores:lista},{merge:true});
+                                    setNewInvoiceForm({...newInvoiceForm, vendedor:nv});
+                                  }
+                                } else {
+                                  setNewInvoiceForm({...newInvoiceForm, vendedor:e.target.value});
+                                }
+                              }}
+                              className="w-36 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black uppercase">
+                              <option value="">— Seleccionar —</option>
+                              {vendedores.map(v=><option key={v} value={v}>{v}</option>)}
+                              {!enLista && actual && <option value="__OTRO__">{actual}</option>}
+                              <option value="__NUEVO__">➕ Crear nuevo…</option>
+                            </select>
+                          );
+                        })()}
+                      </div>
+
                       <div>
                         <label className="text-[9px] font-black text-gray-600 uppercase mb-1 block">Tasa Bs/$</label>
                         <input type="number" step="0.0001" min="0" value={newInvoiceForm.tasa||''}
