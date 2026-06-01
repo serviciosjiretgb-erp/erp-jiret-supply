@@ -457,6 +457,13 @@ export default function App() {
 
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
   const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
+  // ── Cálculos de totales en tiempo real para el formulario de factura ──
+  const _invBase = fgItems&&fgItems.length>0 ? fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0) : parseNum(newInvoiceForm?.montoBase||0);
+  const _invDv = parseNum(descuentoVal||0);
+  const _invDa = descuentoTipo==='pct' ? parseFloat((_invBase*(_invDv/100)).toFixed(2)) : _invDv;
+  const _invSub = parseFloat(Math.max(0,_invBase-_invDa).toFixed(2));
+  const _invIva = (newInvoiceForm?.aplicaIva||'SI')==='SI' ? parseFloat((_invSub*0.16).toFixed(2)) : 0;
+  const _invTot = parseFloat((_invSub+_invIva).toFixed(2));
   const [showGeneralInvoicesReport, setShowGeneralInvoicesReport] = useState(false);
   const [showClientReport, setShowClientReport] = useState(false);
   const [showReqReport, setShowReqReport] = useState(false);
@@ -10873,7 +10880,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         })()}
                       </div>
 
-
+                      </div>
                       <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
                         <div className="relative">
@@ -11021,34 +11028,68 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 </tr>
                               )) : Array.from({length:8}).map((_,i)=>(
                                 <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                                  <td className="py-2.5 px-2 border-r border-gray-100 w-28">&nbsp;</td>
-                                  <td className="py-2.5 px-2 border-r border-gray-100">&nbsp;</td>
-                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-300 w-20">0,00</td>
-                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-300 w-24">0,00</td>
-                                  <td className="py-2.5 px-2 text-right text-gray-300 w-24">0,00</td>
+                                  <td className="py-2.5 px-2 w-28 text-gray-200">—</td>
+                                  <td className="py-2.5 px-2"></td>
+                                  <td className="py-2.5 px-2 text-right text-gray-200 w-20">0,00</td>
+                                  <td className="py-2.5 px-2 text-right text-gray-200 w-24">0,00</td>
+                                  <td className="py-2.5 px-2 text-right text-gray-200 w-24">0,00</td>
+                                  <td className="py-2.5 px-2 w-16"></td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
                           {/* Totales */}
                           <div className="border-t-2 border-gray-200 bg-gray-50 px-4 py-3">
-                            <div className="flex justify-between items-start gap-4 text-[10px]">
-                              <textarea rows={3} placeholder="Observaciones / Instrucciones de pago:"
+                            <div className="flex justify-between items-center text-[10px] mb-2">
+                              <textarea rows={2} placeholder="Observaciones / Instrucciones de pago:"
                                 value={newInvoiceForm.observaciones||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm, observaciones:e.target.value})}
-                                className="border border-gray-200 rounded-lg p-2 text-[9px] font-bold flex-1 outline-none resize-none"/>
-                              <div className="space-y-2 min-w-[260px] text-right">
-                                <TotalesFactura
-                                  fgItems={fgItems}
-                                  montoBase={newInvoiceForm.montoBase}
-                                  aplicaIva={newInvoiceForm.aplicaIva}
-                                  descuentoTipo={descuentoTipo}
-                                  descuentoVal={descuentoVal}
-                                  setDescuentoTipo={setDescuentoTipo}
-                                  setDescuentoVal={setDescuentoVal}
-                                  handleInvoiceFormChange={handleInvoiceFormChange}
-                                />
+                                className="border border-gray-200 rounded-lg p-2 text-[9px] font-bold flex-1 mr-6 outline-none resize-none"/>
+                              <div className="space-y-1 text-right min-w-52">
+                                {[
+                                  ['TOTAL PARCIAL', `$${formatNum(fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0))}`],
+                                  ['DESCUENTO_LABEL',''],
+                                  ['SUBTOTAL MENOS DESCUENTO', `$${formatNum(fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||parseNum(newInvoiceForm.montoBase||0))}`],
+                                  ['__IVA__', ''],
+                                  ['TOTAL IMPUESTOS', `$${formatNum(parseNum(newInvoiceForm.iva||0))}`],
+                                  ['ENVÍO/MANIPULACIÓN','$0,00'],
+                                ].map(([k,v])=>{
+                                  if(k==='__IVA__') return null;
+                                  if(k==='DESCUENTO_LABEL') return (
+                                    <div key="desc" className="bg-orange-50 border border-orange-200 rounded-xl px-2 py-1.5">
+                                      <div className="text-[9px] font-black text-orange-700 uppercase mb-1">Descuento</div>
+                                      <div className="flex items-center gap-1 mb-1">
+                                        <select value={descuentoTipo} onChange={e=>{setDescuentoTipo(e.target.value);setDescuentoVal('');}} className="border border-orange-300 rounded px-1 py-0.5 text-[8px] font-black outline-none bg-white flex-1">
+                                          <option value="monto">$ Monto fijo</option>
+                                          <option value="pct">% Porcentaje</option>
+                                        </select>
+                                        <input type="number" step="0.01" min="0" value={descuentoVal} onChange={e=>setDescuentoVal(e.target.value)} placeholder={descuentoTipo==='pct'?'5':'0.00'} className="w-20 border border-orange-300 rounded px-1.5 py-0.5 text-right font-black text-[9px] outline-none bg-white"/>
+                                      </div>
+                                      {parseNum(descuentoVal||0)>0 && <div className="text-right text-[8px] font-black text-red-600">-${formatNum(descuentoTipo==='pct'?_invBase*(parseNum(descuentoVal)/100):parseNum(descuentoVal))} {descuentoTipo==='pct'?'('+descuentoVal+'%)':'(fijo)'}</div>}
+                                    </div>
+                                  );
+                                  return <div key={k} className="flex justify-between gap-8"><span className="font-black text-gray-600 uppercase">{k}</span><span className="font-black">{v}</span></div>;
+                                })}
+                                <div className="flex justify-between gap-8 items-center">
+                                  <span className="font-black text-gray-600 uppercase flex items-center gap-2">TASA DE IMPUESTO
+                                    <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva',e.target.value)} className="border border-gray-200 rounded px-1.5 py-0.5 text-[9px] font-black outline-none ml-1">
+                                      <option value="SI">+ IVA 16%</option>
+                                      <option value="NO">EXENTO</option>
+                                    </select>
+                                  </span>
+                                  <span className="font-black">{newInvoiceForm.aplicaIva==='SI'?'16,00%':'0,00%'}</span>
+                                </div>
+                                <div className="flex justify-between gap-8 border-t-2 border-gray-400 pt-2 mt-2">
+                                  <span className="font-black text-gray-900 uppercase text-sm">Saldo adeudado</span>
+                                  <span className="font-black text-orange-600 text-xl">$ {(()=>{
+                                    const base=fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0);
+                                    const dv=parseNum(descuentoVal||0);const da=descuentoTipo==='pct'?base*(dv/100):dv;const sub=Math.max(0,base-da);
+                                    const iva=newInvoiceForm.aplicaIva==='SI'?parseFloat((sub*0.16).toFixed(2)):0;
+                                    return formatNum(sub+iva);
+                                  })()}</span>
+                                </div>
                               </div>
                             </div>
+
                           </div>
                         </div>
                       </div>
