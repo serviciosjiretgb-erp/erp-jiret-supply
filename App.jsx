@@ -2633,51 +2633,64 @@ export default function App() {
 
       // ── MULTI-WAREHOUSE DEDUCTION from inventory (Inventario General) ──
       // For items from Inventario General (not finishedGoodsInventory),
-      // use the mwDispatch assignments to deduct from each warehouse document
-      const itemsWithInvCode = itemsToProcess.filter(it => it.invCode || (it._isInvPT));
+      // use the mwDispatch assignments to deduct from each warehouse document.
+      // En edición: items ya guardados solo ajustan la DIFERENCIA de cantidad
+      // (positiva = descontar más; negativa = devolver al stock). Si no cambió, no toca nada.
+      const itemsWithInvCode = itemsToProcess.filter(it => (it.invCode || (it._isInvPT)));
       if(itemsWithInvCode.length > 0) {
         const batch = writeBatch(db);
         for(const item of itemsWithInvCode) {
           const code = item.invCode || (item.fgId||'').split('___')[0];
-          const cantTotal = parseNum(item.cantidad);
-          if(cantTotal <= 0) continue;
+          // Cantidad a mover: nuevos = total; guardados = delta vs original
+          const cantTotal = item._savedItem
+            ? parseNum(item.cantidad) - parseNum(item._origCantidad||0)
+            : parseNum(item.cantidad);
+          if(Math.abs(cantTotal) <= 0.0001) continue;
 
-          const dispatch = mwDispatch[code] || {};
-          const hasDispatch = Object.values(dispatch).some(v=>parseNum(v)>0);
-          
           // Get all warehouse docs for this product
           const whDocs = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code);
-          
-          if(hasDispatch) {
-            // Use explicit warehouse assignments
-            for(const [almNom, qty] of Object.entries(dispatch)) {
-              const qtyNum = parseNum(qty);
-              if(qtyNum <= 0) continue;
-              const whDoc = whDocs.find(i=>(i.almacen||'').toUpperCase()===almNom.toUpperCase() || (i.id||'').includes(almNom.replace(/\s+/g,'-')));
-              if(!whDoc) continue;
-              const newStock = Math.max(0, parseNum(whDoc.stock||0) - qtyNum);
-              batch.update(getDocRef('inventory', whDoc.id), {stock: newStock, timestamp: Date.now()});
-              // Kardex entry
-              await addDoc(getColRef('inventoryMovements'), {
-                itemId: whDoc.id, itemDesc: item.desc||code, almacen: almNom,
-                type: 'SALIDA', qty: qtyNum, unitCost: parseNum(item.costoUnit||0),
-                totalValue: qtyNum * parseNum(item.costoUnit||0),
-                previousStock: parseNum(whDoc.stock||0), newStock,
-                docRef: id, notes: `VENTA ${id} — Almacén: ${almNom}`,
-                date: newInvoiceForm.fecha||getTodayDate(), user: appUser?.name||'Admin', timestamp: Date.now()
-              });
+
+          if(cantTotal > 0){
+            const dispatch = mwDispatch[code] || {};
+            const hasDispatch = Object.values(dispatch).some(v=>parseNum(v)>0);
+            if(hasDispatch && !item._savedItem) {
+              // Use explicit warehouse assignments (solo en alta nueva)
+              for(const [almNom, qty] of Object.entries(dispatch)) {
+                const qtyNum = parseNum(qty);
+                if(qtyNum <= 0) continue;
+                const whDoc = whDocs.find(i=>(i.almacen||'').toUpperCase()===almNom.toUpperCase() || (i.id||'').includes(almNom.replace(/\s+/g,'-')));
+                if(!whDoc) continue;
+                const newStock = Math.max(0, parseNum(whDoc.stock||0) - qtyNum);
+                batch.update(getDocRef('inventory', whDoc.id), {stock: newStock, timestamp: Date.now()});
+                await addDoc(getColRef('inventoryMovements'), {
+                  itemId: whDoc.id, itemDesc: item.desc||code, almacen: almNom,
+                  type: 'SALIDA', qty: qtyNum, unitCost: parseNum(item.costoUnit||0),
+                  totalValue: qtyNum * parseNum(item.costoUnit||0),
+                  previousStock: parseNum(whDoc.stock||0), newStock,
+                  docRef: id, notes: `VENTA ${id} — Almacén: ${almNom}`,
+                  date: newInvoiceForm.fecha||getTodayDate(), user: appUser?.name||'Admin', timestamp: Date.now()
+                });
+              }
+            } else {
+              // Auto: descontar de almacenes con stock (menor stock primero)
+              let remaining = cantTotal;
+              const sorted = [...whDocs].sort((a,b)=>parseNum(a.stock||0)-parseNum(b.stock||0));
+              for(const wh of sorted) {
+                if(remaining<=0) break;
+                const avail = parseNum(wh.stock||0);
+                if(avail<=0) continue;
+                const deduct = Math.min(remaining, avail);
+                remaining -= deduct;
+                const newStock = Math.max(0, avail - deduct);
+                batch.update(getDocRef('inventory', wh.id), {stock: newStock, timestamp: Date.now()});
+              }
             }
           } else {
-            // Auto: deduct from warehouses with stock (FIFO by smallest stock first)
-            let remaining = cantTotal;
-            const sorted = [...whDocs].sort((a,b)=>parseNum(a.stock||0)-parseNum(b.stock||0));
-            for(const wh of sorted) {
-              if(remaining<=0) break;
-              const avail = parseNum(wh.stock||0);
-              if(avail<=0) continue;
-              const deduct = Math.min(remaining, avail);
-              remaining -= deduct;
-              const newStock = Math.max(0, avail - deduct);
+            // Delta negativo (se redujo la cantidad al editar): DEVOLVER al stock
+            const devolver = Math.abs(cantTotal);
+            const wh = whDocs[0];
+            if(wh){
+              const newStock = parseNum(wh.stock||0) + devolver;
               batch.update(getDocRef('inventory', wh.id), {stock: newStock, timestamp: Date.now()});
             }
           }
@@ -2687,30 +2700,49 @@ export default function App() {
       }
 
       // ── Descontar cada item del inventario de terminados (FIFO por lote) ──
-      // Only deduct items that are NEW (not already saved from a previous invoice save)
-      const itemsToDeduct = itemsToProcess.filter(it => !it._savedItem);
+      // Nuevos: descuenta toda la cantidad. Guardados: solo ajusta la diferencia.
+      const itemsToDeduct = itemsToProcess.filter(it => !it._isInvPT && !it.invCode);
 
       for (const item of itemsToDeduct) {
-        const cantFacturada = parseNum(item.cantidad);
-        if (cantFacturada <= 0) continue;
+        // Nuevos: descuenta toda la cantidad. Guardados: solo la diferencia vs original.
+        const cantFacturada = item._savedItem
+          ? parseNum(item.cantidad) - parseNum(item._origCantidad||0)
+          : parseNum(item.cantidad);
+        if (Math.abs(cantFacturada) <= 0.0001) continue;
 
-        // Always use FRESH FG data from current state (not stale grpLotes from click time)
-        // Find all FG items that match this product (by fgId or by grpKey)
-        let lotesADescontar = [];
+        // Resolver lotes FG frescos
+        let lotesRef = [];
         if(item.grpLotes && item.grpLotes.length > 0) {
-          // Re-fetch fresh data for each lote
-          lotesADescontar = item.grpLotes.map(g => (finishedGoodsInventory||[]).find(f=>f.id===g.id)).filter(Boolean);
+          lotesRef = item.grpLotes.map(g => (finishedGoodsInventory||[]).find(f=>f.id===g.id)).filter(Boolean);
         }
-        if(!lotesADescontar.length && item.fgId) {
+        if(!lotesRef.length && item.fgId) {
           const fg = (finishedGoodsInventory||[]).find(f => f.id === item.fgId);
-          if(fg) lotesADescontar = [fg];
+          if(fg) lotesRef = [fg];
         }
-        if (!lotesADescontar.length) {
-          console.warn('No FG lotes found for item:', item.fgId, item.fgGrpKey);
+        if (!lotesRef.length) { console.warn('No FG lotes found for item:', item.fgId, item.fgGrpKey); continue; }
+        const esTermoD = item.esTermo ?? (lotesRef[0]?.tipoProducto === 'TERMOENCOGIBLE');
+
+        // Delta negativo (se redujo la cantidad al editar): DEVOLVER al primer lote
+        if(cantFacturada < 0){
+          const devolver = Math.abs(cantFacturada);
+          const fg = (finishedGoodsInventory||[]).find(f=>f.id===lotesRef[0].id) || lotesRef[0];
+          const stockActual = esTermoD ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
+          const restaurado = stockActual + devolver;
+          await updateDoc(getDocRef('finishedGoodsInventory', fg.id),
+            esTermoD ? {kgProducidos: restaurado, status:'LISTO PARA ENTREGA'} : {millares: restaurado, status:'LISTO PARA ENTREGA'});
+          const costoUnit = esTermoD ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+          await addDoc(getColRef('inventoryMovements'), {
+            itemId: `FG::${fg.id}`, itemDesc: formatFGLabel(fg)||fg.producto||fg.id,
+            type: 'ENTRADA', qty: devolver, unitCost: costoUnit,
+            totalValue: devolver*costoUnit, previousStock: stockActual, newStock: restaurado,
+            docRef: id, notes: `AJUSTE EDICIÓN FAC ${id} (devolución)`,
+            date: newInvoiceForm.fecha||getTodayDate(), user: appUser?.name||'Admin', timestamp: Date.now(), isFG: true
+          });
           continue;
         }
 
-        const esTermo = item.esTermo ?? (lotesADescontar[0]?.tipoProducto === 'TERMOENCOGIBLE');
+        const lotesADescontar = lotesRef;
+        const esTermo = esTermoD;
 
         let porDescontar = cantFacturada;
         for (const fgOld of lotesADescontar) {
@@ -2843,7 +2875,7 @@ export default function App() {
             desc: it.desc || formatFGLabel(fg)||fg.producto||fg.id,
             unidad: it.unidad||(esTermo?'KG':'Mill.'),
             maxCant: parseNum(it.cantidad||0) + currentStock,
-            esTermo, grpLotes: [fg], _savedItem: true, _isInvPT: false
+            esTermo, grpLotes: [fg], _savedItem: true, _isInvPT: false, _origCantidad: parseNum(it.cantidad||0)
           });
         } else {
           // From inventory PT (non-FG items)
@@ -2857,7 +2889,7 @@ export default function App() {
             desc: it.desc || invItem?.desc || it.invCode || '—',
             unidad: it.unidad||invItem?.unit||'und',
             maxCant: parseNum(it.cantidad||0)+(parseNum(invItem?.stock||0)),
-            esTermo: false, grpLotes: [], _savedItem: true, _isInvPT: true
+            esTermo: false, grpLotes: [], _savedItem: true, _isInvPT: true, _origCantidad: parseNum(it.cantidad||0)
           });
         }
       });
