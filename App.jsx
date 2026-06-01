@@ -367,6 +367,9 @@ export default function App() {
   const [fgCatFilter, setFgCatFilter] = useState('TODAS');
   const [selectedOpId, setSelectedOpId] = useState('');
   const [fgItems, setFgItems] = useState([]); // [{fgId, cantidad, desc, unidad, maxCant}]
+  const [editingFgIdx, setEditingFgIdx] = useState(null);
+  const [descuentoTipo, setDescuentoTipo] = useState('monto'); // 'monto' | 'pct'
+  const [descuentoVal, setDescuentoVal] = useState('');
   const [showCargarProducto, setShowCargarProducto] = useState(false);
   const [fgCorrectionDone, setFgCorrectionDone] = useState(false);
 
@@ -2607,9 +2610,12 @@ export default function App() {
     });
 
     // ── Calculate totals from fgItems (not from stale form state) ──
-    const computedBase = fgItems.length > 0
+    const computedBaseRaw = fgItems.length > 0
       ? fgItems.reduce((s,it)=>s + parseNum(it.precioUnit||0)*parseNum(it.cantidad||0), 0)
       : parseNum(newInvoiceForm.montoBase||0);
+    const dVal = parseNum(descuentoVal||0);
+    const descuentoAmt = descuentoTipo==='pct' ? computedBaseRaw*(dVal/100) : dVal;
+    const computedBase = Math.max(0, computedBaseRaw - descuentoAmt);
     const aplicaIvaFinal = newInvoiceForm.aplicaIva || 'SI';
     const computedIva = aplicaIvaFinal==='SI' ? parseFloat((computedBase*0.16).toFixed(2)) : 0;
     const computedTotal = parseFloat((computedBase + computedIva).toFixed(2));
@@ -2619,6 +2625,7 @@ export default function App() {
         ...newInvoiceForm, id, documento: id,
         nroFiscal: newInvoiceForm.nroFiscal||'',
         tasa: parseNum(newInvoiceForm.tasa||settings?.tasaBCV||0),
+        descuentoTipo, descuentoVal: parseNum(descuentoVal||0), descuentoAmt,
         montoBase: computedBase,
         iva: computedIva,
         total: computedTotal,
@@ -2809,7 +2816,7 @@ export default function App() {
         });
       }
 
-      setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm); setFgItems([]);
+      setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm); setFgItems([]); setDescuentoVal(''); setDescuentoTipo('monto');
       setDialog({title: '✅ Éxito', text: editingInvoiceId ? `Factura ${id} actualizada y stock descontado.` : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
     } catch(err) { setDialog({title: 'Error al guardar factura', text: err.message, type: 'alert'}); }
   };
@@ -11012,19 +11019,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       <div>
                         <label className="text-[9px] font-black text-gray-600 uppercase mb-1 block">Vendedor</label>
                         {(()=>{
-                          const vendedores = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : [];
-                          const activos = vendedores.filter(v=>(settings?.vendedoresInfo||{})[v.toUpperCase()]?.activo!==false);
-                          const actual = (newInvoiceForm.vendedor||'').toUpperCase();
-                          const enLista = !actual || activos.includes(actual);
-                          return (
-                            <select value={enLista?actual:'__OTRO__'}
-                              onChange={e=>setNewInvoiceForm({...newInvoiceForm, vendedor:e.target.value==='__OTRO__'?actual:e.target.value})}
-                              className="w-36 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black uppercase">
-                              <option value="">— Seleccionar —</option>
-                              {activos.map(v=><option key={v} value={v}>{v}</option>)}
-                              {!enLista && actual && <option value="__OTRO__">{actual}</option>}
-                            </select>
-                          );
+                          const vendedores=(settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[];
+                          const activos=vendedores.filter(v=>(settings?.vendedoresInfo||{})[v.toUpperCase()]?.activo!==false);
+                          const actual=(newInvoiceForm.vendedor||'').toUpperCase();
+                          const enLista=!actual||activos.includes(actual);
+                          return(<select value={enLista?actual:'__OTRO__'} onChange={e=>setNewInvoiceForm({...newInvoiceForm,vendedor:e.target.value==='__OTRO__'?actual:e.target.value})} className="w-36 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black uppercase"><option value="">— Seleccionar —</option>{activos.map(v=><option key={v} value={v}>{v}</option>)}{!enLista&&actual&&<option value="__OTRO__">{actual}</option>}</select>);
                         })()}
                       </div>
 
@@ -11077,66 +11076,99 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 <th className="py-2.5 px-2 text-center font-black uppercase text-[8px] w-20">Cant.</th>
                                 <th className="py-2.5 px-2 text-right font-black uppercase text-[8px] w-24">Precio U.</th>
                                 <th className="py-2.5 px-2 text-right font-black uppercase text-[8px] w-24">Total</th>
+                                <th className="py-2.5 px-1 text-center font-black uppercase text-[8px] w-16">Acc.</th>
                               </tr>
                             </thead>
                             <tbody>
                               {fgItems.length > 0 ? fgItems.map((item,i)=>(
-                                <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                                  <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode ? cleanFGCode(item.invCode) : cleanFGCode(item.fgId||'').replace(/^FG-\d{10,}$/,'')}</td>
-                                  <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{wordBreak:"break-word",lineHeight:1.3}}>{item.desc}</td>
-                                  <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
-                                  <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:"—"}</td>
-                                  <td className="py-2 px-2 text-right font-black text-green-700 text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:"—"}</td>
+                                <tr key={i} className={`${i%2===0?'bg-white':'bg-gray-50'} ${editingFgIdx===i?'ring-2 ring-inset ring-orange-400':''}`}>
+                                  {editingFgIdx===i ? (<>
+                                    <td className="py-1.5 px-2 font-black text-orange-600 text-[9px]">{item.invCode?cleanFGCode(item.invCode):cleanFGCode(item.fgId||'')}</td>
+                                    <td className="py-1.5 px-2 font-bold text-gray-700 text-[10px]">{item.desc}</td>
+                                    <td className="py-1.5 px-1 w-20 text-center"><input type="number" step="0.01" min="0.01" value={item.cantidad} onChange={e=>setFgItems(p=>p.map((it,idx)=>idx===i?{...it,cantidad:parseNum(e.target.value)||it.cantidad}:it))} className="w-16 border-2 border-orange-300 rounded-lg px-1 py-1 text-center font-black text-xs outline-none focus:border-orange-500"/></td>
+                                    <td className="py-1.5 px-1 w-24"><input type="number" step="0.01" min="0" value={item.precioUnit||''} onChange={e=>setFgItems(p=>p.map((it,idx)=>idx===i?{...it,precioUnit:parseNum(e.target.value),totalUSD:parseNum(e.target.value)*(it.cantidad||1)}:it))} className="w-20 border-2 border-orange-300 rounded-lg px-1 py-1 text-right font-black text-xs outline-none focus:border-orange-500"/></td>
+                                    <td className="py-1.5 px-2 text-right font-black text-green-700 text-[10px]">${formatNum((item.precioUnit||0)*(item.cantidad||1))}</td>
+                                    <td className="py-1.5 px-1 text-center w-16"><button type="button" onClick={()=>setEditingFgIdx(null)} className="bg-green-100 hover:bg-green-500 text-green-600 hover:text-white p-1 rounded-lg transition-all"><CheckCircle size={13}/></button></td>
+                                  </>) : (<>
+                                    <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode?cleanFGCode(item.invCode):cleanFGCode(item.fgId||'').replace(/^FG-\d{10,}$/,'')}</td>
+                                    <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{wordBreak:'break-word',lineHeight:1.3}}>{item.desc}</td>
+                                    <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
+                                    <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
+                                    <td className="py-2 px-2 text-right font-black text-green-700 text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
+                                    <td className="py-2 px-1 text-center w-16"><div className="flex items-center justify-center gap-1"><button type="button" onClick={()=>setEditingFgIdx(i)} className="bg-blue-50 hover:bg-blue-500 text-blue-500 hover:text-white p-1 rounded-lg transition-all"><Edit size={12}/></button><button type="button" onClick={()=>{setFgItems(p=>p.filter((_,idx)=>idx!==i));if(editingFgIdx===i)setEditingFgIdx(null);}} className="bg-red-50 hover:bg-red-500 text-red-500 hover:text-white p-1 rounded-lg transition-all"><Trash2 size={12}/></button></div></td>
+                                  </>)}
                                 </tr>
-                              )) : Array.from({length:8}).map((_,i)=>(
+                              )) : Array.from({length:6}).map((_,i)=>(
                                 <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                                  <td className="py-2.5 px-2 border-r border-gray-100 w-28">&nbsp;</td>
-                                  <td className="py-2.5 px-2 border-r border-gray-100">&nbsp;</td>
-                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-300 w-20">0,00</td>
-                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-300 w-24">0,00</td>
-                                  <td className="py-2.5 px-2 text-right text-gray-300 w-24">0,00</td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100 w-28 text-gray-200 text-[9px]">—</td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100"></td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-200 w-20">0,00</td>
+                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-200 w-24">0,00</td>
+                                  <td className="py-2.5 px-2 text-right text-gray-200 w-24">0,00</td>
+                                  <td className="py-2.5 px-2 w-16"></td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
                           {/* Totales */}
                           <div className="border-t-2 border-gray-200 bg-gray-50 px-4 py-3">
-                            <div className="flex justify-between items-center text-[10px] mb-2">
+                            <div className="flex justify-between items-start text-[10px] mb-2">
                               <textarea rows={2} placeholder="Observaciones / Instrucciones de pago:"
                                 value={newInvoiceForm.observaciones||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm, observaciones:e.target.value})}
                                 className="border border-gray-200 rounded-lg p-2 text-[9px] font-bold flex-1 mr-6 outline-none resize-none"/>
-                              <div className="space-y-1 text-right min-w-52">
-                                {[
-                                  ['TOTAL PARCIAL', `$${formatNum(fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0))}`],
-                                  ['DESCUENTO','$0,00'],
-                                  ['SUBTOTAL MENOS DESCUENTO', `$${formatNum(fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||parseNum(newInvoiceForm.montoBase||0))}`],
-                                  ['__IVA__', ''],
-                                  ['TOTAL IMPUESTOS', `$${formatNum(parseNum(newInvoiceForm.iva||0))}`],
-                                  ['ENVÍO/MANIPULACIÓN','$0,00'],
-                                ].map(([k,v])=>{
-                                  if(k==='__IVA__') return null;
-                                  return <div key={k} className="flex justify-between gap-8"><span className="font-black text-gray-600 uppercase">{k}</span><span className="font-black">{v}</span></div>;
-                                })}
-                                <div className="flex justify-between gap-8 items-center">
-                                  <span className="font-black text-gray-600 uppercase flex items-center gap-2">TASA DE IMPUESTO
-                                    <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva',e.target.value)} className="border border-gray-200 rounded px-1.5 py-0.5 text-[9px] font-black outline-none ml-1">
-                                      <option value="SI">+ IVA 16%</option>
-                                      <option value="NO">EXENTO</option>
-                                    </select>
-                                  </span>
-                                  <span className="font-black">{newInvoiceForm.aplicaIva==='SI'?'16,00%':'0,00%'}</span>
-                                </div>
-                                <div className="flex justify-between gap-8 border-t-2 border-gray-400 pt-2 mt-2">
-                                  <span className="font-black text-gray-900 uppercase text-sm">Saldo adeudado</span>
-                                  <span className="font-black text-orange-600 text-xl">$ {(()=>{
-                                    const base=fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0);
-                                    const iva=newInvoiceForm.aplicaIva==='SI'?base*0.16:0;
-                                    return formatNum(base+iva);
-                                  })()}</span>
-                                </div>
+                              <div className="space-y-1.5 text-right min-w-52">
+                                {(()=>{
+                                  const base = fgItems.length>0
+                                    ? fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)
+                                    : parseNum(newInvoiceForm.montoBase||0);
+                                  const dVal = parseNum(descuentoVal||0);
+                                  const descuento = descuentoTipo==='pct' ? base*(dVal/100) : dVal;
+                                  const subtotal = Math.max(0, base - descuento);
+                                  const ivaAmt = newInvoiceForm.aplicaIva==='SI' ? subtotal*0.16 : 0;
+                                  const total = subtotal + ivaAmt;
+                                  return (<>
+                                    <div className="flex justify-between gap-8">
+                                      <span className="font-black text-gray-600 uppercase">Total Parcial</span>
+                                      <span className="font-black">${formatNum(base)}</span>
+                                    </div>
+                                    {/* DESCUENTO EDITABLE */}
+                                    <div className="flex justify-between gap-4 items-center">
+                                      <span className="font-black text-gray-600 uppercase">Descuento</span>
+                                      <div className="flex items-center gap-1">
+                                        <select value={descuentoTipo} onChange={e=>{setDescuentoTipo(e.target.value);setDescuentoVal('');}}
+                                          className="border border-gray-200 rounded px-1 py-0.5 text-[8px] font-black outline-none focus:border-orange-400">
+                                          <option value="monto">$</option>
+                                          <option value="pct">%</option>
+                                        </select>
+                                        <input type="number" step="0.01" min="0"
+                                          value={descuentoVal}
+                                          onChange={e=>setDescuentoVal(e.target.value)}
+                                          placeholder="0"
+                                          className="w-20 border border-gray-200 rounded px-1.5 py-0.5 text-right font-black text-[10px] outline-none focus:border-orange-400"/>
+                                        {dVal>0 && <span className="font-black text-red-500">-${formatNum(descuento)}</span>}
+                                      </div>
+                                    </div>
+                                    <div className="flex justify-between gap-8">
+                                      <span className="font-black text-gray-600 uppercase">Subtotal</span>
+                                      <span className="font-black">${formatNum(subtotal)}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-8 items-center">
+                                      <span className="font-black text-gray-600 uppercase flex items-center gap-1">IVA
+                                        <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva',e.target.value)} className="border border-gray-200 rounded px-1 py-0.5 text-[8px] font-black outline-none ml-1">
+                                          <option value="SI">16%</option>
+                                          <option value="NO">Exento</option>
+                                        </select>
+                                      </span>
+                                      <span className="font-black">${formatNum(ivaAmt)}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-8 border-t-2 border-gray-400 pt-2 mt-1">
+                                      <span className="font-black text-gray-900 uppercase text-sm">Total</span>
+                                      <span className="font-black text-orange-600 text-xl">${formatNum(total)}</span>
+                                    </div>
+                                  </>);
+                                })()}
                               </div>
                             </div>
-
                           </div>
                         </div>
                       </div>
