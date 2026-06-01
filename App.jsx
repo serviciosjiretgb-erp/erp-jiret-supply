@@ -9977,6 +9977,303 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           );
         })()}
 
+        {ventasView === 'vendedores' && (() => {
+          const ESTADOS_VE = [
+            'Amazonas','Anzoátegui','Apure','Aragua','Barinas','Bolívar','Carabobo',
+            'Cojedes','Delta Amacuro','Falcón','Guárico','Lara','Mérida','Miranda',
+            'Monagas','Nueva Esparta','Portuguesa','Sucre','Táchira','Trujillo',
+            'La Guaira (Vargas)','Yaracuy','Zulia',
+            'Distrito Capital','Dependencias Federales'
+          ];
+          const REGIONES = [
+            {id:'centro', label:'Centro', estados:['Aragua','Carabobo','Miranda','Distrito Capital','La Guaira (Vargas)']},
+            {id:'llanos', label:'Llanos', estados:['Apure','Barinas','Cojedes','Guárico','Portuguesa']},
+            {id:'occidente', label:'Occidente', estados:['Falcón','Lara','Mérida','Táchira','Trujillo','Yaracuy','Zulia']},
+            {id:'oriente', label:'Oriente', estados:['Anzoátegui','Delta Amacuro','Monagas','Nueva Esparta','Sucre']},
+            {id:'sur', label:'Sur', estados:['Amazonas','Bolívar']},
+          ];
+
+          const vendedores = (settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:['OFICINA','NELSON','LIANNY'];
+          const vendedoresInfo = settings?.vendedoresInfo||{};
+
+          // Estado local de la ficha en edición
+          const [fichaVend, setFichaVend] = React.useState(null);         // nombre del vendedor editando
+          const [fichaData, setFichaData] = React.useState({});            // datos del formulario
+          const [fichaGuardando, setFichaGuardando] = React.useState(false);
+          const [nuevoNombre, setNuevoNombre] = React.useState('');
+          const [mostrarNuevo, setMostrarNuevo] = React.useState(false);
+
+          const abrirFicha = (nombre) => {
+            const info = vendedoresInfo[nombre.toUpperCase()]||{};
+            setFichaVend(nombre);
+            setFichaData({
+              nombre: info.nombre||nombre,
+              cargo: info.cargo||'VENDEDOR',
+              fechaIngreso: info.fechaIngreso||'',
+              telefono: info.telefono||'',
+              email: info.email||'',
+              region: info.region||'',
+              estados: info.estados||[],
+              salarioBase: info.salarioBase||300,
+              bonoVehiculo: info.bonoVehiculo||200,
+              activo: info.activo!==false,
+              observaciones: info.observaciones||''
+            });
+          };
+
+          const guardarFicha = async () => {
+            if(!fichaVend) return;
+            setFichaGuardando(true);
+            try {
+              const info = {...vendedoresInfo, [fichaVend.toUpperCase()]: fichaData};
+              // Si cambió el nombre, actualizar la lista de vendedores
+              const nombreNuevo = (fichaData.nombre||fichaVend).toUpperCase();
+              let lista = [...vendedores];
+              if(nombreNuevo !== fichaVend.toUpperCase()){
+                lista = lista.map(v=>v.toUpperCase()===fichaVend.toUpperCase()?nombreNuevo:v);
+                info[nombreNuevo] = {...fichaData};
+                delete info[fichaVend.toUpperCase()];
+              }
+              await setDoc(getDocRef('settings','general'),{vendedores:lista, vendedoresInfo:info},{merge:true});
+              setFichaVend(null);
+              setDialog({title:'✅ Guardado',text:'Ficha del vendedor actualizada.',type:'alert'});
+            } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+            setFichaGuardando(false);
+          };
+
+          const crearVendedor = async () => {
+            const n=nuevoNombre.toUpperCase().trim();
+            if(!n) return;
+            const lista=Array.from(new Set([...vendedores,n]));
+            await setDoc(getDocRef('settings','general'),{vendedores:lista},{merge:true});
+            setNuevoNombre(''); setMostrarNuevo(false);
+            abrirFicha(n);
+          };
+
+          const eliminarVendedor = async (nombre) => {
+            if(!window.confirm(`¿Eliminar a ${nombre}? Se quitará de la lista de vendedores.`)) return;
+            const lista=vendedores.filter(v=>v.toUpperCase()!==nombre.toUpperCase());
+            const info={...vendedoresInfo};
+            delete info[nombre.toUpperCase()];
+            await setDoc(getDocRef('settings','general'),{vendedores:lista,vendedoresInfo:info},{merge:true});
+            if(fichaVend===nombre) setFichaVend(null);
+          };
+
+          const toggleEstado = (est) => {
+            const cur = fichaData.estados||[];
+            setFichaData({...fichaData, estados: cur.includes(est)?cur.filter(e=>e!==est):[...cur,est]});
+          };
+          const toggleRegion = (reg) => {
+            const estActuales = fichaData.estados||[];
+            const todosSeleccionados = reg.estados.every(e=>estActuales.includes(e));
+            let nuevos;
+            if(todosSeleccionados) nuevos = estActuales.filter(e=>!reg.estados.includes(e));
+            else nuevos = Array.from(new Set([...estActuales,...reg.estados]));
+            setFichaData({...fichaData, estados:nuevos});
+          };
+
+          return (
+            <div className="space-y-6 animate-in fade-in">
+              {/* Header */}
+              <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+                <div className="px-8 py-5 border-b bg-gradient-to-r from-indigo-50 to-blue-50 flex justify-between items-center flex-wrap gap-3">
+                  <div>
+                    <h2 className="text-xl font-black text-indigo-900 uppercase flex items-center gap-3"><Users className="text-indigo-600" size={24}/> Equipo de Vendedores</h2>
+                    <p className="text-[10px] font-bold text-indigo-600 mt-0.5">{vendedores.length} vendedor(es) registrado(s) · Gestión de fichas, zonas y comisiones</p>
+                  </div>
+                  <button onClick={()=>setMostrarNuevo(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm ${mostrarNuevo?'bg-red-500 text-white':'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
+                    <Plus size={14}/>{mostrarNuevo?'CANCELAR':'NUEVO VENDEDOR'}
+                  </button>
+                </div>
+
+                {mostrarNuevo && (
+                  <div className="px-8 py-4 bg-indigo-50 border-b flex items-center gap-3">
+                    <input type="text" value={nuevoNombre} onChange={e=>setNuevoNombre(e.target.value.toUpperCase())}
+                      onKeyDown={e=>e.key==='Enter'&&crearVendedor()}
+                      placeholder="Nombre del vendedor (ej: CARLOS PÉREZ)"
+                      className="flex-1 border-2 border-indigo-200 rounded-xl px-4 py-2.5 text-xs font-black uppercase outline-none focus:border-indigo-500 bg-white"/>
+                    <button onClick={crearVendedor} className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl text-xs font-black uppercase">Crear y editar ficha</button>
+                  </div>
+                )}
+
+                {/* Grid de tarjetas */}
+                <div className="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {vendedores.map(v => {
+                    const info = vendedoresInfo[v.toUpperCase()]||{};
+                    const nEst = (info.estados||[]).length;
+                    const activo = info.activo!==false;
+                    return (
+                      <div key={v} className={`rounded-2xl border-2 p-4 hover:shadow-md transition-all cursor-pointer ${fichaVend===v?'border-indigo-500 bg-indigo-50':'border-gray-100 bg-white'}`}
+                        onClick={()=>fichaVend===v?setFichaVend(null):abrirFicha(v)}>
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center font-black text-indigo-700 text-sm">{(info.nombre||v).charAt(0)}</div>
+                              <div>
+                                <div className="font-black text-gray-900 text-sm uppercase">{info.nombre||v}</div>
+                                <div className="text-[9px] font-bold text-gray-500 uppercase">{info.cargo||'VENDEDOR'}</div>
+                              </div>
+                            </div>
+                          </div>
+                          <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${activo?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{activo?'ACTIVO':'INACTIVO'}</span>
+                        </div>
+                        <div className="space-y-1 text-[10px] text-gray-600">
+                          {info.fechaIngreso && <div className="flex items-center gap-1.5"><span className="text-gray-400">📅</span> Ingreso: <b>{info.fechaIngreso}</b></div>}
+                          {info.region && <div className="flex items-center gap-1.5"><span className="text-gray-400">🗺</span> Región: <b className="uppercase">{info.region}</b></div>}
+                          {nEst>0 && <div className="flex items-center gap-1.5"><span className="text-gray-400">📍</span> <b>{nEst}</b> estado(s) asignado(s)</div>}
+                          {info.telefono && <div className="flex items-center gap-1.5"><span className="text-gray-400">📞</span>{info.telefono}</div>}
+                        </div>
+                        <div className="mt-3 flex justify-between items-center">
+                          <button onClick={e=>{e.stopPropagation();abrirFicha(v);}} className="text-[9px] font-black text-indigo-600 hover:underline">✏ Editar ficha</button>
+                          <button onClick={e=>{e.stopPropagation();eliminarVendedor(v);}} className="text-[9px] font-black text-red-400 hover:text-red-600">🗑 Eliminar</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {vendedores.length===0 && <p className="col-span-3 text-center text-gray-400 font-bold py-8 text-xs uppercase">Sin vendedores registrados. Crea el primero.</p>}
+                </div>
+              </div>
+
+              {/* Panel de ficha técnica */}
+              {fichaVend && (
+                <div className="bg-white rounded-3xl shadow-sm border-2 border-indigo-200 overflow-hidden">
+                  <div className="px-8 py-4 bg-indigo-600 text-white flex justify-between items-center">
+                    <h3 className="font-black text-sm uppercase flex items-center gap-2"><User size={16}/> Ficha Técnica — {fichaVend}</h3>
+                    <button onClick={()=>setFichaVend(null)} className="text-white/70 hover:text-white"><X size={18}/></button>
+                  </div>
+
+                  <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Col izquierda: datos personales */}
+                    <div className="space-y-4">
+                      <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest border-b pb-2">Datos Personales</h4>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre Completo</label>
+                          <input type="text" value={fichaData.nombre||''} onChange={e=>setFichaData({...fichaData,nombre:e.target.value.toUpperCase()})}
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 uppercase"/>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cargo</label>
+                          <select value={fichaData.cargo||'VENDEDOR'} onChange={e=>setFichaData({...fichaData,cargo:e.target.value})}
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500">
+                            {['VENDEDOR','SUPERVISOR DE VENTAS','EJECUTIVO DE CUENTAS','COORDINADOR','GERENTE DE VENTAS'].map(c=><option key={c}>{c}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha de Ingreso</label>
+                          <input type="date" value={fichaData.fechaIngreso||''} onChange={e=>setFichaData({...fichaData,fechaIngreso:e.target.value})}
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"/>
+                          <div className="text-[8px] text-gray-400 mt-0.5">Controla el Salario Garantizado (3 meses)</div>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Estatus</label>
+                          <select value={fichaData.activo?'activo':'inactivo'} onChange={e=>setFichaData({...fichaData,activo:e.target.value==='activo'})}
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500">
+                            <option value="activo">✅ Activo</option>
+                            <option value="inactivo">⛔ Inactivo</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Teléfono</label>
+                          <input type="text" value={fichaData.telefono||''} onChange={e=>setFichaData({...fichaData,telefono:e.target.value})}
+                            placeholder="0414-0000000"
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"/>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Email</label>
+                          <input type="email" value={fichaData.email||''} onChange={e=>setFichaData({...fichaData,email:e.target.value})}
+                            placeholder="vendedor@email.com"
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"/>
+                        </div>
+                      </div>
+
+                      <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest border-b pb-2 mt-4">Compensación Base</h4>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Salario Garantizado ($)</label>
+                          <input type="number" value={fichaData.salarioBase||''} onChange={e=>setFichaData({...fichaData,salarioBase:parseNum(e.target.value)})}
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 text-right"/>
+                          <div className="text-[8px] text-gray-400 mt-0.5">Solo aplica primeros 3 meses</div>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Bono Vehículo ($)</label>
+                          <input type="number" value={fichaData.bonoVehiculo||''} onChange={e=>setFichaData({...fichaData,bonoVehiculo:parseNum(e.target.value)})}
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 text-right"/>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Observaciones</label>
+                        <textarea rows={3} value={fichaData.observaciones||''} onChange={e=>setFichaData({...fichaData,observaciones:e.target.value})}
+                          placeholder="Notas adicionales sobre el vendedor..."
+                          className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 resize-none"/>
+                      </div>
+                    </div>
+
+                    {/* Col derecha: zona de ventas */}
+                    <div className="space-y-4">
+                      <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest border-b pb-2">Zona de Ventas — Estados Asignados</h4>
+                      <div>
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Región Principal</label>
+                        <div className="flex flex-wrap gap-2">
+                          {REGIONES.map(r=>(
+                            <button key={r.id} type="button"
+                              onClick={()=>setFichaData({...fichaData,region:fichaData.region===r.label?'':r.label})}
+                              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase transition-all ${fichaData.region===r.label?'bg-indigo-600 text-white':'bg-gray-100 text-gray-600 hover:bg-indigo-100'}`}>
+                              {r.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="text-[9px] font-black text-gray-500 uppercase">Estados (tilda los asignados)</label>
+                          <span className="text-[9px] font-black text-indigo-600">{(fichaData.estados||[]).length} seleccionado(s)</span>
+                        </div>
+                        {/* Botones por región para seleccionar todos */}
+                        <div className="flex flex-wrap gap-1.5 mb-3">
+                          {REGIONES.map(r=>{
+                            const todosSelec=r.estados.every(e=>(fichaData.estados||[]).includes(e));
+                            return (
+                              <button key={r.id} type="button" onClick={()=>toggleRegion(r)}
+                                className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase border transition-all ${todosSelec?'border-indigo-500 bg-indigo-100 text-indigo-700':'border-gray-200 text-gray-500 hover:border-indigo-300'}`}>
+                                {todosSelec?'✓':''} {r.label} ({r.estados.length})
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {/* Checkboxes de estados */}
+                        <div className="grid grid-cols-2 gap-1 max-h-64 overflow-y-auto border border-gray-100 rounded-xl p-3">
+                          {ESTADOS_VE.map(est=>{
+                            const sel=(fichaData.estados||[]).includes(est);
+                            return (
+                              <label key={est} className={`flex items-center gap-2 cursor-pointer px-2 py-1.5 rounded-lg text-[10px] font-bold transition-all ${sel?'bg-indigo-50 text-indigo-800':'text-gray-600 hover:bg-gray-50'}`}>
+                                <input type="checkbox" checked={sel} onChange={()=>toggleEstado(est)} className="accent-indigo-600"/>
+                                {est}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Footer con botones */}
+                  <div className="px-6 py-4 bg-gray-50 border-t flex justify-between items-center">
+                    <button onClick={()=>setFichaVend(null)} className="text-gray-500 hover:text-red-500 font-black text-xs uppercase">Cancelar</button>
+                    <button onClick={guardarFicha} disabled={fichaGuardando}
+                      className="bg-indigo-600 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2">
+                      {fichaGuardando?<><RefreshCw size={13} className="animate-spin"/> Guardando...</>:<><Save size={13}/> Guardar Ficha</>}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {ventasView === 'comisiones' && (() => {
           const vendedores = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : ['OFICINA','NELSON','LIANNY'];
           const ym = `${comAnio}-${String(comMes).padStart(2,'0')}`;
@@ -10085,7 +10382,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           const vendInfo=(settings?.vendedoresInfo||{})[(comVendedor||'').toUpperCase()]||{};
           const fechaIngreso=vendInfo.fechaIngreso||'';
           const mesesDesdeIngreso = fechaIngreso ? mesesEntre(fechaIngreso, ym+'-01') : 999;
-          const salarioAplica = fechaIngreso && mesesDesdeIngreso < 3; // meses 0,1,2
+          const salarioAplica = fechaIngreso && mesesDesdeIngreso < 3;
+          // Valores base desde la ficha del vendedor (editables si cambian)
+          const salarioBaseFicha = parseNum(vendInfo.salarioBase??300);
+          const bonoVehiculoFicha = parseNum(vendInfo.bonoVehiculo??200); // meses 0,1,2
 
           // Bonos (editables, persistidos por vendedor+mes). Montos por defecto configurables.
           const bonosKey = `${comVendedor||'GENERAL'}_${ym}`;
@@ -10096,8 +10396,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           const captacionAuto = nuevosCount >= minClientesCaptacion ? montoCaptacion : 0;
           const recuperacionAuto = recuperadosCount >= 1 ? montoRecuperacion : 0;
           const bonos = comBonos!==null ? comBonos : {
-            bonoVehiculo: parseNum(bonosGuardados.bonoVehiculo ?? 200),
-            salarioGarantizado: salarioAplica ? parseNum(bonosGuardados.salarioGarantizado ?? 300) : 0,
+            bonoVehiculo: parseNum(bonosGuardados.bonoVehiculo ?? bonoVehiculoFicha),
+            salarioGarantizado: salarioAplica ? parseNum(bonosGuardados.salarioGarantizado ?? salarioBaseFicha) : 0,
             captacion: parseNum(bonosGuardados.captacion ?? captacionAuto),
             recuperacion: parseNum(bonosGuardados.recuperacion ?? recuperacionAuto),
           };
@@ -10531,28 +10831,28 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 <span className="text-[10px] font-black uppercase tracking-wider">🛒 Productos Seleccionados ({fgItems.length})</span>
                                 <span className="text-[9px] font-bold opacity-80">Haz clic en ✕ para quitar un producto</span>
                               </div>
-                              <div className="w-full">
+                              <div className="overflow-x-auto">
                               <table className="w-full text-xs" style={{tableLayout:'auto'}}>
                                 <thead>
                                   <tr className="font-black text-[9px] uppercase bg-gray-50 border-b-2 border-green-200">
-                                    <th className="px-2 py-2 text-left whitespace-nowrap">Código</th>
-                                    <th className="px-2 py-2 text-left" style={{width:'40%'}}>Producto / Descripción</th>
-                                    <th className="px-2 py-2 text-center whitespace-nowrap">Cant.</th>
-                                    <th className="px-2 py-2 text-right whitespace-nowrap">Precio U.</th>
-                                    <th className="px-2 py-2 text-right whitespace-nowrap">Total</th>
-                                    <th className="px-2 py-2 text-center">Alm.</th>
-                                    <th className="px-2 py-2 text-center">✕</th>
+                                    <th className="p-2.5 text-left">Código</th>
+                                    <th className="p-2.5 text-left">Producto / Descripción</th>
+                                    <th className="p-2.5 text-center">Cant. Total</th>
+                                    <th className="p-2.5 text-right">Precio U.</th>
+                                    <th className="p-2.5 text-right">Total</th>
+                                    <th className="p-2.5 text-center">Alm.</th>
+                                    <th className="p-2.5 text-center">✕</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-green-100">
                                   {fgItems.map((item, idx) => (
                                     <tr key={idx} className="hover:bg-red-50 group">
-                                      <td className="px-2 py-2 font-black text-orange-600 text-[9px] whitespace-nowrap">{item.invCode||cleanFGCode(item.fgId||'')}</td>
-                                      <td className="px-2 py-2 font-bold text-gray-800 text-[10px] leading-tight">{item.desc}</td>
-                                      <td className="px-2 py-2 text-center font-black text-green-700 text-[10px]">{formatNum(item.cantidad)}<br/><span className="text-[8px] text-gray-400 font-normal">{item.unidad}</span></td>
-                                      <td className="px-2 py-2 text-right font-black text-[10px] whitespace-nowrap">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
-                                      <td className="px-2 py-2 text-right font-black text-gray-800 text-[10px] whitespace-nowrap">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
-                                      <td className="px-2 py-2 text-center relative">
+                                      <td className="p-2.5 font-black text-orange-600 text-[9px] truncate">{item.invCode||cleanFGCode(item.fgId||'')}</td>
+                                      <td className="p-2.5 font-bold text-gray-800 text-[10px] leading-tight">{item.desc}</td>
+                                      <td className="p-2.5 text-center font-black text-green-700 text-[10px]">{formatNum(item.cantidad)}<br/><span className="text-[8px] text-gray-400 font-normal">{item.unidad}</span></td>
+                                      <td className="p-2.5 text-right font-black text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
+                                      <td className="p-2.5 text-right font-black text-gray-800 text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
+                                      <td className="p-2.5 text-center relative">
                                         {(()=>{
                                           const code=item.invCode||(item.fgId||'').split('___')[0];
                                           const whs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
@@ -10577,7 +10877,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                           </div>;
                                         })()}
                                       </td>
-                                      <td className="px-2 py-2 text-center">
+                                      <td className="p-2.5 text-center">
                                         <button type="button" onClick={()=>setFgItems(p=>p.filter((_,i)=>i!==idx))}
                                           className="bg-red-100 hover:bg-red-500 text-red-500 hover:text-white p-1.5 rounded-lg transition-all" title="Quitar producto">
                                           <X size={13}/>
@@ -10667,10 +10967,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         {showInvClientDropdown && <div className="fixed inset-0 z-40" onClick={()=>setShowInvClientDropdown(false)}/>}
                       </div>
                       
+
                       <div>
                         <label className="text-[9px] font-black text-gray-600 uppercase mb-1 block">Vendedor</label>
                         {(()=>{
-                          const vendedores = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : ['OFICINA','NELSON','LIANNY'];
+                          const vendedores = ((settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : ['OFICINA','NELSON','LIANNY'])
+                            .filter(v=>(settings?.vendedoresInfo||{})[v.toUpperCase()]?.activo!==false);
                           const actual = (newInvoiceForm.vendedor||'').toUpperCase();
                           const enLista = !actual || vendedores.includes(actual);
                           return (
@@ -10679,7 +10981,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 if(e.target.value==='__NUEVO__'){
                                   const nv=(prompt('Nombre del nuevo vendedor:')||'').toUpperCase().trim();
                                   if(nv){
-                                    const fi=(prompt('Fecha de ingreso del vendedor (AAAA-MM-DD)\\nSe usa para el Salario Garantizado (primeros 3 meses):', getTodayDate())||'').trim();
+                                    const fi=(prompt('Fecha de ingreso del vendedor (AAAA-MM-DD)\nSe usa para el Salario Garantizado (primeros 3 meses):', getTodayDate())||'').trim();
                                     const lista=Array.from(new Set([...vendedores,nv]));
                                     const info={...(settings?.vendedoresInfo||{}), [nv]:{fechaIngreso:fi||''}};
                                     await setDoc(getDocRef('settings','general'),{vendedores:lista, vendedoresInfo:info},{merge:true});
@@ -20029,6 +20331,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    {id:'productos_vendidos', icon:<Package size={16}/>,  label:'Productos Vendidos',perm:'ventas_productos_vendidos'},
                    {id:'reporte_ventas',     icon:<BarChart3 size={16}/>, label:'Reporte Ventas',    perm:'ventas_facturacion'},
                    {id:'comisiones',         icon:<DollarSign size={16}/>, label:'Comisiones',       perm:'ventas_facturacion'},
+                   {id:'vendedores',          icon:<Users size={16}/>,      label:'Vendedores',        perm:'ventas_facturacion'},
                  ].filter(t=>hasPerm(t.perm)||hasPerm('ventas')||appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
