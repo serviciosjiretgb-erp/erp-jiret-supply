@@ -121,6 +121,8 @@ const getTodayDate = () => {
 };
 
 const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
+// Tasa de cambio: hasta 4 decimales (mínimo 2)
+const formatTasa = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(num || 0);
 
 // Format finished goods label: PRODUCTO ANCHO×LARGO×MICMiC - CLIENTE
 // Video de login: se carga desde Firebase settings.loginVideo
@@ -8585,7 +8587,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                    </div>
                    <div>
                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa de Cambio (Bs/$)</label>
-                     <input type="number" step="0.01" min="0" id="tasaCambio177" defaultValue={settings.tasaCambio||''} onBlur={async e=>{await setDoc(getDocRef('settings','general'),{tasaCambio:parseNum(e.target.value)},{merge:true});}} className="w-40 border-2 border-orange-300 bg-orange-50 rounded-xl p-3 font-black text-xs outline-none text-center focus:border-orange-500" placeholder="Ej: 90.50"/>
+                     <input type="number" step="0.0001" min="0" id="tasaCambio177" defaultValue={settings.tasaCambio||''} onBlur={async e=>{await setDoc(getDocRef('settings','general'),{tasaCambio:parseNum(e.target.value)},{merge:true});}} className="w-40 border-2 border-orange-300 bg-orange-50 rounded-xl p-3 font-black text-xs outline-none text-center focus:border-orange-500" placeholder="Ej: 90.5042"/>
                      <p className="text-[8px] text-gray-400 font-bold mt-0.5">Si se ingresa, los costos se muestran en Bs</p>
                    </div>
                  </div>
@@ -8593,11 +8595,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                  <div className="hidden pdf-header mb-6">
                    <ReportHeader />
                    <h1 className="text-xl font-black text-black uppercase border-b-2 border-orange-500 pb-1">MOVIMIENTO POR UNIDADES — INVENTARIO</h1>
-                   <p className="text-xs font-bold text-gray-500 uppercase mt-1">PERÍODO: {reportMonth.toString().padStart(2, '0')} / {reportYear}{settings.tasaCambio ? ` | TASA: Bs ${formatNum(settings.tasaCambio)}/$` : ''}</p>
+                   <p className="text-xs font-bold text-gray-500 uppercase mt-1">PERÍODO: {reportMonth.toString().padStart(2, '0')} / {reportYear}{settings.tasaCambio ? ` | TASA: Bs ${formatTasa(settings.tasaCambio)}/$` : ''}</p>
                  </div>
 
                  <div className="border border-gray-300 rounded-xl overflow-hidden shadow-sm">
-                   {tc > 0 && <div className="bg-orange-50 border-b border-orange-200 px-4 py-1.5 text-[9px] font-black text-orange-800 uppercase">Tasa de Cambio: Bs {formatNum(tc)} / $ — Valores en Bolívares</div>}
+                   {tc > 0 && <div className="bg-orange-50 border-b border-orange-200 px-4 py-1.5 text-[9px] font-black text-orange-800 uppercase">Tasa de Cambio: Bs {formatTasa(tc)} / $ — Valores en Bolívares</div>}
                    <table id="reporte-177-table" className="w-full text-[10px] border-collapse text-black bg-white">
                      <thead>
                        <tr className="bg-white">
@@ -8726,7 +8728,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               <p className="text-[10px] text-gray-500 font-black">FECHA EMISIÓN:</p>
               <p>{inv.fecha}</p>
               {inv.nroFiscal && <p className="text-xs font-bold text-gray-600 mt-1">NRO. FISCAL: <span className="text-black">{inv.nroFiscal}</span></p>}
-              {parseNum(inv.tasa)>0 && <p className="text-xs font-bold text-gray-600 mt-1">TASA Bs/$: <span className="text-black">{formatNum(inv.tasa)}</span></p>}
+              {parseNum(inv.tasa)>0 && <p className="text-xs font-bold text-gray-600 mt-1">TASA Bs/$: <span className="text-black">{formatTasa(inv.tasa)}</span></p>}
               <p className="text-xs font-bold text-gray-600 mt-1">VENDEDOR: {inv.vendedor || 'N/A'}</p>
               {inv.opAsignada && <p className="text-[10px] text-orange-600 font-black mt-1">OP RELACIONADA: #{String(inv.opAsignada).replace('OP-','').padStart(5,'0')}</p>}
             </div>
@@ -8797,7 +8799,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   <div className="flex justify-between font-bold text-sm"><span>SUBTOTAL:</span><span>${formatNum(base)}</span></div>
                   {inv.aplicaIva === 'SI' && <div className="flex justify-between font-bold text-sm"><span>IVA (16%):</span><span>${formatNum(ivaAmt)}</span></div>}
                   <div className="flex justify-between font-black text-2xl border-t-2 border-black pt-2 text-orange-600"><span>TOTAL:</span><span>${formatNum(totalFinal)}</span></div>
-                  {parseNum(inv.tasa)>0 && <div className="flex justify-between font-bold text-xs text-gray-600 pt-1"><span>TOTAL Bs (Tasa {formatNum(inv.tasa)}):</span><span>Bs {formatNum(totalFinal*parseNum(inv.tasa))}</span></div>}
+                  {parseNum(inv.tasa)>0 && <div className="flex justify-between font-bold text-xs text-gray-600 pt-1"><span>TOTAL Bs (Tasa {formatTasa(inv.tasa)}):</span><span>Bs {formatNum(totalFinal*parseNum(inv.tasa))}</span></div>}
                 </>);
               })()}
             </div>
@@ -8893,6 +8895,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               if(costoU <= 0 && fg) costoU = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
               soldItems.push({
                 factura: inv.documento||inv.id,
+                nroFiscal: inv.nroFiscal||'',
                 fecha: inv.fecha,
                 cliente: inv.clientName||inv.clientRif||'—',
                 producto: it.desc || (fg ? (formatFGLabel(fg)||fg.producto||fg.id) : (it.fgId||'—')),
@@ -8948,6 +8951,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   {(pvFiltCliente !== 'TODOS' || pvFiltProducto !== 'TODOS') && (
                     <button onClick={()=>{pvSetCliente('TODOS');pvSetProducto('TODOS');}} className="text-[9px] font-black text-red-500 uppercase hover:underline mt-4">✕ Limpiar</button>
                   )}
+                  <button onClick={()=>{
+                    const periodo = pvFilter&&pvFilter!=='general'?pvFilter:'General';
+                    const fmtOp = (op)=>op&&op!=='—'?('#'+String(op).replace('OP-','').padStart(5,'0')):'—';
+                    const thead=['Factura','Nro. Fiscal','OP Relacionada','Fecha','Cliente','Producto','Medida','Cantidad','Costo Unit. USD','Costo Total USD'];
+                    const tbody=pvFiltered.map(s=>[s.factura,s.nroFiscal||'—',fmtOp(s.opId),s.fecha,s.cliente,s.producto,s.medida,formatNum(s.cantidad),formatNum(s.costoUnd),formatNum(s.cantidad*s.costoUnd)]);
+                    const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=7?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');
+                    const totCant=pvFiltered.reduce((a,r)=>a+r.cantidad,0);
+                    const totCosto=pvFiltered.reduce((a,r)=>a+r.cantidad*r.costoUnd,0);
+                    const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE DE PRODUCTOS VENDIDOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="7" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES (${pvFiltered.length} líneas)</td><td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${formatNum(totCant)}</td><td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;"></td><td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${formatNum(totCosto)}</td></tr></tfoot></table></body></html>`;
+                    const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Productos_Vendidos_${periodo}_${getTodayDate()}.xls`;a.click();
+                  }} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 mt-4"><Download size={13}/> Excel</button>
                   <button onClick={()=>handleExportPDF('Productos_Vendidos',true)} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 mt-4"><Printer size={13}/> Imprimir</button>
                 </div>
               </div>
@@ -8957,6 +8971,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   <thead className="bg-gray-800 text-white">
                     <tr className="uppercase font-black text-[9px] tracking-widest">
                       <th className="py-3 px-4 border-r border-gray-700 text-left">Factura</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-left">Nro. Fiscal</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-center">OP Relacionada</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-center">Fecha</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-left">Cliente</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-left">Producto</th>
@@ -8968,10 +8984,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {pvFiltered.length === 0 ? (
-                      <tr><td colSpan="8" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas para los filtros seleccionados.</td></tr>
+                      <tr><td colSpan="10" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas para los filtros seleccionados.</td></tr>
                     ) : pvFiltered.map((s,i) => (
                       <tr key={i} className="hover:bg-gray-50">
                         <td className="py-3 px-4 border-r font-black text-orange-600">{s.factura}</td>
+                        <td className="py-3 px-4 border-r font-bold text-gray-600 text-[10px]">{s.nroFiscal||'—'}</td>
+                        <td className="py-3 px-4 border-r text-center font-black text-orange-600 text-[10px]">{s.opId&&s.opId!=='—'?('#'+String(s.opId).replace('OP-','').padStart(5,'0')):'—'}</td>
                         <td className="py-3 px-4 border-r text-center font-bold text-gray-600">{s.fecha}</td>
                         <td className="py-3 px-4 border-r font-bold uppercase text-[10px]">{s.cliente}</td>
                         <td className="py-3 px-4 border-r font-black text-[10px]">{s.producto}</td>
@@ -8985,7 +9003,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   {pvFiltered.length > 0 && (
                     <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-black">
                       <tr>
-                        <td colSpan="5" className="py-3 px-4 text-[10px] uppercase text-gray-500">Total filtrado: {pvFiltered.length} líneas</td>
+                        <td colSpan="7" className="py-3 px-4 text-[10px] uppercase text-gray-500">Total filtrado: {pvFiltered.length} líneas</td>
                         <td className="py-3 px-4 text-right">{formatNum(pvFiltered.reduce((s,r)=>s+r.cantidad,0))}</td>
                         <td></td>
                         <td className="py-3 px-4 text-right text-orange-600">${formatNum(pvFiltered.reduce((s,r)=>s+r.cantidad*r.costoUnd,0))}</td>
@@ -9329,7 +9347,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px;font-size:11px">
                                 <div><b>Cliente:</b> ${cot.clientName||'—'}</div><div><b>Fecha:</b> ${cot.fecha}</div>
                                 <div><b>Vendedor:</b> ${cot.vendedor||'—'}</div><div><b>Validez:</b> ${cot.validez||15} días</div>
-                                ${cot.tasa>0?`<div><b>Tasa Bs/$:</b> ${formatNum(cot.tasa)}</div>`:''} 
+                                ${cot.tasa>0?`<div><b>Tasa Bs/$:</b> ${formatTasa(cot.tasa)}</div>`:''} 
                               </div>
                               <table><thead><tr><th>Descripción</th><th>Cantidad</th><th>Precio Unit.</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>
                               <div style="text-align:right;margin-top:20px;font-size:13px">
@@ -9548,7 +9566,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           filtInvs.forEach(inv=>{
             const items = inv.itemsFacturados||[];
             if(items.length===0){
-              rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+              rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
             } else {
               items.forEach(it=>{
                 const qty=parseNum(it.cantidad||1);
@@ -9661,7 +9679,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
                 // 4. Fallback: invCode clean if anything
                 if(!codigo) codigo = _cc || getClean(it.fgId||'') || '—';
-                rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+                rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
           });
@@ -9681,7 +9699,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <option value="general">📊 General (Todo)</option>
                     {Array.from(new Set((invoices||[]).filter(Boolean).map(i=>(i.fecha||'').substring(0,7)).filter(ym=>ym&&ym.length===7))).sort().map(ym=>{const [y,m]=ym.split('-');const label=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1]+' '+y;return <option key={ym} value={ym}>{label}</option>;})}
                   </select>
-                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','Nro. Fiscal','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=rows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.nroFiscal||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatNum(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=7&&ci<=12?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="7" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
+                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','Nro. Fiscal','OP Relacionada','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=rows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.nroFiscal||'—',r.op||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=8&&ci<=13?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="8" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
                   <button onClick={()=>handleExportPDF('Reporte_Ventas_Costos', true)} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Printer size={12}/> Imprimir</button>
                 </div>
               </div>
@@ -9692,13 +9710,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               </div>
               <div className="overflow-x-auto rounded-xl border border-gray-100">
                 <table className="w-full border-collapse text-[9px]" style={{minWidth:900}}>
-                  <thead><tr className="bg-black text-white">{['Fecha','Documento','Nro. Fiscal','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','Total Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2.5 px-3 text-left font-black uppercase text-[8px] whitespace-nowrap">{h}</th>)}</tr></thead>
+                  <thead><tr className="bg-black text-white">{['Fecha','Documento','Nro. Fiscal','OP Relacionada','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','Total Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2.5 px-3 text-left font-black uppercase text-[8px] whitespace-nowrap">{h}</th>)}</tr></thead>
                   <tbody>
                     {rows.map((r,i)=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return(
                       <tr key={i} className={`border-b border-gray-50 ${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
                         <td className="py-1.5 px-3 font-bold text-gray-500 whitespace-nowrap">{r.fecha}</td>
                         <td className="py-1.5 px-3 font-black text-orange-600 whitespace-nowrap">{r.doc}</td>
                         <td className="py-1.5 px-3 font-bold text-gray-600 whitespace-nowrap">{r.nroFiscal||'—'}</td>
+                        <td className="py-1.5 px-3 font-black text-orange-600 whitespace-nowrap">{r.op||'—'}</td>
                         <td className="py-1.5 px-3 font-bold max-w-[120px] truncate" title={r.cliente}>{r.cliente}</td>
                         <td className="py-1.5 px-3 font-black text-indigo-600 whitespace-nowrap">{r.codigo}</td>
                         <td className="py-1.5 px-3 font-bold" style={{minWidth:160,maxWidth:220,whiteSpace:'normal',wordBreak:'break-word'}}>{r.producto}</td>
@@ -9709,10 +9728,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         <td className="py-1.5 px-3 font-bold text-right text-gray-500 whitespace-nowrap">USD {formatNum(r.costoTotal)}</td>
                         <td className={`py-1.5 px-3 font-black text-right whitespace-nowrap ${util>=0?'text-green-600':'text-red-500'}`}>USD {formatNum(util)}</td>
                         <td className={`py-1.5 px-3 font-black text-center ${pct>=30?'text-green-600':pct>=15?'text-yellow-600':'text-red-500'}`}>{pct}%</td>
-                        <td className="py-1.5 px-3 font-bold text-right text-gray-400 whitespace-nowrap">{r.tasa>0?formatNum(r.tasa):'—'}</td>
+                        <td className="py-1.5 px-3 font-bold text-right text-gray-400 whitespace-nowrap">{r.tasa>0?formatTasa(r.tasa):'—'}</td>
                       </tr>
                     );})}
-                    {rows.length===0 && <tr><td colSpan={14} className="py-8 text-center text-gray-400 font-bold">Sin datos en el período seleccionado</td></tr>}
+                    {rows.length===0 && <tr><td colSpan={15} className="py-8 text-center text-gray-400 font-bold">Sin datos en el período seleccionado</td></tr>}
                   </tbody>
                   {rows.length>0 && <tfoot><tr className="bg-black text-white font-black">
                     <td colSpan={5} className="py-2.5 px-3 text-[8px] uppercase">TOTALES</td>
@@ -10124,7 +10143,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       
                       <div>
                         <label className="text-[9px] font-black text-gray-600 uppercase mb-1 block">Tasa Bs/$</label>
-                        <input type="number" step="0.01" min="0" value={newInvoiceForm.tasa||''}
+                        <input type="number" step="0.0001" min="0" value={newInvoiceForm.tasa||''}
                           onChange={e=>setNewInvoiceForm({...newInvoiceForm, tasa:e.target.value})}
                           className="w-28 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black text-center"
                           placeholder={`${formatNum(settings?.tasaBCV||0)}`}/>
@@ -15959,7 +15978,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   <div className="flex flex-col gap-3">
                     <div>
                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Período: {efaLabel}</label>
-                      <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-28 text-center" />
+                      <input type="number" step="0.0001" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-28 text-center" />
                       <label className="text-[9px] font-bold text-gray-400 block mt-0.5">Tasa Bs/$</label>
                     </div>
                     <button onClick={()=>handleExportPDF('Estado_Resultado_Integral', false)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir</button>
@@ -16793,7 +16812,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     </div>
                   </div>
                   <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa (Bs/$)</label>
-                    <input type="number" step="0.01" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-32 text-center" />
+                    <input type="number" step="0.0001" value={erTasa} onChange={e=>setErTasa(e.target.value)} placeholder="392.00" className="border-2 border-gray-200 rounded-xl p-2.5 font-black text-xs outline-none w-32 text-center" />
                   </div>
                   <button onClick={()=>handleExportPDF('Estado_Resultado', false)} className="bg-black text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-gray-800"><Printer size={14}/> Imprimir</button>
                 </div>
