@@ -2546,8 +2546,11 @@ export default function App() {
       });
 
       // ── Construir lista de items a descontar del inventario ──
-      // Se ejecuta SIEMPRE (creación Y edición) para garantizar el descuento
-      let itemsToProcess = [...fgItems];
+      // En EDICIÓN: solo descontar ítems NUEVOS (sin _savedItem). Los ya guardados no se tocan.
+      // En CREACIÓN: descontar todos.
+      let itemsToProcess = editingInvoiceId
+        ? [...fgItems].filter(it => !it._savedItem)
+        : [...fgItems];
 
       // Auto-incluir selección pendiente en formulario (si no se presionó AGREGAR)
       if (newInvoiceForm.fgId) {
@@ -2693,7 +2696,7 @@ export default function App() {
       }
 
       setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm); setFgItems([]); setDescuentoVal(""); setDescuentoTipo("monto"); setEditingFgIdx(null);
-      setDialog({title: '✅ Éxito', text: editingInvoiceId ? `Factura ${id} actualizada y stock descontado.` : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
+      setDialog({title: '✅ Éxito', text: editingInvoiceId ? `Factura ${id} actualizada correctamente.` : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
     } catch(err) { setDialog({title: 'Error al guardar factura', text: err.message, type: 'alert'}); }
   };
   const handleDeleteInvoice = (id) => {
@@ -9660,6 +9663,205 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           );
         })()}
 
+          );
+        })()}
+
+        {ventasView === 'dashboard' && (() => {
+          const ymD=`${dashAnio}-${String(dashMes).padStart(2,'0')}`;
+          const mesLabelD=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][dashMes-1];
+          const facts=(invoices||[]).filter(inv=>(inv.fecha||'').startsWith(ymD));
+          const detalle=[];
+          facts.forEach(inv=>{const vend=(inv.vendedor||'—').toUpperCase();(inv.itemsFacturados||[]).forEach(it=>{const cant=parseNum(it.cantidad||1);const precio=parseNum(it.precioUnit||0);detalle.push({vend,fecha:inv.fecha,cliente:inv.clientName||'—',producto:it.desc||it.invCode||'—',cant,precio,monto:precio*cant});});if(!(inv.itemsFacturados||[]).length)detalle.push({vend,fecha:inv.fecha,cliente:inv.clientName||'—',producto:inv.productoMaquilado||'—',cant:1,precio:parseNum(inv.montoBase||0),monto:parseNum(inv.montoBase||inv.total||0)});});
+          const porVend={};facts.forEach(inv=>{const v=(inv.vendedor||'—').toUpperCase();porVend[v]=(porVend[v]||0)+parseNum(inv.montoBase||inv.total||0);});
+          const vendArr=Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
+          const totalVentas=vendArr.reduce((s,v)=>s+v.monto,0);
+          const colores=['bg-blue-500','bg-cyan-500','bg-purple-500','bg-emerald-500','bg-amber-500','bg-rose-500'];
+          const vendUnicos=['todos',...Array.from(new Set(detalle.map(d=>d.vend)))];
+          const cliUnicos=['todos',...Array.from(new Set(detalle.map(d=>d.cliente))).sort()];
+          const detalleFilt=detalle.filter(d=>(dashVendFiltro==='todos'||d.vend===dashVendFiltro)&&(dashClienteFiltro==='todos'||d.cliente===dashClienteFiltro)&&(!dashBusqueda||JSON.stringify(d).toLowerCase().includes(dashBusqueda.toLowerCase())));
+          return (
+            <div className="space-y-6">
+              <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-6 flex justify-between items-center flex-wrap gap-3">
+                <div><h2 className="text-2xl font-black text-gray-800 flex items-center gap-3"><BarChart3 className="text-indigo-500" size={26}/> Dashboard de Ventas</h2><span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 rounded-full py-1 px-4">{mesLabelD} {dashAnio}</span></div>
+                <div className="flex gap-3 items-end">
+                  <div><label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Mes</label><select value={dashMes} onChange={e=>setDashMes(parseInt(e.target.value))} className="border-2 border-indigo-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white">{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'].map((m,i)=><option key={i} value={i+1}>{m}</option>)}</select></div>
+                  <div><label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Año</label><input type="number" value={dashAnio} onChange={e=>setDashAnio(parseInt(e.target.value)||dashAnio)} className="border-2 border-indigo-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white w-24 text-center"/></div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                {[{label:'Mejor Vendedor',val:vendArr[0]?vendArr[0].vend:'—',sub:vendArr[0]&&totalVentas>0?formatNum(vendArr[0].monto/totalVentas*100)+'%':''},
+                  {label:'Venta más Grande',val:'$'+formatNum((facts.reduce((mx,inv)=>Math.max(mx,parseNum(inv.montoBase||inv.total||0)),0))),sub:''},
+                  {label:'Facturas',val:facts.length,sub:detalle.length+' líneas'},
+                  {label:'Ventas Totales',val:'$'+formatNum(totalVentas),sub:mesLabelD+' '+dashAnio}
+                ].map((k,i)=>(
+                  <div key={i} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 text-center">
+                    <div className="text-[10px] font-black text-gray-500 uppercase mb-1">{k.label}</div>
+                    <div className="text-xl font-black text-gray-800">{k.val}</div>
+                    <div className="text-[11px] text-gray-500">{k.sub}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <h3 className="text-base font-black text-gray-800 mb-4">Volumen por Vendedor — Total ${formatNum(totalVentas)}</h3>
+                {vendArr.length===0?<p className="text-gray-400 text-sm text-center py-4">Sin ventas en este período.</p>:vendArr.map((v,i)=>{const pct=totalVentas>0?v.monto/totalVentas*100:0;return(<div key={v.vend} className="mb-3"><div className="flex justify-between mb-1"><span className="font-black text-gray-700 text-sm uppercase">{v.vend}</span><span className="text-sm font-black">${formatNum(v.monto)} ({formatNum(pct)}%)</span></div><div className="w-full bg-gray-100 rounded-full h-4"><div className={`${colores[i%colores.length]} h-4 rounded-full`} style={{width:Math.max(pct,1)+'%'}}></div></div></div>);})}
+              </div>
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-3">
+                  <h3 className="text-base font-black text-gray-800">Detalle de Ventas</h3>
+                  <div className="flex gap-2 flex-wrap">
+                    <select value={dashVendFiltro} onChange={e=>setDashVendFiltro(e.target.value)} className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none">{vendUnicos.map(v=><option key={v} value={v}>{v==='todos'?'Todos los Vendedores':v}</option>)}</select>
+                    <select value={dashClienteFiltro} onChange={e=>setDashClienteFiltro(e.target.value)} className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none">{cliUnicos.map(c=><option key={c} value={c}>{c==='todos'?'Todos los Clientes':c}</option>)}</select>
+                    <input type="text" value={dashBusqueda} onChange={e=>setDashBusqueda(e.target.value)} placeholder="Buscar..." className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none"/>
+                  </div>
+                </div>
+                <div className="overflow-x-auto border border-gray-100 rounded-xl">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-100 text-[9px] font-black text-gray-600 uppercase"><tr><th className="px-3 py-2 text-left">Vendedor</th><th className="px-3 py-2 text-left">Fecha</th><th className="px-3 py-2 text-left">Cliente</th><th className="px-3 py-2 text-left">Producto</th><th className="px-3 py-2 text-right">Cant.</th><th className="px-3 py-2 text-right">Precio</th><th className="px-3 py-2 text-right">Monto</th></tr></thead>
+                    <tbody className="divide-y divide-gray-50">{detalleFilt.length===0?<tr><td colSpan="7" className="py-8 text-center text-gray-400 text-[10px] uppercase">Sin ventas para los filtros.</td></tr>:detalleFilt.map((d,i)=>(
+                      <tr key={i} className="hover:bg-indigo-50">
+                        <td className="px-3 py-2 font-black text-indigo-700 uppercase text-[10px]">{d.vend}</td><td className="px-3 py-2 text-gray-500 font-bold whitespace-nowrap">{d.fecha}</td><td className="px-3 py-2 font-bold text-gray-800 uppercase text-[10px]">{d.cliente}</td><td className="px-3 py-2 text-gray-600 text-[10px]">{d.producto}</td><td className="px-3 py-2 text-right font-bold">{formatNum(d.cant)}</td><td className="px-3 py-2 text-right font-bold">${formatNum(d.precio)}</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(d.monto)}</td>
+                      </tr>
+                    ))}</tbody>
+                    <tfoot className="bg-gray-100 font-black text-xs"><tr className="border-t-2 border-gray-300"><td className="px-3 py-2 uppercase" colSpan="6">Total ({detalleFilt.length} líneas)</td><td className="px-3 py-2 text-right text-green-700">${formatNum(detalleFilt.reduce((s,d)=>s+d.monto,0))}</td></tr></tfoot>
+                  </table>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {ventasView === 'comisiones' && (() => {
+          const ym=`${comAnio}-${String(comMes).padStart(2,'0')}`;
+          const mesLabel=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][comMes-1];
+          const vendedores=(settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[];
+          const vendedoresInfo=settings?.vendedoresInfo||{};
+          const cfg=settings?.comisionesConfig||{};
+          const facturasMes=(invoices||[]).filter(inv=>(inv.fecha||'').startsWith(ym)&&(!comVendedor||(inv.vendedor||'').toUpperCase()===comVendedor.toUpperCase()));
+          const totalVentasVend=facturasMes.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
+          const metaTabla=cfg.metaTabla||[{min:15000,max:49999,pct:0.20},{min:50000,max:99999,pct:0.30},{min:100000,max:149999,pct:0.35},{min:150000,max:199999,pct:0.40},{min:200000,max:275000,pct:0.45}];
+          const escMeta=metaTabla.find(e=>totalVentasVend>=e.min&&totalVentasVend<=e.max);
+          const comisionMeta=escMeta?parseFloat((totalVentasVend*(escMeta.pct/100)).toFixed(2)):0;
+          const bonosKey=`${comVendedor||'GENERAL'}_${ym}`;
+          const bonosGuardados=(settings?.comisionesBonos||{})[bonosKey]||{};
+          const vendInfo=vendedoresInfo[(comVendedor||'').toUpperCase()]||{};
+          const fechaIngreso=vendInfo.fechaIngreso||'';
+          const mesesDesdeIngreso=fechaIngreso?(()=>{const a=new Date(fechaIngreso),b=new Date(ym+'-01');return(b.getFullYear()-a.getFullYear())*12+(b.getMonth()-a.getMonth());})():999;
+          const salarioAplica=fechaIngreso&&mesesDesdeIngreso<3;
+          const bonos=comBonos!==null?comBonos:{bonoVehiculo:parseNum(bonosGuardados.bonoVehiculo??(vendInfo.bonoVehiculo??200)),salarioGarantizado:salarioAplica?parseNum(bonosGuardados.salarioGarantizado??(vendInfo.salarioBase??300)):0,captacion:parseNum(bonosGuardados.captacion??0),recuperacion:parseNum(bonosGuardados.recuperacion??0)};
+          const totalCobranza=(comCobranza||[]).reduce((s,r)=>s+parseNum(r.montoPagar||0),0);
+          const compensacionTotal=bonos.bonoVehiculo+bonos.salarioGarantizado+bonos.captacion+bonos.recuperacion+comisionMeta+totalCobranza;
+          const guardarBonos=async()=>{const n={...(settings?.comisionesBonos||{}),[bonosKey]:bonos};await setDoc(getDocRef('settings','general'),{comisionesBonos:n},{merge:true});setDialog({title:'✅ Guardado',text:'Bonos guardados.',type:'alert'});};
+          return (
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-6 space-y-6">
+              <h2 className="text-xl font-black text-green-900 uppercase flex items-center gap-3"><DollarSign className="text-green-600" size={24}/> Comisiones de Vendedores</h2>
+              <div className="flex gap-3 items-end flex-wrap">
+                <div><label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Vendedor</label><select value={comVendedor} onChange={e=>{setComVendedor(e.target.value);setComBonos(null);}} className="border-2 border-green-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white"><option value="">— Todos —</option>{vendedores.map(v=><option key={v} value={v}>{v}</option>)}</select></div>
+                <div><label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Mes</label><select value={comMes} onChange={e=>{setComMes(parseInt(e.target.value));setComBonos(null);}} className="border-2 border-green-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white">{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'].map((m,i)=><option key={i} value={i+1}>{m}</option>)}</select></div>
+                <div><label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Año</label><input type="number" value={comAnio} onChange={e=>{setComAnio(parseInt(e.target.value)||comAnio);setComBonos(null);}} className="border-2 border-green-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white w-24 text-center"/></div>
+                {comVendedor&&<div><label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Fecha Ingreso</label><input type="date" value={vendInfo.fechaIngreso||''} onChange={async e=>{const info={...(settings?.vendedoresInfo||{}),[comVendedor.toUpperCase()]:{...vendInfo,fechaIngreso:e.target.value}};await setDoc(getDocRef('settings','general'),{vendedoresInfo:info},{merge:true});setComBonos(null);}} className="border-2 border-blue-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-blue-50 w-36"/></div>}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-gray-50 rounded-2xl p-4">
+                  <div className="text-[10px] font-black text-gray-500 uppercase mb-1">Ventas del período</div>
+                  <div className="text-3xl font-black text-green-700">${formatNum(totalVentasVend)}</div>
+                  <div className="text-[10px] text-gray-500 mt-1">{facturasMes.length} facturas · {mesLabel} {comAnio}</div>
+                  {escMeta?<div className="mt-2 text-[10px] font-black text-green-600 bg-green-100 rounded-lg px-2 py-1">Escalón {escMeta.pct}% → ${formatNum(comisionMeta)}</div>:<div className="mt-2 text-[10px] font-black text-gray-400 bg-gray-100 rounded-lg px-2 py-1">Sin meta alcanzada (mín $15,000)</div>}
+                </div>
+                <div>
+                  <table className="w-full text-xs border-collapse">
+                    <thead><tr className="bg-green-600 text-white"><th className="px-3 py-2 text-left text-[8px] uppercase font-black">Concepto</th><th className="px-3 py-2 text-right text-[8px] uppercase font-black">Editable</th><th className="px-3 py-2 text-right text-[8px] uppercase font-black">Monto</th></tr></thead>
+                    <tbody className="divide-y divide-gray-100">
+                      <tr><td className="px-3 py-2 font-bold">Comisión Meta ({escMeta?escMeta.pct+'%':'—'})</td><td className="px-3 py-2 text-right text-gray-400 text-[9px]">Automático</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(comisionMeta)}</td></tr>
+                      {[['Bono Vehículo','bonoVehiculo'],['Salario Garantizado','salarioGarantizado'],['Captación','captacion'],['Recuperación','recuperacion']].map(([lbl,fld])=>(
+                        <tr key={fld}><td className="px-3 py-2 font-bold">{lbl}{fld==='salarioGarantizado'&&<span className="text-[8px] text-gray-400 ml-1">{fechaIngreso?(salarioAplica?`(mes ${mesesDesdeIngreso+1}/3)`:'(vencido)'):'(sin fecha)'}</span>}</td>
+                        <td className="px-3 py-2 text-right"><input type="number" value={bonos[fld]??''} disabled={fld==='salarioGarantizado'&&!salarioAplica} onChange={e=>setComBonos({...bonos,[fld]:e.target.value===''?0:parseNum(e.target.value)})} className={`w-20 border rounded-lg px-2 py-1 text-right font-black text-xs ${fld==='salarioGarantizado'&&!salarioAplica?'bg-gray-100 text-gray-400':''}`}/></td>
+                        <td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos[fld]||0)}</td></tr>
+                      ))}
+                      <tr><td className="px-3 py-2 font-bold">Cobranza</td><td className="px-3 py-2 text-right text-gray-400 text-[9px]">Manual</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(totalCobranza)}</td></tr>
+                    </tbody>
+                    <tfoot><tr className="bg-green-700 text-white"><td colSpan="2" className="px-3 py-2 font-black uppercase">TOTAL A PAGAR</td><td className="px-3 py-2 text-right font-black text-lg">${formatNum(compensacionTotal)}</td></tr></tfoot>
+                  </table>
+                  <div className="flex justify-end mt-3"><button onClick={guardarBonos} className="bg-green-600 text-white px-6 py-2 rounded-xl text-[10px] font-black uppercase">Guardar Bonos</button></div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {ventasView === 'vendedores' && (() => {
+          const vendedores=(settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[];
+          const vendedoresInfo=settings?.vendedoresInfo||{};
+          const ESTADOS_VE=['Amazonas','Anzoátegui','Apure','Aragua','Barinas','Bolívar','Carabobo','Cojedes','Delta Amacuro','Falcón','Guárico','Lara','Mérida','Miranda','Monagas','Nueva Esparta','Portuguesa','Sucre','Táchira','Trujillo','La Guaira (Vargas)','Yaracuy','Zulia','Distrito Capital','Dependencias Federales'];
+          const REGIONES=[{id:'centro',label:'Centro',estados:['Aragua','Carabobo','Miranda','Distrito Capital','La Guaira (Vargas)']},{id:'llanos',label:'Llanos',estados:['Apure','Barinas','Cojedes','Guárico','Portuguesa']},{id:'occidente',label:'Occidente',estados:['Falcón','Lara','Mérida','Táchira','Trujillo','Yaracuy','Zulia']},{id:'oriente',label:'Oriente',estados:['Anzoátegui','Delta Amacuro','Monagas','Nueva Esparta','Sucre']},{id:'sur',label:'Sur',estados:['Amazonas','Bolívar']}];
+          const abrirFicha=(nombre)=>{const info=vendedoresInfo[nombre.toUpperCase()]||{};setFichaVend(nombre);setFichaData({nombre:info.nombre||nombre,cargo:info.cargo||'VENDEDOR',fechaIngreso:info.fechaIngreso||'',telefono:info.telefono||'',email:info.email||'',region:info.region||'',estados:info.estados||[],salarioBase:info.salarioBase??300,bonoVehiculo:info.bonoVehiculo??200,activo:info.activo!==false,observaciones:info.observaciones||''});};
+          const guardarFicha=async()=>{if(!fichaVend)return;setFichaGuardando(true);try{const info={...vendedoresInfo,[fichaVend.toUpperCase()]:fichaData};let lista=[...vendedores];await setDoc(getDocRef('settings','general'),{vendedores:lista,vendedoresInfo:info},{merge:true});setFichaVend(null);setDialog({title:'✅',text:'Ficha guardada.',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}setFichaGuardando(false);};
+          const crearVend=async()=>{const n=nuevoNombreVend.toUpperCase().trim();if(!n)return;const lista=Array.from(new Set([...vendedores,n]));await setDoc(getDocRef('settings','general'),{vendedores:lista},{merge:true});setNuevoNombreVend('');setMostrarNuevoVend(false);abrirFicha(n);};
+          const eliminarVend=async(nombre)=>{if(!window.confirm(`¿Eliminar a ${nombre}?`))return;const lista=vendedores.filter(v=>v.toUpperCase()!==nombre.toUpperCase());const info={...vendedoresInfo};delete info[nombre.toUpperCase()];await setDoc(getDocRef('settings','general'),{vendedores:lista,vendedoresInfo:info},{merge:true});if(fichaVend===nombre)setFichaVend(null);};
+          return (
+            <div className="space-y-6">
+              <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+                <div className="px-8 py-5 border-b bg-gradient-to-r from-indigo-50 to-blue-50 flex justify-between items-center flex-wrap gap-3">
+                  <div><h2 className="text-xl font-black text-indigo-900 uppercase flex items-center gap-3"><Users className="text-indigo-600" size={24}/> Equipo de Vendedores</h2><p className="text-[10px] font-bold text-indigo-600 mt-0.5">{vendedores.length} vendedor(es)</p></div>
+                  <button onClick={()=>setMostrarNuevoVend(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 ${mostrarNuevoVend?'bg-red-500 text-white':'bg-indigo-600 text-white'}`}><Plus size={14}/>{mostrarNuevoVend?'CANCELAR':'NUEVO VENDEDOR'}</button>
+                </div>
+                {mostrarNuevoVend&&<div className="px-8 py-4 bg-indigo-50 border-b flex items-center gap-3"><input type="text" value={nuevoNombreVend} onChange={e=>setNuevoNombreVend(e.target.value.toUpperCase())} onKeyDown={e=>e.key==='Enter'&&crearVend()} placeholder="Nombre del vendedor" className="flex-1 border-2 border-indigo-200 rounded-xl px-4 py-2.5 text-xs font-black uppercase outline-none bg-white"/><button onClick={crearVend} className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl text-xs font-black uppercase">Crear ficha</button></div>}
+                <div className="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {vendedores.length===0&&<p className="col-span-3 text-center text-gray-400 font-bold py-8 text-xs uppercase">Sin vendedores. Crea el primero.</p>}
+                  {vendedores.map(v=>{const info=vendedoresInfo[v.toUpperCase()]||{};const activo=info.activo!==false;return(
+                    <div key={v} className={`rounded-2xl border-2 p-4 cursor-pointer hover:shadow-md transition-all ${fichaVend===v?'border-indigo-500 bg-indigo-50':'border-gray-100 bg-white'}`} onClick={()=>fichaVend===v?setFichaVend(null):abrirFicha(v)}>
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex items-center gap-2"><div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center font-black text-indigo-700">{(info.nombre||v).charAt(0)}</div><div><div className="font-black text-gray-900 text-sm uppercase">{info.nombre||v}</div><div className="text-[9px] text-gray-500 uppercase">{info.cargo||'VENDEDOR'}</div></div></div>
+                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${activo?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{activo?'ACTIVO':'INACTIVO'}</span>
+                      </div>
+                      <div className="space-y-0.5 text-[10px] text-gray-600">
+                        {info.fechaIngreso&&<div>📅 Ingreso: <b>{info.fechaIngreso}</b></div>}
+                        {info.region&&<div>🗺 Región: <b className="uppercase">{info.region}</b></div>}
+                        {(info.estados||[]).length>0&&<div>📍 <b>{info.estados.length}</b> estado(s)</div>}
+                        {info.telefono&&<div>📞 {info.telefono}</div>}
+                      </div>
+                      <div className="mt-3 flex justify-between"><button onClick={e=>{e.stopPropagation();abrirFicha(v);}} className="text-[9px] font-black text-indigo-600 hover:underline">✏ Editar</button><button onClick={e=>{e.stopPropagation();eliminarVend(v);}} className="text-[9px] font-black text-red-400 hover:text-red-600">🗑 Eliminar</button></div>
+                    </div>
+                  );})}
+                </div>
+              </div>
+              {fichaVend&&(
+                <div className="bg-white rounded-3xl shadow-sm border-2 border-indigo-200 overflow-hidden">
+                  <div className="px-8 py-4 bg-indigo-600 text-white flex justify-between items-center"><h3 className="font-black text-sm uppercase">Ficha Técnica — {fichaVend}</h3><button onClick={()=>setFichaVend(null)} className="text-white/70 hover:text-white"><X size={18}/></button></div>
+                  <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-3">
+                      <h4 className="text-[10px] font-black text-gray-500 uppercase border-b pb-2">Datos Personales</h4>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre</label><input type="text" value={fichaData.nombre||''} onChange={e=>setFichaData({...fichaData,nombre:e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 uppercase"/></div>
+                        <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cargo</label><select value={fichaData.cargo||''} onChange={e=>setFichaData({...fichaData,cargo:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500">{['VENDEDOR','SUPERVISOR DE VENTAS','EJECUTIVO DE CUENTAS','COORDINADOR','GERENTE DE VENTAS'].map(o=><option key={o}>{o}</option>)}</select></div>
+                        <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha Ingreso</label><input type="date" value={fichaData.fechaIngreso||''} onChange={e=>setFichaData({...fichaData,fechaIngreso:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"/><div className="text-[8px] text-gray-400">Controla Salario Garantizado</div></div>
+                        <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Estatus</label><select value={fichaData.activo?'activo':'inactivo'} onChange={e=>setFichaData({...fichaData,activo:e.target.value==='activo'})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"><option value="activo">✅ Activo</option><option value="inactivo">⛔ Inactivo</option></select></div>
+                        <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Teléfono</label><input type="text" value={fichaData.telefono||''} onChange={e=>setFichaData({...fichaData,telefono:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"/></div>
+                        <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Email</label><input type="email" value={fichaData.email||''} onChange={e=>setFichaData({...fichaData,email:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"/></div>
+                      </div>
+                      <h4 className="text-[10px] font-black text-gray-500 uppercase border-b pb-2">Compensación</h4>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Salario Garantizado ($)</label><input type="number" value={fichaData.salarioBase??''} onChange={e=>setFichaData({...fichaData,salarioBase:e.target.value===''?'':parseNum(e.target.value)})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-right outline-none focus:border-indigo-500"/></div>
+                        <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Bono Vehículo ($)</label><input type="number" value={fichaData.bonoVehiculo??''} onChange={e=>setFichaData({...fichaData,bonoVehiculo:e.target.value===''?'':parseNum(e.target.value)})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-right outline-none focus:border-indigo-500"/></div>
+                      </div>
+                      <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Observaciones</label><textarea rows={2} value={fichaData.observaciones||''} onChange={e=>setFichaData({...fichaData,observaciones:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 resize-none"/></div>
+                    </div>
+                    <div className="space-y-3">
+                      <h4 className="text-[10px] font-black text-gray-500 uppercase border-b pb-2">Zona de Ventas</h4>
+                      <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Región Principal</label><div className="flex flex-wrap gap-2">{REGIONES.map(r=><button key={r.id} type="button" onClick={()=>setFichaData({...fichaData,region:fichaData.region===r.label?'':r.label})} className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase ${fichaData.region===r.label?'bg-indigo-600 text-white':'bg-gray-100 text-gray-600'}`}>{r.label}</button>)}</div></div>
+                      <div>
+                        <div className="flex justify-between mb-2"><label className="text-[9px] font-black text-gray-500 uppercase">Estados</label><span className="text-[9px] font-black text-indigo-600">{(fichaData.estados||[]).length} sel.</span></div>
+                        <div className="flex flex-wrap gap-1.5 mb-2">{REGIONES.map(r=>{const all=r.estados.every(e=>(fichaData.estados||[]).includes(e));return<button key={r.id} type="button" onClick={()=>{const ea=fichaData.estados||[];setFichaData({...fichaData,estados:all?ea.filter(e=>!r.estados.includes(e)):Array.from(new Set([...ea,...r.estados]))});}} className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase border ${all?'border-indigo-500 bg-indigo-100 text-indigo-700':'border-gray-200 text-gray-500'}`}>{all?'✓':''} {r.label}</button>;})}</div>
+                        <div className="grid grid-cols-2 gap-1 max-h-64 overflow-y-auto border border-gray-100 rounded-xl p-3">{ESTADOS_VE.map(est=>{const sel=(fichaData.estados||[]).includes(est);return<label key={est} className={`flex items-center gap-2 cursor-pointer px-2 py-1.5 rounded-lg text-[10px] font-bold ${sel?'bg-indigo-50 text-indigo-800':'text-gray-600'}`}><input type="checkbox" checked={sel} onChange={()=>{const cur=fichaData.estados||[];setFichaData({...fichaData,estados:cur.includes(est)?cur.filter(e=>e!==est):[...cur,est]});}} className="accent-indigo-600"/>{est}</label>;})}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="px-6 py-4 bg-gray-50 border-t flex justify-between"><button onClick={()=>setFichaVend(null)} className="text-gray-500 font-black text-xs uppercase">Cancelar</button><button onClick={guardarFicha} disabled={fichaGuardando} className="bg-indigo-600 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase disabled:opacity-50 flex items-center gap-2">{fichaGuardando?<><RefreshCw size={13} className="animate-spin"/> Guardando...</>:<><Save size={13}/> Guardar Ficha</>}</button></div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {ventasView === 'clientes' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-6 border-b bg-white flex justify-between items-center">
@@ -9763,7 +9965,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 <div className="p-8 bg-gray-50/50 border-b">
                   <form onSubmit={handleCreateInvoice} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
                     <div className="flex justify-between items-center border-b border-gray-100 pb-4 mb-6">
-                      <h3 className="text-sm font-black uppercase text-black tracking-widest">{editingInvoiceId ? `Editando Factura: ${editingInvoiceId}` : 'Registrar Factura de Venta'}</h3>
+                      <h3 className="text-sm font-black uppercase text-black tracking-widest">{editingInvoiceId ? `✏️ Editando: ${editingInvoiceId}` : '📄 Nueva Factura de Venta'}</h3>
                       <div className="flex items-center gap-4">
                         <div>
                           <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">📅 Fecha de Factura</label>
