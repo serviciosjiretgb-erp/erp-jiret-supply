@@ -10873,6 +10873,74 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         })()}
                       </div>
 
+                      {/* Carrito de lotes agregados */}
+                          {fgItems.length > 0 && (
+                            <div className="bg-white rounded-xl border-2 border-green-300 overflow-hidden mt-2">
+                              <div className="flex items-center justify-between px-4 py-2 bg-green-600 text-white">
+                                <span className="text-[10px] font-black uppercase tracking-wider">🛒 Productos Seleccionados ({fgItems.length})</span>
+                                <span className="text-[9px] font-bold opacity-80">Haz clic en ✕ para quitar un producto</span>
+                              </div>
+                              <div className="overflow-x-auto">
+                              <table className="w-full text-xs" style={{tableLayout:'auto'}}>
+<thead>
+                                  <tr className="font-black text-[9px] uppercase bg-gray-50 border-b-2 border-green-200">
+                                    <th className="p-2.5 text-left">Código</th>
+                                    <th className="p-2.5 text-left">Producto / Descripción</th>
+                                    <th className="p-2.5 text-center">Cant. Total</th>
+                                    <th className="p-2.5 text-right">Precio U.</th>
+                                    <th className="p-2.5 text-right">Total</th>
+                                    <th className="p-2.5 text-center">Alm.</th>
+                                    <th className="p-2.5 text-center">✕</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-green-100">
+                                  {fgItems.map((item, idx) => (
+                                    <tr key={idx} className="hover:bg-red-50 group">
+                                      <td className="p-2.5 font-black text-orange-600 text-[9px] truncate">{item.invCode||cleanFGCode(item.fgId||'')}</td>
+                                      <td className="p-2.5 font-bold text-gray-800 text-[10px] leading-tight">{item.desc}</td>
+                                      <td className="p-2.5 text-center font-black text-green-700 text-[10px]">{formatNum(item.cantidad)}<br/><span className="text-[8px] text-gray-400 font-normal">{item.unidad}</span></td>
+                                      <td className="p-2.5 text-right font-black text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
+                                      <td className="p-2.5 text-right font-black text-gray-800 text-[10px]">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
+                                      <td className="p-2.5 text-center relative">
+                                        {(()=>{
+                                          const code=item.invCode||(item.fgId||'').split('___')[0];
+                                          const whs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
+                                          if(whs.length<=1) return null;
+                                          const disp=mwDispatch[code]||{};
+                                          const asgn=Object.values(disp).reduce((s,v)=>s+parseNum(v),0);
+                                          const need=parseNum(item.cantidad);
+                                          const ok=Math.abs(asgn-need)<0.01&&asgn>0;
+                                          return <button type="button" onClick={()=>setShowMwPanel(showMwPanel===code?null:code)} className={`text-[8px] font-black px-2 py-1 rounded-lg ${ok?'bg-green-100 text-green-700':'bg-orange-100 text-orange-600'}`}>{ok?'✓':(`⚠ ${whs.length}`)}</button>;
+                                        })()}
+                                        {showMwPanel===(item.invCode||(item.fgId||'').split('___')[0]) && (()=>{
+                                          const code=item.invCode||(item.fgId||'').split('___')[0];
+                                          const whs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
+                                          const disp=mwDispatch[code]||{};
+                                          const asgn=Object.values(disp).reduce((s,v)=>s+parseNum(v),0);
+                                          const need=parseNum(item.cantidad);
+                                          return <div className="absolute z-50 right-0 top-full mt-1 w-56 bg-white rounded-xl shadow-2xl border border-orange-200 p-3 text-left">
+                                            <div className="flex justify-between mb-2"><span className="text-[9px] font-black text-orange-700 uppercase">Almacenes</span><button onClick={()=>setShowMwPanel(null)} className="text-gray-400 hover:text-red-500"><X size={11}/></button></div>
+                                            <div className="text-[8px] text-gray-500 mb-2">Nec: <b className="text-orange-600">{formatNum(need)} {item.unidad}</b></div>
+                                            {whs.map(wh=>{const alm=wh.almacen||(wh.id||'').split('___')[1]?.replace(/-/g,' ')||'';const mx=parseNum(wh.stock||0);const v=disp[alm]||'';return<div key={wh.id} className="flex items-center gap-2 mb-1.5"><div className="flex-1 min-w-0"><div className="text-[8px] font-black truncate">{alm}</div><div className="text-[7px] text-green-600">Disp:{formatNum(mx)}</div></div><input type="number" step="0.01" min="0" max={mx} value={v} onChange={e=>{const nv=Math.min(parseNum(e.target.value),mx);setMwDispatch(p=>({...p,[code]:{...(p[code]||{}),[alm]:nv||''}}));}} className="w-16 border-2 border-orange-200 rounded-lg px-1.5 py-1 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0"/></div>;})}
+                                            <div className={`mt-1.5 text-[8px] font-black text-center py-1 rounded-lg ${Math.abs(asgn-need)<0.01&&asgn>0?'bg-green-100 text-green-700':'bg-orange-50 text-orange-600'}`}>{formatNum(asgn)}/{formatNum(need)}</div>
+                                          </div>;
+                                        })()}
+                                      </td>
+                                      <td className="p-2.5 text-center">
+                                        <button type="button" onClick={()=>setFgItems(p=>p.filter((_,i)=>i!==idx))}
+                                          className="bg-red-100 hover:bg-red-500 text-red-500 hover:text-white p-1.5 rounded-lg transition-all" title="Quitar producto">
+                                          <X size={13}/>
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
@@ -11012,30 +11080,30 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               </tr>
                             </thead>
                             <tbody>
-                              {fgItems.length > 0 ? fgItems.map((item,i)=>(
+                              {fgItems.length>0 ? fgItems.map((item,i)=>(
                                 <tr key={i} className={`${i%2===0?'bg-white':'bg-gray-50'} ${editingFgIdx===i?'ring-2 ring-inset ring-orange-400':''}`}>
                                   {editingFgIdx===i ? (<>
                                     <td className="py-1.5 px-2 font-black text-orange-600 text-[9px]">{item.invCode?cleanFGCode(item.invCode):cleanFGCode(item.fgId||'')}</td>
-                                    <td className="py-1.5 px-2 font-bold text-gray-700 text-[10px]">{item.desc}</td>
-                                    <td className="py-1.5 px-1 w-20 text-center"><input type="number" step="0.01" min="0.01" value={item.cantidad} onChange={e=>setFgItems(p=>p.map((it,idx)=>idx===i?{...it,cantidad:parseNum(e.target.value)||it.cantidad}:it))} className="w-16 border-2 border-orange-300 rounded-lg px-1 py-1 text-center font-black text-xs outline-none focus:border-orange-500"/></td>
-                                    <td className="py-1.5 px-1 w-24"><input type="number" step="0.01" min="0" value={item.precioUnit||''} onChange={e=>setFgItems(p=>p.map((it,idx)=>idx===i?{...it,precioUnit:parseNum(e.target.value),totalUSD:parseNum(e.target.value)*(it.cantidad||1)}:it))} className="w-20 border-2 border-orange-300 rounded-lg px-1 py-1 text-right font-black text-xs outline-none focus:border-orange-500"/></td>
+                                    <td className="py-1.5 px-2 text-[10px] font-bold text-gray-700">{item.desc}</td>
+                                    <td className="py-1.5 px-1 text-center"><input type="number" step="0.01" min="0.01" value={item.cantidad} onChange={e=>setFgItems(p=>p.map((it,ix)=>ix===i?{...it,cantidad:parseNum(e.target.value)||it.cantidad}:it))} className="w-16 border-2 border-orange-300 rounded-lg px-1 py-1 text-center font-black text-xs outline-none focus:border-orange-500"/></td>
+                                    <td className="py-1.5 px-1"><input type="number" step="0.01" min="0" value={item.precioUnit||''} onChange={e=>setFgItems(p=>p.map((it,ix)=>ix===i?{...it,precioUnit:parseNum(e.target.value),totalUSD:parseNum(e.target.value)*(it.cantidad||1)}:it))} className="w-20 border-2 border-orange-300 rounded-lg px-1 py-1 text-right font-black text-xs outline-none focus:border-orange-500"/></td>
                                     <td className="py-1.5 px-2 text-right font-black text-green-700 text-[10px]">${formatNum((item.precioUnit||0)*(item.cantidad||1))}</td>
-                                    <td className="py-1.5 px-1 text-center w-16"><button type="button" onClick={()=>setEditingFgIdx(null)} className="bg-green-100 hover:bg-green-500 text-green-600 hover:text-white p-1 rounded-lg transition-all"><CheckCircle size={13}/></button></td>
+                                    <td className="py-1.5 px-1 text-center"><button type="button" onClick={()=>setEditingFgIdx(null)} className="bg-green-100 hover:bg-green-500 text-green-600 hover:text-white p-1 rounded-lg transition-all" title="Confirmar"><CheckCircle size={13}/></button></td>
                                   </>) : (<>
                                     <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode?cleanFGCode(item.invCode):cleanFGCode(item.fgId||'').replace(/^FG-\d{10,}$/,'')}</td>
                                     <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{wordBreak:'break-word',lineHeight:1.3}}>{item.desc}</td>
                                     <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
                                     <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
                                     <td className="py-2 px-2 text-right font-black text-green-700 text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
-                                    <td className="py-2 px-1 text-center w-16"><div className="flex items-center justify-center gap-1"><button type="button" onClick={()=>setEditingFgIdx(i)} className="bg-blue-50 hover:bg-blue-500 text-blue-500 hover:text-white p-1 rounded-lg transition-all"><Edit size={12}/></button><button type="button" onClick={()=>{setFgItems(p=>p.filter((_,idx)=>idx!==i));if(editingFgIdx===i)setEditingFgIdx(null);}} className="bg-red-50 hover:bg-red-500 text-red-500 hover:text-white p-1 rounded-lg transition-all"><Trash2 size={12}/></button></div></td>
+                                    <td className="py-2 px-1 text-center w-16"><div className="flex items-center justify-center gap-1"><button type="button" onClick={()=>setEditingFgIdx(i)} className="bg-blue-50 hover:bg-blue-500 text-blue-500 hover:text-white p-1 rounded-lg transition-all" title="Editar"><Edit size={12}/></button><button type="button" onClick={()=>{setFgItems(p=>p.filter((_,ix)=>ix!==i));if(editingFgIdx===i)setEditingFgIdx(null);}} className="bg-red-50 hover:bg-red-500 text-red-500 hover:text-white p-1 rounded-lg transition-all" title="Eliminar"><Trash2 size={12}/></button></div></td>
                                   </>)}
                                 </tr>
                               )) : Array.from({length:6}).map((_,i)=>(
                                 <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                                  <td className="py-2.5 px-2 border-r border-gray-100 w-28 text-gray-200 text-[9px]">—</td>
-                                  <td className="py-2.5 px-2 border-r border-gray-100"></td>
-                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-200 w-20">0,00</td>
-                                  <td className="py-2.5 px-2 border-r border-gray-100 text-right text-gray-200 w-24">0,00</td>
+                                  <td className="py-2.5 px-2 w-28 text-gray-200 text-[9px]">—</td>
+                                  <td className="py-2.5 px-2"></td>
+                                  <td className="py-2.5 px-2 text-right text-gray-200 w-20">0,00</td>
+                                  <td className="py-2.5 px-2 text-right text-gray-200 w-24">0,00</td>
                                   <td className="py-2.5 px-2 text-right text-gray-200 w-24">0,00</td>
                                   <td className="py-2.5 px-2 w-16"></td>
                                 </tr>
@@ -11044,57 +11112,55 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           </table>
                           {/* Totales */}
                           <div className="border-t-2 border-gray-200 bg-gray-50 px-4 py-3">
-                            <div className="flex justify-between items-start text-[10px] mb-2">
-                              <textarea rows={2} placeholder="Observaciones / Instrucciones de pago:"
+                            <div className="flex justify-between items-start gap-4 text-[10px]">
+                              <textarea rows={3} placeholder="Observaciones / Instrucciones de pago:"
                                 value={newInvoiceForm.observaciones||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm, observaciones:e.target.value})}
-                                className="border border-gray-200 rounded-lg p-2 text-[9px] font-bold flex-1 mr-6 outline-none resize-none"/>
-                              <div className="space-y-1.5 text-right min-w-52">
+                                className="border border-gray-200 rounded-lg p-2 text-[9px] font-bold flex-1 outline-none resize-none"/>
+                              <div className="space-y-2 text-right min-w-[260px]">
                                 {(()=>{
-                                  const base = fgItems.length>0
-                                    ? fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)
-                                    : parseNum(newInvoiceForm.montoBase||0);
-                                  const dVal = parseNum(descuentoVal||0);
-                                  const descuento = descuentoTipo==='pct' ? base*(dVal/100) : dVal;
-                                  const subtotal = Math.max(0, base - descuento);
-                                  const ivaAmt = newInvoiceForm.aplicaIva==='SI' ? subtotal*0.16 : 0;
-                                  const total = subtotal + ivaAmt;
-                                  return (<>
-                                    <div className="flex justify-between gap-8">
-                                      <span className="font-black text-gray-600 uppercase">Total Parcial</span>
+                                  const base=fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0);
+                                  const dv=parseNum(descuentoVal||0);
+                                  const descAmt=descuentoTipo==='pct'?base*(dv/100):dv;
+                                  const subtotal=Math.max(0,base-descAmt);
+                                  const ivaAmt=newInvoiceForm.aplicaIva==='SI'?parseFloat((subtotal*0.16).toFixed(2)):0;
+                                  const total=subtotal+ivaAmt;
+                                  return(<>
+                                    <div className="flex justify-between items-center gap-4">
+                                      <span className="font-black text-gray-500 uppercase text-[9px]">Total Parcial</span>
                                       <span className="font-black">${formatNum(base)}</span>
                                     </div>
-                                    {/* DESCUENTO EDITABLE */}
-                                    <div className="flex justify-between gap-4 items-center">
-                                      <span className="font-black text-gray-600 uppercase">Descuento</span>
+                                    <div className="flex justify-between items-center gap-2 bg-orange-50 border border-orange-200 rounded-xl px-2 py-1.5">
+                                      <span className="font-black text-orange-700 uppercase text-[9px] shrink-0">Descuento</span>
                                       <div className="flex items-center gap-1">
                                         <select value={descuentoTipo} onChange={e=>{setDescuentoTipo(e.target.value);setDescuentoVal('');}}
-                                          className="border border-gray-200 rounded px-1 py-0.5 text-[8px] font-black outline-none focus:border-orange-400">
-                                          <option value="monto">$</option>
-                                          <option value="pct">%</option>
+                                          className="border border-orange-300 rounded-lg px-1.5 py-1 text-[9px] font-black outline-none bg-white focus:border-orange-500">
+                                          <option value="monto">$ Monto fijo</option>
+                                          <option value="pct">% Porcentaje</option>
                                         </select>
-                                        <input type="number" step="0.01" min="0"
-                                          value={descuentoVal}
-                                          onChange={e=>setDescuentoVal(e.target.value)}
-                                          placeholder="0"
-                                          className="w-20 border border-gray-200 rounded px-1.5 py-0.5 text-right font-black text-[10px] outline-none focus:border-orange-400"/>
-                                        {dVal>0 && <span className="font-black text-red-500">-${formatNum(descuento)}</span>}
+                                        <input type="number" step="0.01" min="0" value={descuentoVal} onChange={e=>setDescuentoVal(e.target.value)} placeholder="0"
+                                          className="w-20 border border-orange-300 rounded-lg px-2 py-1 text-right font-black text-[10px] outline-none focus:border-orange-500 bg-white"/>
                                       </div>
                                     </div>
-                                    <div className="flex justify-between gap-8">
-                                      <span className="font-black text-gray-600 uppercase">Subtotal</span>
+                                    {dv>0 && <div className="flex justify-between items-center gap-4 text-red-600">
+                                      <span className="font-black text-[9px] uppercase">Descuento aplicado</span>
+                                      <span className="font-black">-${formatNum(descAmt)} {descuentoTipo==='pct'?`(${dv}%)`:'(fijo)'}</span>
+                                    </div>}
+                                    <div className="flex justify-between items-center gap-4">
+                                      <span className="font-black text-gray-500 uppercase text-[9px]">Subtotal</span>
                                       <span className="font-black">${formatNum(subtotal)}</span>
                                     </div>
-                                    <div className="flex justify-between gap-8 items-center">
-                                      <span className="font-black text-gray-600 uppercase flex items-center gap-1">IVA
-                                        <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva',e.target.value)} className="border border-gray-200 rounded px-1 py-0.5 text-[8px] font-black outline-none ml-1">
+                                    <div className="flex justify-between items-center gap-4">
+                                      <span className="font-black text-gray-500 uppercase text-[9px] flex items-center gap-1">IVA
+                                        <select value={newInvoiceForm.aplicaIva} onChange={e=>handleInvoiceFormChange('aplicaIva',e.target.value)}
+                                          className="border border-gray-200 rounded px-1 py-0.5 text-[8px] font-black outline-none ml-1">
                                           <option value="SI">16%</option>
                                           <option value="NO">Exento</option>
                                         </select>
                                       </span>
                                       <span className="font-black">${formatNum(ivaAmt)}</span>
                                     </div>
-                                    <div className="flex justify-between gap-8 border-t-2 border-gray-400 pt-2 mt-1">
-                                      <span className="font-black text-gray-900 uppercase text-sm">Total</span>
+                                    <div className="flex justify-between items-center gap-4 border-t-2 border-gray-300 pt-2">
+                                      <span className="font-black text-gray-900 uppercase">Total a Pagar</span>
                                       <span className="font-black text-orange-600 text-xl">${formatNum(total)}</span>
                                     </div>
                                   </>);
