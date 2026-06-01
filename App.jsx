@@ -10028,16 +10028,16 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 <span className="text-[10px] font-black uppercase tracking-wider">🛒 Productos Seleccionados ({fgItems.length})</span>
                                 <span className="text-[9px] font-bold opacity-80">Haz clic en ✕ para quitar un producto</span>
                               </div>
-                              <div className="overflow-x-auto">
-                              <table className="w-full text-xs" style={{minWidth:680,tableLayout:'fixed'}}>
+                              <div className="w-full">
+                              <table className="w-full text-xs" style={{tableLayout:'fixed'}}>
                                 <colgroup>
-                                  <col style={{width:140}}/>
+                                  <col style={{width:'15%'}}/>
                                   <col/>
-                                  <col style={{width:100}}/>
-                                  <col style={{width:90}}/>
-                                  <col style={{width:90}}/>
-                                  <col style={{width:70}}/>
-                                  <col style={{width:52}}/>
+                                  <col style={{width:'13%'}}/>
+                                  <col style={{width:'11%'}}/>
+                                  <col style={{width:'11%'}}/>
+                                  <col style={{width:'9%'}}/>
+                                  <col style={{width:'7%'}}/>
                                 </colgroup>
                                 <thead>
                                   <tr className="font-black text-[9px] uppercase bg-gray-50 border-b-2 border-green-200">
