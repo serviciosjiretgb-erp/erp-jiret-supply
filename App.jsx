@@ -10019,8 +10019,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
               email: info.email||'',
               region: info.region||'',
               estados: info.estados||[],
-              salarioBase: info.salarioBase||300,
-              bonoVehiculo: info.bonoVehiculo||200,
+              salarioBase: info.salarioBase??300,
+              bonoVehiculo: info.bonoVehiculo??200,
               activo: info.activo!==false,
               observaciones: info.observaciones||''
             });
@@ -10077,6 +10077,34 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             setFichaData({...fichaData, estados:nuevos});
           };
 
+          // ── PDF FICHA INDIVIDUAL ──
+          const pdfFicha = (nombre) => {
+            const info = vendedoresInfo[nombre.toUpperCase()]||{};
+            const nEst = (info.estados||[]).length;
+            const ym2 = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
+            const factsMes = (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(ym2)&&(inv.vendedor||'').toUpperCase()===nombre.toUpperCase());
+            const totalMes = factsMes.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
+            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ficha ${nombre}</title><style>body{font-family:Arial,sans-serif;margin:0;padding:24px;color:#111;}.header{border-bottom:4px solid #4f46e5;padding-bottom:12px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-end;}.logo h2{margin:0;font-size:16px;font-weight:900;text-transform:uppercase;}.logo p{margin:2px 0;font-size:11px;}.ftitle{text-align:right;font-size:13px;font-weight:900;color:#4f46e5;text-transform:uppercase;}.av{width:52px;height:52px;border-radius:50%;background:#e0e7ff;display:inline-flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#4f46e5;margin-right:14px;vertical-align:middle;}.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:10px;font-weight:900;text-transform:uppercase;margin-left:8px;}.activo{background:#d1fae5;color:#065f46;}.inactivo{background:#fee2e2;color:#991b1b;}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0;}.field{background:#f9fafb;border-radius:8px;padding:9px 12px;}.fl{font-size:9px;font-weight:900;color:#6b7280;text-transform:uppercase;margin-bottom:2px;}.fv{font-size:12px;font-weight:700;}.sec{margin-top:18px;border-top:2px solid #e5e7eb;padding-top:10px;}.st{font-size:10px;font-weight:900;color:#4f46e5;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;}.ests{display:flex;flex-wrap:wrap;gap:4px;}.est{background:#e0e7ff;color:#3730a3;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;}.kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px;}.kc{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;text-align:center;}.kv{font-size:18px;font-weight:900;color:#16a34a;}.kl{font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-top:2px;}@media print{body{padding:0;}}</style></head><body><div class="header"><div class="logo"><h2>SERVICIOS JIRET G&amp;B, C.A.</h2><p>RIF: J-412309374</p></div><div class="ftitle">Ficha Técnica de Vendedor<br><span style="font-size:10px;color:#6b7280;font-weight:400;">Generado: ${getTodayDate()}</span></div></div><div style="margin-bottom:14px;"><span class="av">${(info.nombre||nombre).charAt(0)}</span><div style="display:inline-block;vertical-align:middle;"><div><strong style="font-size:20px;text-transform:uppercase;">${info.nombre||nombre}</strong><span class="badge ${info.activo!==false?'activo':'inactivo'}">${info.activo!==false?'ACTIVO':'INACTIVO'}</span></div><div style="font-size:11px;color:#6b7280;font-weight:700;text-transform:uppercase;">${info.cargo||'VENDEDOR'} · Ingreso: ${info.fechaIngreso||'No registrado'}</div></div></div><div class="grid2"><div class="field"><div class="fl">Teléfono</div><div class="fv">${info.telefono||'—'}</div></div><div class="field"><div class="fl">Email</div><div class="fv">${info.email||'—'}</div></div><div class="field"><div class="fl">Región Principal</div><div class="fv">${info.region||'—'}</div></div><div class="field"><div class="fl">Estados Asignados</div><div class="fv">${nEst} estado(s)</div></div><div class="field"><div class="fl">Salario Garantizado</div><div class="fv">$${formatNum(info.salarioBase??300)} <span style="font-size:9px;color:#9ca3af;">(3 meses)</span></div></div><div class="field"><div class="fl">Bono Vehículo</div><div class="fv">$${formatNum(info.bonoVehiculo??200)}</div></div></div>${nEst>0?`<div class="sec"><div class="st">Zona de Ventas — ${nEst} Estado(s)</div><div class="ests">${(info.estados||[]).map(e=>`<span class="est">${e}</span>`).join('')}</div></div>`:''} ${info.observaciones?`<div class="sec"><div class="st">Observaciones</div><p style="font-size:11px;color:#374151;margin:0;">${info.observaciones}</p></div>`:''}<div class="sec"><div class="st">Rendimiento — ${new Date().toLocaleString('es-VE',{month:'long',year:'numeric'})}</div><div class="kpi"><div class="kc"><div class="kv">$${formatNum(totalMes)}</div><div class="kl">Ventas del mes</div></div><div class="kc"><div class="kv">${factsMes.length}</div><div class="kl">Facturas</div></div><div class="kc"><div class="kv">${new Set(factsMes.map(i=>i.clientName||'')).size}</div><div class="kl">Clientes</div></div></div></div><script>window.onload=()=>window.print();</script></body></html>`;
+            const w=window.open('','_blank');w.document.write(html);w.document.close();
+          };
+
+          // ── PDF REPORTE GENERAL ──
+          const pdfReporteGeneral = () => {
+            const ym2=`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
+            const mesLabel2=new Date().toLocaleString('es-VE',{month:'long',year:'numeric'});
+            const rows=vendedores.map(nombre=>{
+              const info=vendedoresInfo[nombre.toUpperCase()]||{};
+              const factsMes=(invoices||[]).filter(inv=>(inv.fecha||'').startsWith(ym2)&&(inv.vendedor||'').toUpperCase()===nombre.toUpperCase());
+              const totalMes=factsMes.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
+              return {nombre:info.nombre||nombre,cargo:info.cargo||'VENDEDOR',fechaIngreso:info.fechaIngreso||'—',region:info.region||'—',nEstados:(info.estados||[]).length,telefono:info.telefono||'—',activo:info.activo!==false,salarioBase:info.salarioBase??300,bonoVehiculo:info.bonoVehiculo??200,totalMes,nFacturas:factsMes.length,nClientes:new Set(factsMes.map(i=>i.clientName||'')).size};
+            });
+            const td=(c,r,b)=>`<td style="padding:5px 8px;border:1px solid #e5e7eb;font-size:10px;${r?'text-align:right;':''}${b?'font-weight:900;':''}">${c}</td>`;
+            const rowsHtml=rows.map((r,i)=>`<tr style="${i%2?'background:#f9fafb;':''}">${td(`<strong style="text-transform:uppercase;">${r.nombre}</strong><br><span style="font-size:9px;color:#6b7280;">${r.cargo}</span>`)}${td(r.fechaIngreso)}${td(r.region)}${td(r.nEstados,true)}${td(r.telefono)}${td(`<span style="padding:1px 7px;border-radius:10px;font-size:9px;font-weight:900;background:${r.activo?'#d1fae5':'#fee2e2'};color:${r.activo?'#065f46':'#991b1b'}">${r.activo?'ACTIVO':'INACT.'}</span>`)}${td('$'+formatNum(r.salarioBase),true)}${td('$'+formatNum(r.bonoVehiculo),true)}${td('$'+formatNum(r.totalMes),true,true)}${td(r.nFacturas,true)}${td(r.nClientes,true)}</tr>`).join('');
+            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Reporte Vendedores</title><style>body{font-family:Arial,sans-serif;margin:0;padding:24px;color:#111;}.header{border-bottom:4px solid #4f46e5;padding-bottom:12px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-end;}h2{margin:0;font-size:16px;font-weight:900;text-transform:uppercase;}h3{margin:2px 0;font-size:14px;color:#4f46e5;font-weight:900;}table{border-collapse:collapse;width:100%;}th{background:#111;color:#fff;font-size:9px;text-transform:uppercase;padding:6px 8px;border:1px solid #111;}@media print{body{padding:0;}}</style></head><body><div class="header"><div><h2>SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:2px 0;font-size:11px;">RIF: J-412309374</p></div><div style="text-align:right;"><h3>Reporte General de Vendedores</h3><p style="font-size:10px;color:#6b7280;margin:0;">Período: ${mesLabel2} · Generado: ${getTodayDate()}</p></div></div><table><thead><tr><th>Vendedor / Cargo</th><th>Ingreso</th><th>Región</th><th>Estados</th><th>Teléfono</th><th>Estatus</th><th>Salario</th><th>B.Veh.</th><th>Ventas Mes</th><th>Facturas</th><th>Clientes</th></tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="8" style="padding:6px 8px;font-weight:900;border:1px solid #111;background:#111;color:#fff;">TOTALES</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">$${formatNum(rows.reduce((s,r)=>s+r.totalMes,0))}</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">${rows.reduce((s,r)=>s+r.nFacturas,0)}</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">${rows.reduce((s,r)=>s+r.nClientes,0)}</td></tr></tfoot></table><script>window.onload=()=>window.print();</script></body></html>`;
+            const w=window.open('','_blank');w.document.write(html);w.document.close();
+          };
+
+
           return (
             <div className="space-y-6 animate-in fade-in">
               {/* Header */}
@@ -10086,9 +10114,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <h2 className="text-xl font-black text-indigo-900 uppercase flex items-center gap-3"><Users className="text-indigo-600" size={24}/> Equipo de Vendedores</h2>
                     <p className="text-[10px] font-bold text-indigo-600 mt-0.5">{vendedores.length} vendedor(es) registrado(s) · Gestión de fichas, zonas y comisiones</p>
                   </div>
-                  <button onClick={()=>setMostrarNuevo(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm ${mostrarNuevo?'bg-red-500 text-white':'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
-                    <Plus size={14}/>{mostrarNuevo?'CANCELAR':'NUEVO VENDEDOR'}
-                  </button>
+                  <div className="flex gap-2 items-center flex-wrap">
+                    <button onClick={pdfReporteGeneral} className="px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm bg-white border-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50"><Printer size={14}/> Reporte General</button>
+                    <button onClick={()=>setMostrarNuevo(v=>!v)} className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 shadow-sm ${mostrarNuevo?'bg-red-500 text-white':'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
+                      <Plus size={14}/>{mostrarNuevo?'CANCELAR':'NUEVO VENDEDOR'}
+                    </button>
+                  </div>
                 </div>
 
                 {mostrarNuevo && (
@@ -10130,7 +10161,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         </div>
                         <div className="mt-3 flex justify-between items-center">
                           <button onClick={e=>{e.stopPropagation();abrirFicha(v);}} className="text-[9px] font-black text-indigo-600 hover:underline">✏ Editar ficha</button>
-                          <button onClick={e=>{e.stopPropagation();eliminarVendedor(v);}} className="text-[9px] font-black text-red-400 hover:text-red-600">🗑 Eliminar</button>
+                          <div className="flex gap-2">
+                            <button onClick={e=>{e.stopPropagation();pdfFicha(v);}} className="text-[9px] font-black text-gray-500 hover:text-indigo-600">🖨 PDF</button>
+                            <button onClick={e=>{e.stopPropagation();eliminarVendedor(v);}} className="text-[9px] font-black text-red-400 hover:text-red-600">🗑 Eliminar</button>
+                          </div>
                         </div>
                       </div>
                     );
@@ -10197,13 +10231,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Salario Garantizado ($)</label>
-                          <input type="number" value={fichaData.salarioBase||''} onChange={e=>setFichaData({...fichaData,salarioBase:parseNum(e.target.value)})}
+                          <input type="number" value={fichaData.salarioBase??''} onChange={e=>setFichaData({...fichaData,salarioBase:e.target.value===''?'':parseNum(e.target.value)})}
                             className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 text-right"/>
                           <div className="text-[8px] text-gray-400 mt-0.5">Solo aplica primeros 3 meses</div>
                         </div>
                         <div>
                           <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Bono Vehículo ($)</label>
-                          <input type="number" value={fichaData.bonoVehiculo||''} onChange={e=>setFichaData({...fichaData,bonoVehiculo:parseNum(e.target.value)})}
+                          <input type="number" value={fichaData.bonoVehiculo??''} onChange={e=>setFichaData({...fichaData,bonoVehiculo:e.target.value===''?'':parseNum(e.target.value)})}
                             className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500 text-right"/>
                         </div>
                       </div>
@@ -10267,7 +10301,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
                   {/* Footer con botones */}
                   <div className="px-6 py-4 bg-gray-50 border-t flex justify-between items-center">
-                    <button onClick={()=>setFichaVend(null)} className="text-gray-500 hover:text-red-500 font-black text-xs uppercase">Cancelar</button>
+                    <div className="flex gap-2">
+                      <button onClick={()=>setFichaVend(null)} className="text-gray-500 hover:text-red-500 font-black text-xs uppercase">Cancelar</button>
+                      <button onClick={()=>pdfFicha(fichaVend)} className="border-2 border-indigo-200 text-indigo-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-50 flex items-center gap-2"><Printer size={13}/> PDF Ficha</button>
+                    </div>
                     <button onClick={guardarFicha} disabled={fichaGuardando}
                       className="bg-indigo-600 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2">
                       {fichaGuardando?<><RefreshCw size={13} className="animate-spin"/> Guardando...</>:<><Save size={13}/> Guardar Ficha</>}
