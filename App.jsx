@@ -612,6 +612,12 @@ export default function App() {
   const [dashVendFiltro, setDashVendFiltro] = useState('todos');
   const [dashClienteFiltro, setDashClienteFiltro] = useState('todos');
   const [dashBusqueda, setDashBusqueda] = useState('');
+  // ── Ficha de vendedores ──
+  const [fichaVend, setFichaVend] = useState(null);
+  const [fichaData, setFichaData] = useState({});
+  const [fichaGuardando, setFichaGuardando] = useState(false);
+  const [nuevoNombreVend, setNuevoNombreVend] = useState('');
+  const [mostrarNuevoVend, setMostrarNuevoVend] = useState(false);
   const [selectedInvItems, setSelectedInvItems] = useState(new Set()); // bulk delete
   const [pvProductoFilter, setPvProductoFilter] = useState('TODOS');
   const [prodActivoSearch, setProdActivoSearch] = useState('');
@@ -9993,15 +9999,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             {id:'sur', label:'Sur', estados:['Amazonas','Bolívar']},
           ];
 
-          const vendedores = (settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:['OFICINA','NELSON','LIANNY'];
+          const vendedores = (settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[];
           const vendedoresInfo = settings?.vendedoresInfo||{};
 
-          // Estado local de la ficha en edición
-          const [fichaVend, setFichaVend] = React.useState(null);         // nombre del vendedor editando
-          const [fichaData, setFichaData] = React.useState({});            // datos del formulario
-          const [fichaGuardando, setFichaGuardando] = React.useState(false);
-          const [nuevoNombre, setNuevoNombre] = React.useState('');
-          const [mostrarNuevo, setMostrarNuevo] = React.useState(false);
+          // Estado de ficha gestionado a nivel de componente (no hooks dentro de IIFE)
+          const setNuevoNombre = setNuevoNombreVend;
+          const nuevoNombre = nuevoNombreVend;
+          const mostrarNuevo = mostrarNuevoVend;
+          const setMostrarNuevo = setMostrarNuevoVend;
 
           const abrirFicha = (nombre) => {
             const info = vendedoresInfo[nombre.toUpperCase()]||{};
@@ -10275,7 +10280,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         })()}
 
         {ventasView === 'comisiones' && (() => {
-          const vendedores = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : ['OFICINA','NELSON','LIANNY'];
+          const vendedores = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : [];
           const ym = `${comAnio}-${String(comMes).padStart(2,'0')}`;
           const mesLabel = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][comMes-1];
 
@@ -10833,7 +10838,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                               </div>
                               <div className="overflow-x-auto">
                               <table className="w-full text-xs" style={{tableLayout:'auto'}}>
-                                <thead>
+<thead>
                                   <tr className="font-black text-[9px] uppercase bg-gray-50 border-b-2 border-green-200">
                                     <th className="p-2.5 text-left">Código</th>
                                     <th className="p-2.5 text-left">Producto / Descripción</th>
@@ -10967,35 +10972,20 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         {showInvClientDropdown && <div className="fixed inset-0 z-40" onClick={()=>setShowInvClientDropdown(false)}/>}
                       </div>
                       
-
                       <div>
                         <label className="text-[9px] font-black text-gray-600 uppercase mb-1 block">Vendedor</label>
                         {(()=>{
-                          const vendedores = ((settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : ['OFICINA','NELSON','LIANNY'])
-                            .filter(v=>(settings?.vendedoresInfo||{})[v.toUpperCase()]?.activo!==false);
+                          const vendedores = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : [];
+                          const activos = vendedores.filter(v=>(settings?.vendedoresInfo||{})[v.toUpperCase()]?.activo!==false);
                           const actual = (newInvoiceForm.vendedor||'').toUpperCase();
-                          const enLista = !actual || vendedores.includes(actual);
+                          const enLista = !actual || activos.includes(actual);
                           return (
                             <select value={enLista?actual:'__OTRO__'}
-                              onChange={async e=>{
-                                if(e.target.value==='__NUEVO__'){
-                                  const nv=(prompt('Nombre del nuevo vendedor:')||'').toUpperCase().trim();
-                                  if(nv){
-                                    const fi=(prompt('Fecha de ingreso del vendedor (AAAA-MM-DD)\nSe usa para el Salario Garantizado (primeros 3 meses):', getTodayDate())||'').trim();
-                                    const lista=Array.from(new Set([...vendedores,nv]));
-                                    const info={...(settings?.vendedoresInfo||{}), [nv]:{fechaIngreso:fi||''}};
-                                    await setDoc(getDocRef('settings','general'),{vendedores:lista, vendedoresInfo:info},{merge:true});
-                                    setNewInvoiceForm({...newInvoiceForm, vendedor:nv});
-                                  }
-                                } else {
-                                  setNewInvoiceForm({...newInvoiceForm, vendedor:e.target.value});
-                                }
-                              }}
+                              onChange={e=>setNewInvoiceForm({...newInvoiceForm, vendedor:e.target.value==='__OTRO__'?actual:e.target.value})}
                               className="w-36 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black uppercase">
                               <option value="">— Seleccionar —</option>
-                              {vendedores.map(v=><option key={v} value={v}>{v}</option>)}
+                              {activos.map(v=><option key={v} value={v}>{v}</option>)}
                               {!enLista && actual && <option value="__OTRO__">{actual}</option>}
-                              <option value="__NUEVO__">➕ Crear nuevo…</option>
                             </select>
                           );
                         })()}
