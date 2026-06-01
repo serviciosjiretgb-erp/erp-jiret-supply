@@ -600,6 +600,18 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
   const [selectedMonths, setSelectedMonths] = useState([]); // multi-month filter for Rentabilidad
   const [pvClienteFilter, setPvClienteFilter] = useState('TODOS');
+  // ── Comisiones de vendedores ──
+  const [comVendedor, setComVendedor] = useState('');
+  const [comMes, setComMes] = useState(new Date().getMonth()+1);
+  const [comAnio, setComAnio] = useState(new Date().getFullYear());
+  const [comCobranza, setComCobranza] = useState([]); // tabla manual de cobranza (estado de edición)
+  const [comBonos, setComBonos] = useState(null); // bonos editables del vendedor/mes
+  // ── Dashboard de ventas ──
+  const [dashMes, setDashMes] = useState(new Date().getMonth()+1);
+  const [dashAnio, setDashAnio] = useState(new Date().getFullYear());
+  const [dashVendFiltro, setDashVendFiltro] = useState('todos');
+  const [dashClienteFiltro, setDashClienteFiltro] = useState('todos');
+  const [dashBusqueda, setDashBusqueda] = useState('');
   const [selectedInvItems, setSelectedInvItems] = useState(new Set()); // bulk delete
   const [pvProductoFilter, setPvProductoFilter] = useState('TODOS');
   const [prodActivoSearch, setProdActivoSearch] = useState('');
@@ -9783,6 +9795,494 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           );
         })()}
 
+        {ventasView === 'dashboard' && (() => {
+          const ymD = `${dashAnio}-${String(dashMes).padStart(2,'0')}`;
+          const mesLabelD = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][dashMes-1];
+          const facts = (invoices||[]).filter(inv => (inv.fecha||'').startsWith(ymD));
+
+          // Filas detalladas (una por item facturado)
+          const detalle = [];
+          facts.forEach(inv => {
+            const vend = (inv.vendedor||'—').toUpperCase();
+            const items = inv.itemsFacturados||[];
+            if(items.length===0){
+              detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:inv.productoMaquilado||'—', cant:1, precio:parseNum(inv.montoBase||0), monto:parseNum(inv.montoBase||inv.total||0)});
+            } else {
+              items.forEach(it=>{
+                const cant=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0);
+                detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:it.desc||it.invCode||it.fgId||'—', cant, precio, monto:precio*cant});
+              });
+            }
+          });
+
+          // Totales por vendedor
+          const porVend = {};
+          facts.forEach(inv=>{
+            const v=(inv.vendedor||'—').toUpperCase();
+            porVend[v]=(porVend[v]||0)+parseNum(inv.montoBase||inv.total||0);
+          });
+          const vendArr = Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
+          const totalVentas = vendArr.reduce((s,v)=>s+v.monto,0);
+          const mejorVend = vendArr[0];
+          const ventaMasGrande = facts.reduce((mx,inv)=>{const m=parseNum(inv.montoBase||inv.total||0);return m>mx.m?{m,inv}:mx;},{m:0,inv:null});
+          const colores=['bg-blue-500','bg-cyan-500','bg-purple-500','bg-emerald-500','bg-amber-500','bg-rose-500','bg-indigo-500'];
+
+          // % de comisión por vendedor según escalón de meta (mismo de Comisiones)
+          const metaTabla = (settings?.comisionesConfig?.metaTabla) || [
+            {min:15000,max:49999,pct:0.20},{min:50000,max:99999,pct:0.30},{min:100000,max:149999,pct:0.35},{min:150000,max:199999,pct:0.40},{min:200000,max:275000,pct:0.45}
+          ];
+          const pctVend = {};
+          vendArr.forEach(v=>{const e=metaTabla.find(x=>v.monto>=x.min&&v.monto<=x.max);pctVend[v.vend]=e?e.pct:0;});
+          // Comisión por línea = monto × % del vendedor
+          detalle.forEach(d=>{ d.pctCom = pctVend[d.vend]||0; d.comision = d.monto*(d.pctCom/100); });
+
+          // Filtros tabla
+          const vendUnicos = ['todos', ...Array.from(new Set(detalle.map(d=>d.vend)))];
+          const cliUnicos = ['todos', ...Array.from(new Set(detalle.map(d=>d.cliente))).sort()];
+          const detalleFilt = detalle.filter(d=>
+            (dashVendFiltro==='todos'||d.vend===dashVendFiltro) &&
+            (dashClienteFiltro==='todos'||d.cliente===dashClienteFiltro) &&
+            (!dashBusqueda || JSON.stringify(d).toLowerCase().includes(dashBusqueda.toLowerCase()))
+          );
+          const totCantF=detalleFilt.reduce((s,d)=>s+d.cant,0);
+          const totMontoF=detalleFilt.reduce((s,d)=>s+d.monto,0);
+          const totComF=detalleFilt.reduce((s,d)=>s+d.comision,0);
+
+          const exportDashExcel = () => {
+            const td=(c,r=false,b=false)=>`<td style="padding:5px 8px;border:1px solid #ccc;font-size:10px;${r?'text-align:right;':''}${b?'font-weight:900;':''}">${c}</td>`;
+            const rowsH=detalleFilt.map((d,i)=>`<tr style="${i%2?'background:#f9fafb;':''}">${td(d.vend)}${td(d.fecha)}${td(d.cliente)}${td(d.producto)}${td(formatNum(d.cant),true)}${td('$'+formatNum(d.precio),true)}${td('$'+formatNum(d.monto),true,true)}${td(formatNum(d.pctCom)+'%',true)}${td('$'+formatNum(d.comision),true,true)}</tr>`).join('');
+            const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 8px;border:1px solid #000;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #6366f1;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#6366f1;font-weight:900;">DASHBOARD DE VENTAS — DETALLE</h3><p style="font-size:10px;">Período: ${mesLabelD} ${dashAnio} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${['Vendedor','Fecha','Cliente','Producto','Cant.','Precio','Monto','% Com.','Comisión'].map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsH}</tbody><tfoot><tr style="background:#111;color:#fff;"><td colspan="6" style="padding:6px 8px;font-weight:900;">TOTALES (${detalleFilt.length} líneas)</td><td style="padding:6px 8px;text-align:right;font-weight:900;">$${formatNum(totMontoF)}</td><td></td><td style="padding:6px 8px;text-align:right;font-weight:900;">$${formatNum(totComF)}</td></tr></tfoot></table></body></html>`;
+            const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Dashboard_Ventas_${ymD}.xls`;a.click();
+          };
+
+          return (
+            <div className="space-y-6 animate-in fade-in">
+              {/* Header */}
+              <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-6 flex justify-between items-center flex-wrap gap-3">
+                <div>
+                  <h2 className="text-2xl font-black text-gray-800 flex items-center gap-3"><BarChart3 className="text-indigo-500" size={26}/> Dashboard de Ventas</h2>
+                  <span className="inline-block mt-1 text-[11px] font-bold text-indigo-600 bg-indigo-50 rounded-full py-1 px-4 uppercase">Período: {mesLabelD} {dashAnio}</span>
+                </div>
+                <div className="flex gap-3 items-end">
+                  <button onClick={exportDashExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1"><Download size={13}/> Excel</button>
+                  <button onClick={()=>window.print()} className="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1"><Printer size={13}/> Imprimir</button>
+                  <div><label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Mes</label><select value={dashMes} onChange={e=>setDashMes(parseInt(e.target.value))} className="border-2 border-indigo-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white">{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'].map((m,i)=><option key={i} value={i+1}>{m}</option>)}</select></div>
+                  <div><label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Año</label><input type="number" value={dashAnio} onChange={e=>setDashAnio(parseInt(e.target.value)||dashAnio)} className="border-2 border-indigo-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white w-24 text-center"/></div>
+                </div>
+              </div>
+
+              {/* Tarjetas resumen */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
+                  <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center mb-2"><DollarSign className="text-green-600" size={20}/></div>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase">Mejor Vendedor</h3>
+                  <p className="text-lg font-black text-gray-800">{mejorVend?mejorVend.vend:'—'}</p>
+                  <p className="text-[11px] text-gray-500 font-bold">{mejorVend&&totalVentas>0?`${formatNum(mejorVend.monto/totalVentas*100)}% del total`:'Sin datos'}</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
+                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center mb-2"><ArrowUpFromLine className="text-blue-600" size={20}/></div>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase">Venta más Grande</h3>
+                  <p className="text-lg font-black text-gray-800">${formatNum(ventaMasGrande.m)}</p>
+                  <p className="text-[11px] text-gray-500 font-bold truncate max-w-full">{ventaMasGrande.inv?(ventaMasGrande.inv.clientName||'—'):'—'}</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
+                  <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center mb-2"><Receipt className="text-indigo-600" size={20}/></div>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase"># Facturas</h3>
+                  <p className="text-lg font-black text-gray-800">{facts.length}</p>
+                  <p className="text-[11px] text-gray-500 font-bold">{detalle.length} líneas</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
+                  <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center mb-2"><BarChart3 className="text-amber-600" size={20}/></div>
+                  <h3 className="text-[10px] font-black text-gray-500 uppercase">Ventas Totales</h3>
+                  <p className="text-lg font-black text-gray-800">${formatNum(totalVentas)}</p>
+                  <p className="text-[11px] text-gray-500 font-bold">{mesLabelD} {dashAnio}</p>
+                </div>
+              </div>
+
+              {/* Barras por vendedor */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <h2 className="text-lg font-black text-gray-800 mb-4 flex items-center gap-2"><Users className="text-indigo-500" size={20}/> Volumen por Vendedor — Total ${formatNum(totalVentas)}</h2>
+                <div className="space-y-4">
+                  {vendArr.length===0 && <p className="text-gray-400 text-sm font-bold text-center py-4">Sin ventas en este período.</p>}
+                  {vendArr.map((v,i)=>{const pct=totalVentas>0?(v.monto/totalVentas*100):0;return(
+                    <div key={v.vend}>
+                      <div className="flex justify-between items-center mb-1"><span className="font-black text-gray-700 text-sm uppercase">{v.vend}</span><span className="text-sm font-black text-gray-600">${formatNum(v.monto)} <span className="text-[10px] text-gray-400">({formatNum(pct)}%)</span></span></div>
+                      <div className="w-full bg-gray-100 rounded-full h-4"><div className={`${colores[i%colores.length]} h-4 rounded-full transition-all`} style={{width:`${Math.max(pct,1)}%`}}></div></div>
+                    </div>
+                  );})}
+                </div>
+              </div>
+
+              {/* Tarjetas por vendedor */}
+              {vendArr.length>0 && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {vendArr.map((v,i)=>{
+                    const facturasV=facts.filter(inv=>(inv.vendedor||'—').toUpperCase()===v.vend);
+                    const clientesV=new Set(facturasV.map(inv=>(inv.clientName||inv.client||'—'))).size;
+                    return (
+                      <div key={v.vend} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow">
+                        <h3 className="text-lg font-black text-gray-800 border-b pb-2 mb-3 flex items-center gap-2"><span className={`w-3 h-3 rounded-full ${colores[i%colores.length]}`}></span>{v.vend}</h3>
+                        <div className="grid grid-cols-2 gap-3 text-center">
+                          <div className="bg-gray-50 p-3 rounded-xl"><div className="text-[9px] font-black text-gray-500 uppercase">Ventas</div><div className="text-lg font-black text-green-600">${formatNum(v.monto)}</div></div>
+                          <div className="bg-gray-50 p-3 rounded-xl"><div className="text-[9px] font-black text-gray-500 uppercase">Facturas</div><div className="text-lg font-black text-blue-600">{facturasV.length}</div></div>
+                          <div className="bg-gray-50 p-3 rounded-xl"><div className="text-[9px] font-black text-gray-500 uppercase">Clientes</div><div className="text-lg font-black text-indigo-600">{clientesV}</div></div>
+                          <div className="bg-gray-50 p-3 rounded-xl"><div className="text-[9px] font-black text-gray-500 uppercase">% del total</div><div className="text-lg font-black text-amber-600">{totalVentas>0?formatNum(v.monto/totalVentas*100):0}%</div></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Tabla detallada */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-3">
+                  <h2 className="text-lg font-black text-gray-800 flex items-center gap-2 shrink-0"><FileText className="text-blue-500" size={20}/> Detalle de Ventas</h2>
+                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                    <select value={dashVendFiltro} onChange={e=>setDashVendFiltro(e.target.value)} className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-400">{vendUnicos.map(v=><option key={v} value={v}>{v==='todos'?'Todos los Vendedores':v}</option>)}</select>
+                    <select value={dashClienteFiltro} onChange={e=>setDashClienteFiltro(e.target.value)} className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-400">{cliUnicos.map(c=><option key={c} value={c}>{c==='todos'?'Todos los Clientes':c}</option>)}</select>
+                    <input type="text" value={dashBusqueda} onChange={e=>setDashBusqueda(e.target.value)} placeholder="Buscar..." className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-400"/>
+                  </div>
+                </div>
+                <div className="overflow-x-auto border border-gray-100 rounded-xl">
+                  <table className="w-full text-xs text-left">
+                    <thead className="text-[9px] text-gray-600 uppercase bg-gray-100 font-black"><tr>
+                      <th className="px-3 py-2.5">Vendedor</th><th className="px-3 py-2.5">Fecha</th><th className="px-3 py-2.5">Cliente</th><th className="px-3 py-2.5">Producto</th><th className="px-3 py-2.5 text-right">Cant.</th><th className="px-3 py-2.5 text-right">Precio</th><th className="px-3 py-2.5 text-right">Monto</th><th className="px-3 py-2.5 text-right">% Com.</th><th className="px-3 py-2.5 text-right">Comisión</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {detalleFilt.length===0 ? (
+                        <tr><td colSpan="9" className="py-8 text-center text-gray-400 font-bold uppercase text-[10px]">Sin ventas para los filtros seleccionados.</td></tr>
+                      ) : detalleFilt.map((d,i)=>(
+                        <tr key={i} className="hover:bg-indigo-50">
+                          <td className="px-3 py-2 font-black text-indigo-700 uppercase text-[10px]">{d.vend}</td>
+                          <td className="px-3 py-2 text-gray-500 font-bold whitespace-nowrap">{d.fecha}</td>
+                          <td className="px-3 py-2 font-bold text-gray-800 uppercase text-[10px]">{d.cliente}</td>
+                          <td className="px-3 py-2 text-gray-600 text-[10px]">{d.producto}</td>
+                          <td className="px-3 py-2 text-right font-bold">{formatNum(d.cant)}</td>
+                          <td className="px-3 py-2 text-right font-bold whitespace-nowrap">${formatNum(d.precio)}</td>
+                          <td className="px-3 py-2 text-right font-black text-gray-800 whitespace-nowrap">${formatNum(d.monto)}</td>
+                          <td className="px-3 py-2 text-right font-bold text-gray-400">{formatNum(d.pctCom)}%</td>
+                          <td className="px-3 py-2 text-right font-black text-green-700 whitespace-nowrap">${formatNum(d.comision)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-gray-100 font-black text-gray-900 text-xs"><tr className="border-t-2 border-gray-300">
+                      <td className="px-3 py-2.5 uppercase" colSpan="4">Total (filtrado): {detalleFilt.length} líneas</td>
+                      <td className="px-3 py-2.5 text-right">{formatNum(totCantF)}</td><td className="px-3 py-2.5 text-right">—</td><td className="px-3 py-2.5 text-right text-gray-800">${formatNum(totMontoF)}</td><td className="px-3 py-2.5 text-right">—</td><td className="px-3 py-2.5 text-right text-green-700">${formatNum(totComF)}</td>
+                    </tr></tfoot>
+                  </table>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {ventasView === 'comisiones' && (() => {
+          const vendedores = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : ['OFICINA','NELSON','LIANNY'];
+          const ym = `${comAnio}-${String(comMes).padStart(2,'0')}`;
+          const mesLabel = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][comMes-1];
+
+          // Configuración de comisiones (persistida en settings.comisionesConfig)
+          const cfgDefault = {
+            metaTabla: [
+              {min:15000, max:49999, pct:0.20},
+              {min:50000, max:99999, pct:0.30},
+              {min:100000, max:149999, pct:0.35},
+              {min:150000, max:199999, pct:0.40},
+              {min:200000, max:275000, pct:0.45},
+            ],
+            mixTabla: [ {cat:4, monto:100}, {cat:6, monto:150}, {cat:8, monto:200} ],
+            cobranzaEscala: [
+              {dMin:0, dMax:7, pct:1.50},
+              {dMin:8, dMax:14, pct:1.30},
+              {dMin:15, dMax:21, pct:1.00},
+              {dMin:22, dMax:30, pct:0.75},
+            ],
+          };
+          const cfg = settings?.comisionesConfig || cfgDefault;
+
+          // Ventas del vendedor en el mes (desde facturas)
+          const facturasMes = (invoices||[]).filter(inv =>
+            (inv.fecha||'').startsWith(ym) &&
+            (!comVendedor || (inv.vendedor||'').toUpperCase()===comVendedor.toUpperCase())
+          );
+          const totalVentasVend = facturasMes.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
+
+          // Total ventas de TODA la empresa en el mes (para Mix de Categoría)
+          const facturasMesEmpresa = (invoices||[]).filter(inv => (inv.fecha||'').startsWith(ym));
+
+          // Subcategorías vendidas por toda la empresa en el mes
+          const subcatsVendidas = new Set();
+          facturasMesEmpresa.forEach(inv => (inv.itemsFacturados||[]).forEach(it => {
+            const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
+            const invItem = (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode);
+            const sub = invItem?.subcategory || getItemSubcategory(invItem||{}) || (fg?'Productos Terminados':'');
+            if(sub) subcatsVendidas.add(sub);
+          }));
+          const nSubcats = subcatsVendidas.size;
+
+          // 1. Comisión por meta de facturación
+          const escMeta = (cfg.metaTabla||[]).find(e=>totalVentasVend>=e.min && totalVentasVend<=e.max);
+          const comisionMeta = escMeta ? totalVentasVend*(escMeta.pct/100) : 0;
+
+          // 2. Mix de categoría — según subcategorías vendidas por la empresa
+          const mixOrden = [...(cfg.mixTabla||[])].sort((a,b)=>b.cat-a.cat);
+          const mixAplica = mixOrden.find(m=>nSubcats>=m.cat);
+          const montoMix = mixAplica ? mixAplica.monto : 0;
+
+          // 3. Cobranza manual
+          const calcRango = (dias) => {
+            const e = (cfg.cobranzaEscala||[]).find(x=>dias>=x.dMin && dias<=x.dMax);
+            return e || null;
+          };
+          const cobranzaCalc = (comCobranza||[]).map(r => {
+            const dias = parseNum(r.diasRetraso);
+            const esc = calcRango(dias<0?0:dias); // retraso negativo (adelantado) = mejor rango
+            const pct = esc ? esc.pct : 0;
+            const rango = esc ? (cfg.cobranzaEscala.indexOf(esc)+1) : '—';
+            const montoPagar = parseNum(r.monto)*(pct/100);
+            return {...r, pct, rango, montoPagar};
+          });
+          const totalCobranza = cobranzaCalc.reduce((s,r)=>s+r.montoPagar,0);
+
+          // ── Detección automática: clientes nuevos y recuperados ──
+          // Helper: meses entre dos fechas YYYY-MM-DD
+          const mesesEntre = (d1,d2) => {
+            const a=new Date(d1), b=new Date(d2);
+            return (b.getFullYear()-a.getFullYear())*12 + (b.getMonth()-a.getMonth()) - (b.getDate()<a.getDate()?1:0);
+          };
+          // Facturas de TODO el histórico ordenadas, para detectar primera compra / inactividad
+          const fechaFactura = (inv)=> inv.fecha||'';
+          // Clientes facturados por este vendedor en el mes
+          const clientesMesVend = {};
+          facturasMes.forEach(inv=>{
+            const cl=(inv.clientName||inv.clientRif||'').toUpperCase();
+            if(!cl) return;
+            const f=fechaFactura(inv);
+            if(!clientesMesVend[cl] || f<clientesMesVend[cl]) clientesMesVend[cl]=f;
+          });
+          let nuevosCount=0, recuperadosCount=0;
+          const recuperadosLista=[], nuevosLista=[];
+          Object.entries(clientesMesVend).forEach(([cl, primeraFechaMes])=>{
+            // Facturas históricas de ese cliente CON ESTE VENDEDOR (atribución por vendedor de la factura)
+            const histCliVend=(invoices||[]).filter(inv=>
+              (inv.clientName||inv.clientRif||'').toUpperCase()===cl &&
+              (!comVendedor || (inv.vendedor||'').toUpperCase()===comVendedor.toUpperCase()) &&
+              fechaFactura(inv));
+            const fechasPrevias=histCliVend.map(fechaFactura).filter(f=>f<primeraFechaMes).sort();
+            if(fechasPrevias.length===0){
+              // Sin facturas previas de este cliente con este vendedor → NUEVO para el vendedor
+              nuevosCount++; nuevosLista.push(cl);
+            } else {
+              const ultimaPrevia=fechasPrevias[fechasPrevias.length-1];
+              if(mesesEntre(ultimaPrevia, primeraFechaMes) > 6){
+                recuperadosCount++; recuperadosLista.push(cl);
+              }
+            }
+          });
+
+          // ── Salario Garantizado: solo primeros 3 meses desde ingreso ──
+          const vendInfo=(settings?.vendedoresInfo||{})[(comVendedor||'').toUpperCase()]||{};
+          const fechaIngreso=vendInfo.fechaIngreso||'';
+          const mesesDesdeIngreso = fechaIngreso ? mesesEntre(fechaIngreso, ym+'-01') : 999;
+          const salarioAplica = fechaIngreso && mesesDesdeIngreso < 3; // meses 0,1,2
+
+          // Bonos (editables, persistidos por vendedor+mes). Montos por defecto configurables.
+          const bonosKey = `${comVendedor||'GENERAL'}_${ym}`;
+          const bonosGuardados = (settings?.comisionesBonos||{})[bonosKey] || {};
+          const montoCaptacion = parseNum((settings?.comisionesConfig?.montoCaptacion) ?? 30);
+          const minClientesCaptacion = parseNum((settings?.comisionesConfig?.minClientesCaptacion) ?? 2);
+          const montoRecuperacion = parseNum((settings?.comisionesConfig?.montoRecuperacion) ?? 30);
+          const captacionAuto = nuevosCount >= minClientesCaptacion ? montoCaptacion : 0;
+          const recuperacionAuto = recuperadosCount >= 1 ? montoRecuperacion : 0;
+          const bonos = comBonos!==null ? comBonos : {
+            bonoVehiculo: parseNum(bonosGuardados.bonoVehiculo ?? 200),
+            salarioGarantizado: salarioAplica ? parseNum(bonosGuardados.salarioGarantizado ?? 300) : 0,
+            captacion: parseNum(bonosGuardados.captacion ?? captacionAuto),
+            recuperacion: parseNum(bonosGuardados.recuperacion ?? recuperacionAuto),
+          };
+
+          const comisionTotalVenta = comisionMeta + montoMix;
+          const compensacionTotal = bonos.bonoVehiculo + bonos.salarioGarantizado + bonos.captacion + bonos.recuperacion + comisionTotalVenta + totalCobranza;
+          const pctSobreVentas = totalVentasVend>0 ? (compensacionTotal/totalVentasVend)*100 : 0;
+
+          const guardarBonos = async () => {
+            const nuevos = {...(settings?.comisionesBonos||{}), [bonosKey]: bonos};
+            await setDoc(getDocRef('settings','general'), {comisionesBonos:nuevos}, {merge:true});
+            setDialog({title:'✅ Guardado', text:'Bonos guardados para '+(comVendedor||'GENERAL')+' — '+mesLabel+' '+comAnio, type:'alert'});
+          };
+
+          const exportComisionesExcel = () => {
+            const td=(c,r=false,b=false)=>`<td style="padding:5px 9px;border:1px solid #ccc;font-size:11px;${r?'text-align:right;':''}${b?'font-weight:900;':''}">${c}</td>`;
+            const fila=(desc,estatus,monto)=>`<tr>${td(desc)}${td(estatus)}${td('$'+formatNum(monto),true,true)}</tr>`;
+            const conceptos=[
+              fila('Bono por Vehículo','Fijo',bonos.bonoVehiculo),
+              fila('Salario Garantizado',salarioAplica?`Aplica (mes ${mesesDesdeIngreso+1}/3)`:'No aplica',bonos.salarioGarantizado),
+              fila(`Captación de Cliente (≥${minClientesCaptacion})`,`${nuevosCount} nuevo(s)`,bonos.captacion),
+              fila('Recuperación de Cliente (+6m)',`${recuperadosCount} recuperado(s)`,bonos.recuperacion),
+              fila(`Mix de Categoría (${nSubcats} subcat.)`,mixAplica?`Cumple ${mixAplica.cat}+`:'No alcanzado',montoMix),
+              fila('Comisión por Meta de Venta',escMeta?`${escMeta.pct}%`:'No alcanzado',comisionMeta),
+              fila('Comisión por Cobranza',`${cobranzaCalc.length} pagos`,totalCobranza),
+            ].join('');
+            const cobrRows=cobranzaCalc.map(r=>`<tr>${td(r.fecha)}${td(r.cliente)}${td('$'+formatNum(r.monto),true)}${td(r.condicion+'d')}${td(r.vencimiento)}${td(r.fechaPago)}${td(formatNum(r.diasRetraso),true)}${td(r.rango)}${td(formatNum(r.pct)+'%',true)}${td('$'+formatNum(r.montoPagar),true,true)}</tr>`).join('');
+            const metaRows=(cfg.metaTabla||[]).map(e=>{const a=totalVentasVend>=e.min&&totalVentasVend<=e.max;return`<tr>${td('$'+formatNum(e.min)+' a $'+formatNum(e.max))}${td(e.pct+'%',true)}${td(a?'✓ Alcanzado':'No alcanzado')}${td('$'+formatNum(a?totalVentasVend*(e.pct/100):0),true)}</tr>`;}).join('');
+            const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;margin-bottom:14px;}th{background:#000;color:#fff;font-size:10px;text-transform:uppercase;padding:6px 9px;border:1px solid #000;}h3{color:#f97316;font-size:13px;margin:10px 0 4px;}</style></head><body>
+            <div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #16a34a;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:15px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="color:#16a34a;font-size:14px;">RECIBO DE COMISIONES — ${comVendedor||'GENERAL'}</h3><p style="font-size:11px;">Período: ${mesLabel} ${comAnio} | Generado: ${getTodayDate()}</p></div>
+            <h3>Conceptos y Bonos</h3><table><thead><tr><th>Descripción</th><th>Estatus</th><th>Devengado</th></tr></thead><tbody>${conceptos}</tbody><tfoot><tr style="background:#111;color:#fff;"><td colspan="2" style="padding:6px 9px;font-weight:900;">COMPENSACIÓN TOTAL</td><td style="padding:6px 9px;text-align:right;font-weight:900;font-size:13px;">$${formatNum(compensacionTotal)}</td></tr></tfoot></table>
+            <h3>1. Cumplimiento de Meta — Total Ventas: $${formatNum(totalVentasVend)}</h3><table><thead><tr><th>Rango</th><th>%</th><th>Estatus</th><th>Aplicado</th></tr></thead><tbody>${metaRows}</tbody></table>
+            <h3>3. Comisión por Cobranza</h3><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Monto</th><th>Cond.</th><th>Vencim.</th><th>Fecha Pago</th><th>Días Retr.</th><th>Rango</th><th>%</th><th>A Pagar</th></tr></thead><tbody>${cobrRows||'<tr><td colspan="10" style="padding:8px;text-align:center;color:#999;">Sin registros</td></tr>'}</tbody><tfoot><tr style="background:#111;color:#fff;"><td colspan="9" style="padding:6px 9px;font-weight:900;">TOTAL COBRANZA</td><td style="padding:6px 9px;text-align:right;font-weight:900;">$${formatNum(totalCobranza)}</td></tr></tfoot></table>
+            <table><tr style="background:#16a34a;color:#fff;"><td style="padding:10px;font-weight:900;font-size:13px;">TOTAL A PAGAR</td><td style="padding:10px;text-align:right;font-weight:900;font-size:16px;">$${formatNum(compensacionTotal)}</td></tr></table>
+            </body></html>`;
+            const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Comisiones_${(comVendedor||'GENERAL').replace(/\s+/g,'_')}_${ym}.xls`;a.click();
+          };
+          const imprimirComisiones = () => window.print();
+
+          const addCobranza = () => setComCobranza([...(comCobranza||[]), {fecha:getTodayDate(), cliente:'', monto:'', condicion:'7', vencimiento:'', fechaPago:'', diasRetraso:''}]);
+          const updCobranza = (i,campo,val) => setComCobranza((comCobranza||[]).map((r,idx)=>idx===i?{...r,[campo]:val}:r));
+          const delCobranza = (i) => setComCobranza((comCobranza||[]).filter((_,idx)=>idx!==i));
+
+          return (
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
+              <div className="px-8 py-6 border-b bg-gradient-to-r from-green-50 to-emerald-50 flex justify-between items-center flex-wrap gap-3">
+                <h2 className="text-xl font-black text-green-900 uppercase flex items-center gap-3"><DollarSign className="text-green-600" size={24}/> Comisiones de Vendedores</h2>
+                <div className="flex gap-3 items-end flex-wrap">
+                  <button onClick={exportComisionesExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1 mb-0.5"><Download size={13}/> Excel</button>
+                  <button onClick={imprimirComisiones} className="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1 mb-0.5"><Printer size={13}/> Imprimir</button>
+                  <div>
+                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Vendedor</label>
+                    <select value={comVendedor} onChange={e=>{setComVendedor(e.target.value);setComBonos(null);}} className="border-2 border-green-200 rounded-xl px-3 py-2 text-xs font-black uppercase outline-none bg-white min-w-36">
+                      <option value="">— Todos —</option>
+                      {vendedores.map(v=><option key={v} value={v}>{v}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Mes</label>
+                    <select value={comMes} onChange={e=>{setComMes(parseInt(e.target.value));setComBonos(null);}} className="border-2 border-green-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white">
+                      {['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'].map((m,i)=><option key={i} value={i+1}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Año</label>
+                    <input type="number" value={comAnio} onChange={e=>{setComAnio(parseInt(e.target.value)||comAnio);setComBonos(null);}} className="border-2 border-green-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white w-24 text-center"/>
+                  </div>
+                  {comVendedor && (
+                    <div>
+                      <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Fecha Ingreso ({comVendedor})</label>
+                      <input type="date" value={(settings?.vendedoresInfo||{})[comVendedor.toUpperCase()]?.fechaIngreso||''}
+                        onChange={async e=>{const info={...(settings?.vendedoresInfo||{}), [comVendedor.toUpperCase()]:{...(settings?.vendedoresInfo||{})[comVendedor.toUpperCase()], fechaIngreso:e.target.value}};await setDoc(getDocRef('settings','general'),{vendedoresInfo:info},{merge:true});setComBonos(null);}}
+                        className="border-2 border-blue-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-blue-50 w-36"/>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-6 space-y-6">
+                {/* RESUMEN SUPERIOR */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Conceptos / Bonos */}
+                  <div className="border-2 border-gray-100 rounded-2xl overflow-hidden">
+                    <div className="bg-gray-800 text-white px-4 py-2 text-[10px] font-black uppercase tracking-widest">Conceptos y Bonos — {comVendedor||'GENERAL'} · {mesLabel} {comAnio}</div>
+                    <table className="w-full text-xs">
+                      <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500"><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-right">Base / Editable</th><th className="px-3 py-2 text-right">Devengado</th></tr></thead>
+                      <tbody className="divide-y divide-gray-50">
+                        <tr><td className="px-3 py-2 font-bold">Bono por Vehículo</td><td className="px-3 py-2 text-right"><input type="number" value={bonos.bonoVehiculo||''} onChange={e=>setComBonos({...bonos,bonoVehiculo:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.bonoVehiculo)}</td></tr>
+                        <tr><td className="px-3 py-2 font-bold">Salario Garantizado <span className="text-[8px] text-gray-400">(primeros 3 meses)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.salarioGarantizado||''} onChange={e=>setComBonos({...bonos,salarioGarantizado:parseNum(e.target.value)})} disabled={!salarioAplica} className={`w-24 border rounded-lg px-2 py-1 text-right font-black text-xs ${!salarioAplica?'bg-gray-100 text-gray-400':''}`} placeholder="0"/><div className="text-[7px] text-gray-400 mt-0.5">{fechaIngreso?(salarioAplica?`Aplica (mes ${mesesDesdeIngreso+1}/3)`:`Vencido (${fechaIngreso})`):'Sin fecha ingreso'}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.salarioGarantizado)}</td></tr>
+                        <tr><td className="px-3 py-2 font-bold">Captación de Cliente <span className="text-[8px] text-gray-400">(≥{minClientesCaptacion} nuevos)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.captacion||''} onChange={e=>setComBonos({...bonos,captacion:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/><div className="text-[7px] text-gray-400 mt-0.5">{nuevosCount} nuevo(s){nuevosCount>0?`: ${nuevosLista.slice(0,3).join(', ')}${nuevosLista.length>3?'…':''}`:''}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.captacion)}</td></tr>
+                        <tr><td className="px-3 py-2 font-bold">Recuperación de Cliente <span className="text-[8px] text-gray-400">(+6 meses inactivo)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.recuperacion||''} onChange={e=>setComBonos({...bonos,recuperacion:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/><div className="text-[7px] text-gray-400 mt-0.5">{recuperadosCount} recuperado(s){recuperadosCount>0?`: ${recuperadosLista.slice(0,3).join(', ')}${recuperadosLista.length>3?'…':''}`:''}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.recuperacion)}</td></tr>
+                        <tr className="bg-blue-50"><td className="px-3 py-2 font-bold">Mix de Categoría ({nSubcats} subcat. vendidas)</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{mixAplica?`Cumple ${mixAplica.cat}+`:'No alcanzado'}</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(montoMix)}</td></tr>
+                        <tr className="bg-orange-50"><td className="px-3 py-2 font-bold">Comisión por Meta de Venta</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{escMeta?`${escMeta.pct}%`:'No alcanzado'}</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(comisionMeta)}</td></tr>
+                        <tr className="bg-orange-50"><td className="px-3 py-2 font-bold">Comisión por Cobranza</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{cobranzaCalc.length} pagos</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(totalCobranza)}</td></tr>
+                      </tbody>
+                      <tfoot className="bg-gray-900 text-white font-black">
+                        <tr><td className="px-3 py-2.5 uppercase text-[10px]" colSpan="2">Compensación Total</td><td className="px-3 py-2.5 text-right text-base">${formatNum(compensacionTotal)}</td></tr>
+                      </tfoot>
+                    </table>
+                    <div className="px-4 py-3 bg-gray-50 flex justify-between items-center">
+                      <span className="text-[9px] font-bold text-gray-500 uppercase">% sobre ventas: <b className="text-orange-600">{formatNum(pctSobreVentas)}%</b></span>
+                      <button onClick={guardarBonos} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Save size={12}/> Guardar Bonos</button>
+                    </div>
+                  </div>
+
+                  {/* Cumplimiento de meta */}
+                  <div className="space-y-4">
+                    <div className="border-2 border-gray-100 rounded-2xl overflow-hidden">
+                      <div className="bg-orange-500 text-white px-4 py-2 text-[10px] font-black uppercase tracking-widest">1. Cumplimiento de Meta por Facturación</div>
+                      <div className="px-4 py-3 bg-orange-50 flex justify-between items-center">
+                        <span className="text-[10px] font-black text-gray-600 uppercase">Total Ventas del Vendedor</span>
+                        <span className="text-lg font-black text-orange-700">${formatNum(totalVentasVend)}</span>
+                      </div>
+                      <table className="w-full text-xs">
+                        <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500"><th className="px-3 py-2 text-left">Rango</th><th className="px-3 py-2 text-center">%</th><th className="px-3 py-2 text-center">Estatus</th><th className="px-3 py-2 text-right">Aplicado</th></tr></thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {(cfg.metaTabla||[]).map((e,i)=>{const aplica=totalVentasVend>=e.min&&totalVentasVend<=e.max;return(
+                            <tr key={i} className={aplica?'bg-green-50':''}><td className="px-3 py-1.5 font-bold">${formatNum(e.min)} a ${formatNum(e.max)}</td><td className="px-3 py-1.5 text-center font-black">{e.pct}%</td><td className={`px-3 py-1.5 text-center font-black text-[9px] ${aplica?'text-green-600':'text-gray-400'}`}>{aplica?'✓ Alcanzado':'No alcanzado'}</td><td className="px-3 py-1.5 text-right font-black">${formatNum(aplica?totalVentasVend*(e.pct/100):0)}</td></tr>
+                          );})}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="border-2 border-gray-100 rounded-2xl overflow-hidden">
+                      <div className="bg-blue-600 text-white px-4 py-2 text-[10px] font-black uppercase tracking-widest">2. Mix de Categoría (subcategorías vendidas por la empresa)</div>
+                      <div className="px-4 py-2 bg-blue-50 text-[9px] font-bold text-gray-600 uppercase">Subcategorías vendidas este mes: <b className="text-blue-700">{nSubcats}</b> {nSubcats>0?`(${Array.from(subcatsVendidas).join(', ')})`:''}</div>
+                      <table className="w-full text-xs">
+                        <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500"><th className="px-3 py-2 text-left">Categorías</th><th className="px-3 py-2 text-center">Estatus</th><th className="px-3 py-2 text-right">Monto</th></tr></thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {(cfg.mixTabla||[]).map((m,i)=>{const aplica=nSubcats>=m.cat&&(mixAplica&&mixAplica.cat===m.cat);const cumple=nSubcats>=m.cat;return(
+                            <tr key={i} className={aplica?'bg-green-50':''}><td className="px-3 py-1.5 font-bold">{m.cat} categorías</td><td className={`px-3 py-1.5 text-center font-black text-[9px] ${cumple?'text-green-600':'text-gray-400'}`}>{cumple?'✓':'No alcanzado'}</td><td className="px-3 py-1.5 text-right font-black">${formatNum(aplica?m.monto:0)}</td></tr>
+                          );})}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                {/* COBRANZA MANUAL */}
+                <div className="border-2 border-gray-100 rounded-2xl overflow-hidden">
+                  <div className="bg-gray-800 text-white px-4 py-2 flex justify-between items-center">
+                    <span className="text-[10px] font-black uppercase tracking-widest">3. Comisión por Cobranza (carga manual)</span>
+                    <button onClick={addCobranza} className="bg-white text-gray-800 px-3 py-1 rounded-lg text-[9px] font-black uppercase">+ Agregar fila</button>
+                  </div>
+                  <div className="px-4 py-2 bg-gray-50 text-[8px] font-bold text-gray-500 uppercase">Escala: {(cfg.cobranzaEscala||[]).map((e,i)=>`Rango ${i+1} (${e.dMin}-${e.dMax}d): ${e.pct}%`).join('  ·  ')}</div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500"><th className="px-2 py-2 text-left">Fecha</th><th className="px-2 py-2 text-left">Cliente</th><th className="px-2 py-2 text-right">Monto</th><th className="px-2 py-2 text-center">Cond. (días)</th><th className="px-2 py-2 text-center">Vencimiento</th><th className="px-2 py-2 text-center">Fecha Pago</th><th className="px-2 py-2 text-center">Días Retraso</th><th className="px-2 py-2 text-center">Rango</th><th className="px-2 py-2 text-center">%</th><th className="px-2 py-2 text-right">A Pagar</th><th className="px-2 py-2"></th></tr></thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {cobranzaCalc.length===0 ? (
+                          <tr><td colSpan="11" className="py-6 text-center text-gray-400 font-bold uppercase text-[10px]">Sin registros de cobranza. Usa "+ Agregar fila".</td></tr>
+                        ) : cobranzaCalc.map((r,i)=>(
+                          <tr key={i} className="hover:bg-gray-50">
+                            <td className="px-2 py-1.5"><input type="date" value={r.fecha||''} onChange={e=>updCobranza(i,'fecha',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-28"/></td>
+                            <td className="px-2 py-1.5"><input type="text" value={r.cliente||''} onChange={e=>updCobranza(i,'cliente',e.target.value.toUpperCase())} className="border rounded px-1 py-0.5 text-[10px] w-32 uppercase" placeholder="Cliente"/></td>
+                            <td className="px-2 py-1.5 text-right"><input type="number" value={r.monto||''} onChange={e=>updCobranza(i,'monto',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-20 text-right" placeholder="0"/></td>
+                            <td className="px-2 py-1.5 text-center"><input type="number" value={r.condicion||''} onChange={e=>updCobranza(i,'condicion',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-14 text-center" placeholder="7"/></td>
+                            <td className="px-2 py-1.5 text-center"><input type="date" value={r.vencimiento||''} onChange={e=>updCobranza(i,'vencimiento',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-28"/></td>
+                            <td className="px-2 py-1.5 text-center"><input type="date" value={r.fechaPago||''} onChange={e=>updCobranza(i,'fechaPago',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-28"/></td>
+                            <td className="px-2 py-1.5 text-center"><input type="number" value={r.diasRetraso||''} onChange={e=>updCobranza(i,'diasRetraso',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-16 text-center font-black" placeholder="0"/></td>
+                            <td className="px-2 py-1.5 text-center font-black text-blue-700">{r.rango}</td>
+                            <td className="px-2 py-1.5 text-center font-black">{formatNum(r.pct)}%</td>
+                            <td className="px-2 py-1.5 text-right font-black text-green-700">${formatNum(r.montoPagar)}</td>
+                            <td className="px-2 py-1.5 text-center"><button onClick={()=>delCobranza(i)} className="text-red-400 hover:text-red-600"><X size={13}/></button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      {cobranzaCalc.length>0 && <tfoot className="bg-gray-100 font-black"><tr><td colSpan="2" className="px-2 py-2 uppercase text-[9px]">Total Cobranza</td><td className="px-2 py-2 text-right">${formatNum(cobranzaCalc.reduce((s,r)=>s+parseNum(r.monto),0))}</td><td colSpan="6"></td><td className="px-2 py-2 text-right text-green-700">${formatNum(totalCobranza)}</td><td></td></tr></tfoot>}
+                    </table>
+                  </div>
+                  <div className="px-4 py-2 bg-amber-50 text-[8px] font-bold text-amber-700 uppercase">⚠ La tabla de cobranza es manual y no se guarda al cambiar de mes/vendedor. Anota o exporta antes de cambiar.</div>
+                </div>
+
+                {/* TOTAL A PAGAR */}
+                <div className="bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-2xl px-8 py-5 flex justify-between items-center">
+                  <div>
+                    <div className="text-[10px] font-black uppercase opacity-80 tracking-widest">Total a Pagar — {comVendedor||'GENERAL'} · {mesLabel} {comAnio}</div>
+                    <div className="text-[9px] font-bold opacity-70 mt-1">Bonos ${formatNum(bonos.bonoVehiculo+bonos.salarioGarantizado+bonos.captacion+bonos.recuperacion)} + Comisión Venta ${formatNum(comisionTotalVenta)} + Cobranza ${formatNum(totalCobranza)}</div>
+                  </div>
+                  <div className="text-3xl font-black">${formatNum(compensacionTotal)}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {ventasView === 'clientes' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-6 border-b bg-white flex justify-between items-center">
@@ -10179,8 +10679,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                 if(e.target.value==='__NUEVO__'){
                                   const nv=(prompt('Nombre del nuevo vendedor:')||'').toUpperCase().trim();
                                   if(nv){
+                                    const fi=(prompt('Fecha de ingreso del vendedor (AAAA-MM-DD)\\nSe usa para el Salario Garantizado (primeros 3 meses):', getTodayDate())||'').trim();
                                     const lista=Array.from(new Set([...vendedores,nv]));
-                                    await setDoc(getDocRef('settings','general'),{vendedores:lista},{merge:true});
+                                    const info={...(settings?.vendedoresInfo||{}), [nv]:{fechaIngreso:fi||''}};
+                                    await setDoc(getDocRef('settings','general'),{vendedores:lista, vendedoresInfo:info},{merge:true});
                                     setNewInvoiceForm({...newInvoiceForm, vendedor:nv});
                                   }
                                 } else {
@@ -19519,12 +20021,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
               <div className="max-w-7xl mx-auto flex gap-4 px-4 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  {[ 
+                   {id:'dashboard',          icon:<BarChart3 size={16}/>, label:'Dashboard',        perm:'ventas_facturacion'},
                    {id:'facturacion',        icon:<Receipt size={16}/>,  label:'Facturación',       perm:'ventas_facturacion'}, 
                    {id:'cotizaciones',       icon:<FileText size={16}/>, label:'Cotizaciones',      perm:'ventas_facturacion'},
                    {id:'clientes',           icon:<Users size={16}/>,    label:'Directorio',        perm:'ventas_directorio'}, 
                    {id:'requisiciones',      icon:<FileText size={16}/>, label:'OPs',               perm:'ventas_ops'},
                    {id:'productos_vendidos', icon:<Package size={16}/>,  label:'Productos Vendidos',perm:'ventas_productos_vendidos'},
                    {id:'reporte_ventas',     icon:<BarChart3 size={16}/>, label:'Reporte Ventas',    perm:'ventas_facturacion'},
+                   {id:'comisiones',         icon:<DollarSign size={16}/>, label:'Comisiones',       perm:'ventas_facturacion'},
                  ].filter(t=>hasPerm(t.perm)||hasPerm('ventas')||appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
