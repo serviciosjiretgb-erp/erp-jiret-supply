@@ -15678,10 +15678,32 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 const mermaTotal=allBatches.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
                 const pctMerma=mpInjectada>0?((mermaTotal/mpInjectada)*100).toFixed(1):'0.0';
                 const esTermo=req.tipoProducto==='TERMOENCOGIBLE';
-                const solicitado=esTermo?parseNum(req.requestedKg):parseNum(req.cantidad);
+                const solicitado=esTermo
+                  ? (parseNum(req.requestedKg)||parseNum(req.cantidadKg)||parseNum(req.cantidad)||parseNum(req.kgSolicitados))
+                  : (parseNum(req.cantidad)||parseNum(req.millares)||parseNum(req.millaresSolicitados)||parseNum(req.requestedMillares));
                 const producido=esTermo?kgProd:millProd;
                 const pctAvance=solicitado>0?Math.min(100,(producido/solicitado)*100):0;
-                const costoMP=allBatches.reduce((s,b)=>s+parseNum(b.cost||0),0);
+                // Buscador robusto de ítem de inventario por id o código limpio
+                const findInvItem=(itemId)=>{
+                  let inv=(inventory||[]).find(i=>i.id===itemId);
+                  if(inv) return inv;
+                  const cc=String(itemId||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                  return (inventory||[]).find(i=>{
+                    const c=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                    return c===cc && parseNum(i.cost||0)>0;
+                  }) || (inventory||[]).find(i=>{
+                    const c=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                    return c===cc;
+                  });
+                };
+                // Costo MP: preferir lotes; si están en 0, calcular desde requisiciones (+ respaldo costoDespachado)
+                const costoBatchesRep=allBatches.reduce((s,b)=>s+parseNum(b.cost||0),0);
+                const costoReqsRep=approvedReqsOP.reduce((s,r)=>{
+                  let cReq=(r.items||[]).reduce((ss,it)=>ss+parseNum(it.qty||0)*parseNum(findInvItem(it.id)?.cost||0),0);
+                  if(cReq<=0) cReq=parseNum(r.costoDespachado||0);
+                  return s+cReq;
+                },0);
+                const costoMP=costoBatchesRep>0?costoBatchesRep:costoReqsRep;
                 const costoXkg=kgProd>0?costoMP/kgProd:0;
                 const costoXmill=millProd>0?costoMP/millProd:0;
                 // Insumos: primary = approved reqs, fallback = batch insumos
@@ -15737,7 +15759,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       {/* Detail sections — visible only when expanded */}
                       {expandedOPs[req.id] && (<>
                       {/* 1. Desglose de MP consumida */}
-                      {allBatches.some(b=>(b.insumos||[]).length>0) && (
+                      {Object.keys(matsConsumidos).length>0 && (
                         <div>
                           <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">1. Insumos Consumidos (MP)</h4>
                           <table className="w-full text-xs border-collapse">
@@ -15750,12 +15772,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             </tr></thead>
                             <tbody>
                               {Object.entries(matsConsumidos).map(([id,qty])=>{
-                                const inv=(inventory||[]).find(i=>i.id===id);
-                                const fases=allBatches.filter(b=>(b.insumos||[]).some(i=>i.id===id)).map(b=>b.fase);
-                                const fasesUnicas=[...new Set(fases)].join(', ');
-                                const cu=inv?.cost||0;
+                                const inv=findInvItem(id);
+                                const faseBatches=allBatches.filter(b=>(b.insumos||[]).some(i=>i.id===id)).map(b=>b.fase);
+                                const faseReqs=approvedReqsOP.filter(r=>(r.items||[]).some(i=>i.id===id)).map(r=>String(r.phase||'').toUpperCase());
+                                const fasesUnicas=[...new Set([...faseBatches,...faseReqs].filter(Boolean))].join(', ');
+                                const cu=parseNum(inv?.cost||0);
                                 return (<tr key={id} className="hover:bg-gray-50">
-                                  <td className="p-2 border font-black text-purple-700">{id}<span className="text-[9px] text-gray-400 font-normal ml-1">{inv?.desc||''}</span></td>
+                                  <td className="p-2 border font-black text-purple-700">{(inv?.displayId||(id||'').split('___')[0])}<span className="text-[9px] text-gray-400 font-normal ml-1">{inv?.desc||''}</span></td>
                                   <td className="p-2 border text-gray-600 text-[9px]">{fasesUnicas}</td>
                                   <td className="p-2 border text-center font-black text-blue-700">{formatNum(qty)} kg</td>
                                   <td className="p-2 border text-center font-bold">${formatNum(cu)}</td>
