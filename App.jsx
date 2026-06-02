@@ -13459,9 +13459,21 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <select value={formulaIngId} onChange={e=>setFormulaIngId(e.target.value)}
                       className="flex-1 border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-purple-500 bg-white">
                       <option value="">Seleccione materia prima...</option>
-                      {(inventory||[]).filter(i=>i.category==='Materia Prima' && !formulaForm.ingredientes.find(fi=>fi.id===i.id)).sort((a,b)=>(a.displayId||a.id||'').localeCompare(b.displayId||b.id||'')).map(i=>(
-                        <option key={i.id} value={i.id}>{(i.displayId||(i.id||'').split('___')[0])} — {i.desc}</option>
-                      ))}
+                      {(() => {
+                        const cleanOf = (i) => (i.displayId||(i.id||'').split('___')[0]||'').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                        const esMP = (i) => {
+                          const cat = String(i.category||'').toLowerCase().replace(/[_\s]+/g,' ').trim();
+                          return cat === 'materia prima' || cat === 'materias primas' || String(cleanOf(i)).toUpperCase().startsWith('MP-');
+                        };
+                        const yaAgregadas = new Set((formulaForm.ingredientes||[]).map(fi=>String(fi.id||'').toUpperCase()));
+                        const vistos = new Set();
+                        return (inventory||[])
+                          .filter(esMP)
+                          .filter(i => { const cc = cleanOf(i).toUpperCase(); if(vistos.has(cc)) return false; vistos.add(cc); return true; })
+                          .filter(i => !yaAgregadas.has(cleanOf(i).toUpperCase()) && !yaAgregadas.has(String(i.id||'').toUpperCase()))
+                          .sort((a,b)=>cleanOf(a).localeCompare(cleanOf(b), undefined, {numeric:true}))
+                          .map(i => (<option key={i.id} value={cleanOf(i)}>{cleanOf(i)} — {i.desc}</option>));
+                      })()}
                     </select>
                     <input type="number" step="0.1" min="0.1" max="100" value={formulaIngPct}
                       onChange={e=>setFormulaIngPct(e.target.value)}
@@ -13469,10 +13481,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       placeholder="%" />
                     <button type="button" onClick={()=>{
                       if(!formulaIngId||!formulaIngPct) return;
-                      const invItem=(inventory||[]).find(i=>i.id===formulaIngId);
+                      const cleanOf=(i)=>(i.displayId||(i.id||'').split('___')[0]||'').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                      const invItem=(inventory||[]).find(i=>i.id===formulaIngId) || (inventory||[]).find(i=>cleanOf(i).toUpperCase()===String(formulaIngId).toUpperCase());
                       const nuevoTotal=totalPctActual+parseNum(formulaIngPct);
                       if(nuevoTotal>100.1) return setDialog({title:'Aviso',text:`Supera 100%. Máximo disponible: ${pctRestante.toFixed(1)}%`,type:'alert'});
-                      setFormulaForm({...formulaForm, ingredientes:[...(formulaForm.ingredientes||[]),{id:formulaIngId,pct:parseNum(formulaIngPct),desc:invItem?.desc||formulaIngId,category:invItem?.category||''}]});
+                      setFormulaForm({...formulaForm, ingredientes:[...(formulaForm.ingredientes||[]),{id:formulaIngId,pct:parseNum(formulaIngPct),desc:invItem?.desc||formulaIngId,category:invItem?.category||'Materia Prima'}]});
                       setFormulaIngId('');setFormulaIngPct('');
                     }} className="bg-purple-600 text-white px-4 py-3 rounded-xl font-black hover:bg-purple-700 flex items-center"><Plus size={16}/></button>
                   </div>
