@@ -1035,8 +1035,8 @@ export default function App() {
   //   • Como toma el saldo ACTUAL de FG Producción, nunca restaura lo ya facturado.
   useEffect(() => {
     if(!inventory || !finishedGoodsInventory || !appUser) return;
-    if(sessionStorage.getItem('auto_fg_mirror_v3')==='done') return;
-    sessionStorage.setItem('auto_fg_mirror_v3','done');
+    if(sessionStorage.getItem('auto_fg_mirror_v4')==='done') return;
+    sessionStorage.setItem('auto_fg_mirror_v4','done');
 
     const r2 = (n) => Math.round(parseNum(n)*100)/100;
     const dimsFromCode = (code) => {
@@ -1048,6 +1048,35 @@ export default function App() {
 
     const doMirror = async () => {
       try {
+        // Helper: costo unitario de un FG. Usa el costoUnitario guardado;
+        // si está en 0, lo calcula desde las requisiciones aprobadas de su OP.
+        const _normOp = (x) => String(x||'').replace(/^OP-/i,'').trim();
+        const costoUnitDeFG = (fg) => {
+          const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+          const guardado = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+          if (guardado > 0) return guardado;
+          const qtyProd = esTermo ? parseNum(fg.kgProducidos||fg.kgProducidosOrigen||0) : parseNum(fg.millares||0);
+          if (qtyProd <= 0) return 0;
+          const reqs = (invRequisitions||[]).filter(r =>
+            _normOp(r.opId) === _normOp(fg.opId) &&
+            ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status));
+          let costo = 0;
+          reqs.forEach(r => {
+            let cReq = 0;
+            (r.items||[]).forEach(it => {
+              const inv = (inventory||[]).find(i => {
+                const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                const itcc = (it.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                return i.id===it.id || cc===itcc;
+              });
+              cReq += parseNum(it.qty||0) * parseNum(inv?.cost||0);
+            });
+            if (cReq <= 0) cReq = parseNum(r.costoDespachado||0);
+            costo += cReq;
+          });
+          return costo > 0 ? costo / qtyProd : 0;
+        };
+
         // 1) Agrupar FG Producción por tipo + ancho + largo (saldo actual y costo)
         const groups = {}; // key -> {esTermo, qty, costTotal, sample}
         (finishedGoodsInventory||[]).forEach(fg => {
@@ -1055,7 +1084,7 @@ export default function App() {
           const entregado = fg.status === 'ENTREGADO';
           const qty = entregado ? 0 : (esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares));
           if(qty <= 0) return;
-          const cu = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+          const cu = costoUnitDeFG(fg);
           const key = `${esTermo?'T':'B'}|${r2(fg.ancho)}|${r2(fg.largo)}`;
           if(!groups[key]) groups[key] = { esTermo, qty:0, costTotal:0, sample:fg };
           groups[key].qty += qty;
@@ -1077,10 +1106,12 @@ export default function App() {
           });
 
           if(doc){
-            // Solo rellenar si está en 0 (no pisar los que ya tienen existencia correcta)
-            if(parseNum(doc.stock) > 0) continue;
+            // La producción es la fuente de verdad: fija existencia = total producido
+            // y completa el costo si el documento no lo tiene.
+            const nuevoCosto = parseNum(doc.cost)>0 ? parseNum(doc.cost) : costUnit;
+            if(r2(doc.stock)===r2(qtyTot) && parseNum(doc.cost)>0) continue; // ya está correcto
             await setDoc(getDocRef('inventory', doc.id), {
-              ...doc, stock: qtyTot, cost: parseNum(doc.cost)>0 ? parseNum(doc.cost) : costUnit,
+              ...doc, stock: qtyTot, cost: nuevoCosto,
               timestamp: Date.now(), updatedAt: getTodayDate()
             }, { merge:true });
           } else {
@@ -1106,7 +1137,7 @@ export default function App() {
       } catch(e){ console.error('Auto-mirror FG error:', e); }
     };
     doMirror();
-  }, [inventory, finishedGoodsInventory, appUser]);
+  }, [inventory, finishedGoodsInventory, invRequisitions, appUser]);
 
 
   // ── ONE-TIME cleanup: FG duplicate docs only ──
@@ -3309,9 +3340,14 @@ export default function App() {
           const descFG = finishedEntry.producto || reqDoc.desc || reqId;
 
           // Compute cost from all materials used in this OP
-          const allApprovedReqs = (invRequisitions||[]).filter(r => r.opId === reqId && (r.status==='APROBADA'||r.status==='APROBADO'));
+          const _normOp = (x) => String(x||'').replace(/^OP-/i,'').trim();
+          const allApprovedReqs = (invRequisitions||[]).filter(r =>
+            _normOp(r.opId) === _normOp(reqId) &&
+            ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status)
+          );
           let totalCostMP = 0, totalKgMP = 0;
           allApprovedReqs.forEach(r => {
+            let costoReq = 0;
             (r.items||[]).forEach(it => {
               const invItem = (inventory||[]).find(i => {
                 const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
@@ -3320,9 +3356,12 @@ export default function App() {
               });
               const qty = parseNum(it.qty||0);
               const cost = parseNum(invItem?.cost||0);
-              totalCostMP += qty * cost;
+              costoReq += qty * cost;
               totalKgMP += qty;
             });
+            // Respaldo: si no se pudo costear por inventario, usar el costo capturado al despachar
+            if (costoReq <= 0) costoReq = parseNum(r.costoDespachado||0);
+            totalCostMP += costoReq;
           });
           // costoUnitario = total MP cost / qty produced
           const costoUnitario = newQty > 0 && totalCostMP > 0 ? totalCostMP / newQty : 0;
@@ -3404,9 +3443,9 @@ export default function App() {
           const esTerKdx = finishedEntry.tipoProducto==='TERMOENCOGIBLE';
           const fgProdQty = esTerKdx ? parseNum(finishedEntry.kgProducidos||0) : parseNum(finishedEntry.millares||0);
           // Recompute cost for kardex
-          const allReqsKdx = (invRequisitions||[]).filter(r => r.opId === reqId && (r.status==='APROBADA'||r.status==='APROBADO'));
+          const allReqsKdx = (invRequisitions||[]).filter(r => String(r.opId||'').replace(/^OP-/i,'').trim() === String(reqId||'').replace(/^OP-/i,'').trim() && ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status));
           let kdxCostTotal = 0, kdxQtyTotal = 0;
-          allReqsKdx.forEach(r => { (r.items||[]).forEach(it => { const itInv=(inventory||[]).find(i=>i.id===it.id||(i.displayId||(i.id||'').split('___')[0])===((it.id||'').split('___')[0])); const q=parseNum(it.qty||0); kdxCostTotal+=q*parseNum(itInv?.cost||0); kdxQtyTotal+=q; }); });
+          allReqsKdx.forEach(r => { let cReq=0; (r.items||[]).forEach(it => { const itInv=(inventory||[]).find(i=>i.id===it.id||(i.displayId||(i.id||'').split('___')[0])===((it.id||'').split('___')[0])); const q=parseNum(it.qty||0); cReq+=q*parseNum(itInv?.cost||0); kdxQtyTotal+=q; }); if(cReq<=0) cReq=parseNum(r.costoDespachado||0); kdxCostTotal+=cReq; });
           const kdxCostUnit = fgProdQty > 0 && kdxCostTotal > 0 ? kdxCostTotal / fgProdQty : 0;
           if(fgProdQty > 0) await addDoc(getColRef('inventoryMovements'), {
             itemId: _codigoFinal,
