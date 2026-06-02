@@ -13459,8 +13459,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <select value={formulaIngId} onChange={e=>setFormulaIngId(e.target.value)}
                       className="flex-1 border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-purple-500 bg-white">
                       <option value="">Seleccione materia prima...</option>
-                      {(inventory||[]).filter(i=>(i.category==='Materia Prima'||i.category==='Pigmentos') && !formulaForm.ingredientes.find(fi=>fi.id===i.id)).map(i=>(
-                        <option key={i.id} value={i.id}>{i.id} — {i.desc} ({i.category})</option>
+                      {(inventory||[]).filter(i=>i.category==='Materia Prima' && !formulaForm.ingredientes.find(fi=>fi.id===i.id)).sort((a,b)=>(a.displayId||a.id||'').localeCompare(b.displayId||b.id||'')).map(i=>(
+                        <option key={i.id} value={i.id}>{(i.displayId||(i.id||'').split('___')[0])} — {i.desc}</option>
                       ))}
                     </select>
                     <input type="number" step="0.1" min="0.1" max="100" value={formulaIngPct}
