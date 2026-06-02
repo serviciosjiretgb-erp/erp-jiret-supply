@@ -3108,16 +3108,12 @@ export default function App() {
   // ============================================================================
   const handleSendRequisitionToAlmacen = async () => {
     if (!phaseForm.insumos || phaseForm.insumos.length === 0) { return setDialog({title: 'Aviso', text: 'Agregue insumos a la lista antes de solicitar a almacén.', type: 'alert'}); }
-    // Include lote number from the current active batch if available
-    const reqLote = (() => {
-      const req = (requirements||[]).find(r=>r.id===selectedPhaseReqId);
-      const prod = req?.production || {};
-      const phaseProd = prod[activePhaseTab] || {};
-      const batches = phaseProd.batches || [];
-      // Use the last active batch number
-      return batches.length > 0 ? `LOTE-${String(batches.length).padStart(3,'0')}` : '';
-    })();
-    const newReq = { opId: selectedPhaseReqId, phase: activePhaseTab, items: phaseForm.insumos, status: 'PENDIENTE', lote: reqLote, timestamp: Date.now(), date: getTodayDate(), user: appUser?.name || 'Operador de Planta' };
+    // Lote activo de la OP (índice y etiqueta) para imputar la MP al lote correcto
+    const _reqOP = (requirements||[]).find(r=>r.id===selectedPhaseReqId);
+    const _lotesOP = _reqOP ? getLotes(_reqOP) : [];
+    const _loteLabel = _lotesOP[activeLoteIndex]?.nombre || `Lote ${activeLoteIndex+1}`;
+    const reqLote = `LOTE-${String(activeLoteIndex+1).padStart(3,'0')}`;
+    const newReq = { opId: selectedPhaseReqId, phase: activePhaseTab, items: phaseForm.insumos, status: 'PENDIENTE', lote: reqLote, loteIndex: activeLoteIndex, loteLabel: _loteLabel, timestamp: Date.now(), date: getTodayDate(), user: appUser?.name || 'Operador de Planta' };
     try {
       await addDoc(getColRef('inventoryRequisitions'), newReq);
       setPhaseForm({...phaseForm, insumos: []});
@@ -11807,21 +11803,66 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
   const handleCerrarLote = async (req) => {
     const lotes = getLotes(req);
-    const updated = lotes.map((l, i) => i === activeLoteIndex ? {...l, cerrado: true, fechaCierre: getTodayDate()} : l);
-    await updateDoc(getDocRef('requirements', req.id), { 'production.lotes': updated });
-    setDialog({title:'Lote Cerrado', text:`El Lote ${activeLoteIndex+1} fue cerrado. Cree un nuevo lote para continuar produciendo.`, type:'alert'});
+    // Ruta de fases según la fórmula del producto
+    const fmla = (formulas||[]).find(f => f.categoria && req.categoria && f.categoria.toUpperCase() === (req.categoria||'').toUpperCase());
+    const fases = fmla?.fases || { extrusion:true, impresion:false, sellado:false };
+    const requeridas = ['extrusion','impresion','sellado'].filter(p => fases[p]);
+    // Batches del lote activo por fase (estructura plana etiquetada)
+    const tieneProd = (p) => (req.production?.[p]?.batches||[])
+      .filter(b => (Number.isInteger(b.loteIndex)?b.loteIndex:0)===activeLoteIndex)
+      .some(b => parseNum(b.producedKg)>0);
+    const faltantes = requeridas.filter(p => !tieneProd(p));
+    const cerrar = async () => {
+      const updated = lotes.map((l, i) => i === activeLoteIndex ? {...l, cerrado: true, fechaCierre: getTodayDate()} : l);
+      await updateDoc(getDocRef('requirements', req.id), { 'production.lotes': updated });
+      setDialog({title:'Lote Cerrado', text:`El Lote ${activeLoteIndex+1} fue cerrado. Cree un nuevo lote para continuar produciendo.`, type:'alert'});
+    };
+    if (faltantes.length > 0) {
+      const nombres = faltantes.map(p=>p.toUpperCase()).join(', ');
+      return setDialog({
+        title:'Faltan fases en el lote',
+        text:`Según la fórmula, este producto requiere: ${requeridas.map(p=>p.toUpperCase()).join(' → ')}. El Lote ${activeLoteIndex+1} aún no tiene producción en: ${nombres}. ¿Cerrar de todas formas?`,
+        type:'confirm', onConfirm: cerrar
+      });
+    }
+    await cerrar();
   };
 
   const handleSavePhaseDirectly = async (req, isClose) => {
     if (!req) return;
     const prodKg = parseNum(phaseForm?.producedKg);
     const totalInsumosKg = (phaseForm?.insumos || []).reduce((s, ing) => s + parseNum(ing?.qty), 0);
-    // KG recibidos según la fase activa
-    const kgRecibidos = activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp)
-                      : activePhaseTab === 'sellado'   ? parseNum(phaseForm.kgRecibidosSel)
-                      : totalInsumosKg;
-    // Merma = KG usados - KG producidos (basada en insumos registrados)
-    const baseParaMerma = totalInsumosKg > 0 ? totalInsumosKg : kgRecibidos;
+
+    // ── Ruta de fases según la fórmula del producto ──
+    const _fmla = (formulas||[]).find(f => f.categoria && req.categoria && f.categoria.toUpperCase() === (req.categoria||'').toUpperCase());
+    const _fases = _fmla?.fases || { extrusion:true, impresion:false, sellado:false };
+    const prevPhaseOf = (ph) => ph==='impresion' ? 'extrusion' : ph==='sellado' ? (_fases.impresion?'impresion':'extrusion') : null;
+
+    // ── MP imputada al lote activo (entrada de extrusión) ──
+    const _norm = (id)=>String(id||'').replace(/^OP-/i,'').trim();
+    const _loteIdxOfReq = (r)=>{ if(Number.isInteger(r.loteIndex)) return r.loteIndex; const m=String(r.loteLabel||r.lote||'').match(/(\d+)/); return m?parseInt(m[1],10)-1:0; };
+    const approvedLote = (invRequisitions||[]).filter(r=>_norm(r.opId)===_norm(req.id) && ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status) && _loteIdxOfReq(r)===activeLoteIndex);
+    const mpLoteKg = approvedLote.reduce((s,r)=>s+(r.items||[]).reduce((ss,it)=>{ const inv=(inventory||[]).find(i=>i.id===it.id); const u=(inv?.unit||'kg').toLowerCase(); if(u.startsWith('mill')||u==='und'||u==='unidad') return ss; return ss+parseNum(it.qty||0); },0),0);
+
+    // ── KG salidos de la fase previa DEL MISMO LOTE (para encadenar) ──
+    const kgSalidosFasePrevia = (ph) => {
+      const pv = prevPhaseOf(ph);
+      if(!pv) return 0;
+      const bs = (req.production?.[pv]?.batches||[]).filter(b=>(Number.isInteger(b.loteIndex)?b.loteIndex:0)===activeLoteIndex);
+      return bs.reduce((s,b)=>s+parseNum(b.producedKg||0),0);
+    };
+
+    // KG recibidos según la fase activa (encadenado automático si no se ingresó)
+    let kgRecibidos;
+    if (activePhaseTab === 'impresion') {
+      kgRecibidos = parseNum(phaseForm.kgRecibidosImp) || kgSalidosFasePrevia('impresion');
+    } else if (activePhaseTab === 'sellado') {
+      kgRecibidos = parseNum(phaseForm.kgRecibidosSel) || kgSalidosFasePrevia('sellado');
+    } else { // extrusión: entrada = insumos del form o MP imputada al lote
+      kgRecibidos = totalInsumosKg > 0 ? totalInsumosKg : mpLoteKg;
+    }
+    // Merma = KG recibidos (entrada de la fase) − KG producidos
+    const baseParaMerma = kgRecibidos > 0 ? kgRecibidos : (totalInsumosKg > 0 ? totalInsumosKg : mpLoteKg);
     const mermaKg = baseParaMerma > 0 && prodKg >= 0 ? Math.max(0, baseParaMerma - prodKg) : parseNum(phaseForm?.mermaKg);
     const mermaPorc = baseParaMerma > 0 ? ((mermaKg / baseParaMerma) * 100).toFixed(2) : 0;
 
@@ -11859,6 +11900,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       const newBatch = {
         id: Date.now().toString(), timestamp: Date.now(),
         date: phaseForm.date || getTodayDate(),
+        loteIndex: activeLoteIndex,
+        loteLabel: getLotes(req)[activeLoteIndex]?.nombre || `Lote ${activeLoteIndex+1}`,
         insumos: phaseForm.insumos || [],
         producedKg: prodKg, mermaKg, mermaPorc: parseFloat(mermaPorc),
         // Desglose de merma por tipo (solo extrusión y sellado)
@@ -13204,7 +13247,21 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status))
       .sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
 
-    // Total MP from all approved reqs
+    // Lotes
+    const lotes = getLotes(req);
+    const currentLoteObj = lotes[activeLoteIndex] || lotes[lotes.length-1] || {};
+    const currentLoteLabel = currentLoteObj?.nombre || `Lote ${activeLoteIndex+1}`;
+
+    // Resolver a qué lote (índice 0-based) pertenece cada requisición
+    const _parseLoteNum = (s) => { const m=String(s||'').match(/(\d+)/); return m?parseInt(m[1],10):null; };
+    const loteIdxOf = (r) => {
+      if(Number.isInteger(r.loteIndex)) return r.loteIndex;
+      const n = _parseLoteNum(r.loteLabel) ?? _parseLoteNum(r.lote);
+      if(n!=null && n>0) return n-1;
+      return lotes.length<=1 ? 0 : null; // sin etiqueta y varias: sin asignar
+    };
+
+    // Total MP de toda la OP (histórico completo)
     const allItems = {};
     approved.forEach(r => (r.items||[]).forEach(it => {
       if(it?.id) allItems[it.id] = (allItems[it.id]||0) + parseNum(it.qty);
@@ -13218,37 +13275,25 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       </div>
     );
 
-    // Lotes
-    const lotes = getLotes(req);
-    const currentLoteObj = lotes[activeLoteIndex] || lotes[lotes.length-1] || {};
-    const currentLoteLabel = currentLoteObj?.nombre || `Lote ${activeLoteIndex+1}`;
-
-    // MP for current lote — if multiple lotes, assign req per lote; else all items belong to this lote
-    let loteItems = {};
-    if(lotes.length <= 1) {
-      loteItems = {...allItems};
-    } else {
-      const loteReqId = currentLoteObj?.reqId;
-      const usedByOthers = lotes.filter((_,li)=>li!==activeLoteIndex).map(l=>l.reqId).filter(Boolean);
-      const loteReq = approved.find(r=>r.id===loteReqId)
-        || approved.find(r=>r.loteIndex===activeLoteIndex)
-        || approved.find(r=>!usedByOthers.includes(r.id))
-        || approved[Math.min(activeLoteIndex, approved.length-1)];
-      (loteReq?.items||[]).forEach(it=>{
-        if(it?.id) loteItems[it.id]=(loteItems[it.id]||0)+parseNum(it.qty);
-      });
-      if(Object.keys(loteItems).length===0) loteItems = {...allItems};
-    }
+    // MP del lote ACTIVO = suma de requisiciones asignadas a este lote.
+    // Arranca en 0 al abrir un lote nuevo y sube solo al aprobar requisiciones de ese lote.
+    const reqsLoteActivo = approved.filter(r => loteIdxOf(r) === activeLoteIndex);
+    const loteItems = {};
+    reqsLoteActivo.forEach(r => (r.items||[]).forEach(it => {
+      if(it?.id) loteItems[it.id] = (loteItems[it.id]||0) + parseNum(it.qty);
+    }));
     const kgLote = Object.values(loteItems).reduce((s,v)=>s+v,0);
 
-    // Check if the current lote's phase is already closed or has batches saved
-    const phaseIsClosed = currentLoteObj?.[phase]?.isClosed === true;
-    const phaseHasBatches = (currentLoteObj?.[phase]?.batches||[]).length > 0;
-    const phaseAlreadyDone = phaseIsClosed || phaseHasBatches;
+    // Batches de la fase pertenecientes al lote activo (estructura plana etiquetada por loteIndex)
+    const _batchesFaseLote = (p) => (req.production?.[p]?.batches||[])
+      .filter(b => (Number.isInteger(b.loteIndex)?b.loteIndex:0)===activeLoteIndex)
+      .filter(b => b.operator!=='ALMACÉN (DESPACHO)' && (parseNum(b.producedKg)>0||(b.insumos||[]).length>0));
+    const phaseBatchesLote = _batchesFaseLote(phase);
+    const phaseAlreadyDone = phaseBatchesLote.length > 0; // este lote ya produjo esta fase
 
-    // Previously produced across all lotes
-    const kgProducidosAnt = lotes.flatMap(l=>(l?.[phase]?.batches||[])).reduce((s,b)=>s+parseNum(b?.producedKg||0),0);
-    const mermaAnt = lotes.flatMap(l=>(l?.[phase]?.batches||[])).reduce((s,b)=>s+parseNum(b?.mermaKg||0),0);
+    // Producido/merma de ESTE lote en esta fase
+    const kgProducidosAnt = phaseBatchesLote.reduce((s,b)=>s+parseNum(b?.producedKg||0),0);
+    const mermaAnt = phaseBatchesLote.reduce((s,b)=>s+parseNum(b?.mermaKg||0),0);
 
     // Merma for current lote
     const prodKg = parseNum(phaseForm.producedKg);
@@ -13275,7 +13320,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 return (
                   <div key={r.id} className="bg-gray-800 rounded-lg px-3 py-2">
                     <div className="flex justify-between mb-1">
-                      <span className="text-[9px] font-black text-orange-300">Solicitud #{ri+1} · {r.date||''}</span>
+                      <span className="text-[9px] font-black text-orange-300">Solicitud #{ri+1} · {r.loteLabel || (loteIdxOf(r)!=null?`Lote ${loteIdxOf(r)+1}`:'Lote —')} · {r.date||''}</span>
                       <span className="text-[8px] text-gray-300 font-bold">{formatNum(rTotal)} KG</span>
                     </div>
                     <div className="flex flex-wrap gap-2">
