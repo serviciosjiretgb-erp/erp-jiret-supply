@@ -12104,8 +12104,61 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     const totalMermaKg = allBatches.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
     const pctMerma = mpInyectadaKg > 0 ? (totalMermaKg / mpInyectadaKg * 100) : 0;
 
-    // Costo total = suma de insumos consumidos en TODAS las fases
-    const totalCostoMP = allBatches.reduce((s,b)=>s+parseNum(b.cost),0);
+    // ── Costo desde REQUISICIONES aprobadas (fuente autoritativa de despacho) ──
+    // Busca el costo del ítem en inventario por id directo o por código limpio (mismo criterio que la aprobación)
+    const findInvCost = (itemId) => {
+      let inv = (inventory||[]).find(i => i.id === itemId);
+      if (inv) return parseNum(inv.cost||0);
+      const cleanCode = String(itemId||'').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+      inv = (inventory||[]).find(i => {
+        const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+        return cc === cleanCode && parseNum(i.cost||0) > 0;
+      }) || (inventory||[]).find(i => {
+        const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+        return cc === cleanCode;
+      });
+      return inv ? parseNum(inv.cost||0) : 0;
+    };
+    const findInvDesc = (itemId) => {
+      let inv = (inventory||[]).find(i => i.id === itemId);
+      if (inv) return inv.desc || itemId;
+      const cleanCode = String(itemId||'').replace(/_inv$/i,'').trim();
+      inv = (inventory||[]).find(i => (i.displayId||(i.id||'').split('___')[0]).replace(/_inv$/i,'').trim() === cleanCode);
+      return inv?.desc || itemId;
+    };
+    const faseLabelFromPhase = (ph) => {
+      const p = String(ph||'').toLowerCase();
+      if (p.startsWith('impr')) return 'IMPRESIÓN';
+      if (p.startsWith('sell')) return 'SELLADO';
+      return 'EXTRUSIÓN';
+    };
+    // Insumos por lote derivados de requisiciones (ordenadas por fecha de despacho)
+    const reqsOrdenadas = [...approvedReqsForOP].sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
+    const reqInsumosPorLote = [];
+    let costoReqTotal = 0;
+    reqsOrdenadas.forEach((r, ri) => {
+      const loteNum = (() => {
+        const m = String(r.lote||'').match(/(\d+)/);
+        return m ? parseInt(m[1],10) : (ri + 1);
+      })();
+      const fase = faseLabelFromPhase(r.phase);
+      (r.items||[]).forEach(it => {
+        const unit = (it.unit||'kg').toLowerCase();
+        if (unit.startsWith('mill')||unit==='und'||unit==='unidad'||unit==='m'||unit==='mts') return;
+        const qty = parseNum(it.qty||0);
+        if (qty <= 0) return;
+        const cost = findInvCost(it.id);
+        reqInsumosPorLote.push({ lote: loteNum, fase, id: it.id, desc: findInvDesc(it.id), qty, cost });
+      });
+      // Costo de la requisición: usa el costo capturado al despachar; si no, recalcula
+      const cd = parseNum(r.costoDespachado||0);
+      if (cd > 0) costoReqTotal += cd;
+      else costoReqTotal += (r.items||[]).reduce((s,it)=>s + parseNum(it.qty||0)*findInvCost(it.id), 0);
+    });
+
+    // Costo total = preferir lotes de producción; si están en 0, usar requisiciones
+    const costoBatches = allBatches.reduce((s,b)=>s+parseNum(b.cost),0);
+    const totalCostoMP = costoBatches > 0 ? costoBatches : costoReqTotal;
 
     // Millares = ÚLTIMA fase activa (el producto terminado final)
     const totalMillares = selBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
@@ -12148,16 +12201,16 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         });
       });
     }
+    // Si los lotes de producción no tienen insumos cargados, usar los de las requisiciones
+    const insumosporLoteFinal = insumosporLote.length > 0 ? insumosporLote : reqInsumosPorLote;
     // También mantener el total acumulado para el finiquito
     const insumoMap = {};
-    allBatches.forEach(b => {
-      (b.insumos || []).forEach(ing => {
-        if (!insumoMap[ing.id]) {
-          const invItem = (inventory||[]).find(i => i.id === ing.id);
-          insumoMap[ing.id] = { id: ing.id, desc: invItem?.desc || ing.id, qty: 0, cost: invItem?.cost || 0, fase: b.fase };
-        }
-        insumoMap[ing.id].qty += parseNum(ing.qty);
-      });
+    const fuenteAcumulado = insumosporLote.length > 0 ? allBatches.flatMap(b=>(b.insumos||[]).map(ing=>({...ing, fase:b.fase}))) : reqInsumosPorLote;
+    fuenteAcumulado.forEach(ing => {
+      if (!insumoMap[ing.id]) {
+        insumoMap[ing.id] = { id: ing.id, desc: ing.desc || findInvDesc(ing.id), qty: 0, cost: (ing.cost!=null && ing.cost>0) ? ing.cost : findInvCost(ing.id), fase: ing.fase };
+      }
+      insumoMap[ing.id].qty += parseNum(ing.qty);
     });
     const insumosList = Object.values(insumoMap);
     const fechaInicio = allBatches[0]?.date || req.fecha;
@@ -12303,10 +12356,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {insumosporLote.length > 0 ? (() => {
+                  {insumosporLoteFinal.length > 0 ? (() => {
                     // Render grouped by lote with header row between lotes
                     let currentLote = null;
-                    return insumosporLote.map((ins, i) => {
+                    return insumosporLoteFinal.map((ins, i) => {
                       const showLoteHeader = ins.lote !== currentLote;
                       currentLote = ins.lote;
                       return [
@@ -13406,7 +13459,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <select value={formulaIngId} onChange={e=>setFormulaIngId(e.target.value)}
                       className="flex-1 border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-purple-500 bg-white">
                       <option value="">Seleccione materia prima...</option>
-                      {(inventory||[]).filter(i=>!formulaForm.ingredientes.find(fi=>fi.id===i.id)).map(i=>(
+                      {(inventory||[]).filter(i=>(i.category==='Materia Prima'||i.category==='Pigmentos') && !formulaForm.ingredientes.find(fi=>fi.id===i.id)).map(i=>(
                         <option key={i.id} value={i.id}>{i.id} — {i.desc} ({i.category})</option>
                       ))}
                     </select>
