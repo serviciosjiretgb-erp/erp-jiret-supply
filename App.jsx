@@ -16,7 +16,7 @@ import {
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
   ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing, Upload,
   Menu, ChevronLeft, Smartphone, Wifi, WifiOff,
-  Activity, Timer, Award, PackageCheck, Calendar, ChevronDown, CheckSquare} from 'lucide-react';
+  Activity, Timer, Award, PackageCheck, Calendar, ChevronDown, CheckSquare, RotateCcw} from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
@@ -1958,6 +1958,40 @@ export default function App() {
   // IMPORTAR INVENTARIO CONSOLIDADO DESDE EXCEL (datos precargados)
   // ============================================================================
 
+  // ── REVERTIR IMPORTACIÓN CONSOLIDADA (elimina docs con ___ALMACEN- en su ID) ──
+  const handleRevertImport = () => {
+    const importedItems = (inventory || []).filter(i => (i.id || '').includes('___ALMACEN-'));
+    if (importedItems.length === 0) {
+      setDialog({ title: 'Aviso', text: 'No se encontraron artículos importados con el formato consolidado.', type: 'alert' });
+      return;
+    }
+    const byAlm = importedItems.reduce((a,i)=>{ const k=i.almacen||'—'; a[k]=(a[k]||0)+1; return a; },{});
+    const resumen = Object.entries(byAlm).map(([k,v])=>`• ${k}: ${v}`).join('\n');
+    setDialog({
+      title: `⚠️ Revertir importación — ${importedItems.length} registros`,
+      text: `Se eliminarán PERMANENTEMENTE los ${importedItems.length} artículos creados por la última importación:\n\n${resumen}\n\n¿Estás seguro?`,
+      type: 'confirm',
+      onConfirm: async () => {
+        try {
+          const batchSize = 400;
+          let deleted = 0;
+          for (let i = 0; i < importedItems.length; i += batchSize) {
+            const chunk = importedItems.slice(i, i + batchSize);
+            const batch = writeBatch(db);
+            for (const item of chunk) {
+              batch.delete(getDocRef('inventory', item.id));
+              deleted++;
+            }
+            await batch.commit();
+          }
+          setDialog({ title: '✅ Revertido', text: `${deleted} artículos eliminados correctamente. Ahora puedes volver a importar el archivo.`, type: 'alert' });
+        } catch(err) {
+          setDialog({ title: 'Error al revertir', text: err.message, type: 'alert' });
+        }
+      }
+    });
+  };
+
   // ── IMPORTAR INVENTARIO CONSOLIDADO DESDE EXCEL (subido por el usuario) ──────
   const handleImportConsolidatedInventory = () => {
     // Crear input de archivo invisible y activarlo
@@ -2015,9 +2049,9 @@ export default function App() {
           if (SKIP.some(s => s && codeStr.startsWith(s))) continue;
           if (codeStr.length < 2) continue;
 
-          const desc   = String(row[1] || '').trim();
+          const desc   = String(row[1] || '').trim().toUpperCase();
           const subcat = String(row[2] || '').trim();
-          const um     = String(row[3] || 'und').trim().toLowerCase();
+          const um     = String(row[3] || 'UND').trim().toUpperCase();
           const cost   = parseN(row[4]);
 
           for (const { col, field, suffix } of ALM_COLS) {
@@ -7661,6 +7695,9 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Box className="text-orange-500" size={24}/> Inventario General</h2>
                <div className="flex gap-3 flex-wrap justify-end">
 
+                 <button onClick={() => requireAdminPassword(handleRevertImport, 'Revertir Importación')} className="bg-red-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-red-700 transition-colors flex items-center gap-2">
+                   <RotateCcw size={16}/> REVERTIR
+                 </button>
                  <button onClick={() => requireAdminPassword(handleImportConsolidatedInventory, 'Importar Inventario Consolidado Excel')} className="bg-indigo-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-indigo-700 transition-colors flex items-center gap-2">
                    <Upload size={16}/> IMPORTAR EXCEL
                  </button>
