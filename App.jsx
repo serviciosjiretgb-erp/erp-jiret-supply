@@ -721,58 +721,59 @@ export default function App() {
   // ── Stock mínimo (edición admin en Proyección MP) ──
   const [editingMinStock, setEditingMinStock] = useState(null); // {id, value}
   // ============================================================================
-  // ── PDF: genera descarga directa usando html2pdf.js (sin diálogo de impresión) ──
-  const _loadHtml2Pdf = () => {
-    if (window.html2pdf) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
+  // ── UTILIDAD: abre ventana membretada con botón IMPRIMIR / GUARDAR PDF ───────
+  const _abrirVentanaReporte = (contenidoHtml, titulo = 'Reporte') => {
+    const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
+    const rif     = settings?.empresaRif || 'J-412309374';
+    const dir     = settings?.empresaDireccion || 'Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9, Maracaibo.';
+    const html = `<!DOCTYPE html><html lang="es"><head>
+<meta charset="utf-8"/>
+<title>${titulo}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+  body{background:#f5f5f5;padding:20px;}
+  .reporte-wrap{max-width:960px;margin:0 auto;background:#fff;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.12);overflow:hidden;}
+  .membrete{display:flex;justify-content:space-between;align-items:center;padding:18px 28px 14px;border-bottom:4px solid #f97316;background:#fff;}
+  .logo-txt{font-size:22px;font-weight:900;color:#f97316;line-height:1;}
+  .logo-sub{font-size:10px;font-weight:700;color:#374151;letter-spacing:2px;text-transform:uppercase;margin-top:3px;}
+  .empresa-info{text-align:right;}
+  .empresa-info h2{font-size:14px;font-weight:900;text-transform:uppercase;color:#111;}
+  .empresa-info p{font-size:9px;color:#6b7280;margin-top:2px;line-height:1.5;}
+  .contenido{padding:20px 28px 28px;}
+  .btn-print{display:block;margin:0 28px 24px;padding:13px 0;background:#f97316;color:#fff;font-size:13px;font-weight:900;text-transform:uppercase;text-align:center;border:none;border-radius:8px;cursor:pointer;letter-spacing:1px;width:calc(100% - 56px);}
+  .btn-print:hover{background:#ea580c;}
+  @media print{
+    body{background:#fff;padding:0;}
+    .reporte-wrap{box-shadow:none;border-radius:0;}
+    .btn-print{display:none!important;}
+  }
+</style>
+</head><body>
+<div class="reporte-wrap">
+  <div class="membrete">
+    <div><div class="logo-txt">Supply<br>G&amp;B</div><div class="logo-sub">Servicios Jiret</div></div>
+    <div class="empresa-info">
+      <h2>${empresa}</h2>
+      <p>RIF: ${rif}<br>${dir}</p>
+    </div>
+  </div>
+  <button class="btn-print" onclick="window.print()">🖨&nbsp; IMPRIMIR / GUARDAR PDF</button>
+  <div class="contenido">${contenidoHtml}</div>
+  <button class="btn-print" onclick="window.print()">🖨&nbsp; IMPRIMIR / GUARDAR PDF</button>
+</div>
+</body></html>`;
+    const w = window.open('', '_blank');
+    if(w){ w.document.write(html); w.document.close(); }
   };
 
-  const handleExportPDF = async (filename, isLandscape = false) => {
+  const handleExportPDF = (filename, isLandscape = false) => {
     const content = document.getElementById('pdf-content');
     if (!content) { window.print(); return; }
-    try {
-      await _loadHtml2Pdf();
-      const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
-      window.html2pdf().set({
-        margin: [8, 8, 8, 8],
-        filename: `${filename || 'reporte'}_${getTodayDate()}.pdf`,
-        image: { type: 'jpeg', quality: 0.97 },
-        html2canvas: { scale: 2, useCORS: true, logging: false },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' },
-        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
-      }).from(content).save();
-    } catch(e) {
-      console.error('pdf error:', e);
-      window.print(); // fallback al diálogo si falla CDN
-    }
+    _abrirVentanaReporte(content.innerHTML, filename || 'Reporte');
   };
 
-  // Genera PDF a partir de un string HTML (para reportes en ventana separada)
-  const handlePDFFromHTML = async (html, filename, isLandscape = false) => {
-    try {
-      await _loadHtml2Pdf();
-      const div = document.createElement('div');
-      div.innerHTML = html;
-      div.style.cssText = 'position:absolute;left:-9999px;top:-9999px;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:11px;';
-      document.body.appendChild(div);
-      await window.html2pdf().set({
-        margin: [8, 8, 8, 8],
-        filename: `${filename || 'reporte'}_${getTodayDate()}.pdf`,
-        image: { type: 'jpeg', quality: 0.97 },
-        html2canvas: { scale: 2, useCORS: true, logging: false },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait' }
-      }).from(div).save();
-      document.body.removeChild(div);
-    } catch(e) {
-      // fallback: abrir ventana con print
-      const w = window.open('', '_blank');
-      if(w){ w.document.write(html); w.document.close(); }
-    }
+  const handlePDFFromHTML = (html, filename, isLandscape = false) => {
+    _abrirVentanaReporte(html, filename || 'Reporte');
   };
   
   const handleExportExcel = (tableDataOrId, filename, headers = null) => {
@@ -3709,28 +3710,31 @@ export default function App() {
   const handleLiquidarNC = async () => {
     if(!selectedNC||ncLiqForm.items.length===0) return;
     const fecha = ncLiqForm.fecha||getTodayDate();
+    // Usar siempre el NC actualizado en tiempo real
+    const nc = (consignaciones||[]).find(c=>c.id===selectedNC.id) || selectedNC;
     try {
       const fb = writeBatch(db);
       for(const it of ncLiqForm.items){
         if(parseNum(it.vendido)<=0) continue;
         const consDocs = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===it.cleanId && (i.almacen||'').startsWith('CONSIGNACION'));
         if(consDocs[0]) fb.update(getDocRef('inventory',consDocs[0].id),{stock:Math.max(0,parseNum(consDocs[0].stock||0)-parseNum(it.vendido))});
-        const movId=`CONS-LIQUID-${selectedNC.id}-${it.cleanId}-${Date.now()}`;
-        fb.set(getDocRef('inventoryMovements',movId),{id:movId,date:fecha,timestamp:Date.now(),itemId:it.cleanId,itemName:it.desc,type:'SALIDA CONSIGNACION VENDIDO',qty:parseNum(it.vendido),unitCost:parseNum(it.precioConsig),totalValue:parseNum(it.vendido)*parseNum(it.precioConsig),reference:selectedNC.id,notes:`Liquidación ${ncLiqForm.tipo==='REPORTE_CLIENTE'?'por reporte':'por toma física'} — Cliente: ${selectedNC.clienteName}`,user:appUser?.name||'Sistema'});
+        const movId=`CONS-LIQUID-${nc.id}-${it.cleanId}-${Date.now()}`;
+        fb.set(getDocRef('inventoryMovements',movId),{id:movId,date:fecha,timestamp:Date.now(),itemId:it.cleanId,itemName:it.desc,type:'SALIDA CONSIGNACION VENDIDO',qty:parseNum(it.vendido),unitCost:parseNum(it.precioConsig),totalValue:parseNum(it.vendido)*parseNum(it.precioConsig),reference:nc.id,notes:`Liquidación ${ncLiqForm.tipo==='REPORTE_CLIENTE'?'por reporte':'por toma física'} — Cliente: ${nc.clienteName}`,user:appUser?.name||'Sistema'});
       }
       const liq = {fecha,tipo:ncLiqForm.tipo,items:ncLiqForm.items.filter(it=>parseNum(it.vendido)>0).map(it=>({cleanId:it.cleanId,desc:it.desc,vendido:parseNum(it.vendido),precioConsig:parseNum(it.precioConsig)})),user:appUser?.name||'Sistema'};
-      const updItems = selectedNC.items.map(i=>{const l=ncLiqForm.items.find(x=>x.cleanId===i.cleanId);if(l)return{...i,cantidadDisponible:Math.max(0,parseNum(i.cantidadDisponible)-parseNum(l.vendido))};return i;});
+      const updItems = nc.items.map(i=>{const l=ncLiqForm.items.find(x=>x.cleanId===i.cleanId);if(l)return{...i,cantidadDisponible:Math.max(0,parseNum(i.cantidadDisponible)-parseNum(l.vendido))};return i;});
       const allLiquid = updItems.every(i=>parseNum(i.cantidadDisponible)===0);
-      fb.update(getDocRef('consignaciones',selectedNC.id),{items:updItems,liquidaciones:[...(selectedNC.liquidaciones||[]),liq],estado:allLiquid?'LIQUIDADA_TOTAL':'LIQUIDADA_PARCIAL',updatedAt:fecha});
+      fb.update(getDocRef('consignaciones',nc.id),{items:updItems,liquidaciones:[...(nc.liquidaciones||[]),liq],estado:allLiquid?'LIQUIDADA_TOTAL':'LIQUIDADA_PARCIAL',updatedAt:fecha});
       await fb.commit();
       setNcModalMode(null); setNcLiqForm({tipo:'REPORTE_CLIENTE',fecha:'',items:[]});
-      setDialog({title:'✅ Liquidación registrada',text:`Liquidación guardada. Para facturar lo vendido, ve a Ventas → Nueva Factura y referencia la ${selectedNC.id}.`,type:'alert'});
+      setDialog({title:'✅ Liquidación registrada',text:`Liquidación guardada. Para facturar lo vendido, ve a Ventas → Nueva Factura y referencia la ${nc.id}.`,type:'alert'});
     } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
   const handleDevolverNC = async () => {
     if(!selectedNC||ncDevForm.items.length===0) return;
     const fecha = ncDevForm.fecha||getTodayDate();
+    const nc = (consignaciones||[]).find(c=>c.id===selectedNC.id) || selectedNC;
     try {
       const fb = writeBatch(db);
       for(const it of ncDevForm.items){
@@ -3740,13 +3744,13 @@ export default function App() {
         const destDocs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===it.cleanId&&(i.almacen||'ALMACEN ZI')===ncDevForm.almacenDestino);
         if(destDocs[0]){ fb.update(getDocRef('inventory',destDocs[0].id),{stock:parseNum(destDocs[0].stock||0)+parseNum(it.devolver)});}
         else{const newId=`${it.cleanId}___${ncDevForm.almacenDestino.replace(/\s+/g,'-')}-DEV-${Date.now()}`;fb.set(getDocRef('inventory',newId),{id:newId,displayId:it.cleanId,desc:it.desc,category:it.category||'Productos Terminados',subcategory:it.subcategory||'',unit:it.unit||'und',stock:parseNum(it.devolver),cost:parseNum(it.costoUnit),almacen:ncDevForm.almacenDestino,activo:true,timestamp:Date.now()});}
-        const movId=`CONS-DEV-${selectedNC.id}-${it.cleanId}-${Date.now()}`;
-        fb.set(getDocRef('inventoryMovements',movId),{id:movId,date:fecha,timestamp:Date.now(),itemId:it.cleanId,itemName:it.desc,type:'ENTRADA DEVOLUCIÓN CONSIGNACION',qty:parseNum(it.devolver),unitCost:parseNum(it.costoUnit),totalValue:parseNum(it.devolver)*parseNum(it.costoUnit),reference:selectedNC.id,notes:`Devolución a ${ncDevForm.almacenDestino} — ${selectedNC.clienteName}`,user:appUser?.name||'Sistema'});
+        const movId=`CONS-DEV-${nc.id}-${it.cleanId}-${Date.now()}`;
+        fb.set(getDocRef('inventoryMovements',movId),{id:movId,date:fecha,timestamp:Date.now(),itemId:it.cleanId,itemName:it.desc,type:'ENTRADA DEVOLUCIÓN CONSIGNACION',qty:parseNum(it.devolver),unitCost:parseNum(it.costoUnit),totalValue:parseNum(it.devolver)*parseNum(it.costoUnit),reference:nc.id,notes:`Devolución a ${ncDevForm.almacenDestino} — ${nc.clienteName}`,user:appUser?.name||'Sistema'});
       }
       const dev={fecha,almacenDestino:ncDevForm.almacenDestino,items:ncDevForm.items.filter(i=>parseNum(i.devolver)>0).map(i=>({cleanId:i.cleanId,desc:i.desc,devolver:parseNum(i.devolver)})),user:appUser?.name||'Sistema'};
-      const updItems=selectedNC.items.map(i=>{const d=ncDevForm.items.find(x=>x.cleanId===i.cleanId);if(d)return{...i,cantidadDisponible:Math.max(0,parseNum(i.cantidadDisponible)-parseNum(d.devolver))};return i;});
+      const updItems=nc.items.map(i=>{const d=ncDevForm.items.find(x=>x.cleanId===i.cleanId);if(d)return{...i,cantidadDisponible:Math.max(0,parseNum(i.cantidadDisponible)-parseNum(d.devolver))};return i;});
       const allDev=updItems.every(i=>parseNum(i.cantidadDisponible)===0);
-      fb.update(getDocRef('consignaciones',selectedNC.id),{items:updItems,devoluciones:[...(selectedNC.devoluciones||[]),dev],estado:allDev?'DEVUELTA':'ACTIVA',updatedAt:fecha});
+      fb.update(getDocRef('consignaciones',nc.id),{items:updItems,devoluciones:[...(nc.devoluciones||[]),dev],estado:allDev?'DEVUELTA':'ACTIVA',updatedAt:fecha});
       await fb.commit();
       setNcModalMode(null); setNcDevForm({fecha:'',almacenDestino:'ALMACEN ZI',items:[]});
       setDialog({title:'✅ Devolución registrada',text:`Artículos devueltos a ${ncDevForm.almacenDestino}.`,type:'alert'});
@@ -3796,7 +3800,7 @@ export default function App() {
     // Cargar items pendientes como cart
     if(pendientes.length > 0) {
       const items = pendientes.map(it => ({
-        invCode: it.cleanId, producto: it.desc, cantidad: it.pendiente, precioUnit: it.precioConsig, unit: it.unit||'und', costoUnit: 0, fgId: '', isNC: true, ncId
+        invCode: it.cleanId, desc: it.desc, producto: it.desc, cantidad: it.pendiente, precioUnit: it.precioConsig, unit: it.unit||'und', costoUnit: 0, fgId: '', isNC: true, ncId
       }));
       setFgItems(items);
     }
@@ -4948,7 +4952,7 @@ export default function App() {
   <div class="sig">Entregado por (Almacenista)<br/><br/>Nombre:______________<br/>Dpto: Almacén<br/>Fecha:______________</div>
   <div class="sig">Recibido por<br/><br/>Nombre:______________<br/>Dpto:_______________<br/>Fecha:______________</div>
 </div>
-<script>window.onload=function(){window.print();}</script>
+<div style="text-align:center;padding:16px 0;"><button onclick="window.print()" style="background:#f97316;color:#fff;font-size:13px;font-weight:900;text-transform:uppercase;padding:13px 40px;border:none;border-radius:8px;cursor:pointer;letter-spacing:1px;">🖨 IMPRIMIR / GUARDAR PDF</button></div>
 </body></html>`);
                                 w.document.close();
                               }} className="p-1 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Imprimir Orden"><Printer size={11}/></button>
@@ -5023,7 +5027,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 <div class="sig">Entregado por (Almacenista)<br/><br/>Nombre:______________<br/>Dpto: Almacén<br/>Fecha:______________</div>
 <div class="sig">Recibido por<br/><br/>Nombre:______________<br/>Dpto:_______________<br/>Fecha:______________</div>
 </div>
-<script>window.onload=function(){window.print();}</script></body></html>`);
+<div style="text-align:center;padding:16px 0;"><button onclick="window.print()" style="background:#f97316;color:#fff;font-size:13px;font-weight:900;text-transform:uppercase;padding:13px 40px;border:none;border-radius:8px;cursor:pointer;letter-spacing:1px;">🖨 IMPRIMIR / GUARDAR PDF</button></div></body></html>`);
         w.document.close();
       };
 
@@ -5308,440 +5312,8 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       );
     }
 
-    if (invView === 'consignacion') {
-      const depositos2 = (depositos||[]).filter(d=>!['PLANTA','ALMACEN EXTERNO','DEPOSITO 2','CONSIGNACION VENTAS'].includes(d));
-      const estadoColor = e => ({'ACTIVA':'bg-green-100 text-green-700','LIQUIDADA_PARCIAL':'bg-yellow-100 text-yellow-700','LIQUIDADA_TOTAL':'bg-blue-100 text-blue-700','DEVUELTA':'bg-gray-100 text-gray-600'}[e]||'bg-gray-100 text-gray-600');
-      const ncActivas = (consignaciones||[]).filter(c=>c.estado==='ACTIVA'||c.estado==='LIQUIDADA_PARCIAL');
-      const ncValorTotal = (consignaciones||[]).reduce((s,c)=>(c.items||[]).reduce((ss,i)=>ss+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||i.costoUnit||0),s),0);
+    // Consignación movida al módulo de Ventas (ventasView === 'consignacion')
 
-      const ncFiltradas = (consignaciones||[]).filter(nc=>{
-        if(ncFiltEstado!=='TODAS' && nc.estado!==ncFiltEstado) return false;
-        if(ncFiltNC && !nc.id.toUpperCase().includes(ncFiltNC.toUpperCase())) return false;
-        if(ncFiltCliente && !(nc.clienteName||'').toUpperCase().includes(ncFiltCliente.toUpperCase()) && !(nc.clienteRif||'').toUpperCase().includes(ncFiltCliente.toUpperCase())) return false;
-        return true;
-      });
-
-      const exportConsignPDF = () => {
-        const rows = ncFiltradas.map(nc=>`<tr>
-          <td style="padding:5px 8px;border:1px solid #ddd;font-weight:900;color:#ea580c">${nc.id}</td>
-          <td style="padding:5px 8px;border:1px solid #ddd">${nc.clienteName}<br><span style="font-size:9px;color:#6b7280">${nc.clienteRif}</span></td>
-          <td style="padding:5px 8px;border:1px solid #ddd;text-align:center">${nc.fecha}</td>
-          <td style="padding:5px 8px;border:1px solid #ddd;text-align:center">${nc.almacenOrigen}</td>
-          <td style="padding:5px 8px;border:1px solid #ddd;text-align:center;font-weight:900;color:${nc.estado==='ACTIVA'?'#16a34a':nc.estado==='DEVUELTA'?'#6b7280':'#d97706'}">${nc.estado}</td>
-          <td style="padding:5px 8px;border:1px solid #ddd;text-align:center">${(nc.items||[]).length}</td>
-          <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible),0))}</td>
-          <td style="padding:5px 8px;border:1px solid #ddd;text-align:right;font-weight:900;color:#16a34a">$${formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0))}</td>
-        </tr>`).join('');
-        const html = `<div style="font-family:Arial,sans-serif;font-size:11px;padding:16px;color:#000">
-<div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:12px">
-  <div><h2 style="margin:0;font-size:15px;text-transform:uppercase">SERVICIOS JIRET G&B, C.A.</h2><p style="font-size:9px;color:#6b7280;margin:2px 0">RIF: J-412309374</p></div>
-  <div style="text-align:right"><p style="font-weight:900;color:#f97316;margin:0">REPORTE DE CONSIGNACIONES</p><p style="font-size:9px;margin:2px 0">Generado: ${getTodayDate()}</p></div>
-</div>
-<table style="width:100%;border-collapse:collapse">
-<thead><tr style="background:#1f2937;color:#fff">
-<th style="padding:6px 8px;font-size:9px;text-transform:uppercase">NC</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Cliente</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Fecha</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Origen</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Estado</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Artículos</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Uds Disp.</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Valor ($)</th>
-</tr></thead><tbody>${rows}</tbody>
-<tfoot><tr style="background:#f3f4f6;font-weight:900"><td colspan="7" style="padding:6px 8px;text-align:right">TOTAL (${ncFiltradas.length} NC):</td><td style="padding:6px 8px;text-align:right;color:#16a34a">$${formatNum(ncFiltradas.reduce((s,nc)=>s+(nc.items||[]).reduce((ss,i)=>ss+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0),0))}</td></tr></tfoot>
-</table></div>`;
-        handlePDFFromHTML(html, 'Reporte_Consignaciones');
-      };
-
-      const exportConsignExcel = () => {
-        const header = ['NC','Cliente','RIF','Fecha','Almacén Origen','Estado','Artículos','Uds Disponibles','Valor NC ($)','Observaciones'];
-        const dataRows = ncFiltradas.map(nc=>[nc.id, nc.clienteName, nc.clienteRif, nc.fecha, nc.almacenOrigen, nc.estado, (nc.items||[]).length, (nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible),0), (nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0), nc.observaciones||'']);
-        let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>body{font-family:Arial;font-size:11px;}th{background:#1f2937;color:#fff;font-weight:bold;}td,th{border:1px solid #ccc;padding:5px 8px;}</style></head><body>`;
-        html += `<h2>SERVICIOS JIRET G&B, C.A. — Consignaciones — ${getTodayDate()}</h2><table><thead><tr>${header.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>`;
-        dataRows.forEach(r=>{html+=`<tr>${r.map(v=>`<td>${v}</td>`).join('')}</tr>`;});
-        html += `</tbody></table></body></html>`;
-        const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});
-        const url=URL.createObjectURL(blob);
-        const a=document.createElement('a');a.href=url;a.download=`Consignaciones_${getTodayDate()}.xls`;a.click();URL.revokeObjectURL(url);
-      };
-
-      // ── MODAL LIQUIDAR ──────────────────────────────────────────────────────
-      if(ncModalMode==='liquidar' && selectedNC) return (
-        <div className="p-6 max-w-2xl mx-auto">
-          <div className="bg-white rounded-3xl shadow border p-6 space-y-5">
-            <div className="flex items-center justify-between">
-              <h3 className="font-black text-base uppercase text-blue-800 flex items-center gap-2"><DollarSign size={18}/> Liquidar {selectedNC.id}</h3>
-              <button onClick={()=>setNcModalMode(null)} className="text-gray-400 hover:text-red-500"><X size={18}/></button>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tipo de liquidación</label>
-                <select value={ncLiqForm.tipo} onChange={e=>setNcLiqForm(f=>({...f,tipo:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-400">
-                  <option value="REPORTE_CLIENTE">Cliente reporta vendido</option>
-                  <option value="TOMA_FISICA">Toma física (conteo en sitio)</option>
-                </select>
-              </div>
-              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                <input type="date" value={ncLiqForm.fecha||getTodayDate()} onChange={e=>setNcLiqForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-400"/>
-              </div>
-            </div>
-            <p className="text-[9px] text-gray-500 font-bold">{ncLiqForm.tipo==='TOMA_FISICA'?'Ingresa el stock que QUEDÓ sin vender. El sistema calculará lo vendido.':'Ingresa las unidades que el cliente reporta como VENDIDAS.'}</p>
-            <table className="w-full text-xs">
-              <thead><tr className="bg-blue-50 text-[9px] font-black uppercase text-blue-700">
-                <th className="py-2 px-3 text-left">Artículo</th>
-                <th className="py-2 px-3 text-center">Disponible</th>
-                <th className="py-2 px-3 text-center">{ncLiqForm.tipo==='TOMA_FISICA'?'Conteo actual':'Vendido'}</th>
-                <th className="py-2 px-3 text-center">Precio NC</th>
-                <th className="py-2 px-3 text-center">Total</th>
-              </tr></thead>
-              <tbody>
-                {(selectedNC.items||[]).filter(i=>parseNum(i.cantidadDisponible)>0).map((it,idx)=>{
-                  const row = (ncLiqForm.items||[])[idx]||{cleanId:it.cleanId,desc:it.desc,vendido:'',precioConsig:parseNum(it.precioConsig||0),costoUnit:parseNum(it.costoUnit||0)};
-                  const vendidoCalc = ncLiqForm.tipo==='TOMA_FISICA' ? Math.max(0,parseNum(it.cantidadDisponible)-parseNum(row.vendido)) : parseNum(row.vendido);
-                  return (<tr key={it.cleanId} className="border-t">
-                    <td className="py-2 px-3 font-black text-orange-600 text-[10px]">{it.cleanId}<br/><span className="text-[9px] text-gray-400 font-normal">{it.desc}</span></td>
-                    <td className="py-2 px-3 text-center font-black text-blue-700">{formatNum(it.cantidadDisponible)} {it.unit}</td>
-                    <td className="py-2 px-3 text-center"><input type="number" min="0" max={it.cantidadDisponible} step="0.01" value={row.vendido} onChange={e=>{const next=([...( ncLiqForm.items||[])]);next[idx]={...row,vendido:e.target.value};setNcLiqForm(f=>({...f,items:next}));}} className="w-20 border-2 border-blue-200 rounded-lg p-1 text-center font-black text-xs outline-none focus:border-blue-500" placeholder="0"/></td>
-                    <td className="py-2 px-3 text-center font-bold">${formatNum(row.precioConsig)}/{it.unit}</td>
-                    <td className="py-2 px-3 text-center font-black text-green-700">${formatNum(vendidoCalc*parseNum(row.precioConsig))}</td>
-                  </tr>);
-                })}
-              </tbody>
-            </table>
-            <div className="flex gap-3 justify-end pt-2 border-t">
-              <button onClick={()=>setNcModalMode(null)} className="px-5 py-2.5 bg-gray-200 text-gray-700 rounded-xl font-black text-[10px] uppercase">Cancelar</button>
-              <button onClick={handleLiquidarNC} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase flex items-center gap-1 shadow-md hover:bg-blue-700"><DollarSign size={13}/> Registrar Liquidación</button>
-            </div>
-          </div>
-        </div>
-      );
-
-      // ── MODAL DEVOLVER ────────────────────────────────────────────────────────
-      if(ncModalMode==='devolver' && selectedNC) return (
-        <div className="p-6 max-w-2xl mx-auto">
-          <div className="bg-white rounded-3xl shadow border p-6 space-y-5">
-            <div className="flex items-center justify-between">
-              <h3 className="font-black text-base uppercase text-orange-700 flex items-center gap-2"><ArrowDownToLine size={18}/> Devolución {selectedNC.id}</h3>
-              <button onClick={()=>setNcModalMode(null)} className="text-gray-400 hover:text-red-500"><X size={18}/></button>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Almacén destino</label>
-                <select value={ncDevForm.almacenDestino} onChange={e=>setNcDevForm(f=>({...f,almacenDestino:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
-                  {depositos2.map(d=><option key={d} value={d}>{d}</option>)}
-                </select>
-              </div>
-              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                <input type="date" value={ncDevForm.fecha||getTodayDate()} onChange={e=>setNcDevForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400"/>
-              </div>
-            </div>
-            <table className="w-full text-xs">
-              <thead><tr className="bg-orange-50 text-[9px] font-black uppercase text-orange-700">
-                <th className="py-2 px-3 text-left">Artículo</th>
-                <th className="py-2 px-3 text-center">Disponible</th>
-                <th className="py-2 px-3 text-center">A devolver</th>
-              </tr></thead>
-              <tbody>
-                {(selectedNC.items||[]).filter(i=>parseNum(i.cantidadDisponible)>0).map((it,idx)=>{
-                  const row=(ncDevForm.items||[])[idx]||{cleanId:it.cleanId,desc:it.desc,devolver:'',costoUnit:parseNum(it.costoUnit||0),category:it.category,subcategory:it.subcategory,unit:it.unit};
-                  return (<tr key={it.cleanId} className="border-t">
-                    <td className="py-2 px-3 font-black text-orange-600 text-[10px]">{it.cleanId}<br/><span className="text-[9px] text-gray-400 font-normal">{it.desc}</span></td>
-                    <td className="py-2 px-3 text-center font-black text-blue-700">{formatNum(it.cantidadDisponible)} {it.unit}</td>
-                    <td className="py-2 px-3 text-center"><input type="number" min="0" max={it.cantidadDisponible} step="0.01" value={row.devolver} onChange={e=>{const next=[...(ncDevForm.items||[])];next[idx]={...row,devolver:e.target.value};setNcDevForm(f=>({...f,items:next}));}} className="w-20 border-2 border-orange-200 rounded-lg p-1 text-center font-black text-xs outline-none focus:border-orange-500" placeholder="0"/></td>
-                  </tr>);
-                })}
-              </tbody>
-            </table>
-            <div className="flex gap-3 justify-end pt-2 border-t">
-              <button onClick={()=>setNcModalMode(null)} className="px-5 py-2.5 bg-gray-200 text-gray-700 rounded-xl font-black text-[10px] uppercase">Cancelar</button>
-              <button onClick={handleDevolverNC} className="px-5 py-2.5 bg-orange-600 text-white rounded-xl font-black text-[10px] uppercase flex items-center gap-1 shadow-md hover:bg-orange-700"><ArrowDownToLine size={13}/> Confirmar Devolución</button>
-            </div>
-          </div>
-        </div>
-      );
-
-      // ── DETALLE NC ─────────────────────────────────────────────────────────
-      if(consignView==='detalle' && selectedNC) return (
-        <div className="p-6 space-y-5">
-          <div className="flex items-center gap-3 flex-wrap">
-            <button onClick={()=>{setConsignView('lista');setSelectedNC(null);}} className="flex items-center gap-1 text-[10px] font-black text-gray-500 uppercase hover:text-orange-600"><ArrowRight size={12} className="rotate-180"/> Volver</button>
-            <span className="font-black text-xl text-orange-600">{selectedNC.id}</span>
-            <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase ${estadoColor(selectedNC.estado)}`}>{selectedNC.estado}</span>
-            {(selectedNC.estado==='ACTIVA'||selectedNC.estado==='LIQUIDADA_PARCIAL') && (
-              <div className="ml-auto flex gap-2">
-                <button onClick={()=>{setNcLiqForm({tipo:'REPORTE_CLIENTE',fecha:getTodayDate(),items:[]});setNcModalMode('liquidar');}} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase flex items-center gap-1 hover:bg-blue-700"><DollarSign size={12}/> Liquidar vendido</button>
-                <button onClick={()=>{setNcDevForm({fecha:getTodayDate(),almacenDestino:depositos2[0]||'ALMACEN ZI',items:[]});setNcModalMode('devolver');}} className="bg-orange-500 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase flex items-center gap-1 hover:bg-orange-600"><ArrowDownToLine size={12}/> Devolver stock</button>
-              </div>
-            )}
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[['Cliente',selectedNC.clienteName],['RIF',selectedNC.clienteRif],['Vendedor',selectedNC.vendedor||'—'],['Origen',selectedNC.almacenOrigen],['Fecha',selectedNC.fecha],['Obs.',selectedNC.observaciones||'—']].map(([l,v])=>(
-              <div key={l} className="bg-white rounded-2xl border p-4 shadow-sm"><p className="text-[9px] font-black text-gray-400 uppercase mb-1">{l}</p><p className="font-black text-sm truncate">{v}</p></div>
-            ))}
-          </div>
-          <div className="bg-white rounded-2xl border overflow-hidden">
-            <div className="bg-orange-600 text-white px-5 py-3 font-black text-sm uppercase flex justify-between items-center">
-              <span>Artículos en Consignación</span>
-              <span className="text-orange-200 text-[10px] font-bold">Disponible: ${formatNum((selectedNC.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0))}</span>
-            </div>
-            <table className="w-full text-xs">
-              <thead className="bg-gray-100"><tr className="text-[9px] font-black uppercase text-gray-600">
-                <th className="py-2 px-3 text-left">Código</th><th className="py-2 px-3 text-left">Descripción</th><th className="py-2 px-3 text-center">UM</th>
-                <th className="py-2 px-3 text-right">Desp.</th><th className="py-2 px-3 text-right">Liquidado</th><th className="py-2 px-3 text-right">Facturado</th><th className="py-2 px-3 text-right">Pdte.Fact.</th><th className="py-2 px-3 text-right">Disponible</th><th className="py-2 px-3 text-right">Precio NC</th><th className="py-2 px-3 text-center">Estado</th>
-              </tr></thead>
-              <tbody>{(selectedNC.items||[]).map((it,i)=>{
-                const totalLiq=(selectedNC.liquidaciones||[]).reduce((s,liq)=>{const l=(liq.items||[]).find(x=>x.cleanId===it.cleanId);return s+(l?parseNum(l.vendido||0):0);},0);
-                const facturado=((selectedNC.facturadoItems||[]).find(x=>x.cleanId===it.cleanId)?.cantidadFacturada)||0;
-                const pendFact=Math.max(0,totalLiq-facturado);
-                const statusBadge = facturado>=totalLiq && totalLiq>0
-                  ? <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[8px] font-black">✓ Facturado</span>
-                  : pendFact>0
-                    ? <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-[8px] font-black">⏳ Pdte.</span>
-                    : parseNum(it.cantidadDisponible)>0
-                      ? <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[8px] font-black">En consig.</span>
-                      : <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded text-[8px] font-black">Cerrado</span>;
-                return (
-                  <tr key={it.cleanId} className={`border-t ${i%2===0?'bg-white':'bg-gray-50'}`}>
-                    <td className="py-2 px-3 font-black text-orange-600 text-[10px]">{it.cleanId}</td>
-                    <td className="py-2 px-3 font-bold text-gray-700 text-[10px] max-w-[100px] truncate">{it.desc}</td>
-                    <td className="py-2 px-3 text-center text-gray-500">{it.unit}</td>
-                    <td className="py-2 px-3 text-right font-black text-blue-700">{formatNum(it.cantidad)}</td>
-                    <td className="py-2 px-3 text-right font-bold text-gray-600">{totalLiq>0?formatNum(totalLiq):'—'}</td>
-                    <td className="py-2 px-3 text-right font-bold text-green-700">{facturado>0?formatNum(facturado):'—'}</td>
-                    <td className="py-2 px-3 text-right font-black text-orange-600">{pendFact>0?formatNum(pendFact):'—'}</td>
-                    <td className={`py-2 px-3 text-right font-black ${parseNum(it.cantidadDisponible)>0?'text-green-700':'text-gray-400'}`}>{formatNum(it.cantidadDisponible)}</td>
-                    <td className="py-2 px-3 text-right font-bold">${formatNum(it.precioConsig||0)}</td>
-                    <td className="py-2 px-3 text-center">{statusBadge}</td>
-                  </tr>
-                );
-              })}</tbody>
-            </table>
-          </div>
-          {(selectedNC.liquidaciones||[]).length>0 && (
-            <div className="bg-white rounded-2xl border overflow-hidden">
-              <div className="bg-blue-700 text-white px-5 py-2.5 font-black text-sm uppercase">Liquidaciones Registradas</div>
-              {(selectedNC.liquidaciones||[]).map((liq,i)=>(
-                <div key={i} className="border-t px-5 py-3">
-                  <div className="flex justify-between items-center mb-2"><span className="font-black text-[10px] text-blue-700 uppercase">{liq.tipo==='TOMA_FISICA'?'Toma Física':'Reporte Cliente'} — {liq.fecha}</span><span className="text-[9px] text-gray-400">{liq.user}</span></div>
-                  <div className="flex flex-wrap gap-2">{(liq.items||[]).map(it=>(
-                    <span key={it.cleanId} className="bg-blue-50 border border-blue-200 text-blue-700 px-2 py-1 rounded-lg text-[9px] font-bold">{it.cleanId}: <strong>{formatNum(it.vendido)}</strong> × ${formatNum(it.precioConsig)} = <strong className="text-green-700">${formatNum(parseNum(it.vendido)*parseNum(it.precioConsig))}</strong></span>
-                  ))}</div>
-                </div>
-              ))}
-            </div>
-          )}
-          {(selectedNC.devoluciones||[]).length>0 && (
-            <div className="bg-white rounded-2xl border overflow-hidden">
-              <div className="bg-orange-600 text-white px-5 py-2.5 font-black text-sm uppercase">Devoluciones Registradas</div>
-              {(selectedNC.devoluciones||[]).map((dev,i)=>(
-                <div key={i} className="border-t px-5 py-3">
-                  <div className="flex justify-between items-center mb-2"><span className="font-black text-[10px] text-orange-700 uppercase">→ {dev.almacenDestino} — {dev.fecha}</span><span className="text-[9px] text-gray-400">{dev.user}</span></div>
-                  <div className="flex flex-wrap gap-2">{(dev.items||[]).map(it=>(
-                    <span key={it.cleanId} className="bg-orange-50 border border-orange-200 text-orange-700 px-2 py-1 rounded-lg text-[9px] font-bold">{it.cleanId}: {formatNum(it.devolver)} {it.unit||''}</span>
-                  ))}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      );
-
-      // ── NUEVA NC ───────────────────────────────────────────────────────────
-      if(consignView==='nueva') return (
-        <div className="p-6 max-w-3xl mx-auto space-y-5">
-          <div className="flex items-center justify-between">
-            <h2 className="font-black text-lg text-orange-600 uppercase flex items-center gap-2"><ArrowRightLeft size={20}/> Nueva Nota de Consignación</h2>
-            <button onClick={()=>{setConsignView('lista');setNcForm({clienteRif:'',clienteName:'',clienteDir:'',vendedor:'',almacenOrigen:depositos2[0]||'ALMACEN ZI',observaciones:'',items:[]});}} className="text-gray-400 hover:text-red-500 flex items-center gap-1 font-black text-[10px] uppercase"><X size={14}/> Cancelar</button>
-          </div>
-          <div className="bg-white rounded-2xl border p-5 space-y-4">
-            <h3 className="font-black text-[11px] text-gray-700 uppercase border-b pb-2">1. Cliente y datos de despacho</h3>
-            <div className="relative">
-              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar cliente</label>
-              <input type="text" value={ncClientSearch} onChange={e=>{setNcClientSearch(e.target.value.toUpperCase());setNcShowClientDrop(true);}} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="Nombre o RIF..."/>
-              {ncShowClientDrop && ncClientSearch.length>1 && (
-                <div className="absolute z-50 bg-white border-2 border-orange-200 rounded-xl shadow-xl w-full max-h-48 overflow-y-auto mt-1">
-                  {(clients||[]).filter(c=>(c.name||c.razonSocial||'').toUpperCase().includes(ncClientSearch)||(c.rif||'').toUpperCase().includes(ncClientSearch)).slice(0,8).map(c=>(
-                    <button key={c.id||c.rif} type="button" onMouseDown={()=>{setNcForm(f=>({...f,clienteRif:c.rif||'',clienteName:c.name||c.razonSocial||'',clienteDir:c.direccion||'',vendedor:f.vendedor||c.vendedor||''}));setNcClientSearch(c.name||c.razonSocial||'');setNcShowClientDrop(false);}} className="w-full text-left px-4 py-2.5 hover:bg-orange-50 text-xs font-bold uppercase border-b border-gray-100">
-                      <span className="text-orange-600 font-black">{c.rif}</span> — {c.name||c.razonSocial}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {ncShowClientDrop && <div className="fixed inset-0 z-40" onClick={()=>setNcShowClientDrop(false)}/>}
-            </div>
-            {ncForm.clienteRif && <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-[10px] font-black text-orange-700">✓ {ncForm.clienteRif} — {ncForm.clienteName}</div>}
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Vendedor</label>
-                <select value={ncForm.vendedor} onChange={e=>setNcForm(f=>({...f,vendedor:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
-                  <option value="">— Seleccionar —</option>
-                  {(settings?.vendedores||[]).map(v=><option key={v} value={v}>{v}</option>)}
-                </select>
-              </div>
-              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Almacén origen</label>
-                <select value={ncForm.almacenOrigen} onChange={e=>setNcForm(f=>({...f,almacenOrigen:e.target.value,items:[]}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
-                  {depositos2.map(d=><option key={d} value={d}>{d}</option>)}
-                </select>
-              </div>
-            </div>
-            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Observaciones</label>
-              <input type="text" value={ncForm.observaciones} onChange={e=>setNcForm(f=>({...f,observaciones:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="Opcional — período, condiciones, etc."/>
-            </div>
-          </div>
-          <div className="bg-white rounded-2xl border p-5 space-y-4">
-            <h3 className="font-black text-[11px] text-gray-700 uppercase border-b pb-2">2. Artículos a despachar en consignación</h3>
-            <div className="flex gap-2 items-end flex-wrap">
-              <div className="flex-1 min-w-48 relative">
-                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Artículo (stock en {ncForm.almacenOrigen})</label>
-                <input type="text" value={ncItemSearch2} onChange={e=>setNcItemSearch2(e.target.value.toUpperCase())} placeholder="Buscar código o descripción..." className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-[10px] font-bold outline-none focus:border-orange-400 uppercase"/>
-                {ncItemSearch2.length>1 && (()=>{
-                  const seen=new Set();
-                  const opts=(inventory||[]).filter(i=>{
-                    const cc=(i.displayId||(i.id||'').split('___')[0]);
-                    if(seen.has(cc)) return false;
-                    const match=cc.toUpperCase().includes(ncItemSearch2)||(i.desc||'').toUpperCase().includes(ncItemSearch2);
-                    const inAlm=(i.almacen||'ALMACEN ZI')===ncForm.almacenOrigen;
-                    if(match&&inAlm){seen.add(cc);return true;} return false;
-                  }).filter(i=>parseNum(i.stock)>0).slice(0,8);
-                  if(!opts.length) return null;
-                  return (<div className="absolute z-50 bg-white border-2 border-orange-200 rounded-xl shadow-xl w-full max-h-40 overflow-y-auto mt-1">
-                    {opts.map(i=>{const cc=(i.displayId||(i.id||'').split('___')[0]);return(<button key={i.id} type="button" onMouseDown={()=>{setNcItemId(i.id);setNcItemSearch2(cc+' — '+i.desc);setNcItemPrice(String(parseNum(i.cost||0)));}} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-[9px] font-bold border-b border-gray-100"><span className="text-orange-600 font-black">{cc}</span> — {i.desc} <span className="text-green-700 font-black">({formatNum(i.stock)} {i.unit})</span></button>);})}
-                  </div>);
-                })()}
-              </div>
-              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
-                <input type="number" step="0.01" min="0.01" value={ncItemQty} onChange={e=>setNcItemQty(e.target.value)} className="w-24 border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="0.00"/>
-              </div>
-              <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Precio consignación ($)</label>
-                <input type="number" step="0.01" min="0" value={ncItemPrice} onChange={e=>setNcItemPrice(e.target.value)} className="w-28 border-2 border-orange-300 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0.00"/>
-              </div>
-              <button type="button" onClick={()=>{
-                if(!ncItemId||!parseNum(ncItemQty)) return;
-                const inv2=(inventory||[]).find(i=>i.id===ncItemId);
-                if(!inv2) return;
-                const cc=(inv2.displayId||(inv2.id||'').split('___')[0]);
-                const cur=(ncForm.items||[]).find(i=>i.cleanId===cc);
-                const cant=parseNum(ncItemQty);
-                const already=parseNum(cur?.cantidad||0);
-                if(parseNum(inv2.stock)<cant+already) return setDialog({title:'Stock insuficiente',text:`Solo hay ${formatNum(inv2.stock)} ${inv2.unit||'und'} en ${ncForm.almacenOrigen}.`,type:'alert'});
-                if(cur){setNcForm(f=>({...f,items:f.items.map(i=>i.cleanId===cc?{...i,cantidad:parseNum(i.cantidad)+cant}:i)}));}
-                else{setNcForm(f=>({...f,items:[...f.items,{cleanId:cc,desc:inv2.desc,unit:inv2.unit||'und',category:inv2.category,subcategory:inv2.subcategory||'',costoUnit:parseNum(inv2.cost||0),precioConsig:parseNum(ncItemPrice||inv2.cost||0),cantidad:cant}]}));}
-                setNcItemId(''); setNcItemSearch2(''); setNcItemQty(''); setNcItemPrice('');
-              }} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-orange-600 flex items-center gap-1"><Plus size={12}/> Agregar</button>
-            </div>
-            {(ncForm.items||[]).length>0 && (
-              <table className="w-full text-xs">
-                <thead><tr className="bg-orange-50 text-[9px] font-black uppercase text-orange-700">
-                  <th className="py-2 px-3 text-left">Código</th><th className="py-2 px-3 text-left">Descripción</th><th className="py-2 px-3 text-center">Cantidad</th><th className="py-2 px-3 text-center">Precio NC ($)</th><th className="py-2 px-3 text-right">Total NC</th><th className="py-2 px-3 w-8"></th>
-                </tr></thead>
-                <tbody>{(ncForm.items||[]).map((it,i)=>(
-                  <tr key={it.cleanId} className={`border-t ${i%2===0?'bg-white':'bg-gray-50'}`}>
-                    <td className="py-2 px-3 font-black text-orange-600 text-[10px]">{it.cleanId}</td>
-                    <td className="py-2 px-3 font-bold text-gray-700">{it.desc}</td>
-                    <td className="py-2 px-3 text-center font-black">{formatNum(it.cantidad)} {it.unit}</td>
-                    <td className="py-2 px-3 text-center"><input type="number" step="0.01" value={it.precioConsig} onChange={e=>setNcForm(f=>({...f,items:f.items.map((x,xi)=>xi===i?{...x,precioConsig:parseNum(e.target.value)}:x)}))} className="w-24 border border-orange-200 rounded-lg p-1 text-center font-black text-[10px] outline-none focus:border-orange-500"/></td>
-                    <td className="py-2 px-3 text-right font-black text-green-700">${formatNum(parseNum(it.cantidad)*parseNum(it.precioConsig))}</td>
-                    <td className="py-2 px-3 text-center"><button onClick={()=>setNcForm(f=>({...f,items:f.items.filter((_,xi)=>xi!==i)}))} className="text-red-400 hover:text-red-600"><X size={12}/></button></td>
-                  </tr>
-                ))}</tbody>
-                <tfoot><tr className="bg-orange-100 font-black text-[10px]">
-                  <td colSpan="4" className="py-2 px-3 text-right uppercase text-orange-700">Total NC:</td>
-                  <td className="py-2 px-3 text-right font-black text-orange-700">${formatNum((ncForm.items||[]).reduce((s,i)=>s+parseNum(i.cantidad)*parseNum(i.precioConsig),0))}</td>
-                  <td></td>
-                </tr></tfoot>
-              </table>
-            )}
-          </div>
-          <div className="flex justify-end gap-3">
-            <button onClick={()=>{setConsignView('lista');}} className="px-6 py-3 bg-gray-200 text-gray-700 rounded-xl font-black text-[10px] uppercase">Cancelar</button>
-            <button onClick={handleCrearNC} className="px-8 py-3 bg-orange-600 text-white rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-orange-700 flex items-center gap-2"><ArrowRightLeft size={14}/> Crear Nota de Consignación</button>
-          </div>
-        </div>
-      );
-
-      // ── LISTA DE NC ────────────────────────────────────────────────────────
-      return (
-        <div className="animate-in fade-in">
-          <div className="px-8 py-5 border-b flex justify-between items-center flex-wrap gap-3">
-            <div>
-              <h2 className="text-xl font-black uppercase flex items-center gap-2 text-orange-600"><ArrowRightLeft size={22}/> Consignaciones</h2>
-              <p className="text-[10px] font-bold text-gray-400 uppercase mt-0.5">Mercancía entregada en consignación — facturar cuando el cliente venda</p>
-            </div>
-            <div className="flex gap-2 flex-wrap">
-              <button onClick={exportConsignExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase flex items-center gap-1 hover:bg-green-700"><Download size={13}/> Excel</button>
-              <button onClick={exportConsignPDF} className="bg-black text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase flex items-center gap-1 hover:bg-gray-800"><Printer size={13}/> PDF</button>
-              <button onClick={()=>{setConsignView('nueva');setNcForm({clienteRif:'',clienteName:'',clienteDir:'',vendedor:'',almacenOrigen:depositos2[0]||'ALMACEN ZI',observaciones:'',items:[]});setNcClientSearch('');}} className="bg-orange-500 text-white px-6 py-2 rounded-xl text-[10px] font-black uppercase shadow-md hover:bg-orange-600 flex items-center gap-2"><Plus size={14}/> Nueva Consignación</button>
-            </div>
-          </div>
-          {/* Filtros */}
-          <div className="px-8 py-3 border-b bg-gray-50 flex gap-3 flex-wrap items-center">
-            <div className="relative flex items-center gap-2 border-2 border-gray-200 rounded-xl px-3 py-2 bg-white">
-              <Search size={13} className="text-gray-400"/>
-              <input type="text" value={ncFiltNC} onChange={e=>setNcFiltNC(e.target.value.toUpperCase())} placeholder="# de nota (NC-...)" className="outline-none text-xs font-bold w-32 bg-white uppercase"/>
-              {ncFiltNC && <button onClick={()=>setNcFiltNC('')} className="text-gray-400 hover:text-red-500"><X size={11}/></button>}
-            </div>
-            <div className="relative flex items-center gap-2 border-2 border-gray-200 rounded-xl px-3 py-2 bg-white">
-              <Search size={13} className="text-gray-400"/>
-              <input type="text" value={ncFiltCliente} onChange={e=>setNcFiltCliente(e.target.value.toUpperCase())} placeholder="Buscar cliente o RIF..." className="outline-none text-xs font-bold w-40 bg-white uppercase"/>
-              {ncFiltCliente && <button onClick={()=>setNcFiltCliente('')} className="text-gray-400 hover:text-red-500"><X size={11}/></button>}
-            </div>
-            <select value={ncFiltEstado} onChange={e=>setNcFiltEstado(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-white">
-              <option value="TODAS">Todos los estados</option>
-              <option value="ACTIVA">Activas</option>
-              <option value="LIQUIDADA_PARCIAL">Liquidadas parcial</option>
-              <option value="LIQUIDADA_TOTAL">Liquidadas total</option>
-              <option value="DEVUELTA">Devueltas</option>
-            </select>
-            <span className="text-[10px] font-black text-gray-500 uppercase ml-auto">{ncFiltradas.length} nota{ncFiltradas.length!==1?'s':''}</span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 px-8 py-4 bg-orange-50/50 border-b">
-            {[['NC Activas',ncActivas.length,'text-orange-600'],['Total NC',(consignaciones||[]).length,'text-gray-700'],['Valor en consignación','$'+formatNum(ncValorTotal),'text-green-700'],['Clientes activos',[...new Set(ncActivas.map(c=>c.clienteRif))].length,'text-blue-700']].map(([l,v,cls])=>(
-              <div key={l} className="bg-white rounded-2xl p-4 border shadow-sm"><p className="text-[9px] font-black text-gray-400 uppercase mb-1">{l}</p><p className={`font-black text-lg ${cls}`}>{v}</p></div>
-            ))}
-          </div>
-          <div className="p-6">
-            {(consignaciones||[]).length===0 ? (
-              <div className="text-center py-16 text-gray-400"><ArrowRightLeft size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">No hay notas de consignación</p><p className="text-xs mt-2">Crea la primera con el botón "Nueva Consignación"</p></div>
-            ) : ncFiltradas.length===0 ? (
-              <div className="text-center py-12 text-gray-400"><Search size={32} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">Sin resultados para los filtros aplicados</p></div>
-            ) : (
-              <div className="space-y-3">
-                {ncFiltradas.map(nc=>(
-                  <div key={nc.id} className="bg-white border-2 border-gray-200 rounded-2xl p-5 hover:border-orange-300 transition-all border-l-[5px] border-l-orange-500">
-                    <div className="flex justify-between items-start flex-wrap gap-2 cursor-pointer" onClick={()=>{setSelectedNC(nc);setConsignView('detalle');}}>
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-black text-orange-600 text-sm">{nc.id}</span>
-                          <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${estadoColor(nc.estado)}`}>{nc.estado}</span>
-                        </div>
-                        <p className="font-black text-gray-800">{nc.clienteName} <span className="text-[10px] text-gray-400 font-bold">({nc.clienteRif})</span></p>
-                        <p className="text-[9px] text-gray-400 font-bold mt-0.5">Origen: {nc.almacenOrigen} · Fecha: {nc.fecha} · Vendedor: {nc.vendedor||'—'}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-black text-green-700 text-lg">${formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0))}</p>
-                        <p className="text-[9px] text-gray-400 font-bold">{(nc.items||[]).length} art. · {formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible),0))} uds disp.</p>
-                        {(nc.liquidaciones||[]).length>0 && <p className="text-[9px] text-blue-600 font-bold">{(nc.liquidaciones||[]).length} liquidación{(nc.liquidaciones||[]).length!==1?'es':''}</p>}
-                        {ncPendienteFactura(nc).length>0 && <p className="text-[9px] text-orange-600 font-bold">{ncPendienteFactura(nc).length} ítem{ncPendienteFactura(nc).length!==1?'s':''} pendientes</p>}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2 mt-3">
-                      {(nc.items||[]).slice(0,5).map(it=><span key={it.cleanId} className={`px-2 py-0.5 rounded text-[9px] font-bold ${parseNum(it.cantidadDisponible)>0?'bg-orange-50 text-orange-700':'bg-gray-100 text-gray-400 line-through'}`}>{it.cleanId}: {formatNum(it.cantidadDisponible)}</span>)}
-                      {(nc.items||[]).length>5 && <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded text-[9px] font-bold">+{(nc.items||[]).length-5} más</span>}
-                    </div>
-                    {/* Acciones por NC */}
-                    <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100 no-pdf">
-                      <button onClick={e=>{e.stopPropagation();setSelectedNC(nc);setConsignView('detalle');}} className="flex-1 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white px-3 py-1.5 rounded-xl font-black text-[9px] uppercase flex items-center justify-center gap-1 transition-all"><Eye size={11}/> Ver</button>
-                      <button onClick={e=>{e.stopPropagation();
-                        const rows2=(nc.items||[]).map(it=>`<tr><td style="padding:4px 7px;border:1px solid #ccc;font-weight:900;color:#ea580c">${it.cleanId}</td><td style="padding:4px 7px;border:1px solid #ccc">${it.desc}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:center">${it.unit}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:right">${formatNum(it.cantidad)}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:right">${formatNum(it.cantidadDisponible)}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:right">$${formatNum(it.precioConsig||0)}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:right;color:#16a34a;font-weight:900">$${formatNum(parseNum(it.cantidadDisponible)*parseNum(it.precioConsig||0))}</td></tr>`).join('');
-                        const html=`<div style="font-family:Arial,sans-serif;font-size:11px;padding:16px;color:#000"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:12px"><div><h2 style="margin:0;font-size:15px">SERVICIOS JIRET G&B, C.A.</h2><p style="font-size:9px;color:#6b7280;margin:2px 0">RIF: J-412309374</p></div><div style="text-align:right"><p style="font-weight:900;color:#f97316;margin:0">NOTA DE CONSIGNACIÓN</p><p style="font-size:10px;font-weight:900">${nc.id}</p></div></div><p style="font-size:11px;margin:4px 0"><b>Cliente:</b> ${nc.clienteName} (${nc.clienteRif})</p><p style="font-size:11px;margin:4px 0"><b>Origen:</b> ${nc.almacenOrigen} · <b>Fecha:</b> ${nc.fecha} · <b>Estado:</b> ${nc.estado}</p><table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="background:#1f2937;color:#fff"><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Código</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Descripción</th><th style="padding:6px 8px;font-size:9px">UM</th><th style="padding:6px 8px;font-size:9px">Despachado</th><th style="padding:6px 8px;font-size:9px">Disponible</th><th style="padding:6px 8px;font-size:9px">Precio NC</th><th style="padding:6px 8px;font-size:9px">Valor</th></tr></thead><tbody>${rows2}</tbody></table></div>`;
-                        handlePDFFromHTML(html,`NC_${nc.id}`);
-                      }} className="flex-1 bg-gray-800 text-white hover:bg-black px-3 py-1.5 rounded-xl font-black text-[9px] uppercase flex items-center justify-center gap-1 transition-all"><Printer size={11}/> PDF</button>
-                      <button onClick={e=>{e.stopPropagation();
-                        const header2=['Código','Descripción','UM','Despachado','Disponible','Liquidado','Precio NC ($)','Valor ($)'];
-                        const rows3=(nc.items||[]).map(it=>{const liq=(nc.liquidaciones||[]).reduce((s,l)=>{const x=(l.items||[]).find(y=>y.cleanId===it.cleanId);return s+(x?parseNum(x.vendido||0):0);},0);return[it.cleanId,it.desc,it.unit,formatNum(it.cantidad),formatNum(it.cantidadDisponible),formatNum(liq),formatNum(it.precioConsig||0),formatNum(parseNum(it.cantidadDisponible)*parseNum(it.precioConsig||0))];});
-                        let xhtml=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>th{background:#1f2937;color:#fff;font-weight:bold;}td,th{border:1px solid #ccc;padding:5px 8px;}</style></head><body><h2>NC ${nc.id} — ${nc.clienteName}</h2><table><thead><tr>${header2.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows3.map(r=>`<tr>${r.map(v=>`<td>${v}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
-                        const b=new Blob(['\uFEFF'+xhtml],{type:'application/vnd.ms-excel;charset=utf-8'});const u=URL.createObjectURL(b);const a2=document.createElement('a');a2.href=u;a2.download=`NC_${nc.id}_${getTodayDate()}.xls`;a2.click();URL.revokeObjectURL(u);
-                      }} className="flex-1 bg-green-600 text-white hover:bg-green-700 px-3 py-1.5 rounded-xl font-black text-[9px] uppercase flex items-center justify-center gap-1 transition-all"><Download size={11}/> Excel</button>
-                      <button onClick={e=>{e.stopPropagation();handleDeleteNC(nc);}} className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-3 py-1.5 rounded-xl font-black text-[9px] uppercase flex items-center gap-1 transition-all"><Trash2 size={11}/> Eliminar</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      );
-    }
 
     if (invView === 'almacenes_mgmt') {
       const allItems = inventory || [];
@@ -7081,7 +6653,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                                 <button onClick={()=>{
                                   const w=window.open('','_blank');
                                   const rows=(po.items||[]).map(it=>`<tr><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;color:#ea580c">${it.productCode}</td><td style="padding:6px 10px;border:1px solid #ddd">${it.productName}</td><td style="padding:6px 10px;border:1px solid #ddd;text-align:center">${formatNum(it.currentStock)}</td><td style="padding:6px 10px;border:1px solid #ddd;text-align:center;font-weight:bold">${formatNum(it.suggestedQty)}</td></tr>`).join('');
-                                  w.document.write(`<html><body style="font-family:Arial;padding:24px;max-width:800px;margin:auto"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:12px;margin-bottom:16px"><div><h1 style="margin:0;font-size:20px">G&B Supply</h1></div><div style="text-align:right"><h2 style="margin:0">${po.id}</h2><p style="color:#f97316;font-weight:bold;margin:0">${po.status}</p></div></div><p><b>Depto:</b> ${po.department||po.provider} | <b>Fecha:</b> ${po.date}</p><table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="background:#1f2937;color:white"><th style="padding:8px 10px;text-align:left">Código</th><th style="padding:8px 10px">Material</th><th style="padding:8px 10px;text-align:center">Stock</th><th style="padding:8px 10px;text-align:center">Cantidad</th></tr></thead><tbody>${rows}</tbody></table>${po.notes?`<p style="margin-top:12px;padding:8px;border:1px solid #ddd;border-radius:4px"><b>Notas:</b> ${po.notes}</p>`:''}<script>window.print();window.close();<\/script></body></html>`);
+                                  w.document.write(`<html><body style="font-family:Arial;padding:24px;max-width:800px;margin:auto"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:12px;margin-bottom:16px"><div><h1 style="margin:0;font-size:20px">G&B Supply</h1></div><div style="text-align:right"><h2 style="margin:0">${po.id}</h2><p style="color:#f97316;font-weight:bold;margin:0">${po.status}</p></div></div><p><b>Depto:</b> ${po.department||po.provider} | <b>Fecha:</b> ${po.date}</p><table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="background:#1f2937;color:white"><th style="padding:8px 10px;text-align:left">Código</th><th style="padding:8px 10px">Material</th><th style="padding:8px 10px;text-align:center">Stock</th><th style="padding:8px 10px;text-align:center">Cantidad</th></tr></thead><tbody>${rows}</tbody></table>${po.notes?`<p style="margin-top:12px;padding:8px;border:1px solid #ddd;border-radius:4px"><b>Notas:</b> ${po.notes}</p>`:''}<div style="text-align:center;padding:12px 0;"><button onclick="window.print()" style="background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;padding:10px 32px;border:none;border-radius:6px;cursor:pointer;">🖨 IMPRIMIR / GUARDAR PDF</button></div></body></html>`);
                                   w.document.close();
                                 }} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Ver / Imprimir"><Eye size={12}/></button>
                                 {!isODP && po.status === 'PENDIENTE' && (
@@ -10841,8 +10413,8 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             const ym2 = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
             const factsMes = (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(ym2)&&(inv.vendedor||'').toUpperCase()===nombre.toUpperCase());
             const totalMes = factsMes.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
-            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ficha ${nombre}</title><style>body{font-family:Arial,sans-serif;margin:0;padding:24px;color:#111;}.header{border-bottom:4px solid #4f46e5;padding-bottom:12px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-end;}.logo h2{margin:0;font-size:16px;font-weight:900;text-transform:uppercase;}.logo p{margin:2px 0;font-size:11px;}.ftitle{text-align:right;font-size:13px;font-weight:900;color:#4f46e5;text-transform:uppercase;}.av{width:52px;height:52px;border-radius:50%;background:#e0e7ff;display:inline-flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#4f46e5;margin-right:14px;vertical-align:middle;}.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:10px;font-weight:900;text-transform:uppercase;margin-left:8px;}.activo{background:#d1fae5;color:#065f46;}.inactivo{background:#fee2e2;color:#991b1b;}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0;}.field{background:#f9fafb;border-radius:8px;padding:9px 12px;}.fl{font-size:9px;font-weight:900;color:#6b7280;text-transform:uppercase;margin-bottom:2px;}.fv{font-size:12px;font-weight:700;}.sec{margin-top:18px;border-top:2px solid #e5e7eb;padding-top:10px;}.st{font-size:10px;font-weight:900;color:#4f46e5;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;}.ests{display:flex;flex-wrap:wrap;gap:4px;}.est{background:#e0e7ff;color:#3730a3;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;}.kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px;}.kc{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;text-align:center;}.kv{font-size:18px;font-weight:900;color:#16a34a;}.kl{font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-top:2px;}@media print{body{padding:0;}}</style></head><body><div class="header"><div class="logo"><h2>SERVICIOS JIRET G&amp;B, C.A.</h2><p>RIF: J-412309374</p></div><div class="ftitle">Ficha Técnica de Vendedor<br><span style="font-size:10px;color:#6b7280;font-weight:400;">Generado: ${getTodayDate()}</span></div></div><div style="margin-bottom:14px;"><span class="av">${(info.nombre||nombre).charAt(0)}</span><div style="display:inline-block;vertical-align:middle;"><div><strong style="font-size:20px;text-transform:uppercase;">${info.nombre||nombre}</strong><span class="badge ${info.activo!==false?'activo':'inactivo'}">${info.activo!==false?'ACTIVO':'INACTIVO'}</span></div><div style="font-size:11px;color:#6b7280;font-weight:700;text-transform:uppercase;">${info.cargo||'VENDEDOR'} · Ingreso: ${info.fechaIngreso||'No registrado'}</div></div></div><div class="grid2"><div class="field"><div class="fl">Teléfono</div><div class="fv">${info.telefono||'—'}</div></div><div class="field"><div class="fl">Email</div><div class="fv">${info.email||'—'}</div></div><div class="field"><div class="fl">Región Principal</div><div class="fv">${info.region||'—'}</div></div><div class="field"><div class="fl">Estados Asignados</div><div class="fv">${nEst} estado(s)</div></div><div class="field"><div class="fl">Salario Garantizado</div><div class="fv">$${formatNum(info.salarioBase??300)} <span style="font-size:9px;color:#9ca3af;">(3 meses)</span></div></div><div class="field"><div class="fl">Bono Vehículo</div><div class="fv">$${formatNum(info.bonoVehiculo??200)}</div></div></div>${nEst>0?`<div class="sec"><div class="st">Zona de Ventas — ${nEst} Estado(s)</div><div class="ests">${(info.estados||[]).map(e=>`<span class="est">${e}</span>`).join('')}</div></div>`:''} ${info.observaciones?`<div class="sec"><div class="st">Observaciones</div><p style="font-size:11px;color:#374151;margin:0;">${info.observaciones}</p></div>`:''}<div class="sec"><div class="st">Rendimiento — ${new Date().toLocaleString('es-VE',{month:'long',year:'numeric'})}</div><div class="kpi"><div class="kc"><div class="kv">$${formatNum(totalMes)}</div><div class="kl">Ventas del mes</div></div><div class="kc"><div class="kv">${factsMes.length}</div><div class="kl">Facturas</div></div><div class="kc"><div class="kv">${new Set(factsMes.map(i=>i.clientName||'')).size}</div><div class="kl">Clientes</div></div></div></div><script>window.onload=()=>window.print();</script></body></html>`;
-            const w=window.open('','_blank');w.document.write(html);w.document.close();
+            const fichaHtml=`<div style="font-family:Arial,sans-serif;color:#111;"><div style="margin-bottom:14px;"><span style="width:52px;height:52px;border-radius:50%;background:#e0e7ff;display:inline-flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#4f46e5;margin-right:14px;vertical-align:middle;">${(info.nombre||nombre).charAt(0)}</span><div style="display:inline-block;vertical-align:middle;"><div><strong style="font-size:18px;text-transform:uppercase;">${info.nombre||nombre}</strong> <span style="padding:2px 10px;border-radius:20px;font-size:10px;font-weight:900;text-transform:uppercase;background:${info.activo!==false?'#d1fae5':'#fee2e2'};color:${info.activo!==false?'#065f46':'#991b1b'}">${info.activo!==false?'ACTIVO':'INACTIVO'}</span></div><div style="font-size:11px;color:#6b7280;font-weight:700;text-transform:uppercase;margin-top:3px;">${info.cargo||'VENDEDOR'} · Ingreso: ${info.fechaIngreso||'No registrado'}</div></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0;">${[['Teléfono',info.telefono||'—'],['Email',info.email||'—'],['Región',info.region||'—'],['Estados',`${nEst} estado(s)`],['Salario','$'+formatNum(info.salarioBase??300)],['Bono Vehículo','$'+formatNum(info.bonoVehiculo??200)]].map(([l,v])=>`<div style="background:#f9fafb;border-radius:8px;padding:9px 12px;"><div style="font-size:9px;font-weight:900;color:#6b7280;text-transform:uppercase;margin-bottom:2px;">${l}</div><div style="font-size:12px;font-weight:700;">${v}</div></div>`).join('')}</div>${nEst>0?`<div style="margin-top:14px;border-top:2px solid #e5e7eb;padding-top:10px;"><div style="font-size:10px;font-weight:900;color:#4f46e5;text-transform:uppercase;margin-bottom:8px;">Zona de Ventas — ${nEst} Estado(s)</div><div style="display:flex;flex-wrap:wrap;gap:4px;">${(info.estados||[]).map(e=>`<span style="background:#e0e7ff;color:#3730a3;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;">${e}</span>`).join('')}</div></div>`:''}<div style="margin-top:14px;border-top:2px solid #e5e7eb;padding-top:10px;"><div style="font-size:10px;font-weight:900;color:#4f46e5;text-transform:uppercase;margin-bottom:8px;">Rendimiento — ${new Date().toLocaleString('es-VE',{month:'long',year:'numeric'})}</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;"><div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:18px;font-weight:900;color:#16a34a;">$${formatNum(totalMes)}</div><div style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-top:2px;">Ventas del mes</div></div><div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:18px;font-weight:900;color:#16a34a;">${factsMes.length}</div><div style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-top:2px;">Facturas</div></div><div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:18px;font-weight:900;color:#16a34a;">${new Set(factsMes.map(i=>i.clientName||'')).size}</div><div style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-top:2px;">Clientes</div></div></div></div></div>`;
+            _abrirVentanaReporte(fichaHtml, `Ficha Técnica — ${info.nombre||nombre}`);
           };
 
           // ── PDF REPORTE GENERAL ──
@@ -10857,8 +10429,8 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             });
             const td=(c,r,b)=>`<td style="padding:5px 8px;border:1px solid #e5e7eb;font-size:10px;${r?'text-align:right;':''}${b?'font-weight:900;':''}">${c}</td>`;
             const rowsHtml=rows.map((r,i)=>`<tr style="${i%2?'background:#f9fafb;':''}">${td(`<strong style="text-transform:uppercase;">${r.nombre}</strong><br><span style="font-size:9px;color:#6b7280;">${r.cargo}</span>`)}${td(r.fechaIngreso)}${td(r.region)}${td(r.nEstados,true)}${td(r.telefono)}${td(`<span style="padding:1px 7px;border-radius:10px;font-size:9px;font-weight:900;background:${r.activo?'#d1fae5':'#fee2e2'};color:${r.activo?'#065f46':'#991b1b'}">${r.activo?'ACTIVO':'INACT.'}</span>`)}${td('$'+formatNum(r.salarioBase),true)}${td('$'+formatNum(r.bonoVehiculo),true)}${td('$'+formatNum(r.totalMes),true,true)}${td(r.nFacturas,true)}${td(r.nClientes,true)}</tr>`).join('');
-            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Reporte Vendedores</title><style>body{font-family:Arial,sans-serif;margin:0;padding:24px;color:#111;}.header{border-bottom:4px solid #4f46e5;padding-bottom:12px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-end;}h2{margin:0;font-size:16px;font-weight:900;text-transform:uppercase;}h3{margin:2px 0;font-size:14px;color:#4f46e5;font-weight:900;}table{border-collapse:collapse;width:100%;}th{background:#111;color:#fff;font-size:9px;text-transform:uppercase;padding:6px 8px;border:1px solid #111;}@media print{body{padding:0;}}</style></head><body><div class="header"><div><h2>SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:2px 0;font-size:11px;">RIF: J-412309374</p></div><div style="text-align:right;"><h3>Reporte General de Vendedores</h3><p style="font-size:10px;color:#6b7280;margin:0;">Período: ${mesLabel2} · Generado: ${getTodayDate()}</p></div></div><table><thead><tr><th>Vendedor / Cargo</th><th>Ingreso</th><th>Región</th><th>Estados</th><th>Teléfono</th><th>Estatus</th><th>Salario</th><th>B.Veh.</th><th>Ventas Mes</th><th>Facturas</th><th>Clientes</th></tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="8" style="padding:6px 8px;font-weight:900;border:1px solid #111;background:#111;color:#fff;">TOTALES</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">$${formatNum(rows.reduce((s,r)=>s+r.totalMes,0))}</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">${rows.reduce((s,r)=>s+r.nFacturas,0)}</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">${rows.reduce((s,r)=>s+r.nClientes,0)}</td></tr></tfoot></table><script>window.onload=()=>window.print();</script></body></html>`;
-            const w=window.open('','_blank');w.document.write(html);w.document.close();
+            const html=`<div style="font-family:Arial,sans-serif;color:#111;"><div style="border-bottom:2px solid #4f46e5;padding-bottom:10px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:flex-end;"><div><h2 style="margin:0;font-size:15px;font-weight:900;text-transform:uppercase;">Reporte General de Vendedores</h2><p style="margin:2px 0;font-size:10px;color:#6b7280;">Período: ${mesLabel2} · Generado: ${getTodayDate()}</p></div></div><table style="border-collapse:collapse;width:100%;"><thead><tr>${['Vendedor / Cargo','Ingreso','Región','Estados','Teléfono','Estatus','Salario','B.Veh.','Ventas Mes','Facturas','Clientes'].map(h=>`<th style="background:#111;color:#fff;font-size:9px;text-transform:uppercase;padding:6px 8px;border:1px solid #111;">${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="8" style="padding:6px 8px;font-weight:900;border:1px solid #111;background:#111;color:#fff;">TOTALES</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">$${formatNum(rows.reduce((s,r)=>s+r.totalMes,0))}</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">${rows.reduce((s,r)=>s+r.nFacturas,0)}</td><td style="padding:6px 8px;text-align:right;font-weight:900;border:1px solid #111;background:#111;color:#fff;">${rows.reduce((s,r)=>s+r.nClientes,0)}</td></tr></tfoot></table></div>`;
+            _abrirVentanaReporte(html, 'Reporte General de Vendedores');
           };
 
 
@@ -11382,6 +10954,444 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           );
         })()}
 
+        {ventasView === 'consignacion' && (() => {
+        const depositos2 = (depositos||[]).filter(d=>!['PLANTA','ALMACEN EXTERNO','DEPOSITO 2','CONSIGNACION VENTAS'].includes(d));
+        const estadoColor = e => ({'ACTIVA':'bg-green-100 text-green-700','LIQUIDADA_PARCIAL':'bg-yellow-100 text-yellow-700','LIQUIDADA_TOTAL':'bg-blue-100 text-blue-700','DEVUELTA':'bg-gray-100 text-gray-600'}[e]||'bg-gray-100 text-gray-600');
+        const ncActivas = (consignaciones||[]).filter(c=>c.estado==='ACTIVA'||c.estado==='LIQUIDADA_PARCIAL');
+        const ncValorTotal = (consignaciones||[]).reduce((s,c)=>(c.items||[]).reduce((ss,i)=>ss+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||i.costoUnit||0),s),0);
+  
+        const ncFiltradas = (consignaciones||[]).filter(nc=>{
+          if(ncFiltEstado!=='TODAS' && nc.estado!==ncFiltEstado) return false;
+          if(ncFiltNC && !nc.id.toUpperCase().includes(ncFiltNC.toUpperCase())) return false;
+          if(ncFiltCliente && !(nc.clienteName||'').toUpperCase().includes(ncFiltCliente.toUpperCase()) && !(nc.clienteRif||'').toUpperCase().includes(ncFiltCliente.toUpperCase())) return false;
+          return true;
+        });
+  
+        const exportConsignPDF = () => {
+          const rows = ncFiltradas.map(nc=>`<tr>
+            <td style="padding:5px 8px;border:1px solid #ddd;font-weight:900;color:#ea580c">${nc.id}</td>
+            <td style="padding:5px 8px;border:1px solid #ddd">${nc.clienteName}<br><span style="font-size:9px;color:#6b7280">${nc.clienteRif}</span></td>
+            <td style="padding:5px 8px;border:1px solid #ddd;text-align:center">${nc.fecha}</td>
+            <td style="padding:5px 8px;border:1px solid #ddd;text-align:center">${nc.almacenOrigen}</td>
+            <td style="padding:5px 8px;border:1px solid #ddd;text-align:center;font-weight:900;color:${nc.estado==='ACTIVA'?'#16a34a':nc.estado==='DEVUELTA'?'#6b7280':'#d97706'}">${nc.estado}</td>
+            <td style="padding:5px 8px;border:1px solid #ddd;text-align:center">${(nc.items||[]).length}</td>
+            <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible),0))}</td>
+            <td style="padding:5px 8px;border:1px solid #ddd;text-align:right;font-weight:900;color:#16a34a">$${formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0))}</td>
+          </tr>`).join('');
+          const html = `<div style="font-family:Arial,sans-serif;font-size:11px;padding:16px;color:#000">
+  <div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:12px">
+    <div><h2 style="margin:0;font-size:15px;text-transform:uppercase">SERVICIOS JIRET G&B, C.A.</h2><p style="font-size:9px;color:#6b7280;margin:2px 0">RIF: J-412309374</p></div>
+    <div style="text-align:right"><p style="font-weight:900;color:#f97316;margin:0">REPORTE DE CONSIGNACIONES</p><p style="font-size:9px;margin:2px 0">Generado: ${getTodayDate()}</p></div>
+  </div>
+  <table style="width:100%;border-collapse:collapse">
+  <thead><tr style="background:#1f2937;color:#fff">
+  <th style="padding:6px 8px;font-size:9px;text-transform:uppercase">NC</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Cliente</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Fecha</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Origen</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Estado</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Artículos</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Uds Disp.</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Valor ($)</th>
+  </tr></thead><tbody>${rows}</tbody>
+  <tfoot><tr style="background:#f3f4f6;font-weight:900"><td colspan="7" style="padding:6px 8px;text-align:right">TOTAL (${ncFiltradas.length} NC):</td><td style="padding:6px 8px;text-align:right;color:#16a34a">$${formatNum(ncFiltradas.reduce((s,nc)=>s+(nc.items||[]).reduce((ss,i)=>ss+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0),0))}</td></tr></tfoot>
+  </table></div>`;
+          handlePDFFromHTML(html, 'Reporte_Consignaciones');
+        };
+  
+        const exportConsignExcel = () => {
+          const header = ['NC','Cliente','RIF','Fecha','Almacén Origen','Estado','Artículos','Uds Disponibles','Valor NC ($)','Observaciones'];
+          const dataRows = ncFiltradas.map(nc=>[nc.id, nc.clienteName, nc.clienteRif, nc.fecha, nc.almacenOrigen, nc.estado, (nc.items||[]).length, (nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible),0), (nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0), nc.observaciones||'']);
+          let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>body{font-family:Arial;font-size:11px;}th{background:#1f2937;color:#fff;font-weight:bold;}td,th{border:1px solid #ccc;padding:5px 8px;}</style></head><body>`;
+          html += `<h2>SERVICIOS JIRET G&B, C.A. — Consignaciones — ${getTodayDate()}</h2><table><thead><tr>${header.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>`;
+          dataRows.forEach(r=>{html+=`<tr>${r.map(v=>`<td>${v}</td>`).join('')}</tr>`;});
+          html += `</tbody></table></body></html>`;
+          const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});
+          const url=URL.createObjectURL(blob);
+          const a=document.createElement('a');a.href=url;a.download=`Consignaciones_${getTodayDate()}.xls`;a.click();URL.revokeObjectURL(url);
+        };
+  
+        // ── MODAL LIQUIDAR ──────────────────────────────────────────────────────
+        if(ncModalMode==='liquidar' && selectedNC) return (
+          <div className="p-6 max-w-2xl mx-auto">
+            <div className="bg-white rounded-3xl shadow border p-6 space-y-5">
+              <div className="flex items-center justify-between">
+                <h3 className="font-black text-base uppercase text-blue-800 flex items-center gap-2"><DollarSign size={18}/> Liquidar {selectedNC.id}</h3>
+                <button onClick={()=>setNcModalMode(null)} className="text-gray-400 hover:text-red-500"><X size={18}/></button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tipo de liquidación</label>
+                  <select value={ncLiqForm.tipo} onChange={e=>setNcLiqForm(f=>({...f,tipo:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-400">
+                    <option value="REPORTE_CLIENTE">Cliente reporta vendido</option>
+                    <option value="TOMA_FISICA">Toma física (conteo en sitio)</option>
+                  </select>
+                </div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                  <input type="date" value={ncLiqForm.fecha||getTodayDate()} onChange={e=>setNcLiqForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-400"/>
+                </div>
+              </div>
+              <p className="text-[9px] text-gray-500 font-bold">{ncLiqForm.tipo==='TOMA_FISICA'?'Ingresa el stock que QUEDÓ sin vender. El sistema calculará lo vendido.':'Ingresa las unidades que el cliente reporta como VENDIDAS.'}</p>
+              <table className="w-full text-xs">
+                <thead><tr className="bg-blue-50 text-[9px] font-black uppercase text-blue-700">
+                  <th className="py-2 px-3 text-left">Artículo</th>
+                  <th className="py-2 px-3 text-center">Disponible</th>
+                  <th className="py-2 px-3 text-center">{ncLiqForm.tipo==='TOMA_FISICA'?'Conteo actual':'Vendido'}</th>
+                  <th className="py-2 px-3 text-center">Precio NC</th>
+                  <th className="py-2 px-3 text-center">Total</th>
+                </tr></thead>
+                <tbody>
+                  {(selectedNC.items||[]).filter(i=>parseNum(i.cantidadDisponible)>0).map((it,idx)=>{
+                    const row = (ncLiqForm.items||[])[idx]||{cleanId:it.cleanId,desc:it.desc,vendido:'',precioConsig:parseNum(it.precioConsig||0),costoUnit:parseNum(it.costoUnit||0)};
+                    const vendidoCalc = ncLiqForm.tipo==='TOMA_FISICA' ? Math.max(0,parseNum(it.cantidadDisponible)-parseNum(row.vendido)) : parseNum(row.vendido);
+                    return (<tr key={it.cleanId} className="border-t">
+                      <td className="py-2 px-3 font-black text-orange-600 text-[10px]">{it.cleanId}<br/><span className="text-[9px] text-gray-400 font-normal">{it.desc}</span></td>
+                      <td className="py-2 px-3 text-center font-black text-blue-700">{formatNum(it.cantidadDisponible)} {it.unit}</td>
+                      <td className="py-2 px-3 text-center"><input type="number" min="0" max={it.cantidadDisponible} step="0.01" value={row.vendido} onChange={e=>{const next=([...( ncLiqForm.items||[])]);next[idx]={...row,vendido:e.target.value};setNcLiqForm(f=>({...f,items:next}));}} className="w-20 border-2 border-blue-200 rounded-lg p-1 text-center font-black text-xs outline-none focus:border-blue-500" placeholder="0"/></td>
+                      <td className="py-2 px-3 text-center font-bold">${formatNum(row.precioConsig)}/{it.unit}</td>
+                      <td className="py-2 px-3 text-center font-black text-green-700">${formatNum(vendidoCalc*parseNum(row.precioConsig))}</td>
+                    </tr>);
+                  })}
+                </tbody>
+              </table>
+              <div className="flex gap-3 justify-end pt-2 border-t">
+                <button onClick={()=>setNcModalMode(null)} className="px-5 py-2.5 bg-gray-200 text-gray-700 rounded-xl font-black text-[10px] uppercase">Cancelar</button>
+                <button onClick={handleLiquidarNC} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase flex items-center gap-1 shadow-md hover:bg-blue-700"><DollarSign size={13}/> Registrar Liquidación</button>
+              </div>
+            </div>
+          </div>
+        );
+  
+        // ── MODAL DEVOLVER ────────────────────────────────────────────────────────
+        if(ncModalMode==='devolver' && selectedNC) return (
+          <div className="p-6 max-w-2xl mx-auto">
+            <div className="bg-white rounded-3xl shadow border p-6 space-y-5">
+              <div className="flex items-center justify-between">
+                <h3 className="font-black text-base uppercase text-orange-700 flex items-center gap-2"><ArrowDownToLine size={18}/> Devolución {selectedNC.id}</h3>
+                <button onClick={()=>setNcModalMode(null)} className="text-gray-400 hover:text-red-500"><X size={18}/></button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Almacén destino</label>
+                  <select value={ncDevForm.almacenDestino} onChange={e=>setNcDevForm(f=>({...f,almacenDestino:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
+                    {depositos2.map(d=><option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                  <input type="date" value={ncDevForm.fecha||getTodayDate()} onChange={e=>setNcDevForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400"/>
+                </div>
+              </div>
+              <table className="w-full text-xs">
+                <thead><tr className="bg-orange-50 text-[9px] font-black uppercase text-orange-700">
+                  <th className="py-2 px-3 text-left">Artículo</th>
+                  <th className="py-2 px-3 text-center">Disponible</th>
+                  <th className="py-2 px-3 text-center">A devolver</th>
+                </tr></thead>
+                <tbody>
+                  {(selectedNC.items||[]).filter(i=>parseNum(i.cantidadDisponible)>0).map((it,idx)=>{
+                    const row=(ncDevForm.items||[])[idx]||{cleanId:it.cleanId,desc:it.desc,devolver:'',costoUnit:parseNum(it.costoUnit||0),category:it.category,subcategory:it.subcategory,unit:it.unit};
+                    return (<tr key={it.cleanId} className="border-t">
+                      <td className="py-2 px-3 font-black text-orange-600 text-[10px]">{it.cleanId}<br/><span className="text-[9px] text-gray-400 font-normal">{it.desc}</span></td>
+                      <td className="py-2 px-3 text-center font-black text-blue-700">{formatNum(it.cantidadDisponible)} {it.unit}</td>
+                      <td className="py-2 px-3 text-center"><input type="number" min="0" max={it.cantidadDisponible} step="0.01" value={row.devolver} onChange={e=>{const next=[...(ncDevForm.items||[])];next[idx]={...row,devolver:e.target.value};setNcDevForm(f=>({...f,items:next}));}} className="w-20 border-2 border-orange-200 rounded-lg p-1 text-center font-black text-xs outline-none focus:border-orange-500" placeholder="0"/></td>
+                    </tr>);
+                  })}
+                </tbody>
+              </table>
+              <div className="flex gap-3 justify-end pt-2 border-t">
+                <button onClick={()=>setNcModalMode(null)} className="px-5 py-2.5 bg-gray-200 text-gray-700 rounded-xl font-black text-[10px] uppercase">Cancelar</button>
+                <button onClick={handleDevolverNC} className="px-5 py-2.5 bg-orange-600 text-white rounded-xl font-black text-[10px] uppercase flex items-center gap-1 shadow-md hover:bg-orange-700"><ArrowDownToLine size={13}/> Confirmar Devolución</button>
+              </div>
+            </div>
+          </div>
+        );
+  
+        // ── DETALLE NC ─────────────────────────────────────────────────────────
+        if(consignView==='detalle' && selectedNC) {
+          // Leer siempre el NC actualizado en tiempo real (no el snapshot viejo de selectedNC)
+          const nc = (consignaciones||[]).find(c=>c.id===selectedNC.id) || selectedNC;
+          return (
+          <div className="p-6 space-y-5">
+            <div className="flex items-center gap-3 flex-wrap">
+              <button onClick={()=>{setConsignView('lista');setSelectedNC(null);}} className="flex items-center gap-1 text-[10px] font-black text-gray-500 uppercase hover:text-orange-600"><ArrowRight size={12} className="rotate-180"/> Volver</button>
+              <span className="font-black text-xl text-orange-600">{nc.id}</span>
+              <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase ${estadoColor(nc.estado)}`}>{nc.estado}</span>
+              {(nc.estado==='ACTIVA'||nc.estado==='LIQUIDADA_PARCIAL') && (
+                <div className="ml-auto flex gap-2">
+                  <button onClick={()=>{setNcLiqForm({tipo:'REPORTE_CLIENTE',fecha:getTodayDate(),items:[]});setNcModalMode('liquidar');}} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase flex items-center gap-1 hover:bg-blue-700"><DollarSign size={12}/> Liquidar vendido</button>
+                  <button onClick={()=>{setNcDevForm({fecha:getTodayDate(),almacenDestino:depositos2[0]||'ALMACEN ZI',items:[]});setNcModalMode('devolver');}} className="bg-orange-500 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase flex items-center gap-1 hover:bg-orange-600"><ArrowDownToLine size={12}/> Devolver stock</button>
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[['Cliente',nc.clienteName],['RIF',nc.clienteRif],['Vendedor',nc.vendedor||'—'],['Origen',nc.almacenOrigen],['Fecha',nc.fecha],['Obs.',nc.observaciones||'—']].map(([l,v])=>(
+                <div key={l} className="bg-white rounded-2xl border p-4 shadow-sm"><p className="text-[9px] font-black text-gray-400 uppercase mb-1">{l}</p><p className="font-black text-sm truncate">{v}</p></div>
+              ))}
+            </div>
+            <div className="bg-white rounded-2xl border overflow-hidden">
+              <div className="bg-orange-600 text-white px-5 py-3 font-black text-sm uppercase flex justify-between items-center">
+                <span>Artículos en Consignación</span>
+                <span className="text-orange-200 text-[10px] font-bold">Disponible: ${formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0))}</span>
+              </div>
+              <table className="w-full text-xs">
+                <thead className="bg-gray-100"><tr className="text-[9px] font-black uppercase text-gray-600">
+                  <th className="py-2 px-3 text-left">Código</th><th className="py-2 px-3 text-left">Descripción</th><th className="py-2 px-3 text-center">UM</th>
+                  <th className="py-2 px-3 text-right">Desp.</th><th className="py-2 px-3 text-right">Liquidado</th><th className="py-2 px-3 text-right">Facturado</th><th className="py-2 px-3 text-right">Pdte.Fact.</th><th className="py-2 px-3 text-right">Disponible</th><th className="py-2 px-3 text-right">Precio NC</th><th className="py-2 px-3 text-center">Estado</th>
+                </tr></thead>
+                <tbody>{(nc.items||[]).map((it,i)=>{
+                  const totalLiq=(nc.liquidaciones||[]).reduce((s,liq)=>{const l=(liq.items||[]).find(x=>x.cleanId===it.cleanId);return s+(l?parseNum(l.vendido||0):0);},0);
+                  const facturado=((nc.facturadoItems||[]).find(x=>x.cleanId===it.cleanId)?.cantidadFacturada)||0;
+                  const pendFact=Math.max(0,totalLiq-facturado);
+                  const statusBadge = facturado>=totalLiq && totalLiq>0
+                    ? <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[8px] font-black">✓ Facturado</span>
+                    : pendFact>0
+                      ? <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-[8px] font-black">⏳ Pdte.</span>
+                      : parseNum(it.cantidadDisponible)>0
+                        ? <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[8px] font-black">En consig.</span>
+                        : <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded text-[8px] font-black">Cerrado</span>;
+                  return (
+                    <tr key={it.cleanId} className={`border-t ${i%2===0?'bg-white':'bg-gray-50'}`}>
+                      <td className="py-2 px-3 font-black text-orange-600 text-[10px]">{it.cleanId}</td>
+                      <td className="py-2 px-3 font-bold text-gray-700 text-[10px] max-w-[100px] truncate">{it.desc}</td>
+                      <td className="py-2 px-3 text-center text-gray-500">{it.unit}</td>
+                      <td className="py-2 px-3 text-right font-black text-blue-700">{formatNum(it.cantidad)}</td>
+                      <td className="py-2 px-3 text-right font-bold text-gray-600">{totalLiq>0?formatNum(totalLiq):'—'}</td>
+                      <td className="py-2 px-3 text-right font-bold text-green-700">{facturado>0?formatNum(facturado):'—'}</td>
+                      <td className="py-2 px-3 text-right font-black text-orange-600">{pendFact>0?formatNum(pendFact):'—'}</td>
+                      <td className={`py-2 px-3 text-right font-black ${parseNum(it.cantidadDisponible)>0?'text-green-700':'text-gray-400'}`}>{formatNum(it.cantidadDisponible)}</td>
+                      <td className="py-2 px-3 text-right font-bold">${formatNum(it.precioConsig||0)}</td>
+                      <td className="py-2 px-3 text-center">{statusBadge}</td>
+                    </tr>
+                  );
+                })}</tbody>
+              </table>
+            </div>
+            {(nc.liquidaciones||[]).length>0 && (
+              <div className="bg-white rounded-2xl border overflow-hidden">
+                <div className="bg-blue-700 text-white px-5 py-2.5 font-black text-sm uppercase">Liquidaciones Registradas</div>
+                {(nc.liquidaciones||[]).map((liq,i)=>(
+                  <div key={i} className="border-t px-5 py-3">
+                    <div className="flex justify-between items-center mb-2"><span className="font-black text-[10px] text-blue-700 uppercase">{liq.tipo==='TOMA_FISICA'?'Toma Física':'Reporte Cliente'} — {liq.fecha}</span><span className="text-[9px] text-gray-400">{liq.user}</span></div>
+                    <div className="flex flex-wrap gap-2">{(liq.items||[]).map(it=>(
+                      <span key={it.cleanId} className="bg-blue-50 border border-blue-200 text-blue-700 px-2 py-1 rounded-lg text-[9px] font-bold">{it.cleanId}: <strong>{formatNum(it.vendido)}</strong> × ${formatNum(it.precioConsig)} = <strong className="text-green-700">${formatNum(parseNum(it.vendido)*parseNum(it.precioConsig))}</strong></span>
+                    ))}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {(nc.devoluciones||[]).length>0 && (
+              <div className="bg-white rounded-2xl border overflow-hidden">
+                <div className="bg-orange-600 text-white px-5 py-2.5 font-black text-sm uppercase">Devoluciones Registradas</div>
+                {(nc.devoluciones||[]).map((dev,i)=>(
+                  <div key={i} className="border-t px-5 py-3">
+                    <div className="flex justify-between items-center mb-2"><span className="font-black text-[10px] text-orange-700 uppercase">→ {dev.almacenDestino} — {dev.fecha}</span><span className="text-[9px] text-gray-400">{dev.user}</span></div>
+                    <div className="flex flex-wrap gap-2">{(dev.items||[]).map(it=>(
+                      <span key={it.cleanId} className="bg-orange-50 border border-orange-200 text-orange-700 px-2 py-1 rounded-lg text-[9px] font-bold">{it.cleanId}: {formatNum(it.devolver)} {it.unit||''}</span>
+                    ))}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+  
+        // ── NUEVA NC ───────────────────────────────────────────────────────────
+        if(consignView==='nueva') return (
+          <div className="p-6 max-w-3xl mx-auto space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="font-black text-lg text-orange-600 uppercase flex items-center gap-2"><ArrowRightLeft size={20}/> Nueva Nota de Consignación</h2>
+              <button onClick={()=>{setConsignView('lista');setNcForm({clienteRif:'',clienteName:'',clienteDir:'',vendedor:'',almacenOrigen:depositos2[0]||'ALMACEN ZI',observaciones:'',items:[]});}} className="text-gray-400 hover:text-red-500 flex items-center gap-1 font-black text-[10px] uppercase"><X size={14}/> Cancelar</button>
+            </div>
+            <div className="bg-white rounded-2xl border p-5 space-y-4">
+              <h3 className="font-black text-[11px] text-gray-700 uppercase border-b pb-2">1. Cliente y datos de despacho</h3>
+              <div className="relative">
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar cliente</label>
+                <input type="text" value={ncClientSearch} onChange={e=>{setNcClientSearch(e.target.value.toUpperCase());setNcShowClientDrop(true);}} className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="Nombre o RIF..."/>
+                {ncShowClientDrop && ncClientSearch.length>1 && (
+                  <div className="absolute z-50 bg-white border-2 border-orange-200 rounded-xl shadow-xl w-full max-h-48 overflow-y-auto mt-1">
+                    {(clients||[]).filter(c=>(c.name||c.razonSocial||'').toUpperCase().includes(ncClientSearch)||(c.rif||'').toUpperCase().includes(ncClientSearch)).slice(0,8).map(c=>(
+                      <button key={c.id||c.rif} type="button" onMouseDown={()=>{setNcForm(f=>({...f,clienteRif:c.rif||'',clienteName:c.name||c.razonSocial||'',clienteDir:c.direccion||'',vendedor:f.vendedor||c.vendedor||''}));setNcClientSearch(c.name||c.razonSocial||'');setNcShowClientDrop(false);}} className="w-full text-left px-4 py-2.5 hover:bg-orange-50 text-xs font-bold uppercase border-b border-gray-100">
+                        <span className="text-orange-600 font-black">{c.rif}</span> — {c.name||c.razonSocial}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {ncShowClientDrop && <div className="fixed inset-0 z-40" onClick={()=>setNcShowClientDrop(false)}/>}
+              </div>
+              {ncForm.clienteRif && <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-[10px] font-black text-orange-700">✓ {ncForm.clienteRif} — {ncForm.clienteName}</div>}
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Vendedor</label>
+                  <select value={ncForm.vendedor} onChange={e=>setNcForm(f=>({...f,vendedor:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
+                    <option value="">— Seleccionar —</option>
+                    {(settings?.vendedores||[]).map(v=><option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Almacén origen</label>
+                  <select value={ncForm.almacenOrigen} onChange={e=>setNcForm(f=>({...f,almacenOrigen:e.target.value,items:[]}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
+                    {depositos2.map(d=><option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Observaciones</label>
+                <input type="text" value={ncForm.observaciones} onChange={e=>setNcForm(f=>({...f,observaciones:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="Opcional — período, condiciones, etc."/>
+              </div>
+            </div>
+            <div className="bg-white rounded-2xl border p-5 space-y-4">
+              <h3 className="font-black text-[11px] text-gray-700 uppercase border-b pb-2">2. Artículos a despachar en consignación</h3>
+              <div className="flex gap-2 items-end flex-wrap">
+                <div className="flex-1 min-w-48 relative">
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Artículo (stock en {ncForm.almacenOrigen})</label>
+                  <input type="text" value={ncItemSearch2} onChange={e=>setNcItemSearch2(e.target.value.toUpperCase())} placeholder="Buscar código o descripción..." className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-[10px] font-bold outline-none focus:border-orange-400 uppercase"/>
+                  {ncItemSearch2.length>1 && (()=>{
+                    const seen=new Set();
+                    const opts=(inventory||[]).filter(i=>{
+                      const cc=(i.displayId||(i.id||'').split('___')[0]);
+                      if(seen.has(cc)) return false;
+                      const match=cc.toUpperCase().includes(ncItemSearch2)||(i.desc||'').toUpperCase().includes(ncItemSearch2);
+                      const inAlm=(i.almacen||'ALMACEN ZI')===ncForm.almacenOrigen;
+                      if(match&&inAlm){seen.add(cc);return true;} return false;
+                    }).filter(i=>parseNum(i.stock)>0).slice(0,8);
+                    if(!opts.length) return null;
+                    return (<div className="absolute z-50 bg-white border-2 border-orange-200 rounded-xl shadow-xl w-full max-h-40 overflow-y-auto mt-1">
+                      {opts.map(i=>{const cc=(i.displayId||(i.id||'').split('___')[0]);return(<button key={i.id} type="button" onMouseDown={()=>{setNcItemId(i.id);setNcItemSearch2(cc+' — '+i.desc);setNcItemPrice(String(parseNum(i.cost||0)));}} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-[9px] font-bold border-b border-gray-100"><span className="text-orange-600 font-black">{cc}</span> — {i.desc} <span className="text-green-700 font-black">({formatNum(i.stock)} {i.unit})</span></button>);})}
+                    </div>);
+                  })()}
+                </div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad</label>
+                  <input type="number" step="0.01" min="0.01" value={ncItemQty} onChange={e=>setNcItemQty(e.target.value)} className="w-24 border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="0.00"/>
+                </div>
+                <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Precio consignación ($)</label>
+                  <input type="number" step="0.01" min="0" value={ncItemPrice} onChange={e=>setNcItemPrice(e.target.value)} className="w-28 border-2 border-orange-300 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0.00"/>
+                </div>
+                <button type="button" onClick={()=>{
+                  if(!ncItemId||!parseNum(ncItemQty)) return;
+                  const inv2=(inventory||[]).find(i=>i.id===ncItemId);
+                  if(!inv2) return;
+                  const cc=(inv2.displayId||(inv2.id||'').split('___')[0]);
+                  const cur=(ncForm.items||[]).find(i=>i.cleanId===cc);
+                  const cant=parseNum(ncItemQty);
+                  const already=parseNum(cur?.cantidad||0);
+                  if(parseNum(inv2.stock)<cant+already) return setDialog({title:'Stock insuficiente',text:`Solo hay ${formatNum(inv2.stock)} ${inv2.unit||'und'} en ${ncForm.almacenOrigen}.`,type:'alert'});
+                  if(cur){setNcForm(f=>({...f,items:f.items.map(i=>i.cleanId===cc?{...i,cantidad:parseNum(i.cantidad)+cant}:i)}));}
+                  else{setNcForm(f=>({...f,items:[...f.items,{cleanId:cc,desc:inv2.desc,unit:inv2.unit||'und',category:inv2.category,subcategory:inv2.subcategory||'',costoUnit:parseNum(inv2.cost||0),precioConsig:parseNum(ncItemPrice||inv2.cost||0),cantidad:cant}]}));}
+                  setNcItemId(''); setNcItemSearch2(''); setNcItemQty(''); setNcItemPrice('');
+                }} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-orange-600 flex items-center gap-1"><Plus size={12}/> Agregar</button>
+              </div>
+              {(ncForm.items||[]).length>0 && (
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-orange-50 text-[9px] font-black uppercase text-orange-700">
+                    <th className="py-2 px-3 text-left">Código</th><th className="py-2 px-3 text-left">Descripción</th><th className="py-2 px-3 text-center">Cantidad</th><th className="py-2 px-3 text-center">Precio NC ($)</th><th className="py-2 px-3 text-right">Total NC</th><th className="py-2 px-3 w-8"></th>
+                  </tr></thead>
+                  <tbody>{(ncForm.items||[]).map((it,i)=>(
+                    <tr key={it.cleanId} className={`border-t ${i%2===0?'bg-white':'bg-gray-50'}`}>
+                      <td className="py-2 px-3 font-black text-orange-600 text-[10px]">{it.cleanId}</td>
+                      <td className="py-2 px-3 font-bold text-gray-700">{it.desc}</td>
+                      <td className="py-2 px-3 text-center font-black">{formatNum(it.cantidad)} {it.unit}</td>
+                      <td className="py-2 px-3 text-center"><input type="number" step="0.01" value={it.precioConsig} onChange={e=>setNcForm(f=>({...f,items:f.items.map((x,xi)=>xi===i?{...x,precioConsig:parseNum(e.target.value)}:x)}))} className="w-24 border border-orange-200 rounded-lg p-1 text-center font-black text-[10px] outline-none focus:border-orange-500"/></td>
+                      <td className="py-2 px-3 text-right font-black text-green-700">${formatNum(parseNum(it.cantidad)*parseNum(it.precioConsig))}</td>
+                      <td className="py-2 px-3 text-center"><button onClick={()=>setNcForm(f=>({...f,items:f.items.filter((_,xi)=>xi!==i)}))} className="text-red-400 hover:text-red-600"><X size={12}/></button></td>
+                    </tr>
+                  ))}</tbody>
+                  <tfoot><tr className="bg-orange-100 font-black text-[10px]">
+                    <td colSpan="4" className="py-2 px-3 text-right uppercase text-orange-700">Total NC:</td>
+                    <td className="py-2 px-3 text-right font-black text-orange-700">${formatNum((ncForm.items||[]).reduce((s,i)=>s+parseNum(i.cantidad)*parseNum(i.precioConsig),0))}</td>
+                    <td></td>
+                  </tr></tfoot>
+                </table>
+              )}
+            </div>
+            <div className="flex justify-end gap-3">
+              <button onClick={()=>{setConsignView('lista');}} className="px-6 py-3 bg-gray-200 text-gray-700 rounded-xl font-black text-[10px] uppercase">Cancelar</button>
+              <button onClick={handleCrearNC} className="px-8 py-3 bg-orange-600 text-white rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-orange-700 flex items-center gap-2"><ArrowRightLeft size={14}/> Crear Nota de Consignación</button>
+            </div>
+          </div>
+        );
+  
+        // ── LISTA DE NC ────────────────────────────────────────────────────────
+        return (
+          <div className="animate-in fade-in">
+            <div className="px-8 py-5 border-b flex justify-between items-center flex-wrap gap-3">
+              <div>
+                <h2 className="text-xl font-black uppercase flex items-center gap-2 text-orange-600"><ArrowRightLeft size={22}/> Consignaciones</h2>
+                <p className="text-[10px] font-bold text-gray-400 uppercase mt-0.5">Mercancía entregada en consignación — facturar cuando el cliente venda</p>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={exportConsignExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase flex items-center gap-1 hover:bg-green-700"><Download size={13}/> Excel</button>
+                <button onClick={exportConsignPDF} className="bg-black text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase flex items-center gap-1 hover:bg-gray-800"><Printer size={13}/> PDF</button>
+                <button onClick={()=>{setConsignView('nueva');setNcForm({clienteRif:'',clienteName:'',clienteDir:'',vendedor:'',almacenOrigen:depositos2[0]||'ALMACEN ZI',observaciones:'',items:[]});setNcClientSearch('');}} className="bg-orange-500 text-white px-6 py-2 rounded-xl text-[10px] font-black uppercase shadow-md hover:bg-orange-600 flex items-center gap-2"><Plus size={14}/> Nueva Consignación</button>
+              </div>
+            </div>
+            {/* Filtros */}
+            <div className="px-8 py-3 border-b bg-gray-50 flex gap-3 flex-wrap items-center">
+              <div className="relative flex items-center gap-2 border-2 border-gray-200 rounded-xl px-3 py-2 bg-white">
+                <Search size={13} className="text-gray-400"/>
+                <input type="text" value={ncFiltNC} onChange={e=>setNcFiltNC(e.target.value.toUpperCase())} placeholder="# de nota (NC-...)" className="outline-none text-xs font-bold w-32 bg-white uppercase"/>
+                {ncFiltNC && <button onClick={()=>setNcFiltNC('')} className="text-gray-400 hover:text-red-500"><X size={11}/></button>}
+              </div>
+              <div className="relative flex items-center gap-2 border-2 border-gray-200 rounded-xl px-3 py-2 bg-white">
+                <Search size={13} className="text-gray-400"/>
+                <input type="text" value={ncFiltCliente} onChange={e=>setNcFiltCliente(e.target.value.toUpperCase())} placeholder="Buscar cliente o RIF..." className="outline-none text-xs font-bold w-40 bg-white uppercase"/>
+                {ncFiltCliente && <button onClick={()=>setNcFiltCliente('')} className="text-gray-400 hover:text-red-500"><X size={11}/></button>}
+              </div>
+              <select value={ncFiltEstado} onChange={e=>setNcFiltEstado(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-white">
+                <option value="TODAS">Todos los estados</option>
+                <option value="ACTIVA">Activas</option>
+                <option value="LIQUIDADA_PARCIAL">Liquidadas parcial</option>
+                <option value="LIQUIDADA_TOTAL">Liquidadas total</option>
+                <option value="DEVUELTA">Devueltas</option>
+              </select>
+              <span className="text-[10px] font-black text-gray-500 uppercase ml-auto">{ncFiltradas.length} nota{ncFiltradas.length!==1?'s':''}</span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 px-8 py-4 bg-orange-50/50 border-b">
+              {[['NC Activas',ncActivas.length,'text-orange-600'],['Total NC',(consignaciones||[]).length,'text-gray-700'],['Valor en consignación','$'+formatNum(ncValorTotal),'text-green-700'],['Clientes activos',[...new Set(ncActivas.map(c=>c.clienteRif))].length,'text-blue-700']].map(([l,v,cls])=>(
+                <div key={l} className="bg-white rounded-2xl p-4 border shadow-sm"><p className="text-[9px] font-black text-gray-400 uppercase mb-1">{l}</p><p className={`font-black text-lg ${cls}`}>{v}</p></div>
+              ))}
+            </div>
+            <div className="p-6">
+              {(consignaciones||[]).length===0 ? (
+                <div className="text-center py-16 text-gray-400"><ArrowRightLeft size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">No hay notas de consignación</p><p className="text-xs mt-2">Crea la primera con el botón "Nueva Consignación"</p></div>
+              ) : ncFiltradas.length===0 ? (
+                <div className="text-center py-12 text-gray-400"><Search size={32} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">Sin resultados para los filtros aplicados</p></div>
+              ) : (
+                <div className="space-y-3">
+                  {ncFiltradas.map(nc=>(
+                    <div key={nc.id} className="bg-white border-2 border-gray-200 rounded-2xl p-5 hover:border-orange-300 transition-all border-l-[5px] border-l-orange-500">
+                      <div className="flex justify-between items-start flex-wrap gap-2 cursor-pointer" onClick={()=>{setSelectedNC(nc);setConsignView('detalle');}}>
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-black text-orange-600 text-sm">{nc.id}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${estadoColor(nc.estado)}`}>{nc.estado}</span>
+                          </div>
+                          <p className="font-black text-gray-800">{nc.clienteName} <span className="text-[10px] text-gray-400 font-bold">({nc.clienteRif})</span></p>
+                          <p className="text-[9px] text-gray-400 font-bold mt-0.5">Origen: {nc.almacenOrigen} · Fecha: {nc.fecha} · Vendedor: {nc.vendedor||'—'}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-black text-green-700 text-lg">${formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0))}</p>
+                          <p className="text-[9px] text-gray-400 font-bold">{(nc.items||[]).length} art. · {formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible),0))} uds disp.</p>
+                          {(nc.liquidaciones||[]).length>0 && <p className="text-[9px] text-blue-600 font-bold">{(nc.liquidaciones||[]).length} liquidación{(nc.liquidaciones||[]).length!==1?'es':''}</p>}
+                          {ncPendienteFactura(nc).length>0 && <p className="text-[9px] text-orange-600 font-bold">{ncPendienteFactura(nc).length} ítem{ncPendienteFactura(nc).length!==1?'s':''} pendientes</p>}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {(nc.items||[]).slice(0,5).map(it=><span key={it.cleanId} className={`px-2 py-0.5 rounded text-[9px] font-bold ${parseNum(it.cantidadDisponible)>0?'bg-orange-50 text-orange-700':'bg-gray-100 text-gray-400 line-through'}`}>{it.cleanId}: {formatNum(it.cantidadDisponible)}</span>)}
+                        {(nc.items||[]).length>5 && <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded text-[9px] font-bold">+{(nc.items||[]).length-5} más</span>}
+                      </div>
+                      {/* Acciones por NC */}
+                      <div className="flex gap-1.5 mt-3 pt-3 border-t border-gray-100 justify-end no-pdf">
+                        <button onClick={e=>{e.stopPropagation();setSelectedNC(nc);setConsignView('detalle');}} title="Ver detalle" className="w-8 h-8 flex items-center justify-center bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-xl transition-all"><Eye size={14}/></button>
+                        <button onClick={e=>{e.stopPropagation();
+                          const rows2=(nc.items||[]).map(it=>`<tr><td style="padding:4px 7px;border:1px solid #ccc;font-weight:900;color:#ea580c">${it.cleanId}</td><td style="padding:4px 7px;border:1px solid #ccc">${it.desc}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:center">${it.unit}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:right">${formatNum(it.cantidad)}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:right">${formatNum(it.cantidadDisponible)}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:right">$${formatNum(it.precioConsig||0)}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:right;color:#16a34a;font-weight:900">$${formatNum(parseNum(it.cantidadDisponible)*parseNum(it.precioConsig||0))}</td></tr>`).join('');
+                          const html=`<div style="font-family:Arial,sans-serif;font-size:11px;padding:16px;color:#000"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:12px"><div><h2 style="margin:0;font-size:15px">SERVICIOS JIRET G&B, C.A.</h2><p style="font-size:9px;color:#6b7280;margin:2px 0">RIF: J-412309374</p></div><div style="text-align:right"><p style="font-weight:900;color:#f97316;margin:0">NOTA DE CONSIGNACIÓN</p><p style="font-size:10px;font-weight:900">${nc.id}</p></div></div><p style="font-size:11px;margin:4px 0"><b>Cliente:</b> ${nc.clienteName} (${nc.clienteRif})</p><p style="font-size:11px;margin:4px 0"><b>Origen:</b> ${nc.almacenOrigen} · <b>Fecha:</b> ${nc.fecha} · <b>Estado:</b> ${nc.estado}</p><table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="background:#1f2937;color:#fff"><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Código</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Descripción</th><th style="padding:6px 8px;font-size:9px">UM</th><th style="padding:6px 8px;font-size:9px">Despachado</th><th style="padding:6px 8px;font-size:9px">Disponible</th><th style="padding:6px 8px;font-size:9px">Precio NC</th><th style="padding:6px 8px;font-size:9px">Valor</th></tr></thead><tbody>${rows2}</tbody></table></div>`;
+                          handlePDFFromHTML(html,`NC_${nc.id}`);
+                        }} title="PDF" className="w-8 h-8 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-xl transition-all"><Printer size={14}/></button>
+                        <button onClick={e=>{e.stopPropagation();
+                          const header2=['Código','Descripción','UM','Despachado','Disponible','Liquidado','Precio NC ($)','Valor ($)'];
+                          const rows3=(nc.items||[]).map(it=>{const liq=(nc.liquidaciones||[]).reduce((s,l)=>{const x=(l.items||[]).find(y=>y.cleanId===it.cleanId);return s+(x?parseNum(x.vendido||0):0);},0);return[it.cleanId,it.desc,it.unit,formatNum(it.cantidad),formatNum(it.cantidadDisponible),formatNum(liq),formatNum(it.precioConsig||0),formatNum(parseNum(it.cantidadDisponible)*parseNum(it.precioConsig||0))];});
+                          let xhtml=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>th{background:#1f2937;color:#fff;font-weight:bold;}td,th{border:1px solid #ccc;padding:5px 8px;}</style></head><body><h2>NC ${nc.id} — ${nc.clienteName}</h2><table><thead><tr>${header2.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows3.map(r=>`<tr>${r.map(v=>`<td>${v}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
+                          const b=new Blob(['\uFEFF'+xhtml],{type:'application/vnd.ms-excel;charset=utf-8'});const u=URL.createObjectURL(b);const a2=document.createElement('a');a2.href=u;a2.download=`NC_${nc.id}_${getTodayDate()}.xls`;a2.click();URL.revokeObjectURL(u);
+                        }} title="Excel" className="w-8 h-8 flex items-center justify-center bg-green-50 text-green-600 hover:bg-green-600 hover:text-white rounded-xl transition-all"><Download size={14}/></button>
+                        <button onClick={e=>{e.stopPropagation();handleDeleteNC(nc);}} title="Eliminar" className="w-8 h-8 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-xl transition-all"><Trash2 size={14}/></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+        }  // end if consignView==='detalle'
+        })()}
         {ventasView === 'clientes' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-6 border-b bg-white flex justify-between items-center">
@@ -21236,6 +21246,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                    {id:'dashboard',          icon:<BarChart3 size={16}/>, label:'Dashboard',        perm:'ventas_facturacion'},
                    {id:'facturacion',        icon:<Receipt size={16}/>,  label:'Facturación',       perm:'ventas_facturacion'}, 
                    {id:'cotizaciones',       icon:<FileText size={16}/>, label:'Cotizaciones',      perm:'ventas_facturacion'},
+                   {id:'consignacion',       icon:<ArrowRightLeft size={16}/>, label:'Consignación', perm:'ventas_facturacion'},
                    {id:'clientes',           icon:<Users size={16}/>,    label:'Directorio',        perm:'ventas_directorio'}, 
                    {id:'requisiciones',      icon:<FileText size={16}/>, label:'OPs',               perm:'ventas_ops'},
                    {id:'productos_vendidos', icon:<Package size={16}/>,  label:'Productos Vendidos',perm:'ventas_productos_vendidos'},
@@ -21271,7 +21282,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     {[
                       {id:'catalogo',       icon:<Box size={14}/>,       label:'General',      perm:'inv_almacen'},
                       {id:'finished',       icon:<Package size={14}/>,   label:'Terminados',   perm:'inv_terminados'},
-                      {id:'consignacion',   icon:<ArrowRightLeft size={14}/>, label:'Consignación', perm:'inv_almacen'},
                       {id:'alimentario',    icon:<FileText size={14}/>,  label:'Orden Salida', perm:'inv_operaciones'},
                       {id:'almacenes_mgmt', icon:<Warehouse size={14}/>, label:'Almacenes',    perm:'inv_almacen'},
                     ].filter(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master').map(t=>(
