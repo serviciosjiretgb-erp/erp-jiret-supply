@@ -2026,10 +2026,10 @@ export default function App() {
         // Col 0=Código  1=Desc  2=Categoría  3=UM  4=Costo
         // Col 5=ZI Stock  7=C2 Stock  9=MCY Stock  11=BQTO Stock
         const ALM_COLS = [
-          {col:5,  field:'ALMACEN ZI',      suffix:'ALMACEN-ZI'     },
-          {col:7,  field:'ALMACEN C2',       suffix:'ALMACEN-C2'     },
-          {col:9,  field:'ALMACEN MARACAY',  suffix:'ALMACEN-MARACAY'},
-          {col:11, field:'ALMACEN BQTO',     suffix:'ALMACEN-BQTO'  },
+          {col:5,  field:'ALMACEN ZI',   suffix:'ALMACEN-ZI'  },
+          {col:7,  field:'ALMACEN C2',   suffix:'ALMACEN-C2'  },
+          {col:9,  field:'ALMACEN MCY',  suffix:'ALMACEN-MCY' },
+          {col:11, field:'ALMACEN BQTO', suffix:'ALMACEN-BQTO'},
         ];
 
         // Mapeo categoría → nombre de categoría en el sistema
@@ -6404,49 +6404,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 
               return (
                 <>
-                  {/* ── SUBCATEGORY CARDS ── */}
-                  {(() => {
-                    const SUB_COLORS = {
-                      'Bolsas Plásticas':   {bg:'bg-blue-50',   border:'border-blue-200',   text:'text-blue-700',   icon:'📦'},
-                      'Termoencogibles':    {bg:'bg-green-50',  border:'border-green-200',  text:'text-green-700',  icon:'🟢'},
-                      'Stretch Film':       {bg:'bg-purple-50', border:'border-purple-200', text:'text-purple-700', icon:'🎞'},
-                      'Cintas':             {bg:'bg-yellow-50', border:'border-yellow-200', text:'text-yellow-700', icon:'🎀'},
-                      'Papel Kraft':        {bg:'bg-amber-50',  border:'border-amber-200',  text:'text-amber-700',  icon:'📜'},
-                      'Dispensadores':      {bg:'bg-pink-50',   border:'border-pink-200',   text:'text-pink-700',   icon:'📌'},
-                      'Empaques Flexibles': {bg:'bg-indigo-50', border:'border-indigo-200', text:'text-indigo-700', icon:'🗂'},
-                      'Otros Terminados':   {bg:'bg-gray-50',   border:'border-gray-200',   text:'text-gray-700',   icon:'📋'},
-                    };
-                    const ptItems = (inventory||[]).filter(i=>i.category==='Productos Terminados'&&parseNum(i.stock)>0);
-                    // Also count FG production items
-                    const fgBolsasCount = bolsasGrp.length;
-                    const fgTermoCount = termosGrp.length;
-                    const subcatCounts = {};
-                    ptItems.forEach(i=>{const sub=getItemSubcategory(i)||'Otros Terminados';if(!subcatCounts[sub])subcatCounts[sub]={count:0,stock:0,valor:0,unit:''};subcatCounts[sub].count++;subcatCounts[sub].stock+=parseNum(i.stock);subcatCounts[sub].valor+=parseNum(i.stock)*parseNum(i.cost||0);subcatCounts[sub].unit=i.unit||'und';});
-                    if(fgBolsasCount>0){if(!subcatCounts['Bolsas Plásticas'])subcatCounts['Bolsas Plásticas']={count:0,stock:0,valor:0,unit:'Millares'};subcatCounts['Bolsas Plásticas'].count+=fgBolsasCount;subcatCounts['Bolsas Plásticas'].stock+=bolsasGrp.reduce((s,g)=>s+g.totalStock,0);subcatCounts['Bolsas Plásticas'].valor+=bolsasGrp.reduce((s,g)=>s+g.pesoTot,0);subcatCounts['Bolsas Plásticas'].unit='Millares';}
-                    if(fgTermoCount>0){if(!subcatCounts['Termoencogibles'])subcatCounts['Termoencogibles']={count:0,stock:0,valor:0,unit:'KG'};subcatCounts['Termoencogibles'].count+=fgTermoCount;subcatCounts['Termoencogibles'].stock+=termosGrp.reduce((s,g)=>s+g.totalStock,0);subcatCounts['Termoencogibles'].valor+=termosGrp.reduce((s,g)=>s+g.pesoTot,0);subcatCounts['Termoencogibles'].unit='KG';}
-                    const totalValor = Object.values(subcatCounts).reduce((s,v)=>s+v.valor,0)+(inventory||[]).filter(i=>i.category==='Semielaborados').reduce((s,i)=>s+parseNum(i.stock)*parseNum(i.cost||0),0);
-                    const subs = Object.entries(subcatCounts);
-                    return (
-                      <>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mb-5">
-                          {subs.map(([sub,v])=>{const c=SUB_COLORS[sub]||{bg:'bg-gray-50',border:'border-gray-200',text:'text-gray-700',icon:'📋'};return(
-                            <div key={sub} className={`${c.bg} border ${c.border} rounded-2xl p-3 text-center`}>
-                              <div className={`text-[9px] font-black ${c.text} uppercase mb-1`}>{c.icon} {sub}</div>
-                              <div className={`font-black ${c.text} text-base`}>{formatNum(v.stock)} <span className="text-[9px]">{v.unit}</span></div>
-                              <div className="text-[8px] text-gray-400 mt-0.5">{v.count} artículo{v.count!==1?'s':''} · ${formatNum(v.valor)}</div>
-                            </div>
-                          );
-                          })}
-                          <div className="bg-orange-50 border border-orange-200 rounded-2xl p-3 text-center">
-                            <div className="text-[9px] font-black text-orange-700 uppercase mb-1">💰 Valor Total</div>
-                            <div className="font-black text-orange-600 text-lg">${formatNum(totalValor)}</div>
-                            <div className="text-[8px] text-gray-400 mt-0.5">{subs.length} subcategoría{subs.length!==1?'s':''}</div>
-                          </div>
-                        </div>
-                      </>
-                    );
-                  })()}
-
                   {/* ── TABLA UNIFICADA POR SUBCATEGORÍA ── */}
                   {(() => {
                     // Merge FG production + inventory PT into single table
