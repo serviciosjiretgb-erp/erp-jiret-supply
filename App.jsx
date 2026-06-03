@@ -1035,8 +1035,8 @@ export default function App() {
   //   • Como toma el saldo ACTUAL de FG Producción, nunca restaura lo ya facturado.
   useEffect(() => {
     if(!inventory || !finishedGoodsInventory || !appUser) return;
-    if(sessionStorage.getItem('auto_fg_mirror_v3')==='done') return;
-    sessionStorage.setItem('auto_fg_mirror_v3','done');
+    if(sessionStorage.getItem('auto_fg_mirror_v4')==='done') return;
+    sessionStorage.setItem('auto_fg_mirror_v4','done');
 
     const r2 = (n) => Math.round(parseNum(n)*100)/100;
     const dimsFromCode = (code) => {
@@ -1048,6 +1048,35 @@ export default function App() {
 
     const doMirror = async () => {
       try {
+        // Helper: costo unitario de un FG. Usa el costoUnitario guardado;
+        // si está en 0, lo calcula desde las requisiciones aprobadas de su OP.
+        const _normOp = (x) => String(x||'').replace(/^OP-/i,'').trim();
+        const costoUnitDeFG = (fg) => {
+          const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
+          const guardado = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+          if (guardado > 0) return guardado;
+          const qtyProd = esTermo ? parseNum(fg.kgProducidos||fg.kgProducidosOrigen||0) : parseNum(fg.millares||0);
+          if (qtyProd <= 0) return 0;
+          const reqs = (invRequisitions||[]).filter(r =>
+            _normOp(r.opId) === _normOp(fg.opId) &&
+            ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status));
+          let costo = 0;
+          reqs.forEach(r => {
+            let cReq = 0;
+            (r.items||[]).forEach(it => {
+              const inv = (inventory||[]).find(i => {
+                const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                const itcc = (it.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+                return i.id===it.id || cc===itcc;
+              });
+              cReq += parseNum(it.qty||0) * parseNum(inv?.cost||0);
+            });
+            if (cReq <= 0) cReq = parseNum(r.costoDespachado||0);
+            costo += cReq;
+          });
+          return costo > 0 ? costo / qtyProd : 0;
+        };
+
         // 1) Agrupar FG Producción por tipo + ancho + largo (saldo actual y costo)
         const groups = {}; // key -> {esTermo, qty, costTotal, sample}
         (finishedGoodsInventory||[]).forEach(fg => {
@@ -1055,7 +1084,7 @@ export default function App() {
           const entregado = fg.status === 'ENTREGADO';
           const qty = entregado ? 0 : (esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares));
           if(qty <= 0) return;
-          const cu = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+          const cu = costoUnitDeFG(fg);
           const key = `${esTermo?'T':'B'}|${r2(fg.ancho)}|${r2(fg.largo)}`;
           if(!groups[key]) groups[key] = { esTermo, qty:0, costTotal:0, sample:fg };
           groups[key].qty += qty;
@@ -1077,10 +1106,12 @@ export default function App() {
           });
 
           if(doc){
-            // Solo rellenar si está en 0 (no pisar los que ya tienen existencia correcta)
-            if(parseNum(doc.stock) > 0) continue;
+            // La producción es la fuente de verdad: fija existencia = total producido
+            // y completa el costo si el documento no lo tiene.
+            const nuevoCosto = parseNum(doc.cost)>0 ? parseNum(doc.cost) : costUnit;
+            if(r2(doc.stock)===r2(qtyTot) && parseNum(doc.cost)>0) continue; // ya está correcto
             await setDoc(getDocRef('inventory', doc.id), {
-              ...doc, stock: qtyTot, cost: parseNum(doc.cost)>0 ? parseNum(doc.cost) : costUnit,
+              ...doc, stock: qtyTot, cost: nuevoCosto,
               timestamp: Date.now(), updatedAt: getTodayDate()
             }, { merge:true });
           } else {
@@ -1106,7 +1137,7 @@ export default function App() {
       } catch(e){ console.error('Auto-mirror FG error:', e); }
     };
     doMirror();
-  }, [inventory, finishedGoodsInventory, appUser]);
+  }, [inventory, finishedGoodsInventory, invRequisitions, appUser]);
 
 
   // ── ONE-TIME cleanup: FG duplicate docs only ──
@@ -3077,16 +3108,12 @@ export default function App() {
   // ============================================================================
   const handleSendRequisitionToAlmacen = async () => {
     if (!phaseForm.insumos || phaseForm.insumos.length === 0) { return setDialog({title: 'Aviso', text: 'Agregue insumos a la lista antes de solicitar a almacén.', type: 'alert'}); }
-    // Include lote number from the current active batch if available
-    const reqLote = (() => {
-      const req = (requirements||[]).find(r=>r.id===selectedPhaseReqId);
-      const prod = req?.production || {};
-      const phaseProd = prod[activePhaseTab] || {};
-      const batches = phaseProd.batches || [];
-      // Use the last active batch number
-      return batches.length > 0 ? `LOTE-${String(batches.length).padStart(3,'0')}` : '';
-    })();
-    const newReq = { opId: selectedPhaseReqId, phase: activePhaseTab, items: phaseForm.insumos, status: 'PENDIENTE', lote: reqLote, timestamp: Date.now(), date: getTodayDate(), user: appUser?.name || 'Operador de Planta' };
+    // Lote activo de la OP (índice y etiqueta) para imputar la MP al lote correcto
+    const _reqOP = (requirements||[]).find(r=>r.id===selectedPhaseReqId);
+    const _lotesOP = _reqOP ? getLotes(_reqOP) : [];
+    const _loteLabel = _lotesOP[activeLoteIndex]?.nombre || `Lote ${activeLoteIndex+1}`;
+    const reqLote = `LOTE-${String(activeLoteIndex+1).padStart(3,'0')}`;
+    const newReq = { opId: selectedPhaseReqId, phase: activePhaseTab, items: phaseForm.insumos, status: 'PENDIENTE', lote: reqLote, loteIndex: activeLoteIndex, loteLabel: _loteLabel, timestamp: Date.now(), date: getTodayDate(), user: appUser?.name || 'Operador de Planta' };
     try {
       await addDoc(getColRef('inventoryRequisitions'), newReq);
       setPhaseForm({...phaseForm, insumos: []});
@@ -3309,9 +3336,14 @@ export default function App() {
           const descFG = finishedEntry.producto || reqDoc.desc || reqId;
 
           // Compute cost from all materials used in this OP
-          const allApprovedReqs = (invRequisitions||[]).filter(r => r.opId === reqId && (r.status==='APROBADA'||r.status==='APROBADO'));
+          const _normOp = (x) => String(x||'').replace(/^OP-/i,'').trim();
+          const allApprovedReqs = (invRequisitions||[]).filter(r =>
+            _normOp(r.opId) === _normOp(reqId) &&
+            ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status)
+          );
           let totalCostMP = 0, totalKgMP = 0;
           allApprovedReqs.forEach(r => {
+            let costoReq = 0;
             (r.items||[]).forEach(it => {
               const invItem = (inventory||[]).find(i => {
                 const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
@@ -3320,9 +3352,12 @@ export default function App() {
               });
               const qty = parseNum(it.qty||0);
               const cost = parseNum(invItem?.cost||0);
-              totalCostMP += qty * cost;
+              costoReq += qty * cost;
               totalKgMP += qty;
             });
+            // Respaldo: si no se pudo costear por inventario, usar el costo capturado al despachar
+            if (costoReq <= 0) costoReq = parseNum(r.costoDespachado||0);
+            totalCostMP += costoReq;
           });
           // costoUnitario = total MP cost / qty produced
           const costoUnitario = newQty > 0 && totalCostMP > 0 ? totalCostMP / newQty : 0;
@@ -3404,9 +3439,9 @@ export default function App() {
           const esTerKdx = finishedEntry.tipoProducto==='TERMOENCOGIBLE';
           const fgProdQty = esTerKdx ? parseNum(finishedEntry.kgProducidos||0) : parseNum(finishedEntry.millares||0);
           // Recompute cost for kardex
-          const allReqsKdx = (invRequisitions||[]).filter(r => r.opId === reqId && (r.status==='APROBADA'||r.status==='APROBADO'));
+          const allReqsKdx = (invRequisitions||[]).filter(r => String(r.opId||'').replace(/^OP-/i,'').trim() === String(reqId||'').replace(/^OP-/i,'').trim() && ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status));
           let kdxCostTotal = 0, kdxQtyTotal = 0;
-          allReqsKdx.forEach(r => { (r.items||[]).forEach(it => { const itInv=(inventory||[]).find(i=>i.id===it.id||(i.displayId||(i.id||'').split('___')[0])===((it.id||'').split('___')[0])); const q=parseNum(it.qty||0); kdxCostTotal+=q*parseNum(itInv?.cost||0); kdxQtyTotal+=q; }); });
+          allReqsKdx.forEach(r => { let cReq=0; (r.items||[]).forEach(it => { const itInv=(inventory||[]).find(i=>i.id===it.id||(i.displayId||(i.id||'').split('___')[0])===((it.id||'').split('___')[0])); const q=parseNum(it.qty||0); cReq+=q*parseNum(itInv?.cost||0); kdxQtyTotal+=q; }); if(cReq<=0) cReq=parseNum(r.costoDespachado||0); kdxCostTotal+=cReq; });
           const kdxCostUnit = fgProdQty > 0 && kdxCostTotal > 0 ? kdxCostTotal / fgProdQty : 0;
           if(fgProdQty > 0) await addDoc(getColRef('inventoryMovements'), {
             itemId: _codigoFinal,
@@ -3531,14 +3566,10 @@ export default function App() {
   const handleDeleteBatch = async (reqId, phase, batchId) => {
     setDialog({ title: `ELIMINAR LOTE`, text: `¿Seguro que desea eliminar este lote parcial?`, type: 'confirm', onConfirm: async () => {
         const req = (requirements || []).find(r => r?.id === reqId); let currentPhase = { ...(req?.production?.[phase] || {}) }; const bIdx = (currentPhase.batches || []).findIndex(b => b?.id === batchId);
-        if (bIdx >= 0) { const batch = currentPhase.batches[bIdx]; const fbBatch = writeBatch(db); for (let ing of (batch.insumos || [])) { const item = (inventory || []).find(i => i?.id === ing?.id); if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (ing?.qty || 0) }); } await fbBatch.commit(); currentPhase.batches.splice(bIdx, 1); }
-        const existingLotes2 = req?.production?.lotes;
-        if(Array.isArray(existingLotes2) && existingLotes2.length > 0) {
-          const updatedL = existingLotes2.map((l,li)=>li===activeLoteIndex?{...l,[phase]:currentPhase}:l);
-          await updateDoc(getDocRef('requirements', reqId), {'production.lotes':updatedL});
-        } else {
-          await updateDoc(getDocRef('requirements', reqId), { production: { ...(req?.production || {}), [phase]: currentPhase } });
-        }
+        if (bIdx >= 0) { const batch = currentPhase.batches[bIdx]; const fbBatch = writeBatch(db); for (let ing of (batch.insumos || [])) { const item = (inventory || []).find(i => i?.id === ing?.id); if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (ing?.qty || 0) }); } await fbBatch.commit(); currentPhase.batches = currentPhase.batches.filter((_,i)=>i!==bIdx); }
+        // Los registros viven en la estructura plana (production[phase]); escribir ahí para que la UI lo refleje
+        await updateDoc(getDocRef('requirements', reqId), { [`production.${phase}`]: currentPhase });
+        setDialog({ title:'Lote eliminado', text:'El registro se eliminó y el inventario fue devuelto.', type:'alert' });
     }});
   };
 
@@ -11768,21 +11799,66 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
   const handleCerrarLote = async (req) => {
     const lotes = getLotes(req);
-    const updated = lotes.map((l, i) => i === activeLoteIndex ? {...l, cerrado: true, fechaCierre: getTodayDate()} : l);
-    await updateDoc(getDocRef('requirements', req.id), { 'production.lotes': updated });
-    setDialog({title:'Lote Cerrado', text:`El Lote ${activeLoteIndex+1} fue cerrado. Cree un nuevo lote para continuar produciendo.`, type:'alert'});
+    // Ruta de fases según la fórmula del producto
+    const fmla = (formulas||[]).find(f => f.categoria && req.categoria && f.categoria.toUpperCase() === (req.categoria||'').toUpperCase());
+    const fases = fmla?.fases || { extrusion:true, impresion:false, sellado:false };
+    const requeridas = ['extrusion','impresion','sellado'].filter(p => fases[p]);
+    // Batches del lote activo por fase (estructura plana etiquetada)
+    const tieneProd = (p) => (req.production?.[p]?.batches||[])
+      .filter(b => (Number.isInteger(b.loteIndex)?b.loteIndex:0)===activeLoteIndex)
+      .some(b => parseNum(b.producedKg)>0);
+    const faltantes = requeridas.filter(p => !tieneProd(p));
+    const cerrar = async () => {
+      const updated = lotes.map((l, i) => i === activeLoteIndex ? {...l, cerrado: true, fechaCierre: getTodayDate()} : l);
+      await updateDoc(getDocRef('requirements', req.id), { 'production.lotes': updated });
+      setDialog({title:'Lote Cerrado', text:`El Lote ${activeLoteIndex+1} fue cerrado. Cree un nuevo lote para continuar produciendo.`, type:'alert'});
+    };
+    if (faltantes.length > 0) {
+      const nombres = faltantes.map(p=>p.toUpperCase()).join(', ');
+      return setDialog({
+        title:'Faltan fases en el lote',
+        text:`Según la fórmula, este producto requiere: ${requeridas.map(p=>p.toUpperCase()).join(' → ')}. El Lote ${activeLoteIndex+1} aún no tiene producción en: ${nombres}. ¿Cerrar de todas formas?`,
+        type:'confirm', onConfirm: cerrar
+      });
+    }
+    await cerrar();
   };
 
   const handleSavePhaseDirectly = async (req, isClose) => {
     if (!req) return;
     const prodKg = parseNum(phaseForm?.producedKg);
     const totalInsumosKg = (phaseForm?.insumos || []).reduce((s, ing) => s + parseNum(ing?.qty), 0);
-    // KG recibidos según la fase activa
-    const kgRecibidos = activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp)
-                      : activePhaseTab === 'sellado'   ? parseNum(phaseForm.kgRecibidosSel)
-                      : totalInsumosKg;
-    // Merma = KG usados - KG producidos (basada en insumos registrados)
-    const baseParaMerma = totalInsumosKg > 0 ? totalInsumosKg : kgRecibidos;
+
+    // ── Ruta de fases según la fórmula del producto ──
+    const _fmla = (formulas||[]).find(f => f.categoria && req.categoria && f.categoria.toUpperCase() === (req.categoria||'').toUpperCase());
+    const _fases = _fmla?.fases || { extrusion:true, impresion:false, sellado:false };
+    const prevPhaseOf = (ph) => ph==='impresion' ? 'extrusion' : ph==='sellado' ? (_fases.impresion?'impresion':'extrusion') : null;
+
+    // ── MP imputada al lote activo (entrada de extrusión) ──
+    const _norm = (id)=>String(id||'').replace(/^OP-/i,'').trim();
+    const _loteIdxOfReq = (r)=>{ if(Number.isInteger(r.loteIndex)) return r.loteIndex; const m=String(r.loteLabel||r.lote||'').match(/(\d+)/); return m?parseInt(m[1],10)-1:0; };
+    const approvedLote = (invRequisitions||[]).filter(r=>_norm(r.opId)===_norm(req.id) && ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status) && _loteIdxOfReq(r)===activeLoteIndex);
+    const mpLoteKg = approvedLote.reduce((s,r)=>s+(r.items||[]).reduce((ss,it)=>{ const inv=(inventory||[]).find(i=>i.id===it.id); const u=(inv?.unit||'kg').toLowerCase(); if(u.startsWith('mill')||u==='und'||u==='unidad') return ss; return ss+parseNum(it.qty||0); },0),0);
+
+    // ── KG salidos de la fase previa DEL MISMO LOTE (para encadenar) ──
+    const kgSalidosFasePrevia = (ph) => {
+      const pv = prevPhaseOf(ph);
+      if(!pv) return 0;
+      const bs = (req.production?.[pv]?.batches||[]).filter(b=>(Number.isInteger(b.loteIndex)?b.loteIndex:0)===activeLoteIndex);
+      return bs.reduce((s,b)=>s+parseNum(b.producedKg||0),0);
+    };
+
+    // KG recibidos según la fase activa (encadenado automático si no se ingresó)
+    let kgRecibidos;
+    if (activePhaseTab === 'impresion') {
+      kgRecibidos = parseNum(phaseForm.kgRecibidosImp) || kgSalidosFasePrevia('impresion');
+    } else if (activePhaseTab === 'sellado') {
+      kgRecibidos = parseNum(phaseForm.kgRecibidosSel) || kgSalidosFasePrevia('sellado');
+    } else { // extrusión: entrada = insumos del form o MP imputada al lote
+      kgRecibidos = totalInsumosKg > 0 ? totalInsumosKg : mpLoteKg;
+    }
+    // Merma = KG recibidos (entrada de la fase) − KG producidos
+    const baseParaMerma = kgRecibidos > 0 ? kgRecibidos : (totalInsumosKg > 0 ? totalInsumosKg : mpLoteKg);
     const mermaKg = baseParaMerma > 0 && prodKg >= 0 ? Math.max(0, baseParaMerma - prodKg) : parseNum(phaseForm?.mermaKg);
     const mermaPorc = baseParaMerma > 0 ? ((mermaKg / baseParaMerma) * 100).toFixed(2) : 0;
 
@@ -11820,6 +11896,8 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       const newBatch = {
         id: Date.now().toString(), timestamp: Date.now(),
         date: phaseForm.date || getTodayDate(),
+        loteIndex: activeLoteIndex,
+        loteLabel: getLotes(req)[activeLoteIndex]?.nombre || `Lote ${activeLoteIndex+1}`,
         insumos: phaseForm.insumos || [],
         producedKg: prodKg, mermaKg, mermaPorc: parseFloat(mermaPorc),
         // Desglose de merma por tipo (solo extrusión y sellado)
@@ -12104,8 +12182,61 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
     const totalMermaKg = allBatches.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
     const pctMerma = mpInyectadaKg > 0 ? (totalMermaKg / mpInyectadaKg * 100) : 0;
 
-    // Costo total = suma de insumos consumidos en TODAS las fases
-    const totalCostoMP = allBatches.reduce((s,b)=>s+parseNum(b.cost),0);
+    // ── Costo desde REQUISICIONES aprobadas (fuente autoritativa de despacho) ──
+    // Busca el costo del ítem en inventario por id directo o por código limpio (mismo criterio que la aprobación)
+    const findInvCost = (itemId) => {
+      let inv = (inventory||[]).find(i => i.id === itemId);
+      if (inv) return parseNum(inv.cost||0);
+      const cleanCode = String(itemId||'').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+      inv = (inventory||[]).find(i => {
+        const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+        return cc === cleanCode && parseNum(i.cost||0) > 0;
+      }) || (inventory||[]).find(i => {
+        const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+        return cc === cleanCode;
+      });
+      return inv ? parseNum(inv.cost||0) : 0;
+    };
+    const findInvDesc = (itemId) => {
+      let inv = (inventory||[]).find(i => i.id === itemId);
+      if (inv) return inv.desc || itemId;
+      const cleanCode = String(itemId||'').replace(/_inv$/i,'').trim();
+      inv = (inventory||[]).find(i => (i.displayId||(i.id||'').split('___')[0]).replace(/_inv$/i,'').trim() === cleanCode);
+      return inv?.desc || itemId;
+    };
+    const faseLabelFromPhase = (ph) => {
+      const p = String(ph||'').toLowerCase();
+      if (p.startsWith('impr')) return 'IMPRESIÓN';
+      if (p.startsWith('sell')) return 'SELLADO';
+      return 'EXTRUSIÓN';
+    };
+    // Insumos por lote derivados de requisiciones (ordenadas por fecha de despacho)
+    const reqsOrdenadas = [...approvedReqsForOP].sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
+    const reqInsumosPorLote = [];
+    let costoReqTotal = 0;
+    reqsOrdenadas.forEach((r, ri) => {
+      const loteNum = (() => {
+        const m = String(r.lote||'').match(/(\d+)/);
+        return m ? parseInt(m[1],10) : (ri + 1);
+      })();
+      const fase = faseLabelFromPhase(r.phase);
+      (r.items||[]).forEach(it => {
+        const unit = (it.unit||'kg').toLowerCase();
+        if (unit.startsWith('mill')||unit==='und'||unit==='unidad'||unit==='m'||unit==='mts') return;
+        const qty = parseNum(it.qty||0);
+        if (qty <= 0) return;
+        const cost = findInvCost(it.id);
+        reqInsumosPorLote.push({ lote: loteNum, fase, id: it.id, desc: findInvDesc(it.id), qty, cost });
+      });
+      // Costo de la requisición: usa el costo capturado al despachar; si no, recalcula
+      const cd = parseNum(r.costoDespachado||0);
+      if (cd > 0) costoReqTotal += cd;
+      else costoReqTotal += (r.items||[]).reduce((s,it)=>s + parseNum(it.qty||0)*findInvCost(it.id), 0);
+    });
+
+    // Costo total = preferir lotes de producción; si están en 0, usar requisiciones
+    const costoBatches = allBatches.reduce((s,b)=>s+parseNum(b.cost),0);
+    const totalCostoMP = costoBatches > 0 ? costoBatches : costoReqTotal;
 
     // Millares = ÚLTIMA fase activa (el producto terminado final)
     const totalMillares = selBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
@@ -12148,16 +12279,16 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         });
       });
     }
+    // Si los lotes de producción no tienen insumos cargados, usar los de las requisiciones
+    const insumosporLoteFinal = insumosporLote.length > 0 ? insumosporLote : reqInsumosPorLote;
     // También mantener el total acumulado para el finiquito
     const insumoMap = {};
-    allBatches.forEach(b => {
-      (b.insumos || []).forEach(ing => {
-        if (!insumoMap[ing.id]) {
-          const invItem = (inventory||[]).find(i => i.id === ing.id);
-          insumoMap[ing.id] = { id: ing.id, desc: invItem?.desc || ing.id, qty: 0, cost: invItem?.cost || 0, fase: b.fase };
-        }
-        insumoMap[ing.id].qty += parseNum(ing.qty);
-      });
+    const fuenteAcumulado = insumosporLote.length > 0 ? allBatches.flatMap(b=>(b.insumos||[]).map(ing=>({...ing, fase:b.fase}))) : reqInsumosPorLote;
+    fuenteAcumulado.forEach(ing => {
+      if (!insumoMap[ing.id]) {
+        insumoMap[ing.id] = { id: ing.id, desc: ing.desc || findInvDesc(ing.id), qty: 0, cost: (ing.cost!=null && ing.cost>0) ? ing.cost : findInvCost(ing.id), fase: ing.fase };
+      }
+      insumoMap[ing.id].qty += parseNum(ing.qty);
     });
     const insumosList = Object.values(insumoMap);
     const fechaInicio = allBatches[0]?.date || req.fecha;
@@ -12303,10 +12434,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {insumosporLote.length > 0 ? (() => {
+                  {insumosporLoteFinal.length > 0 ? (() => {
                     // Render grouped by lote with header row between lotes
                     let currentLote = null;
-                    return insumosporLote.map((ins, i) => {
+                    return insumosporLoteFinal.map((ins, i) => {
                       const showLoteHeader = ins.lote !== currentLote;
                       currentLote = ins.lote;
                       return [
@@ -13112,7 +13243,21 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status))
       .sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
 
-    // Total MP from all approved reqs
+    // Lotes
+    const lotes = getLotes(req);
+    const currentLoteObj = lotes[activeLoteIndex] || lotes[lotes.length-1] || {};
+    const currentLoteLabel = currentLoteObj?.nombre || `Lote ${activeLoteIndex+1}`;
+
+    // Resolver a qué lote (índice 0-based) pertenece cada requisición
+    const _parseLoteNum = (s) => { const m=String(s||'').match(/(\d+)/); return m?parseInt(m[1],10):null; };
+    const loteIdxOf = (r) => {
+      if(Number.isInteger(r.loteIndex)) return r.loteIndex;
+      const n = _parseLoteNum(r.loteLabel) ?? _parseLoteNum(r.lote);
+      if(n!=null && n>0) return n-1;
+      return lotes.length<=1 ? 0 : null; // sin etiqueta y varias: sin asignar
+    };
+
+    // Total MP de toda la OP (histórico completo)
     const allItems = {};
     approved.forEach(r => (r.items||[]).forEach(it => {
       if(it?.id) allItems[it.id] = (allItems[it.id]||0) + parseNum(it.qty);
@@ -13126,37 +13271,25 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
       </div>
     );
 
-    // Lotes
-    const lotes = getLotes(req);
-    const currentLoteObj = lotes[activeLoteIndex] || lotes[lotes.length-1] || {};
-    const currentLoteLabel = currentLoteObj?.nombre || `Lote ${activeLoteIndex+1}`;
-
-    // MP for current lote — if multiple lotes, assign req per lote; else all items belong to this lote
-    let loteItems = {};
-    if(lotes.length <= 1) {
-      loteItems = {...allItems};
-    } else {
-      const loteReqId = currentLoteObj?.reqId;
-      const usedByOthers = lotes.filter((_,li)=>li!==activeLoteIndex).map(l=>l.reqId).filter(Boolean);
-      const loteReq = approved.find(r=>r.id===loteReqId)
-        || approved.find(r=>r.loteIndex===activeLoteIndex)
-        || approved.find(r=>!usedByOthers.includes(r.id))
-        || approved[Math.min(activeLoteIndex, approved.length-1)];
-      (loteReq?.items||[]).forEach(it=>{
-        if(it?.id) loteItems[it.id]=(loteItems[it.id]||0)+parseNum(it.qty);
-      });
-      if(Object.keys(loteItems).length===0) loteItems = {...allItems};
-    }
+    // MP del lote ACTIVO = suma de requisiciones asignadas a este lote.
+    // Arranca en 0 al abrir un lote nuevo y sube solo al aprobar requisiciones de ese lote.
+    const reqsLoteActivo = approved.filter(r => loteIdxOf(r) === activeLoteIndex);
+    const loteItems = {};
+    reqsLoteActivo.forEach(r => (r.items||[]).forEach(it => {
+      if(it?.id) loteItems[it.id] = (loteItems[it.id]||0) + parseNum(it.qty);
+    }));
     const kgLote = Object.values(loteItems).reduce((s,v)=>s+v,0);
 
-    // Check if the current lote's phase is already closed or has batches saved
-    const phaseIsClosed = currentLoteObj?.[phase]?.isClosed === true;
-    const phaseHasBatches = (currentLoteObj?.[phase]?.batches||[]).length > 0;
-    const phaseAlreadyDone = phaseIsClosed || phaseHasBatches;
+    // Batches de la fase pertenecientes al lote activo (estructura plana etiquetada por loteIndex)
+    const _batchesFaseLote = (p) => (req.production?.[p]?.batches||[])
+      .filter(b => (Number.isInteger(b.loteIndex)?b.loteIndex:0)===activeLoteIndex)
+      .filter(b => b.operator!=='ALMACÉN (DESPACHO)' && (parseNum(b.producedKg)>0||(b.insumos||[]).length>0));
+    const phaseBatchesLote = _batchesFaseLote(phase);
+    const phaseAlreadyDone = phaseBatchesLote.length > 0; // este lote ya produjo esta fase
 
-    // Previously produced across all lotes
-    const kgProducidosAnt = lotes.flatMap(l=>(l?.[phase]?.batches||[])).reduce((s,b)=>s+parseNum(b?.producedKg||0),0);
-    const mermaAnt = lotes.flatMap(l=>(l?.[phase]?.batches||[])).reduce((s,b)=>s+parseNum(b?.mermaKg||0),0);
+    // Producido/merma de ESTE lote en esta fase
+    const kgProducidosAnt = phaseBatchesLote.reduce((s,b)=>s+parseNum(b?.producedKg||0),0);
+    const mermaAnt = phaseBatchesLote.reduce((s,b)=>s+parseNum(b?.mermaKg||0),0);
 
     // Merma for current lote
     const prodKg = parseNum(phaseForm.producedKg);
@@ -13183,7 +13316,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 return (
                   <div key={r.id} className="bg-gray-800 rounded-lg px-3 py-2">
                     <div className="flex justify-between mb-1">
-                      <span className="text-[9px] font-black text-orange-300">Solicitud #{ri+1} · {r.date||''}</span>
+                      <span className="text-[9px] font-black text-orange-300">Solicitud #{ri+1} · {r.loteLabel || (loteIdxOf(r)!=null?`Lote ${loteIdxOf(r)+1}`:'Lote —')} · {r.date||''}</span>
                       <span className="text-[8px] text-gray-300 font-bold">{formatNum(rTotal)} KG</span>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -13406,9 +13539,21 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     <select value={formulaIngId} onChange={e=>setFormulaIngId(e.target.value)}
                       className="flex-1 border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-purple-500 bg-white">
                       <option value="">Seleccione materia prima...</option>
-                      {(inventory||[]).filter(i=>!formulaForm.ingredientes.find(fi=>fi.id===i.id)).map(i=>(
-                        <option key={i.id} value={i.id}>{i.id} — {i.desc} ({i.category})</option>
-                      ))}
+                      {(() => {
+                        const cleanOf = (i) => (i.displayId||(i.id||'').split('___')[0]||'').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                        const esMP = (i) => {
+                          const cat = String(i.category||'').toLowerCase().replace(/[_\s]+/g,' ').trim();
+                          return cat === 'materia prima' || cat === 'materias primas' || String(cleanOf(i)).toUpperCase().startsWith('MP-');
+                        };
+                        const yaAgregadas = new Set((formulaForm.ingredientes||[]).map(fi=>String(fi.id||'').toUpperCase()));
+                        const vistos = new Set();
+                        return (inventory||[])
+                          .filter(esMP)
+                          .filter(i => { const cc = cleanOf(i).toUpperCase(); if(vistos.has(cc)) return false; vistos.add(cc); return true; })
+                          .filter(i => !yaAgregadas.has(cleanOf(i).toUpperCase()) && !yaAgregadas.has(String(i.id||'').toUpperCase()))
+                          .sort((a,b)=>cleanOf(a).localeCompare(cleanOf(b), undefined, {numeric:true}))
+                          .map(i => (<option key={i.id} value={cleanOf(i)}>{cleanOf(i)} — {i.desc}</option>));
+                      })()}
                     </select>
                     <input type="number" step="0.1" min="0.1" max="100" value={formulaIngPct}
                       onChange={e=>setFormulaIngPct(e.target.value)}
@@ -13416,10 +13561,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       placeholder="%" />
                     <button type="button" onClick={()=>{
                       if(!formulaIngId||!formulaIngPct) return;
-                      const invItem=(inventory||[]).find(i=>i.id===formulaIngId);
+                      const cleanOf=(i)=>(i.displayId||(i.id||'').split('___')[0]||'').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                      const invItem=(inventory||[]).find(i=>i.id===formulaIngId) || (inventory||[]).find(i=>cleanOf(i).toUpperCase()===String(formulaIngId).toUpperCase());
                       const nuevoTotal=totalPctActual+parseNum(formulaIngPct);
                       if(nuevoTotal>100.1) return setDialog({title:'Aviso',text:`Supera 100%. Máximo disponible: ${pctRestante.toFixed(1)}%`,type:'alert'});
-                      setFormulaForm({...formulaForm, ingredientes:[...(formulaForm.ingredientes||[]),{id:formulaIngId,pct:parseNum(formulaIngPct),desc:invItem?.desc||formulaIngId,category:invItem?.category||''}]});
+                      setFormulaForm({...formulaForm, ingredientes:[...(formulaForm.ingredientes||[]),{id:formulaIngId,pct:parseNum(formulaIngPct),desc:invItem?.desc||formulaIngId,category:invItem?.category||'Materia Prima'}]});
                       setFormulaIngId('');setFormulaIngPct('');
                     }} className="bg-purple-600 text-white px-4 py-3 rounded-xl font-black hover:bg-purple-700 flex items-center"><Plus size={16}/></button>
                   </div>
@@ -14670,7 +14816,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                   <p className="text-xs mt-2">Las OPs se crean desde Ventas → Requisiciones</p>
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-8">
                   {activoFiltered.map(req => {
                     const prod = req.production || {};
                     const lotes = getLotes(req);
@@ -14684,8 +14830,11 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     const isOpen = selectedPhaseReqId === req.id;
                     const totalInsumosActual = (phaseForm?.insumos || []).reduce((s, ing) => s + parseNum(ing?.qty||0), 0);
 
-                    // Phase config — only show phases from formula
-                    const matchFormula = (formulas||[]).find(f=>f.categoria?.toUpperCase()===(req.categoria||'').toUpperCase());
+                    // Phase config — only show phases from formula (match por palabras, ignora orden/signos)
+                    const _tk = (s)=>String(s||'').toUpperCase().replace(/[^A-Z0-9ÑÁÉÍÓÚ]+/g,' ').trim().split(/\s+/).filter(Boolean);
+                    const _ky = (s)=>_tk(s).slice().sort().join(' ');
+                    const _cand = [req.categoria, req.subcategoria, req.subCategoria, req.producto, req.product, req.nombreProducto].filter(Boolean).map(_ky);
+                    const matchFormula = (formulas||[]).find(f=>f.categoria && _cand.includes(_ky(f.categoria)));
                     const fasesActivas = matchFormula?.fases || {extrusion:true, impresion:true, sellado:true};
                     const phases = [
                       {key:'extrusion', label:'Extrusión', n:1},
@@ -14710,13 +14859,14 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     const specs = [req.tipoProducto, req.desc, req.color||'NATURAL', `${req.ancho}cm×${req.largo}cm`, req.micras?`${req.micras}mic`:null, req.requestedKg?`${formatNum(req.requestedKg)} KG`:null].filter(Boolean);
 
                     return (
-                      <div key={req.id} className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+                      <div key={req.id} className="bg-white border-2 border-gray-300 rounded-2xl overflow-hidden shadow-lg border-l-[6px] border-l-orange-500">
                         {/* ── CARD HEADER ── */}
-                        <div className="p-5 flex gap-4 items-start">
+                        <div className="p-5 flex gap-4 items-start bg-gradient-to-b from-orange-50/40 to-white">
                           {/* Left: OP info */}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap mb-1">
-                              <span className="font-black text-gray-900 text-base">OP #{String(req.id).replace('OP-','').padStart(5,'0')} —</span>
+                              <span className="font-black text-orange-600 text-base">OP #{String(req.id).replace('OP-','').padStart(5,'0')}</span>
+                              <span className="text-gray-400 font-black">—</span>
                               <span className="font-black text-gray-900 text-base">{req.client}</span>
                               <span className="bg-green-100 text-green-700 text-[8px] font-black px-2 py-0.5 rounded-full uppercase">EN PROCESO</span>
                             </div>
@@ -14848,18 +14998,25 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
 
                                   {/* Banner: Fórmula disponible para esta OP */}
                                   {(() => {
-                                    const matchFormula = (formulas||[]).find(f=>
-                                      f.categoria && req.categoria &&
-                                      f.categoria.toUpperCase() === (req.categoria||'').toUpperCase() &&
-                                      (f.tipoProducto === req.tipoProducto || !f.tipoProducto)
-                                    );
+                                    // Coincidencia por palabras (ignora orden y signos): "KIRI - CHUPETA" == "CHUPETA - KIRI"
+                                    const _toks = (s)=>String(s||'').toUpperCase().replace(/[^A-Z0-9ÑÁÉÍÓÚ]+/g,' ').trim().split(/\s+/).filter(Boolean);
+                                    const _key = (s)=>_toks(s).slice().sort().join(' ');
+                                    const candFields = [req.categoria, req.subcategoria, req.subCategoria, req.producto, req.product, req.nombreProducto].filter(Boolean);
+                                    const candKeys = candFields.map(_key);
+                                    const matchFormula = (formulas||[]).find(f=> f.categoria && candKeys.includes(_key(f.categoria)));
                                     if (!matchFormula) {
-                                      // Mostrar fórmulas disponibles para seleccionar
-                                      return (formulas||[]).length > 0 ? (
+                                      // Sin match exacto: mostrar SOLO las fórmulas relacionadas al producto (comparten alguna palabra)
+                                      const candTokens = candFields.flatMap(_toks).filter(t=>t.length>2);
+                                      let relacionadas = (formulas||[]).filter(f=>{
+                                        const ft=_toks(f.categoria);
+                                        return candTokens.some(t=>ft.includes(t));
+                                      });
+                                      if(relacionadas.length===0) relacionadas = (formulas||[]); // último recurso
+                                      return relacionadas.length > 0 ? (
                                         <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 mb-4">
                                           <p className="text-[9px] font-black text-purple-700 uppercase mb-2">📋 Aplicar Fórmula / Receta:</p>
                                           <div className="flex flex-wrap gap-2">
-                                            {(formulas||[]).map(f=>(
+                                            {relacionadas.map(f=>(
                                               <button key={f.id} type="button"
                                                 onClick={()=>{
                                                   const kgBase = parseNum(req.requestedKg)||1;
@@ -15573,10 +15730,32 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 const mermaTotal=allBatches.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
                 const pctMerma=mpInjectada>0?((mermaTotal/mpInjectada)*100).toFixed(1):'0.0';
                 const esTermo=req.tipoProducto==='TERMOENCOGIBLE';
-                const solicitado=esTermo?parseNum(req.requestedKg):parseNum(req.cantidad);
+                const solicitado=esTermo
+                  ? (parseNum(req.requestedKg)||parseNum(req.cantidadKg)||parseNum(req.cantidad)||parseNum(req.kgSolicitados))
+                  : (parseNum(req.cantidad)||parseNum(req.millares)||parseNum(req.millaresSolicitados)||parseNum(req.requestedMillares));
                 const producido=esTermo?kgProd:millProd;
                 const pctAvance=solicitado>0?Math.min(100,(producido/solicitado)*100):0;
-                const costoMP=allBatches.reduce((s,b)=>s+parseNum(b.cost||0),0);
+                // Buscador robusto de ítem de inventario por id o código limpio
+                const findInvItem=(itemId)=>{
+                  let inv=(inventory||[]).find(i=>i.id===itemId);
+                  if(inv) return inv;
+                  const cc=String(itemId||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                  return (inventory||[]).find(i=>{
+                    const c=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                    return c===cc && parseNum(i.cost||0)>0;
+                  }) || (inventory||[]).find(i=>{
+                    const c=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                    return c===cc;
+                  });
+                };
+                // Costo MP: preferir lotes; si están en 0, calcular desde requisiciones (+ respaldo costoDespachado)
+                const costoBatchesRep=allBatches.reduce((s,b)=>s+parseNum(b.cost||0),0);
+                const costoReqsRep=approvedReqsOP.reduce((s,r)=>{
+                  let cReq=(r.items||[]).reduce((ss,it)=>ss+parseNum(it.qty||0)*parseNum(findInvItem(it.id)?.cost||0),0);
+                  if(cReq<=0) cReq=parseNum(r.costoDespachado||0);
+                  return s+cReq;
+                },0);
+                const costoMP=costoBatchesRep>0?costoBatchesRep:costoReqsRep;
                 const costoXkg=kgProd>0?costoMP/kgProd:0;
                 const costoXmill=millProd>0?costoMP/millProd:0;
                 // Insumos: primary = approved reqs, fallback = batch insumos
@@ -15632,7 +15811,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       {/* Detail sections — visible only when expanded */}
                       {expandedOPs[req.id] && (<>
                       {/* 1. Desglose de MP consumida */}
-                      {allBatches.some(b=>(b.insumos||[]).length>0) && (
+                      {Object.keys(matsConsumidos).length>0 && (
                         <div>
                           <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">1. Insumos Consumidos (MP)</h4>
                           <table className="w-full text-xs border-collapse">
@@ -15645,12 +15824,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             </tr></thead>
                             <tbody>
                               {Object.entries(matsConsumidos).map(([id,qty])=>{
-                                const inv=(inventory||[]).find(i=>i.id===id);
-                                const fases=allBatches.filter(b=>(b.insumos||[]).some(i=>i.id===id)).map(b=>b.fase);
-                                const fasesUnicas=[...new Set(fases)].join(', ');
-                                const cu=inv?.cost||0;
+                                const inv=findInvItem(id);
+                                const faseBatches=allBatches.filter(b=>(b.insumos||[]).some(i=>i.id===id)).map(b=>b.fase);
+                                const faseReqs=approvedReqsOP.filter(r=>(r.items||[]).some(i=>i.id===id)).map(r=>String(r.phase||'').toUpperCase());
+                                const fasesUnicas=[...new Set([...faseBatches,...faseReqs].filter(Boolean))].join(', ');
+                                const cu=parseNum(inv?.cost||0);
                                 return (<tr key={id} className="hover:bg-gray-50">
-                                  <td className="p-2 border font-black text-purple-700">{id}<span className="text-[9px] text-gray-400 font-normal ml-1">{inv?.desc||''}</span></td>
+                                  <td className="p-2 border font-black text-purple-700">{(inv?.displayId||(id||'').split('___')[0])}<span className="text-[9px] text-gray-400 font-normal ml-1">{inv?.desc||''}</span></td>
                                   <td className="p-2 border text-gray-600 text-[9px]">{fasesUnicas}</td>
                                   <td className="p-2 border text-center font-black text-blue-700">{formatNum(qty)} kg</td>
                                   <td className="p-2 border text-center font-bold">${formatNum(cu)}</td>
@@ -15688,70 +15868,58 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         </div>
                       )}
 
-                      {/* 3. Detalle de fases */}
+                      {/* 3. Detalle por lote (una fila por lote) */}
                       {(extB.length > 0 || impB.length > 0 || selB.length > 0 || approvedReqsOP.length > 0) && (
                         <div>
-                          <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">3. Detalle por Fase / Lote</h4>
+                          <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">3. Detalle por Lote</h4>
                           <table className="w-full text-xs border-collapse">
                             <thead><tr className="bg-gray-800 text-white text-[9px] font-black uppercase">
                               <th className="p-2 border border-gray-700 text-center">Lote</th>
-                              <th className="p-2 border border-gray-700 text-left">Fase</th>
                               <th className="p-2 border border-gray-700 text-center">Fecha</th>
-                              <th className="p-2 border border-gray-700 text-center">KG Recibidos</th>
-                              <th className="p-2 border border-gray-700 text-center">KG Producidos</th>
+                              <th className="p-2 border border-gray-700 text-center">MP Recibidos</th>
+                              <th className="p-2 border border-gray-700 text-center">KG Extruidos</th>
+                              {!esTermo && <th className="p-2 border border-gray-700 text-center">KG Sellados</th>}
                               <th className="p-2 border border-gray-700 text-center">Merma KG (%)</th>
-                              {/* Millares: solo para impresion/sellado en bolsas, o para extrusión en termo */}
-                              {(esTermo || impB.length > 0 || selB.length > 0) && <th className="p-2 border border-gray-700 text-center">{esTermo ? 'KG Prod.' : 'Millares'}</th>}
+                              <th className="p-2 border border-gray-700 text-center">{esTermo ? 'KG Prod.' : 'Millares'}</th>
                             </tr></thead>
                             <tbody>
                               {(() => {
                                 const maxLotes = Math.max(extB.length, impB.length, selB.length, 1);
                                 const rows = [];
                                 for (let li = 0; li < maxLotes; li++) {
-                                  const fasesLote = [
-                                    { label: 'EXTRUSIÓN', b: extB[li], colorCls: 'bg-blue-100 text-blue-700' },
-                                    { label: 'IMPRESIÓN', b: impB[li], colorCls: 'bg-purple-100 text-purple-700' },
-                                    { label: 'SELLADO',   b: selB[li], colorCls: 'bg-green-100 text-green-700' },
-                                  ].filter(f => f.b);
-                                  if (!fasesLote.length) continue;
-                                  fasesLote.forEach((f, fi) => {
-                                    const { label, b, colorCls } = f;
-                                    // entKg = KG from requisition for this lote, not from batch
-                                    const entKg = getEntKgForBatch(b, li);
-                                    const pctM = entKg>0 ? ((parseNum(b.mermaKg)/entKg)*100).toFixed(1) : '0.0';
-                                    const millBatch = parseNum(b.techParams?.millares||0);
-                                    const showMillCol = esTermo || impB.length > 0 || selB.length > 0;
-                                    const millVal = esTermo
-                                      ? (label==='EXTRUSIÓN' ? formatNum(parseNum(b.producedKg))+' KG' : '—')
-                                      : (label==='EXTRUSIÓN' ? '—' : (millBatch>0 ? formatNum(millBatch)+' Mill.' : '—'));
-                                    rows.push(
-                                      <tr key={`${li}-${fi}`} className={`${fi===0?'border-t-2 border-orange-100':''} ${li%2===0?'bg-white':'bg-gray-50'}`}>
-                                        {fi===0 && (
-                                          <td className="p-2 border text-center font-black text-orange-600 align-middle" rowSpan={fasesLote.length}>{li+1}</td>
-                                        )}
-                                        <td className="p-2 border font-black">
-                                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${colorCls}`}>{label}</span>
-                                          {b.observaciones && <div className="text-[8px] text-indigo-600 mt-0.5">📝 {b.observaciones}</div>}
-                                        </td>
-                                        <td className="p-2 border text-center text-gray-600 font-bold">{b.date}</td>
-                                        <td className="p-2 border text-center text-blue-700 font-bold">{formatNum(entKg)} kg</td>
-                                        <td className="p-2 border text-center text-green-700 font-bold">{formatNum(b.producedKg)} kg</td>
-                                        <td className="p-2 border text-center text-red-600 font-bold">{formatNum(b.mermaKg)} kg <span className="text-[9px]">({pctM}%)</span></td>
-                                        {showMillCol && <td className="p-2 border text-center font-bold text-blue-600">{millVal}</td>}
-                                      </tr>
-                                    );
-                                  });
+                                  const ext = extB[li], imp = impB[li], sel = selB[li];
+                                  if (!ext && !imp && !sel) continue;
+                                  const fecha = (sel||imp||ext)?.date || '';
+                                  const mpRecibidos = getEntKgForBatch(ext||imp||sel, li);
+                                  const kgExtr = parseNum(ext?.producedKg||0);
+                                  const kgSell = sel ? parseNum(sel.producedKg||0) : 0;
+                                  const kgFinal = esTermo ? kgExtr : (sel ? kgSell : (imp ? parseNum(imp.producedKg||0) : kgExtr));
+                                  const mermaLote = mpRecibidos>0 ? Math.max(0, mpRecibidos - kgFinal) : 0;
+                                  const pctM = mpRecibidos>0 ? ((mermaLote/mpRecibidos)*100).toFixed(1) : '0.0';
+                                  const millares = parseNum(sel?.techParams?.millares || imp?.techParams?.millares || 0);
+                                  rows.push(
+                                    <tr key={li} className={li%2===0?'bg-white':'bg-gray-50'}>
+                                      <td className="p-2 border text-center font-black text-orange-600">{li+1}</td>
+                                      <td className="p-2 border text-center text-gray-600 font-bold">{fecha}</td>
+                                      <td className="p-2 border text-center text-blue-700 font-bold">{formatNum(mpRecibidos)} kg</td>
+                                      <td className="p-2 border text-center text-green-700 font-bold">{kgExtr>0?formatNum(kgExtr)+' kg':'—'}</td>
+                                      {!esTermo && <td className="p-2 border text-center text-green-800 font-bold">{kgSell>0?formatNum(kgSell)+' kg':'—'}</td>}
+                                      <td className="p-2 border text-center text-red-600 font-bold">{formatNum(mermaLote)} kg <span className="text-[9px]">({pctM}%)</span></td>
+                                      <td className="p-2 border text-center font-bold text-blue-600">{esTermo ? (kgExtr>0?formatNum(kgExtr)+' KG':'—') : (millares>0?formatNum(millares)+' Mill.':'—')}</td>
+                                    </tr>
+                                  );
                                 }
                                 return rows;
                               })()}
                             </tbody>
                             <tfoot>
                               <tr className="bg-orange-500 text-white font-black text-[10px] uppercase">
-                                <td colSpan="3" className="p-2 text-right">TOTAL:</td>
+                                <td colSpan="2" className="p-2 text-right">TOTAL:</td>
                                 <td className="p-2 text-center">{formatNum(mpInjectada)} kg</td>
-                                <td className="p-2 text-center">{formatNum(kgProd)} kg</td>
+                                <td className="p-2 text-center">{formatNum(extB.reduce((s,b)=>s+parseNum(b.producedKg||0),0))} kg</td>
+                                {!esTermo && <td className="p-2 text-center">{formatNum(selB.reduce((s,b)=>s+parseNum(b.producedKg||0),0))} kg</td>}
                                 <td className="p-2 text-center">{formatNum(mermaTotal)} kg ({pctMerma}%)</td>
-                                {(esTermo || impB.length > 0 || selB.length > 0) && <td className="p-2 text-center">{esTermo ? formatNum(kgProd)+' KG' : (millProd>0?formatNum(millProd)+' Mill.':'—')}</td>}
+                                <td className="p-2 text-center">{esTermo ? formatNum(kgProd)+' KG' : (millProd>0?formatNum(millProd)+' Mill.':'—')}</td>
                               </tr>
                             </tfoot>
                           </table>
