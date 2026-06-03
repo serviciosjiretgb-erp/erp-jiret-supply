@@ -11185,6 +11185,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             )}
           </div>
         );
+        }  // end if consignView==='detalle'
   
         // ── NUEVA NC ───────────────────────────────────────────────────────────
         if(consignView==='nueva') return (
@@ -11390,7 +11391,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             </div>
           </div>
         );
-        }  // end if consignView==='detalle'
         })()}
         {ventasView === 'clientes' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
