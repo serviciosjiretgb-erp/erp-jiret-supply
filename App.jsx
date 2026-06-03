@@ -2009,81 +2009,105 @@ export default function App() {
       const file = e.target.files?.[0];
       if (!file) return;
       try {
-        const arrayBuffer = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = ev => resolve(ev.target.result);
-          reader.onerror = reject;
-          reader.readAsArrayBuffer(file);
-        });
-        let XLSX;
-        try { XLSX = window.XLSX; } catch(_){}
+        const arrayBuffer = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=ev=>res(ev.target.result); r.onerror=rej; r.readAsArrayBuffer(file); });
+        let XLSX; try{XLSX=window.XLSX;}catch(_){}
         if (!XLSX) {
-          await new Promise((res,rej)=>{
-            const s=document.createElement('script');
-            s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-            s.onload=res; s.onerror=rej; document.head.appendChild(s);
-          });
-          XLSX = window.XLSX;
+          await new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload=res; s.onerror=rej; document.head.appendChild(s); });
+          XLSX=window.XLSX;
         }
-        const wb = XLSX.read(arrayBuffer, { type: 'array' });
+        const wb = XLSX.read(arrayBuffer,{type:'array'});
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+        const rows = XLSX.utils.sheet_to_json(ws,{header:1,defval:null});
 
-        // Col 0=Código  1=Desc  2=Subcategoría  3=UM  4=Costo
+        // ── Estructura del Excel consolidado ────────────────────────────────
+        // Fila 1: encabezados (CODIGOS, PRODUCTOS, CATEGORIA, U.M, COSTO UND, ALM.ZI, [val], ALM.C2, [val], ALM.MCY, [val], ALM.BQTO, [val], TOTAL, ...)
+        // Fila 2: sub-encabezados (Stock, Valor, Stock, Valor ...)
+        // Fila 3+: datos
+        // Col 0=Código  1=Desc  2=Categoría  3=UM  4=Costo
         // Col 5=ZI Stock  7=C2 Stock  9=MCY Stock  11=BQTO Stock
         const ALM_COLS = [
-          { col:5,  field:'ALMACEN ZI',      suffix:'ALMACEN-ZI'      },
-          { col:7,  field:'ALMACEN C2',       suffix:'ALMACEN-C2'      },
-          { col:9,  field:'ALMACEN MARACAY',  suffix:'ALMACEN-MARACAY' },
-          { col:11, field:'ALMACEN BQTO',     suffix:'ALMACEN-BQTO'    },
+          {col:5,  field:'ALMACEN ZI',      suffix:'ALMACEN-ZI'     },
+          {col:7,  field:'ALMACEN C2',       suffix:'ALMACEN-C2'     },
+          {col:9,  field:'ALMACEN MARACAY',  suffix:'ALMACEN-MARACAY'},
+          {col:11, field:'ALMACEN BQTO',     suffix:'ALMACEN-BQTO'  },
         ];
-        const PT_SUBCATS  = new Set(['Bolsas Plásticas','Cintas','Dispensadores','Papel Kraft','Stretch Film','Termoencogibles']);
-        const getCategory = s => {
-          if (PT_SUBCATS.has(s))       return 'Productos Terminados';
-          if (s === 'Materia Prima')   return 'Materia Prima';
-          if (s === 'Quimicos')        return 'Quimicos';
-          if (s === 'Pigmento')        return 'Pigmento';
-          if (s === 'Semielaborados' || s === 'Semielaborado') return 'Semielaborado';
-          return s || 'Productos Terminados';
-        };
-        const SKIP_PRE    = ['  ▸','TOTAL','SERVICIOS JIRET','RIF:','CODIGOS','PRODUCTOS'];
-        const parseN      = v => { if(!v||v==='—') return 0; if(typeof v==='number') return v; return parseFloat(String(v).replace(/[$,\s]/g,''))||0; };
 
-        const items = []; const seenIds = new Set();
+        // Mapeo categoría → nombre de categoría en el sistema
+        const CAT_MAP = {
+          'Bolsas Plásticas' : 'Productos Terminados',
+          'Cintas'           : 'Productos Terminados',
+          'Dispensadores'    : 'Productos Terminados',
+          'Papel Kraft'      : 'Productos Terminados',
+          'Stretch Film'     : 'Productos Terminados',
+          'Termoencogibles'  : 'Productos Terminados',
+          'Materia Prima'    : 'Materia Prima',
+          'Quimicos'         : 'Quimicos',
+          'Pigmento'         : 'Pigmento',
+          'Semielaborados'   : 'Semielaborado',
+          'Semielaborado'    : 'Semielaborado',
+        };
+
+        const SKIP_STARTS = ['CODIGOS','TOTAL','SERVICIOS JIRET','RIF:','  ▸'];
+        const parseN = v => { if(!v||v==='—') return 0; if(typeof v==='number') return v; return parseFloat(String(v).replace(/[$,\s]/g,''))||0; };
+
+        const items = [];
+        const usedIds = new Set(); // detectar duplicados
+
         for (const row of rows) {
           const code = row[0];
           if (!code) continue;
           const codeStr = String(code).trim();
-          if (codeStr.length < 2 || SKIP_PRE.some(p => codeStr.startsWith(p))) continue;
+          if (codeStr.length < 2) continue;
+          if (SKIP_STARTS.some(p => codeStr.startsWith(p))) continue;
+
           const desc   = String(row[1]||'').trim().toUpperCase();
           const subcat = String(row[2]||'').trim();
           const um     = String(row[3]||'UND').trim().toUpperCase();
           const cost   = parseN(row[4]);
-          const cat    = getCategory(subcat);
+          const cat    = CAT_MAP[subcat] || subcat || 'Productos Terminados';
+
+          // Firestore no permite / en IDs
           const cleanCode = codeStr.replace(/\//g,'-');
+
           const stocks = ALM_COLS.map(a=>({...a, stock:parseN(row[a.col])}));
           const totalSt = stocks.reduce((s,a)=>s+a.stock,0);
+
           if (totalSt > 0) {
             for (const {suffix, field, stock} of stocks) {
               if (stock <= 0) continue;
-              items.push({id:`${cleanCode}___${suffix}`, displayId:cleanCode, desc, category:cat, subcategory:subcat, unit:um, cost, stock, almacen:field, activo:true});
+              let docId = `${cleanCode}___${suffix}`;
+              // Si el docId ya existe (código duplicado en el Excel para distinta categoría)
+              // añadir sufijo de categoría para evitar sobreescritura
+              if (usedIds.has(docId)) {
+                const catSuffix = subcat.substring(0,3).toUpperCase();
+                docId = `${cleanCode}-${catSuffix}___${suffix}`;
+              }
+              usedIds.add(docId);
+              items.push({id:docId, displayId:cleanCode, desc, category:cat, subcategory:subcat, unit:um, cost, stock, almacen:field, activo:true});
             }
           } else {
-            // Sin stock (MP con existencia 0): guardar en ZI para mantener catálogo
-            const docId = `${cleanCode}___ALMACEN-ZI`;
-            if (!seenIds.has(docId)) {
-              items.push({id:docId, displayId:cleanCode, desc, category:cat, subcategory:subcat, unit:um, cost, stock:0, almacen:'ALMACEN ZI', activo:true});
-              seenIds.add(docId);
+            // Sin stock en ningún almacén → registrar en ZI con stock 0 (mantiene catálogo)
+            let docId = `${cleanCode}___ALMACEN-ZI`;
+            if (usedIds.has(docId)) {
+              const catSuffix = subcat.substring(0,3).toUpperCase();
+              docId = `${cleanCode}-${catSuffix}___ALMACEN-ZI`;
             }
+            usedIds.add(docId);
+            items.push({id:docId, displayId:cleanCode, desc, category:cat, subcategory:subcat, unit:um, cost, stock:0, almacen:'ALMACEN ZI', activo:true});
           }
         }
 
-        if (!items.length) { setDialog({title:'Aviso',text:'No se encontraron artículos. Verifica el formato del archivo.',type:'alert'}); return; }
+        if (!items.length) {
+          setDialog({title:'Aviso',text:'No se encontraron artículos. Verifica el formato del archivo.',type:'alert'});
+          return;
+        }
 
-        const byCat = items.reduce((a,i)=>{a[i.category]=(a[i.category]||0)+1;return a;},{});
-        const byAlm = items.reduce((a,i)=>{a[i.almacen]=(a[i.almacen]||0)+1;return a;},{});
+        // Resumen por categoría y almacén
+        const byCat = {}; const byAlm = {};
+        items.forEach(i=>{ byCat[i.category]=(byCat[i.category]||0)+1; byAlm[i.almacen]=(byAlm[i.almacen]||0)+1; });
         const resCat = Object.entries(byCat).map(([k,v])=>`• ${k}: ${v}`).join('\n');
         const resAlm = Object.entries(byAlm).map(([k,v])=>`• ${k}: ${v}`).join('\n');
+
         setDialog({
           title:`📦 Importar ${items.length} artículos`,
           text:`Archivo: ${file.name}\n\nPOR CATEGORÍA:\n${resCat}\n\nPOR ALMACÉN:\n${resAlm}\n\nNuevos artículos se CREAN · Existentes se ACTUALIZAN. ¿Continuar?`,
@@ -2092,11 +2116,11 @@ export default function App() {
             try {
               let created=0, updated=0;
               for (let i=0; i<items.length; i+=400) {
-                const chunk = items.slice(i,i+400);
-                const batch = writeBatch(db);
+                const chunk=items.slice(i,i+400);
+                const batch=writeBatch(db);
                 for (const item of chunk) {
-                  const ref = getDocRef('inventory', item.id);
-                  const existing = (inventory||[]).find(x=>x.id===item.id);
+                  const ref=getDocRef('inventory',item.id);
+                  const existing=(inventory||[]).find(x=>x.id===item.id);
                   if (existing) {
                     batch.update(ref,{stock:item.stock,cost:item.cost,desc:item.desc,category:item.category,subcategory:item.subcategory,displayId:item.displayId,unit:item.unit,almacen:item.almacen,activo:true,_importSource:'CONSOLIDADO_INV',updatedAt:Date.now()});
                     updated++;
@@ -12834,28 +12858,36 @@ tr:nth-child(even) td{background:#f9fafb;}
       // ── MERMA → INVENTARIO RECICLADO ─────────────────────────────────────
       if (activePhaseTab === 'extrusion' || activePhaseTab === 'sellado') {
         const faseLabel = activePhaseTab === 'extrusion' ? 'EXTRUSIÓN' : 'SELLADO';
+        // Códigos nuevos del inventario consolidado (ALMACEN ZI = almacén de planta)
         const mermaTypes = [
-          { key: 'troquelTransp', kg: parseNum(phaseForm.mermaTroquelTransp), desc: 'RECICLADO TRANSPARENTE', invId: 'MP-000' },
-          { key: 'troquelPigm',  kg: parseNum(phaseForm.mermaTroquelPigm),  desc: 'RECICLADO PIGMENTADO',  invId: 'MP-001' },
-          { key: 'torta',        kg: parseNum(phaseForm.mermaTorta),        desc: 'RECICLADO TORTA',       invId: 'MP-002' },
+          { key: 'troquelTransp', kg: parseNum(phaseForm.mermaTroquelTransp), desc: 'RECICLADO TRANSPARENTE', displayId: 'MP-RECI-TRA',   invId: 'MP-RECI-TRA___ALMACEN-ZI'   },
+          { key: 'troquelPigm',  kg: parseNum(phaseForm.mermaTroquelPigm),  desc: 'RECICLADO PIGMENTADO',  displayId: 'MP-RECI-PIG',   invId: 'MP-RECI-PIG___ALMACEN-ZI'   },
+          { key: 'torta',        kg: parseNum(phaseForm.mermaTorta),        desc: 'RECICLADO TORTA',       displayId: 'MP-RECI-TORTA', invId: 'MP-RECI-TORTA___ALMACEN-ZI' },
         ];
         for (const mt of mermaTypes) {
           if (mt.kg <= 0) continue;
-          const existing = (inventory || []).find(i => i.id === mt.invId);
+          // Buscar por ID exacto, o por displayId en ALMACEN ZI como respaldo
+          const existing = (inventory || []).find(i =>
+            i.id === mt.invId ||
+            ((i.displayId || (i.id||'').split('___')[0]) === mt.displayId && (i.almacen||'ALMACEN ZI') === 'ALMACEN ZI')
+          );
+          const targetId  = existing ? existing.id : mt.invId;
           if (existing) {
-            fbBatch.update(getDocRef('inventory', mt.invId), { stock: (existing.stock || 0) + mt.kg });
+            fbBatch.update(getDocRef('inventory', targetId), { stock: (existing.stock || 0) + mt.kg });
           } else {
-            fbBatch.set(getDocRef('inventory', mt.invId), {
-              id: mt.invId, desc: mt.desc, category: 'Materia Prima', unit: 'kg',
-              stock: mt.kg, cost: 0, minStock: 0, timestamp: Date.now(),
+            fbBatch.set(getDocRef('inventory', targetId), {
+              id: targetId, displayId: mt.displayId, desc: mt.desc,
+              category: 'Materia Prima', subcategory: 'Materia Prima', unit: 'Kg',
+              stock: mt.kg, cost: 0, minStock: 0, almacen: 'ALMACEN ZI',
+              activo: true, timestamp: Date.now(),
               notes: 'Material reciclado de producción'
             });
           }
-          const movRecId = `REC-${mt.invId}-${Date.now()}-${Math.floor(Math.random()*9999)}`;
+          const movRecId = `REC-${targetId.split('___')[0]}-${Date.now()}-${Math.floor(Math.random()*9999)}`;
           fbBatch.set(getDocRef('inventoryMovements', movRecId), {
             id: movRecId,
             date: phaseForm.date || getTodayDate(),
-            itemId: mt.invId,
+            itemId: targetId,
             itemName: mt.desc,
             type: 'ENTRADA',
             qty: mt.kg,
