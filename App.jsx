@@ -531,6 +531,7 @@ export default function App() {
   const [phaseForm, setPhaseForm] = useState(initialPhaseForm);
   // Segmentación de lotes de producción por OP
   const [activeLoteIndex, setActiveLoteIndex] = useState(0); // índice del lote activo dentro de la OP
+  const [editingBackup, setEditingBackup] = useState(null); // respaldo del lote en edición para poder cancelar
   const [showLotePanel, setShowLotePanel] = useState(false);
   const [phaseIngId, setPhaseIngId] = useState('');
   const [phaseIngQty, setPhaseIngQty] = useState('');
@@ -3559,7 +3560,7 @@ export default function App() {
     } else {
       await updateDoc(getDocRef('requirements', req.id), { production: newProd, status: newStatus });
     }
-    setPhaseForm({ ...initialPhaseForm, date: getTodayDate() });
+    setPhaseForm({ ...initialPhaseForm, date: getTodayDate() }); setEditingBackup(null);
     setDialog({ title: 'Éxito', text: 'Reporte guardado.', type: 'alert' });
   };
 
@@ -3573,11 +3574,33 @@ export default function App() {
     }});
   };
 
+  const handleCancelEdit = async () => {
+    const bk = editingBackup;
+    if (!bk) { setPhaseForm({ ...initialPhaseForm, date: getTodayDate() }); return; }
+    const req = (requirements || []).find(r => r?.id === bk.reqId);
+    if (req) {
+      let currentPhase = { ...(req.production?.[bk.phase] || {}) };
+      const exists = (currentPhase.batches || []).some(b => b?.id === bk.batch?.id);
+      if (!exists) {
+        currentPhase.batches = [...(currentPhase.batches || []), bk.batch];
+        // Volver a descontar del inventario lo que la edición había devuelto
+        const fb = writeBatch(db);
+        for (let ing of (bk.batch.insumos || [])) { const item = (inventory || []).find(i => i?.id === ing?.id); if (item) fb.update(getDocRef('inventory', item.id), { stock: Math.max(0, (item?.stock || 0) - (ing?.qty || 0)) }); }
+        await fb.commit();
+        await updateDoc(getDocRef('requirements', bk.reqId), { [`production.${bk.phase}`]: currentPhase });
+      }
+    }
+    setEditingBackup(null);
+    setPhaseForm({ ...initialPhaseForm, date: getTodayDate() });
+    setDialog({ title: 'Edición cancelada', text: 'El lote quedó como estaba registrado.', type: 'alert' });
+  };
+
   const handleEditBatch = (reqId, phase, batchId) => {
-    setDialog({ title: `MODIFICAR LOTE`, text: `El lote volverá al formulario para su edición y el inventario se ajustará temporalmente. ¿Continuar?`, type: 'confirm', onConfirm: async () => {
+    setDialog({ title: `MODIFICAR LOTE`, text: `El lote volverá al formulario para su edición y el inventario se ajustará temporalmente. Podrá CANCELAR para dejarlo como estaba. ¿Continuar?`, type: 'confirm', onConfirm: async () => {
         const req = (requirements || []).find(r => r?.id === reqId); if(!req) return; let currentPhase = { ...(req?.production?.[phase] || {}) }; const bIdx = (currentPhase.batches || []).findIndex(b => b?.id === batchId);
         if (bIdx >= 0) { 
             const batch = currentPhase.batches[bIdx]; 
+            setEditingBackup({ reqId, phase, batch: JSON.parse(JSON.stringify(batch)) }); // respaldo para Cancelar
             const restoreForm = { ...initialPhaseForm, date: batch?.date || getTodayDate(), producedKg: batch?.producedKg || '', mermaKg: batch?.mermaKg || '', insumos: batch?.insumos || [] };
             if(phase === 'extrusion' && batch?.techParams) { restoreForm.operadorExt = batch.techParams.operador || ''; restoreForm.tratado = batch.techParams.tratado || ''; restoreForm.motorExt = batch.techParams.motor || ''; restoreForm.ventilador = batch.techParams.ventilador || ''; restoreForm.jalador = batch.techParams.jalador || ''; restoreForm.zona1 = batch.techParams.zonas?.[0] || ''; restoreForm.zona2 = batch.techParams.zonas?.[1] || ''; restoreForm.zona3 = batch.techParams.zonas?.[2] || ''; restoreForm.zona4 = batch.techParams.zonas?.[3] || ''; restoreForm.zona5 = batch.techParams.zonas?.[4] || ''; restoreForm.zona6 = batch.techParams.zonas?.[5] || ''; restoreForm.cabezalA = batch.techParams.cabezalA || ''; restoreForm.cabezalB = batch.techParams.cabezalB || ''; }
             if(phase === 'impresion' && batch?.techParams) { restoreForm.operadorImp = batch.techParams.operador || ''; restoreForm.kgRecibidosImp = batch.techParams.kgRecibidos || ''; restoreForm.cantColores = batch.techParams.cantColores || ''; restoreForm.relacionImp = batch.techParams.relacion || ''; restoreForm.motorImp = batch.techParams.motor || ''; restoreForm.tensores = batch.techParams.tensores || ''; restoreForm.tempImp = batch.techParams.temp || ''; restoreForm.solvente = batch.techParams.solvente || ''; }
@@ -11976,7 +11999,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         // Solo "Entrega Parcial" o "Cierre OP" deben hacer eso para evitar duplicados.
       }
 
-      setPhaseForm({ ...initialPhaseForm, date: getTodayDate() });
+      setPhaseForm({ ...initialPhaseForm, date: getTodayDate() }); setEditingBackup(null);
       setDialog({
         title: isClose ? 'Fase Cerrada' : 'Lote Guardado',
         text: isClose
@@ -14829,6 +14852,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     const prod = req.production || {};
                     const lotes = getLotes(req);
                     const activeLote = lotes[activeLoteIndex] || lotes[lotes.length-1] || {};
+                    // ¿El lote i ya tiene producción registrada (o está cerrado)?
+                    const loteDone = (i) => !!lotes[i]?.cerrado || ['extrusion','impresion','sellado'].some(p =>
+                      (prod[p]?.batches||[]).some(b => (Number.isInteger(b.loteIndex)?b.loteIndex:0)===i && b.operator!=='ALMACÉN (DESPACHO)' && parseNum(b.producedKg)>0)
+                    );
                     const phaseStatus = (phase) => {
                       const phaseData = activeLote?.[phase];
                       if (phaseData?.isClosed) return 'done';
@@ -14891,9 +14918,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             {lotes.length > 0 && (
                               <div className="flex items-center gap-1.5 bg-gray-100 rounded-xl px-3 py-1.5">
                                 <span className="text-[8px] font-black text-gray-500 uppercase">LOTE:</span>
-                                <select value={activeLoteIndex} onChange={e=>setActiveLoteIndex(parseInt(e.target.value))}
-                                  className="bg-transparent text-[10px] font-black text-black outline-none">
-                                  {lotes.map((l,i)=><option key={l.id} value={i}>{l.nombre}{l.cerrado?' ✓':''}</option>)}
+                                <select value={activeLoteIndex} onChange={e=>{
+                                  const idx=parseInt(e.target.value);
+                                  setActiveLoteIndex(idx);
+                                  if(loteDone(idx)) setDialog({
+                                    title:`⚠ Lote ${idx+1} ya registrado`,
+                                    text:`El Lote ${idx+1} ya tiene producción registrada${lotes[idx]?.cerrado?' y está cerrado':''}. No registres de nuevo sobre este lote: crea o selecciona el siguiente lote con el botón +. (Si eliminas su registro, el lote vuelve a quedar disponible.)`,
+                                    type:'alert'
+                                  });
+                                }}
+                                  className={`bg-transparent text-[10px] font-black outline-none ${loteDone(activeLoteIndex)?'text-green-600':'text-black'}`}>
+                                  {lotes.map((l,i)=><option key={l.id} value={i}>{l.nombre}{loteDone(i)?' ✓ REGISTRADO':''}</option>)}
                                 </select>
                                 <button onClick={()=>setDialog({
                                   title:`Crear Lote ${lotes.length+1}`,
@@ -15608,7 +15643,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                         {/* GUARDAR LOTE */}
                                         {!prod[activePhaseTab]?.isClosed && (
                                           <button onClick={() => handleSavePhaseDirectly(req, false)} className="bg-orange-500 text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-orange-600 flex items-center gap-1 shadow-md transition-all">
-                                            <Save size={13}/> GUARDAR LOTE
+                                            <Save size={13}/> {editingBackup ? 'GUARDAR CAMBIOS' : 'GUARDAR LOTE'}
+                                          </button>
+                                        )}
+                                        {/* CANCELAR EDICIÓN — restaura el lote como estaba */}
+                                        {editingBackup && (
+                                          <button onClick={handleCancelEdit} className="bg-gray-200 text-gray-700 px-5 py-2.5 rounded-xl font-black text-[10px] uppercase hover:bg-gray-300 flex items-center gap-1 transition-all">
+                                            <X size={13}/> CANCELAR EDICIÓN
                                           </button>
                                         )}
 
@@ -20649,6 +20690,10 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
           const yaEntregado = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0);
           const yaMillares = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0);
           const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
+          // Peso REAL por millar = KG sellados reales ÷ millares reales (de la producción registrada)
+          const _selKg = (prod.sellado?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg||0),0);
+          const _selMill = (prod.sellado?.batches||[]).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+          const pesoRealMill = _selMill>0 ? _selKg/_selMill : (totalMillProd>0 ? totalKgProd/totalMillProd : 0);
           return (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center z-[99999] p-0 sm:p-4 print:hidden">
               <div className="bg-white p-6 rounded-[1.5rem] shadow-2xl max-w-sm w-full border-t-8 border-blue-500">
@@ -20747,7 +20792,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                         <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares *</label>
                         <input type="number" step="0.01" value={partialMillares} onChange={e=>{
                           const mill=e.target.value;
-                          const kgPorMillarOp = (() => {
+                          const kgPorMillarOp = pesoRealMill>0 ? pesoRealMill : (() => {
                             const ancho=parseNum(req.ancho), fuelles=parseNum(req.fuelles||0), largo=parseNum(req.largo), micras=parseNum(req.micras);
                             const p=(ancho+fuelles)*largo*micras; return p>0?p:0;
                           })();
@@ -20761,6 +20806,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                           className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-black text-base text-center outline-none focus:border-blue-300 bg-gray-50" placeholder="0.000" />
                       </div>
                       {(() => {
+                        if(pesoRealMill>0) return <p className="col-span-2 text-[9px] text-green-600 font-bold -mt-1">Peso real (registrado): {formatNum(pesoRealMill)} KG/Mill.</p>;
                         const ancho=parseNum(req.ancho), fuelles=parseNum(req.fuelles||0), largo=parseNum(req.largo), micras=parseNum(req.micras);
                         const pm=(ancho+fuelles)*largo*micras;
                         return pm>0 && <p className="col-span-2 text-[9px] text-blue-500 font-bold -mt-1">Peso teórico: {formatNum(pm)} KG/Mill.</p>;
