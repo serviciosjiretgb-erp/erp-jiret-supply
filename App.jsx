@@ -513,7 +513,7 @@ export default function App() {
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
-  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', documento: '', nroFiscal: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '' };
+  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', clientAddress: '', documento: '', nroFiscal: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '', ncAsignada: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
   // ── Cálculos de totales en tiempo real (usados en el formulario de factura) ──
   const _invBase = fgItems&&fgItems.length>0 ? fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0) : parseNum(newInvoiceForm?.montoBase||0);
@@ -2925,6 +2925,25 @@ export default function App() {
         });
       }
 
+      // ── Si la factura está vinculada a una NC, marcar ítems como facturados ──
+      if(newInvoiceForm.ncAsignada) {
+        const nc = (consignaciones||[]).find(c=>c.id===newInvoiceForm.ncAsignada);
+        if(nc) {
+          const updFact = [...(nc.facturadoItems||[])];
+          (fgItems||[]).filter(it=>it.isNC).forEach(it=>{
+            const idx=updFact.findIndex(x=>x.cleanId===it.invCode);
+            if(idx>=0) updFact[idx]={...updFact[idx],cantidadFacturada:updFact[idx].cantidadFacturada+parseNum(it.cantidad)};
+            else updFact.push({cleanId:it.invCode,desc:it.producto,cantidadFacturada:parseNum(it.cantidad)});
+          });
+          const allInvoiced = (nc.items||[]).every(ncIt=>{
+            const totalLiq=(nc.liquidaciones||[]).reduce((s,liq)=>{const l=(liq.items||[]).find(x=>x.cleanId===ncIt.cleanId);return s+(l?parseNum(l.vendido||0):0);},0);
+            const fact=(updFact.find(x=>x.cleanId===ncIt.cleanId)?.cantidadFacturada)||0;
+            return fact>=totalLiq && totalLiq>0;
+          });
+          await updateDoc(getDocRef('consignaciones',nc.id),{facturadoItems:updFact,updatedAt:getTodayDate(),...(allInvoiced&&nc.estado!=='DEVUELTA'?{estado:'LIQUIDADA_TOTAL'}:{})});
+        }
+      }
+
       setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm); setFgItems([]); setDescuentoVal(''); setDescuentoTipo('monto');
       setDialog({title: '✅ Éxito', text: editingInvoiceId ? `Factura ${id} actualizada y stock descontado.` : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
     } catch(err) { setDialog({title: 'Error al guardar factura', text: err.message, type: 'alert'}); }
@@ -3733,7 +3752,58 @@ export default function App() {
       setDialog({title:'✅ Devolución registrada',text:`Artículos devueltos a ${ncDevForm.almacenDestino}.`,type:'alert'});
     } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
-  // ── FIN CONSIGNACIONES ──────────────────────────────────────────────────────
+  // ── Pendiente por facturar de una NC ─────────────────────────────────────────
+  const ncPendienteFactura = (nc) => {
+    // para cada item: total liquidado - ya facturado
+    return (nc.items||[]).map(it => {
+      const totalLiquidado = (nc.liquidaciones||[]).reduce((s,liq)=>{
+        const l=(liq.items||[]).find(x=>x.cleanId===it.cleanId);
+        return s + (l ? parseNum(l.vendido||0) : 0);
+      },0);
+      const facturado = ((nc.facturadoItems||[]).find(x=>x.cleanId===it.cleanId)?.cantidadFacturada)||0;
+      return { cleanId: it.cleanId, desc: it.desc, unit: it.unit, precioConsig: it.precioConsig||0, totalLiquidado, facturado, pendiente: Math.max(0, totalLiquidado - facturado) };
+    }).filter(i => i.pendiente > 0);
+  };
+
+  const handleDeleteNC = (nc) => {
+    setDialog({ title:`Eliminar ${nc.id}`, text:`¿Eliminar la nota de consignación ${nc.id}? El stock disponible de ${nc.clienteName} se devolverá al almacén origen (${nc.almacenOrigen}).`, type:'confirm', onConfirm: async () => {
+      try {
+        const fb = writeBatch(db);
+        // Devolver stock disponible al almacén origen
+        for(const it of (nc.items||[])) {
+          const disp = parseNum(it.cantidadDisponible||0);
+          if(disp <= 0) continue;
+          const consDocs = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===it.cleanId&&(i.almacen||'').startsWith('CONSIGNACION'));
+          if(consDocs[0]) fb.update(getDocRef('inventory',consDocs[0].id),{stock:Math.max(0,parseNum(consDocs[0].stock||0)-disp)});
+          const destDocs = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===it.cleanId&&(i.almacen||'ALMACEN ZI')===nc.almacenOrigen);
+          if(destDocs[0]) fb.update(getDocRef('inventory',destDocs[0].id),{stock:parseNum(destDocs[0].stock||0)+disp});
+        }
+        fb.delete(getDocRef('consignaciones', nc.id));
+        await fb.commit();
+        if(selectedNC?.id===nc.id){ setSelectedNC(null); setConsignView('lista'); }
+        setDialog({title:'✅ Eliminada',text:`${nc.id} eliminada y stock devuelto a ${nc.almacenOrigen}.`,type:'alert'});
+      } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+    }});
+  };
+
+  const handleCargarDesdeNC = (ncId) => {
+    const nc = (consignaciones||[]).find(c=>c.id===ncId);
+    if(!nc) return;
+    const pendientes = ncPendienteFactura(nc);
+    // Cargar cliente
+    setNewInvoiceForm(f=>({...f, ncAsignada: ncId, clientRif: nc.clienteRif||'', clientName: nc.clienteName||'', clientAddress: nc.clienteDir||'', vendedor: nc.vendedor||f.vendedor }));
+    setInvClientSearch(nc.clienteName||'');
+    // Cargar items pendientes como cart
+    if(pendientes.length > 0) {
+      const items = pendientes.map(it => ({
+        invCode: it.cleanId, producto: it.desc, cantidad: it.pendiente, precioUnit: it.precioConsig, unit: it.unit||'und', costoUnit: 0, fgId: '', isNC: true, ncId
+      }));
+      setFgItems(items);
+    }
+    setDialog({title:'✅ NC cargada',text:`Datos de ${ncId} cargados: ${nc.clienteName}, ${pendientes.length} artículo${pendientes.length!==1?'s':''} pendientes por facturar ($${formatNum(pendientes.reduce((s,i)=>s+i.pendiente*i.precioConsig,0))}).`,type:'alert'});
+  };
+  // ── FIN CONSIGNACIONES handlers ─────────────────────────────────────────────
+
   const handleCancelEdit = async () => {
     const bk = editingBackup;
     if (!bk) { setPhaseForm({ ...initialPhaseForm, date: getTodayDate() }); return; }
@@ -5403,24 +5473,39 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           <div className="bg-white rounded-2xl border overflow-hidden">
             <div className="bg-orange-600 text-white px-5 py-3 font-black text-sm uppercase flex justify-between items-center">
               <span>Artículos en Consignación</span>
-              <span className="text-orange-200 text-[10px] font-bold">Valor total disponible: ${formatNum((selectedNC.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0))}</span>
+              <span className="text-orange-200 text-[10px] font-bold">Disponible: ${formatNum((selectedNC.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0))}</span>
             </div>
             <table className="w-full text-xs">
               <thead className="bg-gray-100"><tr className="text-[9px] font-black uppercase text-gray-600">
-                <th className="py-2 px-4 text-left">Código</th><th className="py-2 px-4 text-left">Descripción</th><th className="py-2 px-4 text-center">UM</th>
-                <th className="py-2 px-4 text-right">Despachado</th><th className="py-2 px-4 text-right">Disponible</th><th className="py-2 px-4 text-right">Precio NC</th><th className="py-2 px-4 text-right">Valor NC</th>
+                <th className="py-2 px-3 text-left">Código</th><th className="py-2 px-3 text-left">Descripción</th><th className="py-2 px-3 text-center">UM</th>
+                <th className="py-2 px-3 text-right">Desp.</th><th className="py-2 px-3 text-right">Liquidado</th><th className="py-2 px-3 text-right">Facturado</th><th className="py-2 px-3 text-right">Pdte.Fact.</th><th className="py-2 px-3 text-right">Disponible</th><th className="py-2 px-3 text-right">Precio NC</th><th className="py-2 px-3 text-center">Estado</th>
               </tr></thead>
-              <tbody>{(selectedNC.items||[]).map((it,i)=>(
-                <tr key={it.cleanId} className={`border-t ${i%2===0?'bg-white':'bg-gray-50'}`}>
-                  <td className="py-2 px-4 font-black text-orange-600 text-[10px]">{it.cleanId}</td>
-                  <td className="py-2 px-4 font-bold text-gray-700">{it.desc}</td>
-                  <td className="py-2 px-4 text-center text-gray-500">{it.unit}</td>
-                  <td className="py-2 px-4 text-right font-black text-blue-700">{formatNum(it.cantidad)}</td>
-                  <td className={`py-2 px-4 text-right font-black ${parseNum(it.cantidadDisponible)>0?'text-green-700':'text-gray-400 line-through'}`}>{formatNum(it.cantidadDisponible)}</td>
-                  <td className="py-2 px-4 text-right font-bold">${formatNum(it.precioConsig||0)}</td>
-                  <td className="py-2 px-4 text-right font-black text-green-700">${formatNum(parseNum(it.cantidadDisponible)*parseNum(it.precioConsig||0))}</td>
-                </tr>
-              ))}</tbody>
+              <tbody>{(selectedNC.items||[]).map((it,i)=>{
+                const totalLiq=(selectedNC.liquidaciones||[]).reduce((s,liq)=>{const l=(liq.items||[]).find(x=>x.cleanId===it.cleanId);return s+(l?parseNum(l.vendido||0):0);},0);
+                const facturado=((selectedNC.facturadoItems||[]).find(x=>x.cleanId===it.cleanId)?.cantidadFacturada)||0;
+                const pendFact=Math.max(0,totalLiq-facturado);
+                const statusBadge = facturado>=totalLiq && totalLiq>0
+                  ? <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[8px] font-black">✓ Facturado</span>
+                  : pendFact>0
+                    ? <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-[8px] font-black">⏳ Pdte.</span>
+                    : parseNum(it.cantidadDisponible)>0
+                      ? <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[8px] font-black">En consig.</span>
+                      : <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded text-[8px] font-black">Cerrado</span>;
+                return (
+                  <tr key={it.cleanId} className={`border-t ${i%2===0?'bg-white':'bg-gray-50'}`}>
+                    <td className="py-2 px-3 font-black text-orange-600 text-[10px]">{it.cleanId}</td>
+                    <td className="py-2 px-3 font-bold text-gray-700 text-[10px] max-w-[100px] truncate">{it.desc}</td>
+                    <td className="py-2 px-3 text-center text-gray-500">{it.unit}</td>
+                    <td className="py-2 px-3 text-right font-black text-blue-700">{formatNum(it.cantidad)}</td>
+                    <td className="py-2 px-3 text-right font-bold text-gray-600">{totalLiq>0?formatNum(totalLiq):'—'}</td>
+                    <td className="py-2 px-3 text-right font-bold text-green-700">{facturado>0?formatNum(facturado):'—'}</td>
+                    <td className="py-2 px-3 text-right font-black text-orange-600">{pendFact>0?formatNum(pendFact):'—'}</td>
+                    <td className={`py-2 px-3 text-right font-black ${parseNum(it.cantidadDisponible)>0?'text-green-700':'text-gray-400'}`}>{formatNum(it.cantidadDisponible)}</td>
+                    <td className="py-2 px-3 text-right font-bold">${formatNum(it.precioConsig||0)}</td>
+                    <td className="py-2 px-3 text-center">{statusBadge}</td>
+                  </tr>
+                );
+              })}</tbody>
             </table>
           </div>
           {(selectedNC.liquidaciones||[]).length>0 && (
@@ -5612,8 +5697,8 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             ) : (
               <div className="space-y-3">
                 {ncFiltradas.map(nc=>(
-                  <div key={nc.id} className="bg-white border-2 border-gray-200 rounded-2xl p-5 hover:border-orange-300 transition-all cursor-pointer border-l-[5px] border-l-orange-500" onClick={()=>{setSelectedNC(nc);setConsignView('detalle');}}>
-                    <div className="flex justify-between items-start flex-wrap gap-2">
+                  <div key={nc.id} className="bg-white border-2 border-gray-200 rounded-2xl p-5 hover:border-orange-300 transition-all border-l-[5px] border-l-orange-500">
+                    <div className="flex justify-between items-start flex-wrap gap-2 cursor-pointer" onClick={()=>{setSelectedNC(nc);setConsignView('detalle');}}>
                       <div>
                         <div className="flex items-center gap-2 mb-1">
                           <span className="font-black text-orange-600 text-sm">{nc.id}</span>
@@ -5624,13 +5709,30 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                       </div>
                       <div className="text-right">
                         <p className="font-black text-green-700 text-lg">${formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0))}</p>
-                        <p className="text-[9px] text-gray-400 font-bold">{(nc.items||[]).length} artículo{(nc.items||[]).length!==1?'s':''} · {formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible),0))} uds disponibles</p>
+                        <p className="text-[9px] text-gray-400 font-bold">{(nc.items||[]).length} art. · {formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible),0))} uds disp.</p>
                         {(nc.liquidaciones||[]).length>0 && <p className="text-[9px] text-blue-600 font-bold">{(nc.liquidaciones||[]).length} liquidación{(nc.liquidaciones||[]).length!==1?'es':''}</p>}
+                        {ncPendienteFactura(nc).length>0 && <p className="text-[9px] text-orange-600 font-bold">{ncPendienteFactura(nc).length} ítem{ncPendienteFactura(nc).length!==1?'s':''} pendientes</p>}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2 mt-3">
                       {(nc.items||[]).slice(0,5).map(it=><span key={it.cleanId} className={`px-2 py-0.5 rounded text-[9px] font-bold ${parseNum(it.cantidadDisponible)>0?'bg-orange-50 text-orange-700':'bg-gray-100 text-gray-400 line-through'}`}>{it.cleanId}: {formatNum(it.cantidadDisponible)}</span>)}
                       {(nc.items||[]).length>5 && <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded text-[9px] font-bold">+{(nc.items||[]).length-5} más</span>}
+                    </div>
+                    {/* Acciones por NC */}
+                    <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100 no-pdf">
+                      <button onClick={e=>{e.stopPropagation();setSelectedNC(nc);setConsignView('detalle');}} className="flex-1 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white px-3 py-1.5 rounded-xl font-black text-[9px] uppercase flex items-center justify-center gap-1 transition-all"><Eye size={11}/> Ver</button>
+                      <button onClick={e=>{e.stopPropagation();
+                        const rows2=(nc.items||[]).map(it=>`<tr><td style="padding:4px 7px;border:1px solid #ccc;font-weight:900;color:#ea580c">${it.cleanId}</td><td style="padding:4px 7px;border:1px solid #ccc">${it.desc}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:center">${it.unit}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:right">${formatNum(it.cantidad)}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:right">${formatNum(it.cantidadDisponible)}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:right">$${formatNum(it.precioConsig||0)}</td><td style="padding:4px 7px;border:1px solid #ccc;text-align:right;color:#16a34a;font-weight:900">$${formatNum(parseNum(it.cantidadDisponible)*parseNum(it.precioConsig||0))}</td></tr>`).join('');
+                        const html=`<div style="font-family:Arial,sans-serif;font-size:11px;padding:16px;color:#000"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:12px"><div><h2 style="margin:0;font-size:15px">SERVICIOS JIRET G&B, C.A.</h2><p style="font-size:9px;color:#6b7280;margin:2px 0">RIF: J-412309374</p></div><div style="text-align:right"><p style="font-weight:900;color:#f97316;margin:0">NOTA DE CONSIGNACIÓN</p><p style="font-size:10px;font-weight:900">${nc.id}</p></div></div><p style="font-size:11px;margin:4px 0"><b>Cliente:</b> ${nc.clienteName} (${nc.clienteRif})</p><p style="font-size:11px;margin:4px 0"><b>Origen:</b> ${nc.almacenOrigen} · <b>Fecha:</b> ${nc.fecha} · <b>Estado:</b> ${nc.estado}</p><table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="background:#1f2937;color:#fff"><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Código</th><th style="padding:6px 8px;font-size:9px;text-transform:uppercase">Descripción</th><th style="padding:6px 8px;font-size:9px">UM</th><th style="padding:6px 8px;font-size:9px">Despachado</th><th style="padding:6px 8px;font-size:9px">Disponible</th><th style="padding:6px 8px;font-size:9px">Precio NC</th><th style="padding:6px 8px;font-size:9px">Valor</th></tr></thead><tbody>${rows2}</tbody></table></div>`;
+                        handlePDFFromHTML(html,`NC_${nc.id}`);
+                      }} className="flex-1 bg-gray-800 text-white hover:bg-black px-3 py-1.5 rounded-xl font-black text-[9px] uppercase flex items-center justify-center gap-1 transition-all"><Printer size={11}/> PDF</button>
+                      <button onClick={e=>{e.stopPropagation();
+                        const header2=['Código','Descripción','UM','Despachado','Disponible','Liquidado','Precio NC ($)','Valor ($)'];
+                        const rows3=(nc.items||[]).map(it=>{const liq=(nc.liquidaciones||[]).reduce((s,l)=>{const x=(l.items||[]).find(y=>y.cleanId===it.cleanId);return s+(x?parseNum(x.vendido||0):0);},0);return[it.cleanId,it.desc,it.unit,formatNum(it.cantidad),formatNum(it.cantidadDisponible),formatNum(liq),formatNum(it.precioConsig||0),formatNum(parseNum(it.cantidadDisponible)*parseNum(it.precioConsig||0))];});
+                        let xhtml=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>th{background:#1f2937;color:#fff;font-weight:bold;}td,th{border:1px solid #ccc;padding:5px 8px;}</style></head><body><h2>NC ${nc.id} — ${nc.clienteName}</h2><table><thead><tr>${header2.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows3.map(r=>`<tr>${r.map(v=>`<td>${v}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
+                        const b=new Blob(['\uFEFF'+xhtml],{type:'application/vnd.ms-excel;charset=utf-8'});const u=URL.createObjectURL(b);const a2=document.createElement('a');a2.href=u;a2.download=`NC_${nc.id}_${getTodayDate()}.xls`;a2.click();URL.revokeObjectURL(u);
+                      }} className="flex-1 bg-green-600 text-white hover:bg-green-700 px-3 py-1.5 rounded-xl font-black text-[9px] uppercase flex items-center justify-center gap-1 transition-all"><Download size={11}/> Excel</button>
+                      <button onClick={e=>{e.stopPropagation();handleDeleteNC(nc);}} className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-3 py-1.5 rounded-xl font-black text-[9px] uppercase flex items-center gap-1 transition-all"><Trash2 size={11}/> Eliminar</button>
                     </div>
                   </div>
                 ))}
@@ -11622,6 +11724,15 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                           className="w-28 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black text-center"
                           placeholder={`${formatNum(settings?.tasaBCV||0)}`}/>
                         <div className="text-[7px] text-gray-400 mt-0.5 text-center">BCV: {formatNum(settings?.tasaBCV||0)}</div>
+                      </div>
+                      <div className="md:col-span-1">
+                        <label className="text-[10px] font-black text-orange-600 uppercase mb-2 block tracking-widest">📋 NC Consignación</label>
+                        <select value={newInvoiceForm.ncAsignada||''} onChange={e=>{ setNewInvoiceForm(f=>({...f,ncAsignada:e.target.value})); if(e.target.value) handleCargarDesdeNC(e.target.value); }}
+                          className="w-full bg-orange-50 border-2 border-orange-200 rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
+                          <option value="">— Sin NC —</option>
+                          {(consignaciones||[]).filter(c=>c.estado==='ACTIVA'||c.estado==='LIQUIDADA_PARCIAL').map(c=><option key={c.id} value={c.id}>{c.id} — {c.clienteName} ({ncPendienteFactura(c).length} pend.)</option>)}
+                        </select>
+                        {newInvoiceForm.ncAsignada && <p className="text-[8px] text-orange-600 font-bold mt-1">✓ Datos cargados desde {newInvoiceForm.ncAsignada}</p>}
                       </div>
                       <div className="md:col-span-1">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">OP Relacionada</label>
