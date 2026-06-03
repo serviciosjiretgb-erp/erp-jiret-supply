@@ -759,7 +759,6 @@ export default function App() {
   </div>
   <button class="btn-print" onclick="window.print()">🖨&nbsp; IMPRIMIR / GUARDAR PDF</button>
   <div class="contenido">${contenidoHtml}</div>
-  <button class="btn-print" onclick="window.print()">🖨&nbsp; IMPRIMIR / GUARDAR PDF</button>
 </div>
 </body></html>`;
     const w = window.open('', '_blank');
@@ -10993,15 +10992,34 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
         };
   
         const exportConsignExcel = () => {
-          const header = ['NC','Cliente','RIF','Fecha','Almacén Origen','Estado','Artículos','Uds Disponibles','Valor NC ($)','Observaciones'];
-          const dataRows = ncFiltradas.map(nc=>[nc.id, nc.clienteName, nc.clienteRif, nc.fecha, nc.almacenOrigen, nc.estado, (nc.items||[]).length, (nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible),0), (nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0), nc.observaciones||'']);
-          let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>body{font-family:Arial;font-size:11px;}th{background:#1f2937;color:#fff;font-weight:bold;}td,th{border:1px solid #ccc;padding:5px 8px;}</style></head><body>`;
-          html += `<h2>SERVICIOS JIRET G&B, C.A. — Consignaciones — ${getTodayDate()}</h2><table><thead><tr>${header.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>`;
-          dataRows.forEach(r=>{html+=`<tr>${r.map(v=>`<td>${v}</td>`).join('')}</tr>`;});
-          html += `</tbody></table></body></html>`;
+          const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
+          const rif     = settings?.empresaRif || 'J-412309374';
+          const dir     = settings?.empresaDireccion || 'Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9, Maracaibo.';
+          const hoy     = getTodayDate();
+          const dataRows = [];
+          ncFiltradas.forEach(nc => {
+            (nc.items||[]).forEach(it => {
+              const totalLiq = (nc.liquidaciones||[]).reduce((s,liq)=>{const l=(liq.items||[]).find(x=>x.cleanId===it.cleanId);return s+(l?parseNum(l.vendido||0):0);},0);
+              const facturado = ((nc.facturadoItems||[]).find(x=>x.cleanId===it.cleanId)?.cantidadFacturada)||0;
+              dataRows.push({nc:nc.id,cliente:nc.clienteName,rif:nc.clienteRif,vendedor:nc.vendedor||'—',fecha:nc.fecha,origen:nc.almacenOrigen,estado:nc.estado,codigo:it.cleanId,descripcion:it.desc,um:it.unit||'und',despachado:parseNum(it.cantidad),disponible:parseNum(it.cantidadDisponible),liquidado:totalLiq,pendFact:Math.max(0,totalLiq-facturado),precio:parseNum(it.precioConsig||0),valorDisp:parseNum(it.cantidadDisponible)*parseNum(it.precioConsig||0)});
+            });
+          });
+          const TH = s => `<th style="background:#1f2937;color:#fff;font-weight:bold;padding:5px 7px;border:1px solid #374151;font-size:9px;text-transform:uppercase;white-space:nowrap">${s}</th>`;
+          const TD = (s,r,b,c) => `<td style="padding:4px 7px;border:1px solid #e5e7eb;font-size:9px;${r?'text-align:right;':''}${b?'font-weight:bold;':''}${c?'color:'+c+';':''}">${s}</td>`;
+          const totalValor = dataRows.reduce((s,r)=>s+r.valorDisp,0);
+          const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>body{font-family:Arial;font-size:9px;}tr:nth-child(even){background:#fafafa;}</style></head><body>
+<table style="width:100%;border:none;margin-bottom:6px;border-collapse:collapse">
+  <tr><td colspan="9" style="background:#f97316;color:#fff;font-weight:900;font-size:13px;padding:8px 12px;border:none">${empresa}</td><td colspan="7" style="background:#f97316;color:#fff;font-weight:900;font-size:11px;text-align:right;padding:8px 12px;border:none">REPORTE DE CONSIGNACIONES</td></tr>
+  <tr><td colspan="16" style="background:#fff7ed;color:#7c2d12;font-size:9px;padding:3px 12px;border:none">RIF: ${rif} | ${dir} | Generado: ${hoy} | ${ncFiltradas.length} notas | ${dataRows.length} artículos</td></tr>
+</table>
+<table style="width:100%;border-collapse:collapse">
+  <thead><tr>${['NC','Cliente','RIF','Vendedor','Fecha','Almacén','Estado','Código','Descripción','UM','Despachado','Disponible','Liquidado','Pdte.Fact.','Precio ($)','Valor ($)'].map(TH).join('')}</tr></thead>
+  <tbody>${dataRows.map(r=>`<tr>${TD(r.nc,false,true,'#ea580c')}${TD(r.cliente,false,true)}${TD(r.rif)}${TD(r.vendedor)}${TD(r.fecha)}${TD(r.origen)}${TD(r.estado,false,true,r.estado==='ACTIVA'?'#16a34a':r.estado==='DEVUELTA'?'#6b7280':'#d97706')}${TD(r.codigo,false,true,'#ea580c')}${TD(r.descripcion)}${TD(r.um,true)}${TD(formatNum(r.despachado),true,false,'#1d4ed8')}${TD(formatNum(r.disponible),true,true,r.disponible>0?'#16a34a':'#9ca3af')}${TD(formatNum(r.liquidado),true)}${TD(r.pendFact>0?formatNum(r.pendFact):'—',true,false,r.pendFact>0?'#d97706':'')}${TD('$'+formatNum(r.precio),true)}${TD('$'+formatNum(r.valorDisp),true,true,'#16a34a')}</tr>`).join('')}</tbody>
+  <tfoot><tr><td colspan="11" style="background:#1f2937;color:#fff;font-weight:900;padding:5px 8px;border:1px solid #374151;font-size:9px">TOTAL (${dataRows.length} artículos — ${ncFiltradas.length} notas de consignación)</td><td style="background:#1f2937;color:#fff;font-weight:900;text-align:right;padding:5px 8px;border:1px solid #374151">${formatNum(dataRows.reduce((s,r)=>s+r.disponible,0))}</td><td style="background:#1f2937;color:#fff;font-weight:900;text-align:right;padding:5px 8px;border:1px solid #374151">${formatNum(dataRows.reduce((s,r)=>s+r.liquidado,0))}</td><td style="background:#1f2937;color:#fff;font-weight:900;text-align:right;padding:5px 8px;border:1px solid #374151">${formatNum(dataRows.reduce((s,r)=>s+r.pendFact,0))}</td><td style="background:#1f2937;color:#fff;padding:5px 8px;border:1px solid #374151"></td><td style="background:#f97316;color:#fff;font-weight:900;text-align:right;padding:5px 8px;border:1px solid #ea580c;font-size:10px">$${formatNum(totalValor)}</td></tr></tfoot>
+</table></body></html>`;
           const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});
           const url=URL.createObjectURL(blob);
-          const a=document.createElement('a');a.href=url;a.download=`Consignaciones_${getTodayDate()}.xls`;a.click();URL.revokeObjectURL(url);
+          const a=document.createElement('a');a.href=url;a.download=`Consignaciones_${hoy}.xls`;a.click();URL.revokeObjectURL(url);
         };
   
         // ── MODAL LIQUIDAR ──────────────────────────────────────────────────────
@@ -11377,10 +11395,30 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                           handlePDFFromHTML(html,`NC_${nc.id}`);
                         }} title="PDF" className="w-8 h-8 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-xl transition-all"><Printer size={14}/></button>
                         <button onClick={e=>{e.stopPropagation();
-                          const header2=['Código','Descripción','UM','Despachado','Disponible','Liquidado','Precio NC ($)','Valor ($)'];
-                          const rows3=(nc.items||[]).map(it=>{const liq=(nc.liquidaciones||[]).reduce((s,l)=>{const x=(l.items||[]).find(y=>y.cleanId===it.cleanId);return s+(x?parseNum(x.vendido||0):0);},0);return[it.cleanId,it.desc,it.unit,formatNum(it.cantidad),formatNum(it.cantidadDisponible),formatNum(liq),formatNum(it.precioConsig||0),formatNum(parseNum(it.cantidadDisponible)*parseNum(it.precioConsig||0))];});
-                          let xhtml=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>th{background:#1f2937;color:#fff;font-weight:bold;}td,th{border:1px solid #ccc;padding:5px 8px;}</style></head><body><h2>NC ${nc.id} — ${nc.clienteName}</h2><table><thead><tr>${header2.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows3.map(r=>`<tr>${r.map(v=>`<td>${v}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
-                          const b=new Blob(['\uFEFF'+xhtml],{type:'application/vnd.ms-excel;charset=utf-8'});const u=URL.createObjectURL(b);const a2=document.createElement('a');a2.href=u;a2.download=`NC_${nc.id}_${getTodayDate()}.xls`;a2.click();URL.revokeObjectURL(u);
+                          const empresa2=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+                          const rif2=settings?.empresaRif||'J-412309374';
+                          const hoy2=getTodayDate();
+                          const TH2=s=>`<th style="background:#1f2937;color:#fff;font-weight:bold;padding:5px 7px;border:1px solid #374151;font-size:9px;text-transform:uppercase;white-space:nowrap">${s}</th>`;
+                          const TD2=(s,r,b,c)=>`<td style="padding:4px 7px;border:1px solid #e5e7eb;font-size:9px;${r?'text-align:right;':''}${b?'font-weight:bold;':''}${c?'color:'+c+';':''}">${s}</td>`;
+                          const itemRows=(nc.items||[]).map(it=>{
+                            const liq=(nc.liquidaciones||[]).reduce((s,l)=>{const x=(l.items||[]).find(y=>y.cleanId===it.cleanId);return s+(x?parseNum(x.vendido||0):0);},0);
+                            const fact=((nc.facturadoItems||[]).find(x=>x.cleanId===it.cleanId)?.cantidadFacturada)||0;
+                            const pend=Math.max(0,liq-fact);
+                            const status=fact>=liq&&liq>0?'Facturado':pend>0?'Pdte. Facturar':parseNum(it.cantidadDisponible)>0?'En consig.':'Cerrado';
+                            return `<tr>${TD2(it.cleanId,false,true,'#ea580c')}${TD2(it.desc,false,true)}${TD2(it.unit||'und',true)}${TD2(formatNum(it.cantidad),true,false,'#1d4ed8')}${TD2(formatNum(it.cantidadDisponible),true,true,parseNum(it.cantidadDisponible)>0?'#16a34a':'#9ca3af')}${TD2(formatNum(liq),true)}${TD2(pend>0?formatNum(pend):'—',true,false,pend>0?'#d97706':'')}${TD2(fact>0?formatNum(fact):'—',true,false,'#16a34a')}${TD2('$'+formatNum(it.precioConsig||0),true)}${TD2('$'+formatNum(parseNum(it.cantidadDisponible)*parseNum(it.precioConsig||0)),true,true,'#16a34a')}${TD2(status,false,false,status==='Facturado'?'#16a34a':status.includes('Pdte')?'#d97706':'#374151')}</tr>`;
+                          }).join('');
+                          const liqRows=(nc.liquidaciones||[]).length>0?`<tr><td colspan="11" style="background:#dbeafe;color:#1e40af;font-weight:bold;padding:5px 8px;border:1px solid #93c5fd;font-size:9px;text-transform:uppercase">Historial de Liquidaciones</td></tr>${(nc.liquidaciones||[]).map((liq,i)=>`<tr><td colspan="2" style="padding:4px 8px;border:1px solid #e5e7eb;font-size:9px;font-weight:bold;color:#1d4ed8">${liq.tipo==='TOMA_FISICA'?'Toma Física':'Reporte Cliente'} — ${liq.fecha}</td><td colspan="9" style="padding:4px 8px;border:1px solid #e5e7eb;font-size:9px">${(liq.items||[]).map(x=>`${x.cleanId}: ${formatNum(x.vendido)} × $${formatNum(x.precioConsig)} = $${formatNum(x.vendido*x.precioConsig)}`).join(' | ')}</td></tr>`).join('')}`:'';
+                          const xhtml=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>body{font-family:Arial;font-size:9px;}tr:nth-child(even){background:#fafafa;}</style></head><body>
+<table style="width:100%;border:none;margin-bottom:6px;border-collapse:collapse">
+  <tr><td colspan="6" style="background:#f97316;color:#fff;font-weight:900;font-size:13px;padding:8px 12px;border:none">${empresa2}</td><td colspan="5" style="background:#f97316;color:#fff;font-weight:900;text-align:right;padding:8px 12px;border:none">NOTA DE CONSIGNACIÓN ${nc.id}</td></tr>
+  <tr><td colspan="11" style="background:#fff7ed;color:#7c2d12;font-size:9px;padding:3px 12px;border:none">RIF: ${rif2} | Generado: ${hoy2} | Cliente: ${nc.clienteName} (${nc.clienteRif}) | Vendedor: ${nc.vendedor||'—'} | Origen: ${nc.almacenOrigen} | Estado: ${nc.estado}</td></tr>
+</table>
+<table style="width:100%;border-collapse:collapse">
+  <thead><tr>${['Código','Descripción','UM','Despachado','Disponible','Liquidado','Pdte.Fact.','Facturado','Precio ($)','Valor ($)','Estado'].map(TH2).join('')}</tr></thead>
+  <tbody>${itemRows}${liqRows}</tbody>
+  <tfoot><tr><td colspan="4" style="background:#1f2937;color:#fff;font-weight:900;padding:5px 8px;border:1px solid #374151;font-size:9px">TOTAL ${nc.id}</td><td style="background:#1f2937;color:#fff;font-weight:900;text-align:right;padding:5px 8px;border:1px solid #374151">${formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible),0))}</td><td colspan="4" style="background:#1f2937;color:#fff;padding:5px 8px;border:1px solid #374151"></td><td style="background:#1f2937;color:#fff;padding:5px 8px;border:1px solid #374151"></td><td style="background:#f97316;color:#fff;font-weight:900;text-align:right;padding:5px 8px;border:1px solid #ea580c;font-size:10px">$${formatNum((nc.items||[]).reduce((s,i)=>s+parseNum(i.cantidadDisponible)*parseNum(i.precioConsig||0),0))}</td><td style="background:#1f2937;color:#fff;padding:5px 8px;border:1px solid #374151"></td></tr></tfoot>
+</table></body></html>`;
+                          const b=new Blob(['\uFEFF'+xhtml],{type:'application/vnd.ms-excel;charset=utf-8'});const u=URL.createObjectURL(b);const a2=document.createElement('a');a2.href=u;a2.download=`NC_${nc.id}_${hoy2}.xls`;a2.click();URL.revokeObjectURL(u);
                         }} title="Excel" className="w-8 h-8 flex items-center justify-center bg-green-50 text-green-600 hover:bg-green-600 hover:text-white rounded-xl transition-all"><Download size={14}/></button>
                         <button onClick={e=>{e.stopPropagation();handleDeleteNC(nc);}} title="Eliminar" className="w-8 h-8 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-xl transition-all"><Trash2 size={14}/></button>
                       </div>
