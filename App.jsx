@@ -2038,8 +2038,14 @@ export default function App() {
           { col:11, field:'ALMACEN BQTO',     suffix:'ALMACEN-BQTO'    },
         ];
         const PT_SUBCATS  = new Set(['Bolsas Plásticas','Cintas','Dispensadores','Papel Kraft','Stretch Film','Termoencogibles']);
-        const MP_SUBCATS  = new Set(['Materia Prima','Quimicos','Pigmento','Semielaborados','Semielaborado']);
-        const getCategory = s => PT_SUBCATS.has(s) ? 'Productos Terminados' : MP_SUBCATS.has(s) ? 'Materia Prima' : (s || 'Productos Terminados');
+        const getCategory = s => {
+          if (PT_SUBCATS.has(s))       return 'Productos Terminados';
+          if (s === 'Materia Prima')   return 'Materia Prima';
+          if (s === 'Quimicos')        return 'Quimicos';
+          if (s === 'Pigmento')        return 'Pigmento';
+          if (s === 'Semielaborados' || s === 'Semielaborado') return 'Semielaborado';
+          return s || 'Productos Terminados';
+        };
         const SKIP_PRE    = ['  ▸','TOTAL','SERVICIOS JIRET','RIF:','CODIGOS','PRODUCTOS'];
         const parseN      = v => { if(!v||v==='—') return 0; if(typeof v==='number') return v; return parseFloat(String(v).replace(/[$,\s]/g,''))||0; };
 
