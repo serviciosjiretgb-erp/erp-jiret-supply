@@ -1960,10 +1960,13 @@ export default function App() {
 
   // ── REVERTIR IMPORTACIÓN CONSOLIDADA ─────────────────────────────────────────
   const handleRevertImport = () => {
-    // Solo toca artículos marcados con _importSource='CONSOLIDADO_PT'
-    // Nunca borra MP, químicos, tintas ni nada más
+    // Elimina artículos de CUALQUIER importación consolidada:
+    // - Marcados con _importSource (importaciones recientes)
+    // - ID con ___ALMACEN- (patrón de todas las importaciones del consolidado)
     const importedItems = (inventory || []).filter(i =>
-      i._importSource === 'CONSOLIDADO_PT'
+      i._importSource === 'CONSOLIDADO_INV' ||
+      i._importSource === 'CONSOLIDADO_PT' ||
+      (typeof i.id === 'string' && i.id.includes('___ALMACEN-'))
     );
     if (importedItems.length === 0) {
       setDialog({
@@ -1976,8 +1979,8 @@ export default function App() {
     const byAlm = importedItems.reduce((a,i)=>{ const k=i.almacen||'—'; a[k]=(a[k]||0)+1; return a; },{});
     const resumen = Object.entries(byAlm).map(([k,v])=>`• ${k}: ${v}`).join('\n');
     setDialog({
-      title: `Revertir importación — ${importedItems.length} artículos PT`,
-      text: `Solo se eliminarán los artículos de Productos Terminados importados desde el consolidado:\n\n${resumen}\n\nMateria Prima, químicos, tintas, pigmentos y semi-elaborados NO se tocarán. ¿Continuar?`,
+      title: `Revertir importación — ${importedItems.length} artículos`,
+      text: `Se eliminarán los ${importedItems.length} artículos creados por importaciones del consolidado (incluye importaciones previas sin etiquetar).\n\n${resumen}\n\n¿Continuar?`,
       type: 'confirm',
       onConfirm: async () => {
         try {
@@ -2000,7 +2003,7 @@ export default function App() {
     });
   };
 
-  // ── IMPORTAR INVENTARIO CONSOLIDADO DESDE EXCEL (subido por el usuario) ──────
+  // ── IMPORTAR INVENTARIO CONSOLIDADO DESDE EXCEL ──────────────────────────────
   const handleImportConsolidatedInventory = () => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -2019,98 +2022,108 @@ export default function App() {
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(ws,{header:1,defval:null});
 
-        // ── Estructura del Excel consolidado ────────────────────────────────
-        // Fila 1: encabezados (CODIGOS, PRODUCTOS, CATEGORIA, U.M, COSTO UND, ALM.ZI, [val], ALM.C2, [val], ALM.MCY, [val], ALM.BQTO, [val], TOTAL, ...)
-        // Fila 2: sub-encabezados (Stock, Valor, Stock, Valor ...)
-        // Fila 3+: datos
-        // Col 0=Código  1=Desc  2=Categoría  3=UM  4=Costo
-        // Col 5=ZI Stock  7=C2 Stock  9=MCY Stock  11=BQTO Stock
-        const ALM_COLS = [
-          {col:5,  field:'ALMACEN ZI',   suffix:'ALMACEN-ZI'  },
-          {col:7,  field:'ALMACEN C2',   suffix:'ALMACEN-C2'  },
-          {col:9,  field:'ALMACEN MCY',  suffix:'ALMACEN-MCY' },
-          {col:11, field:'ALMACEN BQTO', suffix:'ALMACEN-BQTO'},
-        ];
+        // ── Detectar columnas dinámicamente leyendo la cabecera ──────────────
+        // Buscar la fila cabecera: la que tiene col0='CODIGOS' o col5='ALMACEN ZI'
+        let headerRowIdx = -1;
+        for (let i=0; i<Math.min(10,rows.length); i++) {
+          const r = rows[i];
+          const c0 = String(r[0]||'').toUpperCase();
+          const c5 = String(r[5]||'').toUpperCase();
+          if (c0 === 'CODIGOS' || c5.startsWith('ALMACEN')) { headerRowIdx = i; break; }
+        }
+        if (headerRowIdx < 0) {
+          setDialog({title:'Error de formato',text:'No se encontró la fila de encabezados. Verifica que el archivo sea el consolidado.',type:'alert'});
+          return;
+        }
+        const headerRow = rows[headerRowIdx];
 
-        // Mapeo categoría → nombre de categoría en el sistema
+        // Detectar qué columna corresponde a cada almacén
+        // La cabecera tiene: col0=CODIGOS, col1=PRODUCTOS, col2=CATEGORIA, col3=U.M, col4=COSTO
+        // Luego pares: ALMACEN XX, [Valor], ALMACEN YY, [Valor], ...
+        const almCols = [];
+        for (let col=5; col<headerRow.length; col++) {
+          const val = String(headerRow[col]||'').toUpperCase().trim();
+          if (val.startsWith('ALMACEN') && !val.includes('TOTAL')) {
+            // El nombre del almacen es tal cual está en la cabecera
+            const almName = String(headerRow[col]).trim();
+            const suffix  = almName.replace(/\s+/g,'-'); // ALMACEN ZI → ALMACEN-ZI
+            almCols.push({col, field: almName, suffix});
+          }
+        }
+        if (almCols.length === 0) {
+          setDialog({title:'Error',text:'No se detectaron columnas de almacén en el archivo.',type:'alert'});
+          return;
+        }
+
+        // Mapeo subcategoría → categoría principal
         const CAT_MAP = {
-          'Bolsas Plásticas' : 'Productos Terminados',
-          'Cintas'           : 'Productos Terminados',
-          'Dispensadores'    : 'Productos Terminados',
-          'Papel Kraft'      : 'Productos Terminados',
-          'Stretch Film'     : 'Productos Terminados',
-          'Termoencogibles'  : 'Productos Terminados',
-          'Materia Prima'    : 'Materia Prima',
-          'Quimicos'         : 'Quimicos',
-          'Pigmento'         : 'Pigmento',
-          'Semielaborados'   : 'Semielaborado',
-          'Semielaborado'    : 'Semielaborado',
+          'Bolsas Plásticas':'Productos Terminados','Cintas':'Productos Terminados',
+          'Dispensadores':'Productos Terminados','Papel Kraft':'Productos Terminados',
+          'Stretch Film':'Productos Terminados','Termoencogibles':'Productos Terminados',
+          'Materia Prima':'Materia Prima','Quimicos':'Quimicos',
+          'Pigmento':'Pigmento','Pigmentos':'Pigmento','Tintas':'Tintas',
+          'Semielaborados':'Semielaborado','Semielaborado':'Semielaborado',
         };
 
-        const SKIP_STARTS = ['CODIGOS','TOTAL','SERVICIOS JIRET','RIF:','  ▸'];
+        // Filas que deben ignorarse
+        const SKIP = ['CODIGOS','TOTAL','SERVICIOS JIRET','RIF:','  ▸','ALMACEN','RESUMEN','VALOR INVENTARIO'];
         const parseN = v => { if(!v||v==='—') return 0; if(typeof v==='number') return v; return parseFloat(String(v).replace(/[$,\s]/g,''))||0; };
 
-        const items = [];
-        const usedIds = new Set(); // detectar duplicados
+        const items = []; const usedIds = new Set();
 
-        for (const row of rows) {
+        for (let ri = headerRowIdx+1; ri < rows.length; ri++) {
+          const row = rows[ri];
           const code = row[0];
           if (!code) continue;
           const codeStr = String(code).trim();
           if (codeStr.length < 2) continue;
-          if (SKIP_STARTS.some(p => codeStr.startsWith(p))) continue;
+          // Saltar filas de encabezado, totales, resúmenes y similares
+          if (SKIP.some(p => codeStr.toUpperCase().startsWith(p.toUpperCase()))) continue;
+          // Saltar filas donde el código parece ser un nombre de almacén o ciudad
+          if (/^(Almac[eé]n|Barquisimeto|Maracay|Materia Prima|Semielaborado|Quimico|Pigmento|Tintas?|ZI|C2|MCY|BQTO|Consignac)/i.test(codeStr)) continue;
 
           const desc   = String(row[1]||'').trim().toUpperCase();
           const subcat = String(row[2]||'').trim();
           const um     = String(row[3]||'UND').trim().toUpperCase();
           const cost   = parseN(row[4]);
           const cat    = CAT_MAP[subcat] || subcat || 'Productos Terminados';
-
-          // Firestore no permite / en IDs
           const cleanCode = codeStr.replace(/\//g,'-');
 
-          const stocks = ALM_COLS.map(a=>({...a, stock:parseN(row[a.col])}));
+          const stocks = almCols.map(a=>({...a, stock:parseN(row[a.col])}));
           const totalSt = stocks.reduce((s,a)=>s+a.stock,0);
 
           if (totalSt > 0) {
             for (const {suffix, field, stock} of stocks) {
               if (stock <= 0) continue;
               let docId = `${cleanCode}___${suffix}`;
-              // Si el docId ya existe (código duplicado en el Excel para distinta categoría)
-              // añadir sufijo de categoría para evitar sobreescritura
-              if (usedIds.has(docId)) {
-                const catSuffix = subcat.substring(0,3).toUpperCase();
-                docId = `${cleanCode}-${catSuffix}___${suffix}`;
-              }
+              if (usedIds.has(docId)) { docId = `${cleanCode}-${subcat.substring(0,3).toUpperCase()}___${suffix}`; }
               usedIds.add(docId);
               items.push({id:docId, displayId:cleanCode, desc, category:cat, subcategory:subcat, unit:um, cost, stock, almacen:field, activo:true});
             }
           } else {
-            // Sin stock en ningún almacén → registrar en ZI con stock 0 (mantiene catálogo)
-            let docId = `${cleanCode}___ALMACEN-ZI`;
-            if (usedIds.has(docId)) {
-              const catSuffix = subcat.substring(0,3).toUpperCase();
-              docId = `${cleanCode}-${catSuffix}___ALMACEN-ZI`;
-            }
+            // Sin stock: guardar en primer almacén con stock 0 (mantiene catálogo)
+            const firstAlm = almCols[0];
+            let docId = `${cleanCode}___${firstAlm.suffix}`;
+            if (usedIds.has(docId)) { docId = `${cleanCode}-${subcat.substring(0,3).toUpperCase()}___${firstAlm.suffix}`; }
             usedIds.add(docId);
-            items.push({id:docId, displayId:cleanCode, desc, category:cat, subcategory:subcat, unit:um, cost, stock:0, almacen:'ALMACEN ZI', activo:true});
+            items.push({id:docId, displayId:cleanCode, desc, category:cat, subcategory:subcat, unit:um, cost, stock:0, almacen:firstAlm.field, activo:true});
           }
         }
 
         if (!items.length) {
-          setDialog({title:'Aviso',text:'No se encontraron artículos. Verifica el formato del archivo.',type:'alert'});
+          setDialog({title:'Aviso',text:'No se encontraron artículos. Verifica el archivo.',type:'alert'});
           return;
         }
 
-        // Resumen por categoría y almacén
         const byCat = {}; const byAlm = {};
         items.forEach(i=>{ byCat[i.category]=(byCat[i.category]||0)+1; byAlm[i.almacen]=(byAlm[i.almacen]||0)+1; });
         const resCat = Object.entries(byCat).map(([k,v])=>`• ${k}: ${v}`).join('\n');
         const resAlm = Object.entries(byAlm).map(([k,v])=>`• ${k}: ${v}`).join('\n');
+        const almDetected = almCols.map(a=>a.field).join(' · ');
 
         setDialog({
           title:`📦 Importar ${items.length} artículos`,
-          text:`Archivo: ${file.name}\n\nPOR CATEGORÍA:\n${resCat}\n\nPOR ALMACÉN:\n${resAlm}\n\nNuevos artículos se CREAN · Existentes se ACTUALIZAN. ¿Continuar?`,
+          text:`Archivo: ${file.name}\nAlmacenes detectados: ${almDetected}\n\nPOR CATEGORÍA:\n${resCat}\n\nPOR ALMACÉN:\n${resAlm}\n\n¿Continuar?`,
           type:'confirm',
           onConfirm: async () => {
             try {
