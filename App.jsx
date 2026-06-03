@@ -13370,6 +13370,13 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
         </div>
 
         {/* KG Produced + Auto Merma */}
+        {(phaseAlreadyDone || currentLoteObj?.cerrado) ? (
+        <div className="bg-green-50 border-2 border-green-300 rounded-xl p-4 text-center">
+          <h4 className="text-[10px] font-black text-green-700 uppercase mb-2">✓ {lotes.length>1?currentLoteLabel:'Lote'} — fase ya registrada</h4>
+          <p className="text-[11px] font-black text-green-800">Producido: {formatNum(kgProducidosAnt)} KG · Merma: {formatNum(mermaAnt)} KG</p>
+          <p className="text-[9px] text-gray-500 font-bold mt-1">La MP de este lote ya fue consumida.{currentLoteObj?.cerrado?' El lote está cerrado.':''} Para seguir produciendo, cree un nuevo lote (botón +).</p>
+        </div>
+        ) : (
         <div className="bg-green-50 border-2 border-green-300 rounded-xl p-4">
           <h4 className="text-[10px] font-black text-green-700 uppercase mb-3">⚙ KG Producidos — {lotes.length>1?currentLoteLabel:'Lote'}</h4>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -13403,6 +13410,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
             </div>
           )}
         </div>
+        )}
       </div>
     );
   };
@@ -15667,18 +15675,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                 const norm2 = (id) => String(id||'').replace(/^OP-/i,'').trim();
                 const filterReal = b => b && b.operator!=='ALMACÉN (DESPACHO)'; // accept any valid batch
 
-                // Read batches from LOTES structure (new) OR flat (legacy)
+                // Read batches from FLAT structure (donde se guardan los registros, etiquetados con loteIndex)
                 const allLotes = getLotes(req);
                 let extB, impB, selB;
-                if(allLotes.length > 0) {
-                  extB = allLotes.flatMap(l=>(l?.extrusion?.batches||[]).filter(filterReal)).map(b=>({...b,fase:'EXTRUSIÓN'}));
-                  impB = allLotes.flatMap(l=>(l?.impresion?.batches||[]).filter(filterReal)).map(b=>({...b,fase:'IMPRESIÓN'}));
-                  selB = allLotes.flatMap(l=>(l?.sellado?.batches||[]).filter(filterReal)).map(b=>({...b,fase:'SELLADO'}));
-                } else {
-                  extB=(prod.extrusion?.batches||[]).filter(filterReal).map(b=>({...b,fase:'EXTRUSIÓN'}));
-                  impB=(prod.impresion?.batches||[]).filter(filterReal).map(b=>({...b,fase:'IMPRESIÓN'}));
-                  selB=(prod.sellado?.batches||[]).filter(filterReal).map(b=>({...b,fase:'SELLADO'}));
-                }
+                extB=(prod.extrusion?.batches||[]).filter(filterReal).map(b=>({...b,fase:'EXTRUSIÓN'}));
+                impB=(prod.impresion?.batches||[]).filter(filterReal).map(b=>({...b,fase:'IMPRESIÓN'}));
+                selB=(prod.sellado?.batches||[]).filter(filterReal).map(b=>({...b,fase:'SELLADO'}));
                 const allBatches=[...extB,...impB,...selB];
                 const lastB=selB.length>0?selB:impB.length>0?impB:extB;
 
@@ -15696,28 +15698,21 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                     },0),0)
                   : extB.reduce((s,b)=>{ const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0); return s+(ins>0?ins:parseNum(b.kgRecibidos||b.totalInsumosKg||0)); },0);
 
-                // Build per-lote req mapping for entKg column
+                // MP por lote = suma de requisiciones aprobadas etiquetadas a ese lote
                 const loteReqMap = {};
-                allLotes.forEach((l,li)=>{
-                  const reqId = l.reqId;
-                  const usedByOthers = allLotes.filter((_,xi)=>xi!==li).map(x=>x.reqId).filter(Boolean);
-                  const loteReq = approvedReqsOP.find(r=>r.id===reqId)
-                    || approvedReqsOP.find(r=>r.loteIndex===li)
-                    || approvedReqsOP.find(r=>!usedByOthers.includes(r.id))
-                    || approvedReqsOP[Math.min(li,approvedReqsOP.length-1)];
-                  const kgLote = (loteReq?.items||[]).reduce((s,it)=>{
+                const _loteIdxReq = (r)=>{ if(Number.isInteger(r.loteIndex)) return r.loteIndex; const m=String(r.loteLabel||r.lote||'').match(/(\d+)/); return m?parseInt(m[1],10)-1:0; };
+                approvedReqsOP.forEach(r=>{
+                  const idx=_loteIdxReq(r);
+                  const kg=(r.items||[]).reduce((s,it)=>{
                     const inv=(inventory||[]).find(i=>i.id===it.id);
                     const u=(inv?.unit||'kg').toLowerCase();
-                    if(u.startsWith('mill')||u==='und') return s;
+                    if(u.startsWith('mill')||u==='und'||u==='unidad'||u==='m'||u==='mts') return s;
                     return s+parseNum(it.qty||0);
                   },0);
-                  loteReqMap[li] = kgLote || mpInjectada; // fallback to total if can't split
+                  loteReqMap[idx]=(loteReqMap[idx]||0)+kg;
                 });
-                // For flat (no lotes) — all batches use total mpInjectada
                 const getEntKgForBatch = (b, batchLoteIdx) => {
-                  // For new OPs: use KG from requisition for this lote
-                  if(allLotes.length > 0 && loteReqMap[batchLoteIdx] > 0) return loteReqMap[batchLoteIdx];
-                  // For old OPs: use batch's stored insumos sum, then kgRecibidos, then mpInjectada
+                  if(loteReqMap[batchLoteIdx] > 0) return loteReqMap[batchLoteIdx];
                   const ins=(b?.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);
                   if(ins > 0) return ins;
                   const kr = parseNum(b?.kgRecibidos||b?.kgRecibidosImp||b?.kgRecibidosSel||b?.totalInsumosKg||0);
@@ -15884,22 +15879,25 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             </tr></thead>
                             <tbody>
                               {(() => {
-                                const maxLotes = Math.max(extB.length, impB.length, selB.length, 1);
+                                const loteIdxOfB = (b)=>Number.isInteger(b.loteIndex)?b.loteIndex:0;
+                                const allIdx = [...new Set([...extB,...impB,...selB].map(loteIdxOfB))].sort((a,b)=>a-b);
+                                if(allIdx.length===0) return null;
                                 const rows = [];
-                                for (let li = 0; li < maxLotes; li++) {
-                                  const ext = extB[li], imp = impB[li], sel = selB[li];
-                                  if (!ext && !imp && !sel) continue;
-                                  const fecha = (sel||imp||ext)?.date || '';
-                                  const mpRecibidos = getEntKgForBatch(ext||imp||sel, li);
-                                  const kgExtr = parseNum(ext?.producedKg||0);
-                                  const kgSell = sel ? parseNum(sel.producedKg||0) : 0;
-                                  const kgFinal = esTermo ? kgExtr : (sel ? kgSell : (imp ? parseNum(imp.producedKg||0) : kgExtr));
+                                allIdx.forEach((idx, pos) => {
+                                  const exL = extB.filter(b=>loteIdxOfB(b)===idx);
+                                  const imL = impB.filter(b=>loteIdxOfB(b)===idx);
+                                  const seL = selB.filter(b=>loteIdxOfB(b)===idx);
+                                  const fecha = (seL[0]||imL[0]||exL[0])?.date || '';
+                                  const kgExtr = exL.reduce((s,b)=>s+parseNum(b.producedKg||0),0);
+                                  const kgSell = seL.reduce((s,b)=>s+parseNum(b.producedKg||0),0);
+                                  const mpRecibidos = getEntKgForBatch(exL[0]||imL[0]||seL[0], idx);
+                                  const kgFinal = esTermo ? kgExtr : (seL.length ? kgSell : (imL.length ? imL.reduce((s,b)=>s+parseNum(b.producedKg||0),0) : kgExtr));
                                   const mermaLote = mpRecibidos>0 ? Math.max(0, mpRecibidos - kgFinal) : 0;
                                   const pctM = mpRecibidos>0 ? ((mermaLote/mpRecibidos)*100).toFixed(1) : '0.0';
-                                  const millares = parseNum(sel?.techParams?.millares || imp?.techParams?.millares || 0);
+                                  const millares = seL.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0) || imL.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
                                   rows.push(
-                                    <tr key={li} className={li%2===0?'bg-white':'bg-gray-50'}>
-                                      <td className="p-2 border text-center font-black text-orange-600">{li+1}</td>
+                                    <tr key={idx} className={pos%2===0?'bg-white':'bg-gray-50'}>
+                                      <td className="p-2 border text-center font-black text-orange-600">{idx+1}</td>
                                       <td className="p-2 border text-center text-gray-600 font-bold">{fecha}</td>
                                       <td className="p-2 border text-center text-blue-700 font-bold">{formatNum(mpRecibidos)} kg</td>
                                       <td className="p-2 border text-center text-green-700 font-bold">{kgExtr>0?formatNum(kgExtr)+' kg':'—'}</td>
@@ -15908,7 +15906,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                       <td className="p-2 border text-center font-bold text-blue-600">{esTermo ? (kgExtr>0?formatNum(kgExtr)+' KG':'—') : (millares>0?formatNum(millares)+' Mill.':'—')}</td>
                                     </tr>
                                   );
-                                }
+                                });
                                 return rows;
                               })()}
                             </tbody>
