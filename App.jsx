@@ -14857,9 +14857,12 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       (prod[p]?.batches||[]).some(b => (Number.isInteger(b.loteIndex)?b.loteIndex:0)===i && b.operator!=='ALMACÉN (DESPACHO)' && parseNum(b.producedKg)>0)
                     );
                     const phaseStatus = (phase) => {
-                      const phaseData = activeLote?.[phase];
-                      if (phaseData?.isClosed) return 'done';
-                      if ((phaseData?.batches||[]).length > 0) return 'inprogress';
+                      if (activeLote?.cerrado) return 'done';
+                      const flatB = (prod[phase]?.batches||[]).filter(b => (Number.isInteger(b.loteIndex)?b.loteIndex:0)===activeLoteIndex && b.operator!=='ALMACÉN (DESPACHO)');
+                      const produjo = flatB.some(b => parseNum(b.producedKg)>0);
+                      if (activeLote?.[phase]?.isClosed) return 'done';
+                      if (produjo) return 'done';      // este lote ya registró esta fase
+                      return 'pending';
                       return 'pending';
                     };
                     const isOpen = selectedPhaseReqId === req.id;
@@ -14882,9 +14885,9 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                       || phases.find(p=>phaseStatus(p.key)==='pending')?.key
                       || phases[phases.length-1]?.key;
 
-                    // Phase pct for inprogress phases
+                    // Phase pct for inprogress phases (estructura plana, lote activo)
                     const getPhasePct = (key) => {
-                      const allB = lotes.flatMap(l=>(l?.[key]?.batches||[]));
+                      const allB = (prod[key]?.batches||[]).filter(b=>(Number.isInteger(b.loteIndex)?b.loteIndex:0)===activeLoteIndex);
                       const produced = allB.reduce((s,b)=>s+parseNum(b.producedKg||0),0);
                       const requested = parseNum(req.requestedKg||req.cantidad||0);
                       return requested>0 ? Math.min(100,Math.round((produced/requested)*100)) : 0;
@@ -15002,7 +15005,7 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                        <span className="text-[10px] font-black">{p.n}</span>}
                                     </div>
                                     <span className={`text-[9px] font-black uppercase mt-1 ${st==='done'?'text-green-600':st==='inprogress'?'text-orange-600':'text-gray-400'}`}>{p.n}. {p.label}</span>
-                                    {st==='done' && (()=>{const allB=lotes.flatMap(l=>(l?.[p.key]?.batches||[]));const last=allB[allB.length-1];return last?.date?<span className="text-[7px] text-gray-400 font-bold">Completado el {last.date}</span>:null;})()}
+                                    {st==='done' && (()=>{const allB=(prod[p.key]?.batches||[]).filter(b=>(Number.isInteger(b.loteIndex)?b.loteIndex:0)===activeLoteIndex);const last=allB[allB.length-1];return last?.date?<span className="text-[7px] text-gray-400 font-bold">Completado el {last.date}</span>:null;})()}
                                   </div>
                                 </React.Fragment>
                               );
@@ -15011,19 +15014,18 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                             <div className="flex-1 h-1 rounded-full bg-gray-200"/>
                           </div>
 
-                        {/* Phase status note — only for non-done phases */}
-                        {currentPhaseKey && phaseStatus(currentPhaseKey) !== 'done' && (()=>{
-                          const allB = lotes.flatMap(l=>(l?.[currentPhaseKey]?.batches||[]));
-                          const st = phaseStatus(currentPhaseKey);
-                          const label = phases.find(p=>p.key===currentPhaseKey)?.label||currentPhaseKey;
-                          const msg = st==='inprogress'
-                            ? `${label.toUpperCase()} en proceso — ${allB.length} lote(s) registrado(s).`
-                            : `${label.toUpperCase()} pendiente de inicio.`;
-                          return (
-                            <div className="mt-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 text-[9px] font-bold text-orange-700">
-                              {msg}
-                            </div>
-                          );
+                        {/* Phase status note (por lote activo) */}
+                        {(()=>{
+                          const loteLbl = lotes[activeLoteIndex]?.nombre || `Lote ${activeLoteIndex+1}`;
+                          if (activeLote?.cerrado) {
+                            return <div className="mt-3 bg-green-50 border border-green-200 rounded-xl px-4 py-2 text-[9px] font-black text-green-700 uppercase">✓ {loteLbl} cerrado{activeLote.fechaCierre?` el ${activeLote.fechaCierre}`:''}.</div>;
+                          }
+                          const pendientes = phases.filter(p=>phaseStatus(p.key)!=='done');
+                          if (pendientes.length === 0) {
+                            return <div className="mt-3 bg-green-50 border border-green-200 rounded-xl px-4 py-2 text-[9px] font-black text-green-700 uppercase">✓ {loteLbl} — todas las fases registradas. Cierre el lote o cree el siguiente (+).</div>;
+                          }
+                          const next = pendientes[0];
+                          return <div className="mt-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2 text-[9px] font-bold text-orange-700">{(next.label||'').toUpperCase()} pendiente de registro en {loteLbl}.</div>;
                         })()}
                         </div>
 
@@ -16011,23 +16013,24 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                   <th className="py-2 px-3 border-r border-teal-500 text-center">Fecha</th>
                                   <th className="py-2 px-3 border-r border-teal-500 text-center">KG Entregados</th>
                                   {!esTermo && <th className="py-2 px-3 border-r border-teal-500 text-center">Millares</th>}
-                                  <th className="py-2 px-3 border-r border-teal-500 text-center">Costo Unit.</th>
-                                  <th className="py-2 px-3 border-r border-teal-500 text-center">{esTermo ? '$/KG' : '$/Millar'}</th>
+                                  <th className="py-2 px-3 border-r border-teal-500 text-center">{esTermo ? 'Costo / KG' : 'Costo / Millar'}</th>
+                                  <th className="py-2 px-3 border-r border-teal-500 text-center">Costo Total</th>
                                   <th className="py-2 px-3 text-center no-pdf">Acción</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-gray-100">
-                                {(req.entregasParciales||[]).map((ep,i)=>(
+                                {(req.entregasParciales||[]).map((ep,i)=>{
+                                  const unit = esTermo ? costoXkg : costoXmill;     // costo de los Indicadores
+                                  const qtyEp = esTermo ? parseNum(ep.kg) : parseNum(ep.millares);
+                                  const totalEp = unit * qtyEp;
+                                  return (
                                   <tr key={i} className={i%2===0?'bg-white':'bg-teal-50/30'}>
                                     <td className="py-2 px-3 border-r text-center font-black text-teal-600">EP-{String(i+1).padStart(2,'0')}</td>
                                     <td className="py-2 px-3 border-r text-center font-bold text-gray-600">{ep.fecha}</td>
                                     <td className="py-2 px-3 border-r text-center font-black text-blue-600">{formatNum(ep.kg)} KG</td>
                                     {!esTermo && <td className="py-2 px-3 border-r text-center font-black text-orange-600">{ep.millares>0?formatNum(ep.millares)+' Mill.':'—'}</td>}
-                                    <td className="py-2 px-3 border-r text-center font-bold">
-                                      {ep.costoUnit>0 ? (
-                                        <span>{`$${formatNum(ep.costoUnit)}`}<span className="text-[8px] text-gray-400 ml-0.5">/{esTermo?'KG':'Mill.'}</span></span>
-                                      ) : '—'}
-                                    </td>
+                                    <td className="py-2 px-3 border-r text-center font-bold">{unit>0 ? <span>{`$${formatNum(unit)}`}<span className="text-[8px] text-gray-400 ml-0.5">/{esTermo?'KG':'Mill.'}</span></span> : '—'}</td>
+                                    <td className="py-2 px-3 border-r text-center font-black text-green-700">{totalEp>0?`$${formatNum(totalEp)}`:'—'}</td>
                                     <td className="py-2 px-3 text-center no-pdf">
                                       <button onClick={()=>handleReversePartialDelivery(req,ep)}
                                         className="bg-red-100 text-red-600 hover:bg-red-500 hover:text-white px-2 py-1 rounded-lg text-[9px] font-black uppercase flex items-center gap-1 mx-auto transition-all">
@@ -16035,14 +16038,17 @@ tr:nth-child(even){background:#f9fafb}tfoot tr{background:#f3f4f6;font-weight:90
                                       </button>
                                     </td>
                                   </tr>
-                                ))}
+                                  );
+                                })}
                               </tbody>
                               <tfoot className="bg-teal-50 border-t-2 border-teal-200">
                                 <tr className="font-black text-[10px]">
                                   <td colSpan="2" className="py-2 px-3 text-right uppercase text-teal-700">Total Entregado:</td>
                                   <td className="py-2 px-3 text-center text-blue-700 text-base">{formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0))} KG</td>
                                   {!esTermo && <td className="py-2 px-3 text-center text-orange-700 text-base">{formatNum((req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares||0),0))} Mill.</td>}
-                                  <td className="py-2 px-3"></td>
+                                  <td className="py-2 px-3 text-center text-teal-700">{(esTermo?costoXkg:costoXmill)>0?`$${formatNum(esTermo?costoXkg:costoXmill)}/${esTermo?'KG':'Mill.'}`:'—'}</td>
+                                  <td className="py-2 px-3 text-center text-green-700">{(() => { const u=esTermo?costoXkg:costoXmill; const q=(req.entregasParciales||[]).reduce((s,e)=>s+parseNum(esTermo?e.kg:e.millares||0),0); return u*q>0?`$${formatNum(u*q)}`:'—'; })()}</td>
+                                  <td className="py-2 px-3 no-pdf"></td>
                                 </tr>
                               </tfoot>
                             </table>
