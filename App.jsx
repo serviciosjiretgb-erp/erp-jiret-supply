@@ -1957,62 +1957,142 @@ export default function App() {
   // ============================================================================
   // IMPORTAR INVENTARIO CONSOLIDADO DESDE EXCEL (datos precargados)
   // ============================================================================
-  const INVENTARIO_CONSOLIDADO_DATA = [{"id":"BOL-GEN-60x82-30___ALMACEN-MARACAY","displayId":"BOL-GEN-60x82-30","desc":"Bolsa Genérica 60x82cm x 30mic (Millar)","category":"Productos Terminados","subcategory":"Bolsas Plásticas","unit":"millares","cost":610.0,"stock":1.29,"almacen":"ALMACEN MARACAY","activo":true},{"id":"FG-AFSGRIS-60x82x0.03___ALMACEN-ZI","displayId":"FG-AFSGRIS-60x82x0.03","desc":"AFS GRIS 60X82X30MIC - - 60X82X30MIC","category":"Productos Terminados","subcategory":"Bolsas Plásticas","unit":"millares","cost":287.21,"stock":0.41,"almacen":"ALMACEN ZI","activo":true},{"id":"FG-EMBUTIDO1KIRI-28x75x0.012___ALMACEN-ZI","displayId":"FG-EMBUTIDO1KIRI-28x75x0.012","desc":"EMBUTIDO 1 - KIRI - 28X75X12MIC","category":"Productos Terminados","subcategory":"Bolsas Plásticas","unit":"millares","cost":77.11,"stock":1.67,"almacen":"ALMACEN ZI","activo":true},{"id":"FG-VENILACBOLSA12KG37-37x75x0.01___ALMACEN-ZI","displayId":"FG-VENILACBOLSA12KG37-37x75x0.01","desc":"VENILAC - BOLSA 12KG - 37X75X10MIC","category":"Productos Terminados","subcategory":"Bolsas Plásticas","unit":"millares","cost":76.17,"stock":6.2,"almacen":"ALMACEN ZI","activo":true},{"id":"FG-EMBUTIDOS2KIRI-53x83x0.012___ALMACEN-ZI","displayId":"FG-EMBUTIDOS2KIRI-53x83x0.012","desc":"EMBUTIDOS 2 KIRI - 53X83X12MIC","category":"Productos Terminados","subcategory":"Bolsas Plásticas","unit":"millares","cost":122.25,"stock":1.1,"almacen":"ALMACEN ZI","activo":true},{"id":"FG-VENILACBOLSA25KG-53x91x0.02___ALMACEN-ZI","displayId":"FG-VENILACBOLSA25KG-53x91x0.02","desc":"VENILAC - BOLSA 25KG - 53X91X20MIC","category":"Productos Terminados","subcategory":"Bolsas Plásticas","unit":"millares","cost":201.59,"stock":1.0,"almacen":"ALMACEN ZI","activo":true},{"id":"FG-PAÑALKIRI-60x75x0.004___ALMACEN-ZI","displayId":"FG-PAÑALKIRI-60x75x0.004","desc":"PAÑAL-KIRI 60×75×0.004MIC - 60X75X4MIC","category":"Productos Terminados","subcategory":"Bolsas Plásticas","unit":"millares","cost":78.01,"stock":13.3,"almacen":"ALMACEN ZI","activo":true},{"id":"FG-CHUPETA-KIRI-9X14X6MIC___ALMACEN-ZI","displayId":"FG-CHUPETA-KIRI-9X14X6MIC","desc":"CHUPETA - KIRI - 9X14X6MIC","category":"Productos Terminados","subcategory":"Bolsas Plásticas","unit":"millares","cost":3.0,"stock":51.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-AMA-2x110Y-1.8___ALMACEN-ZI","displayId":"CE-AMA-2x110Y-1.8","desc":"Cinta Embalar Amarilla 2\" x 110Yd x 1.8Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.56,"stock":71.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-AMA-2x110Y-1.8___ALMACEN-C2","displayId":"CE-AMA-2x110Y-1.8","desc":"Cinta Embalar Amarilla 2\" x 110Yd x 1.8Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.56,"stock":64.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-AMA-2x45M___ALMACEN-C2","displayId":"CE-AMA-2x45M","desc":"Cinta Embalar Amarilla 2\" x 45m","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":0.67,"stock":72.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-AZU-2x110Y-1.8___ALMACEN-C2","displayId":"CE-AZU-2x110Y-1.8","desc":"Cinta Embalar Azul 2\" x 110Yd x 1.8Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.28,"stock":109.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-AZU-2x110Y-1.8___ALMACEN-BQTO","displayId":"CE-AZU-2x110Y-1.8","desc":"Cinta Embalar Azul 2\" x 110Yd x 1.8Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.28,"stock":36.0,"almacen":"ALMACEN BQTO","activo":true},{"id":"CE-AZU-3x110Y-1.8___ALMACEN-C2","displayId":"CE-AZU-3x110Y-1.8","desc":"Cinta Embalar Azul 3\" x 110Yd x 1.8Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.3,"stock":11.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-BLA-2x110Y-2.0___ALMACEN-ZI","displayId":"CE-BLA-2x110Y-2.0","desc":"Cinta Embalar Blanca 2\" x 110Yd x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.25,"stock":468.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-BLA-2x110Y-2.0___ALMACEN-C2","displayId":"CE-BLA-2x110Y-2.0","desc":"Cinta Embalar Blanca 2\" x 110Yd x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.25,"stock":154.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-BLA-2x50M___ALMACEN-C2","displayId":"CE-BLA-2x50M","desc":"Cinta Embalar Blanca 2\" x 50m","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":0.7,"stock":44.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-FRAGIL-2x110Y-1.8___ALMACEN-ZI","displayId":"CE-FRAGIL-2x110Y-1.8","desc":"Cinta Embalar Frágil 2\" x 110Yd x 1.8Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":2.22,"stock":35.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-FRAGIL-2x110Y-1.8___ALMACEN-C2","displayId":"CE-FRAGIL-2x110Y-1.8","desc":"Cinta Embalar Frágil 2\" x 110Yd x 1.8Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":2.22,"stock":6.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-LOGO-3x100M___ALMACEN-ZI","displayId":"CE-LOGO-3x100M","desc":"Cinta Embalar Personalizada/Logo 3\" x 100m","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":2.33,"stock":35.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-LOGO-3x100M___ALMACEN-MARACAY","displayId":"CE-LOGO-3x100M","desc":"Cinta Embalar Personalizada/Logo 3\" x 100m","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":2.33,"stock":5.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"CE-MAR-2x110Y-1.88___ALMACEN-ZI","displayId":"CE-MAR-2x110Y-1.88","desc":"Cinta Embalar Marrón 2\" x 110Yd x 1.88Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.27,"stock":36.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-MAR-2x110Y-1.88___ALMACEN-C2","displayId":"CE-MAR-2x110Y-1.88","desc":"Cinta Embalar Marrón 2\" x 110Yd x 1.88Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.27,"stock":38.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-MAR-2x50M___ALMACEN-C2","displayId":"CE-MAR-2x50M","desc":"Cinta Embalar Marrón 2\" x 50m","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":0.62,"stock":13.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-NAR-2x100M-2.0___ALMACEN-ZI","displayId":"CE-NAR-2x100M-2.0","desc":"Cinta Embalar Naranja 2\" x 100m x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.6,"stock":540.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-NAR-2x100M-2.0___ALMACEN-C2","displayId":"CE-NAR-2x100M-2.0","desc":"Cinta Embalar Naranja 2\" x 100m x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.6,"stock":498.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-NAR-2x100M-2.0___ALMACEN-MARACAY","displayId":"CE-NAR-2x100M-2.0","desc":"Cinta Embalar Naranja 2\" x 100m x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.6,"stock":108.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"CE-NEG-2x110Y-2.0___ALMACEN-ZI","displayId":"CE-NEG-2x110Y-2.0","desc":"Cinta Embalar Negra 2\" x 110Yd x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.25,"stock":252.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-NEG-2x110Y-2.0___ALMACEN-C2","displayId":"CE-NEG-2x110Y-2.0","desc":"Cinta Embalar Negra 2\" x 110Yd x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.25,"stock":27.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-ROJ-2x110Y-2.0___ALMACEN-ZI","displayId":"CE-ROJ-2x110Y-2.0","desc":"Cinta Embalar Roja 2\" x 110Yd x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.23,"stock":215.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-ROJ-2x110Y-2.0___ALMACEN-C2","displayId":"CE-ROJ-2x110Y-2.0","desc":"Cinta Embalar Roja 2\" x 110Yd x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.23,"stock":72.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-ROJ-2x45M___ALMACEN-C2","displayId":"CE-ROJ-2x45M","desc":"Cinta Embalar Roja 2\" x 45m","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":0.67,"stock":72.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-STOP-2x110Y-1.8___ALMACEN-ZI","displayId":"CE-STOP-2x110Y-1.8","desc":"Cinta Embalar Stop 2\" x 110Yd x 1.8Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":2.74,"stock":72.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-STOP-2x110Y-1.8___ALMACEN-C2","displayId":"CE-STOP-2x110Y-1.8","desc":"Cinta Embalar Stop 2\" x 110Yd x 1.8Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":2.74,"stock":30.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-TRA-2x1000M-2.0___ALMACEN-ZI","displayId":"CE-TRA-2x1000M-2.0","desc":"Cinta Embalar Transparente 2\" x 1000m x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":6.95,"stock":1028.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-TRA-2x1000M-2.0___ALMACEN-C2","displayId":"CE-TRA-2x1000M-2.0","desc":"Cinta Embalar Transparente 2\" x 1000m x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":6.95,"stock":40.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-TRA-2x1000M-2.0___ALMACEN-MARACAY","displayId":"CE-TRA-2x1000M-2.0","desc":"Cinta Embalar Transparente 2\" x 1000m x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":6.95,"stock":93.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"CE-TRA-2x1000M-2.0___ALMACEN-BQTO","displayId":"CE-TRA-2x1000M-2.0","desc":"Cinta Embalar Transparente 2\" x 1000m x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":6.95,"stock":476.0,"almacen":"ALMACEN BQTO","activo":true},{"id":"CE-TRA-2x110Y-2.0___ALMACEN-ZI","displayId":"CE-TRA-2x110Y-2.0","desc":"Cinta Embalar Transparente 2\" x 110Yd x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":0.76,"stock":3408.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-TRA-2x110Y-2.0___ALMACEN-C2","displayId":"CE-TRA-2x110Y-2.0","desc":"Cinta Embalar Transparente 2\" x 110Yd x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":0.76,"stock":2.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-TRA-2x110Y-2.0___ALMACEN-MARACAY","displayId":"CE-TRA-2x110Y-2.0","desc":"Cinta Embalar Transparente 2\" x 110Yd x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":0.76,"stock":2574.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"CE-TRA-2x110Y-2.0___ALMACEN-BQTO","displayId":"CE-TRA-2x110Y-2.0","desc":"Cinta Embalar Transparente 2\" x 110Yd x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":0.76,"stock":900.0,"almacen":"ALMACEN BQTO","activo":true},{"id":"CE-TRA-3x110Y-2.0___ALMACEN-ZI","displayId":"CE-TRA-3x110Y-2.0","desc":"Cinta Embalar Transparente 3\" x 110Yd x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.51,"stock":48.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-TRA-3x110Y-2.0___ALMACEN-C2","displayId":"CE-TRA-3x110Y-2.0","desc":"Cinta Embalar Transparente 3\" x 110Yd x 2.0Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.51,"stock":3.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-VER-2x100M-1.8___ALMACEN-ZI","displayId":"CE-VER-2x100M-1.8","desc":"Cinta Embalar Verde 2\" x 100m x 1.8Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.55,"stock":36.0,"almacen":"ALMACEN ZI","activo":true},{"id":"CE-VER-2x100M-1.8___ALMACEN-C2","displayId":"CE-VER-2x100M-1.8","desc":"Cinta Embalar Verde 2\" x 100m x 1.8Mil","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":1.55,"stock":52.0,"almacen":"ALMACEN C2","activo":true},{"id":"CE-VER-2x45M___ALMACEN-C2","displayId":"CE-VER-2x45M","desc":"Cinta Embalar Verde 2\" x 45m","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":0.67,"stock":72.0,"almacen":"ALMACEN C2","activo":true},{"id":"FLJ-PS-1/2-3000___ALMACEN-C2","displayId":"FLJ-PS-1/2-3000","desc":"Fleje Poly Strapping 1/2 x 3000m","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":71.26,"stock":1.0,"almacen":"ALMACEN C2","activo":true},{"id":"FLJ-VER-1/2-0.63___ALMACEN-ZI","displayId":"FLJ-VER-1/2-0.63","desc":"Fleje Automático Verde 1/2 x 1768m x 0.63mm","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":48.12,"stock":68.0,"almacen":"ALMACEN ZI","activo":true},{"id":"FLJ-VER-1/2-0.63___ALMACEN-MARACAY","displayId":"FLJ-VER-1/2-0.63","desc":"Fleje Automático Verde 1/2 x 1768m x 0.63mm","category":"Productos Terminados","subcategory":"Cintas","unit":"und","cost":48.12,"stock":30.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"DSP-CINTA-2___ALMACEN-ZI","displayId":"DSP-CINTA-2","desc":"Dispensador de Cinta de Embalar 2\"","category":"Productos Terminados","subcategory":"Dispensadores","unit":"und","cost":3.0,"stock":8.0,"almacen":"ALMACEN ZI","activo":true},{"id":"DSP-CINTA-2___ALMACEN-C2","displayId":"DSP-CINTA-2","desc":"Dispensador de Cinta de Embalar 2\"","category":"Productos Terminados","subcategory":"Dispensadores","unit":"und","cost":3.0,"stock":12.0,"almacen":"ALMACEN C2","activo":true},{"id":"DSP-SF___ALMACEN-ZI","displayId":"DSP-SF","desc":"Dispensador de Stretch Film","category":"Productos Terminados","subcategory":"Dispensadores","unit":"und","cost":7.0,"stock":31.0,"almacen":"ALMACEN ZI","activo":true},{"id":"DSP-SF___ALMACEN-C2","displayId":"DSP-SF","desc":"Dispensador de Stretch Film","category":"Productos Terminados","subcategory":"Dispensadores","unit":"und","cost":7.0,"stock":19.0,"almacen":"ALMACEN C2","activo":true},{"id":"DSP-SF___ALMACEN-MARACAY","displayId":"DSP-SF","desc":"Dispensador de Stretch Film","category":"Productos Terminados","subcategory":"Dispensadores","unit":"und","cost":7.0,"stock":4.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"DSP-SF___ALMACEN-BQTO","displayId":"DSP-SF","desc":"Dispensador de Stretch Film","category":"Productos Terminados","subcategory":"Dispensadores","unit":"und","cost":7.0,"stock":4.0,"almacen":"ALMACEN BQTO","activo":true},{"id":"PK-60-50-10___ALMACEN-ZI","displayId":"PK-60-50-10","desc":"Papel Kraft Marrón 60cm x 50gr x 10kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":20.15,"stock":1861.0,"almacen":"ALMACEN ZI","activo":true},{"id":"PK-60-50-10___ALMACEN-C2","displayId":"PK-60-50-10","desc":"Papel Kraft Marrón 60cm x 50gr x 10kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":20.15,"stock":17.0,"almacen":"ALMACEN C2","activo":true},{"id":"PK-60-50-10___ALMACEN-MARACAY","displayId":"PK-60-50-10","desc":"Papel Kraft Marrón 60cm x 50gr x 10kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":20.15,"stock":22.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"PK-60-50-10___ALMACEN-BQTO","displayId":"PK-60-50-10","desc":"Papel Kraft Marrón 60cm x 50gr x 10kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":20.15,"stock":50.0,"almacen":"ALMACEN BQTO","activo":true},{"id":"PK-60-50-5___ALMACEN-ZI","displayId":"PK-60-50-5","desc":"Papel Kraft Marrón 60cm x 50gr x 5kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":15.95,"stock":1.0,"almacen":"ALMACEN ZI","activo":true},{"id":"PK-60-50-5___ALMACEN-C2","displayId":"PK-60-50-5","desc":"Papel Kraft Marrón 60cm x 50gr x 5kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":15.95,"stock":3.0,"almacen":"ALMACEN C2","activo":true},{"id":"PK-60-66-10___ALMACEN-ZI","displayId":"PK-60-66-10","desc":"Papel Kraft Marrón 60cm x 66gr x 10kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":22.25,"stock":127.0,"almacen":"ALMACEN ZI","activo":true},{"id":"PK-60-66-10___ALMACEN-C2","displayId":"PK-60-66-10","desc":"Papel Kraft Marrón 60cm x 66gr x 10kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":22.25,"stock":14.0,"almacen":"ALMACEN C2","activo":true},{"id":"PK-60-66-10___ALMACEN-MARACAY","displayId":"PK-60-66-10","desc":"Papel Kraft Marrón 60cm x 66gr x 10kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":22.25,"stock":16.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"PK-60-66-10___ALMACEN-BQTO","displayId":"PK-60-66-10","desc":"Papel Kraft Marrón 60cm x 66gr x 10kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":22.25,"stock":6.0,"almacen":"ALMACEN BQTO","activo":true},{"id":"PK-60-82-10___ALMACEN-ZI","displayId":"PK-60-82-10","desc":"Papel Kraft Marrón 60cm x 82gr x 10kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":23.64,"stock":45.0,"almacen":"ALMACEN ZI","activo":true},{"id":"PK-60-82-10___ALMACEN-C2","displayId":"PK-60-82-10","desc":"Papel Kraft Marrón 60cm x 82gr x 10kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":23.64,"stock":7.0,"almacen":"ALMACEN C2","activo":true},{"id":"PK-60-82-10___ALMACEN-MARACAY","displayId":"PK-60-82-10","desc":"Papel Kraft Marrón 60cm x 82gr x 10kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":23.64,"stock":10.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"PK-60-82-10___ALMACEN-BQTO","displayId":"PK-60-82-10","desc":"Papel Kraft Marrón 60cm x 82gr x 10kg","category":"Productos Terminados","subcategory":"Papel Kraft","unit":"und","cost":23.64,"stock":20.0,"almacen":"ALMACEN BQTO","activo":true},{"id":"PSF-TRA-45-8-2.7___ALMACEN-ZI","displayId":"PSF-TRA-45-8-2.7","desc":"Pre-Stretch Film Transparente 45cm x 550m x 8mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.97,"stock":1104.0,"almacen":"ALMACEN ZI","activo":true},{"id":"PSF-TRA-45-8-2.7___ALMACEN-C2","displayId":"PSF-TRA-45-8-2.7","desc":"Pre-Stretch Film Transparente 45cm x 550m x 8mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.97,"stock":53.0,"almacen":"ALMACEN C2","activo":true},{"id":"PSF-TRA-45-8-2.7___ALMACEN-MARACAY","displayId":"PSF-TRA-45-8-2.7","desc":"Pre-Stretch Film Transparente 45cm x 550m x 8mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.97,"stock":4.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"PSF-TRA-45-8-2.7___ALMACEN-BQTO","displayId":"PSF-TRA-45-8-2.7","desc":"Pre-Stretch Film Transparente 45cm x 550m x 8mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.97,"stock":1.0,"almacen":"ALMACEN BQTO","activo":true},{"id":"SF-AMA-50-20-2.0___ALMACEN-C2","displayId":"SF-AMA-50-20-2.0","desc":"Stretch Film Amarillo 50cm x 225m x 20mic x 2.0kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.23,"stock":7.0,"almacen":"ALMACEN C2","activo":true},{"id":"SF-AZU-45-20-2.7___ALMACEN-ZI","displayId":"SF-AZU-45-20-2.7","desc":"Stretch Film Azul 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":9.68,"stock":80.0,"almacen":"ALMACEN ZI","activo":true},{"id":"SF-AZU-45-20-2.7___ALMACEN-C2","displayId":"SF-AZU-45-20-2.7","desc":"Stretch Film Azul 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":9.68,"stock":21.0,"almacen":"ALMACEN C2","activo":true},{"id":"SF-AZU-45-20-2.7___ALMACEN-MARACAY","displayId":"SF-AZU-45-20-2.7","desc":"Stretch Film Azul 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":9.68,"stock":1.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"SF-BLA-45-20-2.7___ALMACEN-ZI","displayId":"SF-BLA-45-20-2.7","desc":"Stretch Film Blanco 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":4.42,"stock":128.0,"almacen":"ALMACEN ZI","activo":true},{"id":"SF-BLA-45-20-2.7___ALMACEN-C2","displayId":"SF-BLA-45-20-2.7","desc":"Stretch Film Blanco 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":4.42,"stock":12.0,"almacen":"ALMACEN C2","activo":true},{"id":"SF-BLA-45-20-2.7___ALMACEN-MARACAY","displayId":"SF-BLA-45-20-2.7","desc":"Stretch Film Blanco 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":4.42,"stock":18.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"SF-BLA-45-20-2.7___ALMACEN-BQTO","displayId":"SF-BLA-45-20-2.7","desc":"Stretch Film Blanco 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":4.42,"stock":18.0,"almacen":"ALMACEN BQTO","activo":true},{"id":"SF-NAR-45-20-2.7___ALMACEN-ZI","displayId":"SF-NAR-45-20-2.7","desc":"Stretch Film Naranja 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":9.66,"stock":32.0,"almacen":"ALMACEN ZI","activo":true},{"id":"SF-NEG-45-20-2.7___ALMACEN-ZI","displayId":"SF-NEG-45-20-2.7","desc":"Stretch Film Negro 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.65,"stock":48.0,"almacen":"ALMACEN ZI","activo":true},{"id":"SF-NEG-45-20-2.7___ALMACEN-C2","displayId":"SF-NEG-45-20-2.7","desc":"Stretch Film Negro 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.65,"stock":11.0,"almacen":"ALMACEN C2","activo":true},{"id":"SF-NEG-45-20-2.7___ALMACEN-MARACAY","displayId":"SF-NEG-45-20-2.7","desc":"Stretch Film Negro 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.65,"stock":15.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"SF-ROJ-45-20-2.7___ALMACEN-ZI","displayId":"SF-ROJ-45-20-2.7","desc":"Stretch Film Rojo 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.55,"stock":8.0,"almacen":"ALMACEN ZI","activo":true},{"id":"SF-ROJ-45-20-2.7___ALMACEN-C2","displayId":"SF-ROJ-45-20-2.7","desc":"Stretch Film Rojo 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.55,"stock":11.0,"almacen":"ALMACEN C2","activo":true},{"id":"SF-ROJ-45-20-2.7___ALMACEN-BQTO","displayId":"SF-ROJ-45-20-2.7","desc":"Stretch Film Rojo 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.55,"stock":8.0,"almacen":"ALMACEN BQTO","activo":true},{"id":"SF-TRA-12-20-MINI___ALMACEN-ZI","displayId":"SF-TRA-12-20-MINI","desc":"Mini Stretch Film Transparente 12cm x 225m x 20mic","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":2.48,"stock":12.0,"almacen":"ALMACEN ZI","activo":true},{"id":"SF-TRA-12-20-MINI___ALMACEN-C2","displayId":"SF-TRA-12-20-MINI","desc":"Mini Stretch Film Transparente 12cm x 225m x 20mic","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":2.48,"stock":3.0,"almacen":"ALMACEN C2","activo":true},{"id":"SF-TRA-12-20-MINI___ALMACEN-MARACAY","displayId":"SF-TRA-12-20-MINI","desc":"Mini Stretch Film Transparente 12cm x 225m x 20mic","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":2.48,"stock":12.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"SF-TRA-45-10-2.7-SHW___ALMACEN-ZI","displayId":"SF-TRA-45-10-2.7-SHW","desc":"Stretch Film Transparente SHW 45cm x 520m x 10mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.7,"stock":2.0,"almacen":"ALMACEN ZI","activo":true},{"id":"SF-TRA-45-10-2.7-SHW___ALMACEN-C2","displayId":"SF-TRA-45-10-2.7-SHW","desc":"Stretch Film Transparente SHW 45cm x 520m x 10mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.7,"stock":3.0,"almacen":"ALMACEN C2","activo":true},{"id":"SF-TRA-45-10-2.7-SHW___ALMACEN-MARACAY","displayId":"SF-TRA-45-10-2.7-SHW","desc":"Stretch Film Transparente SHW 45cm x 520m x 10mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":8.7,"stock":53.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"SF-TRA-45-20-2.0___ALMACEN-C2","displayId":"SF-TRA-45-20-2.0","desc":"Stretch Film Transparente 45cm x 225m x 20mic x 2.0kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":5.16,"stock":2.0,"almacen":"ALMACEN C2","activo":true},{"id":"SF-TRA-45-20-4.0___ALMACEN-ZI","displayId":"SF-TRA-45-20-4.0","desc":"Stretch Film Transparente 45cm x 450m x 20mic x 4.0kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":2.43,"stock":5755.0,"almacen":"ALMACEN ZI","activo":true},{"id":"SF-TRA-45-20-4.0___ALMACEN-C2","displayId":"SF-TRA-45-20-4.0","desc":"Stretch Film Transparente 45cm x 450m x 20mic x 4.0kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":2.43,"stock":24.0,"almacen":"ALMACEN C2","activo":true},{"id":"SF-TRA-45-20-4.0___ALMACEN-MARACAY","displayId":"SF-TRA-45-20-4.0","desc":"Stretch Film Transparente 45cm x 450m x 20mic x 4.0kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":2.43,"stock":789.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"SF-TRA-45-20-4.0___ALMACEN-BQTO","displayId":"SF-TRA-45-20-4.0","desc":"Stretch Film Transparente 45cm x 450m x 20mic x 4.0kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":2.43,"stock":19.0,"almacen":"ALMACEN BQTO","activo":true},{"id":"SF-VER-45-20-2.7___ALMACEN-ZI","displayId":"SF-VER-45-20-2.7","desc":"Stretch Film Verde 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":7.44,"stock":16.0,"almacen":"ALMACEN ZI","activo":true},{"id":"SF-VER-45-20-2.7___ALMACEN-C2","displayId":"SF-VER-45-20-2.7","desc":"Stretch Film Verde 45cm x 330m x 20mic x 2.7kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":7.44,"stock":17.0,"almacen":"ALMACEN C2","activo":true},{"id":"SFA-BLA-75-25-29-UV___ALMACEN-ZI","displayId":"SFA-BLA-75-25-29-UV","desc":"Stretch Film Automático Blanco UV 75cm x 1600m x 25mic x 29kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":74.37,"stock":7.0,"almacen":"ALMACEN ZI","activo":true},{"id":"SFA-BLA-75-25-29-UV___ALMACEN-MARACAY","displayId":"SFA-BLA-75-25-29-UV","desc":"Stretch Film Automático Blanco UV 75cm x 1600m x 25mic x 29kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":74.37,"stock":5.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"SFA-NEG-50-20-16___ALMACEN-C2","displayId":"SFA-NEG-50-20-16","desc":"Stretch Film Automático Negro 50cm x 1500m x 20mic x 16kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":58.42,"stock":8.0,"almacen":"ALMACEN C2","activo":true},{"id":"SFA-TRA-50-20-16___ALMACEN-ZI","displayId":"SFA-TRA-50-20-16","desc":"Stretch Film Automático Transparente 50cm x 1600m x 20mic x 16kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":15.09,"stock":778.0,"almacen":"ALMACEN ZI","activo":true},{"id":"SFA-TRA-50-20-16___ALMACEN-C2","displayId":"SFA-TRA-50-20-16","desc":"Stretch Film Automático Transparente 50cm x 1600m x 20mic x 16kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":15.09,"stock":5.0,"almacen":"ALMACEN C2","activo":true},{"id":"SFA-TRA-50-20-16___ALMACEN-MARACAY","displayId":"SFA-TRA-50-20-16","desc":"Stretch Film Automático Transparente 50cm x 1600m x 20mic x 16kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":15.09,"stock":6.0,"almacen":"ALMACEN MARACAY","activo":true},{"id":"SFA-TRA-50-20-16___ALMACEN-BQTO","displayId":"SFA-TRA-50-20-16","desc":"Stretch Film Automático Transparente 50cm x 1600m x 20mic x 16kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":15.09,"stock":3.0,"almacen":"ALMACEN BQTO","activo":true},{"id":"SFJ-TRA-45-20-42___ALMACEN-ZI","displayId":"SFJ-TRA-45-20-42","desc":"Stretch Film Jumbo Transparente 45cm x 20mic x 42.4kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":14.33,"stock":180.0,"almacen":"ALMACEN ZI","activo":true},{"id":"SFJ-TRA-50-20-45___ALMACEN-ZI","displayId":"SFJ-TRA-50-20-45","desc":"Stretch Film Jumbo Transparente 50cm x 20mic x 45.4kg","category":"Productos Terminados","subcategory":"Stretch Film","unit":"und","cost":44.35,"stock":492.0,"almacen":"ALMACEN ZI","activo":true},{"id":"VENILAC - TERMO - 48X0X7MIC___ALMACEN-ZI","displayId":"VENILAC - TERMO - 48X0X7MIC","desc":"VENILAC - TERMO - 48X0X7MIC","category":"Productos Terminados","subcategory":"Termoencogibles","unit":"kg","cost":0.0,"stock":0.6,"almacen":"ALMACEN ZI","activo":true}];
 
-  const handleImportConsolidatedInventory = async () => {
-    setDialog({
-      title: 'Importar Inventario Consolidado',
-      text: `¿Importar ${INVENTARIO_CONSOLIDADO_DATA.length} registros de productos terminados (nuevos códigos, 4 almacenes)? Los existentes se actualizarán stock y costo. Los nuevos se crearán.`,
-      type: 'confirm',
-      onConfirm: async () => {
-        try {
-          let created = 0, updated = 0;
-          const batchSize = 400;
-          for(let i = 0; i < INVENTARIO_CONSOLIDADO_DATA.length; i += batchSize) {
-            const chunk = INVENTARIO_CONSOLIDADO_DATA.slice(i, i + batchSize);
-            const batch = writeBatch(db);
-            for(const item of chunk) {
-              const ref = getDocRef('inventory', item.id);
-              const existing = (inventory || []).find(x => x.id === item.id);
-              if(existing) {
-                batch.update(ref, {
-                  stock: item.stock,
-                  cost: item.cost,
-                  desc: item.desc,
-                  displayId: item.displayId,
-                  subcategory: item.subcategory,
-                  unit: item.unit,
-                  almacen: item.almacen,
-                  activo: true,
-                  updatedAt: Date.now()
-                });
-                updated++;
-              } else {
-                batch.set(ref, {
-                  id: item.id,
-                  displayId: item.displayId,
-                  desc: item.desc,
-                  category: 'Productos Terminados',
-                  subcategory: item.subcategory || '',
-                  unit: item.unit || 'und',
-                  cost: item.cost,
-                  stock: item.stock,
-                  almacen: item.almacen,
-                  activo: true,
-                  minStock: 0,
-                  timestamp: Date.now()
-                });
-                created++;
-              }
-            }
-            await batch.commit();
-          }
-          setDialog({ title: '✅ Importación Completa', text: `${created} artículos creados · ${updated} actualizados.\nTotal: ${created+updated} registros en 4 almacenes.`, type: 'alert' });
-        } catch(err) {
-          setDialog({ title: 'Error en importación', text: err.message, type: 'alert' });
+  // ── IMPORTAR INVENTARIO CONSOLIDADO DESDE EXCEL (subido por el usuario) ──────
+  const handleImportConsolidatedInventory = () => {
+    // Crear input de archivo invisible y activarlo
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.xlsx,.xls';
+    input.onchange = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        // Leer el archivo con FileReader
+        const arrayBuffer = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = ev => resolve(ev.target.result);
+          reader.onerror = reject;
+          reader.readAsArrayBuffer(file);
+        });
+        // Parsear con SheetJS (XLSX disponible globalmente via CDN o import)
+        let XLSX;
+        try { XLSX = window.XLSX; } catch(_){}
+        if (!XLSX) {
+          await new Promise((res,rej)=>{
+            const s=document.createElement('script');
+            s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+            s.onload=res; s.onerror=rej; document.head.appendChild(s);
+          });
+          XLSX = window.XLSX;
         }
+        const wb = XLSX.read(arrayBuffer, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+
+        // Detectar columnas: buscar fila con "ALM. ZI" / "Stock" etc.
+        // Estructura fija del Excel consolidado:
+        // Col 0=Código, 1=Desc, 2=Subcat, 3=UM, 4=Costo
+        // Col 5=ZI Stock, 7=C2 Stock, 9=MARACAY Stock, 11=BQTO Stock
+        const ALM_COLS = [
+          { col: 5,  field: 'ALMACEN ZI',      suffix: 'ALMACEN-ZI'      },
+          { col: 7,  field: 'ALMACEN C2',       suffix: 'ALMACEN-C2'      },
+          { col: 9,  field: 'ALMACEN MARACAY',  suffix: 'ALMACEN-MARACAY' },
+          { col: 11, field: 'ALMACEN BQTO',     suffix: 'ALMACEN-BQTO'    },
+        ];
+        const SKIP = ['▸','TOTAL','SERVICIOS','RIF:','CODIGOS','PRODUCTOS',null,undefined,''];
+        const parseN = v => {
+          if (v === null || v === undefined || v === '—') return 0;
+          if (typeof v === 'number') return v;
+          return parseFloat(String(v).replace(/[$,\s]/g,'')) || 0;
+        };
+
+        const items = [];
+        for (const row of rows) {
+          const code = row[0];
+          if (!code) continue;
+          const codeStr = String(code).trim();
+          if (SKIP.some(s => s && codeStr.startsWith(s))) continue;
+          if (codeStr.length < 2) continue;
+
+          const desc   = String(row[1] || '').trim();
+          const subcat = String(row[2] || '').trim();
+          const um     = String(row[3] || 'und').trim().toLowerCase();
+          const cost   = parseN(row[4]);
+
+          for (const { col, field, suffix } of ALM_COLS) {
+            const stock = parseN(row[col]);
+            if (stock <= 0) continue;
+            // Limpiar / en códigos (Firestore no permite / en IDs)
+            const cleanCode = codeStr.replace(/\//g, '-');
+            items.push({
+              id: `${cleanCode}___${suffix}`,
+              displayId: cleanCode,
+              desc,
+              category: 'Productos Terminados',
+              subcategory: subcat,
+              unit: um || 'und',
+              cost,
+              stock,
+              almacen: field,
+              activo: true,
+            });
+          }
+        }
+
+        if (items.length === 0) {
+          setDialog({ title: 'Aviso', text: 'No se encontraron artículos con stock en el archivo. Verifica que el formato sea el del consolidado.', type: 'alert' });
+          return;
+        }
+
+        // Mostrar resumen y pedir confirmación
+        const byAlm = items.reduce((a,i)=>{ a[i.almacen]=(a[i.almacen]||0)+1; return a; }, {});
+        const resumen = Object.entries(byAlm).map(([k,v])=>`• ${k}: ${v} artículos`).join('\n');
+        setDialog({
+          title: `📦 Importar ${items.length} registros`,
+          text: `Archivo: ${file.name}\n\n${resumen}\n\nLos artículos NUEVOS se crearán. Los existentes se ACTUALIZARÁN (stock, costo, subcategoría). ¿Continuar?`,
+          type: 'confirm',
+          onConfirm: async () => {
+            try {
+              let created = 0, updated = 0;
+              const batchSize = 400;
+              for (let i = 0; i < items.length; i += batchSize) {
+                const chunk = items.slice(i, i + batchSize);
+                const batch = writeBatch(db);
+                for (const item of chunk) {
+                  const ref = getDocRef('inventory', item.id);
+                  const existing = (inventory || []).find(x => x.id === item.id);
+                  if (existing) {
+                    batch.update(ref, {
+                      stock: item.stock, cost: item.cost, desc: item.desc,
+                      displayId: item.displayId, subcategory: item.subcategory,
+                      unit: item.unit, almacen: item.almacen, activo: true,
+                      updatedAt: Date.now()
+                    });
+                    updated++;
+                  } else {
+                    batch.set(ref, {
+                      id: item.id, displayId: item.displayId, desc: item.desc,
+                      category: 'Productos Terminados', subcategory: item.subcategory || '',
+                      unit: item.unit || 'und', cost: item.cost, stock: item.stock,
+                      almacen: item.almacen, activo: true, minStock: 0, timestamp: Date.now()
+                    });
+                    created++;
+                  }
+                }
+                await batch.commit();
+              }
+              setDialog({ title: '✅ Importación Completa', text: `${created} artículos creados · ${updated} actualizados.\nTotal: ${created+updated} registros en Firebase.`, type: 'alert' });
+            } catch(err) {
+              setDialog({ title: 'Error en importación', text: err.message, type: 'alert' });
+            }
+          }
+        });
+      } catch(err) {
+        setDialog({ title: 'Error al leer el archivo', text: err.message, type: 'alert' });
       }
-    });
+    };
+    input.click();
   };
 
   // ============================================================================
