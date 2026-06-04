@@ -510,7 +510,7 @@ export default function App() {
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [showAddClientForm, setShowAddClientForm] = useState(false);
   const [editingClientId, setEditingClientId] = useState(null);
-  const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '' };
+  const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '', productoDestinoId: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
   const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', clientAddress: '', documento: '', nroFiscal: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '', ncAsignada: '' };
@@ -1105,8 +1105,8 @@ export default function App() {
   //   • Como toma el saldo ACTUAL de FG Producción, nunca restaura lo ya facturado.
   useEffect(() => {
     if(!inventory || !finishedGoodsInventory || !appUser) return;
-    if(sessionStorage.getItem('auto_fg_mirror_v5')==='done') return;
-    sessionStorage.setItem('auto_fg_mirror_v5','done');
+    if(sessionStorage.getItem('auto_fg_mirror_v6')==='done') return;
+    sessionStorage.setItem('auto_fg_mirror_v6','done');
 
     const r2 = (n) => Math.round(parseNum(n)*100)/100;
     const dimsFromCode = (code) => {
@@ -1185,25 +1185,9 @@ export default function App() {
               ...doc, cost: nuevoCosto,
               timestamp: Date.now(), updatedAt: getTodayDate()
             }, { merge: true });
-          } else {
-            // 3) Crear el documento que falta (p.ej. VENILAC - TERMO)
-            const desc = formatFGLabel(fg) || fg.producto || 'Producto';
-            const catShort = (fg.categoria||fg.producto||'PT').toUpperCase().replace(/[\s\/\-&]+/g,'').substring(0,18);
-            const w=parseFloat(fg.ancho||0), l=parseFloat(fg.largo||0), m=parseFloat(fg.micras||0);
-            const cleanCode = `FG-${catShort}-${w}x${l}x${m}`;
-            const newId = `${cleanCode}___ALMACEN-ZI`;
-            // Evitar duplicar si por alguna razón ya existe ese id
-            if((inventory||[]).some(i => i.id===newId || (i.id||'').split('___')[0]===cleanCode)) continue;
-            await setDoc(getDocRef('inventory', newId), {
-              id:newId, displayId:cleanCode, desc,
-              category:'Productos Terminados',
-              subcategory: g.esTermo?'Termoencogibles':'Bolsas Plásticas',
-              unit: g.esTermo?'KG':'Millares',
-              stock: qtyTot, cost: costUnit,
-              almacen:'ALMACEN ZI', activo:true,
-              timestamp:Date.now(), updatedAt:getTodayDate()
-            });
           }
+          // NOTA: No se crean docs nuevos automáticamente.
+          // Los artículos de inventario se crean SOLO mediante el import Excel o entrada manual.
         }
       } catch(e){ console.error('Auto-mirror FG error:', e); }
     };
@@ -1211,52 +1195,28 @@ export default function App() {
   }, [inventory, finishedGoodsInventory, invRequisitions, appUser]);
 
 
-  // ── ONE-TIME cleanup: FG duplicate docs only ──
+  // ── ONE-TIME cleanup: elimina FG duplicados con stock=0 y costo=0 ──────────
   useEffect(() => {
-    if(!inventory || !appUser || sessionStorage.getItem('cleanup_mp0240_fg_v1')==='done') return;
+    if(!inventory || !appUser || sessionStorage.getItem('cleanup_fg_zero_v2')==='done') return;
     const doCleanup = async () => {
       try {
-        const b = writeBatch(db);
-        let count = 0;
-        // (MP-0240 no longer deleted — user re-created it)
-
-        // Delete FG PT duplicate docs
-        // The 7 affected codes
-        const FG_CODES = [
-          'FG-TERMOPINTURASD-70x0x0.012','FG-AFSGRIS-60x82x0.030',
-          'FG-EMBUTIDO1KIRI2-28x75x0.012','FG-EMBUTIDOS2KIRI-53x83x0.012',
-          'FG-PAÑALKIRI-60x75x0.004','FG-VENILACBOLSA12-37x75x0.010',
-          'FG-VENILACBOLSA25-53x91x0.020'
-        ];
-        FG_CODES.forEach(code => {
-          // All docs whose cleanCode matches
-          const docs = (inventory||[]).filter(i => {
-            const cc = (i.displayId||(i.id||'').split('___')[0])
-              .replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
-            return cc === code;
-          });
-          if(docs.length <= 1) return;
-          // Group by almacén
-          const byAlm = {};
-          docs.forEach(d => {
-            const alm = d.almacen || (d.id||'').split('___')[1]?.replace(/-/g,' ') || 'ALMACEN ZI';
-            if(!byAlm[alm]) byAlm[alm] = [];
-            byAlm[alm].push(d);
-          });
-          Object.values(byAlm).forEach(almDocs => {
-            if(almDocs.length <= 1) return;
-            // Sort: keep highest stock, then most recent timestamp
-            almDocs.sort((a,b) => parseNum(b.stock)-parseNum(a.stock) || (b.timestamp||0)-(a.timestamp||0));
-            // Delete all but first (highest stock)
-            almDocs.slice(1).forEach(d => { b.delete(getDocRef('inventory', d.id)); count++; });
-          });
+        // Los duplicados del import tienen AMBOS: stock=0 y cost=0
+        // Los items originales de producción siempre tienen costo>0 o stock>0
+        const toDelete = (inventory||[]).filter(i => {
+          const code = (i.displayId || (i.id||'').split('___')[0] || '');
+          const isFG = code.toUpperCase().startsWith('FG-');
+          const isEmpty = parseNum(i.stock||0) === 0 && parseNum(i.cost||0) === 0;
+          return isFG && isEmpty;
         });
-
-        if(count > 0) await b.commit();
-        sessionStorage.setItem('cleanup_mp0240_fg_v1','done');
-      } catch(e) {
-        console.error('Cleanup error:', e);
-      }
+        if(toDelete.length === 0) {
+          sessionStorage.setItem('cleanup_fg_zero_v2','done');
+          return;
+        }
+        const b = writeBatch(db);
+        toDelete.forEach(d => b.delete(getDocRef('inventory', d.id)));
+        await b.commit();
+        sessionStorage.setItem('cleanup_fg_zero_v2','done');
+      } catch(e) { console.error('Cleanup FG zero error:', e); }
     };
     doCleanup();
   }, [inventory, appUser]);
@@ -3271,7 +3231,7 @@ export default function App() {
       await pushNotif('OP_NUEVA', '📋 Nueva OP', `Ventas generó la OP #${opId.replace('OP-','')} para ${newReqForm.client||'N/A'}.`, { opId, destino:'planta', targetTab:'produccion' });
       setDialog({title: 'Éxito', text: `OP enviada a Planta.`, type: 'alert'}); } catch(err) { setDialog({title: 'Error', text: err.message, type: 'alert'}); }
   };
-  const startEditReq = (r) => { setEditingReqId(r.id); setNewReqForm({ fecha: r.fecha||getTodayDate(), client: r.client||'', tipoProducto: r.tipoProducto||'BOLSAS', desc: r.desc||'', ancho: r.ancho||'', fuelles: r.fuelles||'', largo: r.largo||'', micras: r.micras||'', pesoMillar: r.tipoProducto==='TERMOENCOGIBLE'?'N/A':(r.pesoMillar||''), presentacion: r.presentacion||'MILLAR', cantidad: r.cantidad||'', requestedKg: r.requestedKg||'', color: r.color||'NATURAL', tratamiento: r.tratamiento||'LISO', vendedor: r.vendedor||'' }); setShowNewReqPanel(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const startEditReq = (r) => { setEditingReqId(r.id); setNewReqForm({ fecha: r.fecha||getTodayDate(), client: r.client||'', tipoProducto: r.tipoProducto||'BOLSAS', desc: r.desc||'', ancho: r.ancho||'', fuelles: r.fuelles||'', largo: r.largo||'', micras: r.micras||'', pesoMillar: r.tipoProducto==='TERMOENCOGIBLE'?'N/A':(r.pesoMillar||''), presentacion: r.presentacion||'MILLAR', cantidad: r.cantidad||'', requestedKg: r.requestedKg||'', color: r.color||'NATURAL', tratamiento: r.tratamiento||'LISO', vendedor: r.vendedor||'', productoDestinoId: r.productoDestinoId||'' }); setShowNewReqPanel(true); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteReq = (id) => {
     requireAdminPassword(async () => {
       setDialog({
@@ -12141,6 +12101,40 @@ tr:nth-child(even) td{background:#f9fafb;}
                       </div>
                     </div>
 
+                    {/* Fila 1b: Producto Destino en Inventario */}
+                    <div className="rounded-2xl border-2 border-orange-200 bg-orange-50 p-4">
+                      <label className="text-[10px] font-black text-orange-700 uppercase block mb-2 tracking-widest flex items-center gap-2">
+                        <Package size={13}/> Producto Destino en Inventario <span className="font-normal text-orange-400">(vincula la producción de esta OP con el artículo del catálogo)</span>
+                      </label>
+                      <select
+                        value={newReqForm.productoDestinoId}
+                        onChange={e=>setNewReqForm({...newReqForm, productoDestinoId: e.target.value})}
+                        className="w-full bg-white border-2 border-orange-300 rounded-2xl p-3 font-black text-xs text-black outline-none focus:border-orange-500">
+                        <option value="">— Sin vincular (crear OP sin producto destino) —</option>
+                        {[...(inventory||[])
+                          .filter(i => i.activo!==false && ['Productos Terminados','Semielaborado'].includes(i.category))
+                          .reduce((map, i) => {
+                            const key = i.displayId || (i.id||'').split('___')[0];
+                            if(!map.has(key)) map.set(key, i);
+                            return map;
+                          }, new Map()).values()
+                        ].sort((a,b)=>(a.desc||'').localeCompare(b.desc||''))
+                          .map(i => {
+                            const code = i.displayId||(i.id||'').split('___')[0];
+                            return <option key={i.id} value={i.id}>{code} — {i.desc||'Sin descripción'} ({i.unit||'und'})</option>;
+                          })
+                        }
+                      </select>
+                      {newReqForm.productoDestinoId && (() => {
+                        const prod = (inventory||[]).find(i=>i.id===newReqForm.productoDestinoId);
+                        return prod ? (
+                          <p className="text-[10px] text-orange-700 mt-2 font-bold">
+                            ✅ Al cerrar cada lote, la producción se sumará a <strong>{prod.displayId||(prod.id||'').split('___')[0]}</strong> · Stock actual: {formatNum(prod.stock||0)} {prod.unit||'und'} · Costo: ${formatNum(prod.cost||0)}
+                          </p>
+                        ) : null;
+                      })()}
+                    </div>
+
                     {/* Fila 2: Dimensiones en una sola fila */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <div>
@@ -12733,8 +12727,58 @@ tr:nth-child(even) td{background:#f9fafb;}
     const faltantes = requeridas.filter(p => !tieneProd(p));
     const cerrar = async () => {
       const updated = lotes.map((l, i) => i === activeLoteIndex ? {...l, cerrado: true, fechaCierre: getTodayDate()} : l);
-      await updateDoc(getDocRef('requirements', req.id), { 'production.lotes': updated });
-      setDialog({title:'Lote Cerrado', text:`El Lote ${activeLoteIndex+1} fue cerrado. Cree un nuevo lote para continuar produciendo.`, type:'alert'});
+      const fbBatch = writeBatch(db);
+      fbBatch.update(getDocRef('requirements', req.id), { 'production.lotes': updated });
+
+      // ── Si la OP tiene un Producto Destino vinculado → actualizar su stock y costo ──
+      if (req.productoDestinoId) {
+        const prod = (inventory||[]).find(i => i.id === req.productoDestinoId);
+        if (prod) {
+          // Calcular unidades producidas en la última fase de este lote
+          const matchFormula = (formulas||[]).find(f => f.categoria && req.categoria && f.categoria.toUpperCase() === (req.categoria||'').toUpperCase());
+          const fasesActivas = matchFormula?.fases || { extrusion:true, impresion:false, sellado:false };
+          const ultimaFase = fasesActivas.sellado ? 'sellado' : fasesActivas.impresion ? 'impresion' : 'extrusion';
+          const batchesLote = (req.production?.[ultimaFase]?.batches||[]).filter(b=>(Number.isInteger(b.loteIndex)?b.loteIndex:0)===activeLoteIndex);
+          const kgLote = batchesLote.reduce((s,b)=>s+parseNum(b.producedKg||0),0);
+          const millLote = batchesLote.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
+          const unidsProducidas = (prod.unit||'und').toLowerCase().startsWith('mill') ? millLote : kgLote;
+          // Costo del lote = suma de costos de batches de todas las fases
+          const costoLote = ['extrusion','impresion','sellado'].reduce((s,fase)=>{
+            return s + (req.production?.[fase]?.batches||[])
+              .filter(b=>(Number.isInteger(b.loteIndex)?b.loteIndex:0)===activeLoteIndex)
+              .reduce((ss,b)=>ss+parseNum(b.cost||0),0);
+          },0);
+          if (unidsProducidas > 0) {
+            const stockAnterior = parseNum(prod.stock||0);
+            const costoAnterior = parseNum(prod.cost||0);
+            const nuevoStock = stockAnterior + unidsProducidas;
+            // Costo promedio ponderado
+            const nuevoCostoUnit = costoLote > 0 ? costoLote / unidsProducidas : 0;
+            const costoProm = nuevoStock > 0
+              ? (stockAnterior*costoAnterior + unidsProducidas*nuevoCostoUnit) / nuevoStock
+              : costoAnterior;
+            fbBatch.update(getDocRef('inventory', prod.id), {
+              stock: nuevoStock,
+              cost: costoProm > 0 ? costoProm : costoAnterior,
+              updatedAt: getTodayDate()
+            });
+            // Movimiento kardex
+            const movId = `PT-${req.id}-LOTE${activeLoteIndex+1}-${Date.now()}`;
+            fbBatch.set(getDocRef('inventoryMovements', movId), {
+              id: movId, date: getTodayDate(), timestamp: Date.now(),
+              itemId: prod.id, itemName: prod.desc||prod.displayId||(prod.id||'').split('___')[0],
+              type: 'ENTRADA', qty: unidsProducidas,
+              cost: nuevoCostoUnit, totalValue: unidsProducidas*nuevoCostoUnit,
+              reference: req.id, opAsignada: req.id,
+              notes: `✅ Cierre Lote ${activeLoteIndex+1} — OP ${req.id}`,
+              user: appUser?.name||'Planta'
+            });
+          }
+        }
+      }
+
+      await fbBatch.commit();
+      setDialog({title:'Lote Cerrado', text:`El Lote ${activeLoteIndex+1} fue cerrado.${req.productoDestinoId?' El stock del producto destino fue actualizado.':' Cree un nuevo lote para continuar produciendo.'}`, type:'alert'});
     };
     if (faltantes.length > 0) {
       const nombres = faltantes.map(p=>p.toUpperCase()).join(', ');
