@@ -2069,7 +2069,7 @@ export default function App() {
         const SKIP = ['CODIGOS','TOTAL','SERVICIOS JIRET','RIF:','  ▸','ALMACEN','RESUMEN','VALOR INVENTARIO'];
         const parseN = v => { if(!v||v==='—') return 0; if(typeof v==='number') return v; return parseFloat(String(v).replace(/[$,\s]/g,''))||0; };
 
-        const items = []; const usedIds = new Set();
+        const items = []; const usedIds = new Set(); let skipped = 0;
 
         for (let ri = headerRowIdx+1; ri < rows.length; ri++) {
           const row = rows[ri];
@@ -2088,6 +2088,17 @@ export default function App() {
           const cost   = parseN(row[4]);
           const cat    = CAT_MAP[subcat] || subcat || 'Productos Terminados';
           const cleanCode = codeStr.replace(/\//g,'-');
+          // Normalizar código: quitar ceros finales en decimales (0.030 → 0.03)
+          const normalizeCode = c => c.replace(/(\.\d*?)0+(?=___|\b|-)/g,'$1').replace(/\.(?=___|\b|-)/g,'');
+          const normClean = normalizeCode(cleanCode);
+
+          // Verificar si ya existe en el sistema con el mismo código (evitar duplicados)
+          const alreadyExists = (inventory||[]).some(inv => {
+            const invId    = normalizeCode((inv.displayId || (inv.id||'').split('___')[0]));
+            const invIdRaw = (inv.displayId || (inv.id||'').split('___')[0]);
+            return invId === normClean || invIdRaw === cleanCode || invIdRaw === normClean;
+          });
+          if (alreadyExists) { skipped++; continue; }
 
           const stocks = almCols.map(a=>({...a, stock:parseN(row[a.col])}));
           const totalSt = stocks.reduce((s,a)=>s+a.stock,0);
@@ -2101,7 +2112,6 @@ export default function App() {
               items.push({id:docId, displayId:cleanCode, desc, category:cat, subcategory:subcat, unit:um, cost, stock, almacen:field, activo:true});
             }
           } else {
-            // Sin stock: guardar en primer almacén con stock 0 (mantiene catálogo)
             const firstAlm = almCols[0];
             let docId = `${cleanCode}___${firstAlm.suffix}`;
             if (usedIds.has(docId)) { docId = `${cleanCode}-${subcat.substring(0,3).toUpperCase()}___${firstAlm.suffix}`; }
@@ -2123,7 +2133,7 @@ export default function App() {
 
         setDialog({
           title:`📦 Importar ${items.length} artículos`,
-          text:`Archivo: ${file.name}\nAlmacenes detectados: ${almDetected}\n\nPOR CATEGORÍA:\n${resCat}\n\nPOR ALMACÉN:\n${resAlm}\n\n¿Continuar?`,
+          text:`Archivo: ${file.name}\nAlmacenes detectados: ${almDetected}${skipped>0?`\n⚠️ ${skipped} artículo(s) omitidos por ya existir en el sistema`:''}\n\nPOR CATEGORÍA:\n${resCat}\n\nPOR ALMACÉN:\n${resAlm}\n\n¿Continuar?`,
           type:'confirm',
           onConfirm: async () => {
             try {
