@@ -329,7 +329,23 @@ export default function App() {
   const [fbUser, setFbUser] = useState(null);
   const [appUser, setAppUser] = useState(null); 
   const [systemUsers, setSystemUsers] = useState([]); 
-  const [settings, setSettings] = useState({}); 
+  const [settings, setSettings] = useState({});
+  const [showManageSubcats, setShowManageSubcats] = useState(false);
+  const [newSubcatInput, setNewSubcatInput] = useState('');
+  const DEFAULT_SUBCATS = ['Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Otros Terminados','Materia Prima','Quimicos','Pigmento','Tintas','Semielaborado'];
+  const getSubcats = () => settings?.invSubcategorias?.length ? settings.invSubcategorias : DEFAULT_SUBCATS;
+  const handleAddSubcat = async (name) => {
+    if(!name.trim()) return;
+    const curr = getSubcats();
+    if(curr.map(s=>s.toLowerCase()).includes(name.trim().toLowerCase())) return;
+    const updated = [...curr, name.trim()];
+    await setDoc(getDocRef('settings','general'),{invSubcategorias: updated},{merge:true});
+    setNewSubcatInput('');
+  };
+  const handleDeleteSubcat = async (name) => {
+    const updated = getSubcats().filter(s=>s!==name);
+    await setDoc(getDocRef('settings','general'),{invSubcategorias: updated},{merge:true});
+  }; 
   const [depositos, setDepositos] = useState(['ALMACEN ZI', 'ALMACEN BQTO', 'ALMACEN C2', 'ALMACEN MCY']); // activos
   const [showDepositoModal, setShowDepositoModal] = useState(false);
   const [depositoForm, setDepositoForm] = useState({ nombre: '', editId: null });
@@ -1103,123 +1119,7 @@ export default function App() {
   //   • Solo rellena documentos que estén en 0 (no toca los que ya tienen existencia, p.ej. CHUPETA).
   //   • Crea los que faltan (p.ej. VENILAC - TERMO).
   //   • Como toma el saldo ACTUAL de FG Producción, nunca restaura lo ya facturado.
-  useEffect(() => {
-    if(!inventory || !finishedGoodsInventory || !appUser) return;
-    if(sessionStorage.getItem('auto_fg_mirror_v6')==='done') return;
-    sessionStorage.setItem('auto_fg_mirror_v6','done');
 
-    const r2 = (n) => Math.round(parseNum(n)*100)/100;
-    const dimsFromCode = (code) => {
-      const cc=String(code||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
-      const seg=cc.split('-').pop()||'';
-      const p=seg.toLowerCase().split('x').map(x=>parseFloat(x)||0);
-      return { ancho:p[0]||0, largo:p[1]||0 };
-    };
-
-    const doMirror = async () => {
-      try {
-        // Helper: costo unitario de un FG. Usa el costoUnitario guardado;
-        // si está en 0, lo calcula desde las requisiciones aprobadas de su OP.
-        const _normOp = (x) => String(x||'').replace(/^OP-/i,'').trim();
-        const costoUnitDeFG = (fg) => {
-          const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-          const guardado = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-          if (guardado > 0) return guardado;
-          const qtyProd = esTermo ? parseNum(fg.kgProducidos||fg.kgProducidosOrigen||0) : parseNum(fg.millares||0);
-          if (qtyProd <= 0) return 0;
-          const reqs = (invRequisitions||[]).filter(r =>
-            _normOp(r.opId) === _normOp(fg.opId) &&
-            ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status));
-          let costo = 0;
-          reqs.forEach(r => {
-            let cReq = 0;
-            (r.items||[]).forEach(it => {
-              const inv = (inventory||[]).find(i => {
-                const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
-                const itcc = (it.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
-                return i.id===it.id || cc===itcc;
-              });
-              cReq += parseNum(it.qty||0) * parseNum(inv?.cost||0);
-            });
-            if (cReq <= 0) cReq = parseNum(r.costoDespachado||0);
-            costo += cReq;
-          });
-          return costo > 0 ? costo / qtyProd : 0;
-        };
-
-        // 1) Agrupar FG Producción por tipo + ancho + largo (saldo actual y costo)
-        const groups = {}; // key -> {esTermo, qty, costTotal, sample}
-        (finishedGoodsInventory||[]).forEach(fg => {
-          const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-          const entregado = fg.status === 'ENTREGADO';
-          const qty = entregado ? 0 : (esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares));
-          if(qty <= 0) return;
-          const cu = costoUnitDeFG(fg);
-          const key = `${esTermo?'T':'B'}|${r2(fg.ancho)}|${r2(fg.largo)}`;
-          if(!groups[key]) groups[key] = { esTermo, qty:0, costTotal:0, sample:fg };
-          groups[key].qty += qty;
-          groups[key].costTotal += qty*cu;
-        });
-
-        for(const key of Object.keys(groups)){
-          const g = groups[key];
-          const fg = g.sample;
-          const qtyTot = g.qty;
-          const costUnit = qtyTot>0 ? g.costTotal/qtyTot : 0;
-
-          // 2) Buscar el documento de inventario que corresponde (mismo tipo + ancho + largo)
-          const ptDocs = (inventory||[]).filter(i => i.category==='Productos Terminados' && i.activo!==false);
-          const doc = ptDocs.find(i => {
-            const esT = (i.subcategory==='Termoencogibles') || (i.unit||'').toLowerCase()==='kg';
-            const d = dimsFromCode(i.displayId||i.id);
-            return esT===g.esTermo && r2(d.ancho)===r2(fg.ancho) && r2(d.largo)===r2(fg.largo);
-          });
-
-          if(doc){
-            // Doc ya existe — NO sobreescribir el stock (puede haber sido editado manualmente).
-            // Solo actualizar el costo si estaba en 0.
-            if(parseNum(doc.cost) > 0) continue; // ya tiene costo, no tocar nada
-            const nuevoCosto = costUnit;
-            if(nuevoCosto <= 0) continue; // sin costo calculado, no tocar
-            await setDoc(getDocRef('inventory', doc.id), {
-              ...doc, cost: nuevoCosto,
-              timestamp: Date.now(), updatedAt: getTodayDate()
-            }, { merge: true });
-          }
-          // NOTA: No se crean docs nuevos automáticamente.
-          // Los artículos de inventario se crean SOLO mediante el import Excel o entrada manual.
-        }
-      } catch(e){ console.error('Auto-mirror FG error:', e); }
-    };
-    doMirror();
-  }, [inventory, finishedGoodsInventory, invRequisitions, appUser]);
-
-
-  // ── ONE-TIME cleanup: elimina FG duplicados con stock=0 y costo=0 ──────────
-  useEffect(() => {
-    if(!inventory || !appUser || sessionStorage.getItem('cleanup_fg_zero_v2')==='done') return;
-    const doCleanup = async () => {
-      try {
-        // Los duplicados del import tienen AMBOS: stock=0 y cost=0
-        // Los items originales de producción siempre tienen costo>0 o stock>0
-        const toDelete = (inventory||[]).filter(i => {
-          const code = (i.displayId || (i.id||'').split('___')[0] || '');
-          const isFG = code.toUpperCase().startsWith('FG-');
-          const isEmpty = parseNum(i.stock||0) === 0 && parseNum(i.cost||0) === 0;
-          return isFG && isEmpty;
-        });
-        if(toDelete.length === 0) {
-          sessionStorage.setItem('cleanup_fg_zero_v2','done');
-          return;
-        }
-        const b = writeBatch(db);
-        toDelete.forEach(d => b.delete(getDocRef('inventory', d.id)));
-        await b.commit();
-        sessionStorage.setItem('cleanup_fg_zero_v2','done');
-      } catch(e) { console.error('Cleanup FG zero error:', e); }
-    };
-    doCleanup();
-  }, [inventory, appUser]);
 
   useEffect(() => {
     if(!appUser || sessionStorage.getItem('del_req_00017')==='done') return;
@@ -7306,50 +7206,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       const kgTot = allB.reduce((s,b)=>s+parseNum(b.producedKg),0);
       const millTot = allB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
       if (esTermo) return kgTot > 0 ? costoTotal / kgTot : 0;
-      return millTot > 0 ? costoTotal / millTot : 0;
-    };
-    const fgGroups = {};
-    // FIX: include ALL FG items with any stock (kgProducidos OR millares > 0)
-    (finishedGoodsInventory||[]).forEach(fg => {
-      if (parseNum(fg.kgProducidos) <= 0 && parseNum(fg.millares) <= 0) return;
-      const esTermo = fg.tipoProducto === 'TERMOENCOGIBLE';
-      const key = `${fg.categoria||fg.producto||''}__${fg.cliente||''}__${fg.tipoProducto}`;
-      if (!fgGroups[key]) fgGroups[key] = {key,esTermo,categoria:fg.categoria||fg.producto||'',cliente:fg.cliente||'',tipoProducto:fg.tipoProducto,producto:fg.producto||'',ancho:fg.ancho,largo:fg.largo,micras:fg.micras,totalStock:0,totalKg:0,pesoTot:0,lotes:0};
-      const g = fgGroups[key];
-      const stock = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-      const cu = calcFGCosto(fg);
-      g.totalStock += stock; g.totalKg += parseNum(fg.kgProducidos); g.pesoTot += stock*cu; g.lotes++;
-    });
-    const fgAsCatalog = Object.values(fgGroups).map(g => {
-      const cu = g.totalStock > 0 ? g.pesoTot / g.totalStock : 0;
-      const catSlug = (g.categoria||g.producto||'SIN').replace(/[\s_\-\/\|]/g,'').substring(0,14).toUpperCase();
-      const idCorto = `FG-${catSlug}-${g.ancho||0}x${g.largo||0}x${g.micras||0}`;
-      const descFmt = formatFGLabel(g);
-      return {
-        id: idCorto,
-        desc: descFmt,
-        category: 'Productos Terminados',
-        unit: g.esTermo ? 'KG' : 'Millares',
-        stock: g.totalStock,
-        cost: cu,
-        _isFGGroup: true, _lotes: g.lotes, _totalKg: g.totalKg
-      };
-    });
-    // Deduplicar fgAsCatalog por id (si dos grupos generan el mismo idCorto, unirlos)
-    const fgDeduped = [];
-    const fgById = {};
-    for (const item of fgAsCatalog) {
-      if (fgById[item.id]) {
-        const prev = fgById[item.id];
-        const totalStock = (prev.stock || 0) + (item.stock || 0);
-        const totalVal = (prev.stock || 0) * (prev.cost || 0) + (item.stock || 0) * (item.cost || 0);
-        prev.stock = totalStock;
-        prev.cost = totalStock > 0 ? totalVal / totalStock : 0;
-        prev._lotes = (prev._lotes || 0) + (item._lotes || 0);
-      } else {
-        fgById[item.id] = { ...item };
-        fgDeduped.push(fgById[item.id]);
-      }
     }
     // Inventario General shows ALL categories including Productos Terminados
     // PT items are properly deduplicated via the grouping logic below
@@ -7379,11 +7235,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
         // TODOS: agrupar por código limpio, sumar stock y calcular costo promedio
         const groups = {};
         for (const i of allCatalogItems) {
-          if (i?._isFGGroup) {
-            const key = 'FG__' + (i.id||'');
-            if (!groups[key]) groups[key] = { ...i, _grouped: true };
-            continue;
-          }
           const cleanId = getCleanId(i);
           const matchSearch = cleanId.toUpperCase().includes(searchInvUpper) || getCleanDesc(i).toUpperCase().includes(searchInvUpper);
           const matchCat = catalogCatFilter === 'TODAS'
@@ -7412,16 +7263,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           groups[cleanId].cost = (prevTotal + stk) > 0 ? (prevVal + stk*cst)/(prevTotal+stk) : cst;
           groups[cleanId]._warehouseBreakdown.push({ almacen: i.almacen||'ALMACEN ZI', stock: stk, cost: cst });
         }
-        // Add FG groups
-        for (const i of allCatalogItems) {
-          if (!i?._isFGGroup) continue;
-          const matchSearch = (i?.id||'').toUpperCase().includes(searchInvUpper)||(i?.desc||'').toUpperCase().includes(searchInvUpper);
-          const matchCat = catalogCatFilter === 'TODAS' || catalogCatFilter === 'Productos Terminados';
-          if (matchSearch && matchCat) {
-            const key = 'FG__' + (i.id||'');
-            groups[key] = i;
-          }
-        }
         return deduplicateInventory(Object.values(groups));
       } else {
         // Almacén específico: filtrar por almacen field
@@ -7429,7 +7270,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           const matchSearch = getCleanId(i).toUpperCase().includes(searchInvUpper)||(i?.desc||'').toUpperCase().includes(searchInvUpper);
           const matchCat = catalogCatFilter==='TODAS'||(i?.category||'Otros')===catalogCatFilter;
           if (!matchSearch || !matchCat) return false;
-          if (i?._isFGGroup) return catalogAlmacenFilter === 'Productos Terminados';
+          if (i?._isFGGroup) return false; // FG items no mostrar
           return (i?.almacen||'ALMACEN ZI') === catalogAlmacenFilter;
         });
       }
@@ -7794,24 +7635,41 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         <option value="Otros">Otros</option>
                      </select>
                    </div>
-                   {/* Subcategoría — solo visible para Productos Terminados */}
-                   {newInvItemForm.category === 'Productos Terminados' && (
+                   {/* Subcategoría — para todas las categorías */}
                    <div>
-                     <label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Línea / Subcategoría</label>
+                     <div className="flex items-center justify-between mb-1">
+                       <label className="text-[10px] font-black text-orange-600 uppercase">Línea / Subcategoría</label>
+                       <button type="button" onClick={()=>setShowManageSubcats(v=>!v)}
+                         className="text-[9px] font-black text-orange-500 hover:text-orange-700 flex items-center gap-1 bg-orange-50 px-2 py-1 rounded-lg">
+                         <Settings size={10}/> {showManageSubcats ? 'Cerrar' : 'Gestionar'}
+                       </button>
+                     </div>
                      <select value={newInvItemForm.subcategory||''} onChange={e=>setNewInvItemForm({...newInvItemForm, subcategory: e.target.value})}
                        className="w-full border-2 border-orange-300 bg-orange-50 focus:bg-white focus:border-orange-500 rounded-xl p-3 font-black text-xs uppercase outline-none transition-colors">
                        <option value="">— Seleccione línea —</option>
-                       <option value="Stretch Film">Stretch Film</option>
-                       <option value="Cintas">Cintas</option>
-                       <option value="Papel Kraft">Papel Kraft</option>
-                       <option value="Dispensadores">Dispensadores</option>
-                       <option value="Bolsas Plásticas">Bolsas Plásticas</option>
-                       <option value="Empaques Flexibles">Empaques Flexibles</option>
-                       <option value="Termoencogibles">Termoencogibles</option>
-                       <option value="Otros Terminados">Otros Terminados</option>
+                       {getSubcats().map(s=><option key={s} value={s}>{s}</option>)}
                      </select>
+                     {showManageSubcats && (
+                       <div className="mt-2 border-2 border-orange-200 rounded-2xl bg-orange-50 p-3 space-y-2">
+                         <p className="text-[9px] font-black text-orange-700 uppercase">Gestionar Líneas</p>
+                         <div className="flex gap-1">
+                           <input type="text" value={newSubcatInput} onChange={e=>setNewSubcatInput(e.target.value.toUpperCase())}
+                             onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();handleAddSubcat(newSubcatInput);}}}
+                             placeholder="Nueva línea..." className="flex-1 border-2 border-orange-300 rounded-xl p-2 text-[10px] font-black uppercase outline-none focus:border-orange-500"/>
+                           <button type="button" onClick={()=>handleAddSubcat(newSubcatInput)}
+                             className="bg-orange-500 text-white px-3 py-2 rounded-xl font-black text-[10px] hover:bg-orange-600"><Plus size={12}/></button>
+                         </div>
+                         <div className="flex flex-wrap gap-1 max-h-28 overflow-y-auto">
+                           {getSubcats().map(s=>(
+                             <span key={s} className="flex items-center gap-1 bg-white border border-orange-200 text-orange-800 text-[9px] font-black px-2 py-1 rounded-lg">
+                               {s}
+                               <button type="button" onClick={()=>handleDeleteSubcat(s)} className="text-red-400 hover:text-red-600 ml-1"><X size={9}/></button>
+                             </span>
+                           ))}
+                         </div>
+                       </div>
+                     )}
                    </div>
-                   )}
                    <div className="grid grid-cols-2 gap-2">
                      <div>
                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Costo Promedio ($)</label>
@@ -21996,21 +21854,14 @@ tr:nth-child(even) td{background:#f9fafb;}
                     placeholder={editingAlmacenItem.desc}
                     className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-400 uppercase"/>
                 </div>
-                {editingAlmacenItem.category === 'Productos Terminados' && (
+                {(editingAlmacenItem.category === 'Productos Terminados' || editingAlmacenItem.subcategory) && (
                 <div className="col-span-2">
                   <label className="text-[10px] font-black text-orange-600 uppercase block mb-1.5">Línea / Subcategoría</label>
                   <select value={almacenEditForm.subcategory !== undefined ? almacenEditForm.subcategory : (editingAlmacenItem.subcategory||'')}
                     onChange={e=>setAlmacenEditForm(f=>({...f,subcategory:e.target.value}))}
                     className="w-full border-2 border-orange-300 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500 bg-orange-50">
                     <option value="">— Sin subcategoría —</option>
-                    <option value="Stretch Film">Stretch Film</option>
-                    <option value="Cintas">Cintas</option>
-                    <option value="Papel Kraft">Papel Kraft</option>
-                    <option value="Dispensadores">Dispensadores</option>
-                    <option value="Bolsas Plásticas">Bolsas Plásticas</option>
-                    <option value="Empaques Flexibles">Empaques Flexibles</option>
-                    <option value="Termoencogibles">Termoencogibles</option>
-                    <option value="Otros Terminados">Otros Terminados</option>
+                    {getSubcats().map(s=><option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
                 )}
