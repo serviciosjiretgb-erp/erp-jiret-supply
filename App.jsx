@@ -403,6 +403,17 @@ export default function App() {
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [notasEntrega, setNotasEntrega] = useState([]);
+  // ── Estados Notas de Entrega ────────────────────────────────────────────────
+  const [neView, setNeView] = useState('lista');
+  const [neForm, setNeForm] = useState(null);
+  const [neSearch, setNeSearch] = useState('');
+  const [neFiltStatus, setNeFiltStatus] = useState('TODAS');
+  const [neInvSearch, setNeInvSearch] = useState('');
+  const [neShowInvDrop, setNeShowInvDrop] = useState(false);
+  // ── Estados Transacciones de Ventas ────────────────────────────────────────
+  const [tvDesde, setTvDesde] = useState(() => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`; });
+  const [tvHasta, setTvHasta] = useState(getTodayDate);
+  const [tvStatus, setTvStatus] = useState('TODAS');
   const [invRequisitions, setInvRequisitions] = useState([]);
   const [reqFilter, setReqFilter] = useState('');
 
@@ -11432,10 +11443,6 @@ tr:nth-child(even) td{background:#f9fafb;}
         })()}
         {/* ── NOTAS DE ENTREGA ────────────────────────────────────────────── */}
         {ventasView === 'notas_entrega' && (() => {
-          const [neView, setNeView] = React.useState('lista');
-          const [neForm, setNeForm] = React.useState(null);
-          const [neSearch, setNeSearch] = React.useState('');
-          const [neFiltStatus, setNeFiltStatus] = React.useState('TODAS');
 
           const initNEForm = () => ({
             fecha: getTodayDate(), clientRif:'', clientName:'', clientAddress:'', vendedor:'',
@@ -11485,8 +11492,10 @@ tr:nth-child(even) td{background:#f9fafb;}
           if(neForm !== null) {
             const form = neForm;
             const setForm = setNeForm;
-            const [invSearch2, setInvSearch2] = React.useState('');
-            const [showInvDrop2, setShowInvDrop2] = React.useState(false);
+            const invSearch2 = neInvSearch;
+            const setInvSearch2 = setNeInvSearch;
+            const showInvDrop2 = neShowInvDrop;
+            const setShowInvDrop2 = setNeShowInvDrop;
             const invResults2 = invSearch2.length>1 ? (inventory||[]).filter(i=>i.activo!==false&&((i.displayId||(i.id||'').split('___')[0])||'').toUpperCase().includes(invSearch2.toUpperCase())||(i.desc||'').toUpperCase().includes(invSearch2.toUpperCase())).slice(0,8) : [];
             const base = form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.precioUnit),0);
             const ivaAmt = form.aplicaIva==='SI' ? base*0.16 : 0;
@@ -11652,9 +11661,6 @@ tr:nth-child(even) td{background:#f9fafb;}
 
         {/* ── TRANSACCIONES DE VENTAS ─────────────────────────────────────── */}
         {ventasView === 'transacciones_ventas' && (() => {
-          const [tvDesde, setTvDesde] = React.useState(getTodayDate().substring(0,7)+'-01');
-          const [tvHasta, setTvHasta] = React.useState(getTodayDate());
-          const [tvStatus, setTvStatus] = React.useState('TODAS');
 
           // Combinar facturas + notas de entrega
           const rows = [];
