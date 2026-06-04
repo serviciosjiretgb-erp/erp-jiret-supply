@@ -1105,8 +1105,8 @@ export default function App() {
   //   • Como toma el saldo ACTUAL de FG Producción, nunca restaura lo ya facturado.
   useEffect(() => {
     if(!inventory || !finishedGoodsInventory || !appUser) return;
-    if(sessionStorage.getItem('auto_fg_mirror_v4')==='done') return;
-    sessionStorage.setItem('auto_fg_mirror_v4','done');
+    if(sessionStorage.getItem('auto_fg_mirror_v5')==='done') return;
+    sessionStorage.setItem('auto_fg_mirror_v5','done');
 
     const r2 = (n) => Math.round(parseNum(n)*100)/100;
     const dimsFromCode = (code) => {
@@ -1176,14 +1176,15 @@ export default function App() {
           });
 
           if(doc){
-            // La producción es la fuente de verdad: fija existencia = total producido
-            // y completa el costo si el documento no lo tiene.
-            const nuevoCosto = parseNum(doc.cost)>0 ? parseNum(doc.cost) : costUnit;
-            if(r2(doc.stock)===r2(qtyTot) && parseNum(doc.cost)>0) continue; // ya está correcto
+            // Doc ya existe — NO sobreescribir el stock (puede haber sido editado manualmente).
+            // Solo actualizar el costo si estaba en 0.
+            if(parseNum(doc.cost) > 0) continue; // ya tiene costo, no tocar nada
+            const nuevoCosto = costUnit;
+            if(nuevoCosto <= 0) continue; // sin costo calculado, no tocar
             await setDoc(getDocRef('inventory', doc.id), {
-              ...doc, stock: qtyTot, cost: nuevoCosto,
+              ...doc, cost: nuevoCosto,
               timestamp: Date.now(), updatedAt: getTodayDate()
-            }, { merge:true });
+            }, { merge: true });
           } else {
             // 3) Crear el documento que falta (p.ej. VENILAC - TERMO)
             const desc = formatFGLabel(fg) || fg.producto || 'Producto';
@@ -7392,7 +7393,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
     }
     // Inventario General shows ALL categories including Productos Terminados
     // PT items are properly deduplicated via the grouping logic below
-    const allCatalogItems = [...(inventory || [])]; // Show ALL including inactive (can toggle from here)
+    const allCatalogItems = [...(inventory || []).filter(i => i.activo !== false)]; // Ocultar inactivos
     // Categorías únicas — sin duplicados
     const allCatalogCats = ['TODAS', ...Array.from(new Set(allCatalogItems.map(i=>i?.category||'Otros')))]
       .sort((a,b)=>{ if(a==='TODAS')return -1; if(b==='TODAS')return 1; if(a==='Productos Terminados')return -1; if(b==='Productos Terminados')return 1; return a.localeCompare(b); });
