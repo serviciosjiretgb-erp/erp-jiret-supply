@@ -1123,24 +1123,23 @@ export default function App() {
 
   // ── ELIMINAR TODOS LOS FG DEL INVENTARIO (usuario crea todo desde cero) ──────
   useEffect(() => {
-    if(!inventory || !appUser || sessionStorage.getItem('delete_all_fg_inv_v1')==='done') return;
-    const toDelete = (inventory||[]).filter(i => {
+    if(!inventory || !appUser) return;
+    const fgItems = (inventory||[]).filter(i => {
       const code = (i.displayId || (i.id||'').split('___')[0] || '');
       return code.toUpperCase().startsWith('FG-');
     });
-    if(toDelete.length === 0) { sessionStorage.setItem('delete_all_fg_inv_v1','done'); return; }
+    if(fgItems.length === 0) return;
     const run = async () => {
       try {
-        for(let i=0; i<toDelete.length; i+=400) {
+        for(let i=0; i<fgItems.length; i+=400) {
           const b = writeBatch(db);
-          toDelete.slice(i,i+400).forEach(d => b.delete(getDocRef('inventory', d.id)));
+          fgItems.slice(i,i+400).forEach(d => b.delete(getDocRef('inventory', d.id)));
           await b.commit();
         }
       } catch(e){ console.error(e); }
-      sessionStorage.setItem('delete_all_fg_inv_v1','done');
     };
     run();
-  }, [inventory, appUser]);
+  }, [inventory?.length, appUser?.username]);
 
   useEffect(() => {
     if(!appUser || sessionStorage.getItem('del_req_00017')==='done') return;
@@ -7230,7 +7229,12 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
     }
     // Inventario General shows ALL categories including Productos Terminados
     // PT items are properly deduplicated via the grouping logic below
-    const allCatalogItems = [...(inventory || []).filter(i => i.activo !== false)]; // Ocultar inactivos
+    const allCatalogItems = [...(inventory || []).filter(i => {
+      if (i.activo === false) return false;
+      const code = (i.displayId || (i.id||'').split('___')[0] || '');
+      if (code.toUpperCase().startsWith('FG-')) return false; // Excluir FG auto-generados
+      return true;
+    })];
     // Categorías únicas — sin duplicados
     const allCatalogCats = ['TODAS', ...Array.from(new Set(allCatalogItems.map(i=>i?.category||'Otros')))]
       .sort((a,b)=>{ if(a==='TODAS')return -1; if(b==='TODAS')return 1; if(a==='Productos Terminados')return -1; if(b==='Productos Terminados')return 1; return a.localeCompare(b); });
