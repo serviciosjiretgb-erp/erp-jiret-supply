@@ -1327,7 +1327,46 @@ export default function App() {
     };
   }, [fbUser]);
 
-  // ── AUTO RESPALDO PROGRAMADO ────────────────────────────────────────────────
+  // ── MIGRAR FACTURAS DE MAYO 2026 → NOTAS DE ENTREGA (PROCESADA) ─────────────
+  useEffect(() => {
+    if(!invoices || !appUser || invoices.length===0) return;
+    if(localStorage.getItem('migrated_invoices_to_ne_mayo2026')==='done') return;
+    const mayoInvoices = invoices.filter(inv => (inv.fecha||'').startsWith('2026-05'));
+    if(mayoInvoices.length===0) { localStorage.setItem('migrated_invoices_to_ne_mayo2026','done'); return; }
+    const existingNeIds = new Set((notasEntrega||[]).map(n=>n.facturaId).filter(Boolean));
+    const toMigrate = mayoInvoices.filter(inv => !existingNeIds.has(inv.id) && !existingNeIds.has(inv.documento));
+    if(toMigrate.length===0) { localStorage.setItem('migrated_invoices_to_ne_mayo2026','done'); return; }
+    const run = async () => {
+      try {
+        const existingNums = (notasEntrega||[]).map(n=>parseInt((n.id||'NE-00000').replace('NE-',''))||0);
+        let counter = Math.max(0,...existingNums);
+        const sorted = [...toMigrate].sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+        for(const inv of sorted) {
+          counter++;
+          const neId = 'NE-'+String(counter).padStart(5,'0');
+          const items = (inv.itemsFacturados||[]).map(it=>({
+            invCode: it.invCode||it.fgId||'', desc: it.desc||'', cantidad: it.cantidad||0,
+            precioUnit: it.precioUnit||0, unit: it.unidad||'und', costoUnit: it.costoUnit||0
+          }));
+          const base = parseNum(inv.montoBase||0);
+          const ivaAmt = parseFloat((parseNum(inv.iva||0)).toFixed(2));
+          await setDoc(getDocRef('notasEntrega', neId), {
+            id: neId, fecha: inv.fecha||getTodayDate(),
+            clientRif: inv.clientRif||'', clientName: inv.clientName||'',
+            clientAddress: inv.clientAddress||'', vendedor: inv.vendedor||'',
+            items, montoBase: base, ivaAmt, total: parseNum(inv.total||0),
+            costoTotal: items.reduce((s,it)=>s+it.cantidad*it.costoUnit,0),
+            aplicaIva: inv.aplicaIva||'SI', status: 'PROCESADA',
+            facturaId: inv.id||inv.documento||'', opRelacionada: inv.opAsignada||'',
+            ncConsignacion: inv.ncAsignada||'', observaciones: '',
+            timestamp: inv.timestamp||Date.now(), updatedAt: Date.now(), user: 'MIGRACIÓN MAYO 2026'
+          });
+        }
+        localStorage.setItem('migrated_invoices_to_ne_mayo2026','done');
+      } catch(e) { console.error('Migración NE:', e); }
+    };
+    run();
+  }, [invoices?.length, notasEntrega?.length, appUser?.username]);
   // Estados de respaldo declarados aquí para que el useEffect los pueda usar sin TDZ
   const [backupFreq, setBackupFreq] = useState(() => localStorage.getItem('backupFreq') || 'manual');
   const [backupLastRun, setBackupLastRun] = useState(() => localStorage.getItem('backupLastRun') || '');
@@ -2801,174 +2840,9 @@ export default function App() {
         fgCantidad: fgItems[0]?.cantidad||0
       });
 
-      // ── Construir lista de items a descontar del inventario ──
-      // Se ejecuta SIEMPRE (creación Y edición) para garantizar el descuento
-      let itemsToProcess = [...fgItems];
-
-      // Auto-incluir selección pendiente en formulario (si no se presionó AGREGAR)
-      if (newInvoiceForm.fgId) {
-        const fgPendiente = (finishedGoodsInventory || []).find(f => f.id === newInvoiceForm.fgId);
-        if (fgPendiente && !itemsToProcess.some(i => i.fgId === newInvoiceForm.fgId)) {
-          const esTermo = fgPendiente.tipoProducto === 'TERMOENCOGIBLE';
-          const maxDisp = esTermo ? parseNum(fgPendiente.kgProducidos) : parseNum(fgPendiente.millares);
-          const cantPendiente = parseNum(newInvoiceForm.fgCantidad) > 0
-            ? Math.min(parseNum(newInvoiceForm.fgCantidad), maxDisp)
-            : maxDisp;
-          if (cantPendiente > 0) {
-            itemsToProcess.push({ fgId: newInvoiceForm.fgId, cantidad: cantPendiente });
-          }
-        }
-      }
-
-      // ── MULTI-WAREHOUSE DEDUCTION from inventory (Inventario General) ──
-      // For items from Inventario General (not finishedGoodsInventory),
-      // use the mwDispatch assignments to deduct from each warehouse document.
-      // En edición: items ya guardados solo ajustan la DIFERENCIA de cantidad
-      // (positiva = descontar más; negativa = devolver al stock). Si no cambió, no toca nada.
-      const itemsWithInvCode = itemsToProcess.filter(it => (it.invCode || (it._isInvPT)));
-      if(itemsWithInvCode.length > 0) {
-        const batch = writeBatch(db);
-        for(const item of itemsWithInvCode) {
-          const code = item.invCode || (item.fgId||'').split('___')[0];
-          // Cantidad a mover: nuevos = total; guardados = delta vs original
-          const cantTotal = item._savedItem
-            ? parseNum(item.cantidad) - parseNum(item._origCantidad||0)
-            : parseNum(item.cantidad);
-          if(Math.abs(cantTotal) <= 0.0001) continue;
-
-          // Get all warehouse docs for this product
-          const whDocs = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code);
-
-          if(cantTotal > 0){
-            const dispatch = mwDispatch[code] || {};
-            const hasDispatch = Object.values(dispatch).some(v=>parseNum(v)>0);
-            if(hasDispatch && !item._savedItem) {
-              // Use explicit warehouse assignments (solo en alta nueva)
-              for(const [almNom, qty] of Object.entries(dispatch)) {
-                const qtyNum = parseNum(qty);
-                if(qtyNum <= 0) continue;
-                const whDoc = whDocs.find(i=>(i.almacen||'').toUpperCase()===almNom.toUpperCase() || (i.id||'').includes(almNom.replace(/\s+/g,'-')));
-                if(!whDoc) continue;
-                const newStock = Math.max(0, parseNum(whDoc.stock||0) - qtyNum);
-                batch.update(getDocRef('inventory', whDoc.id), {stock: newStock, timestamp: Date.now()});
-                await addDoc(getColRef('inventoryMovements'), {
-                  itemId: whDoc.id, itemDesc: item.desc||code, almacen: almNom,
-                  type: 'SALIDA', qty: qtyNum, unitCost: parseNum(item.costoUnit||0),
-                  totalValue: qtyNum * parseNum(item.costoUnit||0),
-                  previousStock: parseNum(whDoc.stock||0), newStock,
-                  docRef: id, notes: `VENTA ${id} — Almacén: ${almNom}`,
-                  date: newInvoiceForm.fecha||getTodayDate(), user: appUser?.name||'Admin', timestamp: Date.now()
-                });
-              }
-            } else {
-              // Auto: descontar de almacenes con stock (menor stock primero)
-              let remaining = cantTotal;
-              const sorted = [...whDocs].sort((a,b)=>parseNum(a.stock||0)-parseNum(b.stock||0));
-              for(const wh of sorted) {
-                if(remaining<=0) break;
-                const avail = parseNum(wh.stock||0);
-                if(avail<=0) continue;
-                const deduct = Math.min(remaining, avail);
-                remaining -= deduct;
-                const newStock = Math.max(0, avail - deduct);
-                batch.update(getDocRef('inventory', wh.id), {stock: newStock, timestamp: Date.now()});
-              }
-            }
-          } else {
-            // Delta negativo (se redujo la cantidad al editar): DEVOLVER al stock
-            const devolver = Math.abs(cantTotal);
-            const wh = whDocs[0];
-            if(wh){
-              const newStock = parseNum(wh.stock||0) + devolver;
-              batch.update(getDocRef('inventory', wh.id), {stock: newStock, timestamp: Date.now()});
-            }
-          }
-        }
-        await batch.commit();
-        setMwDispatch({}); setShowMwPanel(null);
-      }
-
-      // ── Descontar cada item del inventario de terminados (FIFO por lote) ──
-      // Nuevos: descuenta toda la cantidad. Guardados: solo ajusta la diferencia.
-      const itemsToDeduct = itemsToProcess.filter(it => !it._isInvPT && !it.invCode);
-
-      for (const item of itemsToDeduct) {
-        // Nuevos: descuenta toda la cantidad. Guardados: solo la diferencia vs original.
-        const cantFacturada = item._savedItem
-          ? parseNum(item.cantidad) - parseNum(item._origCantidad||0)
-          : parseNum(item.cantidad);
-        if (Math.abs(cantFacturada) <= 0.0001) continue;
-
-        // Resolver lotes FG frescos
-        let lotesRef = [];
-        if(item.grpLotes && item.grpLotes.length > 0) {
-          lotesRef = item.grpLotes.map(g => (finishedGoodsInventory||[]).find(f=>f.id===g.id)).filter(Boolean);
-        }
-        if(!lotesRef.length && item.fgId) {
-          const fg = (finishedGoodsInventory||[]).find(f => f.id === item.fgId);
-          if(fg) lotesRef = [fg];
-        }
-        if (!lotesRef.length) { console.warn('No FG lotes found for item:', item.fgId, item.fgGrpKey); continue; }
-        const esTermoD = item.esTermo ?? (lotesRef[0]?.tipoProducto === 'TERMOENCOGIBLE');
-
-        // Delta negativo (se redujo la cantidad al editar): DEVOLVER al primer lote
-        if(cantFacturada < 0){
-          const devolver = Math.abs(cantFacturada);
-          const fg = (finishedGoodsInventory||[]).find(f=>f.id===lotesRef[0].id) || lotesRef[0];
-          const stockActual = esTermoD ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-          const restaurado = stockActual + devolver;
-          await updateDoc(getDocRef('finishedGoodsInventory', fg.id),
-            esTermoD ? {kgProducidos: restaurado, status:'LISTO PARA ENTREGA'} : {millares: restaurado, status:'LISTO PARA ENTREGA'});
-          const costoUnit = esTermoD ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-          await addDoc(getColRef('inventoryMovements'), {
-            itemId: `FG::${fg.id}`, itemDesc: formatFGLabel(fg)||fg.producto||fg.id,
-            type: 'ENTRADA', qty: devolver, unitCost: costoUnit,
-            totalValue: devolver*costoUnit, previousStock: stockActual, newStock: restaurado,
-            docRef: id, notes: `AJUSTE EDICIÓN FAC ${id} (devolución)`,
-            date: newInvoiceForm.fecha||getTodayDate(), user: appUser?.name||'Admin', timestamp: Date.now(), isFG: true
-          });
-          continue;
-        }
-
-        const lotesADescontar = lotesRef;
-        const esTermo = esTermoD;
-
-        let porDescontar = cantFacturada;
-        for (const fgOld of lotesADescontar) {
-          if (porDescontar <= 0.001) break;
-          // Get the absolute freshest data
-          const fg = (finishedGoodsInventory||[]).find(f=>f.id===fgOld.id) || fgOld;
-          const stockLote = esTermo ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-          if (stockLote <= 0.001) continue;
-          const cantDeEste = Math.min(porDescontar, stockLote);
-          porDescontar -= cantDeEste;
-          const nuevoStock = Math.max(0, stockLote - cantDeEste);
-          const costoUnit = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-          
-          // Update finishedGoodsInventory
-          if (nuevoStock <= 0.001) {
-            await updateDoc(getDocRef('finishedGoodsInventory', fg.id), { status: 'ENTREGADO', millares: 0, kgProducidos: 0 });
-          } else {
-            const updateFG = esTermo
-              ? {kgProducidos: nuevoStock}
-              : {millares: nuevoStock};
-            await updateDoc(getDocRef('finishedGoodsInventory', fg.id), updateFG);
-          }
-          
-          // ── Registrar movimiento en Kardex / inventoryMovements ──
-          await addDoc(getColRef('inventoryMovements'), {
-            itemId: `FG::${fg.id}`, itemDesc: formatFGLabel(fg)||fg.producto||fg.id,
-            type: 'SALIDA', qty: cantDeEste, unitCost: costoUnit,
-            totalValue: cantDeEste * costoUnit, previousStock: stockLote,
-            newStock: nuevoStock, docRef: id, notes: `VENTA FAC ${id}`,
-            date: newInvoiceForm.fecha||getTodayDate(),
-            user: appUser?.name||'Admin', timestamp: Date.now(), isFG: true
-          });
-          
-          const costoFG = cantDeEste * costoUnit;
-          if (costoFG > 0) await registrarAsientoContable(null, { debito:'5.1.01.01.001', credito:'1.1.03.01.008', monto:costoFG, descripcion:`COSTO PROD — FAC ${id} — ${fg.producto||fg.id}`, referencia:id, fecha:newInvoiceForm.fecha });
-        }
-      }
+      // ── DESCUENTO DE INVENTARIO: DESHABILITADO EN FACTURACIÓN ──────────────
+      // El descuento de inventario ahora se realiza SOLO desde Nota de Entrega.
+      // Ver handleSaveNE para la lógica de descuento.
 
       // Asiento de ingreso (solo en creación)
       if (!editingInvoiceId) {
@@ -3000,7 +2874,7 @@ export default function App() {
       }
 
       setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm); setFgItems([]); setDescuentoVal(''); setDescuentoTipo('monto');
-      setDialog({title: '✅ Éxito', text: editingInvoiceId ? `Factura ${id} actualizada y stock descontado.` : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
+      setDialog({title: '✅ Éxito', text: editingInvoiceId ? `Factura ${id} actualizada.` : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
     } catch(err) { setDialog({title: 'Error al guardar factura', text: err.message, type: 'alert'}); }
   };
   const handleDeleteInvoice = (id) => {
@@ -11443,209 +11317,265 @@ tr:nth-child(even) td{background:#f9fafb;}
         })()}
         {/* ── NOTAS DE ENTREGA ────────────────────────────────────────────── */}
         {ventasView === 'notas_entrega' && (() => {
-
           const initNEForm = () => ({
             fecha: getTodayDate(), clientRif:'', clientName:'', clientAddress:'', vendedor:'',
-            items:[], montoBase:0, ivaAmt:0, total:0, aplicaIva:'SI',
-            status:'TRANSITO', observaciones:'', facturaId:''
+            items:[], aplicaIva:'SI', status:'TRANSITO', observaciones:'',
+            facturaId:'', opRelacionada:'', ncConsignacion:'', neClientSearch:'', neShowClientDrop:false
           });
-
           const nextNENum = () => {
-            const nums = (notasEntrega||[]).map(n=>parseInt((n.id||'').replace('NE-',''))||0);
-            return 'NE-' + String(Math.max(0,...nums)+1).padStart('00001'.length,'0');
+            const nums=(notasEntrega||[]).map(n=>parseInt((n.id||'NE-00000').replace('NE-',''))||0);
+            return 'NE-'+String(Math.max(0,...nums)+1).padStart(5,'0');
           };
 
           const handleSaveNE = async (form, editId) => {
             try {
               const id = editId || nextNENum();
               const base = form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.precioUnit),0);
-              const ivaAmt = form.aplicaIva==='SI' ? base*0.16 : 0;
-              const data = { ...form, id, montoBase:base, ivaAmt, total:base+ivaAmt,
-                costoTotal: form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0),
-                timestamp: editId ? (notasEntrega||[]).find(n=>n.id===editId)?.timestamp||Date.now() : Date.now(),
-                updatedAt: Date.now(), user: appUser?.name||'Sistema' };
+              const ivaAmt = form.aplicaIva==='SI' ? parseFloat((base*0.16).toFixed(2)) : 0;
+              const costoTotal = form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0);
+              const data = {
+                ...form, id, montoBase:base, ivaAmt, total:parseFloat((base+ivaAmt).toFixed(2)),
+                costoTotal, timestamp: editId?(notasEntrega||[]).find(n=>n.id===editId)?.timestamp||Date.now():Date.now(),
+                updatedAt: Date.now(), user: appUser?.name||'Sistema'
+              };
+              delete data.neClientSearch; delete data.neShowClientDrop;
               await setDoc(getDocRef('notasEntrega', id), data);
-              setNeView('lista'); setNeForm(null);
+
+              // ── DESCUENTO DE INVENTARIO (solo desde NE) ──────────────────────
+              if(!editId) { // solo en alta nueva para no duplicar
+                const itemsConCodigo = form.items.filter(it=>it.invCode);
+                if(itemsConCodigo.length > 0) {
+                  const batch = writeBatch(db);
+                  for(const item of itemsConCodigo) {
+                    const code = (item.invCode||'').split('___')[0];
+                    const cant = parseNum(item.cantidad);
+                    if(cant<=0) continue;
+                    const whDocs = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code && parseNum(i.stock||0)>0)
+                                                  .sort((a,b)=>parseNum(b.stock||0)-parseNum(a.stock||0));
+                    let remaining = cant;
+                    for(const wh of whDocs) {
+                      if(remaining<=0) break;
+                      const avail = parseNum(wh.stock||0);
+                      const deduct = Math.min(remaining, avail);
+                      remaining -= deduct;
+                      batch.update(getDocRef('inventory', wh.id), {stock: Math.max(0,avail-deduct), updatedAt: Date.now()});
+                    }
+                    const movId = `NE-${id}-${code}-${Date.now()}`;
+                    batch.set(getDocRef('inventoryMovements', movId), {
+                      id: movId, date: form.fecha||getTodayDate(), timestamp: Date.now(),
+                      itemId: code, itemName: item.desc||code, type: 'SALIDA',
+                      qty: cant, unitCost: parseNum(item.costoUnit||0),
+                      totalValue: cant*parseNum(item.costoUnit||0),
+                      reference: id, notes: `NOTA DE ENTREGA ${id} — ${form.clientName||''}`,
+                      user: appUser?.name||'Sistema'
+                    });
+                  }
+                  await batch.commit();
+                }
+              }
+
+              setNeView('lista'); setNeForm(null); setNeInvSearch(''); setNeShowInvDrop(false);
             } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
           };
 
-          const handleDeleteNE = async (ne) => {
-            setDialog({title:'Eliminar Nota de Entrega',text:`¿Eliminar ${ne.id}? Esta acción no se puede deshacer.`,type:'confirm',onConfirm:async()=>{
-              await deleteDoc(getDocRef('notasEntrega',ne.id));
-            }});
+          const handleDeleteNE = (ne) => setDialog({title:'Eliminar Nota de Entrega',text:`¿Eliminar ${ne.id}?`,type:'confirm',onConfirm:async()=>{ await deleteDoc(getDocRef('notasEntrega',ne.id)); }});
+
+          const handleChangeStatusNE = async (ne, newStatus) => {
+            await updateDoc(getDocRef('notasEntrega',ne.id),{status:newStatus,updatedAt:Date.now()});
           };
 
           const handleConvertirFactura = (ne) => {
-            // Pre-llena el formulario de factura con datos de la NE
-            setFgItems(ne.items.map(it=>({invCode:it.invCode||it.code||'',desc:it.desc||'',cantidad:it.cantidad,precioUnit:it.precioUnit,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:''})));
-            setNewInvoiceForm(f=>({...f,fecha:ne.fecha,clientRif:ne.clientRif,clientName:ne.clientName,clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',aplicaIva:ne.aplicaIva,neOrigen:ne.id}));
+            setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad,precioUnit:it.precioUnit,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));
+            setNewInvoiceForm(f=>({...f,fecha:ne.fecha,clientRif:ne.clientRif,clientName:ne.clientName,clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',aplicaIva:ne.aplicaIva,opAsignada:ne.opRelacionada||'',ncAsignada:ne.ncConsignacion||'',neOrigen:ne.id}));
             setVentasView('facturacion');
           };
 
           const neFiltradas = (notasEntrega||[]).filter(ne=>{
-            const matchSearch = !neSearch || ne.id.toUpperCase().includes(neSearch.toUpperCase()) || (ne.clientName||'').toUpperCase().includes(neSearch.toUpperCase());
-            const matchStatus = neFiltStatus==='TODAS' || ne.status===neFiltStatus;
-            return matchSearch && matchStatus;
+            const matchSearch=!neSearch||ne.id.toUpperCase().includes(neSearch.toUpperCase())||(ne.clientName||'').toUpperCase().includes(neSearch.toUpperCase());
+            const matchStatus=neFiltStatus==='TODAS'||ne.status===neFiltStatus;
+            return matchSearch&&matchStatus;
           });
 
-          // ── FORMULARIO ──
-          if(neForm !== null) {
-            const form = neForm;
-            const setForm = setNeForm;
-            const invSearch2 = neInvSearch;
-            const setInvSearch2 = setNeInvSearch;
-            const showInvDrop2 = neShowInvDrop;
-            const setShowInvDrop2 = setNeShowInvDrop;
-            const invResults2 = invSearch2.length>1 ? (inventory||[]).filter(i=>i.activo!==false&&((i.displayId||(i.id||'').split('___')[0])||'').toUpperCase().includes(invSearch2.toUpperCase())||(i.desc||'').toUpperCase().includes(invSearch2.toUpperCase())).slice(0,8) : [];
-            const base = form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.precioUnit),0);
-            const ivaAmt = form.aplicaIva==='SI' ? base*0.16 : 0;
-            return (
-              <div className="p-6 space-y-5 max-w-4xl mx-auto">
+          /* ── FORMULARIO ── */
+          if(neForm!==null) {
+            const form=neForm; const setForm=setNeForm;
+            const invResults2=neInvSearch.length>1?(inventory||[]).filter(i=>i.activo!==false&&((i.displayId||(i.id||'').split('___')[0])||'').toUpperCase().includes(neInvSearch.toUpperCase())||(i.desc||'').toUpperCase().includes(neInvSearch.toUpperCase())).slice(0,8):[];
+            const vendedoresList=(vendedores||[]).filter(v=>v.activo!==false);
+            const clientResults=(form.neClientSearch||'').length>1?(clients||[]).filter(c=>(c.name||c.nombre||'').toUpperCase().includes((form.neClientSearch||'').toUpperCase())||(c.rif||'').includes(form.neClientSearch)).slice(0,8):[];
+            const base=form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.precioUnit),0);
+            const ivaAmt=form.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):0;
+            return(
+              <div className="p-6 space-y-5 max-w-5xl mx-auto">
                 <div className="flex items-center gap-3">
-                  <button onClick={()=>{setNeView('lista');setNeForm(null);}} className="flex items-center gap-1 text-[10px] font-black text-gray-500 uppercase hover:text-orange-600"><ArrowRight size={12} className="rotate-180"/> Volver</button>
+                  <button onClick={()=>{setNeView('lista');setNeForm(null);setNeInvSearch('');setNeShowInvDrop(false);}} className="flex items-center gap-1 text-[10px] font-black text-gray-500 uppercase hover:text-orange-600"><ArrowRight size={12} className="rotate-180"/> Volver</button>
                   <span className="font-black text-xl text-orange-600">{form._editId||'Nueva Nota de Entrega'}</span>
                 </div>
-                <div className="bg-white rounded-3xl shadow-sm border p-6 space-y-4">
-                  <div className="grid grid-cols-3 gap-4">
+                <div className="bg-white rounded-3xl shadow-sm border p-6 space-y-5">
+                  <div className="grid grid-cols-4 gap-4">
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Fecha</label>
                       <input type="date" value={form.fecha} onChange={e=>setForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500"/></div>
-                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">RIF Cliente</label>
-                      <input value={form.clientRif} onChange={e=>{
-                        const rif=e.target.value; setForm(f=>({...f,clientRif:rif}));
-                        const cli=(clients||[]).find(c=>c.rif===rif);
-                        if(cli) setForm(f=>({...f,clientRif:rif,clientName:cli.nombre||cli.name||'',clientAddress:cli.direccion||''}));
-                      }} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="J-12345678-9"/></div>
-                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Cliente</label>
-                      <input value={form.clientName} onChange={e=>setForm(f=>({...f,clientName:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="Razón social"/></div>
-                    <div className="col-span-2"><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Dirección</label>
-                      <input value={form.clientAddress||''} onChange={e=>setForm(f=>({...f,clientAddress:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500"/></div>
-                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Vendedor</label>
-                      <input value={form.vendedor||''} onChange={e=>setForm(f=>({...f,vendedor:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500"/></div>
-                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Aplica IVA</label>
-                      <select value={form.aplicaIva} onChange={e=>setForm(f=>({...f,aplicaIva:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none">
-                        <option value="SI">Sí (16%)</option><option value="NO">No</option></select></div>
-                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Estatus</label>
-                      <select value={form.status||'TRANSITO'} onChange={e=>setForm(f=>({...f,status:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none">
-                        <option value="TRANSITO">Tránsito (pendiente factura)</option>
-                        <option value="PROCESADA">Procesada (facturada)</option></select></div>
-                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Nro. Factura (si procesada)</label>
-                      <input value={form.facturaId||''} onChange={e=>setForm(f=>({...f,facturaId:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none" placeholder="INVO-0001"/></div>
-                  </div>
-                  {/* Items */}
-                  <div>
-                    <label className="text-[10px] font-black text-orange-600 uppercase block mb-2">Artículos</label>
-                    <div className="relative mb-2">
-                      <input value={invSearch2} onChange={e=>{setInvSearch2(e.target.value);setShowInvDrop2(true);}} onFocus={()=>setShowInvDrop2(true)}
-                        className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs outline-none focus:border-orange-500" placeholder="Buscar artículo por código o descripción..."/>
-                      {showInvDrop2 && invResults2.length>0 && (
-                        <div className="absolute z-50 w-full bg-white border-2 border-orange-300 rounded-xl mt-1 shadow-xl max-h-52 overflow-y-auto">
-                          {invResults2.map(i=>{const code=i.displayId||(i.id||'').split('___')[0]; return(
-                            <button key={i.id} onMouseDown={()=>{
-                              setForm(f=>({...f,items:[...f.items,{invCode:code,desc:i.desc||'',cantidad:1,precioUnit:0,unit:i.unit||'und',costoUnit:parseNum(i.cost||0)}]}));
-                              setInvSearch2('');setShowInvDrop2(false);
-                            }} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0">
-                              <span className="font-black text-orange-600">{code}</span> — {i.desc||'Sin descripción'}
-                            </button>);
-                          })}
+                    {/* Cliente autocomplete */}
+                    <div className="col-span-2 relative">
+                      <label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Cliente</label>
+                      <input value={form.neClientSearch!==undefined?form.neClientSearch:form.clientName} onChange={e=>{
+                        setForm(f=>({...f,neClientSearch:e.target.value}));
+                      }} onFocus={()=>setForm(f=>({...f,neShowClientDrop:true}))} onBlur={()=>setTimeout(()=>setForm(f=>({...f,neShowClientDrop:false})),200)}
+                        className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="Buscar cliente..."/>
+                      {form.neShowClientDrop&&clientResults.length>0&&(
+                        <div className="absolute z-50 w-full bg-white border-2 border-orange-300 rounded-xl mt-1 shadow-xl max-h-48 overflow-y-auto">
+                          {clientResults.map(c=>(
+                            <button key={c.id||c.rif} onMouseDown={()=>setForm(f=>({...f,clientRif:c.rif||'',clientName:c.name||c.nombre||'',clientAddress:c.direccion||c.address||'',neClientSearch:'',neShowClientDrop:false}))} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0">
+                              <span className="font-black text-orange-600">{c.rif}</span> — {c.name||c.nombre}
+                            </button>
+                          ))}
                         </div>
                       )}
                     </div>
-                    {form.items.length>0 && (
-                      <table className="w-full text-xs border border-gray-200 rounded-xl overflow-hidden">
-                        <thead><tr className="bg-gray-900 text-white">
-                          {['Código','Descripción','U.M.','Cantidad','Precio U.','Costo U.','Total',''].map(h=><th key={h} className="py-2 px-3 text-left text-[9px] font-black uppercase">{h}</th>)}
-                        </tr></thead>
-                        <tbody>{form.items.map((it,idx)=>(
-                          <tr key={idx} className="border-t">
-                            <td className="py-1.5 px-2"><input value={it.invCode||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],invCode:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-24 border rounded p-1 text-[10px] font-black text-orange-600"/></td>
-                            <td className="py-1.5 px-2"><input value={it.desc||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],desc:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-full border rounded p-1 text-[10px]"/></td>
-                            <td className="py-1.5 px-2"><input value={it.unit||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],unit:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-16 border rounded p-1 text-[10px]"/></td>
-                            <td className="py-1.5 px-2"><input type="number" value={it.cantidad} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],cantidad:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-20 border rounded p-1 text-[10px] text-right"/></td>
-                            <td className="py-1.5 px-2"><input type="number" value={it.precioUnit} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],precioUnit:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-24 border rounded p-1 text-[10px] text-right"/></td>
-                            <td className="py-1.5 px-2"><input type="number" value={it.costoUnit||0} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],costoUnit:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-24 border rounded p-1 text-[10px] text-right text-gray-500"/></td>
-                            <td className="py-1.5 px-2 text-right font-black text-green-700">${formatNum(parseNum(it.cantidad)*parseNum(it.precioUnit))}</td>
-                            <td className="py-1.5 px-2"><button onClick={()=>{const ni=form.items.filter((_,i2)=>i2!==idx);setForm(f=>({...f,items:ni}));}} className="text-red-400 hover:text-red-600"><X size={12}/></button></td>
-                          </tr>
-                        ))}</tbody>
-                      </table>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">RIF (auto)</label>
+                      <input value={form.clientRif} onChange={e=>setForm(f=>({...f,clientRif:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500 bg-orange-50"/></div>
+                    <div className="col-span-3"><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Dirección</label>
+                      <input value={form.clientAddress||''} onChange={e=>setForm(f=>({...f,clientAddress:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500 bg-orange-50"/></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Vendedor</label>
+                      <select value={form.vendedor||''} onChange={e=>setForm(f=>({...f,vendedor:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
+                        <option value="">— Seleccionar —</option>
+                        {vendedoresList.map(v=><option key={v.id||v.nombre} value={v.nombre}>{v.nombre}</option>)}
+                        <option value="OFICINA">OFICINA</option>
+                      </select></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">OP Relacionada</label>
+                      <select value={form.opRelacionada||''} onChange={e=>setForm(f=>({...f,opRelacionada:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
+                        <option value="">— Sin OP —</option>
+                        {(requirements||[]).filter(r=>r.status!=='CANCELADA').map(r=><option key={r.id} value={r.id}>{r.id} — {r.desc||r.categoria||''}</option>)}
+                      </select></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">NC Consignación</label>
+                      <select value={form.ncConsignacion||''} onChange={e=>setForm(f=>({...f,ncConsignacion:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
+                        <option value="">— Sin NC —</option>
+                        {(consignaciones||[]).filter(c=>c.estado!=='DEVUELTA').map(c=><option key={c.id} value={c.id}>{c.id} — {c.clienteName||''}</option>)}
+                      </select></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Aplica IVA</label>
+                      <select value={form.aplicaIva||'SI'} onChange={e=>setForm(f=>({...f,aplicaIva:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none">
+                        <option value="SI">Sí (16%)</option><option value="NO">No</option></select></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Estatus</label>
+                      <select value={form.status||'TRANSITO'} onChange={e=>setForm(f=>({...f,status:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none">
+                        <option value="TRANSITO">⏳ Tránsito (sin facturar)</option>
+                        <option value="PROCESADA">✅ Procesada (facturada)</option></select></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Nro. Factura</label>
+                      <input value={form.facturaId||''} onChange={e=>setForm(f=>({...f,facturaId:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="INVO-0001"/></div>
+                  </div>
+                  {/* Items */}
+                  <div>
+                    <label className="text-[10px] font-black text-orange-600 uppercase block mb-2">Artículos del Inventario</label>
+                    <div className="relative mb-2">
+                      <input value={neInvSearch} onChange={e=>{setNeInvSearch(e.target.value);setNeShowInvDrop(true);}} onFocus={()=>setNeShowInvDrop(true)} onBlur={()=>setTimeout(()=>setNeShowInvDrop(false),200)}
+                        className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs outline-none focus:border-orange-500" placeholder="Buscar artículo por código o descripción..."/>
+                      {neShowInvDrop&&invResults2.length>0&&(
+                        <div className="absolute z-50 w-full bg-white border-2 border-orange-300 rounded-xl mt-1 shadow-xl max-h-52 overflow-y-auto">
+                          {invResults2.map(i=>{const code=i.displayId||(i.id||'').split('___')[0];return(
+                            <button key={i.id} onMouseDown={()=>{
+                              setForm(f=>({...f,items:[...f.items,{invCode:code,desc:i.desc||'',cantidad:1,precioUnit:0,unit:i.unit||'und',costoUnit:parseNum(i.cost||0)}]}));
+                              setNeInvSearch('');setNeShowInvDrop(false);
+                            }} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0">
+                              <span className="font-black text-orange-600">{code}</span> — {i.desc} <span className="text-gray-400">· Stock: {formatNum(i.stock||0)} {i.unit||''}</span>
+                            </button>);})}
+                        </div>
+                      )}
+                    </div>
+                    {form.items.length>0&&(
+                      <div className="overflow-x-auto rounded-xl border">
+                        <table className="w-full text-xs">
+                          <thead><tr className="bg-gray-900 text-white">{['Código','Descripción','U.M.','Cantidad','Precio U.','Costo U.','Total',''].map(h=><th key={h} className="py-2 px-3 text-left text-[9px] font-black uppercase whitespace-nowrap">{h}</th>)}</tr></thead>
+                          <tbody>{form.items.map((it,idx)=>(
+                            <tr key={idx} className="border-t hover:bg-orange-50">
+                              <td className="py-1.5 px-2"><input value={it.invCode||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],invCode:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-28 border rounded px-1.5 py-1 text-[10px] font-black text-orange-600 outline-none"/></td>
+                              <td className="py-1.5 px-2"><input value={it.desc||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],desc:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-full border rounded px-1.5 py-1 text-[10px] outline-none"/></td>
+                              <td className="py-1.5 px-2"><input value={it.unit||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],unit:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-16 border rounded px-1.5 py-1 text-[10px] outline-none"/></td>
+                              <td className="py-1.5 px-2"><input type="number" value={it.cantidad} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],cantidad:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-20 border rounded px-1.5 py-1 text-[10px] text-right outline-none"/></td>
+                              <td className="py-1.5 px-2"><input type="number" value={it.precioUnit||0} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],precioUnit:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-24 border rounded px-1.5 py-1 text-[10px] text-right outline-none"/></td>
+                              <td className="py-1.5 px-2"><input type="number" value={it.costoUnit||0} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],costoUnit:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-24 border rounded px-1.5 py-1 text-[10px] text-right text-gray-500 outline-none"/></td>
+                              <td className="py-1.5 px-2 text-right font-black text-green-700 whitespace-nowrap">${formatNum(parseNum(it.cantidad)*parseNum(it.precioUnit))}</td>
+                              <td className="py-1.5 px-2"><button onClick={()=>{const ni=form.items.filter((_,i2)=>i2!==idx);setForm(f=>({...f,items:ni}));}} className="text-red-400 hover:text-red-600"><X size={12}/></button></td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                      </div>
                     )}
                   </div>
                   {/* Totales */}
-                  <div className="flex justify-end gap-8 pt-3 border-t">
+                  <div className="flex justify-between items-end">
+                    <textarea value={form.observaciones||''} onChange={e=>setForm(f=>({...f,observaciones:e.target.value}))} rows={2} placeholder="Observaciones..." className="w-1/2 border-2 border-orange-200 rounded-xl p-2.5 text-xs outline-none focus:border-orange-500 resize-none"/>
                     <div className="text-right space-y-1">
                       <div className="text-xs text-gray-500">Monto Base: <span className="font-black text-gray-900">${formatNum(base)}</span></div>
-                      {form.aplicaIva==='SI' && <div className="text-xs text-gray-500">IVA (16%): <span className="font-black text-gray-900">${formatNum(ivaAmt)}</span></div>}
-                      <div className="text-sm font-black text-orange-600">TOTAL: ${formatNum(base+ivaAmt)}</div>
+                      {form.aplicaIva==='SI'&&<div className="text-xs text-gray-500">IVA (16%): <span className="font-black text-gray-900">${formatNum(ivaAmt)}</span></div>}
+                      <div className="text-base font-black text-orange-600">TOTAL: ${formatNum(base+ivaAmt)}</div>
                     </div>
                   </div>
-                  <div className="col-span-3"><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Observaciones</label>
-                    <textarea value={form.observaciones||''} onChange={e=>setForm(f=>({...f,observaciones:e.target.value}))} rows={2} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs outline-none focus:border-orange-500 resize-none"/></div>
                   <button onClick={()=>handleSaveNE(form,form._editId)} className="w-full bg-orange-500 text-white py-3 rounded-2xl font-black text-sm uppercase hover:bg-orange-600">
-                    {form._editId ? '✅ Guardar Cambios' : '✅ Crear Nota de Entrega'}
+                    {form._editId?'✅ Guardar Cambios':'✅ Crear Nota de Entrega'}
                   </button>
                 </div>
               </div>
             );
           }
 
-          // ── LISTA ──
-          return (
+          /* ── LISTA ── */
+          const totalNE=(neFiltradas.reduce((s,n)=>s+parseNum(n.total||0),0));
+          return(
             <div className="p-6 space-y-5">
               <div className="flex items-center justify-between flex-wrap gap-3">
-                <h2 className="font-black text-xl flex items-center gap-2"><FileText size={20} className="text-orange-500"/> Notas de Entrega
-                  <span className="bg-orange-100 text-orange-700 text-[10px] font-black px-2 py-0.5 rounded-full">{(notasEntrega||[]).length}</span>
-                </h2>
+                <div>
+                  <h2 className="font-black text-xl flex items-center gap-2"><FileText size={20} className="text-orange-500"/> Notas de Entrega
+                    <span className="bg-orange-100 text-orange-700 text-[10px] font-black px-2 py-0.5 rounded-full">{(notasEntrega||[]).length}</span>
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-0.5">El descuento de inventario se aplica al crear la NE · Facturación ya no descuenta</p>
+                </div>
                 <button onClick={()=>setNeForm(initNEForm())} className="bg-orange-500 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-orange-600">
                   <Plus size={14}/> Nueva Nota de Entrega
                 </button>
               </div>
-              {/* Filtros */}
               <div className="flex gap-3 flex-wrap">
-                <div className="relative flex-1 min-w-48">
-                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-                  <input value={neSearch} onChange={e=>setNeSearch(e.target.value)} placeholder="Buscar NE o cliente..." className="w-full pl-9 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-black outline-none focus:border-orange-400"/>
-                </div>
+                <div className="relative flex-1 min-w-48"><Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+                  <input value={neSearch} onChange={e=>setNeSearch(e.target.value)} placeholder="Buscar NE o cliente..." className="w-full pl-9 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-black outline-none focus:border-orange-400"/></div>
                 <select value={neFiltStatus} onChange={e=>setNeFiltStatus(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-black outline-none focus:border-orange-400">
-                  <option value="TODAS">Todos los estatus</option>
-                  <option value="TRANSITO">Tránsito</option>
-                  <option value="PROCESADA">Procesada</option>
+                  <option value="TODAS">Todos los estatus</option><option value="TRANSITO">Tránsito</option><option value="PROCESADA">Procesada</option>
                 </select>
+                <div className="bg-orange-50 border-2 border-orange-200 rounded-xl px-4 py-2.5 text-xs font-black text-orange-700">
+                  {neFiltradas.length} NE · Total: ${formatNum(totalNE)}
+                </div>
               </div>
-              {/* Tabla */}
-              {neFiltradas.length===0 ? (
+              {neFiltradas.length===0?(
                 <div className="text-center py-16 text-gray-400"><FileText size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">No hay notas de entrega</p></div>
-              ) : (
+              ):(
                 <div className="overflow-x-auto rounded-2xl border border-gray-200">
                   <table className="w-full text-xs">
                     <thead><tr className="bg-gray-900 text-white">
-                      {['Nro. NE','Fecha','Cliente','Vendedor','Monto Base','IVA','Total','Estatus','Factura','Acciones'].map(h=>(
+                      {['NE#','Fecha','Cliente','RIF','Vendedor','OP','Monto','IVA','Total','Estatus','Factura','Acciones'].map(h=>(
                         <th key={h} className="py-3 px-3 text-left font-black text-[9px] uppercase whitespace-nowrap">{h}</th>
                       ))}
                     </tr></thead>
                     <tbody className="divide-y divide-gray-100">
                       {neFiltradas.map((ne,i)=>(
-                        <tr key={ne.id} className={`${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50 transition-colors`}>
+                        <tr key={ne.id} className={`${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
                           <td className="py-3 px-3 font-black text-orange-600 whitespace-nowrap cursor-pointer" onClick={()=>setNeForm({...ne,_editId:ne.id})}>{ne.id}</td>
                           <td className="py-3 px-3 text-gray-500 whitespace-nowrap">{ne.fecha}</td>
                           <td className="py-3 px-3 font-bold text-gray-900 max-w-[160px] truncate" title={ne.clientName}>{ne.clientName}</td>
+                          <td className="py-3 px-3 text-gray-500 text-[10px]">{ne.clientRif}</td>
                           <td className="py-3 px-3 text-blue-700 font-bold whitespace-nowrap">{ne.vendedor||'—'}</td>
+                          <td className="py-3 px-3 text-gray-500 text-[10px] whitespace-nowrap">{ne.opRelacionada||'—'}</td>
                           <td className="py-3 px-3 text-right font-black">${formatNum(ne.montoBase||0)}</td>
                           <td className="py-3 px-3 text-right text-gray-500">${formatNum(ne.ivaAmt||0)}</td>
                           <td className="py-3 px-3 text-right font-black text-green-700">${formatNum(ne.total||0)}</td>
                           <td className="py-3 px-3 whitespace-nowrap">
-                            <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${ne.status==='PROCESADA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>
-                              {ne.status==='PROCESADA'?'✓ Procesada':'⏳ Tránsito'}
-                            </span>
+                            <select value={ne.status||'TRANSITO'} onChange={e=>handleChangeStatusNE(ne,e.target.value)} onClick={e=>e.stopPropagation()}
+                              className={`text-[8px] font-black px-2 py-1 rounded-full border-0 outline-none cursor-pointer ${ne.status==='PROCESADA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>
+                              <option value="TRANSITO">⏳ Tránsito</option>
+                              <option value="PROCESADA">✅ Procesada</option>
+                            </select>
                           </td>
                           <td className="py-3 px-3 text-gray-500 text-[10px]">{ne.facturaId||'—'}</td>
                           <td className="py-3 px-3">
                             <div className="flex gap-1">
                               <button onClick={()=>setNeForm({...ne,_editId:ne.id})} title="Editar" className="w-7 h-7 flex items-center justify-center bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-all"><Edit3 size={11}/></button>
                               <button onClick={()=>handleConvertirFactura(ne)} title="Convertir en Factura" className="w-7 h-7 flex items-center justify-center bg-orange-50 text-orange-600 hover:bg-orange-500 hover:text-white rounded-lg transition-all"><Receipt size={11}/></button>
-                              <button onClick={()=>{
-                                const rows2=((ne.items||[])).map(it=>`<tr><td style="padding:5px 8px;border:1px solid #e5e7eb;font-weight:700;color:#ea580c">${it.invCode||it.code||'—'}</td><td style="padding:5px 8px;border:1px solid #e5e7eb">${it.desc||''}</td><td style="padding:5px 8px;border:1px solid #e5e7eb;text-align:center">${it.unit||'und'}</td><td style="padding:5px 8px;border:1px solid #e5e7eb;text-align:right">${formatNum(it.cantidad)}</td><td style="padding:5px 8px;border:1px solid #e5e7eb;text-align:right">$${formatNum(it.precioUnit)}</td><td style="padding:5px 8px;border:1px solid #e5e7eb;text-align:right;font-weight:700;color:#16a34a">$${formatNum(parseNum(it.cantidad)*parseNum(it.precioUnit))}</td></tr>`).join('');
-                                handlePDFFromHTML(`<div style="font-family:Arial,sans-serif;font-size:11px"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:10px;margin-bottom:14px"><div><h2 style="margin:0;font-size:15px;text-transform:uppercase;font-weight:900">NOTA DE ENTREGA</h2><p style="margin:3px 0;font-size:11px;font-weight:900;color:#f97316">${ne.id}</p><span style="background:${ne.status==='PROCESADA'?'#d1fae5':'#fef3c7'};color:${ne.status==='PROCESADA'?'#065f46':'#92400e'};padding:2px 10px;border-radius:20px;font-size:9px;font-weight:900">${ne.status}</span></div><div style="text-align:right"><p style="font-size:11px;margin:2px 0"><b>Fecha:</b> ${ne.fecha}</p>${ne.facturaId?`<p style="font-size:11px;margin:2px 0"><b>Factura:</b> ${ne.facturaId}</p>`:''}</div></div><p style="margin:4px 0"><b>Cliente:</b> ${ne.clientName} (${ne.clientRif})</p>${ne.clientAddress?`<p style="margin:4px 0"><b>Dirección:</b> ${ne.clientAddress}</p>`:''}<p style="margin:4px 0"><b>Vendedor:</b> ${ne.vendedor||'—'}</p><table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="background:#1f2937;color:#fff"><th style="padding:7px 8px;font-size:9px;text-transform:uppercase">Código</th><th style="padding:7px 8px;font-size:9px">Descripción</th><th style="padding:7px 8px;font-size:9px">U.M.</th><th style="padding:7px 8px;font-size:9px">Cantidad</th><th style="padding:7px 8px;font-size:9px">Precio</th><th style="padding:7px 8px;font-size:9px">Total</th></tr></thead><tbody>${rows2}</tbody><tfoot><tr><td colspan="5" style="padding:7px 8px;font-weight:900;border-top:2px solid #e5e7eb;text-align:right">Monto Base:</td><td style="padding:7px 8px;font-weight:900;border-top:2px solid #e5e7eb;text-align:right">$${formatNum(ne.montoBase||0)}</td></tr>${ne.ivaAmt>0?`<tr><td colspan="5" style="padding:4px 8px;text-align:right">IVA (16%):</td><td style="padding:4px 8px;text-align:right">$${formatNum(ne.ivaAmt||0)}</td></tr>`:''}<tr><td colspan="5" style="padding:7px 8px;font-weight:900;font-size:13px;color:#f97316;text-align:right">TOTAL:</td><td style="padding:7px 8px;font-weight:900;font-size:13px;color:#f97316;text-align:right">$${formatNum(ne.total||0)}</td></tr></tfoot></table></div>`,`NE_${ne.id}`);
-                              }} title="PDF" className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-lg transition-all"><Printer size={11}/></button>
+                              <button onClick={()=>{const rows2=(ne.items||[]).map(it=>`<tr><td style="padding:5px 8px;border:1px solid #e5e7eb;font-weight:700;color:#ea580c">${it.invCode||'—'}</td><td style="padding:5px 8px;border:1px solid #e5e7eb">${it.desc||''}</td><td style="padding:5px 8px;border:1px solid #e5e7eb;text-align:center">${it.unit||'und'}</td><td style="padding:5px 8px;border:1px solid #e5e7eb;text-align:right">${formatNum(it.cantidad)}</td><td style="padding:5px 8px;border:1px solid #e5e7eb;text-align:right">$${formatNum(it.precioUnit)}</td><td style="padding:5px 8px;border:1px solid #e5e7eb;text-align:right;font-weight:700;color:#16a34a">$${formatNum(parseNum(it.cantidad)*parseNum(it.precioUnit))}</td></tr>`).join('');handlePDFFromHTML(`<div style="font-family:Arial,sans-serif;font-size:11px"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:10px;margin-bottom:14px"><div><h2 style="margin:0;font-size:15px;font-weight:900">NOTA DE ENTREGA ${ne.id+(ne.status==='PROCESADA'?'P':'T')}</h2><span style="background:${ne.status==='PROCESADA'?'#d1fae5':'#fef3c7'};color:${ne.status==='PROCESADA'?'#065f46':'#92400e'};padding:2px 10px;border-radius:20px;font-size:9px;font-weight:900">${ne.status}</span></div><div style="text-align:right"><p style="font-size:11px;margin:2px 0"><b>Fecha:</b> ${ne.fecha}</p>${ne.facturaId?`<p style="font-size:11px;margin:2px 0"><b>Factura:</b> ${ne.facturaId}</p>`:''}</div></div><p style="margin:4px 0"><b>Cliente:</b> ${ne.clientName} (${ne.clientRif})</p>${ne.clientAddress?`<p style="margin:4px 0">${ne.clientAddress}</p>`:''}<p style="margin:4px 0"><b>Vendedor:</b> ${ne.vendedor||'—'}${ne.opRelacionada?` · <b>OP:</b> ${ne.opRelacionada}`:''}</p><table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="background:#1f2937;color:#fff"><th style="padding:7px 8px;font-size:9px">Código</th><th style="padding:7px 8px;font-size:9px">Descripción</th><th style="padding:7px 8px;font-size:9px">U.M.</th><th style="padding:7px 8px;font-size:9px">Cantidad</th><th style="padding:7px 8px;font-size:9px">Precio</th><th style="padding:7px 8px;font-size:9px">Total</th></tr></thead><tbody>${rows2}</tbody><tfoot><tr><td colspan="5" style="padding:7px 8px;font-weight:900;border-top:2px solid #e5e7eb;text-align:right">Monto Base:</td><td style="padding:7px 8px;font-weight:900;border-top:2px solid #e5e7eb;text-align:right">$${formatNum(ne.montoBase||0)}</td></tr>${ne.ivaAmt>0?`<tr><td colspan="5" style="padding:4px 8px;text-align:right">IVA (16%):</td><td style="padding:4px 8px;text-align:right">$${formatNum(ne.ivaAmt||0)}</td></tr>`:''}<tr><td colspan="5" style="padding:7px 8px;font-weight:900;font-size:13px;color:#f97316;text-align:right">TOTAL:</td><td style="padding:7px 8px;font-weight:900;font-size:13px;color:#f97316;text-align:right">$${formatNum(ne.total||0)}</td></tr></tfoot></table></div>`,`NE_${ne.id}`);}} title="PDF" className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-lg transition-all"><Printer size={11}/></button>
                               <button onClick={()=>handleDeleteNE(ne)} title="Eliminar" className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition-all"><Trash2 size={11}/></button>
                             </div>
                           </td>
@@ -11661,54 +11591,31 @@ tr:nth-child(even) td{background:#f9fafb;}
 
         {/* ── TRANSACCIONES DE VENTAS ─────────────────────────────────────── */}
         {ventasView === 'transacciones_ventas' && (() => {
-
-          // Combinar facturas + notas de entrega
-          const rows = [];
-          // Notas de Entrega
-          (notasEntrega||[]).forEach(ne => {
-            if(ne.fecha < tvDesde || ne.fecha > tvHasta) return;
-            if(tvStatus!=='TODAS' && ne.status!==tvStatus) return;
-            const costo = ne.costoTotal||ne.items?.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0)||0;
-            const utilidad = (ne.montoBase||0) - costo;
-            const pctUtil = (ne.montoBase||0)>0 ? (utilidad/(ne.montoBase||0)*100) : 0;
-            rows.push({fecha:ne.fecha, documento:ne.id+(ne.status==='PROCESADA'?'P':'T'), descripcion:ne.clientName||'—', montoBruto:ne.montoBase||0, iva:ne.ivaAmt||0, tNeto:ne.total||0, contado:0, credito:ne.total||0, costo, utilidad, pctUtil, tipo:'NE', status:ne.status});
-          });
-          // Facturas
-          (invoices||[]).forEach(inv => {
-            if(!inv.fecha || inv.fecha < tvDesde || inv.fecha > tvHasta) return;
-            if(tvStatus==='TRANSITO') return; // facturas siempre son procesadas
-            if(tvStatus==='PROCESADA') {/* ok */}
-            const base = parseNum(inv.montoBase||inv.total||0);
-            const ivaAmt = inv.aplicaIva==='SI' ? base*0.16 : 0;
-            const tNeto = base + ivaAmt;
-            const costo = (inv.itemsFacturados||inv.fgItems||[]).reduce((s,it)=>s+parseNum(it.cantidad||it.qty||0)*parseNum(it.costoUnit||0),0);
-            const utilidad = base - costo;
-            const pctUtil = base>0 ? (utilidad/base*100) : 0;
-            rows.push({fecha:inv.fecha, documento:inv.id||inv.nroInterno||'—', descripcion:inv.clientName||'—', montoBruto:base, iva:ivaAmt, tNeto, contado:0, credito:tNeto, costo, utilidad, pctUtil, tipo:'FAC', status:'PROCESADA'});
+          const rows=[];
+          (notasEntrega||[]).forEach(ne=>{
+            if(ne.fecha<tvDesde||ne.fecha>tvHasta) return;
+            if(tvStatus!=='TODAS'&&ne.status!==tvStatus) return;
+            const costo=ne.costoTotal||(ne.items||[]).reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0);
+            const utilidad=(ne.montoBase||0)-costo;
+            const pctUtil=(ne.montoBase||0)>0?(utilidad/(ne.montoBase||0)*100):0;
+            rows.push({fecha:ne.fecha,documento:ne.id+(ne.status==='PROCESADA'?'P':'T'),descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,contado:0,credito:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,status:ne.status});
           });
           rows.sort((a,b)=>a.fecha.localeCompare(b.fecha));
-
-          const tot = rows.reduce((s,r)=>({montoBruto:s.montoBruto+r.montoBruto,iva:s.iva+r.iva,tNeto:s.tNeto+r.tNeto,contado:s.contado+r.contado,credito:s.credito+r.credito,costo:s.costo+r.costo,utilidad:s.utilidad+r.utilidad}),{montoBruto:0,iva:0,tNeto:0,contado:0,credito:0,costo:0,utilidad:0});
-          const pctTot = tot.montoBruto>0 ? (tot.utilidad/tot.montoBruto*100) : 0;
-
-          const empresa = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B C.A.';
-          const exportReportePDF = () => {
-            const rowsHtml = rows.map(r=>`<tr style="border-bottom:1px solid #e5e7eb;${r.tipo==='NE'?'':'background:#fafafa'}"><td style="padding:4px 7px;font-size:9px;white-space:nowrap">${r.fecha}</td><td style="padding:4px 7px;font-size:9px;font-weight:700;color:${r.status==='PROCESADA'?'#16a34a':'#d97706'}">${r.documento}</td><td style="padding:4px 7px;font-size:9px">${r.descripcion}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.montoBruto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.iva)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;font-weight:700">${formatNum(r.tNeto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.contado)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.credito)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;color:#6b7280">${formatNum(r.costo)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;color:#16a34a;font-weight:700">${formatNum(r.utilidad)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${r.pctUtil.toFixed(2)}%</td></tr>`).join('');
-            handlePDFFromHTML(`<div style="font-family:Arial,sans-serif;font-size:11px"><div style="margin-bottom:14px"><h2 style="margin:0;font-size:15px;font-weight:900">TRANSACCIONES DE VENTAS</h2><p style="margin:3px 0;font-size:10px;color:#6b7280">Desde: ${tvDesde} &nbsp; Hasta: ${tvHasta} &nbsp; Moneda: Dólares</p><p style="margin:3px 0;font-size:9px;color:#6b7280">Leyenda: (P) Procesada &nbsp;·&nbsp; (T) Tránsito</p></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#111827;color:#fff"><th style="padding:6px 7px;font-size:9px;text-align:left">Fecha</th><th style="padding:6px 7px;font-size:9px;text-align:left">Documento</th><th style="padding:6px 7px;font-size:9px;text-align:left">Descripción</th><th style="padding:6px 7px;font-size:9px;text-align:right">Monto Bruto</th><th style="padding:6px 7px;font-size:9px;text-align:right">I.V.A(16%)</th><th style="padding:6px 7px;font-size:9px;text-align:right">T.Neto</th><th style="padding:6px 7px;font-size:9px;text-align:right">Contado</th><th style="padding:6px 7px;font-size:9px;text-align:right">Crédito</th><th style="padding:6px 7px;font-size:9px;text-align:right">Costo</th><th style="padding:6px 7px;font-size:9px;text-align:right">Utilidad</th><th style="padding:6px 7px;font-size:9px;text-align:right">%Util.</th></tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr style="background:#111827;color:#fff;font-weight:900"><td colspan="3" style="padding:6px 7px;font-size:9px">TOTALES (${rows.length} operaciones)</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.montoBruto)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.iva)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.tNeto)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.contado)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.credito)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.costo)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.utilidad)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${pctTot.toFixed(2)}%</td></tr></tfoot></table></div>`,`Transacciones_Ventas_${tvDesde}_${tvHasta}`);
+          const tot=rows.reduce((s,r)=>({montoBruto:s.montoBruto+r.montoBruto,iva:s.iva+r.iva,tNeto:s.tNeto+r.tNeto,costo:s.costo+r.costo,utilidad:s.utilidad+r.utilidad}),{montoBruto:0,iva:0,tNeto:0,costo:0,utilidad:0});
+          const pctTot=tot.montoBruto>0?(tot.utilidad/tot.montoBruto*100):0;
+          const exportTV=()=>{
+            const rowsHtml=rows.map(r=>`<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:4px 7px;font-size:9px;white-space:nowrap">${r.fecha}</td><td style="padding:4px 7px;font-size:9px;font-weight:700;color:${r.status==='PROCESADA'?'#16a34a':'#d97706'}">${r.documento}</td><td style="padding:4px 7px;font-size:9px">${r.descripcion}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.montoBruto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.iva)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;font-weight:700">${formatNum(r.tNeto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.contado)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.credito)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;color:#6b7280">${formatNum(r.costo)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;color:#16a34a;font-weight:700">${formatNum(r.utilidad)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${r.pctUtil.toFixed(2)}%</td></tr>`).join('');
+            handlePDFFromHTML(`<div style="font-family:Arial,sans-serif;font-size:11px"><div style="margin-bottom:14px"><h2 style="margin:0;font-size:15px;font-weight:900">TRANSACCIONES DE VENTAS</h2><p style="font-size:10px;color:#6b7280;margin:3px 0">Desde: ${tvDesde} · Hasta: ${tvHasta} · Moneda: Dólares · Utilidad: Costo Promedio</p><p style="font-size:9px;color:#6b7280;margin:3px 0">(P) Procesada = facturada · (T) Tránsito = pendiente factura</p></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#111827;color:#fff">${['Fecha','Documento','Descripción','Monto Bruto','I.V.A(16%)','T.Neto','Contado','Crédito','Costo','Utilidad','%Util.'].map(h=>`<th style="padding:6px 7px;font-size:9px;text-align:right;text-align:left">${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr style="background:#111827;color:#fff;font-weight:900"><td colspan="3" style="padding:6px 7px;font-size:9px">TOTALES (${rows.length} operaciones)</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.montoBruto)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.iva)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.tNeto)}</td><td colspan="2" style="padding:6px 7px"></td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.costo)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.utilidad)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${pctTot.toFixed(2)}%</td></tr></tfoot></table></div>`,`Transacciones_${tvDesde}_${tvHasta}`);
           };
-
-          return (
+          return(
             <div className="p-6 space-y-5">
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <div>
                   <h2 className="font-black text-xl flex items-center gap-2"><BarChart3 size={20} className="text-orange-500"/> Transacciones de Ventas</h2>
-                  <p className="text-xs text-gray-500 mt-1">Facturas + Notas de Entrega · Moneda: Dólares · Utilidad expresada en Costo Promedio</p>
+                  <p className="text-xs text-gray-500 mt-1">Notas de Entrega · Moneda: Dólares · Utilidad expresada en Costo Promedio</p>
                 </div>
-                <button onClick={exportReportePDF} className="bg-gray-800 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-black">
-                  <Printer size={14}/> Imprimir / PDF
-                </button>
+                <button onClick={exportTV} className="bg-gray-800 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-black"><Printer size={14}/> Imprimir / PDF</button>
               </div>
-              {/* Filtros */}
               <div className="bg-white rounded-2xl border p-4 flex flex-wrap gap-4 items-end">
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label>
                   <input type="date" value={tvDesde} onChange={e=>setTvDesde(e.target.value)} className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400"/></div>
@@ -11716,31 +11623,30 @@ tr:nth-child(even) td{background:#f9fafb;}
                   <input type="date" value={tvHasta} onChange={e=>setTvHasta(e.target.value)} className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400"/></div>
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Estatus</label>
                   <select value={tvStatus} onChange={e=>setTvStatus(e.target.value)} className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400">
-                    <option value="TODAS">Todos</option>
-                    <option value="TRANSITO">Tránsito</option>
-                    <option value="PROCESADA">Procesadas</option>
+                    <option value="TODAS">Todos</option><option value="TRANSITO">Tránsito</option><option value="PROCESADA">Procesadas</option>
                   </select></div>
-                <div className="text-[10px] text-gray-500 ml-auto">
-                  <span className="font-black">{rows.length}</span> operaciones &nbsp;·&nbsp; Total: <span className="font-black text-green-700">${formatNum(tot.tNeto)}</span>
+                <div className="ml-auto text-[10px] text-gray-500 text-right">
+                  <div className="font-black text-lg text-gray-900">${formatNum(tot.tNeto)}</div>
+                  <div>{rows.length} operaciones · Utilidad: <span className="text-green-600 font-black">{pctTot.toFixed(2)}%</span></div>
                 </div>
               </div>
-              {/* Tabla */}
-              {rows.length===0 ? (
-                <div className="text-center py-16 text-gray-400"><BarChart3 size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">Sin transacciones en el período seleccionado</p></div>
-              ) : (
+              {rows.length===0?(
+                <div className="text-center py-16 text-gray-400"><BarChart3 size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">Sin transacciones en el período</p></div>
+              ):(
                 <div className="overflow-x-auto rounded-2xl border border-gray-200">
                   <table className="w-full text-xs">
                     <thead><tr className="bg-gray-900 text-white">
-                      {['Fecha','Documento','Descripción','Monto Bruto','I.V.A(16%)','T.Neto','Contado','Crédito','Costo','Utilidad','%Util.'].map(h=>(
+                      {['Fecha','Documento','Descripción','Monto Bruto','I.V.A(16%)','T.Neto','Contado','Crédito','Costo','Utilidad','%Util.','Estado'].map(h=>(
                         <th key={h} className="py-3 px-3 text-left font-black text-[9px] uppercase whitespace-nowrap">{h}</th>
                       ))}
                     </tr></thead>
                     <tbody className="divide-y divide-gray-100">
-                      {rows.map((r,i)=>(
-                        <tr key={i} className={`${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
+                      {rows.map((r,i)=>{
+                        const ne=(notasEntrega||[]).find(n=>n.id===r.neId);
+                        return(<tr key={i} className={`${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
                           <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">{r.fecha}</td>
                           <td className="py-2.5 px-3 font-black whitespace-nowrap" style={{color:r.status==='PROCESADA'?'#16a34a':'#d97706'}}>{r.documento}</td>
-                          <td className="py-2.5 px-3 font-bold text-gray-900 max-w-[200px] truncate" title={r.descripcion}>{r.descripcion}</td>
+                          <td className="py-2.5 px-3 font-bold text-gray-900 max-w-[180px] truncate" title={r.descripcion}>{r.descripcion}</td>
                           <td className="py-2.5 px-3 text-right font-black">{formatNum(r.montoBruto)}</td>
                           <td className="py-2.5 px-3 text-right text-gray-500">{formatNum(r.iva)}</td>
                           <td className="py-2.5 px-3 text-right font-black text-blue-700">{formatNum(r.tNeto)}</td>
@@ -11749,24 +11655,31 @@ tr:nth-child(even) td{background:#f9fafb;}
                           <td className="py-2.5 px-3 text-right text-gray-400">{formatNum(r.costo)}</td>
                           <td className="py-2.5 px-3 text-right font-black text-green-700">{formatNum(r.utilidad)}</td>
                           <td className="py-2.5 px-3 text-right text-gray-700 font-bold">{r.pctUtil.toFixed(2)}%</td>
-                        </tr>
-                      ))}
+                          <td className="py-2.5 px-3">
+                            {ne&&<select value={ne.status||'TRANSITO'} onChange={e=>{updateDoc(getDocRef('notasEntrega',ne.id),{status:e.target.value,updatedAt:Date.now()});}}
+                              className={`text-[8px] font-black px-2 py-1 rounded-full border-0 outline-none cursor-pointer ${ne.status==='PROCESADA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>
+                              <option value="TRANSITO">⏳ Tránsito</option>
+                              <option value="PROCESADA">✅ Procesada</option>
+                            </select>}
+                          </td>
+                        </tr>);
+                      })}
                     </tbody>
                     <tfoot><tr className="bg-gray-900 text-white font-black">
-                      <td colSpan={3} className="py-3 px-3 text-[10px] uppercase">Totales — {rows.length} operaciones</td>
+                      <td colSpan={3} className="py-3 px-3 text-[10px] uppercase">Totales — {rows.length} ops.</td>
                       <td className="py-3 px-3 text-right">{formatNum(tot.montoBruto)}</td>
                       <td className="py-3 px-3 text-right">{formatNum(tot.iva)}</td>
                       <td className="py-3 px-3 text-right text-blue-300">{formatNum(tot.tNeto)}</td>
-                      <td className="py-3 px-3 text-right">{formatNum(tot.contado)}</td>
-                      <td className="py-3 px-3 text-right">{formatNum(tot.credito)}</td>
+                      <td colSpan={2} className="py-3 px-3"></td>
                       <td className="py-3 px-3 text-right text-gray-400">{formatNum(tot.costo)}</td>
                       <td className="py-3 px-3 text-right text-green-400">{formatNum(tot.utilidad)}</td>
                       <td className="py-3 px-3 text-right text-orange-300">{pctTot.toFixed(2)}%</td>
+                      <td></td>
                     </tr></tfoot>
                   </table>
                 </div>
               )}
-              <p className="text-[9px] text-gray-400 text-center">Leyenda: <span className="text-green-600 font-black">(P) Procesada</span> = facturada · <span className="text-yellow-600 font-black">(T) Tránsito</span> = pendiente factura</p>
+              <p className="text-[9px] text-gray-400 text-center"><span className="text-green-600 font-black">(P)</span> Procesada = facturada · <span className="text-yellow-600 font-black">(T)</span> Tránsito = pendiente de factura</p>
             </div>
           );
         })()}
