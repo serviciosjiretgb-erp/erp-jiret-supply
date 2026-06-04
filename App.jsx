@@ -16,7 +16,7 @@ import {
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
   ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing, Upload,
   Menu, ChevronLeft, Smartphone, Wifi, WifiOff,
-  Activity, Timer, Award, PackageCheck, Calendar, ChevronDown, CheckSquare, RotateCcw} from 'lucide-react';
+  Activity, Timer, Award, PackageCheck, Calendar, ChevronDown, CheckSquare, RotateCcw, Settings} from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
@@ -1120,6 +1120,27 @@ export default function App() {
   //   • Crea los que faltan (p.ej. VENILAC - TERMO).
   //   • Como toma el saldo ACTUAL de FG Producción, nunca restaura lo ya facturado.
 
+
+  // ── ELIMINAR TODOS LOS FG DEL INVENTARIO (usuario crea todo desde cero) ──────
+  useEffect(() => {
+    if(!inventory || !appUser || sessionStorage.getItem('delete_all_fg_inv_v1')==='done') return;
+    const toDelete = (inventory||[]).filter(i => {
+      const code = (i.displayId || (i.id||'').split('___')[0] || '');
+      return code.toUpperCase().startsWith('FG-');
+    });
+    if(toDelete.length === 0) { sessionStorage.setItem('delete_all_fg_inv_v1','done'); return; }
+    const run = async () => {
+      try {
+        for(let i=0; i<toDelete.length; i+=400) {
+          const b = writeBatch(db);
+          toDelete.slice(i,i+400).forEach(d => b.delete(getDocRef('inventory', d.id)));
+          await b.commit();
+        }
+      } catch(e){ console.error(e); }
+      sessionStorage.setItem('delete_all_fg_inv_v1','done');
+    };
+    run();
+  }, [inventory, appUser]);
 
   useEffect(() => {
     if(!appUser || sessionStorage.getItem('del_req_00017')==='done') return;
