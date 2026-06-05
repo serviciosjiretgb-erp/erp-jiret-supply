@@ -415,6 +415,7 @@ export default function App() {
   const [tvHasta, setTvHasta] = useState(getTodayDate);
   const [tvStatus, setTvStatus] = useState('TODAS');
   const [reqProdSearch, setReqProdSearch] = useState('');
+  const [reqClientSearch, setReqClientSearch] = useState('');
   const [invRequisitions, setInvRequisitions] = useState([]);
   const [reqFilter, setReqFilter] = useState('');
 
@@ -11339,12 +11340,31 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Cliente del Directorio</label>
-                        <select required value={newReqForm.client} onChange={e=>handleReqFormChange('client', e.target.value)} className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-black text-xs text-black outline-none focus:border-orange-500">
-                          <option value="">Seleccione cliente...</option>
-                          {(clients||[]).sort((a,b)=>(a.name||a.nombre||'').localeCompare(b.name||b.nombre||'')).map(c=>(
-                            <option key={c?.rif||c?.id} value={c?.name||c?.nombre}>{c?.name||c?.nombre} {c?.rif?`(${c.rif})`:''}</option>
-                          ))}
-                        </select>
+                        <input
+                          type="text"
+                          value={reqClientSearch || newReqForm.client}
+                          onChange={e=>{ setReqClientSearch(e.target.value); if(!e.target.value) handleReqFormChange('client',''); }}
+                          placeholder="🔍 Buscar cliente..."
+                          className="w-full bg-white border-2 border-gray-200 rounded-xl p-3 font-black text-xs text-black outline-none focus:border-orange-500 mb-1"/>
+                        {reqClientSearch && (
+                          <div className="border-2 border-orange-300 rounded-xl bg-white shadow-xl max-h-48 overflow-y-auto z-50 relative">
+                            {(clients||[]).filter(c=>(c.name||c.nombre||'').toUpperCase().includes(reqClientSearch.toUpperCase())||(c.rif||'').includes(reqClientSearch)).slice(0,10).map(c=>(
+                              <button key={c.rif||c.id} type="button" onMouseDown={()=>{ handleReqFormChange('client',c.name||c.nombre); setReqClientSearch(''); }}
+                                className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0">
+                                <span className="font-black text-orange-600">{c.rif}</span> — {c.name||c.nombre}
+                              </button>
+                            ))}
+                            {(clients||[]).filter(c=>(c.name||c.nombre||'').toUpperCase().includes(reqClientSearch.toUpperCase())||(c.rif||'').includes(reqClientSearch)).length===0 && (
+                              <div className="px-3 py-2 text-xs text-gray-400 italic">No encontrado</div>
+                            )}
+                          </div>
+                        )}
+                        {newReqForm.client && !reqClientSearch && (
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[10px] font-black text-orange-600 bg-orange-50 px-2 py-1 rounded-lg">✓ {newReqForm.client}</span>
+                            <button type="button" onClick={()=>{ handleReqFormChange('client',''); setReqClientSearch(''); }} className="text-[9px] text-red-400 hover:text-red-600">✕ Cambiar</button>
+                          </div>
+                        )}
                       </div>
                       <div>
                         <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">Categoría</label>
@@ -11383,15 +11403,19 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         {[...(inventory||[])
                           .filter(i => {
                             if(i.activo===false) return false;
-                            // Solo Termoencogibles y Bolsas Plásticas
+                            // Mostrar Termoencogibles y Bolsas — cualquier variante de subcategoría o código
                             const sub = (i.subcategory||'').toLowerCase();
                             const cat = (i.category||'').toLowerCase();
-                            if(!['termoencogibles','termoencogible','bolsas plásticas','bolsas plasticas'].some(s=>sub.includes(s)||cat.includes(s))) return false;
+                            const code = (i.displayId||(i.id||'').split('___')[0]||'').toLowerCase();
+                            const desc = (i.desc||'').toLowerCase();
+                            const esBolsa = sub.includes('bolsa') || code.startsWith('bol') || desc.includes('bolsa');
+                            const esTermo = sub.includes('termo') || code.startsWith('ter') || desc.includes('termo') || desc.includes('termoencogible');
+                            const esPT = cat === 'productos terminados' || cat === 'semielaborado';
+                            if(!(esBolsa || esTermo) && !esPT) return false;
                             // Filtro de búsqueda
                             if(!reqProdSearch) return true;
                             const q = reqProdSearch.toUpperCase();
-                            const code = (i.displayId||(i.id||'').split('___')[0]||'').toUpperCase();
-                            return code.includes(q)||(i.desc||'').toUpperCase().includes(q);
+                            return code.toUpperCase().includes(q)||(i.desc||'').toUpperCase().includes(q);
                           })
                           .reduce((map, i) => {
                             const key = i.displayId||(i.id||'').split('___')[0];
