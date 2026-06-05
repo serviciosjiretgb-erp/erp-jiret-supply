@@ -11986,7 +11986,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         const prod = (inventory||[]).find(i=>i.id===newReqForm.productoDestinoId);
                         return prod ? (
                           <p className="text-[10px] text-orange-700 mt-2 font-bold">
-                            ✅ Al cerrar cada lote → sumará a <strong>{prod.displayId||(prod.id||'').split('___')[0]}</strong> · Stock actual: {formatNum(prod.stock||0)} {prod.unit||'und'} · Costo: ${formatNum(prod.cost||0)}
+                             ✅ Al cerrar cada lote (fase final) → stock sumará automáticamente a <strong>{prod.displayId||(prod.id||'').split('___')[0]}</strong> · Stock actual: {formatNum(prod.stock||0)} {prod.unit||'und'} · Costo unit: ${formatNum(prod.cost||0)}
                           </p>
                         ) : null;
                       })()}
@@ -12639,7 +12639,10 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       }
 
       await fbBatch.commit();
-      setDialog({title:'Lote Cerrado', text:`El Lote ${activeLoteIndex+1} fue cerrado.${req.productoDestinoId?' El stock del producto destino fue actualizado.':' Cree un nuevo lote para continuar produciendo.'}`, type:'alert'});
+      setDialog({
+        title:'✅ Lote Cerrado',
+        text:`Lote ${activeLoteIndex+1} cerrado.${req.productoDestinoId?' Las unidades producidas fueron sumadas automáticamente a Inventario / Productos Terminados.':' Sin producto destino asignado — asigna el producto en la OP para registrar stock PT.'}`,
+      });
     };
     if (faltantes.length > 0) {
       const nombres = faltantes.map(p=>p.toUpperCase()).join(', ');
@@ -13873,192 +13876,51 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
     if (!req) return;
     setDialog({
       title: 'Cierre de OP ' + String(req.id).replace('OP-', '').padStart(5, '0'),
-      text: 'Se cerrará la OP completa y se cargará la producción pendiente a Inventario de Terminados (ALMACEN ZI). ¿Continuar?',
+      text: `¿Cerrar definitivamente la OP?\n\nNota: el inventario de Productos Terminados ya fue actualizado al cerrar cada lote. Este cierre solo finaliza la orden y genera el registro de finiquito.`,
       type: 'confirm',
       onConfirm: async () => {
         try {
-          const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
-
-          // ── Read batches from lotes structure (new) OR flat structure (legacy) ──
           const allLotes = getLotes(req);
-          const filterReal = b => b?.operator !== 'ALMACÉN (DESPACHO)' && parseNum(b?.producedKg) > 0;
+          const fbBatch = writeBatch(db);
 
-          let selBatch = [], impBatch = [], extBatch = [];
-          if(allLotes.length > 0) {
-            selBatch = allLotes.flatMap(l => (l?.sellado?.batches||[]).filter(filterReal));
-            impBatch = allLotes.flatMap(l => (l?.impresion?.batches||[]).filter(filterReal));
-            extBatch = allLotes.flatMap(l => (l?.extrusion?.batches||[]).filter(filterReal));
-          } else {
-            // Legacy flat structure
-            const prod = req.production || {};
-            selBatch = (prod.sellado?.batches||[]).filter(filterReal);
-            impBatch = (prod.impresion?.batches||[]).filter(filterReal);
-            extBatch = (prod.extrusion?.batches||[]).filter(filterReal);
-          }
-
-          const lastBatches = selBatch.length>0 ? selBatch : impBatch.length>0 ? impBatch : extBatch;
-          const totalKgProd = lastBatches.reduce((s,b)=>s+parseNum(b.producedKg),0);
-          const totalMillares = selBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-            || impBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-            || extBatch.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-            || (esTermo ? 0 : (extBatch.reduce((s,b)=>s+parseNum(b.millaresProd||b.millaresTeóricos||0),0)));
-
-          const pendienteKg   = Math.max(0, totalKgProd - (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0));
-          const pendienteMill = esTermo ? 0 : Math.max(0, totalMillares - (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0));
-          const qtyFinal = esTermo ? pendienteKg : pendienteMill;
-
-          // ── Cost from approved requisitions × inventory unit cost ──
-          const allApprovedReqs = (invRequisitions||[]).filter(r => r.opId===req.id && (r.status==='APROBADA'||r.status==='APROBADO'));
-          let totalCostMP = 0, totalKgMP = 0;
-          allApprovedReqs.forEach(r => {
-            (r.items||[]).forEach(it => {
-              const inv = (inventory||[]).find(i => {
-                if(i.id === it.id) return true;
-                const icc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
-                const itcc = (it.id||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
-                return icc === itcc;
-              });
-              const q = parseNum(it.qty||0);
-              const c = parseNum(inv?.cost||0);
-              totalCostMP += q * c;
-              totalKgMP += q;
-            });
-          });
-          // Also sum from batch insumos (if already stored with unitCost)
-          const allBatches = [...extBatch, ...impBatch, ...selBatch];
-          let batchCostTotal = allBatches.reduce((s,b)=>{
-            const bInsCost = (b.insumos||[]).reduce((ss,ing)=>{
-              const uc = parseNum(ing.unitCost) > 0 ? parseNum(ing.unitCost) : parseNum((inventory||[]).find(i=>i.id===ing.id)?.cost||0);
-              return ss + parseNum(ing.qty)*uc;
-            },0);
-            return s + (bInsCost > 0 ? bInsCost : parseNum(b.cost||0));
-          },0);
-          const costBase = Math.max(totalCostMP, batchCostTotal);
-          const costoUnit = qtyFinal > 0 && costBase > 0 ? costBase / qtyFinal : 0;
-
-          // ── Mark all phases closed ──
-          if(allLotes.length > 0) {
+          // ── Cerrar todos los lotes y fases pendientes ──
+          if (allLotes.length > 0) {
             const updatedLotes = allLotes.map(l => ({
               ...l,
-              extrusion: {...(l.extrusion||{}), isClosed:true},
-              impresion: {...(l.impresion||{}), isClosed:true},
-              sellado:   {...(l.sellado||{}), isClosed:true},
+              extrusion: {...(l.extrusion||{}), isClosed: true},
+              impresion: {...(l.impresion||{}), isClosed: true},
+              sellado:   {...(l.sellado||{}),   isClosed: true},
               cerrado: true, fechaCierre: getTodayDate()
             }));
-            await updateDoc(getDocRef('requirements', req.id), {
+            fbBatch.update(getDocRef('requirements', req.id), {
               'production.lotes': updatedLotes,
               status: 'COMPLETADO', fechaCierre: getTodayDate()
             });
           } else {
-            await updateDoc(getDocRef('requirements', req.id), {
+            fbBatch.update(getDocRef('requirements', req.id), {
               status: 'COMPLETADO', fechaCierre: getTodayDate()
             });
           }
 
-          // ── Only sync if there's something to add ──
-          const qtyToAdd = esTermo ? pendienteKg : (pendienteMill > 0 ? pendienteMill : pendienteKg);
-          if(qtyToAdd > 0) {
-            const unit = esTermo ? 'kg' : 'millares';
-            const subcategory = esTermo ? 'Termoencogibles' : 'Bolsas Plásticas';
-            const descFG = formatFGLabel(req) || req.desc || req.categoria || 'Producto';
+          // ── Kardex: nota de finiquito (sin sumar stock — ya lo hicieron los lotes) ──
+          const movFiniquito = `CIERRE-OP-${req.id}-${Date.now()}`;
+          fbBatch.set(getDocRef('inventoryMovements', movFiniquito), {
+            id: movFiniquito,
+            type: 'NOTA_CIERRE',
+            date: getTodayDate(),
+            timestamp: Date.now(),
+            reference: req.id,
+            notes: `✅ FINIQUITO OP #${String(req.id).replace('OP-','').padStart(5,'0')} — ${req.desc||req.categoria||''} — ${req.client||''}`,
+            user: appUser?.name||'Sistema',
+            isFG: false
+          });
 
-            // ── Generate cleanCode for this product ──
-            const catShort = (req.categoria||req.desc||'PT').toUpperCase().replace(/[\s\/\-&]+/g,'').substring(0,18);
-            const w = parseFloat(req.ancho||0), l = parseFloat(req.largo||0), m = parseFloat(req.micras||0);
-            const dims = (w>0||l>0) ? `${w}x${l}x${m}` : '';
-            const cleanCode = dims ? `FG-${catShort}-${dims}` : `FG-${catShort}`;
-
-            // ── Find existing PT inventory doc ──
-            const descNorm = descFG.toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
-            const _normDims = (s)=>{const p=String(s||'').toLowerCase().split('x').map(x=>parseFloat(x)||0);return p.length>=3?`${p[0]}x${p[1]}x${p[2]}`:'';};
-            const opDims = _normDims(dims);
-            const ptDocs = (inventory||[]).filter(i => i.category==='Productos Terminados' && i.activo!==false);
-            let existingDoc = ptDocs.find(i => {
-              const iNorm = (i.desc||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
-              return iNorm === descNorm;
-            }) || ptDocs.find(i => {
-              const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
-              return cc === cleanCode;
-            }) || (opDims ? ptDocs.find(i => {
-              const esT = (i.subcategory==='Termoencogibles') || (i.unit||'').toLowerCase()==='kg';
-              const cc = (i.displayId||(i.id||'').split('___')[0]).split('___')[0].split('-').pop();
-              return _normDims(cc) === opDims && esT === esTermo;
-            }) : null);
-
-            if(existingDoc) {
-              // ── Evitar doble carga de la MISMA OP a este producto ──
-              const aplicadas = Array.isArray(existingDoc.opsAplicadas) ? existingDoc.opsAplicadas : [];
-              if(!aplicadas.includes(req.id)) {
-                // ── SUMA a la existencia + costo PROMEDIO PONDERADO ──
-                const prevStock = parseNum(existingDoc.stock||0);
-                const newStock = prevStock + qtyToAdd;
-                const prevCost = parseNum(existingDoc.cost||0);
-                const newCost = costoUnit > 0
-                  ? ((prevStock * prevCost) + (qtyToAdd * costoUnit)) / newStock
-                  : prevCost;
-                await setDoc(getDocRef('inventory', existingDoc.id), {
-                  ...existingDoc, stock: newStock, cost: newCost,
-                  opsAplicadas: [...aplicadas, req.id],
-                  timestamp: Date.now(), updatedAt: getTodayDate()
-                }, { merge: true });
-              }
-            } else {
-              // ── Create new PT doc ──
-              const newId = `${cleanCode}___ALMACEN-ZI`;
-              await setDoc(getDocRef('inventory', newId), {
-                id: newId, displayId: cleanCode, desc: descFG,
-                category: 'Productos Terminados', subcategory, unit,
-                stock: qtyToAdd, cost: costoUnit,
-                opsAplicadas: [req.id],
-                almacen: 'ALMACEN ZI', activo: true,
-                opId: req.id, cliente: req.client||'',
-                timestamp: Date.now(), updatedAt: getTodayDate()
-              });
-            }
-
-            // ── finishedGoodsInventory entry ──
-            const fgId = `FG-${req.id}-${Date.now()}`;
-            await setDoc(getDocRef('finishedGoodsInventory', fgId), {
-              id: fgId, opId: req.id, reqId: req.id,
-              cliente: req.client||'N/A', tipoProducto: req.tipoProducto||'BOLSAS',
-              categoria: req.categoria||'', producto: descFG,
-              ancho: req.ancho||0, largo: req.largo||0, micras: req.micras||0,
-              color: req.color||'NATURAL', tratamiento: req.tratamiento||'LISO',
-              kgProducidos: pendienteKg, millares: esTermo ? 0 : pendienteMill,
-              costoUnitario: esTermo ? costoUnit : 0,
-              costoUnitarioMillar: !esTermo ? costoUnit : 0,
-              costoTotal: costoUnit * qtyToAdd,
-              fechaFinalizacion: getTodayDate(), ubicacion: 'ALMACEN ZI',
-              status: 'LISTO PARA ENTREGA', esCierreFinal: true,
-              timestamp: Date.now()
-            });
-
-            // ── Kardex ENTRADA ──
-            await addDoc(getColRef('inventoryMovements'), {
-              itemId: cleanCode, itemDesc: `${descFG} — ${req.client||''}`,
-              type: 'ENTRADA', qty: qtyToAdd, unitCost: costoUnit,
-              totalValue: qtyToAdd * costoUnit,
-              reference: `CIERRE-${req.id}`,
-              notes: `CIERRE OP #${String(req.id).replace('OP-','').padStart(5,'0')} — ${descFG}`,
-              date: getTodayDate(), user: appUser?.name||'Sistema',
-              timestamp: Date.now(), isFG: true, almacen: 'ALMACEN ZI'
-            });
-
-            // ── Asiento contable Paso 1: MP → PT ──
-            if(costoUnit > 0) {
-              await registrarAsientoContable(null, {
-                debito: '1.1.03.01.008', credito: '1.1.03.01.004',
-                monto: costoUnit * qtyToAdd,
-                descripcion: `CIERRE OP ${req.id} — ${descFG} — ${req.client||''}`,
-                referencia: req.id, fecha: getTodayDate()
-              });
-            }
-          }
+          await fbBatch.commit();
 
           setSelectedPhaseReqId(null);
           setDialog({
             title: '✅ OP Cerrada',
-            text: `OP #${String(req.id).replace('OP-','').padStart(5,'0')} cerrada.\n${esTermo ? `${formatNum(pendienteKg)} KG` : `${formatNum(pendienteMill || pendienteKg)} Millares`} cargados a Inventario de Terminados (ALMACEN ZI).\nCosto unitario: $${formatNum(costoUnit)} / ${esTermo?'KG':'Millar'}.`,
+            text: `OP #${String(req.id).replace('OP-','').padStart(5,'0')} cerrada exitosamente.\n\nTodos los lotes han sido finiquitados. El inventario de Productos Terminados fue actualizado al cerrar cada lote.`,
             type: 'alert'
           });
         } catch (err) {
@@ -15781,8 +15643,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                                       className="w-full text-left px-4 py-2.5 text-[10px] font-black uppercase hover:bg-gray-50">NUEVO LOTE</button>
                                     <button onClick={()=>{setExpandedOPs(p=>({...p,[`menu-${req.id}`]:false}));setShowOrdenTrabajo(req.id);}}
                                       className="w-full text-left px-4 py-2.5 text-[10px] font-black uppercase hover:bg-gray-50">ORDEN DE TRABAJO</button>
-                                    <button onClick={()=>{setExpandedOPs(p=>({...p,[`menu-${req.id}`]:false}));setShowPartialModal(req);setPartialKg('');setPartialMillares('');}}
-                                      className="w-full text-left px-4 py-2.5 text-[10px] font-black uppercase hover:bg-orange-50 text-orange-600">ENTREGA PARCIAL</button>
+
                                     <button onClick={()=>{setExpandedOPs(p=>({...p,[`menu-${req.id}`]:false}));handleCloseOP(req);}}
                                       className="w-full text-left px-4 py-2.5 text-[10px] font-black uppercase hover:bg-red-50 text-red-600 border-t border-gray-100">CIERRE OP</button>
                                   </div>
@@ -21499,167 +21360,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
              </div>
           </div>
         )}
-
-        {/* ── MODAL ENTREGA PARCIAL ── */}
-        {showPartialModal && (() => {
-          const req = showPartialModal;
-          const prod = req.production || {};
-          const allB = [...(prod.extrusion?.batches||[]),...(prod.impresion?.batches||[]),...(prod.sellado?.batches||[])];
-          const totalKgProd = allB.reduce((s,b)=>s+parseNum(b.producedKg),0);
-          const totalMillProd = (prod.sellado?.batches||[]).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)
-            || (prod.impresion?.batches||[]).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
-          const yaEntregado = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.kg),0);
-          const yaMillares = (req.entregasParciales||[]).reduce((s,e)=>s+parseNum(e.millares),0);
-          const esTermo = req.tipoProducto === 'TERMOENCOGIBLE';
-          // Peso REAL por millar = KG sellados reales ÷ millares reales (de la producción registrada)
-          const _selKg = (prod.sellado?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg||0),0);
-          const _selMill = (prod.sellado?.batches||[]).reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
-          const pesoRealMill = _selMill>0 ? _selKg/_selMill : (totalMillProd>0 ? totalKgProd/totalMillProd : 0);
-          return (
-            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center z-[99999] p-0 sm:p-4 print:hidden">
-              <div className="bg-white p-6 rounded-[1.5rem] shadow-2xl max-w-sm w-full border-t-8 border-blue-500">
-                <div className="flex justify-between items-center mb-3">
-                  <h3 className="text-sm font-black uppercase text-blue-800">Entrega Parcial</h3>
-                  <button onClick={()=>{ setShowPartialModal(null); setPartialTargetFgKey(''); setPartialFecha(''); setPartialFgSearch(''); }} className="text-gray-400 hover:text-red-500"><X size={18}/></button>
-                </div>
-                <div className="mb-3">
-                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha de Entrega</label>
-                  <input type="date" value={partialFecha||getTodayDate()} onChange={e=>setPartialFecha(e.target.value)}
-                    className="w-full border-2 border-blue-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-500"/>
-                </div>
-                {/* Info compacta */}
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3 text-[10px]">
-                  <p className="text-blue-800 font-black uppercase mb-1">OP #{String(req.id).replace('OP-','').padStart(5,'0')} — {req.client}</p>
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
-                    <div><span className="text-gray-400">Producidos:</span> <span className="font-black text-blue-700">{esTermo?formatNum(totalKgProd)+' KG':formatNum(totalMillProd)+' Mill.'}</span></div>
-                    <div><span className="text-gray-400">Entregado:</span> <span className="font-black text-green-700">{esTermo?formatNum(yaEntregado)+' KG':formatNum(yaMillares)+' Mill.'}</span></div>
-                    <div className="col-span-2"><span className="text-gray-400">Pendiente:</span> <span className="font-black text-orange-600">{esTermo?formatNum(Math.max(0,totalKgProd-yaEntregado))+' KG':formatNum(Math.max(0,totalMillProd-yaMillares))+' Mill.'}</span></div>
-                  </div>
-                </div>
-                <div className="space-y-3 mb-3">
-                  {/* Selector de producto destino — compacto */}
-                  {(() => {
-                    // FIX 1: Include ALL finished goods AND inventory PT items
-                    const fgGrps = {};
-                    (finishedGoodsInventory||[]).forEach(fg=>{
-                      const prodNorm=(fg.producto||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                      const cliNorm=(fg.cliente||'').toUpperCase().replace(/\s+/g,'').replace(/[^\w]/g,'');
-                      const gk=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
-                      if(!fgGrps[gk]) fgGrps[gk]={key:gk, label:formatFGLabel(fg)||fg.producto||fg.id, esTermo:fg.tipoProducto==='TERMOENCOGIBLE', stk:0, unit:fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millares'};
-                      fgGrps[gk].stk += fg.tipoProducto==='TERMOENCOGIBLE' ? parseNum(fg.kgProducidos) : parseNum(fg.millares);
-                    });
-                    // Add inventory items with category='Productos Terminados'
-                    (inventory||[]).filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i=>{
-                      const cleanId = i.displayId||(i.id||'').split('___')[0];
-                      const gk = `INV-PT-${cleanId}`;
-                      if(!fgGrps[gk]) fgGrps[gk]={key:gk, label:i.desc||cleanId, esTermo:(i.unit||'').toUpperCase()==='KG', stk:0, unit:i.unit||'und', _isInvPT:true, _invCleanId:cleanId};
-                      fgGrps[gk].stk += parseNum(i.stock||0);
-                    });
-                    const grpList = Object.values(fgGrps).sort((a,b)=>(a.label||'').localeCompare(b.label||''));
-                    const autoName = formatFGLabel(req) || `${req.categoria||''} ${req.desc||''}`.trim();
-                    const [partialSearch, setPartialSearch] = [partialNewName.startsWith('SEARCH:') ? partialNewName.slice(7) : '', v => setPartialNewName('SEARCH:'+v)];
-
-                    return (
-                      <div className="space-y-2">
-                        <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">📦 Producto destino</label>
-                        <div className="relative mb-1">
-                          <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
-                          <input type="text" value={partialFgSearch} onChange={e=>setPartialFgSearch(e.target.value)}
-                            placeholder="Buscar producto terminado..." autoComplete="off"
-                            className="w-full border-2 border-gray-200 rounded-xl pl-6 pr-7 py-1.5 text-[10px] font-bold outline-none focus:border-blue-400"/>
-                          {partialFgSearch && <button onClick={()=>setPartialFgSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500"><X size={10}/></button>}
-                        </div>
-                        <select value={partialTargetFgKey} onChange={e=>setPartialTargetFgKey(e.target.value)}
-                          size={Math.min(7, (grpList.filter(g=>!partialFgSearch||g.label.toUpperCase().includes(partialFgSearch.toUpperCase())).length)+1)}
-                          className="w-full border-2 border-blue-200 rounded-xl p-1 text-[10px] font-bold outline-none focus:border-blue-500 bg-white">
-                          <option value="">➕ Crear nuevo producto terminado</option>
-                          {grpList.filter(g=>!partialFgSearch||g.label.toUpperCase().includes(partialFgSearch.toUpperCase())).map(g=>(
-                            <option key={g.key} value={g.key}>{g.label} ({formatNum(g.stk)} {g.unit})</option>
-                          ))}
-                        </select>
-                        {!partialTargetFgKey && (
-                          <div className="bg-blue-50 border border-blue-200 rounded-xl p-2 space-y-1.5">
-                            <p className="text-[8px] font-black text-blue-700 uppercase">Nombre del nuevo Producto Terminado:</p>
-                            <input type="text" value={partialNewName||autoName} onChange={e=>setPartialNewName(e.target.value.toUpperCase())}
-                              className="w-full border-2 border-blue-300 rounded-xl p-2 text-[10px] font-black uppercase outline-none focus:border-blue-500 bg-white"
-                              placeholder={autoName}/>
-                            {/* Preview del código que se generará */}
-                            {(() => {
-                              const nombre = (partialNewName||autoName||'').toUpperCase().trim();
-                              const slug = nombre.replace(/[^A-Z0-9\-\.]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'');
-                              const previewCode = slug ? `FG-${slug}` : '—';
-                              return (
-                                <div className="flex items-center gap-1 mt-1">
-                                  <p className="text-[8px] text-blue-500 font-bold">Código a crear:</p>
-                                  <span className="text-[8px] font-black text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">{previewCode}</span>
-                                </div>
-                              );
-                            })()}
-                            <p className="text-[8px] text-blue-500 mt-0.5">Formato: CATEGORÍA - ANCHOxLARGOxMICRASMIC</p>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  {esTermo ? (
-                    <div>
-                      <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG a Entregar *</label>
-                      <input type="number" step="0.01" value={partialKg} onChange={e=>setPartialKg(e.target.value)} className="w-full border-2 border-blue-300 rounded-xl p-2.5 font-black text-base text-center outline-none focus:border-blue-500" placeholder="0.00" autoFocus />
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Millares *</label>
-                        <input type="number" step="0.01" value={partialMillares} onChange={e=>{
-                          const mill=e.target.value;
-                          const kgPorMillarOp = pesoRealMill>0 ? pesoRealMill : (() => {
-                            const ancho=parseNum(req.ancho), fuelles=parseNum(req.fuelles||0), largo=parseNum(req.largo), micras=parseNum(req.micras);
-                            const p=(ancho+fuelles)*largo*micras; return p>0?p:0;
-                          })();
-                          setPartialMillares(mill);
-                          setPartialKg(kgPorMillarOp>0?(parseNum(mill)*kgPorMillarOp).toFixed(3):partialKg);
-                        }} className="w-full border-2 border-blue-300 rounded-xl p-2.5 font-black text-base text-center outline-none focus:border-blue-500" placeholder="0.00" autoFocus />
-                      </div>
-                      <div>
-                        <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">KG equiv.</label>
-                        <input type="number" step="0.001" value={partialKg} onChange={e=>setPartialKg(e.target.value)}
-                          className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-black text-base text-center outline-none focus:border-blue-300 bg-gray-50" placeholder="0.000" />
-                      </div>
-                      {(() => {
-                        if(pesoRealMill>0) return <p className="col-span-2 text-[9px] text-green-600 font-bold -mt-1">Peso real (registrado): {formatNum(pesoRealMill)} KG/Mill.</p>;
-                        const ancho=parseNum(req.ancho), fuelles=parseNum(req.fuelles||0), largo=parseNum(req.largo), micras=parseNum(req.micras);
-                        const pm=(ancho+fuelles)*largo*micras;
-                        return pm>0 && <p className="col-span-2 text-[9px] text-blue-500 font-bold -mt-1">Peso teórico: {formatNum(pm)} KG/Mill.</p>;
-                      })()}
-                    </div>
-                  )}
-                </div>
-
-                {/* Historial EP compacto */}
-                {(req.entregasParciales||[]).length > 0 && (
-                  <div className="mb-3 bg-orange-50 border border-orange-200 rounded-xl p-2">
-                    <p className="text-[8px] font-black text-orange-700 uppercase mb-1">Entregas anteriores:</p>
-                    {(req.entregasParciales||[]).map((ep,i)=>(
-                      <div key={i} className="flex items-center justify-between text-[9px] mb-0.5">
-                        <span className="font-black text-orange-600">EP-{String(i+1).padStart(2,'0')}</span>
-                        <span className="text-gray-500">{ep.fecha}</span>
-                        <span className="font-black text-blue-700">{formatNum(ep.kg)} KG{ep.millares>0?' / '+formatNum(ep.millares)+' Mill.':''}</span>
-                        <button onClick={()=>handleReversePartialDelivery(req,ep)} className="text-red-400 hover:text-red-600 flex items-center gap-0.5 font-black uppercase"><RefreshCw size={9}/> Rev.</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <p className="text-[8px] font-bold text-gray-400 mb-3 text-center uppercase">La OP permanece activa. La cantidad se suma al producto seleccionado.</p>
-                <div className="flex gap-2">
-                  <button onClick={()=>{ setShowPartialModal(null); setPartialTargetFgKey(''); }} className="flex-1 bg-gray-200 text-gray-700 font-black py-2.5 rounded-xl uppercase text-xs hover:bg-gray-300">Cancelar</button>
-                  <button onClick={handlePartialDelivery} className="flex-1 bg-blue-600 text-white font-black py-2.5 rounded-xl uppercase text-xs shadow-lg hover:bg-blue-700 flex items-center justify-center gap-2"><ArrowUpFromLine size={14}/> Confirmar</button>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
 
         {/* ============================================================ */}
         {/* MODAL: VER / IMPRIMIR TOMA FÍSICA PDF CON MEMBRETE          */}
