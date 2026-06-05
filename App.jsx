@@ -10738,7 +10738,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 </div>
               </div>
 
-              <div className="p-6 space-y-6">
+              <div className="p-4 sm:p-6 space-y-6 w-full">
                 {/* RESUMEN SUPERIOR */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {/* Conceptos / Bonos */}
@@ -11984,7 +11984,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       };
 
       return (
-        <div className="w-full max-w-7xl animate-in fade-in">
+        <div className="w-full animate-in fade-in">
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-green-50 to-green-100">
               <div className="flex justify-between items-center">
@@ -11997,7 +11997,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               </div>
             </div>
 
-            <div className="p-8 space-y-8">
+            <div className="p-4 sm:p-6 space-y-6 w-full">
               {/* Formulario de registro */}
               <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
                 <h3 className="text-sm font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">Registrar Nuevo Costo</h3>
@@ -12211,7 +12211,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 
   const renderSimuladorModule = () => {
     return (
-      <div className="w-full max-w-7xl animate-in fade-in">
+      <div className="w-full animate-in fade-in">
         <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden print:border-none print:shadow-none print:m-0 print:p-0 print:block print:w-full">
           <div data-html2canvas-ignore="true" className="px-8 py-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center no-pdf">
              <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Calculator className="text-orange-500" size={24}/> Simulador de Producción</h2>
@@ -16384,7 +16384,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               </div>
             </div>
 
-            <div className="p-6 space-y-8" id="pdf-content">
+            <div className="p-4 sm:p-6 space-y-6 w-full" id="pdf-content">
               {/* PDF Header */}
               <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-orange-500 pb-2">REPORTE DE PRODUCCIÓN EN PROCESO</h1></div>
 
@@ -16969,7 +16969,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             </div>
           </div>
 
-          <div className="p-8 space-y-6">
+          <div className="p-4 sm:p-6 space-y-6 w-full">
             <div className="no-pdf">
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                 {REPORT_CARDS.map(card => (
@@ -19559,7 +19559,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
-        <div className="max-w-7xl mx-auto bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
           {/* Header */}
           <div className="px-8 py-6 border-b-2 border-black flex flex-col md:flex-row md:justify-between md:items-center gap-4">
             <div>
@@ -21030,7 +21030,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           </div>
         )}
         <nav className="bg-black text-white px-3 sm:px-6 py-2 sm:py-4 shadow-xl print:hidden sticky top-0 z-40 border-b-4 border-orange-500">
-           <div className="flex justify-between items-center max-w-7xl mx-auto">
+           <div className="flex justify-between items-center w-full px-2">
               <div className="flex items-center gap-3 sm:gap-6">
                  <div className="flex items-center cursor-pointer" onClick={() => {clearAllReports(); setActiveTab('home');}}>
                     <span className="text-sm sm:text-xl font-light tracking-widest text-gray-300">Supply</span>
@@ -21210,7 +21210,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 
         {activeTab === 'ventas' && (
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
-              <div className="max-w-7xl mx-auto flex gap-4 px-4 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+              <div className="w-full flex gap-4 px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  {[ 
                    {id:'dashboard',          icon:<BarChart3 size={16}/>, label:'Dashboard',        perm:'ventas_facturacion'},
                    {id:'facturacion',        icon:<Receipt size={16}/>,  label:'Facturación',       perm:'ventas_facturacion'}, 
@@ -21232,7 +21232,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 
         {activeTab === 'inventario' && (
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[52px] sm:top-[72px] z-30">
-              <div className="max-w-7xl mx-auto flex items-stretch overflow-x-auto" style={{scrollbarWidth:'none', msOverflowStyle:'none'}}>
+              <div className="w-full flex items-stretch overflow-x-auto" style={{scrollbarWidth:'none', msOverflowStyle:'none'}}>
                 {/* GROUP 1: SOLICITUDES — perms: inv_planta, inv_almacen */}
                 {([{id:'requisiciones',perm:'inv_planta'},{id:'almacen',perm:'inv_almacen'}].some(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master')) && <div className="flex flex-col border-r border-gray-200">
                   <div className="text-[8px] font-black text-orange-500 uppercase tracking-widest px-4 pt-2 pb-0.5">Solicitudes</div>
@@ -21280,7 +21280,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 
         {activeTab === 'produccion' && (
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
-              <div className="max-w-7xl mx-auto flex gap-4 px-4 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+              <div className="w-full flex gap-4 px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  {[ 
                    {id:'proyeccion',    icon:<TrendingUp size={16}/>,     label:'Proyección MP',      perm:'produccion_proyeccion'},
                    {id:'bobinas',       icon:<Box size={16}/>,            label:'Prod. Bobinas',      perm:'produccion_bobinas'},
@@ -21295,7 +21295,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
            </div>
         )}
 
-        <main className="flex-1 p-2 sm:p-4 md:p-8 max-w-[1400px] mx-auto w-full print:p-0 print:m-0 print:max-w-none print:w-full bg-transparent print:bg-white pb-28 md:pb-8 overflow-x-hidden">
+        <main className="flex-1 p-2 sm:p-3 md:p-6 w-full print:p-0 print:m-0 print:max-w-none print:w-full bg-transparent print:bg-white pb-28 md:pb-8 overflow-x-hidden">
            {/* ── OFFLINE BANNER ── */}
            {!isOnline && (
              <div className="mb-3 bg-gray-800 text-white rounded-2xl p-3 flex items-center gap-3 no-pdf">
