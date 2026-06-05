@@ -416,6 +416,9 @@ export default function App() {
   const [tvStatus, setTvStatus] = useState('TODAS');
   const [reqProdSearch, setReqProdSearch] = useState('');
   const [reqClientSearch, setReqClientSearch] = useState('');
+  // ── Paginación ─────────────────────────────────────────────────────────────
+  const [nePagina, setNePagina] = useState(0);
+  const [tvPagina, setTvPagina] = useState(0);
   const [invRequisitions, setInvRequisitions] = useState([]);
   const [reqFilter, setReqFilter] = useState('');
 
@@ -10803,6 +10806,332 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   <div className="text-3xl font-black">${formatNum(compensacionTotal)}</div>
                 </div>
               </div>
+            </div>
+          );
+        })()}
+
+        {/* ── NOTAS DE ENTREGA ── */}
+        {ventasView === 'notas_entrega' && (() => {
+          const PAGE_SIZE = 25;
+          const initNEForm = () => ({
+            fecha: getTodayDate(), clientRif:'', clientName:'', clientAddress:'', vendedor:'',
+            items:[], aplicaIva:'SI', status:'TRANSITO', observaciones:'',
+            facturaId:'', opRelacionada:'', ncConsignacion:'', neClientSearch:'', neShowClientDrop:false
+          });
+          const nextNENum = () => {
+            const nums=(notasEntrega||[]).map(n=>parseInt((n.id||'NE-00000').replace('NE-',''))||0);
+            return 'NE-'+String(Math.max(0,...nums)+1).padStart(5,'0');
+          };
+          const handleSaveNE = async (form, editId) => {
+            try {
+              const id = editId || nextNENum();
+              const base = form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.precioUnit),0);
+              const ivaAmt = form.aplicaIva==='SI' ? parseFloat((base*0.16).toFixed(2)) : 0;
+              const costoTotal = form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0);
+              const data = { ...form, id, montoBase:base, ivaAmt, total:parseFloat((base+ivaAmt).toFixed(2)), costoTotal,
+                timestamp: editId?(notasEntrega||[]).find(n=>n.id===editId)?.timestamp||Date.now():Date.now(),
+                updatedAt: Date.now(), user: appUser?.name||'Sistema' };
+              delete data.neClientSearch; delete data.neShowClientDrop;
+              await setDoc(getDocRef('notasEntrega', id), data);
+              if(!editId) {
+                const itemsConCodigo = form.items.filter(it=>it.invCode);
+                if(itemsConCodigo.length > 0) {
+                  const batch = writeBatch(db);
+                  for(const item of itemsConCodigo) {
+                    const code = (item.invCode||'').split('___')[0];
+                    const cant = parseNum(item.cantidad);
+                    if(cant<=0) continue;
+                    const whDocs = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code && parseNum(i.stock||0)>0).sort((a,b)=>parseNum(b.stock||0)-parseNum(a.stock||0));
+                    let remaining = cant;
+                    for(const wh of whDocs) {
+                      if(remaining<=0) break;
+                      const avail = parseNum(wh.stock||0);
+                      const deduct = Math.min(remaining, avail);
+                      remaining -= deduct;
+                      batch.update(getDocRef('inventory', wh.id), {stock: Math.max(0,avail-deduct), updatedAt: Date.now()});
+                    }
+                    const movId = `NE-${id}-${code}-${Date.now()}`;
+                    batch.set(getDocRef('inventoryMovements', movId), {
+                      id: movId, date: form.fecha||getTodayDate(), timestamp: Date.now(),
+                      itemId: code, itemName: item.desc||code, type: 'SALIDA',
+                      qty: cant, unitCost: parseNum(item.costoUnit||0), totalValue: cant*parseNum(item.costoUnit||0),
+                      reference: id, notes: `NOTA DE ENTREGA ${id} — ${form.clientName||''}`, user: appUser?.name||'Sistema'
+                    });
+                  }
+                  await batch.commit();
+                }
+              }
+              setNeView('lista'); setNeForm(null); setNeInvSearch(''); setNeShowInvDrop(false);
+            } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+          };
+          const handleDeleteNE = (ne) => setDialog({title:'Eliminar NE',text:`¿Eliminar ${ne.id}?`,type:'confirm',onConfirm:async()=>{ await deleteDoc(getDocRef('notasEntrega',ne.id)); }});
+          const handleChangeStatusNE = async (ne, newStatus) => { await updateDoc(getDocRef('notasEntrega',ne.id),{status:newStatus,updatedAt:Date.now()}); };
+          const handleConvertirFactura = (ne) => {
+            setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad,precioUnit:it.precioUnit,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));
+            setNewInvoiceForm(f=>({...f,fecha:ne.fecha,clientRif:ne.clientRif,clientName:ne.clientName,clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',aplicaIva:ne.aplicaIva,opAsignada:ne.opRelacionada||'',ncAsignada:'',neOrigen:ne.id}));
+            setVentasView('facturacion');
+          };
+          const neFiltradas = (notasEntrega||[]).filter(ne=>{
+            const matchSearch=!neSearch||ne.id.toUpperCase().includes(neSearch.toUpperCase())||(ne.clientName||'').toUpperCase().includes(neSearch.toUpperCase());
+            const matchStatus=neFiltStatus==='TODAS'||ne.status===neFiltStatus;
+            return matchSearch&&matchStatus;
+          });
+          const nePage = Math.max(0, Math.min(nePagina, Math.ceil(neFiltradas.length/PAGE_SIZE)-1));
+          const nePageItems = neFiltradas.slice(nePage*PAGE_SIZE, (nePage+1)*PAGE_SIZE);
+          const neTotalPages = Math.ceil(neFiltradas.length/PAGE_SIZE)||1;
+
+          if(neForm!==null) {
+            const form=neForm; const setForm=setNeForm;
+            const invResults2=neInvSearch.length>1?(inventory||[]).filter(i=>i.activo!==false&&((i.displayId||(i.id||'').split('___')[0])||'').toUpperCase().includes(neInvSearch.toUpperCase())||(i.desc||'').toUpperCase().includes(neInvSearch.toUpperCase())).slice(0,8):[];
+            const vendedoresList=(settings?.vendedores||[]);
+            const clientResults=(form.neClientSearch||'').length>1?(clients||[]).filter(c=>(c.name||c.nombre||'').toUpperCase().includes((form.neClientSearch||'').toUpperCase())||(c.rif||'').includes(form.neClientSearch)).slice(0,8):[];
+            const base=form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.precioUnit),0);
+            const ivaAmt=form.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):0;
+            return(
+              <div className="p-6 space-y-5 max-w-5xl mx-auto">
+                <div className="flex items-center gap-3">
+                  <button onClick={()=>{setNeView('lista');setNeForm(null);setNeInvSearch('');setNeShowInvDrop(false);}} className="flex items-center gap-1 text-[10px] font-black text-gray-500 uppercase hover:text-orange-600"><ArrowRight size={12} className="rotate-180"/> Volver</button>
+                  <span className="font-black text-xl text-orange-600">{form._editId||'Nueva Nota de Entrega'}</span>
+                </div>
+                <div className="bg-white rounded-3xl shadow-sm border p-6 space-y-5">
+                  <div className="grid grid-cols-4 gap-4">
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Fecha</label>
+                      <input type="date" value={form.fecha} onChange={e=>setForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500"/></div>
+                    <div className="col-span-2 relative">
+                      <label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Cliente</label>
+                      <input value={form.neClientSearch!==undefined?form.neClientSearch:form.clientName} onChange={e=>setForm(f=>({...f,neClientSearch:e.target.value}))} onFocus={()=>setForm(f=>({...f,neShowClientDrop:true}))} onBlur={()=>setTimeout(()=>setForm(f=>({...f,neShowClientDrop:false})),200)}
+                        className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="Buscar cliente..."/>
+                      {form.neShowClientDrop&&clientResults.length>0&&(<div className="absolute z-50 w-full bg-white border-2 border-orange-300 rounded-xl mt-1 shadow-xl max-h-48 overflow-y-auto">
+                        {clientResults.map(c=>(<button key={c.id||c.rif} onMouseDown={()=>setForm(f=>({...f,clientRif:c.rif||'',clientName:c.name||c.nombre||'',clientAddress:c.direccion||c.address||'',neClientSearch:'',neShowClientDrop:false}))} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0"><span className="font-black text-orange-600">{c.rif}</span> — {c.name||c.nombre}</button>))}
+                      </div>)}
+                    </div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">RIF</label>
+                      <input value={form.clientRif} onChange={e=>setForm(f=>({...f,clientRif:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500 bg-orange-50"/></div>
+                    <div className="col-span-3"><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Dirección</label>
+                      <input value={form.clientAddress||''} onChange={e=>setForm(f=>({...f,clientAddress:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500 bg-orange-50"/></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Vendedor</label>
+                      <select value={form.vendedor||''} onChange={e=>setForm(f=>({...f,vendedor:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
+                        <option value="">— Seleccionar —</option>
+                        {vendedoresList.map(v=><option key={v} value={v}>{v}</option>)}
+                      </select></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">OP Relacionada</label>
+                      <select value={form.opRelacionada||''} onChange={e=>setForm(f=>({...f,opRelacionada:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
+                        <option value="">— Sin OP —</option>
+                        {(requirements||[]).filter(r=>r.status!=='CANCELADA').map(r=><option key={r.id} value={r.id}>{r.id} — {r.desc||r.categoria||''}</option>)}
+                      </select></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Aplica IVA</label>
+                      <select value={form.aplicaIva||'SI'} onChange={e=>setForm(f=>({...f,aplicaIva:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none"><option value="SI">Sí (16%)</option><option value="NO">No</option></select></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Estatus</label>
+                      <select value={form.status||'TRANSITO'} onChange={e=>setForm(f=>({...f,status:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none">
+                        <option value="TRANSITO">⏳ Tránsito</option><option value="PROCESADA">✅ Procesada</option></select></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Nro. Factura</label>
+                      <input value={form.facturaId||''} onChange={e=>setForm(f=>({...f,facturaId:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="INVO-0001"/></div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-orange-600 uppercase block mb-2">Artículos</label>
+                    <div className="relative mb-2">
+                      <input value={neInvSearch} onChange={e=>{setNeInvSearch(e.target.value);setNeShowInvDrop(true);}} onFocus={()=>setNeShowInvDrop(true)} onBlur={()=>setTimeout(()=>setNeShowInvDrop(false),200)}
+                        className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs outline-none focus:border-orange-500" placeholder="Buscar artículo..."/>
+                      {neShowInvDrop&&invResults2.length>0&&(<div className="absolute z-50 w-full bg-white border-2 border-orange-300 rounded-xl mt-1 shadow-xl max-h-52 overflow-y-auto">
+                        {invResults2.map(i=>{const code=i.displayId||(i.id||'').split('___')[0];return(
+                          <button key={i.id} onMouseDown={()=>{setForm(f=>({...f,items:[...f.items,{invCode:code,desc:i.desc||'',cantidad:1,precioUnit:0,unit:i.unit||'und',costoUnit:parseNum(i.cost||0)}]}));setNeInvSearch('');setNeShowInvDrop(false);}} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0">
+                            <span className="font-black text-orange-600">{code}</span> — {i.desc} · Stock: {formatNum(i.stock||0)} {i.unit||''}
+                          </button>);})}
+                      </div>)}
+                    </div>
+                    {form.items.length>0&&(<div className="overflow-x-auto rounded-xl border"><table className="w-full text-xs"><thead><tr className="bg-gray-900 text-white">{['Código','Descripción','U.M.','Cantidad','Precio U.','Costo U.','Total',''].map(h=><th key={h} className="py-2 px-3 text-left text-[9px] font-black uppercase whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{form.items.map((it,idx)=>(<tr key={idx} className="border-t hover:bg-orange-50">
+                      <td className="py-1.5 px-2"><input value={it.invCode||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],invCode:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-28 border rounded px-1.5 py-1 text-[10px] font-black text-orange-600 outline-none"/></td>
+                      <td className="py-1.5 px-2"><input value={it.desc||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],desc:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-full border rounded px-1.5 py-1 text-[10px] outline-none"/></td>
+                      <td className="py-1.5 px-2"><input value={it.unit||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],unit:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-16 border rounded px-1.5 py-1 text-[10px] outline-none"/></td>
+                      <td className="py-1.5 px-2"><input type="number" value={it.cantidad} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],cantidad:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-20 border rounded px-1.5 py-1 text-[10px] text-right outline-none"/></td>
+                      <td className="py-1.5 px-2"><input type="number" value={it.precioUnit||0} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],precioUnit:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-24 border rounded px-1.5 py-1 text-[10px] text-right outline-none"/></td>
+                      <td className="py-1.5 px-2"><input type="number" value={it.costoUnit||0} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],costoUnit:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-24 border rounded px-1.5 py-1 text-[10px] text-right text-gray-500 outline-none"/></td>
+                      <td className="py-1.5 px-2 text-right font-black text-green-700 whitespace-nowrap">${formatNum(parseNum(it.cantidad)*parseNum(it.precioUnit))}</td>
+                      <td className="py-1.5 px-2"><button onClick={()=>{const ni=form.items.filter((_,i2)=>i2!==idx);setForm(f=>({...f,items:ni}));}} className="text-red-400 hover:text-red-600"><X size={12}/></button></td>
+                    </tr>))}</tbody></table></div>)}
+                  </div>
+                  <div className="flex justify-between items-end">
+                    <textarea value={form.observaciones||''} onChange={e=>setForm(f=>({...f,observaciones:e.target.value}))} rows={2} placeholder="Observaciones..." className="w-1/2 border-2 border-orange-200 rounded-xl p-2.5 text-xs outline-none focus:border-orange-500 resize-none"/>
+                    <div className="text-right space-y-1">
+                      <div className="text-xs text-gray-500">Monto Base: <span className="font-black text-gray-900">${formatNum(base)}</span></div>
+                      {form.aplicaIva==='SI'&&<div className="text-xs text-gray-500">IVA (16%): <span className="font-black">${formatNum(ivaAmt)}</span></div>}
+                      <div className="text-base font-black text-orange-600">TOTAL: ${formatNum(base+ivaAmt)}</div>
+                    </div>
+                  </div>
+                  <button onClick={()=>handleSaveNE(form,form._editId)} className="w-full bg-orange-500 text-white py-3 rounded-2xl font-black text-sm uppercase hover:bg-orange-600">{form._editId?'✅ Guardar Cambios':'✅ Crear Nota de Entrega'}</button>
+                </div>
+              </div>
+            );
+          }
+
+          const totalNE=neFiltradas.reduce((s,n)=>s+parseNum(n.total||0),0);
+          return(
+            <div className="p-6 space-y-5">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div><h2 className="font-black text-xl flex items-center gap-2"><FileText size={20} className="text-orange-500"/> Notas de Entrega <span className="bg-orange-100 text-orange-700 text-[10px] font-black px-2 py-0.5 rounded-full">{(notasEntrega||[]).length}</span></h2></div>
+                <button onClick={()=>setNeForm(initNEForm())} className="bg-orange-500 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-orange-600"><Plus size={14}/> Nueva Nota de Entrega</button>
+              </div>
+              <div className="flex gap-3 flex-wrap">
+                <div className="relative flex-1 min-w-48"><Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+                  <input value={neSearch} onChange={e=>{setNeSearch(e.target.value);setNePagina(0);}} placeholder="Buscar NE o cliente..." className="w-full pl-9 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-black outline-none focus:border-orange-400"/></div>
+                <select value={neFiltStatus} onChange={e=>{setNeFiltStatus(e.target.value);setNePagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-black outline-none focus:border-orange-400">
+                  <option value="TODAS">Todos los estatus</option><option value="TRANSITO">Tránsito</option><option value="PROCESADA">Procesada</option>
+                </select>
+                <div className="bg-orange-50 border-2 border-orange-200 rounded-xl px-4 py-2.5 text-xs font-black text-orange-700">{neFiltradas.length} NE · ${formatNum(totalNE)}</div>
+              </div>
+              {/* Paginación top */}
+              {neTotalPages>1&&<div className="flex items-center gap-2 text-xs font-black text-gray-600">
+                <button onClick={()=>setNePagina(p=>Math.max(0,p-1))} disabled={nePage===0} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-40 hover:bg-gray-200">← Ant.</button>
+                {Array.from({length:Math.min(5,neTotalPages)},(_,i)=>{const pg=Math.max(0,Math.min(neTotalPages-5,nePage-2))+i;return(<button key={pg} onClick={()=>setNePagina(pg)} className={`px-3 py-1.5 rounded-lg ${pg===nePage?'bg-orange-500 text-white':'bg-gray-100 hover:bg-gray-200'}`}>{pg+1}</button>);}).filter((_,i)=>Math.max(0,Math.min(neTotalPages-5,nePage-2))+i<neTotalPages)}
+                <button onClick={()=>setNePagina(p=>Math.min(neTotalPages-1,p+1))} disabled={nePage>=neTotalPages-1} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-40 hover:bg-gray-200">Sig. →</button>
+                <span className="ml-2 text-gray-400 font-normal">Mostrando {nePage*PAGE_SIZE+1}–{Math.min((nePage+1)*PAGE_SIZE,neFiltradas.length)} de {neFiltradas.length}</span>
+              </div>}
+              {neFiltradas.length===0?(
+                <div className="text-center py-16 text-gray-400"><FileText size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">No hay notas de entrega</p></div>
+              ):(
+                <div className="overflow-x-auto rounded-2xl border border-gray-200">
+                  <table className="w-full text-xs">
+                    <thead><tr className="bg-gray-900 text-white">
+                      {['NE#','Fecha','Cliente','RIF','Vendedor','OP','Monto','IVA','Total','Estatus','Factura','Acciones'].map(h=>(
+                        <th key={h} className="py-3 px-3 text-left font-black text-[9px] uppercase whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {nePageItems.map((ne,i)=>(
+                        <tr key={ne.id} className={`${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
+                          <td className="py-3 px-3 font-black text-orange-600 whitespace-nowrap cursor-pointer" onClick={()=>setNeForm({...ne,_editId:ne.id})}>{ne.id}</td>
+                          <td className="py-3 px-3 text-gray-500 whitespace-nowrap">{ne.fecha}</td>
+                          <td className="py-3 px-3 font-bold text-gray-900 max-w-[160px] truncate" title={ne.clientName}>{ne.clientName}</td>
+                          <td className="py-3 px-3 text-gray-500 text-[10px]">{ne.clientRif}</td>
+                          <td className="py-3 px-3 text-blue-700 font-bold whitespace-nowrap">{ne.vendedor||'—'}</td>
+                          <td className="py-3 px-3 text-gray-500 text-[10px] whitespace-nowrap">{ne.opRelacionada||'—'}</td>
+                          <td className="py-3 px-3 text-right font-black">${formatNum(ne.montoBase||0)}</td>
+                          <td className="py-3 px-3 text-right text-gray-500">${formatNum(ne.ivaAmt||0)}</td>
+                          <td className="py-3 px-3 text-right font-black text-green-700">${formatNum(ne.total||0)}</td>
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <select value={ne.status||'TRANSITO'} onChange={e=>handleChangeStatusNE(ne,e.target.value)} onClick={e=>e.stopPropagation()}
+                              className={`text-[8px] font-black px-2 py-1 rounded-full border-0 outline-none cursor-pointer ${ne.status==='PROCESADA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>
+                              <option value="TRANSITO">⏳ Tránsito</option><option value="PROCESADA">✅ Procesada</option>
+                            </select>
+                          </td>
+                          <td className="py-3 px-3 text-gray-500 text-[10px]">{ne.facturaId||'—'}</td>
+                          <td className="py-3 px-3">
+                            <div className="flex gap-1">
+                              <button onClick={()=>setNeForm({...ne,_editId:ne.id})} title="Editar" className="w-7 h-7 flex items-center justify-center bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-all"><Edit size={11}/></button>
+                              <button onClick={()=>handleConvertirFactura(ne)} title="Convertir en Factura" className="w-7 h-7 flex items-center justify-center bg-orange-50 text-orange-600 hover:bg-orange-500 hover:text-white rounded-lg transition-all"><Receipt size={11}/></button>
+                              <button onClick={()=>handleDeleteNE(ne)} title="Eliminar" className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition-all"><Trash2 size={11}/></button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {/* Paginación bottom */}
+              {neTotalPages>1&&<div className="flex items-center gap-2 text-xs font-black text-gray-600 justify-center">
+                <button onClick={()=>setNePagina(p=>Math.max(0,p-1))} disabled={nePage===0} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-40 hover:bg-gray-200">← Ant.</button>
+                {Array.from({length:Math.min(5,neTotalPages)},(_,i)=>{const pg=Math.max(0,Math.min(neTotalPages-5,nePage-2))+i;return(<button key={pg} onClick={()=>setNePagina(pg)} className={`px-3 py-1.5 rounded-lg ${pg===nePage?'bg-orange-500 text-white':'bg-gray-100 hover:bg-gray-200'}`}>{pg+1}</button>);}).filter((_,i)=>Math.max(0,Math.min(neTotalPages-5,nePage-2))+i<neTotalPages)}
+                <button onClick={()=>setNePagina(p=>Math.min(neTotalPages-1,p+1))} disabled={nePage>=neTotalPages-1} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-40 hover:bg-gray-200">Sig. →</button>
+                <span className="ml-2 text-gray-400 font-normal">Mostrando {nePage*PAGE_SIZE+1}–{Math.min((nePage+1)*PAGE_SIZE,neFiltradas.length)} de {neFiltradas.length}</span>
+              </div>}
+            </div>
+          );
+        })()}
+
+        {/* ── TRANSACCIONES DE VENTAS ── */}
+        {ventasView === 'transacciones_ventas' && (() => {
+          const PAGE_SIZE = 25;
+          const rows=[];
+          (notasEntrega||[]).forEach(ne=>{
+            if(ne.fecha<tvDesde||ne.fecha>tvHasta) return;
+            if(tvStatus!=='TODAS'&&ne.status!==tvStatus) return;
+            const costo=ne.costoTotal||(ne.items||[]).reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0);
+            const utilidad=(ne.montoBase||0)-costo;
+            const pctUtil=(ne.montoBase||0)>0?(utilidad/(ne.montoBase||0)*100):0;
+            rows.push({fecha:ne.fecha,documento:ne.id+(ne.status==='PROCESADA'?'P':'T'),descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,contado:0,credito:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,status:ne.status});
+          });
+          rows.sort((a,b)=>a.fecha.localeCompare(b.fecha));
+          const tot=rows.reduce((s,r)=>({montoBruto:s.montoBruto+r.montoBruto,iva:s.iva+r.iva,tNeto:s.tNeto+r.tNeto,costo:s.costo+r.costo,utilidad:s.utilidad+r.utilidad}),{montoBruto:0,iva:0,tNeto:0,costo:0,utilidad:0});
+          const pctTot=tot.montoBruto>0?(tot.utilidad/tot.montoBruto*100):0;
+          const tvTotalPages=Math.ceil(rows.length/PAGE_SIZE)||1;
+          const tvPage=Math.max(0,Math.min(tvPagina,tvTotalPages-1));
+          const tvPageRows=rows.slice(tvPage*PAGE_SIZE,(tvPage+1)*PAGE_SIZE);
+
+          const exportTV=()=>{
+            const rowsHtml=rows.map(r=>`<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:4px 7px;font-size:9px;white-space:nowrap">${r.fecha}</td><td style="padding:4px 7px;font-size:9px;font-weight:700;color:${r.status==='PROCESADA'?'#16a34a':'#d97706'}">${r.documento}</td><td style="padding:4px 7px;font-size:9px">${r.descripcion}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.montoBruto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.iva)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;font-weight:700">${formatNum(r.tNeto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.costo)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;color:#16a34a;font-weight:700">${formatNum(r.utilidad)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${r.pctUtil.toFixed(2)}%</td></tr>`).join('');
+            handlePDFFromHTML(`<div style="font-family:Arial,sans-serif;font-size:11px"><h2 style="margin:0;font-size:15px;font-weight:900">TRANSACCIONES DE VENTAS</h2><p style="font-size:10px;color:#6b7280;margin:3px 0">Desde: ${tvDesde} · Hasta: ${tvHasta}</p><table style="width:100%;border-collapse:collapse;margin-top:10px"><thead><tr style="background:#111827;color:#fff">${['Fecha','Documento','Descripción','Monto Bruto','I.V.A(16%)','T.Neto','Costo','Utilidad','%Util.'].map(h=>`<th style="padding:6px 7px;font-size:9px">${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr style="background:#111827;color:#fff;font-weight:900"><td colspan="3" style="padding:6px 7px;font-size:9px">TOTALES (${rows.length} ops.)</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.montoBruto)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.iva)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.tNeto)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.costo)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.utilidad)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${pctTot.toFixed(2)}%</td></tr></tfoot></table></div>`,`Transacciones_${tvDesde}_${tvHasta}`);
+          };
+          return(
+            <div className="p-6 space-y-5">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div><h2 className="font-black text-xl flex items-center gap-2"><BarChart3 size={20} className="text-orange-500"/> Transacciones de Ventas</h2>
+                  <p className="text-xs text-gray-500 mt-1">Notas de Entrega · Dólares · Utilidad = Monto Base − Costo</p></div>
+                <button onClick={exportTV} className="bg-gray-800 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-black"><Printer size={14}/> PDF</button>
+              </div>
+              <div className="bg-white rounded-2xl border p-4 flex flex-wrap gap-4 items-end">
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label>
+                  <input type="date" value={tvDesde} onChange={e=>{setTvDesde(e.target.value);setTvPagina(0);}} className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400"/></div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label>
+                  <input type="date" value={tvHasta} onChange={e=>{setTvHasta(e.target.value);setTvPagina(0);}} className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400"/></div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Estatus</label>
+                  <select value={tvStatus} onChange={e=>{setTvStatus(e.target.value);setTvPagina(0);}} className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400">
+                    <option value="TODAS">Todos</option><option value="TRANSITO">Tránsito</option><option value="PROCESADA">Procesadas</option>
+                  </select></div>
+                <div className="ml-auto text-right"><div className="font-black text-lg text-gray-900">${formatNum(tot.tNeto)}</div><div className="text-[10px] text-gray-500">{rows.length} operaciones · Utilidad: <span className="text-green-600 font-black">{pctTot.toFixed(2)}%</span></div></div>
+              </div>
+              {/* Paginación top */}
+              {tvTotalPages>1&&<div className="flex items-center gap-2 text-xs font-black text-gray-600">
+                <button onClick={()=>setTvPagina(p=>Math.max(0,p-1))} disabled={tvPage===0} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-40 hover:bg-gray-200">← Ant.</button>
+                {Array.from({length:Math.min(5,tvTotalPages)},(_,i)=>{const pg=Math.max(0,Math.min(tvTotalPages-5,tvPage-2))+i;return(<button key={pg} onClick={()=>setTvPagina(pg)} className={`px-3 py-1.5 rounded-lg ${pg===tvPage?'bg-orange-500 text-white':'bg-gray-100 hover:bg-gray-200'}`}>{pg+1}</button>);}).filter((_,i)=>Math.max(0,Math.min(tvTotalPages-5,tvPage-2))+i<tvTotalPages)}
+                <button onClick={()=>setTvPagina(p=>Math.min(tvTotalPages-1,p+1))} disabled={tvPage>=tvTotalPages-1} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-40 hover:bg-gray-200">Sig. →</button>
+                <span className="ml-2 text-gray-400 font-normal">Mostrando {tvPage*PAGE_SIZE+1}–{Math.min((tvPage+1)*PAGE_SIZE,rows.length)} de {rows.length}</span>
+              </div>}
+              {rows.length===0?(
+                <div className="text-center py-16 text-gray-400"><BarChart3 size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">Sin transacciones en el período</p></div>
+              ):(
+                <div className="overflow-x-auto rounded-2xl border border-gray-200">
+                  <table className="w-full text-xs">
+                    <thead><tr className="bg-gray-900 text-white">
+                      {['Fecha','Documento','Descripción','Monto Bruto','I.V.A(16%)','T.Neto','Costo','Utilidad','%Util.','Estado'].map(h=>(<th key={h} className="py-3 px-3 text-left font-black text-[9px] uppercase whitespace-nowrap">{h}</th>))}
+                    </tr></thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {tvPageRows.map((r,i)=>{
+                        const ne=(notasEntrega||[]).find(n=>n.id===r.neId);
+                        return(<tr key={i} className={`${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
+                          <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">{r.fecha}</td>
+                          <td className="py-2.5 px-3 font-black whitespace-nowrap" style={{color:r.status==='PROCESADA'?'#16a34a':'#d97706'}}>{r.documento}</td>
+                          <td className="py-2.5 px-3 font-bold text-gray-900 max-w-[180px] truncate" title={r.descripcion}>{r.descripcion}</td>
+                          <td className="py-2.5 px-3 text-right font-black">{formatNum(r.montoBruto)}</td>
+                          <td className="py-2.5 px-3 text-right text-gray-500">{formatNum(r.iva)}</td>
+                          <td className="py-2.5 px-3 text-right font-black text-blue-700">{formatNum(r.tNeto)}</td>
+                          <td className="py-2.5 px-3 text-right text-gray-400">{formatNum(r.costo)}</td>
+                          <td className="py-2.5 px-3 text-right font-black text-green-700">{formatNum(r.utilidad)}</td>
+                          <td className="py-2.5 px-3 text-right text-gray-700 font-bold">{r.pctUtil.toFixed(2)}%</td>
+                          <td className="py-2.5 px-3">{ne&&<select value={ne.status||'TRANSITO'} onChange={e=>{updateDoc(getDocRef('notasEntrega',ne.id),{status:e.target.value,updatedAt:Date.now()});}} className={`text-[8px] font-black px-2 py-1 rounded-full border-0 outline-none cursor-pointer ${ne.status==='PROCESADA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}><option value="TRANSITO">⏳ Tránsito</option><option value="PROCESADA">✅ Procesada</option></select>}</td>
+                        </tr>);
+                      })}
+                    </tbody>
+                    <tfoot><tr className="bg-gray-900 text-white font-black">
+                      <td colSpan={3} className="py-3 px-3 text-[10px] uppercase">Totales — {rows.length} ops.</td>
+                      <td className="py-3 px-3 text-right">{formatNum(tot.montoBruto)}</td>
+                      <td className="py-3 px-3 text-right">{formatNum(tot.iva)}</td>
+                      <td className="py-3 px-3 text-right text-blue-300">{formatNum(tot.tNeto)}</td>
+                      <td className="py-3 px-3 text-right text-gray-400">{formatNum(tot.costo)}</td>
+                      <td className="py-3 px-3 text-right text-green-400">{formatNum(tot.utilidad)}</td>
+                      <td className="py-3 px-3 text-right text-orange-300">{pctTot.toFixed(2)}%</td>
+                      <td></td>
+                    </tr></tfoot>
+                  </table>
+                </div>
+              )}
+              {tvTotalPages>1&&<div className="flex items-center gap-2 text-xs font-black text-gray-600 justify-center">
+                <button onClick={()=>setTvPagina(p=>Math.max(0,p-1))} disabled={tvPage===0} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-40 hover:bg-gray-200">← Ant.</button>
+                {Array.from({length:Math.min(5,tvTotalPages)},(_,i)=>{const pg=Math.max(0,Math.min(tvTotalPages-5,tvPage-2))+i;return(<button key={pg} onClick={()=>setTvPagina(pg)} className={`px-3 py-1.5 rounded-lg ${pg===tvPage?'bg-orange-500 text-white':'bg-gray-100 hover:bg-gray-200'}`}>{pg+1}</button>);}).filter((_,i)=>Math.max(0,Math.min(tvTotalPages-5,tvPage-2))+i<tvTotalPages)}
+                <button onClick={()=>setTvPagina(p=>Math.min(tvTotalPages-1,p+1))} disabled={tvPage>=tvTotalPages-1} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-40 hover:bg-gray-200">Sig. →</button>
+                <span className="ml-2 text-gray-400 font-normal">Mostrando {tvPage*PAGE_SIZE+1}–{Math.min((tvPage+1)*PAGE_SIZE,rows.length)} de {rows.length}</span>
+              </div>}
+              <p className="text-[9px] text-gray-400 text-center"><span className="text-green-600 font-black">(P)</span> Procesada = facturada · <span className="text-yellow-600 font-black">(T)</span> Tránsito = pendiente</p>
             </div>
           );
         })()}
