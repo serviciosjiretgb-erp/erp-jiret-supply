@@ -10902,33 +10902,51 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 updatedAt: Date.now(), user: appUser?.name||'Sistema' };
               delete data.neClientSearch; delete data.neShowClientDrop;
               await setDoc(getDocRef('notasEntrega', id), data);
-              if(!editId) {
-                const itemsConCodigo = form.items.filter(it=>it.invCode);
-                if(itemsConCodigo.length > 0) {
-                  const batch = writeBatch(db);
-                  for(const item of itemsConCodigo) {
-                    const code = (item.invCode||'').split('___')[0];
-                    const cant = parseNum(item.cantidad);
-                    if(cant<=0) continue;
-                    const whDocs = (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code && parseNum(i.stock||0)>0).sort((a,b)=>parseNum(b.stock||0)-parseNum(a.stock||0));
-                    let remaining = cant;
-                    for(const wh of whDocs) {
-                      if(remaining<=0) break;
-                      const avail = parseNum(wh.stock||0);
-                      const deduct = Math.min(remaining, avail);
-                      remaining -= deduct;
-                      batch.update(getDocRef('inventory', wh.id), {stock: Math.max(0,avail-deduct), updatedAt: Date.now()});
-                    }
-                    const movId = `NE-${id}-${code}-${Date.now()}`;
-                    batch.set(getDocRef('inventoryMovements', movId), {
-                      id: movId, date: form.fecha||getTodayDate(), timestamp: Date.now(),
-                      itemId: code, itemName: item.desc||code, type: 'SALIDA',
-                      qty: cant, unitCost: parseNum(item.costoUnit||0), totalValue: cant*parseNum(item.costoUnit||0),
-                      reference: id, notes: `NOTA DE ENTREGA ${id} — ${form.clientName||''}`, user: appUser?.name||'Sistema'
-                    });
+              // ── Descuento de inventario (solo NE nueva; en edición solo ajusta diferencia) ──
+              const itemsConCodigo = data.items.filter(it=>it.invCode);
+              if(itemsConCodigo.length > 0) {
+                const batch = writeBatch(db);
+                const neAnterior = editId ? (notasEntrega||[]).find(n=>n.id===editId) : null;
+                for(const item of itemsConCodigo) {
+                  const code = (item.invCode||'').split('___')[0];
+                  const cantNueva = parseNum(item.cantidad);
+                  if(cantNueva <= 0) continue;
+                  // Calcular diferencia vs NE anterior (si es edición)
+                  let cantDescuento = cantNueva;
+                  if(editId && neAnterior) {
+                    const itemAnterior = (neAnterior.items||[]).find(it=>(it.invCode||'').split('___')[0]===code);
+                    const cantAnterior = parseNum(itemAnterior?.cantidad||0);
+                    cantDescuento = cantNueva - cantAnterior; // positivo = descontar más; negativo = devolver
                   }
-                  await batch.commit();
+                  if(Math.abs(cantDescuento) < 0.001) continue; // sin cambio
+                  // Usar almacén de deducción específico del ítem o el de mayor stock
+                  const almacenTarget = item.almacenDeduccion;
+                  let targetDoc = almacenTarget
+                    ? (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===code && i.almacen===almacenTarget)
+                    : (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code && parseNum(i.stock||0)>0).sort((a,b)=>parseNum(b.stock||0)-parseNum(a.stock||0))[0];
+                  if(!targetDoc && cantDescuento > 0) {
+                    // Buscar cualquier doc de ese código
+                    targetDoc = (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===code);
+                  }
+                  if(!targetDoc) continue;
+                  const stockActual = parseNum(targetDoc.stock||0);
+                  batch.update(getDocRef('inventory', targetDoc.id), {
+                    stock: Math.max(0, stockActual - cantDescuento), updatedAt: Date.now()
+                  });
+                  const movId = `NE-${id}-${code}-${Date.now()}-${Math.random().toString(36).slice(2,5)}`;
+                  batch.set(getDocRef('inventoryMovements', movId), {
+                    id: movId, date: form.fecha||getTodayDate(), timestamp: Date.now(),
+                    itemId: targetDoc.id, itemName: item.desc||code,
+                    type: cantDescuento > 0 ? 'SALIDA' : 'ENTRADA',
+                    qty: Math.abs(cantDescuento),
+                    unitCost: parseNum(item.costoUnit||0),
+                    totalValue: Math.abs(cantDescuento)*parseNum(item.costoUnit||0),
+                    reference: id,
+                    notes: `${cantDescuento>0?'SALIDA':'DEVOLUCIÓN'} NOTA DE ENTREGA ${id}${editId?' (AJUSTE EDICIÓN)':''} — ${form.clientName||''}`,
+                    user: appUser?.name||'Sistema'
+                  });
                 }
+                await batch.commit();
               }
               setNeView('lista'); setNeForm(null); setNeInvSearch(''); setNeShowInvDrop(false);
             } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
@@ -10994,15 +11012,9 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                       <select value={form.status||'TRANSITO'} onChange={e=>setForm(f=>({...f,status:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none">
                         <option value="TRANSITO">⏳ Tránsito</option><option value="PROCESADA">✅ Procesada</option></select></div>
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Días de Crédito</label>
-                      <select value={form.diasCredito||'0'} onChange={e=>setForm(f=>({...f,diasCredito:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
-                        <option value="0">Contado (0 días)</option>
-                        <option value="7">7 días</option>
-                        <option value="15">15 días</option>
-                        <option value="30">30 días</option>
-                        <option value="45">45 días</option>
-                        <option value="60">60 días</option>
-                        <option value="90">90 días</option>
-                      </select></div>
+                      <input type="number" min="0" max="365" step="1"
+                        value={form.diasCredito||'0'} onChange={e=>setForm(f=>({...f,diasCredito:e.target.value}))}
+                        className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="0 = contado"/></div>
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Fecha Vencimiento</label>
                       <div className="w-full border-2 border-orange-100 bg-orange-50 rounded-xl p-2.5 text-xs font-black text-orange-700">
                         {calcVenc(form.fecha, form.diasCredito||'0') || '—'}
@@ -11017,22 +11029,39 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                       <input value={neInvSearch} onChange={e=>{setNeInvSearch(e.target.value);setNeShowInvDrop(true);}} onFocus={()=>setNeShowInvDrop(true)} onBlur={()=>setTimeout(()=>setNeShowInvDrop(false),200)}
                         className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs outline-none focus:border-orange-500" placeholder="Buscar artículo..."/>
                       {neShowInvDrop&&invResults2.length>0&&(<div className="absolute z-50 w-full bg-white border-2 border-orange-300 rounded-xl mt-1 shadow-xl max-h-52 overflow-y-auto">
-                        {invResults2.map(i=>{const code=i.displayId||(i.id||'').split('___')[0];return(
-                          <button key={i.id} onMouseDown={()=>{setForm(f=>({...f,items:[...f.items,{invCode:code,desc:i.desc||'',cantidad:1,precioUnit:0,unit:i.unit||'und',costoUnit:parseNum(i.cost||0)}]}));setNeInvSearch('');setNeShowInvDrop(false);}} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0">
-                            <span className="font-black text-orange-600">{code}</span> — {i.desc} · Stock: {formatNum(i.stock||0)} {i.unit||''}
+                        {invResults2.map(i=>{const code=i.displayId||(i.id||'').split('___')[0];
+                          const allAlm=(inventory||[]).filter(inv=>(inv.displayId||(inv.id||'').split('___')[0])===code&&parseNum(inv.stock||0)>0);
+                          const stockStr=allAlm.length>0?allAlm.map(a=>`${(a.almacen||'ZI').replace('ALMACEN ','')}: ${formatNum(a.stock||0)} ${a.unit||''}`).join(' | '): `Total: ${formatNum(i.stock||0)} ${i.unit||''}`;
+                          return(
+                          <button key={i.id} onMouseDown={()=>{
+                            const bestAlm=allAlm.sort((a,b)=>parseNum(b.stock||0)-parseNum(a.stock||0))[0];
+                            setForm(f=>({...f,items:[...f.items,{invCode:code,desc:i.desc||'',cantidad:1,precioUnit:0,unit:i.unit||'und',costoUnit:parseNum(i.cost||0),almacenDeduccion:bestAlm?.almacen||i.almacen||'ALMACEN ZI'}]}));
+                            setNeInvSearch('');setNeShowInvDrop(false);
+                          }} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0">
+                            <span className="font-black text-orange-600">{code}</span> — {i.desc}
+                            <div className="text-[9px] text-gray-400 mt-0.5">📦 {stockStr}</div>
                           </button>);})}
                       </div>)}
                     </div>
-                    {form.items.length>0&&(<div className="overflow-x-auto rounded-xl border"><table className="w-full text-xs"><thead><tr className="bg-gray-900 text-white">{['Código','Descripción','U.M.','Cantidad','Precio U.','Costo U.','Total',''].map(h=><th key={h} className="py-2 px-3 text-left text-[9px] font-black uppercase whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{form.items.map((it,idx)=>(<tr key={idx} className="border-t hover:bg-orange-50">
+                    {form.items.length>0&&(<div className="overflow-x-auto rounded-xl border"><table className="w-full text-xs"><thead><tr className="bg-gray-900 text-white">{['Código','Descripción','Almacén Descuento','U.M.','Cantidad','Precio U.','Costo U.','Total',''].map(h=><th key={h} className="py-2 px-3 text-left text-[9px] font-black uppercase whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{form.items.map((it,idx)=>{
+                      const code=(it.invCode||'').split('___')[0];
+                      const almacenesConStock=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
+                      return(<tr key={idx} className="border-t hover:bg-orange-50">
                       <td className="py-1.5 px-2"><input value={it.invCode||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],invCode:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-28 border rounded px-1.5 py-1 text-[10px] font-black text-orange-600 outline-none"/></td>
                       <td className="py-1.5 px-2"><input value={it.desc||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],desc:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-full border rounded px-1.5 py-1 text-[10px] outline-none"/></td>
+                      <td className="py-1.5 px-2">
+                        <select value={it.almacenDeduccion||'ALMACEN ZI'} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],almacenDeduccion:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-32 border rounded px-1.5 py-1 text-[9px] outline-none focus:border-orange-400">
+                          {almacenesConStock.length>0?almacenesConStock.map(a=><option key={a.id} value={a.almacen||'ALMACEN ZI'}>{(a.almacen||'ALMACEN ZI').replace('ALMACEN ','')}: {formatNum(a.stock||0)} {a.unit||''}</option>):
+                          depositos.map(d=><option key={d} value={d}>{d.replace('ALMACEN ','')}</option>)}
+                        </select>
+                      </td>
                       <td className="py-1.5 px-2"><input value={it.unit||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],unit:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-16 border rounded px-1.5 py-1 text-[10px] outline-none"/></td>
                       <td className="py-1.5 px-2"><input type="number" value={it.cantidad} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],cantidad:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-20 border rounded px-1.5 py-1 text-[10px] text-right outline-none"/></td>
                       <td className="py-1.5 px-2"><input type="number" value={it.precioUnit||0} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],precioUnit:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-24 border rounded px-1.5 py-1 text-[10px] text-right outline-none"/></td>
                       <td className="py-1.5 px-2"><input type="number" value={it.costoUnit||0} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],costoUnit:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-24 border rounded px-1.5 py-1 text-[10px] text-right text-gray-500 outline-none"/></td>
                       <td className="py-1.5 px-2 text-right font-black text-green-700 whitespace-nowrap">${formatNum(parseNum(it.cantidad)*parseNum(it.precioUnit))}</td>
                       <td className="py-1.5 px-2"><button onClick={()=>{const ni=form.items.filter((_,i2)=>i2!==idx);setForm(f=>({...f,items:ni}));}} className="text-red-400 hover:text-red-600"><X size={12}/></button></td>
-                    </tr>))}</tbody></table></div>)}
+                    </tr>);})}</tbody></table></div>)}
                   </div>
                   <div className="flex justify-between items-end">
                     <textarea value={form.observaciones||''} onChange={e=>setForm(f=>({...f,observaciones:e.target.value}))} rows={2} placeholder="Observaciones..." className="w-1/2 border-2 border-orange-200 rounded-xl p-2.5 text-xs outline-none focus:border-orange-500 resize-none"/>
@@ -11108,59 +11137,56 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                                 const rif = settings?.empresaRIF||'J-412309374';
                                 const dir = settings?.empresaDireccion||'AV CIRCUNVALACIÓN 2 CC EL DIVIDIVI NIVEL PB LOCAL G-9, SECTOR EL TREBOL MARACAIBO ZULIA';
                                 const itemsHtml = (ne.items||[]).map(it=>`<tr><td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:10px;color:#ea580c;font-weight:700">${it.invCode||it.code||'—'}</td><td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:10px">${it.desc||''}</td><td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:10px;text-align:center">${formatNum(it.cantidad)} ${it.unit||'und'}</td><td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:10px;text-align:right">$${formatNum(it.precioUnit||0)}</td><td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:10px;text-align:right;font-weight:700">$${formatNum(parseNum(it.cantidad)*parseNum(it.precioUnit||0))}</td></tr>`).join('');
+                                const neVenc = ne.fechaVencimiento || (ne.fecha && ne.diasCredito ? (() => { const d=new Date(ne.fecha+'T00:00:00'); d.setDate(d.getDate()+parseInt(ne.diasCredito||0)); return d.toISOString().split('T')[0]; })() : '');
                                 handlePDFFromHTML(`
 <div style="font-family:Arial,sans-serif;font-size:11px;color:#111;max-width:900px;margin:0 auto">
-  <!-- Membrete -->
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #f97316;padding-bottom:16px;margin-bottom:20px">
+  <!-- Encabezado NE — sin repetir empresa porque el membrete ya la muestra -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #f97316;padding-bottom:12px;margin-bottom:20px">
     <div>
-      <div style="font-size:22px;font-weight:900;color:#111;letter-spacing:1px">${emp}</div>
-      <div style="font-size:9px;color:#888;margin-top:4px">${dir}</div>
-      <div style="font-size:9px;color:#888">RIF: ${rif}</div>
+      <div style="font-size:26px;font-weight:900;color:#f97316;letter-spacing:1px">NOTA DE ENTREGA N° ${ne.id}</div>
+      <div style="margin-top:8px;display:inline-block;background:${ne.status==='PROCESADA'?'#d1fae5':'#fef3c7'};color:${ne.status==='PROCESADA'?'#065f46':'#92400e'};padding:3px 16px;border-radius:20px;font-size:10px;font-weight:900">${ne.status==='PROCESADA'?'✓ PROCESADA':'⏳ EN TRÁNSITO'}</div>
     </div>
     <div style="text-align:right">
-      <div style="font-size:18px;font-weight:900;color:#f97316">NOTA DE ENTREGA N° ${ne.id}</div>
-      <div style="margin-top:8px;display:inline-block;background:${ne.status==='PROCESADA'?'#d1fae5':'#fef3c7'};color:${ne.status==='PROCESADA'?'#065f46':'#92400e'};padding:3px 14px;border-radius:20px;font-size:9px;font-weight:900">${ne.status==='PROCESADA'?'✓ PROCESADA':'⏳ EN TRÁNSITO'}</div>
-    </div>
-  </div>
-  <!-- Datos cliente y NE -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
-    <div>
-      <div style="font-size:8px;color:#888;text-transform:uppercase;font-weight:700;margin-bottom:4px">CLIENTE:</div>
-      <div style="font-size:14px;font-weight:900">${ne.clientName||'—'}</div>
-      <div style="font-size:10px;color:#666">RIF: ${ne.clientRif||'—'}</div>
-      ${ne.clientAddress?`<div style="font-size:9px;color:#888;margin-top:2px">DIRECCIÓN: ${ne.clientAddress}</div>`:''}
-    </div>
-    <div style="text-align:right">
-      <table style="width:100%;border-collapse:collapse;font-size:10px">
-        <tr><td style="padding:2px 0;color:#888">FECHA EMISIÓN:</td><td style="font-weight:700;text-align:right">${ne.fecha}</td></tr>
-        ${ne.vendedor?`<tr><td style="padding:2px 0;color:#888">VENDEDOR:</td><td style="font-weight:700;text-align:right">${ne.vendedor}</td></tr>`:''}
-        ${ne.facturaId?`<tr><td style="padding:2px 0;color:#888">NRO. FACTURA:</td><td style="font-weight:700;text-align:right;color:#f97316">${ne.facturaId}</td></tr>`:''}
-        ${ne.opRelacionada?`<tr><td style="padding:2px 0;color:#888">OP RELACIONADA:</td><td style="font-weight:700;text-align:right;color:#f97316">${ne.opRelacionada}</td></tr>`:''}
+      <table style="font-size:10px;border-collapse:collapse">
+        <tr><td style="padding:2px 6px;color:#888;text-align:right">FECHA EMISIÓN:</td><td style="font-weight:700;padding:2px 0">${ne.fecha||'—'}</td></tr>
+        ${neVenc?`<tr><td style="padding:2px 6px;color:#888;text-align:right">FECHA VENCIMIENTO:</td><td style="font-weight:900;padding:2px 0;color:${ne.diasCredito>0?'#dc2626':'#16a34a'}">${neVenc} ${ne.diasCredito>0?`(${ne.diasCredito} días)`:''}</td></tr>`:''}
+        ${ne.vendedor?`<tr><td style="padding:2px 6px;color:#888;text-align:right">VENDEDOR:</td><td style="font-weight:700;padding:2px 0">${ne.vendedor}</td></tr>`:''}
+        ${ne.facturaId?`<tr><td style="padding:2px 6px;color:#888;text-align:right">FACTURA:</td><td style="font-weight:900;padding:2px 0;color:#f97316">${ne.facturaId}</td></tr>`:''}
+        ${ne.opRelacionada?`<tr><td style="padding:2px 6px;color:#888;text-align:right">OP RELACIONADA:</td><td style="font-weight:900;padding:2px 0;color:#f97316">${ne.opRelacionada}</td></tr>`:''}
       </table>
     </div>
   </div>
+  <!-- Datos cliente -->
+  <div style="margin-bottom:20px;padding:12px 16px;background:#f9fafb;border-radius:8px;border-left:4px solid #f97316">
+    <div style="font-size:8px;color:#888;text-transform:uppercase;font-weight:700;margin-bottom:4px">CLIENTE:</div>
+    <div style="font-size:15px;font-weight:900">${ne.clientName||'—'}</div>
+    <div style="font-size:10px;color:#666;margin-top:2px">RIF: ${ne.clientRif||'—'}</div>
+    ${ne.clientAddress?`<div style="font-size:9px;color:#888;margin-top:2px">${ne.clientAddress}</div>`:''}
+  </div>
   <!-- Tabla de artículos -->
   <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
-    <thead>
-      <tr style="background:#111827;color:#fff">
-        <th style="padding:10px 12px;font-size:9px;text-align:left;text-transform:uppercase">Código</th>
-        <th style="padding:10px 12px;font-size:9px;text-align:left;text-transform:uppercase">Descripción / Concepto</th>
-        <th style="padding:10px 12px;font-size:9px;text-align:center;text-transform:uppercase">Cantidad</th>
-        <th style="padding:10px 12px;font-size:9px;text-align:right;text-transform:uppercase">Precio Unit. (USD)</th>
-        <th style="padding:10px 12px;font-size:9px;text-align:right;text-transform:uppercase">Importe Base (USD)</th>
-      </tr>
-    </thead>
+    <thead><tr style="background:#111827;color:#fff">
+      <th style="padding:10px 12px;font-size:9px;text-align:left;text-transform:uppercase">Código</th>
+      <th style="padding:10px 12px;font-size:9px;text-align:left;text-transform:uppercase">Descripción / Concepto</th>
+      <th style="padding:10px 12px;font-size:9px;text-align:center;text-transform:uppercase">Cantidad</th>
+      <th style="padding:10px 12px;font-size:9px;text-align:right;text-transform:uppercase">Precio Unit. (USD)</th>
+      <th style="padding:10px 12px;font-size:9px;text-align:right;text-transform:uppercase">Importe Base (USD)</th>
+    </tr></thead>
     <tbody>${itemsHtml||'<tr><td colspan="5" style="padding:20px;text-align:center;color:#aaa;font-size:10px">Sin artículos detallados</td></tr>'}</tbody>
   </table>
   <!-- Totales -->
   <div style="display:flex;justify-content:flex-end">
-    <table style="border-collapse:collapse;min-width:280px">
+    <table style="border-collapse:collapse;min-width:300px">
       <tr style="border-top:1px solid #e5e7eb"><td style="padding:6px 12px;font-size:10px;color:#888">SUBTOTAL:</td><td style="padding:6px 12px;font-size:10px;font-weight:700;text-align:right">$${formatNum(ne.montoBase||0)}</td></tr>
       ${ne.ivaAmt>0?`<tr><td style="padding:6px 12px;font-size:10px;color:#888">IVA (16%):</td><td style="padding:6px 12px;font-size:10px;font-weight:700;text-align:right">$${formatNum(ne.ivaAmt||0)}</td></tr>`:''}
       <tr style="background:#f97316"><td style="padding:10px 12px;font-size:13px;font-weight:900;color:#fff">TOTAL:</td><td style="padding:10px 12px;font-size:13px;font-weight:900;color:#fff;text-align:right">$${formatNum(ne.total||0)}</td></tr>
     </table>
   </div>
   ${ne.observaciones?`<div style="margin-top:20px;font-size:9px;color:#888;border-top:1px solid #e5e7eb;padding-top:10px"><b>OBSERVACIONES:</b> ${ne.observaciones}</div>`:''}
+  <div style="margin-top:36px;display:grid;grid-template-columns:1fr 1fr;gap:40px;border-top:1px solid #e5e7eb;padding-top:24px">
+    <div style="text-align:center"><div style="border-top:1px solid #111;padding-top:8px;font-size:9px;color:#666;text-transform:uppercase">FIRMA AUTORIZADA / VENDEDOR</div></div>
+    <div style="text-align:center"><div style="border-top:1px solid #111;padding-top:8px;font-size:9px;color:#666;text-transform:uppercase">RECIBÍ CONFORME / CLIENTE</div></div>
+  </div>
 </div>`, `NE_${ne.id}_${ne.clientName||''}`)}} className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-lg transition-all" title="PDF"><Printer size={11}/></button>
                               <button onClick={()=>handleDeleteNE(ne)} title="Eliminar" className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition-all"><Trash2 size={11}/></button>
                             </div>
@@ -11396,20 +11422,48 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                           <input type="date" value={newInvoiceForm.fecha} onChange={e=>setNewInvoiceForm({...newInvoiceForm, fecha: e.target.value})} className="border-2 border-orange-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-orange-50" />
                         </div>
                         <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest shadow-sm">INVOICE NRO: {newInvoiceForm.documento || generateInvoiceId()}</span>
+                        {newInvoiceForm.neOrigen && <span className="bg-blue-100 text-blue-800 px-3 py-2 rounded-xl text-[10px] font-black">NE: {newInvoiceForm.neOrigen}</span>}
                         {/* NRO FISCAL MANUAL */}
                         <div className="flex items-center gap-2">
                           <label className="text-[9px] font-black text-gray-500 uppercase whitespace-nowrap">Nro. Fiscal:</label>
-                          <input
-                            type="text"
-                            value={newInvoiceForm.nroFiscal||''}
-                            onChange={e=>setNewInvoiceForm({...newInvoiceForm, nroFiscal: e.target.value.toUpperCase()})}
-                            placeholder="00001234"
-                            className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-400 w-32 text-center"
-                          />
+                          <input type="text" value={newInvoiceForm.nroFiscal||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm, nroFiscal: e.target.value.toUpperCase()})}
+                            placeholder="00001234" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-400 w-32 text-center"/>
                         </div>
                         <button type="button" onClick={()=>{setShowNewInvoicePanel(false);setEditingInvoiceId(null);setNewInvoiceForm(initialInvoiceForm);}} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
                       </div>
                     </div>
+
+                    {/* ── SELECTOR DE NOTA DE ENTREGA ── */}
+                    {!editingInvoiceId && (
+                    <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 mb-2">
+                      <label className="text-[10px] font-black text-blue-700 uppercase block mb-2 tracking-widest">📋 Seleccionar Nota de Entrega a Facturar</label>
+                      <div className="flex gap-3 items-end">
+                        <div className="flex-1">
+                          <select value={newInvoiceForm.neOrigen||''} onChange={e=>{
+                            const neId = e.target.value;
+                            if(!neId) { setNewInvoiceForm(f=>({...f,neOrigen:'',clientRif:'',clientName:'',clientAddress:'',vendedor:'',opAsignada:'',_ptSearch:'',fgId:'',fgCantidad:''})); setFgItems([]); return; }
+                            const ne=(notasEntrega||[]).find(n=>n.id===neId);
+                            if(ne) {
+                              // Auto-cargar items de la NE como fgItems para la factura
+                              setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad||0,precioUnit:it.precioUnit||0,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));
+                              setNewInvoiceForm(f=>({...f,neOrigen:neId,fecha:ne.fecha||f.fecha,clientRif:ne.clientRif||'',clientName:ne.clientName||'',clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',opAsignada:ne.opRelacionada||'',aplicaIva:ne.aplicaIva||'SI'}));
+                            }
+                          }} className="w-full border-2 border-blue-300 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-500 bg-white">
+                            <option value="">— Sin NE (factura directa) —</option>
+                            {(notasEntrega||[]).filter(ne=>!ne.facturaId).sort((a,b)=>b.id.localeCompare(a.id)).map(ne=>(
+                              <option key={ne.id} value={ne.id}>{ne.id} · {ne.clientName} · {ne.fecha} · ${formatNum(ne.total||0)}</option>
+                            ))}
+                          </select>
+                        </div>
+                        {newInvoiceForm.neOrigen && (
+                          <div className="text-[10px] text-blue-700 font-bold bg-blue-100 px-3 py-2.5 rounded-xl">
+                            ✅ Datos cargados desde {newInvoiceForm.neOrigen}
+                          </div>
+                        )}
+                      </div>
+                      <p className="text-[9px] text-blue-500 mt-1">Solo Notas de Entrega sin factura asignada. Al guardar, la NE se marcará como PROCESADA automáticamente.</p>
+                    </div>
+                    )}
                     
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                     {/* ── DROPDOWN SELECTOR — Like OSA (Petición 3) ── */}
