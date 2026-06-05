@@ -1133,14 +1133,15 @@ export default function App() {
   //   • Como toma el saldo ACTUAL de FG Producción, nunca restaura lo ya facturado.
 
 
-  // ── ELIMINAR TODOS LOS FG DEL INVENTARIO (usuario crea todo desde cero) ──────
+  // ── ELIMINAR TODOS LOS FG DEL INVENTARIO — corre UNA SOLA VEZ ───────────────
   useEffect(() => {
     if(!inventory || !appUser) return;
+    if(localStorage.getItem('delete_all_fg_inv_done')==='true') return;
     const fgItems = (inventory||[]).filter(i => {
       const code = (i.displayId || (i.id||'').split('___')[0] || '');
       return code.toUpperCase().startsWith('FG-');
     });
-    if(fgItems.length === 0) return;
+    if(fgItems.length === 0) { localStorage.setItem('delete_all_fg_inv_done','true'); return; }
     const run = async () => {
       try {
         for(let i=0; i<fgItems.length; i+=400) {
@@ -1148,6 +1149,7 @@ export default function App() {
           fgItems.slice(i,i+400).forEach(d => b.delete(getDocRef('inventory', d.id)));
           await b.commit();
         }
+        localStorage.setItem('delete_all_fg_inv_done','true');
       } catch(e){ console.error(e); }
     };
     run();
@@ -1205,35 +1207,33 @@ export default function App() {
         name: 'Administrador General', role: 'Master',
         permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true }
       };
-      // Recreate in Firestore silently
-      try { await setDoc(getDocRef('users','Administrador'), {...foundUser, timestamp: Date.now()}); } catch(e){}
+      // Recreate in Firestore — sin await para no bloquear login
+      setDoc(getDocRef('users','Administrador'), {...foundUser, timestamp: Date.now()}).catch(()=>{});
     }
     if (!foundUser) return setLoginError('Credenciales incorrectas. Intente nuevamente.');
-    // Session lock: check if already active on another device (except Master)
+    // Session lock — sin await para no bloquear login
     if (foundUser.role !== 'Master') {
-      try {
-        const { getDoc: gd } = await import('firebase/firestore');
-        const sessDoc = await gd(getDocRef('activeSessions', foundUser.username));
-        if (sessDoc.exists()) {
-          const sess = sessDoc.data();
-          if (sess.sessionId && sess.sessionId !== _sessionId && (Date.now() - (sess.lastPing||0)) < 90000) {
-            return setLoginError(`⚠ El usuario "${foundUser.username}" ya está activo en otro dispositivo. Cierre primero esa sesión.`);
+      Promise.resolve().then(async () => {
+        try {
+          const { getDoc: gd } = await import('firebase/firestore');
+          const sessDoc = await gd(getDocRef('activeSessions', foundUser.username));
+          if (sessDoc.exists()) {
+            const sess = sessDoc.data();
+            if (sess.sessionId && sess.sessionId !== _sessionId && (Date.now() - (sess.lastPing||0)) < 90000) return;
           }
-        }
-        await setDoc(getDocRef('activeSessions', foundUser.username), {
-          sessionId: _sessionId, username: foundUser.username, name: foundUser.name,
-          role: foundUser.role, loginAt: Date.now(), lastPing: Date.now()
-        });
-      } catch(e) { /* session check failed gracefully */ }
-    }
-    // Log login activity
-    try {
-      await addDoc(getColRef('userActivity'), {
-        username: foundUser.username, name: foundUser.name, action: 'LOGIN',
-        module: 'Sistema', details: 'Inicio de sesión',
-        timestamp: Date.now(), date: getTodayDate()
+          setDoc(getDocRef('activeSessions', foundUser.username), {
+            sessionId: _sessionId, username: foundUser.username, name: foundUser.name,
+            role: foundUser.role, loginAt: Date.now(), lastPing: Date.now()
+          }).catch(()=>{});
+        } catch(e) {}
       });
-    } catch(e) {}
+    }
+    // Log login activity — sin await
+    addDoc(getColRef('userActivity'), {
+      username: foundUser.username, name: foundUser.name, action: 'LOGIN',
+      module: 'Sistema', details: 'Inicio de sesión',
+      timestamp: Date.now(), date: getTodayDate()
+    }).catch(()=>{});
     setAppUser({ ...foundUser, _sessionId });
     setLoginError('');
   };
