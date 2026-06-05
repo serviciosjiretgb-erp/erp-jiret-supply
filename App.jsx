@@ -633,6 +633,7 @@ export default function App() {
   // Multialmacén — Traslados
   const initialTrasladoForm = { date: getTodayDate(), itemId: '', almacenOrigen: 'ALMACEN ZI', almacenDestino: 'PLANTA', qty: '', notes: '' };
   const [trasladoForm, setTrasladoForm] = useState(initialTrasladoForm);
+  const [trasladoItems, setTrasladoItems] = useState([]); // lista multi-artículo
   const [showTrasladoModal, setShowTrasladoModal] = useState(false);
   const [trasladoSearch, setTrasladoSearch] = useState('');
   const [catalogAlmacenFilter, setCatalogAlmacenFilter] = useState('TODOS');
@@ -2235,86 +2236,58 @@ export default function App() {
   // LÓGICA TRASLADOS ENTRE ALMACENES
   // ============================================================================
   const handleSaveTraslado = async () => {
-    const { itemId, almacenOrigen, almacenDestino, qty, date, notes } = trasladoForm;
-    if (!itemId || !qty || !almacenOrigen || !almacenDestino) return setDialog({ title: 'Aviso', text: 'Complete todos los campos del traslado.', type: 'alert' });
+    const { almacenOrigen, almacenDestino, date, notes } = trasladoForm;
+    if (!almacenOrigen || !almacenDestino) return setDialog({ title: 'Aviso', text: 'Seleccione almacenes.', type: 'alert' });
     if (almacenOrigen === almacenDestino) return setDialog({ title: 'Aviso', text: 'El almacén origen y destino deben ser diferentes.', type: 'alert' });
-    const cantQty = parseNum(qty);
-    if (cantQty <= 0) return setDialog({ title: 'Aviso', text: 'La cantidad debe ser mayor a cero.', type: 'alert' });
-
-    // The itemId here is the cleanCode (from the consolidated selector)
-    const cleanCode = itemId;
-
-    // Find ALL docs for this cleanCode across all warehouses
-    const allDocs = (inventory||[]).filter(i => {
-      const cc = (i.displayId||(i.id||'').split('___')[0])
-        .replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
-      return cc === cleanCode;
-    });
-
-    // Find the doc for almacenOrigen
-    const origenDoc = allDocs.find(i => (i.almacen||'') === almacenOrigen || (i.id||'').includes(almacenOrigen.replace('ALMACEN ','').replace(/ /g,'-')));
-    // Find the doc for almacenDestino
-    const destinoDoc = allDocs.find(i => (i.almacen||'') === almacenDestino || (i.id||'').includes(almacenDestino.replace('ALMACEN ','').replace(/ /g,'-')));
-
-    const stockOrigen = parseNum(origenDoc?.stock||0);
-    if(cantQty > stockOrigen) return setDialog({ title: 'Stock insuficiente', text: `El almacén ${almacenOrigen} solo tiene ${formatNum(stockOrigen)} ${origenDoc?.unit||''}. No puede trasladar ${formatNum(cantQty)}.`, type: 'alert' });
-
-    // Representative doc for metadata
-    const repDoc = origenDoc || allDocs[0];
-    if (!repDoc) return setDialog({ title: 'Error', text: 'Artículo no encontrado en el sistema.', type: 'alert' });
+    if (!trasladoItems.length) return setDialog({ title: 'Aviso', text: 'Agregue al menos un artículo al traslado.', type: 'alert' });
 
     try {
       const batch = writeBatch(db);
       const ts = Date.now();
+      const itemsDesc = [];
 
-      // 1. Deduct from origen doc
-      if(origenDoc) {
-        batch.update(getDocRef('inventory', origenDoc.id), {
-          stock: Math.max(0, stockOrigen - cantQty),
-          timestamp: ts
+      for (let idx = 0; idx < trasladoItems.length; idx++) {
+        const { cleanCode, qty, unit, desc, stockOrigen: stockOrig } = trasladoItems[idx];
+        const cantQty = parseNum(qty);
+        if (cantQty <= 0) continue;
+
+        const allDocs = (inventory||[]).filter(i => {
+          const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+          return cc === cleanCode;
         });
+        const origenDoc = allDocs.find(i => (i.almacen||'') === almacenOrigen);
+        const destinoDoc = allDocs.find(i => (i.almacen||'') === almacenDestino);
+        const repDoc = origenDoc || allDocs[0];
+        if (!repDoc) continue;
+        const stockOrigen = parseNum(origenDoc?.stock||0);
+        if (cantQty > stockOrigen) continue;
+
+        const t = ts + idx * 2;
+        // Descontar del origen
+        if (origenDoc) batch.update(getDocRef('inventory', origenDoc.id), { stock: Math.max(0, stockOrigen - cantQty), timestamp: t });
+        // Sumar al destino (o crear si no existe)
+        if (destinoDoc) {
+          batch.update(getDocRef('inventory', destinoDoc.id), { stock: parseNum(destinoDoc.stock||0) + cantQty, timestamp: t + 1 });
+        } else {
+          const newDocId = `${cleanCode}___${almacenDestino.replace(/\s+/g,'-')}`;
+          batch.set(getDocRef('inventory', newDocId), {
+            id: newDocId, displayId: cleanCode, desc: repDoc.desc,
+            category: repDoc.category, subcategory: repDoc.subcategory||'',
+            unit: repDoc.unit, cost: repDoc.cost, stock: cantQty,
+            almacen: almacenDestino, activo: true, timestamp: t + 1
+          });
+        }
+        // Kardex
+        const movBase = { itemId: cleanCode, itemName: repDoc.desc, qty: cantQty, unitCost: repDoc.cost, totalValue: cantQty*(repDoc.cost||0), date, reference: 'TRASLADO', notes: `TRASLADO: ${almacenOrigen} → ${almacenDestino}${notes?' | '+notes.toUpperCase():''}`, user: appUser?.name||'Admin' };
+        batch.set(getDocRef('inventoryMovements', `TSAL-${t}`), { ...movBase, id: `TSAL-${t}`, type: 'SALIDA_TRASLADO', almacen: almacenOrigen, almacenDestino, timestamp: t });
+        batch.set(getDocRef('inventoryMovements', `TENT-${t+1}`), { ...movBase, id: `TENT-${t+1}`, type: 'ENTRADA_TRASLADO', almacen: almacenDestino, almacenOrigen, timestamp: t + 1 });
+        itemsDesc.push(`${cleanCode}: ${formatNum(cantQty)} ${unit}`);
       }
-
-      // 2. Add to destino doc (or create it if it doesn't exist)
-      if(destinoDoc) {
-        batch.update(getDocRef('inventory', destinoDoc.id), {
-          stock: parseNum(destinoDoc.stock||0) + cantQty,
-          timestamp: ts + 1
-        });
-      } else {
-        // Create a new doc for this item in the destination warehouse
-        const newDocId = `${cleanCode}___${almacenDestino.replace(/\s+/g,'-')}`;
-        batch.set(getDocRef('inventory', newDocId), {
-          id: newDocId,
-          displayId: cleanCode,
-          desc: repDoc.desc,
-          category: repDoc.category,
-          subcategory: repDoc.subcategory || '',
-          unit: repDoc.unit,
-          cost: repDoc.cost,
-          stock: cantQty,
-          almacen: almacenDestino,
-          activo: true,
-          timestamp: ts + 1
-        });
-      }
-
-      // 3. Log movements
-      const movBase = {
-        itemId: cleanCode, itemName: repDoc.desc,
-        qty: cantQty, unitCost: repDoc.cost,
-        totalValue: cantQty * (repDoc.cost||0),
-        date, reference: 'TRASLADO',
-        notes: `TRASLADO: ${almacenOrigen} → ${almacenDestino}${notes ? ' | ' + notes.toUpperCase() : ''}`,
-        user: appUser?.name || 'Admin'
-      };
-      batch.set(getDocRef('inventoryMovements', `TSAL-${ts}`), { ...movBase, id: `TSAL-${ts}`, type: 'SALIDA_TRASLADO', almacen: almacenOrigen, almacenDestino, timestamp: ts });
-      batch.set(getDocRef('inventoryMovements', `TENT-${ts+1}`), { ...movBase, id: `TENT-${ts+1}`, type: 'ENTRADA_TRASLADO', almacen: almacenDestino, almacenOrigen, timestamp: ts + 1 });
 
       await batch.commit();
-      setTrasladoForm(initialTrasladoForm);
+      setTrasladoForm(initialTrasladoForm); setTrasladoItems([]);
       setShowTrasladoModal(false); setTrasladoSearch('');
-      setDialog({ title: '✅ Traslado Registrado', text: `${formatNum(cantQty)} ${repDoc.unit} de "${cleanCode}" trasladados de ${almacenOrigen} → ${almacenDestino}.`, type: 'alert' });
+      setDialog({ title: '✅ Traslado Registrado', text: `${itemsDesc.length} artículo(s) trasladados de ${almacenOrigen} → ${almacenDestino}:\n${itemsDesc.join('\n')}`, type: 'alert' });
     } catch (err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
 
@@ -2879,6 +2852,15 @@ export default function App() {
         fgId: fgItems[0]?.fgId||newInvoiceForm.fgId||'',
         fgCantidad: fgItems[0]?.cantidad||0
       });
+
+      // ── Si la factura proviene de una Nota de Entrega, actualizar la NE con el facturaId ──
+      if (!editingInvoiceId && newInvoiceForm.neOrigen) {
+        try {
+          await updateDoc(getDocRef('notasEntrega', newInvoiceForm.neOrigen), {
+            facturaId: id, status: 'PROCESADA', updatedAt: Date.now()
+          });
+        } catch(e) { console.error('Error actualizando NE:', e); }
+      }
 
       // ── DESCUENTO DE INVENTARIO: DESHABILITADO EN FACTURACIÓN ──────────────
       // El descuento de inventario ahora se realiza SOLO desde Nota de Entrega.
@@ -7678,176 +7660,162 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             </div>
         {/* ── MODAL TRASLADO ENTRE ALMACENES ── */}
             {showTrasladoModal && (() => {
-              // Build consolidated item list: one entry per cleanCode, from ALL inventory docs
-              // Grouped by category → subcategory
+              // Solo artículos con stock > 0 en almacén ORIGEN
               const consolidated = {};
               (inventory||[]).filter(i=>i.activo!==false).forEach(i => {
                 const rawId = i.displayId||(i.id||'').split('___')[0];
-                const cleanCode = rawId.replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
+                const cleanCode = rawId.replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
                 if(!cleanCode) return;
+                const almNom = i.almacen || '';
                 const qty = parseNum(i.stock||0);
                 if(!consolidated[cleanCode]) {
-                  consolidated[cleanCode] = {
-                    cleanCode, desc: i.desc||'', unit: i.unit||'und',
-                    category: i.category||'Otros',
-                    subcategory: i.subcategory||getItemSubcategory(i)||'',
-                    totalStock: 0, warehouses: {}
-                  };
+                  consolidated[cleanCode] = { cleanCode, desc: i.desc||'', unit: i.unit||'und', category: i.category||'Otros', subcategory: i.subcategory||'', warehouses: {} };
                 }
-                const almNom = i.almacen || rawId.split('___')[1]?.replace(/-/g,' ') || '';
-                if(!consolidated[cleanCode].warehouses[almNom] || qty > (consolidated[cleanCode].warehouses[almNom]||0)) {
-                  consolidated[cleanCode].warehouses[almNom] = qty;
-                }
-                // Prefer clean desc without ×
-                const curD = consolidated[cleanCode].desc||'';
-                const newD = i.desc||'';
-                if(newD && !newD.includes('×') && (curD.includes('×') || newD.length >= curD.length)) consolidated[cleanCode].desc = newD;
-              });
-              // Compute total stock, remove empty almacen if named ones exist
-              Object.values(consolidated).forEach(c => {
-                const hasNamed = Object.keys(c.warehouses).some(a=>a.trim()!=='');
-                if(hasNamed && c.warehouses['']!==undefined) delete c.warehouses[''];
-                c.totalStock = Object.values(c.warehouses).reduce((s,v)=>s+v,0);
+                if(qty > 0) consolidated[cleanCode].warehouses[almNom] = (consolidated[cleanCode].warehouses[almNom]||0) + qty;
+                if(i.desc && (!consolidated[cleanCode].desc || i.desc.length > consolidated[cleanCode].desc.length)) consolidated[cleanCode].desc = i.desc;
               });
 
-              // Filter by search
+              // Filtrar: solo mostrar artículos con stock > 0 en almacén origen
               const s = (trasladoSearch||'').toUpperCase();
               const filteredItems = Object.values(consolidated).filter(c => {
+                const stockEnOrigen = c.warehouses[trasladoForm.almacenOrigen]||0;
+                if(stockEnOrigen <= 0) return false; // SOLO los del almacén origen
                 if(!s) return true;
                 return c.cleanCode.toUpperCase().includes(s) || (c.desc||'').toUpperCase().includes(s);
-              });
+              }).sort((a,b)=>a.cleanCode.localeCompare(b.cleanCode));
 
-              // Group by category → subcategory
-              const CAT_ORDER = ['Productos Terminados','Materia Prima','Semielaborados','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
-              const SUB_ORDER = ['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
-              const catGroups = {};
-              filteredItems.forEach(c => {
-                const cat = c.category;
-                if(!catGroups[cat]) catGroups[cat] = {};
-                const sub = c.subcategory || '__NONE__';
-                if(!catGroups[cat][sub]) catGroups[cat][sub] = [];
-                catGroups[cat][sub].push(c);
-              });
-              const sortedCats = [...CAT_ORDER.filter(c=>catGroups[c]), ...Object.keys(catGroups).filter(c=>!CAT_ORDER.includes(c))];
-
-              // Stock in selected origen for selected item
               const selItem = trasladoForm.itemId ? consolidated[trasladoForm.itemId] : null;
               const stockOrigen = selItem ? (selItem.warehouses[trasladoForm.almacenOrigen]||0) : 0;
+              const yaEnLista = trasladoItems.reduce((s,it)=>s+(it.cleanCode===trasladoForm.itemId?parseNum(it.qty):0),0);
+              const disponible = stockOrigen - yaEnLista;
+
+              const agregarItem = () => {
+                if(!trasladoForm.itemId || !trasladoForm.qty || parseNum(trasladoForm.qty)<=0) return;
+                if(parseNum(trasladoForm.qty) > disponible) return;
+                const existing = trasladoItems.findIndex(it=>it.cleanCode===trasladoForm.itemId);
+                if(existing>=0) {
+                  const updated=[...trasladoItems]; updated[existing]={...updated[existing],qty:String(parseNum(updated[existing].qty)+parseNum(trasladoForm.qty))};
+                  setTrasladoItems(updated);
+                } else {
+                  setTrasladoItems(prev=>[...prev,{cleanCode:trasladoForm.itemId,qty:trasladoForm.qty,unit:selItem?.unit||'und',desc:selItem?.desc||trasladoForm.itemId,stockOrigen}]);
+                }
+                setTrasladoForm(f=>({...f,itemId:'',qty:''}));
+                setTrasladoSearch('');
+              };
 
               return (
               <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
                 <div className="bg-white rounded-3xl p-6 max-w-2xl w-full shadow-2xl border-t-4 border-indigo-500 max-h-[90vh] overflow-y-auto">
-                  <div className="flex justify-between items-center mb-5">
+                  <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-black uppercase flex items-center gap-2"><ArrowRightLeft size={20} className="text-indigo-600"/> Traslado entre Almacenes</h3>
-                    <button onClick={()=>setShowTrasladoModal(false)}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
+                    <button onClick={()=>{setShowTrasladoModal(false);setTrasladoItems([]);setTrasladoSearch('');}}><X size={20} className="text-gray-400 hover:text-red-500"/></button>
                   </div>
                   <div className="space-y-4">
-                    {/* Almacenes */}
-                    <div className="grid grid-cols-2 gap-4">
+                    {/* Almacenes + fecha */}
+                    <div className="grid grid-cols-3 gap-3">
                       <div>
                         <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
-                        <select value={trasladoForm.almacenOrigen} onChange={e=>setTrasladoForm({...trasladoForm,almacenOrigen:e.target.value})}
-                          className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                        <select value={trasladoForm.almacenOrigen} onChange={e=>{ setTrasladoForm(f=>({...f,almacenOrigen:e.target.value,itemId:'',qty:''})); setTrasladoItems([]); setTrasladoSearch(''); }}
+                          className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
                           {depositos.map(a=><option key={a} value={a}>{a}</option>)}
                         </select>
                       </div>
                       <div>
                         <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Destino</label>
-                        <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm({...trasladoForm,almacenDestino:e.target.value})}
-                          className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
+                        <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm(f=>({...f,almacenDestino:e.target.value}))}
+                          className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                          {depositos.filter(a=>a!==trasladoForm.almacenOrigen).map(a=><option key={a} value={a}>{a}</option>)}
                         </select>
-                      </div>
-                    </div>
-                    {/* Buscador */}
-                    <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Artículo</label>
-                      <input type="text" placeholder="🔍 Buscar por código o descripción..."
-                        value={trasladoSearch||''} onChange={e=>setTrasladoSearch(e.target.value.toUpperCase())}
-                        className="w-full border-2 border-indigo-200 bg-indigo-50 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-500 focus:bg-white mb-2 uppercase"/>
-                      <select value={trasladoForm.itemId}
-                        onChange={e=>setTrasladoForm({...trasladoForm, itemId: e.target.value})}
-                        className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 bg-white"
-                        size={1}>
-                        <option value="">— Seleccionar artículo —</option>
-                        {sortedCats.map(cat => {
-                          const subMap = catGroups[cat] || {};
-                          const subKeys = [...SUB_ORDER.filter(s=>subMap[s]),...Object.keys(subMap).filter(s=>!SUB_ORDER.includes(s)&&s!=='__NONE__'),...(subMap['__NONE__']?['__NONE__']:[])];
-                          const hasSubs = subKeys.some(k=>k!=='__NONE__');
-                          if(!hasSubs) {
-                            return [
-                              <option key={`cat-${cat}`} disabled>── {cat.toUpperCase()} ──</option>,
-                              ...(subMap['__NONE__']||[]).sort((a,b)=>a.cleanCode.localeCompare(b.cleanCode)).map(c=>{
-                                const whLabel = Object.entries(c.warehouses).filter(([,v])=>v>0).map(([a,v])=>`${a.replace('ALMACEN ','')}:${formatNum(v)}`).join(' ');
-                                return <option key={c.cleanCode} value={c.cleanCode}>{c.cleanCode} — {c.desc} ({whLabel||formatNum(c.totalStock)} {c.unit})</option>;
-                              })
-                            ];
-                          }
-                          return subKeys.flatMap(sub => {
-                            const subItems = (subMap[sub]||[]).sort((a,b)=>a.cleanCode.localeCompare(b.cleanCode));
-                            const label = sub==='__NONE__' ? `── ${cat.toUpperCase()} ──` : `── ${cat.toUpperCase()} / ${sub.toUpperCase()} ──`;
-                            return [
-                              <option key={`sub-${cat}-${sub}`} disabled>{label}</option>,
-                              ...subItems.map(c=>{
-                                const whLabel = Object.entries(c.warehouses).filter(([,v])=>v>0).map(([a,v])=>`${a.replace('ALMACEN ','')}:${formatNum(v)}`).join(' ');
-                                return <option key={c.cleanCode} value={c.cleanCode}>{c.cleanCode} — {c.desc} ({whLabel||formatNum(c.totalStock)} {c.unit})</option>;
-                              })
-                            ];
-                          });
-                        })}
-                      </select>
-                    </div>
-                    {/* Stock info */}
-                    {selItem && (
-                      <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-200">
-                        <p className="text-[10px] font-black text-indigo-700 uppercase mb-1">{selItem.cleanCode} — {selItem.desc}</p>
-                        <div className="flex flex-wrap gap-2">
-                          {Object.entries(selItem.warehouses).filter(([,v])=>v>0).map(([alm,v])=>(
-                            <span key={alm} className={`text-[9px] font-black px-2 py-1 rounded-lg ${alm===trasladoForm.almacenOrigen?'bg-orange-200 text-orange-800':'bg-white text-gray-600 border border-gray-200'}`}>
-                              {alm.replace('ALMACEN ','')} : {formatNum(v)} {selItem.unit}
-                              {alm===trasladoForm.almacenOrigen?' (ORIGEN)':''}
-                            </span>
-                          ))}
-                        </div>
-                        <p className="text-[9px] text-indigo-600 font-bold mt-1">
-                          Disponible en {trasladoForm.almacenOrigen}: <span className="font-black">{formatNum(stockOrigen)} {selItem.unit}</span>
-                        </p>
-                      </div>
-                    )}
-                    {/* Cantidad y fecha */}
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">
-                          Cantidad {selItem ? `(máx. ${formatNum(stockOrigen)} ${selItem.unit})` : ''}
-                        </label>
-                        <input type="number" step="0.01" min="0.01" max={stockOrigen||undefined}
-                          value={trasladoForm.qty} onChange={e=>setTrasladoForm({...trasladoForm,qty:e.target.value})}
-                          className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-indigo-400" placeholder="0.00"/>
                       </div>
                       <div>
                         <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                        <input type="date" value={trasladoForm.date} onChange={e=>setTrasladoForm({...trasladoForm,date:e.target.value})}
-                          className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400"/>
+                        <input type="date" value={trasladoForm.date} onChange={e=>setTrasladoForm(f=>({...f,date:e.target.value}))}
+                          className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-400"/>
                       </div>
                     </div>
+
+                    {/* Buscador + selector de artículo */}
+                    <div className="bg-indigo-50 rounded-2xl p-3 space-y-2">
+                      <label className="text-[10px] font-black text-indigo-700 uppercase">Agregar artículo del {trasladoForm.almacenOrigen} ({filteredItems.length} disponibles)</label>
+                      <input type="text" placeholder="🔍 Buscar por código o descripción..."
+                        value={trasladoSearch||''} onChange={e=>setTrasladoSearch(e.target.value.toUpperCase())}
+                        className="w-full border-2 border-indigo-200 bg-white rounded-xl p-2 text-xs font-bold outline-none focus:border-indigo-500 uppercase"/>
+                      <select value={trasladoForm.itemId} onChange={e=>setTrasladoForm(f=>({...f,itemId:e.target.value,qty:''}))}
+                        className="w-full border-2 border-indigo-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
+                        <option value="">— Seleccionar artículo del {trasladoForm.almacenOrigen} —</option>
+                        {filteredItems.map(c=>(
+                          <option key={c.cleanCode} value={c.cleanCode}>
+                            {c.cleanCode} — {c.desc} | Stock: {formatNum(c.warehouses[trasladoForm.almacenOrigen]||0)} {c.unit}
+                          </option>
+                        ))}
+                      </select>
+                      {selItem && (
+                        <div className="flex gap-2 items-end">
+                          <div className="flex-1">
+                            <label className="text-[9px] font-black text-indigo-600 uppercase block mb-1">
+                              Cantidad (máx. {formatNum(disponible)} {selItem.unit})
+                            </label>
+                            <input type="number" step="0.01" min="0.01" max={disponible}
+                              value={trasladoForm.qty} onChange={e=>setTrasladoForm(f=>({...f,qty:e.target.value}))}
+                              onKeyDown={e=>{ if(e.key==='Enter') agregarItem(); }}
+                              className="w-full border-2 border-indigo-200 rounded-xl p-2 text-xs font-black text-center outline-none focus:border-indigo-500" placeholder="0.00"/>
+                          </div>
+                          <button onClick={agregarItem} disabled={!trasladoForm.qty||parseNum(trasladoForm.qty)<=0||parseNum(trasladoForm.qty)>disponible}
+                            className="bg-indigo-600 text-white px-4 py-2 rounded-xl font-black text-xs uppercase hover:bg-indigo-700 disabled:opacity-40 flex items-center gap-1">
+                            <Plus size={12}/> Agregar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Lista de artículos a trasladar */}
+                    {trasladoItems.length > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-[10px] font-black text-gray-700 uppercase">{trasladoItems.length} artículo(s) a trasladar → {trasladoForm.almacenDestino}</label>
+                          <button onClick={()=>setTrasladoItems([])} className="text-[9px] text-red-400 hover:text-red-600 font-black">✕ Limpiar todo</button>
+                        </div>
+                        <div className="rounded-2xl border border-gray-200 overflow-hidden">
+                          <table className="w-full text-xs">
+                            <thead><tr className="bg-indigo-900 text-white">
+                              <th className="py-2 px-3 text-left text-[9px] font-black uppercase">Código</th>
+                              <th className="py-2 px-3 text-left text-[9px] font-black uppercase">Descripción</th>
+                              <th className="py-2 px-3 text-right text-[9px] font-black uppercase">Cantidad</th>
+                              <th className="py-2 px-3 text-center text-[9px] font-black uppercase">U.M.</th>
+                              <th className="py-2 px-3"></th>
+                            </tr></thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {trasladoItems.map((it,idx)=>(
+                                <tr key={idx} className="bg-white hover:bg-indigo-50">
+                                  <td className="py-2 px-3 font-black text-indigo-600 text-[10px]">{it.cleanCode}</td>
+                                  <td className="py-2 px-3 text-[10px] max-w-[140px] truncate" title={it.desc}>{it.desc}</td>
+                                  <td className="py-2 px-3 text-right font-black">{formatNum(parseNum(it.qty))}</td>
+                                  <td className="py-2 px-3 text-center text-gray-500">{it.unit}</td>
+                                  <td className="py-2 px-3">
+                                    <button onClick={()=>setTrasladoItems(prev=>prev.filter((_,i)=>i!==idx))} className="text-red-400 hover:text-red-600"><X size={11}/></button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Observaciones */}
                     <div>
                       <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Observaciones (opcional)</label>
-                      <input type="text" value={trasladoForm.notes} onChange={e=>setTrasladoForm({...trasladoForm,notes:e.target.value.toUpperCase()})}
-                        className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-indigo-400 uppercase"
+                      <input type="text" value={trasladoForm.notes} onChange={e=>setTrasladoForm(f=>({...f,notes:e.target.value.toUpperCase()}))}
+                        className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-400 uppercase"
                         placeholder="Ej: INSUMOS PARA PRODUCCIÓN LÍNEA 2"/>
                     </div>
-                    {trasladoForm.almacenOrigen === trasladoForm.almacenDestino && (
-                      <p className="text-xs text-red-500 font-bold text-center">⚠ El origen y destino no pueden ser iguales</p>
-                    )}
-                    {selItem && parseNum(trasladoForm.qty) > stockOrigen && (
-                      <p className="text-xs text-red-500 font-bold text-center">⚠ Stock insuficiente en {trasladoForm.almacenOrigen} (disponible: {formatNum(stockOrigen)} {selItem.unit})</p>
-                    )}
+
                     <div className="flex justify-end gap-3 pt-2">
-                      <button onClick={()=>setShowTrasladoModal(false)} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
+                      <button onClick={()=>{setShowTrasladoModal(false);setTrasladoItems([]);setTrasladoSearch('');}} className="px-6 py-2.5 rounded-xl border-2 border-gray-200 font-black text-xs uppercase">Cancelar</button>
                       <button onClick={handleSaveTraslado}
-                        disabled={!trasladoForm.itemId || !trasladoForm.qty || trasladoForm.almacenOrigen===trasladoForm.almacenDestino || parseNum(trasladoForm.qty)>stockOrigen}
+                        disabled={!trasladoItems.length || trasladoForm.almacenOrigen===trasladoForm.almacenDestino}
                         className="bg-indigo-600 text-white px-8 py-2.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-indigo-700 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
-                        <ArrowRightLeft size={14}/> Registrar Traslado
+                        <ArrowRightLeft size={14}/> Registrar Traslado ({trasladoItems.length})
                       </button>
                     </div>
                   </div>
@@ -10589,20 +10557,53 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           const mixAplica = mixOrden.find(m=>nSubcats>=m.cat);
           const montoMix = mixAplica ? mixAplica.monto : 0;
 
-          // 3. Cobranza manual
+          // 3. Cobranza automática desde Notas de Entrega
           const calcRango = (dias) => {
             const e = (cfg.cobranzaEscala||[]).find(x=>dias>=x.dMin && dias<=x.dMax);
             return e || null;
           };
-          const cobranzaCalc = (comCobranza||[]).map(r => {
-            const dias = parseNum(r.diasRetraso);
-            const esc = calcRango(dias<0?0:dias); // retraso negativo (adelantado) = mejor rango
+          const calcVencCobranza = (fecha, diasCred) => {
+            if(!fecha) return '';
+            const d = new Date(fecha+'T00:00:00');
+            d.setDate(d.getDate() + parseInt(diasCred||0));
+            return d.toISOString().split('T')[0];
+          };
+          const diffDias = (d1,d2) => {
+            if(!d1||!d2) return 0;
+            return Math.round((new Date(d2+'T00:00:00')-new Date(d1+'T00:00:00'))/(1000*60*60*24));
+          };
+          // NEs del período del vendedor seleccionado
+          const nesCobranza = (notasEntrega||[]).filter(ne => {
+            const neYm = (ne.fecha||'').substring(0,7);
+            return neYm === ym && (!comVendedor || (ne.vendedor||'').toUpperCase()===comVendedor.toUpperCase());
+          });
+          const cobranzaCalc = nesCobranza.map(ne => {
+            const pago = (comCobranza||[]).find(c=>c.neId===ne.id)||{};
+            const condicion = parseInt(ne.diasCredito||0);
+            const vencimiento = ne.fechaVencimiento || calcVencCobranza(ne.fecha, condicion);
+            const fechaPago = pago.fechaPago || '';
+            const diasRetraso = fechaPago && vencimiento ? Math.max(0, diffDias(vencimiento, fechaPago)) : 0;
+            const esc = fechaPago ? calcRango(diasRetraso) : null;
             const pct = esc ? esc.pct : 0;
             const rango = esc ? (cfg.cobranzaEscala.indexOf(esc)+1) : '—';
-            const montoPagar = parseNum(r.monto)*(pct/100);
-            return {...r, pct, rango, montoPagar};
+            const monto = parseNum(ne.total||ne.montoBase||0);
+            return {
+              neId: ne.id, fecha: ne.fecha, cliente: ne.clientName||'',
+              monto, condicion, vencimiento, fechaPago, diasRetraso,
+              rango, pct, montoPagar: monto*(pct/100)
+            };
           });
           const totalCobranza = cobranzaCalc.reduce((s,r)=>s+r.montoPagar,0);
+          const updCobranza = (i,campo,val) => {
+            const neId = cobranzaCalc[i]?.neId;
+            if(!neId) return;
+            const existing = (comCobranza||[]).findIndex(c=>c.neId===neId);
+            if(existing>=0) {
+              setComCobranza((comCobranza||[]).map((c,idx)=>idx===existing?{...c,[campo]:val}:c));
+            } else {
+              setComCobranza([...(comCobranza||[]),{neId,[campo]:val}]);
+            }
+          };
 
           // ── Detección automática: clientes nuevos y recuperados ──
           // Helper: meses entre dos fechas YYYY-MM-DD
@@ -10699,8 +10700,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           };
           const imprimirComisiones = () => handleExportPDF('Reporte_Comisiones',false);
 
-          const addCobranza = () => setComCobranza([...(comCobranza||[]), {fecha:getTodayDate(), cliente:'', monto:'', condicion:'7', vencimiento:'', fechaPago:'', diasRetraso:''}]);
-          const updCobranza = (i,campo,val) => setComCobranza((comCobranza||[]).map((r,idx)=>idx===i?{...r,[campo]:val}:r));
+          const addCobranza = () => {};
           const delCobranza = (i) => setComCobranza((comCobranza||[]).filter((_,idx)=>idx!==i));
 
           return (
@@ -10797,39 +10797,64 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   </div>
                 </div>
 
-                {/* COBRANZA MANUAL */}
+                {/* COBRANZA DESDE NOTAS DE ENTREGA */}
                 <div className="border-2 border-gray-100 rounded-2xl overflow-hidden">
                   <div className="bg-gray-800 text-white px-4 py-2 flex justify-between items-center">
-                    <span className="text-[10px] font-black uppercase tracking-widest">3. Comisión por Cobranza (carga manual)</span>
-                    <button onClick={addCobranza} className="bg-white text-gray-800 px-3 py-1 rounded-lg text-[9px] font-black uppercase">+ Agregar fila</button>
+                    <span className="text-[10px] font-black uppercase tracking-widest">3. Comisión por Cobranza (desde Notas de Entrega)</span>
+                    <span className="text-[9px] text-gray-400">Solo ingresa la Fecha de Pago — todo lo demás se calcula automático</span>
                   </div>
                   <div className="px-4 py-2 bg-gray-50 text-[8px] font-bold text-gray-500 uppercase">Escala: {(cfg.cobranzaEscala||[]).map((e,i)=>`Rango ${i+1} (${e.dMin}-${e.dMax}d): ${e.pct}%`).join('  ·  ')}</div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
-                      <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500"><th className="px-2 py-2 text-left">Fecha</th><th className="px-2 py-2 text-left">Cliente</th><th className="px-2 py-2 text-right">Monto</th><th className="px-2 py-2 text-center">Cond. (días)</th><th className="px-2 py-2 text-center">Vencimiento</th><th className="px-2 py-2 text-center">Fecha Pago</th><th className="px-2 py-2 text-center">Días Retraso</th><th className="px-2 py-2 text-center">Rango</th><th className="px-2 py-2 text-center">%</th><th className="px-2 py-2 text-right">A Pagar</th><th className="px-2 py-2"></th></tr></thead>
+                      <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500">
+                        <th className="px-2 py-2 text-left">NE</th>
+                        <th className="px-2 py-2 text-left">Fecha NE</th>
+                        <th className="px-2 py-2 text-left">Cliente</th>
+                        <th className="px-2 py-2 text-right">Monto</th>
+                        <th className="px-2 py-2 text-center">Cond. (días)</th>
+                        <th className="px-2 py-2 text-center">Vencimiento</th>
+                        <th className="px-2 py-2 text-center">Fecha Pago ✏</th>
+                        <th className="px-2 py-2 text-center">Días Retraso</th>
+                        <th className="px-2 py-2 text-center">Rango</th>
+                        <th className="px-2 py-2 text-center">%</th>
+                        <th className="px-2 py-2 text-right">A Pagar</th>
+                      </tr></thead>
                       <tbody className="divide-y divide-gray-50">
                         {cobranzaCalc.length===0 ? (
-                          <tr><td colSpan="11" className="py-6 text-center text-gray-400 font-bold uppercase text-[10px]">Sin registros de cobranza. Usa "+ Agregar fila".</td></tr>
+                          <tr><td colSpan="11" className="py-6 text-center text-gray-400 font-bold uppercase text-[10px]">
+                            No hay Notas de Entrega para {comVendedor||'este vendedor'} en {mesLabel} {comAnio}
+                          </td></tr>
                         ) : cobranzaCalc.map((r,i)=>(
-                          <tr key={i} className="hover:bg-gray-50">
-                            <td className="px-2 py-1.5"><input type="date" value={r.fecha||''} onChange={e=>updCobranza(i,'fecha',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-28"/></td>
-                            <td className="px-2 py-1.5"><input type="text" value={r.cliente||''} onChange={e=>updCobranza(i,'cliente',e.target.value.toUpperCase())} className="border rounded px-1 py-0.5 text-[10px] w-32 uppercase" placeholder="Cliente"/></td>
-                            <td className="px-2 py-1.5 text-right"><input type="number" value={r.monto||''} onChange={e=>updCobranza(i,'monto',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-20 text-right" placeholder="0"/></td>
-                            <td className="px-2 py-1.5 text-center"><input type="number" value={r.condicion||''} onChange={e=>updCobranza(i,'condicion',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-14 text-center" placeholder="7"/></td>
-                            <td className="px-2 py-1.5 text-center"><input type="date" value={r.vencimiento||''} onChange={e=>updCobranza(i,'vencimiento',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-28"/></td>
-                            <td className="px-2 py-1.5 text-center"><input type="date" value={r.fechaPago||''} onChange={e=>updCobranza(i,'fechaPago',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-28"/></td>
-                            <td className="px-2 py-1.5 text-center"><input type="number" value={r.diasRetraso||''} onChange={e=>updCobranza(i,'diasRetraso',e.target.value)} className="border rounded px-1 py-0.5 text-[10px] w-16 text-center font-black" placeholder="0"/></td>
-                            <td className="px-2 py-1.5 text-center font-black text-blue-700">{r.rango}</td>
-                            <td className="px-2 py-1.5 text-center font-black">{formatNum(r.pct)}%</td>
+                          <tr key={r.neId||i} className={`hover:bg-gray-50 ${r.diasRetraso>0?'bg-red-50/30':''}`}>
+                            <td className="px-2 py-1.5 font-black text-orange-600 text-[10px] whitespace-nowrap">{r.neId||'—'}</td>
+                            <td className="px-2 py-1.5 text-[10px] whitespace-nowrap">{r.fecha}</td>
+                            <td className="px-2 py-1.5 text-[10px] max-w-[120px] truncate" title={r.cliente}>{r.cliente}</td>
+                            <td className="px-2 py-1.5 text-right font-black">${formatNum(r.monto)}</td>
+                            <td className="px-2 py-1.5 text-center text-gray-600">{r.condicion}d</td>
+                            <td className="px-2 py-1.5 text-center text-[10px]">{r.vencimiento||'—'}</td>
+                            <td className="px-2 py-1.5 text-center">
+                              <input type="date" value={r.fechaPago||''}
+                                onChange={e=>updCobranza(i,'fechaPago',e.target.value)}
+                                className="border-2 border-orange-200 rounded-lg px-1 py-0.5 text-[10px] w-28 focus:border-orange-400 outline-none"/>
+                            </td>
+                            <td className="px-2 py-1.5 text-center font-black" style={{color:r.diasRetraso>0?'#dc2626':'#16a34a'}}>
+                              {r.fechaPago ? (r.diasRetraso>0 ? `+${formatNum(r.diasRetraso)}d` : '✓ A tiempo') : '—'}
+                            </td>
+                            <td className="px-2 py-1.5 text-center font-black text-blue-700">{r.rango||'—'}</td>
+                            <td className="px-2 py-1.5 text-center font-black">{r.pct>0?formatNum(r.pct)+'%':'—'}</td>
                             <td className="px-2 py-1.5 text-right font-black text-green-700">${formatNum(r.montoPagar)}</td>
-                            <td className="px-2 py-1.5 text-center"><button onClick={()=>delCobranza(i)} className="text-red-400 hover:text-red-600"><X size={13}/></button></td>
                           </tr>
                         ))}
                       </tbody>
-                      {cobranzaCalc.length>0 && <tfoot className="bg-gray-100 font-black"><tr><td colSpan="2" className="px-2 py-2 uppercase text-[9px]">Total Cobranza</td><td className="px-2 py-2 text-right">${formatNum(cobranzaCalc.reduce((s,r)=>s+parseNum(r.monto),0))}</td><td colSpan="6"></td><td className="px-2 py-2 text-right text-green-700">${formatNum(totalCobranza)}</td><td></td></tr></tfoot>}
+                      {cobranzaCalc.length>0 && <tfoot className="bg-gray-100 font-black"><tr>
+                        <td colSpan="3" className="px-2 py-2 uppercase text-[9px]">Total Cobranza ({cobranzaCalc.filter(r=>r.fechaPago).length}/{cobranzaCalc.length} pagados)</td>
+                        <td className="px-2 py-2 text-right">${formatNum(cobranzaCalc.reduce((s,r)=>s+parseNum(r.monto),0))}</td>
+                        <td colSpan="6"></td>
+                        <td className="px-2 py-2 text-right text-green-700">${formatNum(totalCobranza)}</td>
+                      </tr></tfoot>}
                     </table>
                   </div>
-                  <div className="px-4 py-2 bg-amber-50 text-[8px] font-bold text-amber-700 uppercase">⚠ La tabla de cobranza es manual y no se guarda al cambiar de mes/vendedor. Anota o exporta antes de cambiar.</div>
+                  <div className="px-4 py-2 bg-blue-50 text-[8px] font-bold text-blue-700 uppercase">ℹ Datos tomados de Notas de Entrega del período. La Fecha de Pago se guarda temporalmente y se recalcula si cambias de mes/vendedor.</div>
                 </div>
 
                 {/* TOTAL A PAGAR */}
@@ -10851,8 +10876,15 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           const initNEForm = () => ({
             fecha: getTodayDate(), clientRif:'', clientName:'', clientAddress:'', vendedor:'',
             items:[], aplicaIva:'SI', status:'TRANSITO', observaciones:'',
-            facturaId:'', opRelacionada:'', ncConsignacion:'', neClientSearch:'', neShowClientDrop:false
+            facturaId:'', opRelacionada:'', ncConsignacion:'', diasCredito:'0',
+            neClientSearch:'', neShowClientDrop:false
           });
+          const calcVenc = (fecha, dias) => {
+            if(!fecha) return '';
+            const d = new Date(fecha+'T00:00:00');
+            d.setDate(d.getDate() + parseInt(dias||0));
+            return d.toISOString().split('T')[0];
+          };
           const nextNENum = () => {
             const nums=(notasEntrega||[]).map(n=>parseInt((n.id||'NE-00000').replace('NE-',''))||0);
             return 'NE-'+String(Math.max(0,...nums)+1).padStart(5,'0');
@@ -10864,6 +10896,8 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               const ivaAmt = form.aplicaIva==='SI' ? parseFloat((base*0.16).toFixed(2)) : 0;
               const costoTotal = form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0);
               const data = { ...form, id, montoBase:base, ivaAmt, total:parseFloat((base+ivaAmt).toFixed(2)), costoTotal,
+                diasCredito: parseInt(form.diasCredito||0),
+                fechaVencimiento: calcVenc(form.fecha, form.diasCredito||'0'),
                 timestamp: editId?(notasEntrega||[]).find(n=>n.id===editId)?.timestamp||Date.now():Date.now(),
                 updatedAt: Date.now(), user: appUser?.name||'Sistema' };
               delete data.neClientSearch; delete data.neShowClientDrop;
@@ -10959,8 +10993,23 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Estatus</label>
                       <select value={form.status||'TRANSITO'} onChange={e=>setForm(f=>({...f,status:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none">
                         <option value="TRANSITO">⏳ Tránsito</option><option value="PROCESADA">✅ Procesada</option></select></div>
-                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Nro. Factura</label>
-                      <input value={form.facturaId||''} onChange={e=>setForm(f=>({...f,facturaId:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="INVO-0001"/></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Días de Crédito</label>
+                      <select value={form.diasCredito||'0'} onChange={e=>setForm(f=>({...f,diasCredito:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
+                        <option value="0">Contado (0 días)</option>
+                        <option value="7">7 días</option>
+                        <option value="15">15 días</option>
+                        <option value="30">30 días</option>
+                        <option value="45">45 días</option>
+                        <option value="60">60 días</option>
+                        <option value="90">90 días</option>
+                      </select></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Fecha Vencimiento</label>
+                      <div className="w-full border-2 border-orange-100 bg-orange-50 rounded-xl p-2.5 text-xs font-black text-orange-700">
+                        {calcVenc(form.fecha, form.diasCredito||'0') || '—'}
+                        {parseInt(form.diasCredito||0)>0 && <span className="text-orange-400 font-normal ml-1">({form.diasCredito} días)</span>}
+                      </div></div>
+                    {form.facturaId && <div className="col-span-2 bg-green-50 border border-green-200 rounded-xl p-2.5 text-[10px] font-black text-green-700">
+                      ✅ Facturada: <span>{form.facturaId}</span></div>}
                   </div>
                   <div>
                     <label className="text-[10px] font-black text-orange-600 uppercase block mb-2">Artículos</label>
