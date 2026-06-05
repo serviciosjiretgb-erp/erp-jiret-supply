@@ -419,6 +419,37 @@ export default function App() {
   // ── Paginación ─────────────────────────────────────────────────────────────
   const [nePagina, setNePagina] = useState(0);
   const [tvPagina, setTvPagina] = useState(0);
+  const [tvBuscarDoc, setTvBuscarDoc] = useState('');
+  const [tvBuscarDesc, setTvBuscarDesc] = useState('');
+  const [facturaPagina, setFacturaPagina] = useState(0);
+  const [cotizPagina, setCotizPagina] = useState(0);
+  const [clientesPagina, setClientesPagina] = useState(0);
+  const [reqPagina, setReqPagina] = useState(0);
+  const [prodVendPagina, setProdVendPagina] = useState(0);
+  const [reportVentasPagina, setReportVentasPagina] = useState(0);
+  const [historialPagina, setHistorialPagina] = useState(0);
+  const PAGE_SIZE_DEFAULT = 25;
+  // Helper: componente de paginación reutilizable
+  const PaginadorUI = ({total, pagina, setPagina, pageSize=PAGE_SIZE_DEFAULT}) => {
+    const totalPages = Math.ceil(total/pageSize)||1;
+    if(totalPages<=1) return null;
+    const pg = Math.max(0,Math.min(pagina,totalPages-1));
+    return (
+      <div className="flex items-center gap-1.5 text-xs font-black text-gray-600 flex-wrap">
+        <button onClick={()=>setPagina(0)} disabled={pg===0} className="px-2 py-1.5 bg-gray-100 rounded-lg disabled:opacity-30 hover:bg-gray-200 text-[10px]">««</button>
+        <button onClick={()=>setPagina(p=>Math.max(0,p-1))} disabled={pg===0} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-30 hover:bg-gray-200">← Ant.</button>
+        {Array.from({length:Math.min(5,totalPages)},(_,i)=>{
+          const start=Math.max(0,Math.min(totalPages-5,pg-2));
+          const page=start+i;
+          if(page>=totalPages) return null;
+          return(<button key={page} onClick={()=>setPagina(page)} className={`px-3 py-1.5 rounded-lg ${page===pg?'bg-orange-500 text-white shadow-sm':'bg-gray-100 hover:bg-gray-200'}`}>{page+1}</button>);
+        })}
+        <button onClick={()=>setPagina(p=>Math.min(totalPages-1,p+1))} disabled={pg>=totalPages-1} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-30 hover:bg-gray-200">Sig. →</button>
+        <button onClick={()=>setPagina(totalPages-1)} disabled={pg>=totalPages-1} className="px-2 py-1.5 bg-gray-100 rounded-lg disabled:opacity-30 hover:bg-gray-200 text-[10px]">»»</button>
+        <span className="ml-2 text-gray-400 font-normal text-[10px]">Mostrando {pg*pageSize+1}–{Math.min((pg+1)*pageSize,total)} de {total}</span>
+      </div>
+    );
+  };
   const [invRequisitions, setInvRequisitions] = useState([]);
   const [reqFilter, setReqFilter] = useState('');
 
@@ -11023,6 +11054,65 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                             <div className="flex gap-1">
                               <button onClick={()=>setNeForm({...ne,_editId:ne.id})} title="Editar" className="w-7 h-7 flex items-center justify-center bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-all"><Edit size={11}/></button>
                               <button onClick={()=>handleConvertirFactura(ne)} title="Convertir en Factura" className="w-7 h-7 flex items-center justify-center bg-orange-50 text-orange-600 hover:bg-orange-500 hover:text-white rounded-lg transition-all"><Receipt size={11}/></button>
+                              <button title="Ver PDF" onClick={()=>{
+                                const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B C.A.';
+                                const rif = settings?.empresaRIF||'J-412309374';
+                                const dir = settings?.empresaDireccion||'AV CIRCUNVALACIÓN 2 CC EL DIVIDIVI NIVEL PB LOCAL G-9, SECTOR EL TREBOL MARACAIBO ZULIA';
+                                const itemsHtml = (ne.items||[]).map(it=>`<tr><td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:10px;color:#ea580c;font-weight:700">${it.invCode||it.code||'—'}</td><td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:10px">${it.desc||''}</td><td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:10px;text-align:center">${formatNum(it.cantidad)} ${it.unit||'und'}</td><td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:10px;text-align:right">$${formatNum(it.precioUnit||0)}</td><td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:10px;text-align:right;font-weight:700">$${formatNum(parseNum(it.cantidad)*parseNum(it.precioUnit||0))}</td></tr>`).join('');
+                                handlePDFFromHTML(`
+<div style="font-family:Arial,sans-serif;font-size:11px;color:#111;max-width:900px;margin:0 auto">
+  <!-- Membrete -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #f97316;padding-bottom:16px;margin-bottom:20px">
+    <div>
+      <div style="font-size:22px;font-weight:900;color:#111;letter-spacing:1px">${emp}</div>
+      <div style="font-size:9px;color:#888;margin-top:4px">${dir}</div>
+      <div style="font-size:9px;color:#888">RIF: ${rif}</div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:18px;font-weight:900;color:#f97316">NOTA DE ENTREGA N° ${ne.id}</div>
+      <div style="margin-top:8px;display:inline-block;background:${ne.status==='PROCESADA'?'#d1fae5':'#fef3c7'};color:${ne.status==='PROCESADA'?'#065f46':'#92400e'};padding:3px 14px;border-radius:20px;font-size:9px;font-weight:900">${ne.status==='PROCESADA'?'✓ PROCESADA':'⏳ EN TRÁNSITO'}</div>
+    </div>
+  </div>
+  <!-- Datos cliente y NE -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+    <div>
+      <div style="font-size:8px;color:#888;text-transform:uppercase;font-weight:700;margin-bottom:4px">CLIENTE:</div>
+      <div style="font-size:14px;font-weight:900">${ne.clientName||'—'}</div>
+      <div style="font-size:10px;color:#666">RIF: ${ne.clientRif||'—'}</div>
+      ${ne.clientAddress?`<div style="font-size:9px;color:#888;margin-top:2px">DIRECCIÓN: ${ne.clientAddress}</div>`:''}
+    </div>
+    <div style="text-align:right">
+      <table style="width:100%;border-collapse:collapse;font-size:10px">
+        <tr><td style="padding:2px 0;color:#888">FECHA EMISIÓN:</td><td style="font-weight:700;text-align:right">${ne.fecha}</td></tr>
+        ${ne.vendedor?`<tr><td style="padding:2px 0;color:#888">VENDEDOR:</td><td style="font-weight:700;text-align:right">${ne.vendedor}</td></tr>`:''}
+        ${ne.facturaId?`<tr><td style="padding:2px 0;color:#888">NRO. FACTURA:</td><td style="font-weight:700;text-align:right;color:#f97316">${ne.facturaId}</td></tr>`:''}
+        ${ne.opRelacionada?`<tr><td style="padding:2px 0;color:#888">OP RELACIONADA:</td><td style="font-weight:700;text-align:right;color:#f97316">${ne.opRelacionada}</td></tr>`:''}
+      </table>
+    </div>
+  </div>
+  <!-- Tabla de artículos -->
+  <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
+    <thead>
+      <tr style="background:#111827;color:#fff">
+        <th style="padding:10px 12px;font-size:9px;text-align:left;text-transform:uppercase">Código</th>
+        <th style="padding:10px 12px;font-size:9px;text-align:left;text-transform:uppercase">Descripción / Concepto</th>
+        <th style="padding:10px 12px;font-size:9px;text-align:center;text-transform:uppercase">Cantidad</th>
+        <th style="padding:10px 12px;font-size:9px;text-align:right;text-transform:uppercase">Precio Unit. (USD)</th>
+        <th style="padding:10px 12px;font-size:9px;text-align:right;text-transform:uppercase">Importe Base (USD)</th>
+      </tr>
+    </thead>
+    <tbody>${itemsHtml||'<tr><td colspan="5" style="padding:20px;text-align:center;color:#aaa;font-size:10px">Sin artículos detallados</td></tr>'}</tbody>
+  </table>
+  <!-- Totales -->
+  <div style="display:flex;justify-content:flex-end">
+    <table style="border-collapse:collapse;min-width:280px">
+      <tr style="border-top:1px solid #e5e7eb"><td style="padding:6px 12px;font-size:10px;color:#888">SUBTOTAL:</td><td style="padding:6px 12px;font-size:10px;font-weight:700;text-align:right">$${formatNum(ne.montoBase||0)}</td></tr>
+      ${ne.ivaAmt>0?`<tr><td style="padding:6px 12px;font-size:10px;color:#888">IVA (16%):</td><td style="padding:6px 12px;font-size:10px;font-weight:700;text-align:right">$${formatNum(ne.ivaAmt||0)}</td></tr>`:''}
+      <tr style="background:#f97316"><td style="padding:10px 12px;font-size:13px;font-weight:900;color:#fff">TOTAL:</td><td style="padding:10px 12px;font-size:13px;font-weight:900;color:#fff;text-align:right">$${formatNum(ne.total||0)}</td></tr>
+    </table>
+  </div>
+  ${ne.observaciones?`<div style="margin-top:20px;font-size:9px;color:#888;border-top:1px solid #e5e7eb;padding-top:10px"><b>OBSERVACIONES:</b> ${ne.observaciones}</div>`:''}
+</div>`, `NE_${ne.id}_${ne.clientName||''}`)}} className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-lg transition-all" title="PDF"><Printer size={11}/></button>
                               <button onClick={()=>handleDeleteNE(ne)} title="Eliminar" className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition-all"><Trash2 size={11}/></button>
                             </div>
                           </td>
@@ -11050,17 +11140,20 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           (notasEntrega||[]).forEach(ne=>{
             if(ne.fecha<tvDesde||ne.fecha>tvHasta) return;
             if(tvStatus!=='TODAS'&&ne.status!==tvStatus) return;
+            const doc=ne.id+(ne.status==='PROCESADA'?'P':'T');
+            if(tvBuscarDoc && !doc.toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
+            if(tvBuscarDesc && !(ne.clientName||'').toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
             const costo=ne.costoTotal||(ne.items||[]).reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0);
             const utilidad=(ne.montoBase||0)-costo;
             const pctUtil=(ne.montoBase||0)>0?(utilidad/(ne.montoBase||0)*100):0;
-            rows.push({fecha:ne.fecha,documento:ne.id+(ne.status==='PROCESADA'?'P':'T'),descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,contado:0,credito:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,status:ne.status});
+            rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,contado:0,credito:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,status:ne.status});
           });
           rows.sort((a,b)=>a.fecha.localeCompare(b.fecha));
           const tot=rows.reduce((s,r)=>({montoBruto:s.montoBruto+r.montoBruto,iva:s.iva+r.iva,tNeto:s.tNeto+r.tNeto,costo:s.costo+r.costo,utilidad:s.utilidad+r.utilidad}),{montoBruto:0,iva:0,tNeto:0,costo:0,utilidad:0});
           const pctTot=tot.montoBruto>0?(tot.utilidad/tot.montoBruto*100):0;
-          const tvTotalPages=Math.ceil(rows.length/PAGE_SIZE)||1;
+          const tvTotalPages=Math.ceil(rows.length/PAGE_SIZE_DEFAULT)||1;
           const tvPage=Math.max(0,Math.min(tvPagina,tvTotalPages-1));
-          const tvPageRows=rows.slice(tvPage*PAGE_SIZE,(tvPage+1)*PAGE_SIZE);
+          const tvPageRows=rows.slice(tvPage*PAGE_SIZE_DEFAULT,(tvPage+1)*PAGE_SIZE_DEFAULT);
 
           const exportTV=()=>{
             const rowsHtml=rows.map(r=>`<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:4px 7px;font-size:9px;white-space:nowrap">${r.fecha}</td><td style="padding:4px 7px;font-size:9px;font-weight:700;color:${r.status==='PROCESADA'?'#16a34a':'#d97706'}">${r.documento}</td><td style="padding:4px 7px;font-size:9px">${r.descripcion}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.montoBruto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.iva)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;font-weight:700">${formatNum(r.tNeto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.costo)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;color:#16a34a;font-weight:700">${formatNum(r.utilidad)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${r.pctUtil.toFixed(2)}%</td></tr>`).join('');
@@ -11082,6 +11175,10 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   <select value={tvStatus} onChange={e=>{setTvStatus(e.target.value);setTvPagina(0);}} className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400">
                     <option value="TODAS">Todos</option><option value="TRANSITO">Tránsito</option><option value="PROCESADA">Procesadas</option>
                   </select></div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Documento</label>
+                  <input value={tvBuscarDoc} onChange={e=>{setTvBuscarDoc(e.target.value);setTvPagina(0);}} placeholder="NE-00001" className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400 w-32"/></div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente / Descripción</label>
+                  <input value={tvBuscarDesc} onChange={e=>{setTvBuscarDesc(e.target.value);setTvPagina(0);}} placeholder="Buscar cliente..." className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400 w-44"/></div>
                 <div className="ml-auto text-right"><div className="font-black text-lg text-gray-900">${formatNum(tot.tNeto)}</div><div className="text-[10px] text-gray-500">{rows.length} operaciones · Utilidad: <span className="text-green-600 font-black">{pctTot.toFixed(2)}%</span></div></div>
               </div>
               {/* Paginación top */}
