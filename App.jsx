@@ -9193,12 +9193,21 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               </div>
               <div className="hidden pdf-header p-8 mb-4"><ReportHeader/><h1 className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">REPORTE DE PRODUCTOS VENDIDOS</h1></div>
               <div className="overflow-x-auto">
+                {(()=>{
+                  const totalPV=pvFiltered.length;
+                  const pgPV=Math.max(0,Math.min(prodVendPagina,Math.ceil(totalPV/PAGE_SIZE_DEFAULT)-1));
+                  const pagePV=pvFiltered.slice(pgPV*PAGE_SIZE_DEFAULT,(pgPV+1)*PAGE_SIZE_DEFAULT);
+                  return(<>
+                <div className="px-6 pt-4 flex items-center justify-between flex-wrap gap-2">
+                  <span className="text-[10px] text-gray-500 font-bold">{totalPV} líneas</span>
+                  <PaginadorUI total={totalPV} pagina={pgPV} setPagina={setProdVendPagina}/>
+                </div>
                 <table className="w-full text-xs">
                   <thead className="bg-gray-800 text-white">
                     <tr className="uppercase font-black text-[9px] tracking-widest">
                       <th className="py-3 px-4 border-r border-gray-700 text-left">Factura</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-left">Nro. Fiscal</th>
-                      <th className="py-3 px-4 border-r border-gray-700 text-center">OP Relacionada</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-center">OP Rel.</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-center">Fecha</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-center">Vendedor</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-left">Cliente</th>
@@ -9210,16 +9219,17 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {pvFiltered.length === 0 ? (
+                    {pagePV.length === 0 ? (
                       <tr><td colSpan="11" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin ventas para los filtros seleccionados.</td></tr>
-                    ) : pvFiltered.map((s,i) => (
-                      <tr key={i} className="hover:bg-gray-50">
+                    ) : pagePV.map((s,i) => (
+                      <tr key={pgPV*PAGE_SIZE_DEFAULT+i} className="hover:bg-gray-50">
                         <td className="py-3 px-4 border-r font-black text-orange-600">{s.factura}</td>
                         <td className="py-3 px-4 border-r font-bold text-gray-600 text-[10px]">{s.nroFiscal||'—'}</td>
                         <td className="py-3 px-4 border-r text-center font-black text-orange-600 text-[10px]">{s.opId&&s.opId!=='—'?('#'+String(s.opId).replace('OP-','').padStart(5,'0')):'—'}</td>
                         <td className="py-3 px-4 border-r text-center font-bold text-gray-600">{s.fecha}</td>
                         <td className="py-3 px-4 border-r text-center font-black text-blue-700 text-[10px] uppercase">{s.vendedor||'—'}</td>
-                        <td className="py-3 px-4 border-r font-black text-[10px]">{s.producto}</td>
+                        <td className="py-3 px-4 border-r font-black text-[10px]">{s.cliente}</td>
+                        <td className="py-3 px-4 border-r font-bold text-[10px]">{s.producto}</td>
                         <td className="py-3 px-4 border-r text-center"><span className="bg-blue-100 text-blue-700 font-black text-[9px] px-2 py-0.5 rounded">{s.medida}</span></td>
                         <td className="py-3 px-4 border-r text-right font-black">{formatNum(s.cantidad)}</td>
                         <td className="py-3 px-4 border-r text-right font-bold text-gray-600">${formatNum(s.costoUnd)}</td>
@@ -9230,7 +9240,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   {pvFiltered.length > 0 && (
                     <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-black">
                       <tr>
-                        <td colSpan="8" className="py-3 px-4 text-[10px] uppercase text-gray-500">Total filtrado: {pvFiltered.length} líneas</td>
+                        <td colSpan="8" className="py-3 px-4 text-[10px] uppercase text-gray-500">Total: {pvFiltered.length} líneas · Pág. {pgPV+1}</td>
                         <td className="py-3 px-4 text-right">{formatNum(pvFiltered.reduce((s,r)=>s+r.cantidad,0))}</td>
                         <td></td>
                         <td className="py-3 px-4 text-right text-orange-600">${formatNum(pvFiltered.reduce((s,r)=>s+r.cantidad*r.costoUnd,0))}</td>
@@ -9238,6 +9248,8 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     </tfoot>
                   )}
                 </table>
+                <div className="px-6 py-4 flex justify-center"><PaginadorUI total={totalPV} pagina={pgPV} setPagina={setProdVendPagina}/></div>
+                </>);})()}
               </div>
             </div>
           );
@@ -10902,56 +10914,77 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 updatedAt: Date.now(), user: appUser?.name||'Sistema' };
               delete data.neClientSearch; delete data.neShowClientDrop;
               await setDoc(getDocRef('notasEntrega', id), data);
-              // ── Descuento de inventario (solo NE nueva; en edición solo ajusta diferencia) ──
+              // ── Descuento de inventario usando warehouseQtys ──────────────────
               const itemsConCodigo = data.items.filter(it=>it.invCode);
               if(itemsConCodigo.length > 0) {
                 const batch = writeBatch(db);
                 const neAnterior = editId ? (notasEntrega||[]).find(n=>n.id===editId) : null;
                 for(const item of itemsConCodigo) {
                   const code = (item.invCode||'').split('___')[0];
-                  const cantNueva = parseNum(item.cantidad);
-                  if(cantNueva <= 0) continue;
-                  // Calcular diferencia vs NE anterior (si es edición)
-                  let cantDescuento = cantNueva;
-                  if(editId && neAnterior) {
-                    const itemAnterior = (neAnterior.items||[]).find(it=>(it.invCode||'').split('___')[0]===code);
-                    const cantAnterior = parseNum(itemAnterior?.cantidad||0);
-                    cantDescuento = cantNueva - cantAnterior; // positivo = descontar más; negativo = devolver
+                  const wqtyNuevo = item.warehouseQtys || {};
+                  // Para edición, obtener quantities anteriores
+                  const itemAnterior = neAnterior ? (neAnterior.items||[]).find(it=>(it.invCode||'').split('___')[0]===code) : null;
+                  const wqtyAnterior = itemAnterior?.warehouseQtys || (itemAnterior ? {'ALMACEN ZI': parseNum(itemAnterior.almacenDeduccion?parseNum(itemAnterior.cantidad||0):0)} : {});
+                  // Calcular delta por almacén
+                  const todosAlmacenes = new Set([...Object.keys(wqtyNuevo),...Object.keys(wqtyAnterior)]);
+                  for(const almNom of todosAlmacenes) {
+                    const cantNueva = parseNum(wqtyNuevo[almNom]||0);
+                    const cantAnterior = parseNum(wqtyAnterior[almNom]||0);
+                    const delta = editId ? cantNueva - cantAnterior : cantNueva;
+                    if(Math.abs(delta)<0.001) continue;
+                    const targetDoc=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===code && i.almacen===almNom);
+                    if(!targetDoc) continue;
+                    const stockActual=parseNum(targetDoc.stock||0);
+                    batch.update(getDocRef('inventory',targetDoc.id),{stock:Math.max(0,stockActual-delta),updatedAt:Date.now()});
+                    const movId=`NE-${id}-${code}-${almNom.slice(-2)}-${Date.now()}-${Math.random().toString(36).slice(2,4)}`;
+                    batch.set(getDocRef('inventoryMovements',movId),{
+                      id:movId,date:form.fecha||getTodayDate(),timestamp:Date.now(),
+                      itemId:targetDoc.id,itemName:item.desc||code,
+                      type:delta>0?'SALIDA':'ENTRADA',qty:Math.abs(delta),
+                      unitCost:parseNum(item.costoUnit||0),totalValue:Math.abs(delta)*parseNum(item.costoUnit||0),
+                      reference:id,almacen:almNom,
+                      notes:`${delta>0?'SALIDA':'DEVOLUCIÓN'} NE ${id}${editId?' (AJUSTE)':''} — ${form.clientName||''}`,
+                      user:appUser?.name||'Sistema'
+                    });
                   }
-                  if(Math.abs(cantDescuento) < 0.001) continue; // sin cambio
-                  // Usar almacén de deducción específico del ítem o el de mayor stock
-                  const almacenTarget = item.almacenDeduccion;
-                  let targetDoc = almacenTarget
-                    ? (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===code && i.almacen===almacenTarget)
-                    : (inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code && parseNum(i.stock||0)>0).sort((a,b)=>parseNum(b.stock||0)-parseNum(a.stock||0))[0];
-                  if(!targetDoc && cantDescuento > 0) {
-                    // Buscar cualquier doc de ese código
-                    targetDoc = (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===code);
-                  }
-                  if(!targetDoc) continue;
-                  const stockActual = parseNum(targetDoc.stock||0);
-                  batch.update(getDocRef('inventory', targetDoc.id), {
-                    stock: Math.max(0, stockActual - cantDescuento), updatedAt: Date.now()
-                  });
-                  const movId = `NE-${id}-${code}-${Date.now()}-${Math.random().toString(36).slice(2,5)}`;
-                  batch.set(getDocRef('inventoryMovements', movId), {
-                    id: movId, date: form.fecha||getTodayDate(), timestamp: Date.now(),
-                    itemId: targetDoc.id, itemName: item.desc||code,
-                    type: cantDescuento > 0 ? 'SALIDA' : 'ENTRADA',
-                    qty: Math.abs(cantDescuento),
-                    unitCost: parseNum(item.costoUnit||0),
-                    totalValue: Math.abs(cantDescuento)*parseNum(item.costoUnit||0),
-                    reference: id,
-                    notes: `${cantDescuento>0?'SALIDA':'DEVOLUCIÓN'} NOTA DE ENTREGA ${id}${editId?' (AJUSTE EDICIÓN)':''} — ${form.clientName||''}`,
-                    user: appUser?.name||'Sistema'
-                  });
                 }
                 await batch.commit();
               }
               setNeView('lista'); setNeForm(null); setNeInvSearch(''); setNeShowInvDrop(false);
             } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
           };
-          const handleDeleteNE = (ne) => setDialog({title:'Eliminar NE',text:`¿Eliminar ${ne.id}?`,type:'confirm',onConfirm:async()=>{ await deleteDoc(getDocRef('notasEntrega',ne.id)); }});
+          const handleDeleteNE = (ne) => setDialog({title:'Eliminar Nota de Entrega',text:`¿Eliminar ${ne.id}? La mercancía será devuelta al inventario.`,type:'confirm',onConfirm:async()=>{
+            try {
+              const batch = writeBatch(db);
+              // 1. Devolver inventario por almacén
+              for(const item of (ne.items||[])) {
+                if(!item.invCode) continue;
+                const code=(item.invCode||'').split('___')[0];
+                const wqty=item.warehouseQtys||(item.almacenDeduccion?{[item.almacenDeduccion]:parseNum(item.cantidad||0)}:{'ALMACEN ZI':parseNum(item.cantidad||0)});
+                for(const [almNom,qty] of Object.entries(wqty)) {
+                  if(parseNum(qty)<=0) continue;
+                  const targetDoc=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===code&&i.almacen===almNom);
+                  if(!targetDoc) continue;
+                  batch.update(getDocRef('inventory',targetDoc.id),{stock:parseNum(targetDoc.stock||0)+parseNum(qty),updatedAt:Date.now()});
+                  const movId=`DEVNЕ-${ne.id}-${code}-${Date.now()}-${Math.random().toString(36).slice(2,4)}`;
+                  batch.set(getDocRef('inventoryMovements',movId),{
+                    id:movId,date:getTodayDate(),timestamp:Date.now(),
+                    itemId:targetDoc.id,itemName:item.desc||code,
+                    type:'ENTRADA',qty:parseNum(qty),
+                    unitCost:parseNum(item.costoUnit||0),totalValue:parseNum(qty)*parseNum(item.costoUnit||0),
+                    reference:ne.id,almacen:almNom,
+                    notes:`DEVOLUCIÓN POR ELIMINACIÓN NE ${ne.id} — ${ne.clientName||''}`,
+                    user:appUser?.name||'Sistema'
+                  });
+                }
+              }
+              // 2. Eliminar la NE
+              batch.delete(getDocRef('notasEntrega',ne.id));
+              await batch.commit();
+              // 3. Limpiar de comCobranza si existe
+              setComCobranza(prev=>(prev||[]).filter(c=>c.neId!==ne.id));
+            } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+          }});
           const handleChangeStatusNE = async (ne, newStatus) => { await updateDoc(getDocRef('notasEntrega',ne.id),{status:newStatus,updatedAt:Date.now()}); };
           const handleConvertirFactura = (ne) => {
             setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad,precioUnit:it.precioUnit,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));
@@ -11034,8 +11067,11 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                           const stockStr=allAlm.length>0?allAlm.map(a=>`${(a.almacen||'ZI').replace('ALMACEN ','')}: ${formatNum(a.stock||0)} ${a.unit||''}`).join(' | '): `Total: ${formatNum(i.stock||0)} ${i.unit||''}`;
                           return(
                           <button key={i.id} onMouseDown={()=>{
-                            const bestAlm=allAlm.sort((a,b)=>parseNum(b.stock||0)-parseNum(a.stock||0))[0];
-                            setForm(f=>({...f,items:[...f.items,{invCode:code,desc:i.desc||'',cantidad:1,precioUnit:0,unit:i.unit||'und',costoUnit:parseNum(i.cost||0),almacenDeduccion:bestAlm?.almacen||i.almacen||'ALMACEN ZI'}]}));
+                            // Inicializar warehouseQtys con todos los almacenes que tienen stock
+                            const allAlm2=(inventory||[]).filter(inv=>(inv.displayId||(inv.id||'').split('___')[0])===code&&parseNum(inv.stock||0)>0);
+                            const wqty={};
+                            allAlm2.forEach(a=>{ wqty[a.almacen||'ALMACEN ZI']=0; });
+                            setForm(f=>({...f,items:[...f.items,{invCode:code,desc:i.desc||'',cantidad:0,precioUnit:0,unit:i.unit||'und',costoUnit:parseNum(i.cost||0),warehouseQtys:wqty}]}));
                             setNeInvSearch('');setNeShowInvDrop(false);
                           }} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0">
                             <span className="font-black text-orange-600">{code}</span> — {i.desc}
@@ -11043,25 +11079,69 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                           </button>);})}
                       </div>)}
                     </div>
-                    {form.items.length>0&&(<div className="overflow-x-auto rounded-xl border"><table className="w-full text-xs"><thead><tr className="bg-gray-900 text-white">{['Código','Descripción','Almacén Descuento','U.M.','Cantidad','Precio U.','Costo U.','Total',''].map(h=><th key={h} className="py-2 px-3 text-left text-[9px] font-black uppercase whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{form.items.map((it,idx)=>{
-                      const code=(it.invCode||'').split('___')[0];
-                      const almacenesConStock=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
-                      return(<tr key={idx} className="border-t hover:bg-orange-50">
-                      <td className="py-1.5 px-2"><input value={it.invCode||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],invCode:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-28 border rounded px-1.5 py-1 text-[10px] font-black text-orange-600 outline-none"/></td>
-                      <td className="py-1.5 px-2"><input value={it.desc||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],desc:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-full border rounded px-1.5 py-1 text-[10px] outline-none"/></td>
-                      <td className="py-1.5 px-2">
-                        <select value={it.almacenDeduccion||'ALMACEN ZI'} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],almacenDeduccion:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-32 border rounded px-1.5 py-1 text-[9px] outline-none focus:border-orange-400">
-                          {almacenesConStock.length>0?almacenesConStock.map(a=><option key={a.id} value={a.almacen||'ALMACEN ZI'}>{(a.almacen||'ALMACEN ZI').replace('ALMACEN ','')}: {formatNum(a.stock||0)} {a.unit||''}</option>):
-                          depositos.map(d=><option key={d} value={d}>{d.replace('ALMACEN ','')}</option>)}
-                        </select>
-                      </td>
-                      <td className="py-1.5 px-2"><input value={it.unit||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],unit:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-16 border rounded px-1.5 py-1 text-[10px] outline-none"/></td>
-                      <td className="py-1.5 px-2"><input type="number" value={it.cantidad} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],cantidad:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-20 border rounded px-1.5 py-1 text-[10px] text-right outline-none"/></td>
-                      <td className="py-1.5 px-2"><input type="number" value={it.precioUnit||0} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],precioUnit:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-24 border rounded px-1.5 py-1 text-[10px] text-right outline-none"/></td>
-                      <td className="py-1.5 px-2"><input type="number" value={it.costoUnit||0} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],costoUnit:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-24 border rounded px-1.5 py-1 text-[10px] text-right text-gray-500 outline-none"/></td>
-                      <td className="py-1.5 px-2 text-right font-black text-green-700 whitespace-nowrap">${formatNum(parseNum(it.cantidad)*parseNum(it.precioUnit))}</td>
-                      <td className="py-1.5 px-2"><button onClick={()=>{const ni=form.items.filter((_,i2)=>i2!==idx);setForm(f=>({...f,items:ni}));}} className="text-red-400 hover:text-red-600"><X size={12}/></button></td>
-                    </tr>);})}</tbody></table></div>)}
+                    {form.items.length>0&&(
+                      <div className="space-y-2">
+                        {form.items.map((it,idx)=>{
+                          const code=(it.invCode||'').split('___')[0];
+                          const almacenesConStock=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
+                          const wqty=it.warehouseQtys||{};
+                          const totalCant=Object.values(wqty).reduce((s,v)=>s+parseNum(v||0),0);
+                          // Sincronizar cantidad total
+                          if(Math.abs(parseNum(it.cantidad)-totalCant)>0.001) {
+                            const ni=[...form.items];ni[idx]={...ni[idx],cantidad:totalCant};
+                            setTimeout(()=>setForm(f=>({...f,items:ni})),0);
+                          }
+                          return(
+                          <div key={idx} className="border rounded-xl overflow-hidden">
+                            {/* Fila principal */}
+                            <div className="grid grid-cols-[1fr_2fr_auto_auto_auto_auto] gap-2 items-center bg-gray-50 px-3 py-2">
+                              <input value={it.invCode||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],invCode:e.target.value};setForm(f=>({...f,items:ni}));}} className="border rounded px-1.5 py-1 text-[10px] font-black text-orange-600 outline-none"/>
+                              <input value={it.desc||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],desc:e.target.value};setForm(f=>({...f,items:ni}));}} className="border rounded px-1.5 py-1 text-[10px] outline-none"/>
+                              <input value={it.unit||''} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],unit:e.target.value};setForm(f=>({...f,items:ni}));}} className="w-16 border rounded px-1.5 py-1 text-[10px] outline-none" placeholder="U.M."/>
+                              <div className="text-[10px] font-black text-center min-w-[60px]"><span className="text-gray-400 text-[8px] block">TOTAL</span>{formatNum(totalCant)}</div>
+                              <input type="number" value={it.precioUnit||0} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],precioUnit:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-24 border rounded px-1.5 py-1 text-[10px] text-right outline-none" placeholder="Precio U."/>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-black text-green-700 whitespace-nowrap">${formatNum(totalCant*parseNum(it.precioUnit||0))}</span>
+                                <button onClick={()=>{const ni=form.items.filter((_,i2)=>i2!==idx);setForm(f=>({...f,items:ni}));}} className="text-red-400 hover:text-red-600"><X size={11}/></button>
+                              </div>
+                            </div>
+                            {/* Sub-fila: cantidad por almacén */}
+                            <div className="px-3 py-2 bg-orange-50 border-t border-orange-100 flex flex-wrap gap-3 items-center">
+                              <span className="text-[9px] font-black text-orange-700 uppercase">Cantidades por almacén:</span>
+                              {almacenesConStock.length>0 ? almacenesConStock.map(a=>{
+                                const almNom=a.almacen||'ALMACEN ZI';
+                                const stockDisp=parseNum(a.stock||0);
+                                return(
+                                <div key={a.id} className="flex items-center gap-1.5 bg-white rounded-lg px-2 py-1 border border-orange-200">
+                                  <span className="text-[9px] font-black text-orange-600">{almNom.replace('ALMACEN ','')}</span>
+                                  <span className="text-[8px] text-gray-400">({formatNum(stockDisp)} disp.)</span>
+                                  <input type="number" min="0" max={stockDisp} step="0.01"
+                                    value={wqty[almNom]||0}
+                                    onChange={e=>{
+                                      const v=Math.min(parseFloat(e.target.value)||0,stockDisp);
+                                      const ni=[...form.items];
+                                      ni[idx]={...ni[idx],warehouseQtys:{...wqty,[almNom]:v},cantidad:Object.entries({...wqty,[almNom]:v}).reduce((s,[,q])=>s+parseNum(q),0)};
+                                      setForm(f=>({...f,items:ni}));
+                                    }}
+                                    className="w-20 border border-orange-300 rounded px-1.5 py-0.5 text-[10px] font-black text-right outline-none focus:border-orange-500"/>
+                                  <span className="text-[8px] text-gray-400">{it.unit||'und'}</span>
+                                </div>);
+                              }) : (
+                                <div className="flex items-center gap-1.5 bg-white rounded-lg px-2 py-1 border border-orange-200">
+                                  <span className="text-[9px] font-black text-orange-600">Sin stock registrado — ingrese cantidad:</span>
+                                  <input type="number" min="0" step="0.01"
+                                    value={it.cantidad||0}
+                                    onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],cantidad:parseFloat(e.target.value)||0,warehouseQtys:{'ALMACEN ZI':parseFloat(e.target.value)||0}};setForm(f=>({...f,items:ni}));}}
+                                    className="w-20 border border-orange-300 rounded px-1.5 py-0.5 text-[10px] font-black text-right outline-none"/>
+                                </div>
+                              )}
+                              <div className="ml-auto text-[9px] text-gray-500">Costo U.: <input type="number" value={it.costoUnit||0} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],costoUnit:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-20 border rounded px-1.5 py-0.5 text-[10px] text-right outline-none border-gray-200 ml-1"/></div>
+                            </div>
+                          </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                   <div className="flex justify-between items-end">
                     <textarea value={form.observaciones||''} onChange={e=>setForm(f=>({...f,observaciones:e.target.value}))} rows={2} placeholder="Observaciones..." className="w-1/2 border-2 border-orange-200 rounded-xl p-2.5 text-xs outline-none focus:border-orange-500 resize-none"/>
@@ -11212,6 +11292,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
         {ventasView === 'transacciones_ventas' && (() => {
           const PAGE_SIZE = 25;
           const rows=[];
+          // ── Fuente 1: Notas de Entrega ──────────────────────────────────────
           (notasEntrega||[]).forEach(ne=>{
             if(ne.fecha<tvDesde||ne.fecha>tvHasta) return;
             if(tvStatus!=='TODAS'&&ne.status!==tvStatus) return;
@@ -11221,7 +11302,27 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             const costo=ne.costoTotal||(ne.items||[]).reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0);
             const utilidad=(ne.montoBase||0)-costo;
             const pctUtil=(ne.montoBase||0)>0?(utilidad/(ne.montoBase||0)*100):0;
-            rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,contado:0,credito:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,status:ne.status});
+            rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,status:ne.status,fuente:'NE'});
+          });
+          // ── Fuente 2: Facturas SIN NE asociada (facturas directas) ──────────
+          (invoices||[]).forEach(inv=>{
+            if(!inv) return;
+            const fecha=inv.fecha||'';
+            if(fecha<tvDesde||fecha>tvHasta) return;
+            if(inv.neOrigen) return; // ya está representada por la NE
+            if(tvStatus!=='TODAS'&&tvStatus!=='PROCESADA') return; // facturas siempre son procesadas
+            const doc=(inv.documento||inv.id||'').replace(/^FAC-/,'INVO-');
+            if(tvBuscarDoc && !doc.toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
+            if(tvBuscarDesc && !(inv.clientName||'').toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
+            const base=parseNum(inv.montoBase||inv.total||0);
+            const ivaAmt=parseNum(inv.iva||0);
+            const total=parseNum(inv.total||0)||base+ivaAmt;
+            // Costo desde items facturados
+            const items=inv.itemsFacturados||[];
+            const costo=items.reduce((s,it)=>s+parseNum(it.costoUnit||0)*parseNum(it.cantidad||0),0);
+            const utilidad=base-costo;
+            const pctUtil=base>0?(utilidad/base*100):0;
+            rows.push({fecha,documento:doc,descripcion:inv.clientName||'—',montoBruto:base,iva:ivaAmt,tNeto:total,costo,utilidad,pctUtil,neId:null,invId:inv.id,status:'PROCESADA',fuente:'FACTURA'});
           });
           rows.sort((a,b)=>a.fecha.localeCompare(b.fecha));
           const tot=rows.reduce((s,r)=>({montoBruto:s.montoBruto+r.montoBruto,iva:s.iva+r.iva,tNeto:s.tNeto+r.tNeto,costo:s.costo+r.costo,utilidad:s.utilidad+r.utilidad}),{montoBruto:0,iva:0,tNeto:0,costo:0,utilidad:0});
@@ -11273,10 +11374,13 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     </tr></thead>
                     <tbody className="divide-y divide-gray-100">
                       {tvPageRows.map((r,i)=>{
-                        const ne=(notasEntrega||[]).find(n=>n.id===r.neId);
+                        const ne=r.neId?(notasEntrega||[]).find(n=>n.id===r.neId):null;
                         return(<tr key={i} className={`${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
                           <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">{r.fecha}</td>
-                          <td className="py-2.5 px-3 font-black whitespace-nowrap" style={{color:r.status==='PROCESADA'?'#16a34a':'#d97706'}}>{r.documento}</td>
+                          <td className="py-2.5 px-3 font-black whitespace-nowrap">
+                            <span style={{color:r.status==='PROCESADA'?'#16a34a':'#d97706'}}>{r.documento}</span>
+                            <span className={`ml-1 text-[8px] px-1 py-0.5 rounded ${r.fuente==='NE'?'bg-orange-100 text-orange-600':'bg-blue-100 text-blue-600'}`}>{r.fuente}</span>
+                          </td>
                           <td className="py-2.5 px-3 font-bold text-gray-900 max-w-[180px] truncate" title={r.descripcion}>{r.descripcion}</td>
                           <td className="py-2.5 px-3 text-right font-black">{formatNum(r.montoBruto)}</td>
                           <td className="py-2.5 px-3 text-right text-gray-500">{formatNum(r.iva)}</td>
@@ -11284,7 +11388,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                           <td className="py-2.5 px-3 text-right text-gray-400">{formatNum(r.costo)}</td>
                           <td className="py-2.5 px-3 text-right font-black text-green-700">{formatNum(r.utilidad)}</td>
                           <td className="py-2.5 px-3 text-right text-gray-700 font-bold">{r.pctUtil.toFixed(2)}%</td>
-                          <td className="py-2.5 px-3">{ne&&<select value={ne.status||'TRANSITO'} onChange={e=>{updateDoc(getDocRef('notasEntrega',ne.id),{status:e.target.value,updatedAt:Date.now()});}} className={`text-[8px] font-black px-2 py-1 rounded-full border-0 outline-none cursor-pointer ${ne.status==='PROCESADA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}><option value="TRANSITO">⏳ Tránsito</option><option value="PROCESADA">✅ Procesada</option></select>}</td>
+                          <td className="py-2.5 px-3">{ne?<select value={ne.status||'TRANSITO'} onChange={e=>{updateDoc(getDocRef('notasEntrega',ne.id),{status:e.target.value,updatedAt:Date.now()});}} className={`text-[8px] font-black px-2 py-1 rounded-full border-0 outline-none cursor-pointer ${ne.status==='PROCESADA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}><option value="TRANSITO">⏳ Tránsito</option><option value="PROCESADA">✅ Procesada</option></select>:<span className="text-[8px] font-black px-2 py-1 rounded-full bg-green-100 text-green-700">✅ Factura</span>}</td>
                         </tr>);
                       })}
                     </tbody>
@@ -11400,12 +11504,32 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               </form>
             </div>
             )}
-            <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR POR NOMBRE O RIF..." value={clientSearchTerm} onChange={e=>setClientSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4">RIF</th><th className="py-4 px-4 w-1/2">Razón Social</th><th className="py-4 px-4">Contacto</th><th className="py-4 px-4 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">{(clients || []).map(c => {
-               if(!String(c?.name || '').toUpperCase().includes(clientSearchTerm.toUpperCase()) && !String(c?.rif || '').toUpperCase().includes(clientSearchTerm.toUpperCase())) return null;
-               return (
-               <tr key={c?.rif}><td className="py-5 px-4 font-black">{c?.rif}</td><td className="py-5 px-4"><span className="font-black uppercase block text-sm">{c?.name}</span><span className="text-[10px] font-bold text-gray-400 block">{c?.direccion}</span></td><td className="py-5 px-4"><span className="font-bold text-gray-700 text-xs">{c?.personaContacto}</span></td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>{startEditClient(c);setShowAddClientForm(true);}} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c?.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
-               );
-            })}</tbody></table></div></div>
+            <div className="p-6">
+              <div className="relative max-w-2xl mb-6"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR POR NOMBRE O RIF..." value={clientSearchTerm} onChange={e=>{setClientSearchTerm(e.target.value);setClientesPagina(0);}} className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div>
+              {(()=>{
+                const allCli=(clients||[]).filter(c=>!clientSearchTerm||(String(c?.name||'').toUpperCase().includes(clientSearchTerm.toUpperCase())||String(c?.rif||'').toUpperCase().includes(clientSearchTerm.toUpperCase())));
+                const totalCli=allCli.length;
+                const pgCli=Math.max(0,Math.min(clientesPagina,Math.ceil(totalCli/PAGE_SIZE_DEFAULT)-1));
+                const pageCli=allCli.slice(pgCli*PAGE_SIZE_DEFAULT,(pgCli+1)*PAGE_SIZE_DEFAULT);
+                return(<>
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <span className="text-[10px] text-gray-500 font-bold">{totalCli} clientes registrados</span>
+                    <PaginadorUI total={totalCli} pagina={pgCli} setPagina={setClientesPagina}/>
+                  </div>
+                  <div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4">RIF</th><th className="py-4 px-4 w-1/2">Razón Social</th><th className="py-4 px-4">Contacto</th><th className="py-4 px-4 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">
+                  {pageCli.map(c=>(
+                    <tr key={c?.rif||c?.id}>
+                      <td className="py-4 px-4 font-black">{c?.rif}</td>
+                      <td className="py-4 px-4"><span className="font-black uppercase block text-sm">{c?.name}</span><span className="text-[10px] font-bold text-gray-400 block">{c?.direccion}</span></td>
+                      <td className="py-4 px-4"><span className="font-bold text-gray-700 text-xs">{c?.personaContacto}</span></td>
+                      <td className="py-4 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>{startEditClient(c);setShowAddClientForm(true);}} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c?.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td>
+                    </tr>
+                  ))}
+                  </tbody></table></div>
+                  <div className="mt-4 flex justify-center"><PaginadorUI total={totalCli} pagina={pgCli} setPagina={setClientesPagina}/></div>
+                </>);
+              })()}
+            </div>
           </div>
         )}
         {ventasView === 'facturacion' && (
@@ -11818,11 +11942,32 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   </div>
                 </div>
              )}
-             <div className="p-8"><div className="relative max-w-2xl mb-8"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR FACTURA O CLIENTE..." value={invoiceSearchTerm} onChange={e=>setInvoiceSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div><div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">OP N°</th><th className="py-4 px-4 text-black">Cliente / Producto</th><th className="py-4 px-4 text-right text-black w-32">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{(invoices || []).map(inv=>{
-               if(!String(inv?.documento || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()) && !String(inv?.clientName || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase())) return null;
+             <div className="p-6"><div className="relative max-w-2xl mb-6"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR FACTURA O CLIENTE..." value={invoiceSearchTerm} onChange={e=>{setInvoiceSearchTerm(e.target.value);setFacturaPagina(0);}} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div>
+             {(()=>{
+               const allInv=(invoices||[]).filter(inv=>!invoiceSearchTerm||String(inv?.documento||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase())||String(inv?.clientName||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase()));
+               const totalInv=allInv.length;
+               const pgInv=Math.max(0,Math.min(facturaPagina,Math.ceil(totalInv/PAGE_SIZE_DEFAULT)-1));
+               const pageInv=allInv.slice(pgInv*PAGE_SIZE_DEFAULT,(pgInv+1)*PAGE_SIZE_DEFAULT);
+               return(<>
+               <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                 <span className="text-[10px] text-gray-500 font-bold">{totalInv} facturas registradas</span>
+                 <PaginadorUI total={totalInv} pagina={pgInv} setPagina={setFacturaPagina}/>
+               </div>
+               <div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">OP N°</th><th className="py-4 px-4 text-black">NE</th><th className="py-4 px-4 text-black">Cliente / Producto</th><th className="py-4 px-4 text-right text-black w-32">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{pageInv.map(inv=>{
                return (
-               <tr key={inv?.id} className="hover:bg-gray-50"><td className="py-5 px-4 font-black text-sm">{inv?.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{inv?.fecha || getSafeDate(inv?.timestamp)}</span></td><td className="py-5 px-4 font-black text-xs text-orange-600">{inv?.opAsignada || '---'}</td><td className="py-5 px-4 font-bold text-gray-700 uppercase">{inv?.clientName}<br/><span className="text-[9px] font-black text-orange-500 block max-w-xs truncate" title={inv?.productoMaquilado}>{inv?.productoMaquilado || 'S/D'}</span></td><td className="py-5 px-4 text-right font-black text-green-600 text-lg w-32">${formatNum((()=>{const t=parseNum(inv?.total||0);if(t>0) return t;const items=inv?.itemsFacturados||[];const b=items.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0);return inv?.aplicaIva==="SI"?b*1.16:b;})())}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>startEditInvoice(inv)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteInvoice(inv?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td></tr>
-             )})}</tbody></table></div></div>
+               <tr key={inv?.id} className="hover:bg-gray-50">
+                 <td className="py-4 px-4 font-black text-sm">{inv?.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{inv?.fecha||getSafeDate(inv?.timestamp)}</span></td>
+                 <td className="py-4 px-4 font-black text-xs text-orange-600">{inv?.opAsignada||'—'}</td>
+                 <td className="py-4 px-4 text-[10px] font-black text-blue-600">{inv?.neOrigen||'—'}</td>
+                 <td className="py-4 px-4 font-bold text-gray-700 uppercase">{inv?.clientName}<br/><span className="text-[9px] font-black text-orange-500 block max-w-xs truncate">{inv?.productoMaquilado||'S/D'}</span></td>
+                 <td className="py-4 px-4 text-right font-black text-green-600 text-lg w-32">${formatNum((()=>{const t=parseNum(inv?.total||0);if(t>0)return t;const items=inv?.itemsFacturados||[];const b=items.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0);return inv?.aplicaIva==="SI"?b*1.16:b;})())}</td>
+                 <td className="py-4 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>startEditInvoice(inv)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteInvoice(inv?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td>
+               </tr>
+             )})}</tbody></table></div>
+               <div className="mt-4 flex justify-center"><PaginadorUI total={totalInv} pagina={pgInv} setPagina={setFacturaPagina}/></div>
+               </>);
+             })()}
+             </div>
           </div>
         )}
         {ventasView === 'requisiciones' && (
