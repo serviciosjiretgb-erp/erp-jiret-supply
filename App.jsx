@@ -5521,9 +5521,14 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             <div className="p-6 border-t border-gray-200">
               <h3 className="font-black text-sm uppercase text-indigo-800 mb-4 flex items-center gap-2"><ArrowRightLeft size={16}/> Historial de Traslados ({(invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO').length} registros)</h3>
               {(() => {
-                const traslados = (invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO').sort((a,b)=>(b.timestamp||0)-(a.timestamp||0)).slice(0,20);
-                if(!traslados.length) return <p className="text-xs text-gray-400 font-bold uppercase py-4 text-center">Sin traslados registrados</p>;
+                const allTras=(invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO').sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+                if(!allTras.length) return <p className="text-xs text-gray-400 font-bold uppercase py-4 text-center">Sin traslados registrados</p>;
+                const totalT=allTras.length;
+                const pgT=Math.max(0,Math.min(historialPagina,Math.ceil(totalT/PAGE_SIZE_DEFAULT)-1));
+                const pageT=allTras.slice(pgT*PAGE_SIZE_DEFAULT,(pgT+1)*PAGE_SIZE_DEFAULT);
                 return (
+                  <div>
+                  <div className="flex items-center justify-between mb-3"><span className="text-[10px] text-gray-500 font-bold">{totalT} traslados</span><PaginadorUI total={totalT} pagina={pgT} setPagina={setHistorialPagina}/></div>
                   <div className="overflow-x-auto rounded-xl border border-gray-200">
                     <table className="w-full text-xs">
                       <thead className="bg-gray-800 text-white"><tr className="font-black text-[9px] uppercase">
@@ -5535,7 +5540,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         <th className="py-2 px-3 text-center">Reversar</th>
                       </tr></thead>
                       <tbody className="divide-y divide-gray-100">
-                        {traslados.map(m=>{
+                        {pageT.map(m=>{
                           // Find matching ENTRADA_TRASLADO
                           const entMovId = `TENT-${(m.timestamp||0)+1}`;
                           const de = m.almacen || '—';
@@ -5573,6 +5578,8 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         })}
                       </tbody>
                     </table>
+                  </div>
+                  <div className="mt-3 flex justify-center"><PaginadorUI total={totalT} pagina={pgT} setPagina={setHistorialPagina}/></div>
                   </div>
                 );
               })()}
@@ -11304,14 +11311,18 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             const pctUtil=(ne.montoBase||0)>0?(utilidad/(ne.montoBase||0)*100):0;
             rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,status:ne.status,fuente:'NE'});
           });
-          // ── Fuente 2: Facturas SIN NE asociada (facturas directas) ──────────
+          // ── Fuente 2: Facturas SIN NE asociada ──────────────────────────────
+          const facturasEnNE=new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
           (invoices||[]).forEach(inv=>{
             if(!inv) return;
             const fecha=inv.fecha||'';
             if(fecha<tvDesde||fecha>tvHasta) return;
-            if(inv.neOrigen) return; // ya está representada por la NE
-            if(tvStatus!=='TODAS'&&tvStatus!=='PROCESADA') return; // facturas siempre son procesadas
-            const doc=(inv.documento||inv.id||'').replace(/^FAC-/,'INVO-');
+            if(inv.neOrigen) return;
+            const invId=inv.id||inv.documento||'';
+            const invDoc=(inv.documento||'').replace(/^FAC-/,'INVO-');
+            if(facturasEnNE.has(invId)||facturasEnNE.has(invDoc)) return;
+            if(tvStatus!=='TODAS'&&tvStatus!=='PROCESADA') return;
+            const doc=invDoc||invId;
             if(tvBuscarDoc && !doc.toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
             if(tvBuscarDesc && !(inv.clientName||'').toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
             const base=parseNum(inv.montoBase||inv.total||0);
@@ -11341,6 +11352,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 <div><h2 className="font-black text-xl flex items-center gap-2"><BarChart3 size={20} className="text-orange-500"/> Transacciones de Ventas</h2>
                   <p className="text-xs text-gray-500 mt-1">Notas de Entrega · Dólares · Utilidad = Monto Base − Costo</p></div>
                 <button onClick={exportTV} className="bg-gray-800 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-black"><Printer size={14}/> PDF</button>
+                <button onClick={()=>{const th=['Fecha','Documento','Fuente','Descripci\u00f3n','Monto Bruto','I.V.A(16%)','T.Neto','Costo','Utilidad','%Util.'];const tb=rows.map(r=>[r.fecha,r.documento,r.fuente||'NE',r.descripcion,formatNum(r.montoBruto),formatNum(r.iva),formatNum(r.tNeto),formatNum(r.costo),formatNum(r.utilidad),r.pctUtil.toFixed(2)+'%']);const rH=tb.map((row,idx)=>'<tr>'+row.map((c,ci)=>'<td style="padding:4px 7px;border:1px solid #ccc;">'+(ci>=4?formatNum(parseFloat(c)||0):c)+'</td>').join('')+'</tr>').join('');const html='<html><head><meta charset="utf-8"></head><body><h2>SERVICIOS JIRET G&amp;B, C.A.</h2><h3>RIF: J-412309374</h3><h4>TRANSACCIONES DE VENTAS — Desde: '+tvDesde+' Hasta: '+tvHasta+'</h4><table style="border-collapse:collapse;width:100%"><thead><tr>'+th.map(h=>'<th style="background:#000;color:#fff;padding:5px 7px;">'+h+'</th>').join('')+'</tr></thead><tbody>'+rH+'</tbody><tfoot><tr><td colspan="4" style="background:#333;color:#fff;padding:5px 7px;">TOTALES</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.montoBruto)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.iva)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.tNeto)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.costo)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.utilidad)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+pctTot.toFixed(2)+'%</td></tr></tfoot></table></body></html>';const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='TV_'+tvDesde+'_'+tvHasta+'.xls';a.click();}} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-green-700"><Download size={14}/> Excel</button>
               </div>
               <div className="bg-white rounded-2xl border p-4 flex flex-wrap gap-4 items-end">
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label>
@@ -11562,148 +11574,20 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 mb-2">
                       <label className="text-[10px] font-black text-blue-700 uppercase block mb-2 tracking-widest">📋 Seleccionar Nota de Entrega a Facturar</label>
                       <div className="flex gap-3 items-end">
-                        <div className="flex-1">
-                          <select value={newInvoiceForm.neOrigen||''} onChange={e=>{
-                            const neId = e.target.value;
-                            if(!neId) { setNewInvoiceForm(f=>({...f,neOrigen:'',clientRif:'',clientName:'',clientAddress:'',vendedor:'',opAsignada:'',_ptSearch:'',fgId:'',fgCantidad:''})); setFgItems([]); return; }
-                            const ne=(notasEntrega||[]).find(n=>n.id===neId);
-                            if(ne) {
-                              // Auto-cargar items de la NE como fgItems para la factura
-                              setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad||0,precioUnit:it.precioUnit||0,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));
-                              setNewInvoiceForm(f=>({...f,neOrigen:neId,fecha:ne.fecha||f.fecha,clientRif:ne.clientRif||'',clientName:ne.clientName||'',clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',opAsignada:ne.opRelacionada||'',aplicaIva:ne.aplicaIva||'SI'}));
-                            }
-                          }} className="w-full border-2 border-blue-300 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-500 bg-white">
+                        <div className="flex-1 space-y-2">
+                          <input type="text" placeholder="🔍 Buscar NE..." onChange={e=>{const v=e.target.value.toUpperCase();document.querySelectorAll('#_ne_inv option').forEach(o=>{o.style.display=(!v||o.value===''||o.text.toUpperCase().includes(v))?'':'none';});}} className="w-full border-2 border-blue-300 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500"/>
+                          <select id="_ne_inv" value={newInvoiceForm.neOrigen||''} onChange={e=>{const neId=e.target.value;if(!neId){setNewInvoiceForm(f=>({...f,neOrigen:'',clientRif:'',clientName:'',clientAddress:'',vendedor:'',opAsignada:''}));setFgItems([]);return;}const ne=(notasEntrega||[]).find(n=>n.id===neId);if(ne){setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad||0,precioUnit:it.precioUnit||0,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));setNewInvoiceForm(f=>({...f,neOrigen:neId,fecha:ne.fecha||f.fecha,clientRif:ne.clientRif||'',clientName:ne.clientName||'',clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',opAsignada:ne.opRelacionada||'',aplicaIva:ne.aplicaIva||'SI'}));}}} size={5} className="w-full border-2 border-blue-300 rounded-xl p-1 text-xs font-bold outline-none focus:border-blue-500 bg-white">
                             <option value="">— Sin NE (factura directa) —</option>
-                            {(notasEntrega||[]).filter(ne=>!ne.facturaId).sort((a,b)=>b.id.localeCompare(a.id)).map(ne=>(
-                              <option key={ne.id} value={ne.id}>{ne.id} · {ne.clientName} · {ne.fecha} · ${formatNum(ne.total||0)}</option>
-                            ))}
+                            {(notasEntrega||[]).filter(ne=>!ne.facturaId).sort((a,b)=>b.id.localeCompare(a.id)).map(ne=>(<option key={ne.id} value={ne.id}>{ne.id} · {ne.clientName} · {ne.fecha} · ${formatNum(ne.total||0)}</option>))}
                           </select>
                         </div>
-                        {newInvoiceForm.neOrigen && (
-                          <div className="text-[10px] text-blue-700 font-bold bg-blue-100 px-3 py-2.5 rounded-xl">
-                            ✅ Datos cargados desde {newInvoiceForm.neOrigen}
-                          </div>
-                        )}
+                        {newInvoiceForm.neOrigen && <div className="text-[10px] text-blue-700 font-bold bg-blue-100 px-3 py-2.5 rounded-xl whitespace-nowrap">✅ {newInvoiceForm.neOrigen}</div>}
                       </div>
-                      <p className="text-[9px] text-blue-500 mt-1">Solo Notas de Entrega sin factura asignada. Al guardar, la NE se marcará como PROCESADA automáticamente.</p>
+                      <p className="text-[9px] text-blue-500 mt-1">Solo NEs sin factura. Al guardar, la NE se marcará PROCESADA.</p>
                     </div>
                     )}
                     
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                    {/* ── DROPDOWN SELECTOR — Like OSA (Petición 3) ── */}
-                    {/* ── PRODUCT PICKER — Inventario General PT ── */}
-                      <div className="md:col-span-4 bg-green-50 border-2 border-green-200 rounded-2xl p-4">
-                        <label className="text-[10px] font-black text-green-700 uppercase block mb-2 tracking-widest">📦 Inventario General / Productos Terminados</label>
-                        {(() => {
-                          // Build consolidated groups by clean code (same as OSA)
-                          const ptConsolidated = {};
-                          (inventory||[]).filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i=>{
-                            const cid=(i.displayId||(i.id||'')).split('___')[0].replace(/_inv$/i,'');
-                            if(!ptConsolidated[cid]) ptConsolidated[cid]={cid,desc:i.desc||'',subcategory:i.subcategory||getItemSubcategory(i)||'Otros Terminados',unit:i.unit||'und',totalStock:0,cost:parseNum(i.cost||0),warehouses:[],_invId:i.id};
-                            ptConsolidated[cid].totalStock+=parseNum(i.stock||0);
-                            ptConsolidated[cid].warehouses.push({almacen:i.almacen||(i.id||'').split('___')[1]?.replace(/-/g,' ')||'',stock:parseNum(i.stock||0),docId:i.id});
-                            if(parseNum(i.cost||0)>0) ptConsolidated[cid].cost=parseNum(i.cost);
-                          });
-                          const SUB_ORDER=['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
-                          const subcatGrps={};
-                          Object.values(ptConsolidated).forEach(g=>{const s=g.subcategory||'Otros Terminados';if(!subcatGrps[s])subcatGrps[s]=[];subcatGrps[s].push(g);});
-                          const selGrp = newInvoiceForm.fgId ? ptConsolidated[newInvoiceForm.fgId] : null;
-
-                          return (
-                            <div className="space-y-3">
-                              {/* Search + Dropdown like OSA */}
-                              <div className="mb-1">
-                                <input type="text" placeholder="🔍 Buscar por código o descripción..." value={newInvoiceForm._ptSearch||''}
-                                  onChange={e=>setNewInvoiceForm({...newInvoiceForm,_ptSearch:e.target.value.toUpperCase(),fgId:'',fgCantidad:'',_fgPrecio:''})}
-                                  className="w-full border-2 border-green-300 bg-white rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500 uppercase"/>
-                              </div>
-                              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
-                                <div className="md:col-span-2">
-                                  <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Categoría / Producto</label>
-                                  <select value={newInvoiceForm.fgId||''} onChange={e=>{setNewInvoiceForm({...newInvoiceForm,fgId:e.target.value,fgCantidad:'',_fgPrecio:''});}}
-                                    className="w-full border-2 border-green-300 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-green-500 bg-white">
-                                    <option value="">— Seleccione producto terminado —</option>
-                                    {SUB_ORDER.filter(s=>subcatGrps[s]?.length>0).map(sub=>(
-                                      <optgroup key={sub} label={`── ${sub.toUpperCase()} ──`}>
-                                        {(subcatGrps[sub]||[])
-                                          .filter(g=>!newInvoiceForm._ptSearch || g.cid.includes(newInvoiceForm._ptSearch||'') || (g.desc||'').toUpperCase().includes(newInvoiceForm._ptSearch||''))
-                                          .filter(g=>!fgItems.some(it=>it.fgGrpKey===g.cid))
-                                          .sort((a,b)=>a.cid.localeCompare(b.cid))
-                                          .map(g=>(
-                                          <option key={g.cid} value={g.cid}>
-                                            {g.cid} — {g.desc} ({formatNum(g.totalStock)} {g.unit})
-                                          </option>
-                                        ))}
-                                      </optgroup>
-                                    ))}
-                                  </select>
-                                </div>
-                                {selGrp && (<>
-                                  <div>
-                                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cantidad ({selGrp.unit})</label>
-                                    <input type="number" step="0.01" max={selGrp.totalStock} value={newInvoiceForm.fgCantidad}
-                                      onChange={e=>setNewInvoiceForm({...newInvoiceForm,fgCantidad:e.target.value})}
-                                      className="w-full border-2 border-green-400 rounded-xl p-2.5 font-black text-sm outline-none focus:border-green-600 text-center bg-white"
-                                      placeholder={formatNum(selGrp.totalStock)}/>
-                                    <div className="text-[8px] text-green-600 font-black mt-0.5 text-center">Disp: {formatNum(selGrp.totalStock)}</div>
-                                  </div>
-                                  <div>
-                                    <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Precio U. (USD)</label>
-                                    <input type="number" step="0.01" min="0" value={newInvoiceForm._fgPrecio||''}
-                                      onChange={e=>setNewInvoiceForm({...newInvoiceForm,_fgPrecio:e.target.value})}
-                                      className="w-full border-2 border-orange-300 rounded-xl p-2.5 font-black text-sm outline-none focus:border-orange-500 text-center bg-orange-50"
-                                      placeholder="0.00"/>
-                                  </div>
-                                  <div>
-                                    <button type="button"
-                                      onClick={()=>{
-                                        const cant=parseNum(newInvoiceForm.fgCantidad)||selGrp.totalStock;
-                                        const precioU=parseNum(newInvoiceForm._fgPrecio||0);
-                                        if(cant>selGrp.totalStock+0.001) return setDialog({title:'Aviso',text:`Máximo: ${formatNum(selGrp.totalStock)} ${selGrp.unit}`,type:'alert'});
-                                        setFgItems(prev=>[...prev,{
-                                          fgGrpKey:selGrp.cid, fgId:selGrp._invId||selGrp.cid,
-                                          invCode:selGrp.cid, cantidad:cant, precioUnit:precioU,
-                                          totalUSD:precioU*cant, totalRenglon:precioU*cant,
-                                          desc:selGrp.desc, unidad:selGrp.unit, maxCant:selGrp.totalStock,
-                                          esTermo:selGrp.unit==='KG', grpLotes:[],
-                                          _isInvPT:true, _invId:selGrp._invId, _cost:selGrp.cost
-                                        }]);
-                                        setNewInvoiceForm({...newInvoiceForm,fgId:'',fgCantidad:'',_fgPrecio:'',_ptSearch:''});
-                                      }}
-                                      className="w-full bg-green-600 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-green-700 flex items-center gap-1 justify-center">
-                                      <Plus size={14}/> Agregar
-                                    </button>
-                                  </div>
-                                </>)}
-                              </div>
-
-                              {/* ── WAREHOUSE DISPATCH (shown when product selected + multi-warehouse) ── */}
-                              {selGrp && selGrp.warehouses.filter(w=>w.stock>0).length>1 && (
-                                <div className="bg-white border-2 border-orange-200 rounded-xl p-3">
-                                  <div className="text-[9px] font-black text-orange-700 uppercase mb-2 flex items-center gap-1.5">
-                                    <Warehouse size={12}/> Asignar por Almacén — Necesario: {formatNum(parseNum(newInvoiceForm.fgCantidad)||selGrp.totalStock)} {selGrp.unit}
-                                  </div>
-                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                    {selGrp.warehouses.filter(w=>w.stock>0).map((wh,wi)=>{
-                                      const val=(mwDispatch[selGrp.cid]||{})[wh.almacen]||'';
-                                      return (
-                                        <div key={wi} className="bg-gray-50 rounded-lg p-2">
-                                          <div className="text-[8px] font-black text-gray-700 mb-0.5">{(wh.almacen||'').replace('ALMACEN ','ALM.')}</div>
-                                          <div className="text-[8px] text-green-600 font-bold mb-1">Disp: {formatNum(wh.stock)}</div>
-                                          <input type="number" step="0.01" min="0" max={wh.stock} value={val}
-                                            onChange={e=>{const v=Math.min(parseNum(e.target.value),wh.stock);setMwDispatch(prev=>({...prev,[selGrp.cid]:{...(prev[selGrp.cid]||{}),[wh.almacen]:v||''}}));}}
-                                            className="w-full border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black text-center outline-none focus:border-orange-500 bg-white" placeholder="0"/>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                  {(()=>{const a=Object.values(mwDispatch[selGrp.cid]||{}).reduce((s,v)=>s+parseNum(v),0);const n=parseNum(newInvoiceForm.fgCantidad)||selGrp.totalStock;const ok=Math.abs(a-n)<0.01;return a>0?<div className={`mt-1.5 text-[8px] font-black text-center py-1 rounded-lg ${ok?'bg-green-100 text-green-700':'bg-orange-100 text-orange-700'}`}>{ok?'✓ Asignación completa':a<n?`Faltan ${formatNum(n-a)}`:``}</div>:null;})()}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()}
-                      </div>
 
                       </div>
                       <div className="md:col-span-2">
@@ -12172,17 +12056,21 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   </form>
                 </div>
              )}
-             <div className="p-8 overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black w-1/2">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead>
-             <tbody className="divide-y divide-gray-100">{(()=>{
-               const opsFiltered = (requirements||[]).filter(r=>{
-                 const matchStatus = opsStatusFilter==='TODOS'||r?.status===opsStatusFilter||(!r?.status&&opsStatusFilter==='PENDIENTE');
-                 if(!matchStatus) return false;
-                 if(!opsSearch.trim()) return true;
-                 const q=opsSearch.toUpperCase();
-                 return (r?.id||'').toUpperCase().includes(q)||(r?.client||'').toUpperCase().includes(q)||(r?.desc||'').toUpperCase().includes(q)||(r?.categoria||'').toUpperCase().includes(q);
-               });
-               if(opsFiltered.length===0) return <tr><td colSpan="4" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin resultados</td></tr>;
-               return opsFiltered.map(r=>(<tr key={r?.id} className={`hover:bg-gray-50 group transition-all ${r?.status==='ANULADA'?'opacity-40 bg-red-50/20':''}`}><td className="py-5 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r?.fecha}</span></td><td className="py-5 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.desc}</span></td><td className="py-5 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-5 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>));})()}</tbody></table></div>
+             <div className="p-6">
+             {(()=>{
+               const opsFiltered=(requirements||[]).filter(r=>{const ms=opsStatusFilter==='TODOS'||r?.status===opsStatusFilter||(!r?.status&&opsStatusFilter==='PENDIENTE');if(!ms)return false;if(!opsSearch.trim())return true;const q=opsSearch.toUpperCase();return(r?.id||'').toUpperCase().includes(q)||(r?.client||'').toUpperCase().includes(q)||(r?.desc||'').toUpperCase().includes(q)||(r?.categoria||'').toUpperCase().includes(q);});
+               const totalOP=opsFiltered.length;
+               const pgOP=Math.max(0,Math.min(reqPagina,Math.ceil(totalOP/PAGE_SIZE_DEFAULT)-1));
+               const pageOP=opsFiltered.slice(pgOP*PAGE_SIZE_DEFAULT,(pgOP+1)*PAGE_SIZE_DEFAULT);
+               return(
+                 <div>
+                   <div className="flex items-center justify-between mb-3 flex-wrap gap-2"><span className="text-[10px] text-gray-500 font-bold">{totalOP} órdenes</span><PaginadorUI total={totalOP} pagina={pgOP} setPagina={setReqPagina}/></div>
+                   <table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black w-1/2">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{pageOP.length===0?<tr><td colSpan="4" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin resultados</td></tr>:pageOP.map(r=>(<tr key={r?.id} className={`hover:bg-gray-50 group transition-all ${r?.status==='ANULADA'?'opacity-40 bg-red-50/20':''}`}><td className="py-4 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r?.fecha}</span></td><td className="py-4 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.desc}</span></td><td className="py-4 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-4 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table>
+                   <div className="mt-4 flex justify-center"><PaginadorUI total={totalOP} pagina={pgOP} setPagina={setReqPagina}/></div>
+                 </div>
+               );
+             })()}
+             </div>
           </div>
         )}
       </div>
