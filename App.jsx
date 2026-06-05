@@ -2334,9 +2334,10 @@ export default function App() {
               id: docId, displayId: itemId, almacen: alm,
               desc: newInvItemForm.desc.toUpperCase(),
               category: newInvItemForm.category || 'Materia Prima',
+              subcategory: newInvItemForm.subcategory || '',
               unit: newInvItemForm.unit || 'kg',
-              cost: newCost,  // EXACT cost — never modified
-              stock: stk,
+              cost: newCost, stock: stk,
+              activo: true, minStock: parseNum(newInvItemForm.minStock||0),
               timestamp: Date.now()
             }, { merge: true });
             if (stk > 0) almacenesConStock.push({ alm, stk, docId });
@@ -2383,8 +2384,11 @@ export default function App() {
           id: docId, displayId: itemId, almacen,
           desc: newInvItemForm.desc.toUpperCase(),
           category: newInvItemForm.category || 'Materia Prima',
+          subcategory: newInvItemForm.subcategory || '',
           unit: newInvItemForm.unit || 'kg',
-          cost: costToSave, stock: newStock, timestamp: Date.now()
+          cost: costToSave, stock: newStock,
+          activo: true, minStock: parseNum(newInvItemForm.minStock||0),
+          timestamp: Date.now()
         };
         await setDoc(getDocRef('inventory', docId), itemData, { merge: true });
         // Kardex only for stock changes
@@ -11478,15 +11482,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                           className="w-28 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black text-center"
                           placeholder={`${formatNum(settings?.tasaBCV||0)}`}/>
                         <div className="text-[7px] text-gray-400 mt-0.5 text-center">BCV: {formatNum(settings?.tasaBCV||0)}</div>
-                      </div>
-                      <div className="md:col-span-1">
-                        <label className="text-[10px] font-black text-orange-600 uppercase mb-2 block tracking-widest">📋 NC Consignación</label>
-                        <select value={newInvoiceForm.ncAsignada||''} onChange={e=>{ setNewInvoiceForm(f=>({...f,ncAsignada:e.target.value})); if(e.target.value) handleCargarDesdeNC(e.target.value); }}
-                          className="w-full bg-orange-50 border-2 border-orange-200 rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
-                          <option value="">— Sin NC —</option>
-                          {(consignaciones||[]).filter(c=>c.estado==='ACTIVA'||c.estado==='LIQUIDADA_PARCIAL').map(c=><option key={c.id} value={c.id}>{c.id} — {c.clienteName} ({ncPendienteFactura(c).length} pend.)</option>)}
-                        </select>
-                        {newInvoiceForm.ncAsignada && <p className="text-[8px] text-orange-600 font-bold mt-1">✓ Datos cargados desde {newInvoiceForm.ncAsignada}</p>}
                       </div>
                       <div className="md:col-span-1">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">OP Relacionada</label>
