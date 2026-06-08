@@ -10011,29 +10011,45 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
         {ventasView === 'dashboard' && (() => {
           const ymD = `${dashAnio}-${String(dashMes).padStart(2,'0')}`;
           const mesLabelD = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][dashMes-1];
-          const facts = (invoices||[]).filter(inv => (inv.fecha||'').startsWith(ymD));
+          // ── Fuente de ingresos: NEs del mes (canónica) + facturas directas sin NE ──
+          const facturasEnNEDash = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
+          const nesMes = (notasEntrega||[]).filter(ne => (ne.fecha||'').startsWith(ymD));
+          const factsDirect = (invoices||[]).filter(inv => {
+            if(!(inv.fecha||'').startsWith(ymD)) return false;
+            if(inv.neOrigen) return false;
+            const invId = inv.id||inv.documento||'';
+            const invDoc = (inv.documento||'').replace(/^FAC-/,'INVO-');
+            return !facturasEnNEDash.has(invId) && !facturasEnNEDash.has(invDoc);
+          });
+          const facts = [...nesMes, ...factsDirect]; // unificado para conteo
 
-          // Filas detalladas (una por item facturado)
+          // Filas detalladas (una por item de NE o factura directa)
           const detalle = [];
-          facts.forEach(inv => {
+          nesMes.forEach(ne => {
+            const vend = (ne.vendedor||'—').toUpperCase();
+            const items = ne.items||[];
+            if(items.length===0){
+              detalle.push({vend, fecha:ne.fecha, cliente:ne.clientName||'—', producto:ne.id, cant:1, monto:parseNum(ne.montoBase||0), comision:0, pctCom:0});
+            } else {
+              items.forEach(it=>{ const cant=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0);
+                detalle.push({vend, fecha:ne.fecha, cliente:ne.clientName||'—', producto:it.desc||'—', cant, monto:precio*cant, comision:0, pctCom:0}); });
+            }
+          });
+          factsDirect.forEach(inv => {
             const vend = (inv.vendedor||'—').toUpperCase();
             const items = inv.itemsFacturados||[];
             if(items.length===0){
-              detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:inv.productoMaquilado||'—', cant:1, precio:parseNum(inv.montoBase||0), monto:parseNum(inv.montoBase||inv.total||0)});
+              detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:inv.productoMaquilado||'—', cant:1, monto:parseNum(inv.montoBase||inv.total||0), comision:0, pctCom:0});
             } else {
-              items.forEach(it=>{
-                const cant=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0);
-                detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:it.desc||it.invCode||it.fgId||'—', cant, precio, monto:precio*cant});
-              });
+              items.forEach(it=>{ const cant=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0);
+                detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:it.desc||'—', cant, monto:precio*cant, comision:0, pctCom:0}); });
             }
           });
 
           // Totales por vendedor
           const porVend = {};
-          facts.forEach(inv=>{
-            const v=(inv.vendedor||'—').toUpperCase();
-            porVend[v]=(porVend[v]||0)+parseNum(inv.montoBase||inv.total||0);
-          });
+          nesMes.forEach(ne=>{ const v=(ne.vendedor||'—').toUpperCase(); porVend[v]=(porVend[v]||0)+parseNum(ne.montoBase||0); });
+          factsDirect.forEach(inv=>{ const v=(inv.vendedor||'—').toUpperCase(); porVend[v]=(porVend[v]||0)+parseNum(inv.montoBase||inv.total||0); });
           const vendArr = Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
           const totalVentas = vendArr.reduce((s,v)=>s+v.monto,0);
           const mejorVend = vendArr[0];
@@ -10547,15 +10563,33 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           };
           const cfg = settings?.comisionesConfig || cfgDefault;
 
-          // Ventas del vendedor en el mes (desde facturas)
-          const facturasMes = (invoices||[]).filter(inv =>
-            (inv.fecha||'').startsWith(ym) &&
-            (!comVendedor || (inv.vendedor||'').toUpperCase()===comVendedor.toUpperCase())
+          // Ventas del vendedor en el mes (desde NEs como fuente canónica)
+          const facturasEnNECom = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
+          const nesMesCom = (notasEntrega||[]).filter(ne =>
+            (ne.fecha||'').startsWith(ym) &&
+            (!comVendedor || (ne.vendedor||'').toUpperCase()===comVendedor.toUpperCase())
           );
-          const totalVentasVend = facturasMes.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
+          const factsDirCom = (invoices||[]).filter(inv => {
+            if(!(inv.fecha||'').startsWith(ym)) return false;
+            if(!comVendedor || (inv.vendedor||'').toUpperCase()===comVendedor.toUpperCase());
+            if(inv.neOrigen) return false;
+            const invId = inv.id||inv.documento||'';
+            if(facturasEnNECom.has(invId)||facturasEnNECom.has((inv.documento||'').replace(/^FAC-/,'INVO-'))) return false;
+            return true;
+          });
+          const facturasMes = [...nesMesCom, ...factsDirCom]; // para compatibilidad
+          const totalVentasVend = nesMesCom.reduce((s,ne)=>s+parseNum(ne.montoBase||0),0)
+                                + factsDirCom.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
 
-          // Total ventas de TODA la empresa en el mes (para Mix de Categoría)
-          const facturasMesEmpresa = (invoices||[]).filter(inv => (inv.fecha||'').startsWith(ym));
+          // Total ventas de TODA la empresa en el mes
+          const nesMesEmpresa = (notasEntrega||[]).filter(ne => (ne.fecha||'').startsWith(ym));
+          const factsDirEmpresa = (invoices||[]).filter(inv => {
+            if(!(inv.fecha||'').startsWith(ym)) return false;
+            if(inv.neOrigen) return false;
+            const invId = inv.id||inv.documento||'';
+            return !facturasEnNECom.has(invId)&&!facturasEnNECom.has((inv.documento||'').replace(/^FAC-/,'INVO-'));
+          });
+          const facturasMesEmpresa = [...nesMesEmpresa, ...factsDirEmpresa];
 
           // Subcategorías vendidas por toda la empresa en el mes
           const subcatsVendidas = new Set();
@@ -18309,71 +18343,110 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
   // ── FIN renderLibroDiarioModule ──
   // ============================================================================
   const calcEstadoData = (ym) => {
-    // Ingresos: facturas del periodo
-    const facturasperiodo = (invoices || []).filter(i => {
-      const d = i.fecha || (typeof i.timestamp==='number' ? new Date(i.timestamp).toISOString().substring(0,7) : '');
+    // ── INGRESOS: usar NEs como fuente canónica (misma lógica que Transacciones de Ventas) ──
+    // Excluir facturas ya representadas por una NE para evitar duplicación
+    const facturasEnNE = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
+
+    // NEs del período
+    const nesperiodo = (notasEntrega||[]).filter(ne => {
+      const d = ne.fecha || '';
       return d.startsWith(ym);
     });
-    const totalIngresos = facturasperiodo.reduce((s,i) => s + parseNum(i.montoBase), 0);
 
-    // ── COSTO DE VENTAS REAL: cantidad vendida × costo unitario del producto ──
+    // Facturas directas del período (sin NE asociada)
+    const facturasPeriodo = (invoices||[]).filter(inv => {
+      const d = inv.fecha || (typeof inv.timestamp==='number' ? new Date(inv.timestamp).toISOString().substring(0,7) : '');
+      if (!d.startsWith(ym)) return false;
+      if (inv.neOrigen) return false; // ya representada por NE
+      const invId = inv.id || inv.documento || '';
+      const invDoc = (inv.documento||'').replace(/^FAC-/,'INVO-');
+      if (facturasEnNE.has(invId) || facturasEnNE.has(invDoc)) return false;
+      return true;
+    });
+
+    // Total ingresos = NEs + facturas directas (montoBase = base sin IVA)
+    const totalIngresosNE = nesperiodo.reduce((s,ne) => s + parseNum(ne.montoBase||0), 0);
+    const totalIngresosInv = facturasPeriodo.reduce((s,inv) => s + parseNum(inv.montoBase||0), 0);
+    const totalIngresos = totalIngresosNE + totalIngresosInv;
+
+    // ── COSTO DE VENTAS: desde ítems con costoUnit (NEs e invoices directas) ──
     let totalCostoProd = 0;
-    const cogsRows = []; // [{opId, opNum, producto, cantVendida, unidad, costoUnit, costoTotal, esTermo}]
+    const cogsRows = [];
 
-    facturasperiodo.forEach(inv => {
-      // Get all FG items for this invoice
-      const allItems = [];
-      if((inv.itemsFacturados||[]).length > 0) {
-        inv.itemsFacturados.forEach(it => allItems.push({fgId: it.fgId, cantidad: parseNum(it.cantidad||0)}));
-      } else if(inv.fgId) {
-        allItems.push({fgId: inv.fgId, cantidad: parseNum(inv.fgCantidad||0)});
+    // Costos desde NEs
+    nesperiodo.forEach(ne => {
+      (ne.items||[]).forEach(it => {
+        const costoUnit = parseNum(it.costoUnit||0);
+        const cant = parseNum(it.cantidad||0);
+        if (costoUnit <= 0 || cant <= 0) return;
+        const costoTotal2 = costoUnit * cant;
+        totalCostoProd += costoTotal2;
+        cogsRows.push({
+          opId: ne.opRelacionada||'—',
+          opNum: String(ne.opRelacionada||'').replace('OP-','').padStart(5,'0'),
+          producto: it.desc||'',
+          cliente: ne.clientName||'',
+          cantVendida: cant,
+          unidad: it.unit||'und',
+          costoUnit,
+          costoTotal: costoTotal2,
+          esTermo: false,
+          factura: ne.id
+        });
+      });
+      // Fallback: si la NE tiene costoTotal registrado pero sin items con costo
+      if (cogsRows.filter(r=>r.factura===ne.id).length===0 && parseNum(ne.costoTotal||0)>0) {
+        totalCostoProd += parseNum(ne.costoTotal);
+        cogsRows.push({
+          opId: ne.opRelacionada||'—',
+          opNum: String(ne.opRelacionada||'').replace('OP-','').padStart(5,'0'),
+          producto: ne.clientName||'NE sin detalle',
+          cliente: ne.clientName||'',
+          cantVendida: 1,
+          unidad: 'global',
+          costoUnit: parseNum(ne.costoTotal||0),
+          costoTotal: parseNum(ne.costoTotal||0),
+          esTermo: false,
+          factura: ne.id
+        });
       }
+    });
+
+    // Costos desde facturas directas (items con costoUnit)
+    facturasPeriodo.forEach(inv => {
+      const allItems = (inv.itemsFacturados||[]).length > 0
+        ? inv.itemsFacturados
+        : (inv.fgId ? [{ fgId: inv.fgId, cantidad: parseNum(inv.fgCantidad||0), costoUnit: 0 }] : []);
 
       allItems.forEach(it => {
-        if(!it.fgId || it.cantidad <= 0) return;
-        const cant = parseNum(it.cantidad);
-        // ISSUE 3: Usar el costo congelado en itemsFacturados (capturado al facturar)
-        // Si no existe (facturas antiguas), intentar desde FG actual como fallback
+        const cant = parseNum(it.cantidad||0);
+        if (cant <= 0) return;
+        // Intentar costo: directo del ítem, luego finishedGoods, luego inventario
         let costoUnit = parseNum(it.costoUnit||0);
-        const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
-        const esTermo = it.esTermo ?? (fg?.tipoProducto==='TERMOENCOGIBLE');
-        if(costoUnit <= 0 && fg) {
-          // Fallback para facturas sin costo congelado
-          costoUnit = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+        if (costoUnit <= 0 && it.fgId) {
+          const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
+          if (fg) {
+            const esTermo = it.esTermo ?? (fg.tipoProducto==='TERMOENCOGIBLE');
+            costoUnit = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+          }
         }
-        // También buscar en movimientos de Kardex de SALIDA con ref a esta factura
-        if(costoUnit <= 0) {
-          const kardexMov = (invMovements||[]).find(m=>
-            m.itemId===`FG::${it.fgId}` && m.type==='SALIDA' &&
-            (m.docRef||'').includes(inv.documento||inv.id) && parseNum(m.unitCost||0)>0
-          );
-          if(kardexMov) costoUnit = parseNum(kardexMov.unitCost||0);
+        if (costoUnit <= 0 && it.invCode) {
+          const invItem = (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode);
+          if (invItem) costoUnit = parseNum(invItem.cost||0);
         }
-        // FIX 5: Para facturas antiguas sin costo, buscar en CUALQUIER movimiento SALIDA del FG
-        if(costoUnit <= 0) {
-          const anyKardex = (invMovements||[]).find(m=>
-            m.itemId===`FG::${it.fgId}` && m.type==='SALIDA' && parseNum(m.unitCost||0)>0
-          );
-          if(anyKardex) costoUnit = parseNum(anyKardex.unitCost||0);
-        }
-        // Último recurso: usar costoUnitarioMillar/costoUnitario actual del FG (puede ser incorrecto si cambió)
-        if(costoUnit <= 0 && fg) {
-          const esTermo2 = fg.tipoProducto==='TERMOENCOGIBLE';
-          costoUnit = esTermo2 ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-        }
-        if(costoUnit <= 0) return; // sin costo — no incluir
+        if (costoUnit <= 0) return;
         const costoTotal2 = cant * costoUnit;
         totalCostoProd += costoTotal2;
         cogsRows.push({
           opId: inv.opAsignada||'—',
           opNum: String(inv.opAsignada||'').replace('OP-','').padStart(5,'0'),
-          producto: it.desc || (fg?formatFGLabel(fg)||fg.producto||fg.id:'—'),
-          cliente: fg?.cliente||inv.clientName||'',
+          producto: it.desc||'',
+          cliente: inv.clientName||'',
           cantVendida: cant,
-          unidad: it.unidad || (esTermo ? 'KG' : 'Millares'),
+          unidad: it.unidad||'und',
           costoUnit,
           costoTotal: costoTotal2,
-          esTermo,
+          esTermo: it.esTermo||false,
           factura: inv.documento||inv.id
         });
       });
@@ -18382,13 +18455,11 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
     // Costos operativos del periodo, agrupados por cuenta contable
     const costosPeriodo = (opCosts || []).filter(c => (c.month || (c.date||'').substring(0,7) || '').startsWith(ym));
 
-    // Movimientos de produccion del periodo (para referencia / detalle)
     const movsProd = (invMovements || []).filter(m =>
       m.type === 'SALIDA' && String(m.notes||'').toUpperCase().includes('PRODUCCI') &&
       (m.date||'').startsWith(ym)
     );
 
-    // Agrupar costos operativos por cuenta contable
     const costosPorCuenta = {};
     costosPeriodo.forEach(c => {
       const key = c.cuentaContable || ('CAT::' + (c.category||'OTROS'));
@@ -18409,6 +18480,26 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
     const totalCostosOp = costosPeriodo.reduce((s,c) => s + parseNum(c.amount), 0);
     const totalCostos = totalCostoProd + totalCostosOp;
     const resultado = totalIngresos - totalCostos;
+
+    // facturasperiodo = NEs + facturas directas (para el detalle de ingresos en el UI)
+    const facturasperiodo = [
+      ...nesperiodo.map(ne => ({
+        documento: ne.id,
+        clientName: ne.clientName||'',
+        productoMaquilado: (ne.items||[]).map(i=>i.desc||'').filter(Boolean).join(' / '),
+        fecha: ne.fecha,
+        montoBase: ne.montoBase||0,
+        isNE: true
+      })),
+      ...facturasPeriodo.map(inv => ({
+        documento: inv.documento||inv.id,
+        clientName: inv.clientName||'',
+        productoMaquilado: inv.productoMaquilado||'',
+        fecha: inv.fecha,
+        montoBase: inv.montoBase||0,
+        isNE: false
+      }))
+    ];
 
     return { facturasperiodo, totalIngresos, costosPorCuenta, costosPeriodo, movsProd, totalCostoProd, totalCostosOp, totalCostos, resultado, cogsRows };
   };
