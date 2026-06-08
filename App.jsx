@@ -9811,37 +9811,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             return true;
           }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
           const rows = [];
-          // ── Fuente 1: NEs ────────────────────────────────────────────────────
-          const facturasEnNErg = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
-          const nesRG = (notasEntrega||[]).filter(ne=>{
-            if(!ne) return false;
-            if(pvFilter && pvFilter!=='general' && !(ne.fecha||'').startsWith(pvFilter)) return false;
-            if(pvFiltCliente && !(ne.clientName||'').toUpperCase().includes(pvFiltCliente)) return false;
-            if(pvFiltDoc && !(ne.id||'').toUpperCase().includes(pvFiltDoc)) return false;
-            return true;
-          });
-          nesRG.forEach(ne=>{
-            const items = ne.items||[];
-            const costo = ne.costoTotal||(items.reduce((s,it)=>s+parseNum(it.cantidad||0)*parseNum(it.costoUnit||0),0));
-            if(items.length===0){
-              const monto=parseNum(ne.montoBase||0);
-              rows.push({fecha:ne.fecha,doc:ne.id,nroFiscal:'',vendedor:ne.vendedor||'—',cliente:ne.clientName||'—',clienteRif:'',producto:ne.id,codigo:'',cantTotal:1,monto,costo:costo,costoTotal:costo,utilidad:monto-costo,fuente:'NE'});
-            } else {
-              items.forEach(it=>{
-                const qty=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0); const cu=parseNum(it.costoUnit||0);
-                const total=precio*qty; const ct=cu*qty;
-                rows.push({fecha:ne.fecha,doc:ne.id,nroFiscal:'',vendedor:ne.vendedor||'—',cliente:ne.clientName||'—',clienteRif:'',producto:it.desc||'—',codigo:it.invCode||'',cantTotal:qty,monto:total,costo:cu,costoTotal:ct,utilidad:total-ct,fuente:'NE'});
-              });
-            }
-          });
-          // ── Fuente 2: Facturas directas (sin NE asociada) ────────────────────
-          const filtInvsDirect = filtInvs.filter(inv=>{
-            if(inv.neOrigen) return false;
-            const invId=inv.id||inv.documento||'';
-            const invDoc=(inv.documento||'').replace(/^FAC-/,'INVO-');
-            return !facturasEnNErg.has(invId)&&!facturasEnNErg.has(invDoc);
-          });
-          filtInvsDirect.forEach(inv=>{
+          filtInvs.forEach(inv=>{
             const items = inv.itemsFacturados||[];
             if(items.length===0){
               rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
@@ -11370,10 +11340,10 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             const doc=ne.id+(ne.status==='PROCESADA'?'P':'T');
             if(tvBuscarDoc && !doc.toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
             if(tvBuscarDesc && !(ne.clientName||'').toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
-            const costo=ne.costoTotal||(ne.items||[]).reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0);
+            const costo=parseNum(ne.costoTotal||0)||(ne.items||[]).reduce((s,it)=>s+parseNum(it.cantidad||0)*parseNum(it.costoUnit||0),0);
             const utilidad=(ne.montoBase||0)-costo;
             const pctUtil=(ne.montoBase||0)>0?(utilidad/(ne.montoBase||0)*100):0;
-            rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,status:ne.status,fuente:'NE'});
+            rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,facturaId:ne.facturaId||'',status:ne.status,fuente:'NE'});
           });
           // ── Fuente 2: Facturas SIN NE asociada ──────────────────────────────
           const facturasEnNE=new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
@@ -11389,15 +11359,15 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             const doc=invDoc||invId;
             if(tvBuscarDoc && !doc.toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
             if(tvBuscarDesc && !(inv.clientName||'').toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
-            const base=parseNum(inv.montoBase||inv.total||0);
+            const base=parseNum(inv.montoBase||0)||(()=>{const its=inv.itemsFacturados||[];return its.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0);})();
             const ivaAmt=parseNum(inv.iva||0);
             const total=parseNum(inv.total||0)||base+ivaAmt;
-            // Costo desde items facturados
+            // Costo total = suma de (costoTotal por item) o (costoUnit × cantidad)
             const items=inv.itemsFacturados||[];
-            const costo=items.reduce((s,it)=>s+parseNum(it.costoUnit||0)*parseNum(it.cantidad||0),0);
+            const costo=items.reduce((s,it)=>s+parseNum(it.costoTotal||0||parseNum(it.costoUnit||0)*parseNum(it.cantidad||0)),0);
             const utilidad=base-costo;
             const pctUtil=base>0?(utilidad/base*100):0;
-            rows.push({fecha,documento:doc,descripcion:inv.clientName||'—',montoBruto:base,iva:ivaAmt,tNeto:total,costo,utilidad,pctUtil,neId:null,invId:inv.id,status:'PROCESADA',fuente:'FACTURA'});
+            rows.push({fecha,documento:doc,descripcion:inv.clientName||'—',montoBruto:base,iva:ivaAmt,tNeto:total,costo,utilidad,pctUtil,neId:null,invId:inv.id,facturaId:inv.documento||inv.id,status:'PROCESADA',fuente:'FACTURA'});
           });
           rows.sort((a,b)=>a.fecha.localeCompare(b.fecha));
           const tot=rows.reduce((s,r)=>({montoBruto:s.montoBruto+r.montoBruto,iva:s.iva+r.iva,tNeto:s.tNeto+r.tNeto,costo:s.costo+r.costo,utilidad:s.utilidad+r.utilidad}),{montoBruto:0,iva:0,tNeto:0,costo:0,utilidad:0});
@@ -11446,7 +11416,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 <div className="overflow-x-auto rounded-2xl border border-gray-200">
                   <table className="w-full text-xs">
                     <thead><tr className="bg-gray-900 text-white">
-                      {['Fecha','Documento','Descripción','Monto Bruto','I.V.A(16%)','T.Neto','Costo','Utilidad','%Util.','Estado'].map(h=>(<th key={h} className="py-3 px-3 text-left font-black text-[9px] uppercase whitespace-nowrap">{h}</th>))}
+                      {['Fecha','Documento','Factura','Descripción','Monto Bruto','I.V.A(16%)','T.Neto','Costo','Utilidad','%Útil.','Estado'].map(h=>(<th key={h} className="py-3 px-3 text-left font-black text-[9px] uppercase whitespace-nowrap">{h}</th>))}
                     </tr></thead>
                     <tbody className="divide-y divide-gray-100">
                       {tvPageRows.map((r,i)=>{
@@ -11457,6 +11427,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                             <span style={{color:r.status==='PROCESADA'?'#16a34a':'#d97706'}}>{r.documento}</span>
                             <span className={`ml-1 text-[8px] px-1 py-0.5 rounded ${r.fuente==='NE'?'bg-orange-100 text-orange-600':'bg-blue-100 text-blue-600'}`}>{r.fuente}</span>
                           </td>
+                          <td className="py-2.5 px-3 text-[10px] text-blue-600 font-bold whitespace-nowrap">{r.facturaId||'—'}</td>
                           <td className="py-2.5 px-3 font-bold text-gray-900 max-w-[180px] truncate" title={r.descripcion}>{r.descripcion}</td>
                           <td className="py-2.5 px-3 text-right font-black">{formatNum(r.montoBruto)}</td>
                           <td className="py-2.5 px-3 text-right text-gray-500">{formatNum(r.iva)}</td>
@@ -11469,7 +11440,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                       })}
                     </tbody>
                     <tfoot><tr className="bg-gray-900 text-white font-black">
-                      <td colSpan={3} className="py-3 px-3 text-[10px] uppercase">Totales — {rows.length} ops.</td>
+                      <td colSpan={4} className="py-3 px-3 text-[10px] uppercase">Totales — {rows.length} ops.</td>
                       <td className="py-3 px-3 text-right">{formatNum(tot.montoBruto)}</td>
                       <td className="py-3 px-3 text-right">{formatNum(tot.iva)}</td>
                       <td className="py-3 px-3 text-right text-blue-300">{formatNum(tot.tNeto)}</td>
