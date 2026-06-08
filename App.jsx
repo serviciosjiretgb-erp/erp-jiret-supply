@@ -16,7 +16,7 @@ import {
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
   ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing, Upload,
   Menu, ChevronLeft, Smartphone, Wifi, WifiOff,
-  Activity, Timer, Award, PackageCheck, Calendar, ChevronDown, CheckSquare, RotateCcw, Settings} from 'lucide-react';
+  Activity, Timer, Award, PackageCheck, Calendar, ChevronDown, CheckSquare, RotateCcw, Settings, BookOpen} from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
@@ -414,6 +414,13 @@ export default function App() {
   const [invFiltAnio, setInvFiltAnio] = useState(''); // 'YYYY' o '' para todos
   const [reqFiltMes, setReqFiltMes] = useState('');  // 'MM' o '' para todos
   const [reqFiltAnio, setReqFiltAnio] = useState(''); // 'YYYY' o '' para todos
+  // ── Libro de Ventas Fiscal ──────────────────────────────────────────────────
+  const [libroAnio, setLibroAnio] = useState(()=>String(new Date().getFullYear()));
+  const [libroMes, setLibroMes] = useState(()=>String(new Date().getMonth()+1).padStart(2,'0'));
+  const [libroQuincena, setLibroQuincena] = useState('1');
+  const [retenciones, setRetenciones] = useState([]);
+  const [showRetModal, setShowRetModal] = useState(false);
+  const [retForm, setRetForm] = useState({facturaId:'',nroRetencion:'',fechaComprobante:'',quincena:'1',porcentaje:'75'});
   const [neInvSearch, setNeInvSearch] = useState('');
   const [neShowInvDrop, setNeShowInvDrop] = useState(false);
   // ── Estados Transacciones de Ventas ────────────────────────────────────────
@@ -583,7 +590,7 @@ export default function App() {
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '', productoDestinoId: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
-  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', clientAddress: '', documento: '', nroFiscal: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '', ncAsignada: '' };
+  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', clientAddress: '', documento: '', nroFiscal: '', nroControl: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '', ncAsignada: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
   // ── Cálculos de totales en tiempo real (usados en el formulario de factura) ──
   const _invBase = fgItems&&fgItems.length>0 ? fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0) : parseNum(newInvoiceForm?.montoBase||0);
@@ -1345,7 +1352,8 @@ export default function App() {
     const unsubCotiz = onSnapshot(getColRef('cotizaciones'), (s) => setCotizaciones(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
-    const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    const unsubRetenciones = onSnapshot(getColRef('retencionesClientes'), (s) => setRetenciones(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubOpCosts = onSnapshot(getColRef('operatingCosts'), (s) => setOpCosts(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubActivity = onSnapshot(collection(db, 'userActivity'), (s) => setUserActivityLog(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubPOs = onSnapshot(getColRef('purchaseOrders'), (s) => setPurchaseOrders(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
@@ -1363,8 +1371,8 @@ export default function App() {
     const unsubNE = onSnapshot(getColRef('notasEntrega'), (s) => setNotasEntrega(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     
     return () => { 
-      unsubAlimentario(); unsubDepositos(); unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
-      unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST(); unsubConsign(); unsubNE();
+      unsubAlimentario(); unsubDepositos(); unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli();; unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
+      unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST(); if(typeof unsubRetenciones==='function') unsubRetenciones();onsign(); unsubNE();
       if (typeof unsubNotifs === 'function') unsubNotifs();
       if (typeof unsubTomas === 'function') unsubTomas();
     };
@@ -2846,6 +2854,7 @@ export default function App() {
       await setDoc(getDocRef('maquilaInvoices', id), {
         ...newInvoiceForm, id, documento: id,
         nroFiscal: newInvoiceForm.nroFiscal||'',
+        nroControl: newInvoiceForm.nroControl||'',
         tasa: parseNum(newInvoiceForm.tasa||settings?.tasaBCV||0),
         descuentoTipo, descuentoVal: parseNum(descuentoVal||0), descuentoAmt,
         montoBase: computedBase,
@@ -9033,11 +9042,25 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   : items.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0);
                 const ivaAmt = inv.aplicaIva==='SI' ? parseNum(inv.iva||0)||parseFloat((base*0.16).toFixed(2)) : 0;
                 const totalFinal = parseNum(inv.total||0) > 0 ? parseNum(inv.total) : base+ivaAmt;
+                const tasa = parseNum(inv.tasa||0) || parseNum(settings?.tasaBCV||0) || 1;
+                const hasTasa = tasa > 1;
                 return (<>
-                  <div className="flex justify-between font-bold text-sm"><span>SUBTOTAL:</span><span>${formatNum(base)}</span></div>
-                  {inv.aplicaIva === 'SI' && <div className="flex justify-between font-bold text-sm"><span>IVA (16%):</span><span>${formatNum(ivaAmt)}</span></div>}
-                  <div className="flex justify-between font-black text-2xl border-t-2 border-black pt-2 text-orange-600"><span>TOTAL:</span><span>${formatNum(totalFinal)}</span></div>
-                  {parseNum(inv.tasa)>0 && <div className="flex justify-between font-bold text-xs text-gray-600 pt-1"><span>TOTAL Bs (Tasa {formatTasa(inv.tasa)}):</span><span>Bs {formatNum(totalFinal*parseNum(inv.tasa))}</span></div>}
+                  <div className="border border-gray-200 rounded-xl overflow-hidden mt-4">
+                    <table className="w-full text-sm font-bold">
+                      <thead><tr className="bg-gray-800 text-white">
+                        <th className="py-2 px-4 text-left font-black uppercase text-xs"></th>
+                        {hasTasa && <th className="py-2 px-4 text-right font-black uppercase text-xs">Bs.</th>}
+                        <th className="py-2 px-4 text-right font-black uppercase text-xs">USD $</th>
+                      </tr></thead>
+                      <tbody>
+                        <tr className="border-b border-gray-100"><td className="py-2 px-4 text-gray-600 text-xs">Total Neto:</td>{hasTasa && <td className="py-2 px-4 text-right">{formatNum(base*tasa)}</td>}<td className="py-2 px-4 text-right">${formatNum(base)}</td></tr>
+                        <tr className="border-b border-gray-100"><td className="py-2 px-4 text-gray-600 text-xs">Monto Exento:</td>{hasTasa && <td className="py-2 px-4 text-right">0,00</td>}<td className="py-2 px-4 text-right">0,00</td></tr>
+                        {inv.aplicaIva==='SI' && <><tr className="border-b border-gray-100"><td className="py-2 px-4 text-gray-600 text-xs">Base Imponible 16%:</td>{hasTasa && <td className="py-2 px-4 text-right">{formatNum(base*tasa)}</td>}<td className="py-2 px-4 text-right">${formatNum(base)}</td></tr><tr className="border-b border-gray-100"><td className="py-2 px-4 text-gray-600 text-xs">I.V.A. 16%:</td>{hasTasa && <td className="py-2 px-4 text-right">{formatNum(ivaAmt*tasa)}</td>}<td className="py-2 px-4 text-right">${formatNum(ivaAmt)}</td></tr></>}
+                        <tr className="bg-orange-500 text-white"><td className="py-3 px-4 font-black uppercase">Total Factura:</td>{hasTasa && <td className="py-3 px-4 text-right font-black">{formatNum(totalFinal*tasa)}</td>}<td className="py-3 px-4 text-right font-black">${formatNum(totalFinal)}</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  {hasTasa && <p className="text-[9px] text-gray-400 mt-1 text-right">Tasa BCV: {formatNum(tasa)} Bs/$</p>}
                 </>);
               })()}
             </div>
@@ -9812,9 +9835,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           const filtInvs = (invoices||[]).filter(inv=>{
             if(!inv) return false;
             if(pvFilter && pvFilter !== 'general') { if(!(inv.fecha||'').startsWith(pvFilter)) return false; }
-            // Respetar filtros activos de Facturación (año + mes)
-            if(invFiltAnio && !(inv.fecha||'').startsWith(invFiltAnio)) return false;
-            if(invFiltMes && (inv.fecha||'').substring(5,7)!==invFiltMes) return false;
+            // Nota: el Reporte General usa pvFilter propio, NO hereda invFiltMes/Anio
             if(pvFiltCliente){ const cli=(inv.clientName||inv.client||'').toUpperCase(); const rif=(inv.clientRif||'').toUpperCase(); if(!cli.includes(pvFiltCliente.toUpperCase())&&!rif.includes(pvFiltCliente.toUpperCase())) return false; }
             if(pvFiltDoc){ const doc=(inv.documento||'').toUpperCase(); const fisc=(inv.nroFiscal||'').toUpperCase(); if(!doc.includes(pvFiltDoc.toUpperCase())&&!fisc.includes(pvFiltDoc.toUpperCase())) return false; }
             return true;
@@ -11003,47 +11024,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               setNeView('lista'); setNeForm(null); setNeInvSearch(''); setNeShowInvDrop(false);
             } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
           };
-          // ── ANULAR NE: devuelve inventario pero mantiene el registro ──────────────
-          const handleAnularNE = (ne) => {
-            if(ne.status==='ANULADA') return setDialog({title:'Ya anulada',text:`${ne.id} ya está anulada.`,type:'alert'});
-            setDialog({
-              title:'Anular Nota de Entrega',
-              text:`¿Anular ${ne.id}?
-Se devolverá el inventario descontado y quedará marcada como ANULADA (no se elimina el registro).`,
-              type:'confirm',
-              onConfirm: async() => {
-                try {
-                  const batch = writeBatch(db);
-                  // Devolver inventario por almacén
-                  for(const item of (ne.items||[])) {
-                    if(!item.invCode) continue;
-                    const code=(item.invCode||'').split('___')[0];
-                    const wqty = item.warehouseQtys||{'ALMACEN ZI':parseNum(item.cantidad||0)};
-                    for(const [almNom, cantRaw] of Object.entries(wqty)) {
-                      const cant=parseNum(cantRaw||0);
-                      if(cant<0.001) continue;
-                      const targetDoc=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===code&&(i.almacen||'ALMACEN ZI')===almNom);
-                      if(targetDoc) {
-                        batch.update(getDocRef('inventory',targetDoc.id),{stock:Math.max(0,parseNum(targetDoc.stock||0)+cant),updatedAt:getTodayDate()});
-                        const movId=`NE-ANU-${ne.id}-${code}-${Date.now()}`;
-                        batch.set(getDocRef('inventoryMovements',movId),{id:movId,date:getTodayDate(),timestamp:Date.now(),itemId:targetDoc.id,itemName:item.desc||code,type:'ENTRADA',qty:cant,unitCost:parseNum(item.costoUnit||0),totalValue:cant*parseNum(item.costoUnit||0),reference:ne.id,almacen:almNom,notes:`ANULACIÓN NE ${ne.id} — ${ne.clientName||''}`,user:appUser?.name||'Sistema'});
-                      }
-                    }
-                  }
-                  // Marcar NE como ANULADA
-                  batch.update(getDocRef('notasEntrega',ne.id),{status:'ANULADA',fechaAnulacion:getTodayDate(),anuladaPor:appUser?.name||'Sistema',updatedAt:Date.now()});
-                  // Si tenía factura, deslinkar
-                  if(ne.facturaId) {
-                    const inv=(invoices||[]).find(i=>i.id===ne.facturaId||i.documento===ne.facturaId);
-                    if(inv) batch.update(getDocRef('maquilaInvoices',inv.id),{neOrigen:'',updatedAt:Date.now()});
-                  }
-                  await batch.commit();
-                  setDialog({title:'✅ Anulada',text:`${ne.id} fue anulada. El inventario fue restaurado.`,type:'alert'});
-                } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-              }
-            });
-          };
-
           const handleDeleteNE = (ne) => setDialog({title:'Eliminar Nota de Entrega',text:`¿Eliminar ${ne.id}? La mercancía será devuelta al inventario.`,type:'confirm',onConfirm:async()=>{
             try {
               const batch = writeBatch(db);
@@ -11105,7 +11085,7 @@ Se devolverá el inventario descontado y quedará marcada como ANULADA (no se el
               <div className="p-6 space-y-5 max-w-5xl mx-auto">
                 <div className="flex items-center gap-3">
                   <button onClick={()=>{setNeView('lista');setNeForm(null);setNeInvSearch('');setNeShowInvDrop(false);}} className="flex items-center gap-1 text-[10px] font-black text-gray-500 uppercase hover:text-orange-600"><ArrowRight size={12} className="rotate-180"/> Volver</button>
-                  <span className="font-black text-xl text-orange-600">{form._editId ? `✏️ Editando ${form._editId}` : `📄 Nueva Nota de Entrega — ${nextNENum()}`}</span>
+                  <span className="font-black text-xl text-orange-600">{form._editId||'Nueva Nota de Entrega'}</span>
                 </div>
                 <div className="bg-white rounded-3xl shadow-sm border p-6 space-y-5">
                   <div className="grid grid-cols-4 gap-4">
@@ -11376,7 +11356,6 @@ Se devolverá el inventario descontado y quedará marcada como ANULADA (no se el
     <div style="text-align:center"><div style="border-top:1px solid #111;padding-top:8px;font-size:9px;color:#666;text-transform:uppercase">RECIBÍ CONFORME / CLIENTE</div></div>
   </div>
 </div>`, `NE_${ne.id}_${ne.clientName||''}`)}} className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-lg transition-all" title="PDF"><Printer size={11}/></button>
-                              <button onClick={()=>handleAnularNE(ne)} title="Anular NE" className="w-7 h-7 flex items-center justify-center bg-yellow-50 text-yellow-600 rounded-lg hover:bg-yellow-500 hover:text-white transition-all"><span className="text-[9px] font-black">✕</span></button>
                               <button onClick={()=>handleDeleteNE(ne)} title="Eliminar" className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition-all"><Trash2 size={11}/></button>
                             </div>
                           </td>
@@ -11452,8 +11431,8 @@ Se devolverá el inventario descontado y quedará marcada como ANULADA (no se el
           const tvPageRows=rows.slice(tvPage*PAGE_SIZE_DEFAULT,(tvPage+1)*PAGE_SIZE_DEFAULT);
 
           const exportTV=()=>{
-            const rowsHtml=rows.map(r=>`<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:4px 7px;font-size:9px;white-space:nowrap">${r.fecha}</td><td style="padding:4px 7px;font-size:9px;font-weight:700;color:${r.status==='PROCESADA'?'#16a34a':'#d97706'}">${r.documento}</td><td style="padding:4px 7px;font-size:9px;color:#1d4ed8">${r.facturaId||'—'}</td><td style="padding:4px 7px;font-size:9px">${r.descripcion}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.montoBruto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.iva)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;font-weight:700">${formatNum(r.tNeto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.costo)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;color:#16a34a;font-weight:700">${formatNum(r.utilidad)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${r.pctUtil.toFixed(2)}%</td></tr>`).join('');
-            handlePDFFromHTML(`<div style="font-family:Arial,sans-serif;font-size:11px"><h2 style="margin:0;font-size:15px;font-weight:900">TRANSACCIONES DE VENTAS</h2><p style="font-size:10px;color:#6b7280;margin:3px 0">Desde: ${tvDesde} · Hasta: ${tvHasta}</p><table style="width:100%;border-collapse:collapse;margin-top:10px"><thead><tr style="background:#111827;color:#fff">${['Fecha','Documento','Factura','Descripción','Monto Bruto','I.V.A(16%)','T.Neto','Costo','Utilidad','%Útil.','Estado'].map(h=>`<th style="padding:6px 7px;font-size:9px">${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr style="background:#111827;color:#fff;font-weight:900"><td colspan="4" style="padding:6px 7px;font-size:9px">TOTALES (${rows.length} ops.)</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.montoBruto)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.iva)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.tNeto)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.costo)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.utilidad)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${pctTot.toFixed(2)}%</td></tr></tfoot></table></div>`,`Transacciones_${tvDesde}_${tvHasta}`);
+            const rowsHtml=rows.map(r=>`<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:4px 7px;font-size:9px;white-space:nowrap">${r.fecha}</td><td style="padding:4px 7px;font-size:9px;font-weight:700;color:${r.status==='PROCESADA'?'#16a34a':'#d97706'}">${r.documento}</td><td style="padding:4px 7px;font-size:9px">${r.descripcion}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.montoBruto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.iva)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;font-weight:700">${formatNum(r.tNeto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.costo)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;color:#16a34a;font-weight:700">${formatNum(r.utilidad)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${r.pctUtil.toFixed(2)}%</td></tr>`).join('');
+            handlePDFFromHTML(`<div style="font-family:Arial,sans-serif;font-size:11px"><h2 style="margin:0;font-size:15px;font-weight:900">TRANSACCIONES DE VENTAS</h2><p style="font-size:10px;color:#6b7280;margin:3px 0">Desde: ${tvDesde} · Hasta: ${tvHasta}</p><table style="width:100%;border-collapse:collapse;margin-top:10px"><thead><tr style="background:#111827;color:#fff">${['Fecha','Documento','Descripción','Monto Bruto','I.V.A(16%)','T.Neto','Costo','Utilidad','%Util.'].map(h=>`<th style="padding:6px 7px;font-size:9px">${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr style="background:#111827;color:#fff;font-weight:900"><td colspan="3" style="padding:6px 7px;font-size:9px">TOTALES (${rows.length} ops.)</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.montoBruto)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.iva)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.tNeto)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.costo)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.utilidad)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${pctTot.toFixed(2)}%</td></tr></tfoot></table></div>`,`Transacciones_${tvDesde}_${tvHasta}`);
           };
           return(
             <div className="p-6 space-y-5">
@@ -11674,13 +11653,17 @@ Se devolverá el inventario descontado y quedará marcada como ANULADA (no se el
                         </div>
                         <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest shadow-sm">INVOICE NRO: {newInvoiceForm.documento || generateInvoiceId()}</span>
                         {newInvoiceForm.neOrigen && <span className="bg-blue-100 text-blue-800 px-3 py-2 rounded-xl text-[10px] font-black">NE: {newInvoiceForm.neOrigen}</span>}
-                        {/* NRO FISCAL MANUAL */}
+                        {/* NRO FISCAL Y NRO CONTROL MANUAL */}
                         <div className="flex items-center gap-2">
                           <label className="text-[9px] font-black text-gray-500 uppercase whitespace-nowrap">Nro. Fiscal:</label>
                           <input type="text" value={newInvoiceForm.nroFiscal||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm, nroFiscal: e.target.value.toUpperCase()})}
-                            placeholder="00001234" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-400 w-32 text-center"/>
+                            placeholder="00001234" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-28"/>
                         </div>
-                        <button type="button" onClick={()=>{setShowNewInvoicePanel(false);setEditingInvoiceId(null);setNewInvoiceForm(initialInvoiceForm);}} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
+                        <div className="flex items-center gap-2">
+                          <label className="text-[9px] font-black text-gray-500 uppercase whitespace-nowrap">N° Control:</label>
+                          <input type="text" value={newInvoiceForm.nroControl||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm, nroControl: e.target.value})}
+                            placeholder="00-000000" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-28"/>
+                        </div>
                       </div>
                     </div>
 
@@ -11956,16 +11939,35 @@ Se devolverá el inventario descontado y quedará marcada como ANULADA (no se el
                   <div className="relative flex-1 max-w-lg"><Search className="absolute left-4 top-3.5 text-gray-400" size={16}/><input type="text" placeholder="Buscar factura o cliente..." value={invoiceSearchTerm} onChange={e=>{setInvoiceSearchTerm(e.target.value);setFacturaPagina(0);}} className="w-full pl-10 pr-4 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400"/></div>
                 </div>
               {(()=>{
+                // Fuente: NEs + facturas directas sin NE (igual que Transacciones)
+                const facturasEnNEinv = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
+                const nesInv = (notasEntrega||[]).filter(ne=>{
+                  const matchSearch=!invoiceSearchTerm||(ne.id||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase())||(ne.clientName||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase());
+                  const matchAnio=!invFiltAnio||(ne.fecha||'').startsWith(invFiltAnio);
+                  const matchMes=!invFiltMes||(ne.fecha||'').substring(5,7)===invFiltMes;
+                  return matchSearch&&matchAnio&&matchMes;
+                });
                 const allInv=(invoices||[]).filter(inv=>{
                   const matchSearch=!invoiceSearchTerm||String(inv?.documento||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase())||String(inv?.clientName||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase());
                   const matchAnio=!invFiltAnio||(inv?.fecha||'').startsWith(invFiltAnio);
                   const matchMes=!invFiltMes||(inv?.fecha||'').substring(5,7)===invFiltMes;
+                  if(inv?.neOrigen) return false; // representada por NE
+                  const invId=inv?.id||inv?.documento||'';
+                  const invDoc=(inv?.documento||'').replace(/^FAC-/,'INVO-');
+                  if(facturasEnNEinv.has(invId)||facturasEnNEinv.has(invDoc)) return false;
                   return matchSearch&&matchAnio&&matchMes;
                 });
-                const totalInv=allInv.length;
-               const totalFact=allInv.reduce((s,inv)=>s+parseNum(inv?.montoBase||0),0);
-               const pgInv=Math.max(0,Math.min(facturaPagina,Math.ceil(totalInv/PAGE_SIZE_DEFAULT)-1));
-               const pageInv=allInv.slice(pgInv*PAGE_SIZE_DEFAULT,(pgInv+1)*PAGE_SIZE_DEFAULT);
+                const totalInv = nesInv.length + allInv.length;
+                const totalFact = nesInv.reduce((s,ne)=>s+parseNum(ne.montoBase||0),0)
+                                + allInv.reduce((s,inv)=>s+parseNum(inv?.montoBase||0),0);
+                const pgInv=Math.max(0,Math.min(facturaPagina,Math.ceil(totalInv/PAGE_SIZE_DEFAULT)-1));
+                // Lista paginada: NEs primero, luego facturas directas
+                const allItems=[...nesInv.map(ne=>({
+                  id:ne.id, documento:ne.id, fecha:ne.fecha, opAsignada:ne.opRelacionada||'—',
+                  neOrigen:'', clientName:ne.clientName, productoMaquilado:(ne.items||[]).map(i=>i.desc||'').filter(Boolean).join(' / '),
+                  total:ne.total, montoBase:ne.montoBase, _isNE:true
+                })), ...allInv];
+                const pageInv=allItems.slice(pgInv*PAGE_SIZE_DEFAULT,(pgInv+1)*PAGE_SIZE_DEFAULT);
                return(<>
                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                  <div className="flex items-center gap-3"><span className="text-[10px] text-gray-500 font-bold">{totalInv} facturas registradas</span><span className="bg-green-50 border border-green-200 rounded-xl px-3 py-1 text-xs font-black text-green-700">Total facturado: ${formatNum(totalFact)}</span></div>
@@ -11987,6 +11989,299 @@ Se devolverá el inventario descontado y quedará marcada como ANULADA (no se el
              </div>
           </div>
         )}
+
+        {ventasView === 'libro_ventas' && (() => {
+          // ── Datos del período ─────────────────────────────────────────────────
+          const mes2 = libroMes.padStart(2,'0');
+          const quincena1Start = `${libroAnio}-${mes2}-01`;
+          const quincena1End   = `${libroAnio}-${mes2}-15`;
+          const lastDay = new Date(parseInt(libroAnio), parseInt(libroMes), 0).getDate();
+          const quincena2Start = `${libroAnio}-${mes2}-16`;
+          const quincena2End   = `${libroAnio}-${mes2}-${String(lastDay).padStart(2,'0')}`;
+          const periodoDesde = libroQuincena==='1' ? quincena1Start : quincena2Start;
+          const periodoHasta = libroQuincena==='1' ? quincena1End   : quincena2End;
+          const mesesLabel = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+          const mesLabel = mesesLabel[parseInt(libroMes,10)-1]||'';
+
+          // ── Filtrar facturas con nroFiscal en el período ──────────────────────
+          const factsPeriodo = (invoices||[]).filter(inv=>{
+            if(!inv) return false;
+            if(!inv.nroFiscal && !inv.nroControl) return false; // solo con datos fiscales
+            const f = inv.fecha||'';
+            return f >= periodoDesde && f <= periodoHasta;
+          }).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+
+          // ── Retenciones del período ───────────────────────────────────────────
+          const retPeriodo = (retenciones||[]).filter(r=>{
+            const f = r.fechaComprobante||r.fecha||'';
+            return f >= periodoDesde && f <= periodoHasta;
+          }).sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
+
+          // ── Construir filas del libro ─────────────────────────────────────────
+          // Cada factura y cada retención son filas
+          const rows = [];
+          let seq = 1;
+
+          // Facturas
+          factsPeriodo.forEach(inv=>{
+            const tasa = parseNum(inv.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+            const base = parseNum(inv.montoBase||0);
+            const ivaAmt = parseNum(inv.iva||0)||(inv.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):0);
+            const total = parseNum(inv.total||0)||base+ivaAmt;
+            // Retención asociada a esta factura
+            const ret = retPeriodo.find(r=>r.facturaId===inv.id||r.facturaId===inv.documento);
+            rows.push({
+              seq: seq++, fecha: inv.fecha, rif: inv.clientRif||'', nombre: inv.clientName||'',
+              tipo: 'FACTURA', nroFactura: inv.nroFiscal||'', nroControl: inv.nroControl||'',
+              nroDebito: '', nroCredito: '', facAfectada: '', invId: inv.id, doc: inv.documento||'',
+              totalVentasBs: total*tasa, igtf: 0, noGravable: 0,
+              baseImponibleBs: base*tasa, alicuota: inv.aplicaIva==='SI'?'16%':'0%',
+              ivaBs: ivaAmt*tasa, ivaRetenidoDb: 0, ivaRetenidoCr: 0,
+              nroFactAfecta: '', nroComprobante: ret?.nroRetencion||'', tasa
+            });
+          });
+
+          // Retenciones (como filas separadas)
+          retPeriodo.forEach(ret=>{
+            const factOrigen = (invoices||[]).find(i=>i.id===ret.facturaId||i.documento===ret.facturaId);
+            if(!factOrigen) return;
+            const tasa = parseNum(factOrigen.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+            const base = parseNum(factOrigen.montoBase||0);
+            const ivaAmt = parseNum(factOrigen.iva||0)||(factOrigen.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):0);
+            const pct = parseNum(ret.porcentaje||75)/100;
+            const ivaRetenido = ivaAmt * pct * tasa;
+            rows.push({
+              seq: seq++, fecha: ret.fechaComprobante||ret.fecha||'', rif: factOrigen.clientRif||'', nombre: factOrigen.clientName||'',
+              tipo: 'RETENCION', nroFactura: '', nroControl: '', nroDebito: '', nroCredito: '', facAfectada: '',
+              totalVentasBs: 0, igtf: 0, noGravable: 0, baseImponibleBs: 0, alicuota: `${ret.porcentaje||75}%`,
+              ivaBs: 0, ivaRetenidoDb: ivaRetenido, ivaRetenidoCr: 0,
+              nroFactAfecta: factOrigen.nroFiscal||factOrigen.documento||'', nroComprobante: ret.nroRetencion||'',
+              tasa, retId: ret.id
+            });
+          });
+
+          // ── Totales ───────────────────────────────────────────────────────────
+          const totTotalVentas = rows.reduce((s,r)=>s+r.totalVentasBs,0);
+          const totBase = rows.reduce((s,r)=>s+r.baseImponibleBs,0);
+          const totIva = rows.reduce((s,r)=>s+r.ivaBs,0);
+          const totRetDb = rows.reduce((s,r)=>s+r.ivaRetenidoDb,0);
+
+          // ── Guardar retención ─────────────────────────────────────────────────
+          const handleSaveRetencion = async () => {
+            if(!retForm.facturaId||!retForm.nroRetencion||!retForm.fechaComprobante) return setDialog({title:'Datos incompletos',text:'Selecciona la factura, ingresa el N° de retención y la fecha.',type:'alert'});
+            try {
+              const docId = `RET-${retForm.facturaId}-${Date.now()}`;
+              await setDoc(getDocRef('retencionesClientes',docId),{id:docId,...retForm,timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'});
+              setShowRetModal(false);
+              setRetForm({facturaId:'',nroRetencion:'',fechaComprobante:'',quincena:'1',porcentaje:'75'});
+              setDialog({title:'✅ Retención registrada',text:`Retención ${retForm.nroRetencion} guardada.`,type:'alert'});
+            } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+          };
+
+          const fmtBs = n => formatNum(n).replace(/\./g,',');
+
+          return (
+            <div className="space-y-4 p-4">
+              {/* ── HEADER ── */}
+              <div className="bg-white rounded-2xl border p-4">
+                <div className="flex items-stretch gap-4">
+                  {/* Logo + empresa */}
+                  <div className="flex items-center gap-4 flex-1">
+                    {settings?.logoURL ? <img src={settings.logoURL} alt="logo" className="h-16 w-auto object-contain"/> : <div className="h-16 w-16 bg-orange-500 rounded-xl flex items-center justify-center text-white font-black text-lg">JG</div>}
+                    <div>
+                      <div className="font-black text-sm uppercase">{settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div>
+                      <div className="text-xs font-bold text-gray-600">RIF: {settings?.empresaRIF||'J-412309374'}</div>
+                      <div className="text-[10px] text-gray-500 max-w-sm">{settings?.empresaDireccion||''}</div>
+                      <div className="font-black text-sm mt-1 border-b-2 border-black inline-block">LIBRO DE VENTAS</div>
+                    </div>
+                  </div>
+                  {/* Forma 99030 */}
+                  <div className="border-l-2 border-gray-200 pl-4 text-right space-y-1 min-w-48">
+                    <div className="text-[10px] font-black uppercase bg-gray-800 text-white px-3 py-1">IMPUESTO AL VALOR AGREGADO</div>
+                    <div className="text-[10px] font-bold text-center bg-gray-100 px-3 py-1">FORMA 99030</div>
+                    <div className="flex items-center justify-between gap-2 text-xs font-black">
+                      <span className="bg-gray-700 text-white px-2 py-0.5">MES</span>
+                      <span className="bg-gray-100 px-2 py-0.5 uppercase">{mesLabel.toUpperCase()}</span>
+                    </div>
+                    <div className="text-[10px] font-bold text-center bg-gray-700 text-white px-3 py-1">PERIODO: {libroQuincena==='1'?'I':'II'} QUINCENA</div>
+                    <div className="text-[10px] font-bold text-center bg-gray-100 px-3 py-1">DEL {periodoDesde.split('-').reverse().join('/')} AL {periodoHasta.split('-').reverse().join('/')}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── FILTROS ── */}
+              <div className="bg-white rounded-2xl border p-3 flex flex-wrap gap-3 items-end">
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Año</label>
+                  <select value={libroAnio} onChange={e=>setLibroAnio(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                    {['2024','2025','2026','2027'].map(y=>(<option key={y} value={y}>{y}</option>))}
+                  </select></div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mes</label>
+                  <select value={libroMes} onChange={e=>setLibroMes(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                    {mesesLabel.map((m,i)=>(<option key={i} value={String(i+1).padStart(2,'0')}>{m}</option>))}
+                  </select></div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Quincena</label>
+                  <select value={libroQuincena} onChange={e=>setLibroQuincena(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                    <option value="1">I Quincena (01-15)</option><option value="2">II Quincena (16-{lastDay})</option>
+                  </select></div>
+                <button onClick={()=>{setRetForm({facturaId:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena,porcentaje:'75'});setShowRetModal(true);}} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-blue-700 flex items-center gap-2"><Plus size={14}/>Registrar Retención</button>
+                <button onClick={()=>{
+                  const ths=['Nº','Fecha','RIF','Razón Social','Tipo','N° Factura','N° Control','N° Débito','N° Crédito','Fact. Afectada','Total Ventas Bs.','IGTF','No Gravable','Base Imponible','% Alícuota','IVA 16%','IVA Ret. Débito','IVA Ret. Crédito','Fact. que Afecta','N° Comprobante'];
+                  const trs=rows.map(r=>[r.seq,r.fecha,r.rif,r.nombre,r.tipo,r.nroFactura,r.nroControl,r.nroDebito,r.nroCredito,r.facAfectada,fmtBs(r.totalVentasBs),fmtBs(r.igtf),fmtBs(r.noGravable),fmtBs(r.baseImponibleBs),r.alicuota,fmtBs(r.ivaBs),fmtBs(r.ivaRetenidoDb),fmtBs(r.ivaRetenidoCr),r.nroFactAfecta,r.nroComprobante]);
+                  const rH=trs.map(tr=>'<tr>'+tr.map((c,ci)=>`<td style="padding:3px 5px;border:1px solid #ccc;font-size:8px;white-space:nowrap;${ci>9?'text-align:right':''}">${c||''}</td>`).join('')+'</tr>').join('');
+                  const html=`<html><head><meta charset="utf-8"><style>*{font-family:Arial}table{border-collapse:collapse;width:100%}th{background:#1f2937;color:#fff;padding:4px 5px;font-size:8px;text-align:center}</style></head><body><table><thead><tr>${ths.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rH}</tbody><tfoot><tr><td colspan="10" style="padding:4px 5px;background:#374151;color:#fff;font-weight:900;font-size:8px">TOTALES</td><td style="padding:4px 5px;background:#374151;color:#fff;font-weight:900;font-size:8px;text-align:right">${fmtBs(totTotalVentas)}</td><td colspan="2"></td><td style="padding:4px 5px;background:#374151;color:#fff;font-weight:900;font-size:8px;text-align:right">${fmtBs(totBase)}</td><td></td><td style="padding:4px 5px;background:#374151;color:#fff;font-weight:900;font-size:8px;text-align:right">${fmtBs(totIva)}</td><td style="padding:4px 5px;background:#374151;color:#fff;font-weight:900;font-size:8px;text-align:right">${fmtBs(totRetDb)}</td><td colspan="3"></td></tr></tfoot></table></body></html>`;
+                  const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}.xls`;a.click();
+                }} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-green-700 flex items-center gap-2"><Download size={14}/>Excel</button>
+                <button onClick={()=>{
+                  const ths=['Nº','Fecha','RIF','Razón Social','Tipo','N° Factura','N° Control','Total Bs.','Base Imp.','% Alíc.','IVA 16%','IVA Ret.','N° Comprobante'];
+                  const trs=rows.map(r=>[r.seq,r.fecha,r.rif,r.nombre,r.tipo,r.nroFactura,r.nroControl,fmtBs(r.totalVentasBs),fmtBs(r.baseImponibleBs),r.alicuota,fmtBs(r.ivaBs),fmtBs(r.ivaRetenidoDb),r.nroComprobante]);
+                  const rH=trs.map(tr=>`<tr style="border-bottom:1px solid #eee">${tr.map((c,ci)=>`<td style="padding:4px 5px;font-size:8px;${ci>6?'text-align:right':''}">${c||''}</td>`).join('')}</tr>`).join('');
+                  const html=`<div style="font-family:Arial;padding:20px"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:10px;margin-bottom:12px"><div><div style="font-weight:900;font-size:13px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div><div style="font-size:10px">RIF: ${settings?.empresaRIF||'J-412309374'}</div><div style="font-weight:900;font-size:12px;margin-top:4px">LIBRO DE VENTAS</div></div><div style="text-align:center;border:1px solid #ddd;padding:8px;min-width:180px"><div style="background:#1f2937;color:#fff;padding:4px;font-size:9px;font-weight:900">IMPUESTO AL VALOR AGREGADO</div><div style="padding:2px;font-size:9px;font-weight:bold">FORMA 99030</div><div style="background:#1f2937;color:#fff;padding:3px;font-size:9px">MES: ${mesLabel.toUpperCase()} — ${libroQuincena==='1'?'I':'II'} QUINCENA</div><div style="padding:2px;font-size:9px">DEL ${periodoDesde.split('-').reverse().join('/')} AL ${periodoHasta.split('-').reverse().join('/')}</div></div></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#1f2937;color:#fff">${ths.map(h=>`<th style="padding:5px;font-size:8px;text-align:center">${h}</th>`).join('')}</tr></thead><tbody>${rH}</tbody><tfoot><tr style="background:#374151;color:#fff;font-weight:900"><td colspan="7" style="padding:4px;font-size:8px">TOTALES</td><td style="padding:4px;font-size:8px;text-align:right">${fmtBs(totTotalVentas)}</td><td style="padding:4px;font-size:8px;text-align:right">${fmtBs(totBase)}</td><td></td><td style="padding:4px;font-size:8px;text-align:right">${fmtBs(totIva)}</td><td style="padding:4px;font-size:8px;text-align:right">${fmtBs(totRetDb)}</td><td></td></tr></tfoot></table></div>`;
+                  handlePDFFromHTML(html,`LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}`,true);
+                }} className="bg-gray-800 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-black flex items-center gap-2"><Printer size={14}/>PDF</button>
+              </div>
+
+              {/* ── TABLA LIBRO ── */}
+              <div className="bg-white rounded-2xl border overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[9px] whitespace-nowrap border-collapse">
+                    <thead>
+                      <tr className="bg-gray-800 text-white text-center">
+                        <th className="py-2 px-2 border-r border-white/20">Nº</th>
+                        <th className="py-2 px-2 border-r border-white/20">Fecha</th>
+                        <th className="py-2 px-2 border-r border-white/20">RIF</th>
+                        <th className="py-2 px-2 border-r border-white/20 min-w-40">Razón Social</th>
+                        <th className="py-2 px-2 border-r border-white/20">Tipo</th>
+                        <th className="py-2 px-2 border-r border-white/20">N° Factura</th>
+                        <th className="py-2 px-2 border-r border-white/20">N° Control</th>
+                        <th className="py-2 px-2 border-r border-white/20">N° Débito</th>
+                        <th className="py-2 px-2 border-r border-white/20">N° Crédito</th>
+                        <th className="py-2 px-2 border-r border-white/20">Fact. Afect.</th>
+                        <th className="py-2 px-2 border-r border-white/20 text-right">Total Ventas Bs.</th>
+                        <th className="py-2 px-2 border-r border-white/20 text-right">IGTF</th>
+                        <th className="py-2 px-2 border-r border-white/20 text-right">No Gravable</th>
+                        <th className="py-2 px-2 border-r border-white/20 text-right">Base Imponible</th>
+                        <th className="py-2 px-2 border-r border-white/20">% Alíc.</th>
+                        <th className="py-2 px-2 border-r border-white/20 text-right">IVA 16%</th>
+                        <th className="py-2 px-2 border-r border-white/20 text-right" colSpan={2}>IVA Retenido<br/><span className="flex gap-4 justify-center"><span>Débito</span><span>Crédito</span></span></th>
+                        <th className="py-2 px-2 border-r border-white/20">Fact. que Afecta</th>
+                        <th className="py-2 px-2">N° Comprobante</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {rows.length===0 ? <tr><td colSpan={21} className="py-10 text-center text-gray-400 font-bold">Sin registros fiscales para esta quincena</td></tr> :
+                      rows.map((r,i)=>(
+                        <tr key={i} className={`${i%2===1?'bg-gray-50':''} hover:bg-blue-50 ${r.tipo==='RETENCION'?'text-yellow-700 font-bold':''}`}>
+                          <td className="py-1.5 px-2 text-center font-bold">{r.seq}</td>
+                          <td className="py-1.5 px-2">{r.fecha}</td>
+                          <td className="py-1.5 px-2 font-bold">{r.rif}</td>
+                          <td className="py-1.5 px-2 uppercase max-w-48 truncate">{r.nombre}</td>
+                          <td className="py-1.5 px-2 text-center"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${r.tipo==='FACTURA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>{r.tipo}</span></td>
+                          <td className="py-1.5 px-2 font-bold text-blue-700">{r.nroFactura||'—'}</td>
+                          <td className="py-1.5 px-2">{r.nroControl||'—'}</td>
+                          <td className="py-1.5 px-2 text-center">—</td>
+                          <td className="py-1.5 px-2 text-center">—</td>
+                          <td className="py-1.5 px-2 text-center">—</td>
+                          <td className="py-1.5 px-2 text-right">{r.totalVentasBs>0?fmtBs(r.totalVentasBs):'—'}</td>
+                          <td className="py-1.5 px-2 text-right">0,00</td>
+                          <td className="py-1.5 px-2 text-right">0,00</td>
+                          <td className="py-1.5 px-2 text-right">{r.baseImponibleBs>0?fmtBs(r.baseImponibleBs):'—'}</td>
+                          <td className="py-1.5 px-2 text-center font-bold">{r.alicuota}</td>
+                          <td className="py-1.5 px-2 text-right">{r.ivaBs>0?fmtBs(r.ivaBs):'—'}</td>
+                          <td className="py-1.5 px-2 text-right text-red-600">{r.ivaRetenidoDb>0?fmtBs(r.ivaRetenidoDb):'—'}</td>
+                          <td className="py-1.5 px-2 text-right text-green-600">{r.ivaRetenidoCr>0?fmtBs(r.ivaRetenidoCr):'—'}</td>
+                          <td className="py-1.5 px-2 font-bold text-orange-600">{r.nroFactAfecta||'—'}</td>
+                          <td className="py-1.5 px-2 font-bold">{r.nroComprobante||'—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-gray-800 text-white font-black">
+                        <td colSpan={10} className="py-2 px-2">TOTALES — {rows.length} registros</td>
+                        <td className="py-2 px-2 text-right">{fmtBs(totTotalVentas)}</td>
+                        <td className="py-2 px-2 text-right">0,00</td>
+                        <td className="py-2 px-2 text-right">0,00</td>
+                        <td className="py-2 px-2 text-right">{fmtBs(totBase)}</td>
+                        <td></td>
+                        <td className="py-2 px-2 text-right">{fmtBs(totIva)}</td>
+                        <td className="py-2 px-2 text-right text-red-300">{fmtBs(totRetDb)}</td>
+                        <td colSpan={3}></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              {/* ── MODAL REGISTRO RETENCIÓN ── */}
+              {showRetModal && (()=>{
+                const factOpc = (invoices||[]).filter(inv=>inv.nroFiscal||inv.documento).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+                const selFact = factOpc.find(i=>i.id===retForm.facturaId||i.documento===retForm.facturaId);
+                const tasa = selFact ? parseNum(selFact.tasa||0)||parseNum(settings?.tasaBCV||0)||1 : 1;
+                const baseUsd = selFact ? parseNum(selFact.montoBase||0) : 0;
+                const ivaUsd = selFact ? (parseNum(selFact.iva||0)||(selFact.aplicaIva==='SI'?parseFloat((baseUsd*0.16).toFixed(2)):0)) : 0;
+                const pct = parseNum(retForm.porcentaje||75)/100;
+                const retMontoUsd = ivaUsd*pct;
+                const retMontoBs = retMontoUsd*tasa;
+                return (
+                  <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h3 className="font-black text-lg text-blue-800">📋 Registrar Retención de IVA</h3>
+                        <button onClick={()=>setShowRetModal(false)} className="text-gray-400 hover:text-gray-700 text-xl font-black">✕</button>
+                      </div>
+                      <div className="space-y-3">
+                        <div>
+                          <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Factura del cliente</label>
+                          <select value={retForm.facturaId} onChange={e=>setRetForm(f=>({...f,facturaId:e.target.value}))} className="w-full border-2 border-blue-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-blue-500">
+                            <option value="">— Seleccionar factura —</option>
+                            {factOpc.map(inv=>(<option key={inv.id} value={inv.id}>{inv.nroFiscal||inv.documento} · {inv.clientName} · {inv.fecha}</option>))}
+                          </select>
+                        </div>
+                        {selFact && <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs space-y-1">
+                          <div><span className="font-black">Cliente:</span> {selFact.clientName}</div>
+                          <div><span className="font-black">RIF:</span> {selFact.clientRif}</div>
+                          <div><span className="font-black">N° Fiscal:</span> {selFact.nroFiscal||'—'} &nbsp;|&nbsp; <span className="font-black">N° Control:</span> {selFact.nroControl||'—'}</div>
+                          <div><span className="font-black">IVA factura:</span> ${formatNum(ivaUsd)} USD / {formatNum(ivaUsd*tasa)} Bs.</div>
+                        </div>}
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">% Retención</label>
+                            <select value={retForm.porcentaje} onChange={e=>setRetForm(f=>({...f,porcentaje:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500">
+                              <option value="75">75%</option><option value="100">100%</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Quincena</label>
+                            <select value={retForm.quincena} onChange={e=>setRetForm(f=>({...f,quincena:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500">
+                              <option value="1">I Quincena (01-15)</option><option value="2">II Quincena (16-{lastDay})</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">N° Comprobante retención</label>
+                            <input value={retForm.nroRetencion} onChange={e=>setRetForm(f=>({...f,nroRetencion:e.target.value}))} placeholder="00002986" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Fecha comprobante</label>
+                            <input type="date" value={retForm.fechaComprobante} onChange={e=>setRetForm(f=>({...f,fechaComprobante:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
+                          </div>
+                        </div>
+                        {selFact && retForm.nroRetencion && <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-3 text-xs font-bold">
+                          <span className="text-yellow-800">IVA retenido ({retForm.porcentaje}%):</span>
+                          <span className="ml-2 text-yellow-900 font-black">${formatNum(retMontoUsd)} USD / {formatNum(retMontoBs)} Bs.</span>
+                        </div>}
+                      </div>
+                      <div className="flex gap-3 pt-2">
+                        <button onClick={()=>setShowRetModal(false)} className="flex-1 py-2.5 border-2 border-gray-200 rounded-xl font-black text-xs text-gray-600 hover:bg-gray-100">Cancelar</button>
+                        <button onClick={handleSaveRetencion} className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs hover:bg-blue-700">✅ Guardar Retención</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        })()}
+
+
         {ventasView === 'requisiciones' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
              <div className="px-8 py-5 border-b bg-white flex flex-wrap gap-3 justify-between items-center">
@@ -11995,7 +12290,7 @@ Se devolverá el inventario descontado y quedará marcada como ANULADA (no se el
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Año</label>
                     <select value={reqFiltAnio} onChange={e=>{setReqFiltAnio(e.target.value);setReqPagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
                       <option value="">Todos</option>
-                      {[...new Set((requirements||[]).map(r=>(r.fecha||'').substring(0,4)).filter(Boolean))].sort().reverse().map(y=>(<option key={y} value={y}>{y}</option>))}
+                      {reqAnios.map(y=>(<option key={y} value={y}>{y}</option>))}
                     </select></div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mes</label>
                     <select value={reqFiltMes} onChange={e=>{setReqFiltMes(e.target.value);setReqPagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
@@ -21431,6 +21726,7 @@ Se devolverá el inventario descontado y quedará marcada como ANULADA (no se el
                    {id:'productos_vendidos', icon:<Package size={16}/>,  label:'Productos Vendidos',perm:'ventas_productos_vendidos'},
                    {id:'reporte_ventas',     icon:<BarChart3 size={16}/>, label:'Reporte Ventas',    perm:'ventas_facturacion'},
                    {id:'transacciones_ventas',icon:<BarChart3 size={16}/>,label:'Transacciones',    perm:'ventas_facturacion'},
+                    {id:'libro_ventas',        icon:<BookOpen size={16}/>, label:'Libro Ventas',   perm:'ventas_facturacion'},
                    {id:'comisiones',         icon:<DollarSign size={16}/>, label:'Comisiones',       perm:'ventas_facturacion'},
                    {id:'vendedores',          icon:<Users size={16}/>,      label:'Vendedores',        perm:'ventas_facturacion'},
                  ].filter(t=>hasPerm(t.perm)||hasPerm('ventas')||appUser?.role==='Master').map(t => (
