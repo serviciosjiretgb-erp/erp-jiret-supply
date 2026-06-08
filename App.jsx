@@ -948,7 +948,7 @@ export default function App() {
     };
 
     for (const cat of sortedCats) {
-      if (cat === 'Productos Terminados') continue; // se añade en sección propia al final
+      if (cat === 'Productos Terminados' || cat.toUpperCase().includes('FLEJE')) continue; // se añade en sección PT al final
       const items = catGroups[cat] || [];
       if (items.length === 0) continue;
       html += sectionHeader(`📦 ${cat.toUpperCase()} (${items.length} artículo${items.length!==1?'s':''})`, catColors[cat]||'#374151');
@@ -978,7 +978,7 @@ export default function App() {
     // ── PRODUCTOS TERMINADOS — por subcategoría, código limpio ──
     // Consolidate inventory PT items by clean code
     const ptByCodeExcel = {};
-    inventory.filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i => {
+    inventory.filter(i=>(i.category==='Productos Terminados'||(i.category||'').toUpperCase().includes('FLEJE')||(i.displayId||(i.id||'').split('___')[0]||'').toUpperCase().startsWith('FLJ-'))&&i.activo!==false).forEach(i => {
       // Strip all suffixes and get the canonical clean code
       const rawId = i.displayId||(i.id||'').split('___')[0];
       let cleanCode = rawId
@@ -5713,7 +5713,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       // FIX 3: inventory PT items are now shown within bolsas/termos via allFG merge
       // Include inventory PT items converted to FG format
       // Include Productos Terminados AND Fleje/Flejes categories
-      const isPTCategory = i => i.category === 'Productos Terminados' || (i.category||'').toUpperCase().includes('FLEJE') || (i.subcategory||'').toUpperCase().includes('FLEJE');
+      const isPTCategory = i => i.category === 'Productos Terminados' || (i.category||'').toUpperCase().includes('FLEJE') || (i.subcategory||'').toUpperCase().includes('FLEJE') || (i.displayId||(i.id||'').split('___')[0]||'').toUpperCase().startsWith('FLJ-');
       const invPTForView = (inventory||[]).filter(i => isPTCategory(i) && parseNum(i.stock) > 0).map(i => {
         const unitUp = (i.unit||'').toUpperCase();
         const isKG = unitUp === 'KG';
@@ -6135,7 +6135,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 });
 
               // FIX 3: Also add inventory items with category='Productos Terminados' — ALL items including stock=0
-              (inventory||[]).filter(i => i.category === 'Productos Terminados' || (i.category||'').toUpperCase().includes('FLEJE')).forEach(i => {
+              (inventory||[]).filter(i => i.category === 'Productos Terminados' || (i.category||'').toUpperCase().includes('FLEJE')||(i.displayId||(i.id||'').split('___')[0]||'').toUpperCase().startsWith('FLJ-')).forEach(i => {
                 const cleanId = i.displayId || (i.id||'').split('___')[0];
                 // Deduplicate by cleanId across warehouses (sum stock for same product)
                 const esTermo = (i.unit||'').toUpperCase() === 'KG';
@@ -6985,7 +6985,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             {(() => {
               // Consolidate inventory PT items by clean code (strip ___ALMACEN suffix)
               const ptByCode = {};
-              inventory.filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i => {
+              inventory.filter(i=>(i.category==='Productos Terminados'||(i.category||'').toUpperCase().includes('FLEJE')||(i.displayId||(i.id||'').split('___')[0]||'').toUpperCase().startsWith('FLJ-'))&&i.activo!==false).forEach(i => {
                 const rawId = i.displayId||(i.id||'').split('___')[0];
                 const cleanCode = rawId.replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
                 if(!cleanCode) return;
@@ -8746,7 +8746,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 fgByDesc[key].salesQty += periodSales.reduce((s,m)=>s+parseNum(m.qty),0);
               });
               // Also include inventory items with category='Productos Terminados' (imported goods)
-              (inventory||[]).filter(i => i.category === 'Productos Terminados' || (i.category||'').toUpperCase().includes('FLEJE')).forEach(i => {
+              (inventory||[]).filter(i => i.category === 'Productos Terminados' || (i.category||'').toUpperCase().includes('FLEJE')||(i.displayId||(i.id||'').split('___')[0]||'').toUpperCase().startsWith('FLJ-')).forEach(i => {
                 const cleanId = i.displayId || (i.id||'').split('___')[0];
                 const desc = i.desc || cleanId;
                 const stk = parseNum(i.stock||0);
@@ -8783,7 +8783,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               });
 
               // Agregar ítems de inventory con category === 'Productos Terminados'
-              const invPT = inventory.filter(item => item.category === 'Productos Terminados' || (item.category||'').toUpperCase().includes('FLEJE'));
+              const invPT = inventory.filter(item => item.category === 'Productos Terminados' || (item.category||'').toUpperCase().includes('FLEJE') || (item.displayId||(item.id||'').split('___')[0]||'').toUpperCase().startsWith('FLJ-'));
               invPT.forEach(item => {
                 const allItemMovs2 = (invMovements||[]).filter(m=>m.itemId===item.id);
                 const histBefore2 = allItemMovs2.filter(m=>new Date(`${m.date}T00:00:00`)<startOfMonth);
@@ -11116,7 +11116,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           if(neForm!==null) {
             const form=neForm; const setForm=setNeForm;
             // Buscar en Productos Terminados + deduplicar por código (un producto puede tener varios registros/almacén)
-            const invPTAll = (inventory||[]).filter(i => i.activo!==false && (i.category==='Productos Terminados'||i.category==='Terminados'||(i.category||'').toUpperCase().includes('FLEJE')||(i.subcategory||'').toUpperCase().includes('FLEJE')));
+            const invPTAll = (inventory||[]).filter(i => i.activo!==false && (i.category==='Productos Terminados'||i.category==='Terminados'||(i.category||'').toUpperCase().includes('FLEJE')||(i.subcategory||'').toUpperCase().includes('FLEJE')||(i.displayId||(i.id||'').split('___')[0]||'').toUpperCase().startsWith('FLJ-')));
             const invResults2 = neInvSearch.length>0 ? (()=>{
               const q = neInvSearch.toUpperCase();
               const matched = invPTAll.filter(i =>
@@ -12297,14 +12297,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               nroComprobante:ret.nroRetencion||'',retId:ret.id});
           });
 
-          // ── Agrupar facturas con mismo nroFiscal ─────────────────────────────────
+          // ── Una fila por documento único (invId es el ID de Firebase, único por factura)
           const rowsMap = {};
           rows.forEach(r => {
-            const key = (r.tipo==='FACTURA' && r.nroFactura) ? `FAC-${r.nroFactura}` : `${r.tipo}-${r.fecha}-${r.seq}`;
+            // Clave: para FACTURAS usar el ID de Firebase (único), para otros usar seq+tipo
+            const key = (r.tipo==='FACTURA' && r.invId) ? `FAC-${r.invId}` : `${r.tipo}-${r.fecha}-${r.nroComprobante||r.seq}`;
             if (!rowsMap[key]) {
               rowsMap[key] = {...r};
             } else {
-              // Sumar montos (misma factura con múltiples ítems)
+              // Solo sumar si es MISMO documento (mismo invId, distintos ítems NE)
               rowsMap[key].totalVentasBs += r.totalVentasBs;
               rowsMap[key].baseImponibleBs += r.baseImponibleBs;
               rowsMap[key].ivaBs += r.ivaBs;
@@ -12350,101 +12351,231 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // ── Excel con membrete ────────────────────────────────────────────────
           const exportExcel=()=>{
-            const pNum=(s,l=8)=>String(s||'').trim()?String(s).padStart(l,'0'):'—';
-            const fV=n=>{if(!n&&n!==0)return'—';const p=Math.abs(parseNum(n)).toFixed(2).split('.');return(n<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1];};
+            // ── Helpers ────────────────────────────────────────────────────────
+            const num = v => (parseNum(v)||0);                    // raw number
+            const rawFact = s => String(s||'').replace(/^0+/,'') || '';   // 3014 (sin ceros)
+            const ctrl = s => {                                   // 00-003109
+              const c = String(s||'').trim();
+              if(!c) return '';
+              if(c.includes('-')) return c;
+              return c.length>2 ? `${c.slice(0,2)}-${c.slice(2)}` : c;
+            };
+            const fV = n => {                                     // 3.354.362,74 (formato VEN)
+              if(!n&&n!==0)return'';
+              const p=Math.abs(parseNum(n)).toFixed(2).split('.');
+              return(n<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1];
+            };
+            const dateFmt = d => {
+              if(!d) return '';
+              const parts = String(d).split('-');
+              if(parts.length===3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+              return d;
+            };
 
-            // Totales para resumen
-            const totVG=rows.filter(r=>r.tipo==='FACTURA'&&r.alicuota==='16%').reduce((s,r)=>s+r.baseImponibleBs,0);
-            const totIVAD=rows.filter(r=>r.tipo==='FACTURA').reduce((s,r)=>s+r.ivaBs,0);
-            const totVB=rows.filter(r=>r.tipo==='FACTURA').reduce((s,r)=>s+r.totalVentasBs,0);
-            const retPer=rows.filter(r=>r.tipo==='RETENCION').reduce((s,r)=>s+r.ivaRetDb,0);
-            const retAc=parseNum(libroRetAcum||0);
-            const retDe=parseNum(libroRetDesc||0);
-            const totRet=retAc+retPer;
-            const saldo=totRet-retDe;
-            const islr=parseFloat((totVG*0.01).toFixed(2));
-            const iae=parseFloat((totVB*0.01).toFixed(2));
+            // ── Totales ────────────────────────────────────────────────────────
+            const totVG  = rows.filter(r=>r.tipo==='FACTURA'&&r.alicuota==='16%').reduce((s,r)=>s+r.baseImponibleBs,0);
+            const totIVAD= rows.filter(r=>r.tipo==='FACTURA').reduce((s,r)=>s+r.ivaBs,0);
+            const totVBrt= rows.filter(r=>r.tipo==='FACTURA').reduce((s,r)=>s+r.totalVentasBs,0);
+            const retPer = rows.filter(r=>r.tipo==='RETENCION').reduce((s,r)=>s+r.ivaRetDb,0);
+            const retAc  = parseNum(libroRetAcum||0);
+            const retDe  = parseNum(libroRetDesc||0);
+            const totRet = retAc+retPer;
+            const saldo  = totRet-retDe;
+            const islr   = parseFloat((totVG*0.01).toFixed(2));
+            const iae    = parseFloat((totVBrt*0.01).toFixed(2));
 
-            const ths=['Nº','Fecha','N° RIF','Razón Social','Tipo Transacción','N° Factura','N° Control','N° Débito','N° Crédito','Fact. Afectada','Valor Total Bs.','IGTF','No Gravable','Base Imponible','% Alíc.','IVA 16%','IVA Retenido','Fact. que Afecta','N° Comprobante'];
-            const dataRows=rows.map(r=>[
-              r.seq,r.fecha,r.rif,r.nombre,r.tipo,
-              pNum(r.nroFactura,8),pNum(r.nroControl,8)||'—',
-              r.tipo==='ND'?pNum(r.nroFactura,8):'—',
-              r.tipo==='NC'?pNum(r.nroFactura,8):'—',
-              r.facAfectada?pNum(r.facAfectada,8):'—',
-              r.totalVentasBs!==0?fV(r.totalVentasBs):'—','0,00','0,00',
-              r.baseImponibleBs!==0?fV(r.baseImponibleBs):'—',
-              r.alicuota,
-              r.ivaBs>0?fV(r.ivaBs):'—',
-              r.ivaRetDb>0?fV(r.ivaRetDb):'—',
-              r.nroFactAfecta?pNum(r.nroFactAfecta,8):'—',
-              r.nroComprobante||'—'
-            ]);
+            // ── HTML del libro (formato modelo LVENTAS) ────────────────────────
+            const th = (txt,bg='#1f2937',color='#fff',w='',align='center',colspan=1,rowspan=1) =>
+              `<th colspan="${colspan}" rowspan="${rowspan}" style="background:${bg};color:${color};font-weight:900;font-size:7.5px;padding:3px 4px;border:1px solid #555;text-align:${align};vertical-align:middle;white-space:nowrap;${w?`width:${w};`:''}mso-number-format:'@'">${txt}</th>`;
+            const td = (txt,align='left',color='',bold='',bg='',colspan=1) =>
+              `<td colspan="${colspan}" style="padding:2px 4px;border:1px solid #d1d5db;font-size:7.5px;text-align:${align};color:${color||'inherit'};font-weight:${bold||'normal'};background:${bg||'transparent'};vertical-align:middle;mso-number-format:'@'">${txt}</td>`;
+            const tdN = (n,bold='',color='') =>
+              `<td style="padding:2px 4px;border:1px solid #d1d5db;font-size:7.5px;text-align:right;color:${color||'inherit'};font-weight:${bold||'normal'};vertical-align:middle;mso-number-format:Comma">${n!==0&&n!==''?fV(n):''}</td>`;
 
-            const numCols = [10,11,12,13,15,16]; // columnas numéricas (0-indexed)
-            const rH=dataRows.map((row,ri)=>'<tr style="background:'+(ri%2?'#f9fafb':'#fff')+'">'
-              +row.map((c,ci)=>`<td style="padding:3px 5px;border:1px solid #d1d5db;font-size:8px;${numCols.includes(ci)?'text-align:right;':''}${ci===4?(c==='FACTURA'?'background:#f0fdf4;':'background:#fefce8;'):''}${ci===5?'color:#1d4ed8;font-weight:bold;':''}">${c}</td>`).join('')+'</tr>').join('');
+            // Membrete (filas 1-7)
+            const colWidths='<colgroup><col style="width:8px"/><col style="width:30px"/><col style="width:70px"/><col style="width:80px"/><col style="width:180px"/><col style="width:70px"/><col style="width:55px"/><col style="width:65px"/><col style="width:45px"/><col style="width:45px"/><col style="width:55px"/><col style="width:80px"/><col style="width:45px"/><col style="width:60px"/><col style="width:80px"/><col style="width:40px"/><col style="width:70px"/><col style="width:70px"/><col style="width:60px"/><col style="width:80px"/></colgroup>';
+            const nc=20; // número de columnas
+            const blk=`<td style="border:none"></td>`;
+            const periodoStr=libroQuincena==='AMBAS'?'MES COMPLETO':(libroQuincena==='1'?'I QUINCENA':'II QUINCENA');
+            const desdeStr=periodoDesde.split('-').reverse().join('/');
+            const hastaStr=periodoHasta.split('-').reverse().join('/');
 
-            const totRow=`<tr style="background:#1f2937;color:#fff;font-weight:900">
-              <td colspan="10" style="padding:4px 5px;font-size:8px;border:1px solid #374151">TOTALES — ${rows.length} reg.</td>
-              <td style="padding:4px 5px;font-size:8px;text-align:right;border:1px solid #374151">${fV(totTV)}</td>
-              <td style="padding:4px 5px;font-size:8px;border:1px solid #374151">0,00</td>
-              <td style="padding:4px 5px;font-size:8px;border:1px solid #374151">0,00</td>
-              <td style="padding:4px 5px;font-size:8px;text-align:right;border:1px solid #374151;font-weight:bold">${fV(totBase)}</td>
-              <td style="border:1px solid #374151"></td>
-              <td style="padding:4px 5px;font-size:8px;text-align:right;border:1px solid #374151">${fV(totIva)}</td>
-              <td style="padding:4px 5px;font-size:8px;text-align:right;border:1px solid #374151;color:#fca5a5">${fV(totRetDb)}</td>
-              <td colspan="2" style="border:1px solid #374151"></td>
-            </tr>`;
-
-            const resumen=`
-<tr><td colspan="${ths.length}" style="padding:0"></td></tr>
-<tr><td colspan="${ths.length}" style="padding:8px 6px;background:#1f2937;color:#fff;font-size:10px;font-weight:900">RESUMEN DEL LIBRO DE VENTAS — ${mesLabel.toUpperCase()} ${libroAnio} — ${libroQuincena==='AMBAS'?'MES COMPLETO':libroQuincena==='1'?'I QUINCENA':'II QUINCENA'}</td></tr>
-<tr><td colspan="2" style="padding:5px 6px;background:#374151;color:#fff;font-size:9px;font-weight:900">DÉBITOS FISCALES</td><td colspan="2" style="padding:5px 6px;background:#374151;color:#fff;font-size:9px;font-weight:900">AUTOLIQUIDACIÓN</td><td colspan="${ths.length-4}" style="padding:5px 6px;background:#374151;color:#fff;font-size:9px;font-weight:900">OTROS IMPUESTOS</td></tr>
-<tr>
-  <td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px">Ventas internas no gravadas</td><td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right">0,00</td>
-  <td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px">Retenciones acumuladas por descontar</td><td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right">${fV(retAc)}</td>
-  <td colspan="2" style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px">Anticipo ISLR (1% × Base Imponible)</td><td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold;color:#1d4ed8">${fV(islr)}</td><td colspan="${ths.length-7}" style="border:1px solid #d1d5db"></td>
+            const membrete=`
+<tr style="height:20px">
+  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
+  <td colspan="3" style="font-weight:900;font-size:9px;text-align:center;vertical-align:middle;background:#1f2937;color:#fff;padding:4px">IMPUESTO AL VALOR AGREGADO</td>
 </tr>
-<tr>
-  <td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px">Ventas gravadas 16%</td><td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold">${fV(totVG)}</td>
-  <td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px">Retenciones del Período</td><td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold">${fV(retPer)}</td>
-  <td colspan="2" style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px">I.A.E. (1% × Ventas Brutas)</td><td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold;color:#1d4ed8">${fV(iae)}</td><td colspan="${ths.length-7}" style="border:1px solid #d1d5db"></td>
+<tr style="height:18px">
+  ${blk}${blk}${blk}${blk}
+  <td style="font-weight:900;font-size:9px;padding:2px 4px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</td>
+  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
+  <td colspan="3" style="font-size:8px;text-align:center;padding:2px 4px;border:1px solid #ddd">FORMA 99030</td>
 </tr>
-<tr>
-  <td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px;font-weight:bold;background:#f9fafb">Total Débitos Fiscales</td><td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold;background:#f9fafb">${fV(totIVAD)}</td>
-  <td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px">Total Retenciones</td><td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold">${fV(totRet)}</td>
-  <td colspan="${ths.length-4}" style="border:1px solid #d1d5db"></td>
+<tr style="height:16px">
+  ${blk}${blk}${blk}${blk}
+  <td style="font-size:8px;padding:2px 4px">RIF: ${settings?.empresaRIF||'J-412309374'}</td>
+  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
 </tr>
-<tr>
-  <td colspan="2" style="border:1px solid #d1d5db"></td>
-  <td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px">Ret. descontadas en esta declaración</td><td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right">${fV(retDe)}</td>
-  <td colspan="${ths.length-4}" style="border:1px solid #d1d5db"></td>
+<tr style="height:16px">
+  ${blk}${blk}${blk}${blk}
+  <td style="font-size:7.5px;padding:2px 4px">${settings?.empresaDireccion||''}</td>
+  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
+  <td style="font-size:8px;font-weight:900;text-align:center;background:#f3f4f6;padding:2px 4px;border:1px solid #ddd">MES</td>
+  <td style="font-size:8px;font-weight:900;text-align:center;padding:2px 4px;border:1px solid #ddd">${mesLabel.toUpperCase()}</td>
+  ${blk}
 </tr>
-<tr>
-  <td colspan="2" style="border:1px solid #d1d5db"></td>
-  <td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px;font-weight:bold;background:#fef3c7">Saldo Ret. IVA no aplicado</td><td style="padding:4px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold;background:#fef3c7">${fV(saldo)}</td>
-  <td colspan="${ths.length-4}" style="border:1px solid #d1d5db"></td>
+<tr style="height:16px">
+  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
+  <td colspan="3" style="font-size:8px;font-weight:900;text-align:center;background:#374151;color:#fff;padding:2px 4px">PERIODO: ${periodoStr}</td>
+</tr>
+<tr style="height:16px">
+  ${blk}${blk}${blk}${blk}
+  <td style="font-size:9px;font-weight:900;text-decoration:underline;padding:2px 4px">LIBRO DE VENTAS</td>
+  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
+  <td colspan="3" style="font-size:7.5px;text-align:center;padding:2px 4px;border:1px solid #ddd">DEL ${desdeStr} AL ${hastaStr}</td>
+</tr>
+<tr style="height:12px">
+  ${blk}${blk}${blk}${blk}
+  <td colspan="8" style="font-size:7px;text-align:center;padding:2px;border:1px solid #ddd">Ventas internas o Exportaciones</td>
+  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
 </tr>`;
 
-            const membrete=`<tr><td colspan="${ths.length}" style="padding:10px 6px;background:#fff;border-bottom:3px solid #f97316">
-              <table width="100%"><tr>
-                <td style="font-weight:900;font-size:13px;font-family:Arial">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</td>
-                <td style="text-align:right;font-size:9px;font-family:Arial">
-                  <b>IMPUESTO AL VALOR AGREGADO · FORMA 99030</b><br/>
-                  RIF: ${settings?.empresaRIF||'J-412309374'}<br/>
-                  <b>LIBRO DE VENTAS</b> — ${mesLabel.toUpperCase()} ${libroAnio} — ${libroQuincena==='AMBAS'?'MES COMPLETO':libroQuincena==='1'?'I QUINCENA':'II QUINCENA'}<br/>
-                  Del ${periodoDesde.split('-').reverse().join('/')} al ${periodoHasta.split('-').reverse().join('/')}
-                </td>
-              </tr></table>
-            </td></tr>`;
+            // Headers (fila 8 y 9 del modelo)
+            const hdrs=`
+<tr style="background:#1f2937;color:#fff">
+  ${th('')}${th('Nº','#1f2937','#fff','30px')}${th('Fecha','#1f2937','#fff','70px')}${th('Nº R.I.F.','#1f2937','#fff','80px')}
+  ${th('Nombre y Apellido o Razón Social','#1f2937','#fff','180px','left')}
+  ${th('Tipo de Transacción','#1f2937','#fff','70px')}
+  ${th('N° de Factura','#1f2937','#fff','55px')}
+  ${th('N° Control de Factura','#1f2937','#fff','65px')}
+  ${th('N° Nota de Débito','#1f2937','#fff','45px')}
+  ${th('N° Nota de Crédito','#1f2937','#fff','45px')}
+  ${th('Nº Factura Afectada','#1f2937','#fff','55px')}
+  ${th('Valor Total de Ventas','#1f2937','#fff','80px','right')}
+  ${th('Igtf Percibido','#1f2937','#fff','45px','right')}
+  ${th('Ventas internas no gravables','#1f2937','#fff','60px','right')}
+  ${th('Base Imponible','#1f2937','#fff','80px','right')}
+  ${th('%  Alicuota','#1f2937','#fff','40px','right')}
+  ${th('Impuesto I.V.A (16%)','#1f2937','#fff','70px','right')}
+  ${th('IVA Retenido','#1f2937','#fff','70px','right')}
+  ${th('N° Factura que afecta','#1f2937','#fff','60px')}
+  ${th('N° Comprobante de retención','#1f2937','#fff','80px')}
+</tr>
+<tr style="background:#374151;color:#fff">
+  ${th('')}${th('')}${th('Documento','#374151','#fff')}${th('o C.I.','#374151','#fff')}
+  ${th('','#374151')}${th('','#374151')}${th('','#374151')}${th('','#374151')}
+  ${th('Débito','#374151','#fff')}${th('Crédito','#374151','#fff')}${th('Afectada','#374151','#fff')}
+  ${th('','#374151')}${th('','#374151')}${th('','#374151')}${th('','#374151')}
+  ${th('','#374151')}${th('','#374151')}${th('','#374151')}${th('','#374151')}${th('','#374151')}
+</tr>`;
 
-            const thsHtml='<tr style="background:#1f2937;color:#fff">'+ths.map(h=>`<th style="padding:5px 4px;font-size:8px;font-family:Arial;text-align:center;border:1px solid #374151;white-space:nowrap">${h}</th>`).join('')+'</tr>';
+            // Filas de datos
+            const dataRows = rows.map((r,i)=>{
+              const isNC = r.tipo==='NC';
+              const isND = r.tipo==='ND';
+              const isRET= r.tipo==='RETENCION';
+              const rowBg= isRET?'#fefce8':isNC||isND?'#f5f3ff':(i%2?'#f9fafb':'#fff');
+              const nFact = rawFact(r.nroFactura);   // sin ceros: 3014
+              return `<tr style="background:${rowBg}">
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7px"></td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center">${isRET||isNC?'':r.seq||''}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px">${dateFmt(r.fecha)}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px">${r.rif}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:left">${r.nombre}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center;font-weight:bold;background:${r.tipo==='FACTURA'?'#f0fdf4':isRET?'#fef3c7':'#ede9fe'}">${r.tipo}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center;color:#1d4ed8;font-weight:bold">${isRET?'':nFact}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center">${isRET?'':ctrl(r.nroControl)||'-'}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center">${isND?nFact:'-'}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center">${isNC?nFact:'-'}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center">${r.facAfectada?rawFact(r.facAfectada):'-'}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right">${isRET?fV(0):fV(r.totalVentasBs)}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right">0</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right">0</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right;font-weight:bold">${isRET?fV(0):fV(r.baseImponibleBs)}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right">${isRET?'0,75':r.alicuota==='16%'?'0,16':r.alicuota==='0%'?'0':'0,16'}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right">${isRET?fV(0):fV(r.ivaBs)}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right;color:#dc2626;font-weight:bold">${r.ivaRetDb>0?fV(r.ivaRetDb):''}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center;color:#ea580c">${r.nroFactAfecta?rawFact(r.nroFactAfecta):isRET?String(r.nroFactAfecta||'').replace(/^0+/,'')||'':''}</td>
+  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px">${r.nroComprobante||''}</td>
+</tr>`;
+            }).join('');
 
-            const html=`<html><head><meta charset="utf-8"><style>*{font-family:Arial,sans-serif}table{border-collapse:collapse;width:100%}body{padding:8px}</style></head><body><table><tbody>${membrete}${thsHtml}${rH}${totRow}${resumen}</tbody></table></body></html>`;
-            const blob=new Blob([html],{type:'application/vnd.ms-excel;charset=utf-8'});
+            // Fila de totales
+            const totRow=`<tr style="background:#1f2937;color:#fff;font-weight:900">
+  <td style="padding:3px 4px;font-size:8px;border:1px solid #374151"></td>
+  <td colspan="10" style="padding:3px 4px;font-size:8px;border:1px solid #374151">TOTALES — ${rows.length} operaciones</td>
+  <td style="padding:3px 4px;font-size:8px;text-align:right;border:1px solid #374151">${fV(totTV)}</td>
+  <td style="padding:3px 4px;font-size:8px;text-align:right;border:1px solid #374151">${fV(0)}</td>
+  <td style="padding:3px 4px;font-size:8px;text-align:right;border:1px solid #374151">${fV(0)}</td>
+  <td style="padding:3px 4px;font-size:8px;text-align:right;border:1px solid #374151;font-weight:900">${fV(totBase)}</td>
+  <td style="padding:3px 4px;font-size:8px;border:1px solid #374151"></td>
+  <td style="padding:3px 4px;font-size:8px;text-align:right;border:1px solid #374151">${fV(totIva)}</td>
+  <td style="padding:3px 4px;font-size:8px;text-align:right;border:1px solid #374151;color:#fca5a5">${fV(totRetDb)}</td>
+  <td colspan="2" style="padding:3px 4px;font-size:8px;border:1px solid #374151"></td>
+</tr>`;
+
+            // Resumen al final
+            const resumen=`
+<tr><td colspan="${nc}" style="padding:6px;border:none"></td></tr>
+<tr>
+  <td colspan="${nc}" style="padding:5px 6px;background:#1f2937;color:#fff;font-size:9px;font-weight:900;border:1px solid #374151">
+    RESUMEN DEL LIBRO DE VENTAS — ${mesLabel.toUpperCase()} ${libroAnio} — ${periodoStr}
+  </td>
+</tr>
+<tr>
+  <td colspan="5" style="padding:4px 6px;background:#374151;color:#fff;font-size:8px;font-weight:900;border:1px solid #555">DÉBITOS FISCALES</td>
+  <td colspan="8" style="padding:4px 6px;background:#374151;color:#fff;font-size:8px;font-weight:900;border:1px solid #555">AUTOLIQUIDACIÓN</td>
+  <td colspan="7" style="padding:4px 6px;background:#374151;color:#fff;font-size:8px;font-weight:900;border:1px solid #555">OTROS IMPUESTOS</td>
+</tr>
+<tr>
+  <td colspan="4" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Ventas internas no gravadas</td><td style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right">${fV(0)}</td>
+  <td colspan="3" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Retenciones acumuladas por descontar</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right">${fV(retAc)}</td>
+  <td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Anticipo ISLR (1% × Base)</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold;color:#1d4ed8">${fV(islr)}</td>
+  <td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">I.A.E. (1% × Ventas Brutas)</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold;color:#1d4ed8">${fV(iae)}</td>
+  <td style="border:1px solid #d1d5db"></td>
+</tr>
+<tr>
+  <td colspan="4" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Ventas gravadas alícuota 16%</td><td style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold">${fV(totVG)}</td>
+  <td colspan="3" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Retenciones del Período</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold">${fV(retPer)}</td>
+  <td colspan="4" style="border:1px solid #d1d5db"></td><td colspan="2" style="border:1px solid #d1d5db"></td><td style="border:1px solid #d1d5db"></td>
+</tr>
+<tr>
+  <td colspan="4" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;font-weight:bold;background:#f9fafb">Total Débitos Fiscales</td><td style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:900;background:#f9fafb">${fV(totIVAD)}</td>
+  <td colspan="3" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Total Retenciones</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold">${fV(totRet)}</td>
+  <td colspan="4" style="border:1px solid #d1d5db"></td><td colspan="2" style="border:1px solid #d1d5db"></td><td style="border:1px solid #d1d5db"></td>
+</tr>
+<tr>
+  <td colspan="5" style="border:1px solid #d1d5db"></td>
+  <td colspan="3" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Ret. soportadas y descontadas</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right">${fV(retDe)}</td>
+  <td colspan="${nc-10}" style="border:1px solid #d1d5db"></td>
+</tr>
+<tr>
+  <td colspan="5" style="border:1px solid #d1d5db"></td>
+  <td colspan="3" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;font-weight:bold;background:#fef3c7">Saldo Retenciones IVA no aplicado</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:900;background:#fef3c7;color:#ea580c">${fV(saldo)}</td>
+  <td colspan="${nc-10}" style="border:1px solid #d1d5db"></td>
+</tr>`;
+
+            const html=`<html xmlns:x="urn:schemas-microsoft-com:office:excel">
+<head><meta charset="utf-8">
+<xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
+<x:Name>Libro de Ventas</x:Name>
+<x:WorksheetOptions><x:FitToPage/></x:WorksheetOptions>
+</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml>
+<style>
+  * { font-family: Arial, sans-serif; }
+  table { border-collapse: collapse; width: 100%; }
+  body { padding: 6px; }
+</style>
+</head><body>
+<table>${colWidths}<tbody>
+${membrete}${hdrs}${dataRows}${totRow}${resumen}
+</tbody></table>
+</body></html>`;
+
+            const blob=new Blob(['\ufeff'+html],{type:'application/vnd.ms-excel;charset=utf-8'});
             Object.assign(document.createElement('a'),{href:URL.createObjectURL(blob),download:`LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}.xls`}).click();
           };
+
 
           // ── PDF ───────────────────────────────────────────────────────────────
           const exportPDF=()=>{
