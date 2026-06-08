@@ -422,6 +422,12 @@ export default function App() {
   const [retenciones, setRetenciones] = useState([]);
   const [showRetModal, setShowRetModal] = useState(false);
   const [retBusqFact, setRetBusqFact] = useState('');
+  const [retFiltMes2, setRetFiltMes2] = useState('');
+  const [retFiltQ2, setRetFiltQ2] = useState('AMBAS');
+  const [retFiltCli2, setRetFiltCli2] = useState('');
+  const [retFiltComp2, setRetFiltComp2] = useState('');
+  const [retFiltFact2, setRetFiltFact2] = useState('');
+  const [retPage2, setRetPage2] = useState(0);
   // ── Ventas: Notas de Crédito / Débito ────────────────────────────────────────
   const [notasVentaCD, setNotasVentaCD] = useState([]);
   const [showVentaNCModal, setShowVentaNCModal] = useState(false);
@@ -11072,7 +11078,26 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 
           if(neForm!==null) {
             const form=neForm; const setForm=setNeForm;
-            const invResults2=neInvSearch.length>1?(inventory||[]).filter(i=>i.activo!==false&&((i.displayId||(i.id||'').split('___')[0])||'').toUpperCase().includes(neInvSearch.toUpperCase())||(i.desc||'').toUpperCase().includes(neInvSearch.toUpperCase())).slice(0,8):[];
+            // Buscar en Productos Terminados + deduplicar por código (un producto puede tener varios registros/almacén)
+            const invPTAll = (inventory||[]).filter(i => i.activo!==false && (i.category==='Productos Terminados'||i.category==='Terminados'||i.subCategory==='Terminados'));
+            const invResults2 = neInvSearch.length>0 ? (()=>{
+              const q = neInvSearch.toUpperCase();
+              const matched = invPTAll.filter(i =>
+                ((i.displayId||(i.id||'').split('___')[0])||'').toUpperCase().includes(q) ||
+                (i.desc||'').toUpperCase().includes(q) ||
+                (i.category||'').toUpperCase().includes(q) ||
+                (i.subCategory||'').toUpperCase().includes(q) ||
+                (i.codigo||'').toUpperCase().includes(q)
+              );
+              // Deduplicar por código (displayId)
+              const seen = new Set();
+              return matched.filter(i=>{
+                const code = i.displayId||(i.id||'').split('___')[0];
+                if(seen.has(code)) return false;
+                seen.add(code);
+                return true;
+              }).slice(0,12);
+            })() : [];
             const vendedoresList=(settings?.vendedores||[]);
             const clientResults=(form.neClientSearch||'').length>1?(clients||[]).filter(c=>(c.name||c.nombre||'').toUpperCase().includes((form.neClientSearch||'').toUpperCase())||(c.rif||'').includes(form.neClientSearch)).slice(0,8):[];
             const base=form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.precioUnit),0);
@@ -11130,23 +11155,29 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     <label className="text-[10px] font-black text-orange-600 uppercase block mb-2">Artículos</label>
                     <div className="relative mb-2">
                       <input value={neInvSearch} onChange={e=>{setNeInvSearch(e.target.value);setNeShowInvDrop(true);}} onFocus={()=>setNeShowInvDrop(true)} onBlur={()=>setTimeout(()=>setNeShowInvDrop(false),200)}
-                        className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs outline-none focus:border-orange-500" placeholder="Buscar artículo..."/>
+                        className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs outline-none focus:border-orange-500" placeholder="Buscar por código, nombre o categoría — Productos Terminados"/>
                       {neShowInvDrop&&invResults2.length>0&&(<div className="absolute z-50 w-full bg-white border-2 border-orange-300 rounded-xl mt-1 shadow-xl max-h-52 overflow-y-auto">
-                        {invResults2.map(i=>{const code=i.displayId||(i.id||'').split('___')[0];
-                          const allAlm=(inventory||[]).filter(inv=>(inv.displayId||(inv.id||'').split('___')[0])===code&&parseNum(inv.stock||0)>0);
-                          const stockStr=allAlm.length>0?allAlm.map(a=>`${(a.almacen||'ZI').replace('ALMACEN ','')}: ${formatNum(a.stock||0)} ${a.unit||''}`).join(' | '): `Total: ${formatNum(i.stock||0)} ${i.unit||''}`;
+                        {invResults2.map(i=>{
+                          const code=i.displayId||(i.id||'').split('___')[0];
+                          // Sumar stock de todos los almacenes para este producto
+                          const allAlm=(inventory||[]).filter(inv=>(inv.displayId||(inv.id||'').split('___')[0])===code);
+                          const totalStock=allAlm.reduce((s,a)=>s+parseNum(a.stock||0),0);
+                          const stockStr=allAlm.length>0?allAlm.map(a=>`${(a.almacen||'ZI').replace('ALMACEN ','')}: ${formatNum(parseNum(a.stock||0))} ${a.unit||i.unit||'und'}`).join(' | '):`Stock: ${formatNum(totalStock)}`;
+                          const cat=i.category||''; const sub=i.subCategory||'';
                           return(
-                          <button key={i.id} onMouseDown={()=>{
+                          <button key={code} onMouseDown={()=>{
                             // Inicializar warehouseQtys con todos los almacenes que tienen stock
-                            const allAlm2=(inventory||[]).filter(inv=>(inv.displayId||(inv.id||'').split('___')[0])===code&&parseNum(inv.stock||0)>0);
+                            const allAlm2=(inventory||[]).filter(inv=>(inv.displayId||(inv.id||'').split('___')[0])===code);
                             const wqty={};
                             allAlm2.forEach(a=>{ wqty[a.almacen||'ALMACEN ZI']=0; });
-                            setForm(f=>({...f,items:[...f.items,{invCode:code,desc:i.desc||'',cantidad:0,precioUnit:0,unit:i.unit||'und',costoUnit:parseNum(i.cost||0),warehouseQtys:wqty}]}));
+                            setForm(f=>({...f,items:[...f.items,{invCode:code,desc:i.desc||'',cantidad:0,precioUnit:0,costoUnit:parseNum(i.cost||0),unit:i.unit||'und',warehouseQtys:wqty}]}));
                             setNeInvSearch('');setNeShowInvDrop(false);
-                          }} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0">
-                            <span className="font-black text-orange-600">{code}</span> — {i.desc}
+                          }} className="w-full text-left px-3 py-2.5 hover:bg-orange-50 text-xs border-b last:border-0 transition-colors">
+                            <div><span className="font-black text-orange-600">{code}</span> <span className="text-gray-800 font-bold">— {i.desc}</span></div>
+                            {(cat||sub)&&<div className="text-[9px] text-purple-600 font-bold mt-0.5">{[cat,sub].filter(Boolean).join(' › ')}</div>}
                             <div className="text-[9px] text-gray-400 mt-0.5">📦 {stockStr}</div>
-                          </button>);})}
+                          </button>);
+                        })}
                       </div>)}
                     </div>
                     {form.items.length>0&&(
@@ -12178,7 +12209,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           // ── Período ───────────────────────────────────────────────────────────
           const mes2 = String(libroMes).padStart(2,'0');
           const lastDay = new Date(parseInt(libroAnio), parseInt(libroMes), 0).getDate();
-          const periodoDesde = libroQuincena==='1' ? `${libroAnio}-${mes2}-01` : `${libroAnio}-${mes2}-16`;
+          const periodoDesde = libroQuincena==='2' ? `${libroAnio}-${mes2}-16` : `${libroAnio}-${mes2}-01`;
           const periodoHasta = libroQuincena==='1' ? `${libroAnio}-${mes2}-15` : `${libroAnio}-${mes2}-${String(lastDay).padStart(2,'0')}`;
           const mesesLabel = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
           const mesLabel = mesesLabel[parseInt(libroMes,10)-1]||'';
@@ -12217,13 +12248,31 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           retPeriodo.forEach(ret=>{
             const inv=(invoices||[]).find(i=>i.id===ret.facturaId); if(!inv) return;
             const tasa=parseNum(inv.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-            const montoRet=parseNum(ret.montoRetenido||0)*tasa;
+            const montoRet=parseNum(ret.montoRetenido||0); // montoRetenido ya está en Bs.
             rows.push({seq:seq++,fecha:ret.fechaComprobante||'',rif:inv.clientRif||'',nombre:inv.clientName||'',
               tipo:'RETENCION',nroFactura:'',nroControl:'',
               totalVentasBs:0,baseImponibleBs:0,alicuota:`${ret.porcentaje||75}%`,
               ivaBs:0,ivaRetDb:montoRet,ivaRetCr:0,nroFactAfecta:padNum(inv.nroFiscal,8),
               nroComprobante:ret.nroRetencion||'',retId:ret.id});
           });
+
+          // ── Agrupar facturas con mismo nroFiscal ─────────────────────────────────
+          const rowsMap = {};
+          rows.forEach(r => {
+            const key = (r.tipo==='FACTURA' && r.nroFactura) ? `FAC-${r.nroFactura}` : `${r.tipo}-${r.fecha}-${r.seq}`;
+            if (!rowsMap[key]) {
+              rowsMap[key] = {...r};
+            } else {
+              // Sumar montos (misma factura con múltiples ítems)
+              rowsMap[key].totalVentasBs += r.totalVentasBs;
+              rowsMap[key].baseImponibleBs += r.baseImponibleBs;
+              rowsMap[key].ivaBs += r.ivaBs;
+              rowsMap[key].ivaRetDb += r.ivaRetDb;
+            }
+          });
+          // Reemplazar rows con agrupados
+          rows.length = 0;
+          Object.values(rowsMap).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).forEach((r,i)=>{r.seq=i+1;rows.push(r);});
 
           // NC/ND Fiscales → entran al libro (NC negativo, ND positivo)
           ncndFiscales.forEach(n=>{
@@ -12273,8 +12322,23 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 
           // ── PDF ───────────────────────────────────────────────────────────────
           const exportPDF=()=>{
-            const ths=['Nº','Fecha','RIF','Razón Social','Tipo','N° Factura','N° Control','Total Bs.','Base Imp.','% Alíc.','IVA 16%','IVA Retenido','N° Comp.'];
-            const rH=rows.map(r=>`<tr style="border-bottom:1px solid #eee"><td style="padding:3px 4px;font-size:7px;text-align:center">${r.seq}</td><td style="padding:3px 4px;font-size:7px">${r.fecha}</td><td style="padding:3px 4px;font-size:7px">${r.rif}</td><td style="padding:3px 4px;font-size:7px;max-width:90px;overflow:hidden">${r.nombre}</td><td style="padding:3px 4px;font-size:7px;text-align:center;background:${r.tipo==='FACTURA'?'#d1fae5':'#fef3c7'}">${r.tipo}</td><td style="padding:3px 4px;font-size:7px;text-align:center">${r.nroFactura||'—'}</td><td style="padding:3px 4px;font-size:7px;text-align:center">${r.nroControl||'—'}</td><td style="padding:3px 4px;font-size:7px;text-align:right">${r.totalVentasBs>0?fmtVen(r.totalVentasBs):'—'}</td><td style="padding:3px 4px;font-size:7px;text-align:right">${r.baseImponibleBs>0?fmtVen(r.baseImponibleBs):'—'}</td><td style="padding:3px 4px;font-size:7px;text-align:center">${r.alicuota}</td><td style="padding:3px 4px;font-size:7px;text-align:right">${r.ivaBs>0?fmtVen(r.ivaBs):'—'}</td><td style="padding:3px 4px;font-size:7px;text-align:right;color:#dc2626">${r.ivaRetDb>0?fmtVen(r.ivaRetDb):'—'}</td><td style="padding:3px 4px;font-size:7px">${r.nroComprobante||'—'}</td></tr>`).join('');
+            const ths=['Nº','Fecha','RIF','Razón Social','Tipo','N° Factura','N° Control','Total Bs.','Base Imp.','% Alíc.','IVA 16%','IVA Retenido','Fact. Afecta','N° Comp.'];
+            const rH=rows.map(r=>`<tr style="border-bottom:1px solid #eee;${r.tipo!=='FACTURA'?'background:#fefce8':''}">
+<td style="padding:3px 4px;font-size:7px;text-align:center">${r.seq}</td>
+<td style="padding:3px 4px;font-size:7px">${r.fecha}</td>
+<td style="padding:3px 4px;font-size:7px">${r.rif}</td>
+<td style="padding:3px 4px;font-size:7px">${r.nombre}</td>
+<td style="padding:3px 4px;font-size:7px;text-align:center;background:${r.tipo==='FACTURA'?'#d1fae5':r.tipo==='RETENCION'?'#fef3c7':'#ede9fe'};color:#111">${r.tipo}</td>
+<td style="padding:3px 4px;font-size:7px;text-align:center;color:#1d4ed8">${r.nroFactura||'—'}</td>
+<td style="padding:3px 4px;font-size:7px;text-align:center">${r.nroControl||'—'}</td>
+<td style="padding:3px 4px;font-size:7px;text-align:right">${r.totalVentasBs>0?fmtVen(r.totalVentasBs):r.totalVentasBs<0?fmtVen(r.totalVentasBs):'—'}</td>
+<td style="padding:3px 4px;font-size:7px;text-align:right">${r.baseImponibleBs>0?fmtVen(r.baseImponibleBs):r.baseImponibleBs<0?fmtVen(r.baseImponibleBs):'—'}</td>
+<td style="padding:3px 4px;font-size:7px;text-align:center">${r.alicuota}</td>
+<td style="padding:3px 4px;font-size:7px;text-align:right">${r.ivaBs>0?fmtVen(r.ivaBs):'—'}</td>
+<td style="padding:3px 4px;font-size:7px;text-align:right;color:#dc2626;font-weight:bold">${r.ivaRetDb>0?fmtVen(r.ivaRetDb):'—'}</td>
+<td style="padding:3px 4px;font-size:7px;text-align:center;color:#ea580c;font-weight:bold">${r.nroFactAfecta||'—'}</td>
+<td style="padding:3px 4px;font-size:7px">${r.nroComprobante||'—'}</td>
+</tr>`).join('');
             const html=`<div style="font-family:Arial;font-size:9px;padding:16px"><div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:10px"><div><div style="font-weight:900;font-size:12px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div><div>RIF: ${settings?.empresaRIF||''} &nbsp;|&nbsp; ${settings?.empresaDireccion||''}</div><div style="font-weight:900;font-size:11px;border-bottom:2px solid #000;display:inline-block;margin-top:4px">LIBRO DE VENTAS</div></div><div style="text-align:center;border:1px solid #ddd;padding:6px;min-width:180px"><div style="background:#1f2937;color:#fff;padding:3px 6px;font-size:8px;font-weight:900">IMPUESTO AL VALOR AGREGADO</div><div style="padding:2px;font-size:8px">FORMA 99030</div><div style="display:flex;justify-content:space-between;font-size:8px;padding:2px 4px"><span style="background:#374151;color:#fff;padding:1px 4px">MES</span><span>${mesLabel.toUpperCase()} ${libroAnio}</span></div><div style="background:#374151;color:#fff;padding:2px 6px;font-size:8px">PERIODO: ${libroQuincena==='1'?'I':'II'} QUINCENA</div><div style="font-size:7px;padding:2px">DEL ${periodoDesde.split('-').reverse().join('/')} AL ${periodoHasta.split('-').reverse().join('/')}</div></div></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#1f2937;color:#fff">${ths.map(h=>`<th style="padding:4px 3px;font-size:7px;text-align:center;border:1px solid #555">${h}</th>`).join('')}</tr></thead><tbody>${rH}</tbody><tfoot><tr style="background:#374151;color:#fff;font-weight:900"><td colspan="7" style="padding:3px 4px;font-size:7px">TOTALES — ${rows.length} registros</td><td style="padding:3px 4px;font-size:7px;text-align:right">${fmtVen(totTV)}</td><td style="padding:3px 4px;font-size:7px;text-align:right">${fmtVen(totBase)}</td><td></td><td style="padding:3px 4px;font-size:7px;text-align:right">${fmtVen(totIva)}</td><td style="padding:3px 4px;font-size:7px;text-align:right">${fmtVen(totRetDb)}</td><td></td></tr></tfoot></table></div>`;
             handlePDFFromHTML(html,`LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}`,true);
           };
@@ -12304,7 +12368,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                       <span className="bg-gray-700 text-white px-2 py-0.5 text-[10px]">MES</span>
                       <span className="bg-gray-100 px-2 py-0.5 uppercase text-[10px]">{mesLabel.toUpperCase()}</span>
                     </div>
-                    <div className="text-[9px] font-bold text-center bg-gray-700 text-white px-3 py-1">PERIODO: {libroQuincena==='1'?'I':'II'} QUINCENA</div>
+                    <div className="text-[9px] font-bold text-center bg-gray-700 text-white px-3 py-1">PERIODO: {libroQuincena==='AMBAS'?'MES COMPLETO':libroQuincena==='1'?'I QUINCENA':'II QUINCENA'}</div>
                     <div className="text-[9px] font-bold text-center bg-gray-100 px-3 py-1">DEL {periodoDesde.split('-').reverse().join('/')} AL {periodoHasta.split('-').reverse().join('/')}</div>
                   </div>
                 </div>
@@ -12326,6 +12390,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   </select></div>
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Quincena</label>
                   <select value={libroQuincena} onChange={e=>setLibroQuincena(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                    <option value="AMBAS">📅 Ambas Quincenas (mes completo)</option>
                     <option value="1">I Quincena (01–15)</option>
                     <option value="2">II Quincena (16–{lastDay})</option>
                   </select></div>
@@ -12391,51 +12456,117 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               </div>
 
               {/* REPORTE RETENCIONES */}
+              {/* REPORTE RETENCIONES */}
               <div className="bg-white rounded-2xl border overflow-hidden">
-                <div className="px-4 py-3 border-b flex items-center justify-between">
-                  <h3 className="font-black text-sm uppercase text-blue-800">📋 Retenciones Registradas — {(retenciones||[]).length} total</h3>
-                  <div className="flex gap-2">
-                    <button onClick={()=>{
-                      const h=['N° Comprobante','Fecha','Factura','Cliente','RIF','Monto Retenido Bs.','Quincena'];
-                      const r=(retenciones||[]).map(r=>{const inv=(invoices||[]).find(i=>i.id===r.facturaId);return[r.nroRetencion,r.fechaComprobante,inv?.nroFiscal||inv?.documento||'',inv?.clientName||'',inv?.clientRif||'',fmtVen(parseNum(r.montoRetenido||0)),r.quincena==='1'?'I Quincena':'II Quincena'];});
-                      const rH=r.map(row=>'<tr>'+row.map(c=>`<td style="padding:4px 6px;border:1px solid #ccc;font-size:9px">${c||''}</td>`).join('')+'</tr>').join('');
-                      const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${settings?.empresaRazonSocial||''} — REPORTE DE RETENCIONES</h2><table style="border-collapse:collapse;width:100%;font-family:Arial"><thead><tr>${h.map(x=>`<th style="background:#1f2937;color:#fff;padding:5px 6px;font-size:9px">${x}</th>`).join('')}</tr></thead><tbody>${rH}</tbody></table></body></html>`;
-                      const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([html],{type:'application/vnd.ms-excel'})),download:'Retenciones.xls'});a.click();
-                    }} className="bg-green-600 text-white px-3 py-1.5 rounded-xl font-black text-[10px] flex items-center gap-1 hover:bg-green-700"><Download size={12}/>Excel</button>
+                <div className="px-4 py-3 border-b space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <h3 className="font-black text-sm uppercase text-blue-800">📋 Retenciones de IVA — {(()=>{
+                      const rf=(retenciones||[]).filter(r=>{
+                        const f=r.fechaComprobante||r.fecha||'';
+                        if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
+                        if(retFiltQ2==='1'&&parseInt(f.substring(8,10))>15)return false;
+                        if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
+                        if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
+                        const inv=(invoices||[]).find(i=>i.id===r.facturaId);
+                        if(retFiltCli2&&!(inv?.clientName||'').toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
+                        if(retFiltFact2&&!(inv?.nroFiscal||inv?.documento||'').toUpperCase().includes(retFiltFact2.toUpperCase()))return false;
+                        return true;
+                      });
+                      return rf.length;
+                    })()} registro(s)</h3>
+                    <div className="flex gap-2">
+                      <button onClick={()=>{
+                        const retFilt=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
+                          if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
+                          if(retFiltQ2==='1'&&parseInt(f.substring(8,10))>15)return false;
+                          if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
+                          if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
+                          const inv=(invoices||[]).find(i=>i.id===r.facturaId);
+                          if(retFiltCli2&&!(inv?.clientName||'').toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
+                          if(retFiltFact2&&!(inv?.nroFiscal||inv?.documento||'').toUpperCase().includes(retFiltFact2.toUpperCase()))return false;
+                          return true;
+                        });
+                        const totRet=retFilt.reduce((s,r)=>s+parseNum(r.montoRetenido||0),0);
+                        const rH=retFilt.map((ret,i)=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);return `<tr style="border-bottom:1px solid #eee;${i%2?'background:#f9fafb':''}"><td style="padding:4px 5px;font-size:8px">${ret.fechaComprobante||'—'}</td><td style="padding:4px 5px;font-size:8px;font-weight:700">${ret.nroRetencion||'—'}</td><td style="padding:4px 5px;font-size:8px;color:#1d4ed8">${padNum(inv?.nroFiscal,8)||inv?.documento||'—'}</td><td style="padding:4px 5px;font-size:8px">${inv?.clientName||'—'}</td><td style="padding:4px 5px;font-size:8px">${inv?.clientRif||'—'}</td><td style="padding:4px 5px;font-size:8px;text-align:right;font-weight:700">${fmtVen(ret.montoRetenido||0)}</td><td style="padding:4px 5px;font-size:8px;text-align:center">${ret.quincena==='1'?'I Quincena':'II Quincena'}</td></tr>`;}).join('');
+                        const h=`<div style="font-family:Arial;padding:16px"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:10px"><div><div style="font-weight:900;font-size:13px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div><div style="font-size:10px">RIF: ${settings?.empresaRIF||''}</div><div style="font-weight:900;font-size:11px;margin-top:4px">REPORTE DE RETENCIONES DE IVA</div></div><div style="text-align:right;font-size:9px"><div>Período: ${mesLabel.toUpperCase()} ${libroAnio}</div><div>${retFilt.length} registros · Total: ${fmtVen(totRet)} Bs.</div></div></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#1f2937;color:#fff"><th style="padding:5px;font-size:8px">Fecha</th><th style="padding:5px;font-size:8px">N° Comp.</th><th style="padding:5px;font-size:8px">N° Factura</th><th style="padding:5px;font-size:8px">Cliente</th><th style="padding:5px;font-size:8px">RIF</th><th style="padding:5px;font-size:8px;text-align:right">Monto Ret. Bs.</th><th style="padding:5px;font-size:8px">Quincena</th></tr></thead><tbody>${rH}</tbody><tfoot><tr style="background:#374151;color:#fff;font-weight:900"><td colspan="5" style="padding:4px 5px;font-size:8px">TOTAL</td><td style="padding:4px 5px;font-size:8px;text-align:right">${fmtVen(totRet)}</td><td></td></tr></tfoot></table></div>`;
+                        handlePDFFromHTML(h,`Retenciones_${libroAnio}_${mes2}`,false);
+                      }} className="bg-gray-800 text-white px-3 py-1.5 rounded-xl font-black text-[10px] flex items-center gap-1 hover:bg-black"><Printer size={12}/>PDF</button>
+                      <button onClick={()=>{
+                        const retFilt=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
+                          if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
+                          if(retFiltQ2==='1'&&parseInt(f.substring(8,10))>15)return false;
+                          if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
+                          if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
+                          const inv=(invoices||[]).find(i=>i.id===r.facturaId);
+                          if(retFiltCli2&&!(inv?.clientName||'').toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
+                          if(retFiltFact2&&!(inv?.nroFiscal||inv?.documento||'').toUpperCase().includes(retFiltFact2.toUpperCase()))return false;
+                          return true;
+                        });
+                        const ths=['Fecha','N° Comp.','N° Factura','Cliente','RIF','Monto Ret. Bs.','Quincena'];
+                        const rH=retFilt.map(ret=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);return '<tr>'+[ret.fechaComprobante||'—',ret.nroRetencion||'—',padNum(inv?.nroFiscal,8)||inv?.documento||'—',inv?.clientName||'—',inv?.clientRif||'—',fmtVen(ret.montoRetenido||0),ret.quincena==='1'?'I Quincena':'II Quincena'].map(c=>`<td style="padding:4px 6px;border:1px solid #ccc;font-size:9px">${c}</td>`).join('')+'</tr>';}).join('');
+                        const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${settings?.empresaRazonSocial||''} — RETENCIONES DE IVA</h2><table style="border-collapse:collapse;font-family:Arial"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px;font-size:9px">${h}</th>`).join('')}</tr></thead><tbody>${rH}</tbody></table></body></html>`;
+                        Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([html],{type:'application/vnd.ms-excel'})),download:`Retenciones_${libroAnio}_${mes2}.xls`}).click();
+                      }} className="bg-green-600 text-white px-3 py-1.5 rounded-xl font-black text-[10px] flex items-center gap-1 hover:bg-green-700"><Download size={12}/>Excel</button>
+                    </div>
+                  </div>
+                  {/* Filtros */}
+                  <div className="flex gap-2 flex-wrap items-end">
+                    <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mes</label>
+                      <select value={retFiltMes2} onChange={e=>{setRetFiltMes2(e.target.value);setRetPage2(0);}} className="border-2 border-gray-200 rounded-xl px-2 py-1.5 text-xs font-bold outline-none focus:border-blue-400">
+                        <option value="">Todos</option>
+                        {['01','02','03','04','05','06','07','08','09','10','11','12'].map((m,i)=>(<option key={m} value={m}>{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][i]}</option>))}
+                      </select></div>
+                    <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Quincena</label>
+                      <select value={retFiltQ2} onChange={e=>{setRetFiltQ2(e.target.value);setRetPage2(0);}} className="border-2 border-gray-200 rounded-xl px-2 py-1.5 text-xs font-bold outline-none focus:border-blue-400">
+                        <option value="AMBAS">Ambas</option><option value="1">I (01-15)</option><option value="2">II (16-fin)</option>
+                      </select></div>
+                    <div><input value={retFiltCli2} onChange={e=>{setRetFiltCli2(e.target.value);setRetPage2(0);}} placeholder="Cliente..." className="border-2 border-gray-200 rounded-xl px-2 py-1.5 text-xs font-bold outline-none focus:border-blue-400 w-36"/></div>
+                    <div><input value={retFiltComp2} onChange={e=>{setRetFiltComp2(e.target.value);setRetPage2(0);}} placeholder="N° Comprobante..." className="border-2 border-gray-200 rounded-xl px-2 py-1.5 text-xs font-bold outline-none focus:border-blue-400 w-36"/></div>
+                    <div><input value={retFiltFact2} onChange={e=>{setRetFiltFact2(e.target.value);setRetPage2(0);}} placeholder="N° Factura..." className="border-2 border-gray-200 rounded-xl px-2 py-1.5 text-xs font-bold outline-none focus:border-blue-400 w-32"/></div>
                   </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-gray-100"><tr className="font-black text-[9px] uppercase text-gray-500">
-                      <th className="py-2 px-3">N° Comp.</th><th className="py-2 px-3">Fecha</th><th className="py-2 px-3">N° Factura</th><th className="py-2 px-3">Cliente</th><th className="py-2 px-3 text-right">Monto Ret. Bs.</th><th className="py-2 px-3">Quincena</th><th className="py-2 px-3 text-center">Acciones</th>
+                      <th className="py-2 px-3">N° Comp.</th><th className="py-2 px-3">Fecha</th><th className="py-2 px-3">N° Factura</th><th className="py-2 px-3">Cliente</th><th className="py-2 px-3 text-right">Monto Ret. Bs.</th><th className="py-2 px-3">Quincena</th><th className="py-2 px-3 text-center">Acc.</th>
                     </tr></thead>
                     <tbody className="divide-y divide-gray-100">
-                      {(retenciones||[]).length===0
-                        ? <tr><td colSpan={7} className="py-6 text-center text-gray-400 text-[10px]">No hay retenciones registradas</td></tr>
-                        : (retenciones||[]).map(ret=>{
-                            const inv=(invoices||[]).find(i=>i.id===ret.facturaId);
-                            const tasa=parseNum(inv?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-                            return (
-                              <tr key={ret.id} className="hover:bg-yellow-50">
-                                <td className="py-2 px-3 font-black text-blue-700">{ret.nroRetencion}</td>
-                                <td className="py-2 px-3">{ret.fechaComprobante}</td>
-                                <td className="py-2 px-3 font-bold text-orange-600">{padNum(inv?.nroFiscal,8)||inv?.documento||'—'}</td>
-                                <td className="py-2 px-3 uppercase">{inv?.clientName||'—'}</td>
-                                <td className="py-2 px-3 text-right font-black">{fmtVen(parseNum(ret.montoRetenido||0)*tasa)}</td>
-                                <td className="py-2 px-3 text-center"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{ret.quincena==='1'?'I Quincena':'II Quincena'}</span></td>
-                                <td className="py-2 px-3 text-center">
-                                  <div className="flex justify-center gap-1">
-                                    <button onClick={()=>{setRetForm({...ret});setRetBusqFact(inv?.nroFiscal||'');setShowRetModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Editar"><Edit size={13}/></button>
-                                    <button onClick={()=>setDialog({title:'Eliminar retención',text:`¿Eliminar comprobante ${ret.nroRetencion}?`,type:'confirm',onConfirm:async()=>{try{await deleteDoc(getDocRef('retencionesClientes',ret.id));setDialog({title:'✅ Eliminada',text:'Retención eliminada.',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white" title="Eliminar"><Trash2 size={13}/></button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })
-                      }
+                      {(()=>{
+                        const retFilt=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
+                          if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
+                          if(retFiltQ2==='1'&&parseInt(f.substring(8,10))>15)return false;
+                          if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
+                          if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
+                          const inv=(invoices||[]).find(i=>i.id===r.facturaId);
+                          if(retFiltCli2&&!(inv?.clientName||'').toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
+                          if(retFiltFact2&&!(inv?.nroFiscal||inv?.documento||'').toUpperCase().includes(retFiltFact2.toUpperCase()))return false;
+                          return true;
+                        });
+                        const PAGE_RET=15;
+                        const retTotalPages=Math.ceil(retFilt.length/PAGE_RET)||1;
+                        const retPageSafe=Math.min(retPage2,retTotalPages-1);
+                        const retPageItems=retFilt.slice(retPageSafe*PAGE_RET,(retPageSafe+1)*PAGE_RET);
+                        if(retFilt.length===0) return <tr><td colSpan={7} className="py-6 text-center text-gray-400 text-[10px]">No hay retenciones para los filtros seleccionados</td></tr>;
+                        return retPageItems.map(ret=>{
+                          const inv=(invoices||[]).find(i=>i.id===ret.facturaId);
+                          return (<tr key={ret.id} className="hover:bg-yellow-50">
+                            <td className="py-2 px-3 font-black text-blue-700">{ret.nroRetencion}</td>
+                            <td className="py-2 px-3">{ret.fechaComprobante}</td>
+                            <td className="py-2 px-3 font-bold text-orange-600">{padNum(inv?.nroFiscal,8)||inv?.documento||'—'}</td>
+                            <td className="py-2 px-3 uppercase">{inv?.clientName||'—'}</td>
+                            <td className="py-2 px-3 text-right font-black">{fmtVen(parseNum(ret.montoRetenido||0))}</td>
+                            <td className="py-2 px-3 text-center"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{ret.quincena==='1'?'I Quincena':'II Quincena'}</span></td>
+                            <td className="py-2 px-3"><div className="flex justify-center gap-1">
+                              <button onClick={()=>{setRetForm({...ret});setRetBusqFact(inv?.nroFiscal||'');setShowRetModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
+                              <button onClick={()=>setDialog({title:'Eliminar retención',text:`¿Eliminar comprobante ${ret.nroRetencion}?`,type:'confirm',onConfirm:async()=>{try{await deleteDoc(getDocRef('retencionesClientes',ret.id));setDialog({title:'✅ Eliminada',text:'',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
+                            </div></td>
+                          </tr>);
+                        });
+                      })()}
                     </tbody>
                   </table>
                 </div>
+                {(retenciones||[]).length>15&&<div className="p-3 flex justify-center"><PaginadorUI total={(retenciones||[]).length} pagina={retPage2} setPagina={setRetPage2}/></div>}
               </div>
 
               {/* MODAL REGISTRO RETENCIÓN */}
@@ -12460,7 +12591,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         </div>
                         {selFact&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs"><div><span className="font-black">Cliente:</span> {selFact.clientName}</div><div><span className="font-black">RIF:</span> {selFact.clientRif} &nbsp;|&nbsp; <span className="font-black">N° Fiscal:</span> {padNum(selFact.nroFiscal,8)||'—'} &nbsp;|&nbsp; <span className="font-black">Control:</span> {padNum(selFact.nroControl,8)||'—'}</div></div>}
                         <div className="grid grid-cols-2 gap-3">
-                          <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Monto Retenido (USD)</label><input type="number" step="0.01" value={retForm.montoRetenido} onChange={e=>setRetForm(f=>({...f,montoRetenido:e.target.value}))} placeholder="0.00" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/></div>
+                          <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Monto Retenido (Bs.)</label><input type="number" step="0.01" value={retForm.montoRetenido} onChange={e=>setRetForm(f=>({...f,montoRetenido:e.target.value}))} placeholder="0.00" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/></div>
                           <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Quincena</label>
                             <select value={retForm.quincena} onChange={e=>setRetForm(f=>({...f,quincena:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500">
                               <option value="1">I Quincena (01–15)</option><option value="2">II Quincena (16–{lastDay})</option>
@@ -12496,7 +12627,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                       <option value="">Todos</option>
                       {['01','02','03','04','05','06','07','08','09','10','11','12'].map((m,i)=>(<option key={m} value={m}>{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][i]}</option>))}
                     </select></div>
-                  <div className="relative"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/><input type="text" value={opsSearch} onChange={e=>setOpsSearch(e.target.value)} placeholder="Buscar OP, cliente..." className="pl-8 pr-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400 w-48"/></div>
+                  <div className="relative"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/><input type="text" value={opsSearch} onChange={e=>setOpsSearch(e.target.value)} placeholder="Buscar OP, cliente, categoría..." className="pl-8 pr-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400 w-48"/></div>
                   <select value={opsStatusFilter} onChange={e=>setOpsStatusFilter(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
                     <option value="TODOS">Todos</option><option value="PENDIENTE">Pendiente</option><option value="EN PROCESO">En Proceso</option><option value="COMPLETADO">Completado</option><option value="ANULADA">Anulada</option>
                   </select>
@@ -21914,23 +22045,23 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 
         {activeTab === 'ventas' && (
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
-              <div className="w-full flex gap-4 px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+              <div className="w-full flex gap-0.5 px-2 overflow-x-auto" style={{scrollbarWidth:'none',msOverflowStyle:'none'}}>
                  {[ 
-                   {id:'dashboard',          icon:<BarChart3 size={16}/>, label:'Dashboard',        perm:'ventas_facturacion'},
-                   {id:'facturacion',        icon:<Receipt size={16}/>,  label:'Facturación',       perm:'ventas_facturacion'}, 
-                   {id:'notas_entrega',      icon:<FileText size={16}/>, label:'Notas de Entrega',  perm:'ventas_facturacion'},
-                   {id:'cotizaciones',       icon:<FileText size={16}/>, label:'Cotizaciones',      perm:'ventas_facturacion'},
-                   {id:'clientes',           icon:<Users size={16}/>,    label:'Directorio',        perm:'ventas_directorio'}, 
-                   {id:'requisiciones',      icon:<FileText size={16}/>, label:'OPs',               perm:'ventas_ops'},
-                   {id:'productos_vendidos', icon:<Package size={16}/>,  label:'Productos Vendidos',perm:'ventas_productos_vendidos'},
-                   {id:'reporte_ventas',     icon:<BarChart3 size={16}/>, label:'Reporte Ventas',    perm:'ventas_facturacion'},
-                   {id:'transacciones_ventas',icon:<BarChart3 size={16}/>,label:'Transacciones',    perm:'ventas_facturacion'},
-                    {id:'libro_ventas',        icon:<BookOpen size={16}/>, label:'Libro Ventas',   perm:'ventas_facturacion'},
-                    {id:'notas_cd',            icon:<FileText size={16}/>,label:'NC / ND',          perm:'ventas_facturacion'},
-                   {id:'comisiones',         icon:<DollarSign size={16}/>, label:'Comisiones',       perm:'ventas_facturacion'},
-                   {id:'vendedores',          icon:<Users size={16}/>,      label:'Vendedores',        perm:'ventas_facturacion'},
+                   {id:'dashboard',          icon:<BarChart3 size={13}/>, label:'Dashboard',        perm:'ventas_facturacion'},
+                   {id:'facturacion',        icon:<Receipt size={13}/>,   label:'Factura',       perm:'ventas_facturacion'}, 
+                   {id:'notas_entrega',      icon:<FileText size={13}/>,  label:'NE',  perm:'ventas_facturacion'},
+                   {id:'cotizaciones',       icon:<FileText size={13}/>,  label:'Cotizaciones',      perm:'ventas_facturacion'},
+                   {id:'clientes',           icon:<Users size={13}/>,     label:'Directorio',        perm:'ventas_directorio'}, 
+                   {id:'requisiciones',      icon:<FileText size={13}/>,  label:'OPs',               perm:'ventas_ops'},
+                   {id:'productos_vendidos', icon:<Package size={13}/>,   label:'Prod. Vendidos',perm:'ventas_productos_vendidos'},
+                   {id:'reporte_ventas',     icon:<BarChart3 size={13}/>, label:'Rpt. Ventas',    perm:'ventas_facturacion'},
+                   {id:'transacciones_ventas',icon:<BarChart3 size={13}/>, label:'Transac.',    perm:'ventas_facturacion'},
+                    {id:'libro_ventas',        icon:<BookOpen size={13}/>,  label:'Libro Vtas',   perm:'ventas_facturacion'},
+                    {id:'notas_cd',            icon:<FileText size={13}/>,  label:'NC / ND',          perm:'ventas_facturacion'},
+                   {id:'comisiones',         icon:<DollarSign size={13}/>,label:'Comisiones',       perm:'ventas_facturacion'},
+                   {id:'vendedores',          icon:<Users size={13}/>,     label:'Vendedores',        perm:'ventas_facturacion'},
                  ].filter(t=>hasPerm(t.perm)||hasPerm('ventas')||appUser?.role==='Master').map(t => (
-                    <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
+                    <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
               </div>
            </div>
