@@ -408,6 +408,9 @@ export default function App() {
   const [neForm, setNeForm] = useState(null);
   const [neSearch, setNeSearch] = useState('');
   const [neFiltStatus, setNeFiltStatus] = useState('TODAS');
+  const [neFiltMes, setNeFiltMes] = useState('');    // 'YYYY-MM' o '' para todos
+  const [invFiltMes, setInvFiltMes] = useState('');  // 'YYYY-MM' o '' para todos
+  const [reqFiltMes, setReqFiltMes] = useState('');  // 'YYYY-MM' o '' para todos
   const [neInvSearch, setNeInvSearch] = useState('');
   const [neShowInvDrop, setNeShowInvDrop] = useState(false);
   // ── Estados Transacciones de Ventas ────────────────────────────────────────
@@ -11035,8 +11038,10 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           const neFiltradas = (notasEntrega||[]).filter(ne=>{
             const matchSearch=!neSearch||ne.id.toUpperCase().includes(neSearch.toUpperCase())||(ne.clientName||'').toUpperCase().includes(neSearch.toUpperCase());
             const matchStatus=neFiltStatus==='TODAS'||ne.status===neFiltStatus;
-            return matchSearch&&matchStatus;
+            const matchMes=!neFiltMes||(ne.fecha||'').startsWith(neFiltMes);
+            return matchSearch&&matchStatus&&matchMes;
           });
+          const neMonths=[...new Set((notasEntrega||[]).map(ne=>(ne.fecha||'').substring(0,7)).filter(Boolean))].sort().reverse();
           const nePage = Math.max(0, Math.min(nePagina, Math.ceil(neFiltradas.length/PAGE_SIZE)-1));
           const nePageItems = neFiltradas.slice(nePage*PAGE_SIZE, (nePage+1)*PAGE_SIZE);
           const neTotalPages = Math.ceil(neFiltradas.length/PAGE_SIZE)||1;
@@ -11198,20 +11203,25 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             );
           }
 
-          const totalNE=neFiltradas.reduce((s,n)=>s+parseNum(n.total||0),0);
+          const totalNEbase=neFiltradas.reduce((s,n)=>s+parseNum(n.montoBase||0),0);
+          const totalNEiva=neFiltradas.reduce((s,n)=>s+parseNum(n.ivaAmt||0),0);
+          const totalNEtotal=neFiltradas.reduce((s,n)=>s+parseNum(n.total||0),0);
           return(
             <div className="p-6 space-y-5">
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <div><h2 className="font-black text-xl flex items-center gap-2"><FileText size={20} className="text-orange-500"/> Notas de Entrega <span className="bg-orange-100 text-orange-700 text-[10px] font-black px-2 py-0.5 rounded-full">{(notasEntrega||[]).length}</span></h2></div>
                 <button onClick={()=>setNeForm(initNEForm())} className="bg-orange-500 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-orange-600"><Plus size={14}/> Nueva Nota de Entrega</button>
               </div>
-              <div className="flex gap-3 flex-wrap">
-                <div className="relative flex-1 min-w-48"><Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-                  <input value={neSearch} onChange={e=>{setNeSearch(e.target.value);setNePagina(0);}} placeholder="Buscar NE o cliente..." className="w-full pl-9 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-black outline-none focus:border-orange-400"/></div>
-                <select value={neFiltStatus} onChange={e=>{setNeFiltStatus(e.target.value);setNePagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-black outline-none focus:border-orange-400">
+              <div className="flex gap-3 flex-wrap items-end">
+                <select value={neFiltMes} onChange={e=>{setNeFiltMes(e.target.value);setNePagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                  <option value="">Todos los meses</option>
+                  {neMonths.map(ym=>{const[y,m]=ym.split('-');const mn=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1];return(<option key={ym} value={ym}>{mn} {y}</option>);})}
+                </select>
+                <div className="relative flex-1 min-w-48"><Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/><input value={neSearch} onChange={e=>{setNeSearch(e.target.value);setNePagina(0);}} placeholder="Buscar NE o cliente..." className="w-full pl-8 pr-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400"/></div>
+                <select value={neFiltStatus} onChange={e=>{setNeFiltStatus(e.target.value);setNePagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
                   <option value="TODAS">Todos los estatus</option><option value="TRANSITO">Tránsito</option><option value="PROCESADA">Procesada</option>
                 </select>
-                <div className="bg-orange-50 border-2 border-orange-200 rounded-xl px-4 py-2.5 text-xs font-black text-orange-700">{neFiltradas.length} NE · ${formatNum(totalNE)}</div>
+                <div className="bg-orange-50 border-2 border-orange-200 rounded-xl px-4 py-2 text-xs font-black text-orange-700 whitespace-nowrap">{neFiltradas.length} NE &nbsp;·&nbsp; Base: ${formatNum(totalNEbase)} &nbsp;·&nbsp; IVA: ${formatNum(totalNEiva)} &nbsp;·&nbsp; Total: ${formatNum(totalNEtotal)}</div>
               </div>
               {/* Paginación top */}
               {neTotalPages>1&&<div className="flex items-center gap-2 text-xs font-black text-gray-600">
@@ -11315,6 +11325,13 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         </tr>
                       ))}
                     </tbody>
+                    <tfoot><tr className="bg-gray-900 text-white font-black">
+                      <td colSpan={6} className="py-2.5 px-3 text-[10px] uppercase">Totales — {neFiltradas.length} NE</td>
+                      <td className="py-2.5 px-3 text-right">${formatNum(totalNEbase)}</td>
+                      <td className="py-2.5 px-3 text-right text-blue-300">${formatNum(totalNEiva)}</td>
+                      <td className="py-2.5 px-3 text-right text-orange-300">${formatNum(totalNEtotal)}</td>
+                      <td colSpan={2}></td>
+                    </tr></tfoot>
                   </table>
                 </div>
               )}
@@ -11389,24 +11406,24 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 <button onClick={()=>{const th=['Fecha','Documento','Fuente','Descripci\u00f3n','Monto Bruto','I.V.A(16%)','T.Neto','Costo','Utilidad','%Util.'];const tb=rows.map(r=>[r.fecha,r.documento,r.fuente||'NE',r.descripcion,formatNum(r.montoBruto),formatNum(r.iva),formatNum(r.tNeto),formatNum(r.costo),formatNum(r.utilidad),r.pctUtil.toFixed(2)+'%']);const rH=tb.map((row,idx)=>'<tr>'+row.map((c,ci)=>'<td style="padding:4px 7px;border:1px solid #ccc;">'+(ci>=4?formatNum(parseFloat(c)||0):c)+'</td>').join('')+'</tr>').join('');const html='<html><head><meta charset="utf-8"></head><body><h2>SERVICIOS JIRET G&amp;B, C.A.</h2><h3>RIF: J-412309374</h3><h4>TRANSACCIONES DE VENTAS — Desde: '+tvDesde+' Hasta: '+tvHasta+'</h4><table style="border-collapse:collapse;width:100%"><thead><tr>'+th.map(h=>'<th style="background:#000;color:#fff;padding:5px 7px;">'+h+'</th>').join('')+'</tr></thead><tbody>'+rH+'</tbody><tfoot><tr><td colspan="4" style="background:#333;color:#fff;padding:5px 7px;">TOTALES</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.montoBruto)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.iva)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.tNeto)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.costo)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.utilidad)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+pctTot.toFixed(2)+'%</td></tr></tfoot></table></body></html>';const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='TV_'+tvDesde+'_'+tvHasta+'.xls';a.click();}} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-green-700"><Download size={14}/> Excel</button>
               </div>
               <div className="bg-white rounded-2xl border p-4 flex flex-wrap gap-3 items-end">
-                <div className="w-full flex gap-1 flex-wrap items-center">
-                  <span className="text-[9px] font-black text-gray-400 uppercase mr-1">Mes rápido:</span>
-                  {(()=>{const now=new Date();return [-5,-4,-3,-2,-1,0].map(i=>{const d=new Date(now.getFullYear(),now.getMonth()+i,1);const ym=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');const lbl=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()]+' '+String(d.getFullYear()).slice(2);const last=new Date(d.getFullYear(),d.getMonth()+1,0);const active=tvDesde===ym+'-01'&&tvHasta===ym+'-'+String(last.getDate()).padStart(2,'0');return(<button key={ym} onClick={()=>{setTvDesde(ym+'-01');setTvHasta(ym+'-'+String(last.getDate()).padStart(2,'0'));setTvPagina(0);}} className={'px-2.5 py-1 rounded-lg text-[9px] font-black '+(active?'bg-orange-500 text-white':'bg-gray-100 text-gray-600 hover:bg-orange-100')}>{lbl}</button>);});})()}
-                  <button onClick={()=>{const y=new Date().getFullYear();setTvDesde(y+'-01-01');setTvHasta(getTodayDate());setTvPagina(0);}} className="px-2.5 py-1 rounded-lg text-[9px] font-black bg-gray-100 text-gray-600 hover:bg-gray-200 ml-1">Todo {new Date().getFullYear()}</button>
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Período</label>
+                  <select onChange={e=>{const ym=e.target.value;if(ym==='all'){setTvDesde(new Date().getFullYear()+'-01-01');setTvHasta(getTodayDate());}else{const[y,m]=ym.split('-');const last=new Date(parseInt(y),parseInt(m),0).getDate();setTvDesde(ym+'-01');setTvHasta(ym+'-'+String(last).padStart(2,'0'));}setTvPagina(0);}} value={(tvDesde.endsWith('-01-01')&&tvHasta===getTodayDate())?'all':tvDesde.substring(0,7)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 min-w-36">
+                    <option value="all">Todo {new Date().getFullYear()}</option>
+                    {[...new Set((notasEntrega||[]).concat(invoices||[]).map(i=>(i.fecha||'').substring(0,7)).filter(Boolean))].sort().reverse().map(ym=>{const[y,m]=ym.split('-');const mn=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1];return(<option key={ym} value={ym}>{mn} {y}</option>);})}
+                  </select>
                 </div>
-                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label>
-                  <input type="date" value={tvDesde} onChange={e=>{setTvDesde(e.target.value);setTvPagina(0);}} className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400"/></div>
-                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label>
-                  <input type="date" value={tvHasta} onChange={e=>{setTvHasta(e.target.value);setTvPagina(0);}} className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400"/></div>
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Estatus</label>
-                  <select value={tvStatus} onChange={e=>{setTvStatus(e.target.value);setTvPagina(0);}} className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400">
-                    <option value="TODAS">Todos</option><option value="TRANSITO">Tránsito</option><option value="PROCESADA">Procesadas</option>
+                  <select value={tvStatus} onChange={e=>{setTvStatus(e.target.value);setTvPagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                    <option value="TODAS">Todos</option><option value="TRANSITO">Tránsito</option><option value="PROCESADA">Procesada</option>
                   </select></div>
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Documento</label>
-                  <input value={tvBuscarDoc} onChange={e=>{setTvBuscarDoc(e.target.value);setTvPagina(0);}} placeholder="NE-00001" className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400 w-32"/></div>
+                  <input value={tvBuscarDoc} onChange={e=>{setTvBuscarDoc(e.target.value);setTvPagina(0);}} placeholder="NE-00001..." className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-32"/>
+                </div>
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente / Descripción</label>
-                  <input value={tvBuscarDesc} onChange={e=>{setTvBuscarDesc(e.target.value);setTvPagina(0);}} placeholder="Buscar cliente..." className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400 w-44"/></div>
-                <div className="ml-auto text-right"><div className="font-black text-lg text-gray-900">${formatNum(tot.tNeto)}</div><div className="text-[10px] text-gray-500">{rows.length} operaciones · Utilidad: <span className="text-green-600 font-black">{pctTot.toFixed(2)}%</span></div></div>
+                  <input value={tvBuscarDesc} onChange={e=>{setTvBuscarDesc(e.target.value);setTvPagina(0);}} placeholder="Buscar cliente..." className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-44"/>
+                </div>
+                <div className="ml-auto text-right"><div className="font-black text-lg text-gray-900">${formatNum(tot.montoBruto)}</div><div className="text-[10px] text-gray-400 font-bold">{rows.length} ops. · Base sin IVA</div></div>
               </div>
               {/* Paginación top */}
               {tvTotalPages>1&&<div className="flex items-center gap-2 text-xs font-black text-gray-600">
@@ -11866,28 +11883,39 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   </div>
                 </div>
              )}
-             <div className="p-6"><div className="relative max-w-2xl mb-6"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR FACTURA O CLIENTE..." value={invoiceSearchTerm} onChange={e=>{setInvoiceSearchTerm(e.target.value);setFacturaPagina(0);}} className="w-full pl-12 pr-4 py-3.5 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div>
+             <div className="p-6">
+               <div className="flex gap-3 flex-wrap items-end mb-4">
+                 <select value={invFiltMes} onChange={e=>{setInvFiltMes(e.target.value);setFacturaPagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                   <option value="">Todos los meses</option>
+                   {[...new Set((invoices||[]).map(i=>(i.fecha||'').substring(0,7)).filter(Boolean))].sort().reverse().map(ym=>{const[y,m]=ym.split('-');const mn=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1];return(<option key={ym} value={ym}>{mn} {y}</option>);})}
+                 </select>
+                 <div className="relative flex-1 max-w-lg"><Search className="absolute left-4 top-3.5 text-gray-400" size={16}/><input type="text" placeholder="Buscar factura o cliente..." value={invoiceSearchTerm} onChange={e=>{setInvoiceSearchTerm(e.target.value);setFacturaPagina(0);}} className="w-full pl-10 pr-4 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400"/></div>
+               </div>
              {(()=>{
-               const allInv=(invoices||[]).filter(inv=>!invoiceSearchTerm||String(inv?.documento||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase())||String(inv?.clientName||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase()));
+               const allInv=(invoices||[]).filter(inv=>{
+                 const matchSearch=!invoiceSearchTerm||String(inv?.documento||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase())||String(inv?.clientName||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase());
+                 const matchMes=!invFiltMes||(inv?.fecha||'').startsWith(invFiltMes);
+                 return matchSearch&&matchMes;
+               });
                const totalInv=allInv.length;
+               const totalFact=allInv.reduce((s,inv)=>s+parseNum(inv?.montoBase||0),0);
                const pgInv=Math.max(0,Math.min(facturaPagina,Math.ceil(totalInv/PAGE_SIZE_DEFAULT)-1));
                const pageInv=allInv.slice(pgInv*PAGE_SIZE_DEFAULT,(pgInv+1)*PAGE_SIZE_DEFAULT);
                return(<>
                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-                 <span className="text-[10px] text-gray-500 font-bold">{totalInv} facturas registradas</span>
+                 <div className="flex items-center gap-3"><span className="text-[10px] text-gray-500 font-bold">{totalInv} facturas registradas</span><span className="bg-green-50 border border-green-200 rounded-xl px-3 py-1 text-xs font-black text-green-700">Total facturado: ${formatNum(totalFact)}</span></div>
                  <PaginadorUI total={totalInv} pagina={pgInv} setPagina={setFacturaPagina}/>
                </div>
-               <div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">OP N°</th><th className="py-4 px-4 text-black">NE</th><th className="py-4 px-4 text-black">Cliente / Producto</th><th className="py-4 px-4 text-right text-black w-32">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{pageInv.map(inv=>{
-               return (
+               <div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">OP N°</th><th className="py-4 px-4 text-black">NE</th><th className="py-4 px-4 text-black">Cliente / Producto</th><th className="py-4 px-4 text-right text-black w-32">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{pageInv.map(inv=>(
                <tr key={inv?.id} className="hover:bg-gray-50">
-                 <td className="py-4 px-4 font-black text-sm">{inv?.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{inv?.fecha||getSafeDate(inv?.timestamp)}</span></td>
+                 <td className="py-4 px-4 font-black text-sm">{inv?.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{inv?.fecha}</span></td>
                  <td className="py-4 px-4 font-black text-xs text-orange-600">{inv?.opAsignada||'—'}</td>
                  <td className="py-4 px-4 text-[10px] font-black text-blue-600">{inv?.neOrigen||'—'}</td>
                  <td className="py-4 px-4 font-bold text-gray-700 uppercase">{inv?.clientName}<br/><span className="text-[9px] font-black text-orange-500 block max-w-xs truncate">{inv?.productoMaquilado||'S/D'}</span></td>
-                 <td className="py-4 px-4 text-right font-black text-green-600 text-lg w-32">${formatNum((()=>{const t=parseNum(inv?.total||0);if(t>0)return t;const items=inv?.itemsFacturados||[];const b=items.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0);return inv?.aplicaIva==="SI"?b*1.16:b;})())}</td>
+                 <td className="py-4 px-4 text-right font-black text-green-600 text-lg w-32">${formatNum((()=>{const t=parseNum(inv?.total||0);if(t>0)return t;const items=inv?.itemsFacturados||[];const b=items.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0);return inv?.aplicaIva==='SI'?b*1.16:b;})())}</td>
                  <td className="py-4 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleInvoice(inv?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button><button onClick={()=>startEditInvoice(inv)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteInvoice(inv?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td>
                </tr>
-             )})}</tbody></table></div>
+             ))}</tbody></table></div>
                <div className="mt-4 flex justify-center"><PaginadorUI total={totalInv} pagina={pgInv} setPagina={setFacturaPagina}/></div>
                </>);
              })()}
@@ -11899,6 +11927,10 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
              <div className="px-8 py-5 border-b bg-white flex flex-wrap gap-3 justify-between items-center">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> REQUISICIONES OP</h2>
                <div className="flex gap-2 items-center flex-wrap">
+                 <select value={reqFiltMes} onChange={e=>{setReqFiltMes(e.target.value);setReqPagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                   <option value="">Todos los meses</option>
+                   {[...new Set((requirements||[]).map(r=>(r.fecha||''). substring(0,7)).filter(Boolean))].sort().reverse().map(ym=>{const[y,m]=ym.split('-');const mn=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1];return(<option key={ym} value={ym}>{mn} {y}</option>);})}
+                 </select>
                  <div className="relative">
                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
                    <input type="text" value={opsSearch} onChange={e=>setOpsSearch(e.target.value)} placeholder="Buscar OP, cliente, producto..." className="border-2 border-gray-200 rounded-xl pl-9 pr-8 py-2.5 text-xs font-bold outline-none focus:border-orange-400 w-56"/>
@@ -12104,7 +12136,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                const pageOP=opsFiltered.slice(pgOP*PAGE_SIZE_DEFAULT,(pgOP+1)*PAGE_SIZE_DEFAULT);
                return(
                  <div>
-                   <div className="flex items-center justify-between mb-3 flex-wrap gap-2"><span className="text-[10px] text-gray-500 font-bold">{totalOP} órdenes</span><PaginadorUI total={totalOP} pagina={pgOP} setPagina={setReqPagina}/></div>
+                   <div className="flex items-center justify-between mb-3 flex-wrap gap-2"><div className="flex items-center gap-3"><span className="text-[10px] text-gray-500 font-bold">{totalOP} órdenes</span><span className="bg-orange-50 border border-orange-200 rounded-xl px-3 py-1 text-[10px] font-black text-orange-700">KG Est.: {formatNum(opsFiltered.reduce((s,r)=>s+parseNum(r?.requestedKg||0),0))}</span></div><PaginadorUI total={totalOP} pagina={pgOP} setPagina={setReqPagina}/></div>
                    <table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black w-1/2">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{pageOP.length===0?<tr><td colSpan="4" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin resultados</td></tr>:pageOP.map(r=>(<tr key={r?.id} className={`hover:bg-gray-50 group transition-all ${r?.status==='ANULADA'?'opacity-40 bg-red-50/20':''}`}><td className="py-4 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r?.fecha}</span></td><td className="py-4 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.desc}</span></td><td className="py-4 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-4 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table>
                    <div className="mt-4 flex justify-center"><PaginadorUI total={totalOP} pagina={pgOP} setPagina={setReqPagina}/></div>
                  </div>
