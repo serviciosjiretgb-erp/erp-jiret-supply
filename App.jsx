@@ -416,6 +416,8 @@ export default function App() {
   // ── Libro de Ventas Fiscal ──────────────────────────────────────────────────
   const [libroAnio, setLibroAnio] = useState(()=>String(new Date().getFullYear()));
   const [libroFiltFact, setLibroFiltFact] = useState('');
+  const [libroRetAcum, setLibroRetAcum] = useState('');    // Retenciones acumuladas por descontar (Bs.)
+  const [libroRetDesc, setLibroRetDesc] = useState('');    // Retenciones soportadas y descontadas (Bs.)
   const [libroFiltCliente, setLibroFiltCliente] = useState('');
   const [libroMes, setLibroMes] = useState(()=>String(new Date().getMonth()+1).padStart(2,'0'));
   const [libroQuincena, setLibroQuincena] = useState('1');
@@ -12322,24 +12324,117 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 
           // ── PDF ───────────────────────────────────────────────────────────────
           const exportPDF=()=>{
-            const ths=['Nº','Fecha','RIF','Razón Social','Tipo','N° Factura','N° Control','Total Bs.','Base Imp.','% Alíc.','IVA 16%','IVA Retenido','Fact. Afecta','N° Comp.'];
-            const rH=rows.map(r=>`<tr style="border-bottom:1px solid #eee;${r.tipo!=='FACTURA'?'background:#fefce8':''}">
-<td style="padding:3px 4px;font-size:7px;text-align:center">${r.seq}</td>
-<td style="padding:3px 4px;font-size:7px">${r.fecha}</td>
-<td style="padding:3px 4px;font-size:7px">${r.rif}</td>
-<td style="padding:3px 4px;font-size:7px">${r.nombre}</td>
-<td style="padding:3px 4px;font-size:7px;text-align:center;background:${r.tipo==='FACTURA'?'#d1fae5':r.tipo==='RETENCION'?'#fef3c7':'#ede9fe'};color:#111">${r.tipo}</td>
-<td style="padding:3px 4px;font-size:7px;text-align:center;color:#1d4ed8">${r.nroFactura||'—'}</td>
-<td style="padding:3px 4px;font-size:7px;text-align:center">${r.nroControl||'—'}</td>
-<td style="padding:3px 4px;font-size:7px;text-align:right">${r.totalVentasBs>0?fmtVen(r.totalVentasBs):r.totalVentasBs<0?fmtVen(r.totalVentasBs):'—'}</td>
-<td style="padding:3px 4px;font-size:7px;text-align:right">${r.baseImponibleBs>0?fmtVen(r.baseImponibleBs):r.baseImponibleBs<0?fmtVen(r.baseImponibleBs):'—'}</td>
-<td style="padding:3px 4px;font-size:7px;text-align:center">${r.alicuota}</td>
-<td style="padding:3px 4px;font-size:7px;text-align:right">${r.ivaBs>0?fmtVen(r.ivaBs):'—'}</td>
-<td style="padding:3px 4px;font-size:7px;text-align:right;color:#dc2626;font-weight:bold">${r.ivaRetDb>0?fmtVen(r.ivaRetDb):'—'}</td>
-<td style="padding:3px 4px;font-size:7px;text-align:center;color:#ea580c;font-weight:bold">${r.nroFactAfecta||'—'}</td>
-<td style="padding:3px 4px;font-size:7px">${r.nroComprobante||'—'}</td>
+            const pNum = (s,l=8) => String(s||'').trim()?String(s).padStart(l,'0'):'—';
+            const fV = n => {if(!n&&n!==0)return'—';const p=Math.abs(parseNum(n)).toFixed(2).split('.');return(n<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1];};
+
+            // Totales para el Resumen
+            const totVentasGravadas = rows.filter(r=>r.tipo==='FACTURA'&&r.alicuota==='16%').reduce((s,r)=>s+r.baseImponibleBs,0);
+            const totIVADebitos = rows.filter(r=>r.tipo==='FACTURA').reduce((s,r)=>s+r.ivaBs,0);
+            const totVentasBruta = rows.filter(r=>r.tipo==='FACTURA').reduce((s,r)=>s+r.totalVentasBs,0);
+            const retPeriodo = rows.filter(r=>r.tipo==='RETENCION').reduce((s,r)=>s+r.ivaRetDb,0);
+            const retAcum = parseNum(libroRetAcum||0);
+            const retDesc = parseNum(libroRetDesc||0);
+            const totalRetenciones = retAcum + retPeriodo;
+            const saldoRet = totalRetenciones - retDesc;
+            const anticipoISLR = parseFloat((totVentasGravadas*0.01).toFixed(2));
+            const iae = parseFloat((totVentasBruta*0.01).toFixed(2));
+
+            const rowsHtml = rows.map(r=>`
+<tr style="border-bottom:1px solid #e5e7eb;${r.tipo!=='FACTURA'?'background:#fefce8':''}">
+  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.seq}</td>
+  <td style="padding:2px 4px;font-size:7px;border-right:1px solid #e5e7eb">${r.fecha}</td>
+  <td style="padding:2px 4px;font-size:7px;border-right:1px solid #e5e7eb">${r.rif}</td>
+  <td style="padding:2px 4px;font-size:7px;max-width:110px;border-right:1px solid #e5e7eb">${r.nombre}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb;background:${r.tipo==='FACTURA'?'#f0fdf4':r.tipo==='RETENCION'?'#fefce8':'#f5f3ff'};color:#111;font-weight:bold">${r.tipo}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:center;color:#1d4ed8;font-weight:bold;border-right:1px solid #e5e7eb">${pNum(r.nroFactura,8)}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${pNum(r.nroControl,8)||'—'}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.tipo==='ND'?r.nroFactura:'—'}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.tipo==='NC'?r.nroFactura:'—'}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.facAfectada?pNum(r.facAfectada,8):'—'}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb">${r.totalVentasBs>0||r.totalVentasBs<0?fV(r.totalVentasBs):'—'}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb">0,00</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb">0,00</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb;font-weight:bold">${r.baseImponibleBs>0||r.baseImponibleBs<0?fV(r.baseImponibleBs):'—'}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.alicuota}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:right;font-weight:bold;border-right:1px solid #e5e7eb">${r.ivaBs>0?fV(r.ivaBs):'—'}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:right;color:#dc2626;font-weight:bold;border-right:1px solid #e5e7eb">${r.ivaRetDb>0?fV(r.ivaRetDb):'—'}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:center;color:#ea580c;font-weight:bold;border-right:1px solid #e5e7eb">${r.nroFactAfecta?pNum(r.nroFactAfecta,8):'—'}</td>
+  <td style="padding:2px 4px;font-size:7px">${r.nroComprobante?pNum(r.nroComprobante,14):'—'}</td>
 </tr>`).join('');
-            const html=`<div style="font-family:Arial;font-size:9px;padding:16px"><div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:10px"><div><div style="font-weight:900;font-size:12px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div><div>RIF: ${settings?.empresaRIF||''} &nbsp;|&nbsp; ${settings?.empresaDireccion||''}</div><div style="font-weight:900;font-size:11px;border-bottom:2px solid #000;display:inline-block;margin-top:4px">LIBRO DE VENTAS</div></div><div style="text-align:center;border:1px solid #ddd;padding:6px;min-width:180px"><div style="background:#1f2937;color:#fff;padding:3px 6px;font-size:8px;font-weight:900">IMPUESTO AL VALOR AGREGADO</div><div style="padding:2px;font-size:8px">FORMA 99030</div><div style="display:flex;justify-content:space-between;font-size:8px;padding:2px 4px"><span style="background:#374151;color:#fff;padding:1px 4px">MES</span><span>${mesLabel.toUpperCase()} ${libroAnio}</span></div><div style="background:#374151;color:#fff;padding:2px 6px;font-size:8px">PERIODO: ${libroQuincena==='1'?'I':'II'} QUINCENA</div><div style="font-size:7px;padding:2px">DEL ${periodoDesde.split('-').reverse().join('/')} AL ${periodoHasta.split('-').reverse().join('/')}</div></div></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#1f2937;color:#fff">${ths.map(h=>`<th style="padding:4px 3px;font-size:7px;text-align:center;border:1px solid #555">${h}</th>`).join('')}</tr></thead><tbody>${rH}</tbody><tfoot><tr style="background:#374151;color:#fff;font-weight:900"><td colspan="7" style="padding:3px 4px;font-size:7px">TOTALES — ${rows.length} registros</td><td style="padding:3px 4px;font-size:7px;text-align:right">${fmtVen(totTV)}</td><td style="padding:3px 4px;font-size:7px;text-align:right">${fmtVen(totBase)}</td><td></td><td style="padding:3px 4px;font-size:7px;text-align:right">${fmtVen(totIva)}</td><td style="padding:3px 4px;font-size:7px;text-align:right">${fmtVen(totRetDb)}</td><td></td></tr></tfoot></table></div>`;
+
+            const colHeaders = ['Nº','Fecha','N° RIF','Razón Social','Tipo Transacción','N° Factura','N° Control','N° Débito','N° Crédito','Fact. Afectada','Valor Total Bs.','IGTF','No Gravable','Base Imponible','% Alíc.','IVA 16%','IVA Retenido','Fact. que Afecta','N° Comprobante'];
+            const totRow = `<tr style="background:#1f2937;color:#fff;font-weight:900">
+  <td colspan="10" style="padding:3px 4px;font-size:7px">TOTALES — ${rows.length} registros</td>
+  <td style="padding:3px 4px;font-size:7px;text-align:right">${fV(totTV)}</td>
+  <td style="padding:3px 4px;font-size:7px;text-align:right">0,00</td>
+  <td style="padding:3px 4px;font-size:7px;text-align:right">0,00</td>
+  <td style="padding:3px 4px;font-size:7px;text-align:right;font-weight:900">${fV(totBase)}</td>
+  <td></td>
+  <td style="padding:3px 4px;font-size:7px;text-align:right">${fV(totIva)}</td>
+  <td style="padding:3px 4px;font-size:7px;text-align:right">${fV(totRetDb)}</td>
+  <td colspan="2"></td>
+</tr>`;
+
+            const resumenHtml = `
+<div style="margin-top:20px;page-break-inside:avoid">
+  <table style="width:55%;border-collapse:collapse;font-size:8px;font-family:Arial">
+    <tr><td colspan="2" style="background:#1f2937;color:#fff;font-weight:900;padding:6px 8px;font-size:9px">RESUMEN LIBRO DE VENTAS</td></tr>
+    <tr><td colspan="2" style="background:#374151;color:#fff;font-weight:900;padding:4px 8px">DÉBITOS FISCALES</td></tr>
+    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Ventas internas no gravadas</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
+    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Ventas de exportación</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
+    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Ventas internas gravadas alícuota general (16%)</td><td style="padding:3px 8px;text-align:right;font-weight:bold;border-bottom:1px solid #e5e7eb">${fV(totVentasGravadas)}</td></tr>
+    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Ventas internas gravadas alícuota general + adicional</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
+    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Ventas internas gravadas alícuota reducida</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
+    <tr style="background:#f9fafb"><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb;font-weight:bold">Total ventas y débitos fiscales para determinación</td><td style="padding:3px 8px;text-align:right;font-weight:bold;border-bottom:1px solid #e5e7eb">${fV(totVentasGravadas)}</td></tr>
+    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Ajuste a los débitos fiscales de períodos anteriores</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
+    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Certificados de Créditos Fiscales para determinación</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
+    <tr style="background:#1f2937;color:#fff"><td style="padding:4px 8px;font-weight:900">Total débitos fiscales</td><td style="padding:4px 8px;text-align:right;font-weight:900">${fV(totIVADebitos)}</td></tr>
+    <tr><td colspan="2" style="padding:6px 8px"></td></tr>
+    <tr><td colspan="2" style="background:#374151;color:#fff;font-weight:900;padding:4px 8px">AUTOLIQUIDACIÓN</td></tr>
+    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Retenciones acumuladas por descontar</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">${fV(retAcum)}</td></tr>
+    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Retenciones del Período</td><td style="padding:3px 8px;text-align:right;font-weight:bold;border-bottom:1px solid #e5e7eb">${fV(retPeriodo)}</td></tr>
+    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Créditos adquiridos por cesión de retenciones</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
+    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Recuperación de retenciones solicitado</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
+    <tr style="background:#f9fafb"><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb;font-weight:bold">Total Retenciones</td><td style="padding:3px 8px;text-align:right;font-weight:bold;border-bottom:1px solid #e5e7eb">${fV(totalRetenciones)}</td></tr>
+    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Retenciones soportadas y descontadas en esta declaración</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">${fV(retDesc)}</td></tr>
+    <tr style="background:#fef3c7"><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb;font-weight:bold">Saldo de Retenciones de IVA no aplicado</td><td style="padding:3px 8px;text-align:right;font-weight:bold;border-bottom:1px solid #e5e7eb">${fV(saldoRet)}</td></tr>
+    <tr style="background:#1f2937;color:#fff"><td style="padding:4px 8px;font-weight:900">Total Retenciones</td><td style="padding:4px 8px;text-align:right;font-weight:900">${fV(saldoRet)}</td></tr>
+    <tr><td colspan="2" style="padding:6px 8px"></td></tr>
+    <tr><td colspan="2" style="background:#374151;color:#fff;font-weight:900;padding:4px 8px">OTROS IMPUESTOS</td></tr>
+    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Anticipo ISLR (1% Base Imponible)</td><td style="padding:3px 8px;text-align:right;font-weight:bold;color:#1d4ed8;border-bottom:1px solid #e5e7eb">${fV(anticipoISLR)}</td></tr>
+    <tr style="background:#1f2937;color:#fff"><td style="padding:4px 8px;font-weight:900">I.A.E. (1% Ventas Brutas)</td><td style="padding:4px 8px;text-align:right;font-weight:900">${fV(iae)}</td></tr>
+  </table>
+</div>`;
+
+            const html=`<html><head><meta charset="utf-8"><style>
+              @page{size:A3 landscape;margin:8mm}
+              *{font-family:Arial,sans-serif;font-size:7px;box-sizing:border-box}
+              body{padding:0;margin:0}
+              table{border-collapse:collapse;width:100%}
+              .hdr th{background:#1f2937;color:#fff;padding:4px 3px;font-size:7px;text-align:center;border:1px solid #333;white-space:nowrap}
+              td{vertical-align:middle}
+            </style></head><body>
+<div style="padding:10px">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:10px">
+  <div>
+    ${settings?.logoURL?`<img src="${settings.logoURL}" style="height:40px;margin-bottom:4px" alt="logo"/>`:'' }
+    <div style="font-weight:900;font-size:11px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div>
+    <div style="font-size:8px">RIF: ${settings?.empresaRIF||'J-412309374'}</div>
+    <div style="font-size:8px">${settings?.empresaDireccion||''}</div>
+    <div style="font-weight:900;font-size:12px;border-bottom:2px solid #000;margin-top:4px;display:inline-block">LIBRO DE VENTAS</div>
+  </div>
+  <div style="text-align:center;border:1px solid #ddd;padding:6px;min-width:200px">
+    <div style="background:#1f2937;color:#fff;padding:4px 6px;font-size:8px;font-weight:900">IMPUESTO AL VALOR AGREGADO</div>
+    <div style="padding:2px;font-size:8px;font-weight:bold">FORMA 99030</div>
+    <div style="font-size:8px">RIF: ${settings?.empresaRIF||'J-412309374'}</div>
+    <div style="display:flex;justify-content:space-between;font-size:8px;padding:2px 4px"><span style="background:#374151;color:#fff;padding:1px 4px;font-weight:bold">MES</span><span style="font-weight:bold">${mesLabel.toUpperCase()} ${libroAnio}</span></div>
+    <div style="background:#374151;color:#fff;padding:2px 6px;font-size:8px;font-weight:bold">${libroQuincena==='AMBAS'?'MES COMPLETO':libroQuincena==='1'?'PERIODO: I QUINCENA':'PERIODO: II QUINCENA'}</div>
+    <div style="font-size:8px;padding:2px">DEL ${periodoDesde.split('-').reverse().join('/')} AL ${periodoHasta.split('-').reverse().join('/')}</div>
+  </div>
+</div>
+<table class="hdr"><thead><tr>${colHeaders.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot>${totRow}</tfoot></table>
+${resumenHtml}
+</div></body></html>`;
             handlePDFFromHTML(html,`LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}`,true);
           };
 
@@ -12454,6 +12549,70 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   </table>
                 </div>
               </div>
+
+              {/* RESUMEN LIBRO DE VENTAS */}
+              {(()=>{
+                const totVentasGravadas = rows.filter(r=>r.tipo==='FACTURA'&&r.alicuota==='16%').reduce((s,r)=>s+r.baseImponibleBs,0);
+                const totIVADebitos = rows.filter(r=>r.tipo==='FACTURA').reduce((s,r)=>s+r.ivaBs,0);
+                const totVentasBruta = rows.filter(r=>r.tipo==='FACTURA').reduce((s,r)=>s+r.totalVentasBs,0);
+                const retPeriodo = rows.filter(r=>r.tipo==='RETENCION').reduce((s,r)=>s+r.ivaRetDb,0);
+                const retAcum=parseNum(libroRetAcum||0);
+                const retDesc=parseNum(libroRetDesc||0);
+                const totalRetenciones=retAcum+retPeriodo;
+                const saldoRet=totalRetenciones-retDesc;
+                const anticipoISLR=parseFloat((totVentasGravadas*0.01).toFixed(2));
+                const iae=parseFloat((totVentasBruta*0.01).toFixed(2));
+                const row2=(label,value,bold,bg)=>(
+                  <div className={`flex justify-between items-center py-1.5 px-3 text-[10px] border-b border-gray-100 ${bg||''}`}>
+                    <span className={bold?'font-black':'font-medium text-gray-700'}>{label}</span>
+                    <span className={`font-black ${bold?'text-gray-900':'text-gray-700'}`}>{fmtVen(value)}</span>
+                  </div>);
+                return(
+                <div className="bg-white rounded-2xl border overflow-hidden">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-0 divide-y md:divide-y-0 md:divide-x divide-gray-200">
+                    {/* DÉBITOS FISCALES */}
+                    <div>
+                      <div className="bg-gray-800 text-white font-black text-[10px] uppercase px-3 py-2">DÉBITOS FISCALES</div>
+                      {row2('Ventas internas no gravadas',0)}
+                      {row2('Ventas de exportación',0)}
+                      {row2('Ventas gravadas alícuota general (16%)',totVentasGravadas,true)}
+                      {row2('Ventas gravadas alícuota general + adicional',0)}
+                      {row2('Ventas gravadas alícuota reducida',0)}
+                      {row2('Total ventas y débitos fiscales',totVentasGravadas,true,'bg-gray-50')}
+                      {row2('Ajuste débitos fiscales períodos anteriores',0)}
+                      {row2('Certificados de Créditos Fiscales',0)}
+                      <div className="flex justify-between items-center py-2 px-3 text-[10px] bg-gray-800 text-white"><span className="font-black uppercase">Total Débitos Fiscales</span><span className="font-black">{fmtVen(totIVADebitos)}</span></div>
+                      <div className="px-3 py-2 space-y-1">
+                        <div className="text-[9px] font-black text-gray-500 uppercase">Otros Impuestos</div>
+                        <div className="flex justify-between text-[10px]"><span>Anticipo ISLR (1% × Base Imponible)</span><span className="font-black text-blue-700">{fmtVen(anticipoISLR)}</span></div>
+                        <div className="flex justify-between text-[10px]"><span>I.A.E. (1% × Ventas Brutas)</span><span className="font-black text-blue-700">{fmtVen(iae)}</span></div>
+                      </div>
+                    </div>
+                    {/* AUTOLIQUIDACIÓN */}
+                    <div>
+                      <div className="bg-gray-800 text-white font-black text-[10px] uppercase px-3 py-2">AUTOLIQUIDACIÓN</div>
+                      <div className="flex justify-between items-center py-1.5 px-3 text-[10px] border-b border-gray-100">
+                        <span className="text-gray-700">Retenciones acumuladas por descontar</span>
+                        <input type="number" step="0.01" value={libroRetAcum} onChange={e=>setLibroRetAcum(e.target.value)} placeholder="0,00" className="w-32 border border-gray-200 rounded px-2 py-0.5 text-right text-[10px] font-black outline-none focus:border-blue-400"/>
+                      </div>
+                      {row2('Retenciones del Período',retPeriodo,true)}
+                      {row2('Créditos adquiridos por cesión',0)}
+                      {row2('Recuperación de retenciones solicitado',0)}
+                      {row2('Total Retenciones',totalRetenciones,true,'bg-gray-50')}
+                      <div className="flex justify-between items-center py-1.5 px-3 text-[10px] border-b border-gray-100">
+                        <span className="text-gray-700">Retenciones soportadas y descontadas</span>
+                        <input type="number" step="0.01" value={libroRetDesc} onChange={e=>setLibroRetDesc(e.target.value)} placeholder="0,00" className="w-32 border border-gray-200 rounded px-2 py-0.5 text-right text-[10px] font-black outline-none focus:border-blue-400"/>
+                      </div>
+                      <div className="flex justify-between items-center py-1.5 px-3 text-[10px] border-b border-gray-100 bg-yellow-50">
+                        <span className="font-black">Saldo de Retenciones IVA no aplicado</span>
+                        <span className="font-black text-orange-600">{fmtVen(saldoRet)}</span>
+                      </div>
+                      <div className="flex justify-between items-center py-2 px-3 text-[10px] bg-gray-800 text-white"><span className="font-black uppercase">Total Retenciones</span><span className="font-black">{fmtVen(saldoRet)}</span></div>
+                    </div>
+                  </div>
+                </div>
+                );
+              })()}
 
               {/* REPORTE RETENCIONES */}
               {/* REPORTE RETENCIONES */}
@@ -12589,16 +12748,41 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                             {factFilt.slice(0,30).map(inv=>(<option key={inv.id} value={inv.id}>{padNum(inv.nroFiscal,8)||inv.documento} · {inv.clientName} · {inv.fecha}</option>))}
                           </select>
                         </div>
-                        {selFact&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs"><div><span className="font-black">Cliente:</span> {selFact.clientName}</div><div><span className="font-black">RIF:</span> {selFact.clientRif} &nbsp;|&nbsp; <span className="font-black">N° Fiscal:</span> {padNum(selFact.nroFiscal,8)||'—'} &nbsp;|&nbsp; <span className="font-black">Control:</span> {padNum(selFact.nroControl,8)||'—'}</div></div>}
-                        <div className="grid grid-cols-2 gap-3">
-                          <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Monto Retenido (Bs.)</label><input type="number" step="0.01" value={retForm.montoRetenido} onChange={e=>setRetForm(f=>({...f,montoRetenido:e.target.value}))} placeholder="0.00" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/></div>
-                          <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Quincena</label>
-                            <select value={retForm.quincena} onChange={e=>setRetForm(f=>({...f,quincena:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500">
-                              <option value="1">I Quincena (01–15)</option><option value="2">II Quincena (16–{lastDay})</option>
-                            </select></div>
-                          <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">N° Comprobante retención</label><input value={retForm.nroRetencion} onChange={e=>setRetForm(f=>({...f,nroRetencion:e.target.value}))} placeholder="00002986" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/></div>
-                          <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Fecha comprobante</label><input type="date" value={retForm.fechaComprobante} onChange={e=>setRetForm(f=>({...f,fechaComprobante:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/></div>
-                        </div>
+                        {selFact&&(()=>{
+                          const tasaFact=parseNum(selFact.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+                          const baseUsd=parseNum(selFact.montoBase||0);
+                          const ivaUsd=parseNum(selFact.iva||0)||(selFact.aplicaIva==='SI'?parseFloat((baseUsd*0.16).toFixed(2)):0);
+                          const pctRet=parseNum(retForm.porcentaje||75)/100;
+                          const montoRetUsd=parseFloat((ivaUsd*pctRet).toFixed(2));
+                          const montoRetBs=parseFloat((montoRetUsd*tasaFact).toFixed(2));
+                          return(<>
+                          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs space-y-1">
+                            <div><span className="font-black">Cliente:</span> {selFact.clientName} &nbsp;·&nbsp; <span className="font-black">RIF:</span> {selFact.clientRif}</div>
+                            <div><span className="font-black">N° Fiscal:</span> {selFact.nroFiscal||'—'} &nbsp;·&nbsp; <span className="font-black">Control:</span> {selFact.nroControl||'—'}</div>
+                            <div><span className="font-black">IVA:</span> ${formatNum(ivaUsd)} USD &nbsp;·&nbsp; <span className="font-black">Tasa BCV:</span> {formatNum(tasaFact)} Bs/$</div>
+                            <div className="border-t border-blue-200 pt-1 font-black text-blue-800">Retención ({retForm.porcentaje||75}%): ${formatNum(montoRetUsd)} = <span className="text-orange-600">{formatNum(montoRetBs)} Bs.</span></div>
+                            {!retForm.montoRetenido&&<button type="button" onClick={()=>setRetForm(f=>({...f,montoRetenido:String(montoRetBs)}))} className="mt-1 bg-blue-600 text-white px-3 py-1 rounded-lg font-black text-[9px]">⚡ Usar monto calculado</button>}
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">% Retención</label>
+                              <select value={retForm.porcentaje||'75'} onChange={e=>setRetForm(f=>({...f,porcentaje:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500">
+                                <option value="75">75%</option><option value="100">100%</option>
+                              </select></div>
+                            <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Monto Retenido (Bs.)</label>
+                              <input type="number" step="0.01" value={retForm.montoRetenido} onChange={e=>setRetForm(f=>({...f,montoRetenido:e.target.value}))} placeholder={String(montoRetBs)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
+                              <span className="text-[9px] text-gray-400">≈ ${formatNum(parseNum(retForm.montoRetenido||0)/Math.max(tasaFact,1))} USD</span>
+                            </div>
+                            <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Quincena</label>
+                              <select value={retForm.quincena} onChange={e=>setRetForm(f=>({...f,quincena:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500">
+                                <option value="1">I Quincena (01–15)</option><option value="2">II Quincena (16–{lastDay})</option>
+                              </select></div>
+                            <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">N° Comprobante</label>
+                              <input value={retForm.nroRetencion} onChange={e=>setRetForm(f=>({...f,nroRetencion:e.target.value}))} placeholder="00002986" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/></div>
+                            <div className="col-span-2"><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Fecha comprobante</label>
+                              <input type="date" value={retForm.fechaComprobante} onChange={e=>setRetForm(f=>({...f,fechaComprobante:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/></div>
+                          </div>
+                          </>);
+                        })()}
                       </div>
                       <div className="flex gap-3 pt-2">
                         <button onClick={()=>setShowRetModal(false)} className="flex-1 py-2.5 border-2 border-gray-200 rounded-xl font-black text-xs hover:bg-gray-100">Cancelar</button>
