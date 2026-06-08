@@ -1165,7 +1165,7 @@ export default function App() {
 
   // ── RESTORE 7 FG products to Inventario General PT + ALMACEN ZI ──
   useEffect(() => {
-    if(!inventory || !appUser || sessionStorage.getItem('fg_restore_v3')==='done') return;
+    return; // FG auto-restore DESHABILITADO: el usuario no quiere estos códigos auto-generados
     const FG_PRODUCTS = [{'id': 'FG-EMBUTIDOS2KIRI-53x83x0.012', 'desc': 'EMBUTIDOS 2 KIRI - 53X83X12MIC', 'subcategory': 'Bolsas Plásticas'}, {'id': 'FG-VENILACBOLSA25-53x91x0.020', 'desc': 'VENILAC - BOLSA 25KG - 53X91X20MIC', 'subcategory': 'Bolsas Plásticas'}, {'id': 'FG-VENILACBOLSA12-37x75x0.010', 'desc': 'VENILAC - BOLSA 12KG - 37X75X10MIC', 'subcategory': 'Bolsas Plásticas'}, {'id': 'FG-AFSGRIS-60x82x0.030', 'desc': 'AFS GRIS 60X82X30MIC', 'subcategory': 'Bolsas Plásticas'}, {'id': 'FG-EMBUTIDO1KIRI2-28x75x0.012', 'desc': 'EMBUTIDO 1 - KIRI 28X75X12MIC', 'subcategory': 'Bolsas Plásticas'}, {'id': 'FG-PAÑALKIRI-60x75x0.004', 'desc': 'PAÑAL-KIRI 60X75X4MIC', 'subcategory': 'Bolsas Plásticas'}, {'id': 'FG-TERMOPINTURASD-70x0x0.012', 'desc': 'TERMO - PINTURAS DEL CARIBE 70X12MIC', 'subcategory': 'Termoencogibles'}];
     const doRestore = async () => {
       let restored = 0;
@@ -1202,10 +1202,11 @@ export default function App() {
   // ── ELIMINAR TODOS LOS FG DEL INVENTARIO — corre UNA SOLA VEZ ───────────────
   useEffect(() => {
     if(!inventory || !appUser) return;
-    if(localStorage.getItem('delete_all_fg_inv_done')==='true') return;
+    // FG deletion runs on every session to keep inventory clean
+    const FG_BAD_PREFIXES = ['FG-VENILACBOLSA','FG-PAÑALKIRI','FG-EMBUTIDOS2KIRI','FG-EMBUTIDO1KIRI2','FG-AFSGRIS','FG-TERMOPINTURAS','FG-TERMOENC'];
     const fgItems = (inventory||[]).filter(i => {
       const code = (i.displayId || (i.id||'').split('___')[0] || '');
-      return code.toUpperCase().startsWith('FG-');
+      return FG_BAD_PREFIXES.some(p=>code.toUpperCase().startsWith(p.toUpperCase()));
     });
     if(fgItems.length === 0) { localStorage.setItem('delete_all_fg_inv_done','true'); return; }
     const run = async () => {
@@ -5711,7 +5712,9 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
     if (invView === 'finished') {
       // FIX 3: inventory PT items are now shown within bolsas/termos via allFG merge
       // Include inventory PT items converted to FG format
-      const invPTForView = (inventory||[]).filter(i => i.category === 'Productos Terminados' && parseNum(i.stock) > 0).map(i => {
+      // Include Productos Terminados AND Fleje/Flejes categories
+      const isPTCategory = i => i.category === 'Productos Terminados' || (i.category||'').toUpperCase().includes('FLEJE') || (i.subcategory||'').toUpperCase().includes('FLEJE');
+      const invPTForView = (inventory||[]).filter(i => isPTCategory(i) && parseNum(i.stock) > 0).map(i => {
         const unitUp = (i.unit||'').toUpperCase();
         const isKG = unitUp === 'KG';
         const isMillares = unitUp === 'MILLARES' || unitUp === 'MILLAR';
@@ -6132,7 +6135,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 });
 
               // FIX 3: Also add inventory items with category='Productos Terminados' — ALL items including stock=0
-              (inventory||[]).filter(i => i.category === 'Productos Terminados').forEach(i => {
+              (inventory||[]).filter(i => i.category === 'Productos Terminados' || (i.category||'').toUpperCase().includes('FLEJE')).forEach(i => {
                 const cleanId = i.displayId || (i.id||'').split('___')[0];
                 // Deduplicate by cleanId across warehouses (sum stock for same product)
                 const esTermo = (i.unit||'').toUpperCase() === 'KG';
@@ -7469,9 +7472,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                  </button>
                  <button onClick={() => {clearAllReports(); setInvView('toma_fisica'); setPhysicalCounts({});}} className="bg-orange-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-orange-700 transition-colors flex items-center gap-2">
                    <ClipboardEdit size={16}/> TOMA FÍSICA / AJUSTE
-                 <button onClick={cleanupFGCodes} className="bg-red-600 text-white px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-red-700 flex items-center gap-2">
-                   <Trash2 size={16}/> ELIMINAR CÓDIGOS FG AUTO
-                 </button>
+
                  </button>
                  <button onClick={() => {
                    const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
@@ -8745,7 +8746,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 fgByDesc[key].salesQty += periodSales.reduce((s,m)=>s+parseNum(m.qty),0);
               });
               // Also include inventory items with category='Productos Terminados' (imported goods)
-              (inventory||[]).filter(i => i.category === 'Productos Terminados').forEach(i => {
+              (inventory||[]).filter(i => i.category === 'Productos Terminados' || (i.category||'').toUpperCase().includes('FLEJE')).forEach(i => {
                 const cleanId = i.displayId || (i.id||'').split('___')[0];
                 const desc = i.desc || cleanId;
                 const stk = parseNum(i.stock||0);
@@ -8782,7 +8783,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               });
 
               // Agregar ítems de inventory con category === 'Productos Terminados'
-              const invPT = inventory.filter(item => item.category === 'Productos Terminados');
+              const invPT = inventory.filter(item => item.category === 'Productos Terminados' || (item.category||'').toUpperCase().includes('FLEJE'));
               invPT.forEach(item => {
                 const allItemMovs2 = (invMovements||[]).filter(m=>m.itemId===item.id);
                 const histBefore2 = allItemMovs2.filter(m=>new Date(`${m.date}T00:00:00`)<startOfMonth);
@@ -11115,7 +11116,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           if(neForm!==null) {
             const form=neForm; const setForm=setNeForm;
             // Buscar en Productos Terminados + deduplicar por código (un producto puede tener varios registros/almacén)
-            const invPTAll = (inventory||[]).filter(i => i.activo!==false && (i.category==='Productos Terminados'||i.category==='Terminados'||i.subCategory==='Terminados'));
+            const invPTAll = (inventory||[]).filter(i => i.activo!==false && (i.category==='Productos Terminados'||i.category==='Terminados'||(i.category||'').toUpperCase().includes('FLEJE')||(i.subcategory||'').toUpperCase().includes('FLEJE')));
             const invResults2 = neInvSearch.length>0 ? (()=>{
               const q = neInvSearch.toUpperCase();
               const matched = invPTAll.filter(i =>
@@ -12005,16 +12006,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   return matchSearch&&matchAnio&&matchMes;
                 });
                 const totalInv=allInv.length;
-                // Total: NEs del período + facturas directas sin NE
-                const facEnNEf=new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
-                const nesF=(notasEntrega||[]).filter(ne=>{
-                  const matchA=!invFiltAnio||(ne.fecha||'').startsWith(invFiltAnio);
-                  const matchM=!invFiltMes||(ne.fecha||'').substring(5,7)===invFiltMes;
-                  return matchA&&matchM;
-                });
-                const totalFact=nesF.reduce((s,ne)=>s+parseNum(ne.montoBase||0),0)
-                               +allInv.filter(inv=>{const id=inv.id||'';const dc=(inv.documento||'').replace(/^FAC-/,'INVO-');return !inv.neOrigen&&!facEnNEf.has(id)&&!facEnNEf.has(dc);}).reduce((s,inv)=>s+parseNum(inv?.montoBase||0),0);
-               const pgInv=Math.max(0,Math.min(facturaPagina,Math.ceil(totalInv/PAGE_SIZE_DEFAULT)-1));
+                // Total facturado: solo facturas INVO reales del período filtrado (sin NEs en tránsito)
+                const totalFact=allInv.filter(inv=>
+                  (inv.id||'').toUpperCase().startsWith('INVO-')||(inv.documento||'').toUpperCase().startsWith('INVO-')
+                ).reduce((s,inv)=>s+parseNum(inv?.montoBase||0),0);
                const pageInv=allInv.slice(pgInv*PAGE_SIZE_DEFAULT,(pgInv+1)*PAGE_SIZE_DEFAULT);
                return(<>
                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -18843,8 +18838,8 @@ ${resumenHtml}
                       <tr className="bg-orange-50 cursor-pointer hover:bg-orange-100 select-none" onClick={()=>setErExpanded(p=>({...p,ingresos:!p.ingresos}))}>
                         <td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-orange-800" colSpan={tasa>1?4:3}>
                           <span className="mr-2">{erExpanded.ingresos?'▼':'▶'}</span>
-                          <span className="text-orange-600 font-black mr-2">4.1.01.01.000</span>
-                          INGRESOS POR MAQUILA
+                          <span className="text-orange-600 font-black mr-2">{(efaData.facturasperiodo||[]).some(f=>(notasEntrega||[]).find(ne=>ne.id===f.documento)?.opRelacionada)?'4.1.01.01.002':'4.1.01.01.001'}</span>
+                          {(efaData.facturasperiodo||[]).some(f=>(notasEntrega||[]).find(ne=>ne.id===f.documento)?.opRelacionada)?'INGRESOS POR ORDEN DE PRODUCCIÓN':'INGRESOS POR VENTAS GENERALES'}
                           <span className="ml-3 text-[9px] text-orange-400">{erExpanded.ingresos?'contraer':'expandir facturas'}</span>
                         </td>
                         <td className="py-1.5 px-3 text-right font-black text-orange-700">{formatNum(efaData.totalIngresos)}</td>
@@ -18880,7 +18875,7 @@ ${resumenHtml}
                         onClick={()=>setErExpanded(p=>({...p,costo_ventas:!p.costo_ventas}))}>
                         <td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={tasa>1?4:3}>
                           <span className="mr-2">{erExpanded.costo_ventas?'▼':'▶'}</span>
-                          COSTO DE PRODUCCIÓN VENDIDA
+                          {(()=>{const conOP=(efaData.cogsRows||[]).filter(r=>r.cuentaCosto==='5.1.01.01.002').length;const sinOP=(efaData.cogsRows||[]).length-conOP;return conOP>0&&sinOP===0?'COSTO DE VENTA (PRODUCCIÓN) — 5.1.01.01.002':sinOP>0&&conOP===0?'COSTO DE VENTA (MERCANCÍA) — 5.1.01.01.001':'COSTO DE VENTA (5.1.01.01.001 / 5.1.01.01.002)';})()}
                           <span className="ml-3 text-[9px] text-gray-400">{erExpanded.costo_ventas?'contraer':'expandir detalle'}</span>
                         </td>
                         <td className="py-1.5 px-3 text-right font-black">${formatNum(efaData.totalCostoProd)}</td>
