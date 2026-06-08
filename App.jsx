@@ -408,9 +408,12 @@ export default function App() {
   const [neForm, setNeForm] = useState(null);
   const [neSearch, setNeSearch] = useState('');
   const [neFiltStatus, setNeFiltStatus] = useState('TODAS');
-  const [neFiltMes, setNeFiltMes] = useState('');    // 'YYYY-MM' o '' para todos
-  const [invFiltMes, setInvFiltMes] = useState('');  // 'YYYY-MM' o '' para todos
-  const [reqFiltMes, setReqFiltMes] = useState('');  // 'YYYY-MM' o '' para todos
+  const [neFiltMes, setNeFiltMes] = useState('');    // 'MM' o '' para todos
+  const [neFiltAnio, setNeFiltAnio] = useState('');  // 'YYYY' o '' para todos
+  const [invFiltMes, setInvFiltMes] = useState('');  // 'MM' o '' para todos
+  const [invFiltAnio, setInvFiltAnio] = useState(''); // 'YYYY' o '' para todos
+  const [reqFiltMes, setReqFiltMes] = useState('');  // 'MM' o '' para todos
+  const [reqFiltAnio, setReqFiltAnio] = useState(''); // 'YYYY' o '' para todos
   const [neInvSearch, setNeInvSearch] = useState('');
   const [neShowInvDrop, setNeShowInvDrop] = useState(false);
   // ── Estados Transacciones de Ventas ────────────────────────────────────────
@@ -9809,6 +9812,9 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           const filtInvs = (invoices||[]).filter(inv=>{
             if(!inv) return false;
             if(pvFilter && pvFilter !== 'general') { if(!(inv.fecha||'').startsWith(pvFilter)) return false; }
+            // Respetar filtros activos de Facturación (año + mes)
+            if(invFiltAnio && !(inv.fecha||'').startsWith(invFiltAnio)) return false;
+            if(invFiltMes && (inv.fecha||'').substring(5,7)!==invFiltMes) return false;
             if(pvFiltCliente){ const cli=(inv.clientName||inv.client||'').toUpperCase(); const rif=(inv.clientRif||'').toUpperCase(); if(!cli.includes(pvFiltCliente.toUpperCase())&&!rif.includes(pvFiltCliente.toUpperCase())) return false; }
             if(pvFiltDoc){ const doc=(inv.documento||'').toUpperCase(); const fisc=(inv.nroFiscal||'').toUpperCase(); if(!doc.includes(pvFiltDoc.toUpperCase())&&!fisc.includes(pvFiltDoc.toUpperCase())) return false; }
             return true;
@@ -10997,6 +11003,47 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               setNeView('lista'); setNeForm(null); setNeInvSearch(''); setNeShowInvDrop(false);
             } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
           };
+          // ── ANULAR NE: devuelve inventario pero mantiene el registro ──────────────
+          const handleAnularNE = (ne) => {
+            if(ne.status==='ANULADA') return setDialog({title:'Ya anulada',text:`${ne.id} ya está anulada.`,type:'alert'});
+            setDialog({
+              title:'Anular Nota de Entrega',
+              text:`¿Anular ${ne.id}?
+Se devolverá el inventario descontado y quedará marcada como ANULADA (no se elimina el registro).`,
+              type:'confirm',
+              onConfirm: async() => {
+                try {
+                  const batch = writeBatch(db);
+                  // Devolver inventario por almacén
+                  for(const item of (ne.items||[])) {
+                    if(!item.invCode) continue;
+                    const code=(item.invCode||'').split('___')[0];
+                    const wqty = item.warehouseQtys||{'ALMACEN ZI':parseNum(item.cantidad||0)};
+                    for(const [almNom, cantRaw] of Object.entries(wqty)) {
+                      const cant=parseNum(cantRaw||0);
+                      if(cant<0.001) continue;
+                      const targetDoc=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===code&&(i.almacen||'ALMACEN ZI')===almNom);
+                      if(targetDoc) {
+                        batch.update(getDocRef('inventory',targetDoc.id),{stock:Math.max(0,parseNum(targetDoc.stock||0)+cant),updatedAt:getTodayDate()});
+                        const movId=`NE-ANU-${ne.id}-${code}-${Date.now()}`;
+                        batch.set(getDocRef('inventoryMovements',movId),{id:movId,date:getTodayDate(),timestamp:Date.now(),itemId:targetDoc.id,itemName:item.desc||code,type:'ENTRADA',qty:cant,unitCost:parseNum(item.costoUnit||0),totalValue:cant*parseNum(item.costoUnit||0),reference:ne.id,almacen:almNom,notes:`ANULACIÓN NE ${ne.id} — ${ne.clientName||''}`,user:appUser?.name||'Sistema'});
+                      }
+                    }
+                  }
+                  // Marcar NE como ANULADA
+                  batch.update(getDocRef('notasEntrega',ne.id),{status:'ANULADA',fechaAnulacion:getTodayDate(),anuladaPor:appUser?.name||'Sistema',updatedAt:Date.now()});
+                  // Si tenía factura, deslinkar
+                  if(ne.facturaId) {
+                    const inv=(invoices||[]).find(i=>i.id===ne.facturaId||i.documento===ne.facturaId);
+                    if(inv) batch.update(getDocRef('maquilaInvoices',inv.id),{neOrigen:'',updatedAt:Date.now()});
+                  }
+                  await batch.commit();
+                  setDialog({title:'✅ Anulada',text:`${ne.id} fue anulada. El inventario fue restaurado.`,type:'alert'});
+                } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+              }
+            });
+          };
+
           const handleDeleteNE = (ne) => setDialog({title:'Eliminar Nota de Entrega',text:`¿Eliminar ${ne.id}? La mercancía será devuelta al inventario.`,type:'confirm',onConfirm:async()=>{
             try {
               const batch = writeBatch(db);
@@ -11035,13 +11082,14 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             setNewInvoiceForm(f=>({...f,fecha:ne.fecha,clientRif:ne.clientRif,clientName:ne.clientName,clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',aplicaIva:ne.aplicaIva,opAsignada:ne.opRelacionada||'',ncAsignada:'',neOrigen:ne.id}));
             setVentasView('facturacion');
           };
+          const neAnios=[...new Set((notasEntrega||[]).map(ne=>(ne.fecha||'').substring(0,4)).filter(Boolean))].sort().reverse();
           const neFiltradas = (notasEntrega||[]).filter(ne=>{
             const matchSearch=!neSearch||ne.id.toUpperCase().includes(neSearch.toUpperCase())||(ne.clientName||'').toUpperCase().includes(neSearch.toUpperCase());
             const matchStatus=neFiltStatus==='TODAS'||ne.status===neFiltStatus;
-            const matchMes=!neFiltMes||(ne.fecha||'').startsWith(neFiltMes);
-            return matchSearch&&matchStatus&&matchMes;
+            const matchAnio=!neFiltAnio||(ne.fecha||'').startsWith(neFiltAnio);
+            const matchMes=!neFiltMes||(ne.fecha||'').substring(5,7)===neFiltMes;
+            return matchSearch&&matchStatus&&matchAnio&&matchMes;
           });
-          const neMonths=[...new Set((notasEntrega||[]).map(ne=>(ne.fecha||'').substring(0,7)).filter(Boolean))].sort().reverse();
           const nePage = Math.max(0, Math.min(nePagina, Math.ceil(neFiltradas.length/PAGE_SIZE)-1));
           const nePageItems = neFiltradas.slice(nePage*PAGE_SIZE, (nePage+1)*PAGE_SIZE);
           const neTotalPages = Math.ceil(neFiltradas.length/PAGE_SIZE)||1;
@@ -11057,7 +11105,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               <div className="p-6 space-y-5 max-w-5xl mx-auto">
                 <div className="flex items-center gap-3">
                   <button onClick={()=>{setNeView('lista');setNeForm(null);setNeInvSearch('');setNeShowInvDrop(false);}} className="flex items-center gap-1 text-[10px] font-black text-gray-500 uppercase hover:text-orange-600"><ArrowRight size={12} className="rotate-180"/> Volver</button>
-                  <span className="font-black text-xl text-orange-600">{form._editId||'Nueva Nota de Entrega'}</span>
+                  <span className="font-black text-xl text-orange-600">{form._editId ? `✏️ Editando ${form._editId}` : `📄 Nueva Nota de Entrega — ${nextNENum()}`}</span>
                 </div>
                 <div className="bg-white rounded-3xl shadow-sm border p-6 space-y-5">
                   <div className="grid grid-cols-4 gap-4">
@@ -11212,16 +11260,25 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 <div><h2 className="font-black text-xl flex items-center gap-2"><FileText size={20} className="text-orange-500"/> Notas de Entrega <span className="bg-orange-100 text-orange-700 text-[10px] font-black px-2 py-0.5 rounded-full">{(notasEntrega||[]).length}</span></h2></div>
                 <button onClick={()=>setNeForm(initNEForm())} className="bg-orange-500 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-orange-600"><Plus size={14}/> Nueva Nota de Entrega</button>
               </div>
-              <div className="flex gap-3 flex-wrap items-end">
-                <select value={neFiltMes} onChange={e=>{setNeFiltMes(e.target.value);setNePagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
-                  <option value="">Todos los meses</option>
-                  {neMonths.map(ym=>{const[y,m]=ym.split('-');const mn=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1];return(<option key={ym} value={ym}>{mn} {y}</option>);})}
-                </select>
+              <div className="flex gap-2 flex-wrap items-end">
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Año</label>
+                  <select value={neFiltAnio} onChange={e=>{setNeFiltAnio(e.target.value);setNePagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                    <option value="">Todos</option>
+                    {neAnios.map(y=>(<option key={y} value={y}>{y}</option>))}
+                  </select></div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mes</label>
+                  <select value={neFiltMes} onChange={e=>{setNeFiltMes(e.target.value);setNePagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                    <option value="">Todos</option>
+                    {['01','02','03','04','05','06','07','08','09','10','11','12'].map((m,i)=>(<option key={m} value={m}>{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][i]}</option>))}
+                  </select></div>
                 <div className="relative flex-1 min-w-48"><Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/><input value={neSearch} onChange={e=>{setNeSearch(e.target.value);setNePagina(0);}} placeholder="Buscar NE o cliente..." className="w-full pl-8 pr-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400"/></div>
-                <select value={neFiltStatus} onChange={e=>{setNeFiltStatus(e.target.value);setNePagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
-                  <option value="TODAS">Todos los estatus</option><option value="TRANSITO">Tránsito</option><option value="PROCESADA">Procesada</option>
-                </select>
-                <div className="bg-orange-50 border-2 border-orange-200 rounded-xl px-4 py-2 text-xs font-black text-orange-700 whitespace-nowrap">{neFiltradas.length} NE &nbsp;·&nbsp; Base: ${formatNum(totalNEbase)} &nbsp;·&nbsp; IVA: ${formatNum(totalNEiva)} &nbsp;·&nbsp; Total: ${formatNum(totalNEtotal)}</div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Estatus</label>
+                  <select value={neFiltStatus} onChange={e=>{setNeFiltStatus(e.target.value);setNePagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                    <option value="TODAS">Todos</option><option value="TRANSITO">Tránsito</option><option value="PROCESADA">Procesada</option><option value="ANULADA">Anulada</option>
+                  </select></div>
+                <div className="flex gap-2 items-center">
+                  <div className="text-right"><div className="text-[9px] text-gray-400 font-bold">{neFiltradas.length} NE</div><div className="font-black text-sm text-orange-600">${formatNum(totalNEbase)}</div><div className="text-[9px] text-gray-400">+IVA ${formatNum(totalNEiva)} = ${formatNum(totalNEtotal)}</div></div>
+                </div>
               </div>
               {/* Paginación top */}
               {neTotalPages>1&&<div className="flex items-center gap-2 text-xs font-black text-gray-600">
@@ -11319,6 +11376,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
     <div style="text-align:center"><div style="border-top:1px solid #111;padding-top:8px;font-size:9px;color:#666;text-transform:uppercase">RECIBÍ CONFORME / CLIENTE</div></div>
   </div>
 </div>`, `NE_${ne.id}_${ne.clientName||''}`)}} className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-lg transition-all" title="PDF"><Printer size={11}/></button>
+                              <button onClick={()=>handleAnularNE(ne)} title="Anular NE" className="w-7 h-7 flex items-center justify-center bg-yellow-50 text-yellow-600 rounded-lg hover:bg-yellow-500 hover:text-white transition-all"><span className="text-[9px] font-black">✕</span></button>
                               <button onClick={()=>handleDeleteNE(ne)} title="Eliminar" className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition-all"><Trash2 size={11}/></button>
                             </div>
                           </td>
@@ -11394,8 +11452,8 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           const tvPageRows=rows.slice(tvPage*PAGE_SIZE_DEFAULT,(tvPage+1)*PAGE_SIZE_DEFAULT);
 
           const exportTV=()=>{
-            const rowsHtml=rows.map(r=>`<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:4px 7px;font-size:9px;white-space:nowrap">${r.fecha}</td><td style="padding:4px 7px;font-size:9px;font-weight:700;color:${r.status==='PROCESADA'?'#16a34a':'#d97706'}">${r.documento}</td><td style="padding:4px 7px;font-size:9px">${r.descripcion}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.montoBruto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.iva)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;font-weight:700">${formatNum(r.tNeto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.costo)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;color:#16a34a;font-weight:700">${formatNum(r.utilidad)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${r.pctUtil.toFixed(2)}%</td></tr>`).join('');
-            handlePDFFromHTML(`<div style="font-family:Arial,sans-serif;font-size:11px"><h2 style="margin:0;font-size:15px;font-weight:900">TRANSACCIONES DE VENTAS</h2><p style="font-size:10px;color:#6b7280;margin:3px 0">Desde: ${tvDesde} · Hasta: ${tvHasta}</p><table style="width:100%;border-collapse:collapse;margin-top:10px"><thead><tr style="background:#111827;color:#fff">${['Fecha','Documento','Descripción','Monto Bruto','I.V.A(16%)','T.Neto','Costo','Utilidad','%Util.'].map(h=>`<th style="padding:6px 7px;font-size:9px">${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr style="background:#111827;color:#fff;font-weight:900"><td colspan="3" style="padding:6px 7px;font-size:9px">TOTALES (${rows.length} ops.)</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.montoBruto)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.iva)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.tNeto)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.costo)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.utilidad)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${pctTot.toFixed(2)}%</td></tr></tfoot></table></div>`,`Transacciones_${tvDesde}_${tvHasta}`);
+            const rowsHtml=rows.map(r=>`<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:4px 7px;font-size:9px;white-space:nowrap">${r.fecha}</td><td style="padding:4px 7px;font-size:9px;font-weight:700;color:${r.status==='PROCESADA'?'#16a34a':'#d97706'}">${r.documento}</td><td style="padding:4px 7px;font-size:9px;color:#1d4ed8">${r.facturaId||'—'}</td><td style="padding:4px 7px;font-size:9px">${r.descripcion}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.montoBruto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.iva)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;font-weight:700">${formatNum(r.tNeto)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${formatNum(r.costo)}</td><td style="padding:4px 7px;font-size:9px;text-align:right;color:#16a34a;font-weight:700">${formatNum(r.utilidad)}</td><td style="padding:4px 7px;font-size:9px;text-align:right">${r.pctUtil.toFixed(2)}%</td></tr>`).join('');
+            handlePDFFromHTML(`<div style="font-family:Arial,sans-serif;font-size:11px"><h2 style="margin:0;font-size:15px;font-weight:900">TRANSACCIONES DE VENTAS</h2><p style="font-size:10px;color:#6b7280;margin:3px 0">Desde: ${tvDesde} · Hasta: ${tvHasta}</p><table style="width:100%;border-collapse:collapse;margin-top:10px"><thead><tr style="background:#111827;color:#fff">${['Fecha','Documento','Factura','Descripción','Monto Bruto','I.V.A(16%)','T.Neto','Costo','Utilidad','%Útil.','Estado'].map(h=>`<th style="padding:6px 7px;font-size:9px">${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr style="background:#111827;color:#fff;font-weight:900"><td colspan="4" style="padding:6px 7px;font-size:9px">TOTALES (${rows.length} ops.)</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.montoBruto)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.iva)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.tNeto)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.costo)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${formatNum(tot.utilidad)}</td><td style="padding:6px 7px;font-size:9px;text-align:right">${pctTot.toFixed(2)}%</td></tr></tfoot></table></div>`,`Transacciones_${tvDesde}_${tvHasta}`);
           };
           return(
             <div className="p-6 space-y-5">
@@ -11403,7 +11461,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 <div><h2 className="font-black text-xl flex items-center gap-2"><BarChart3 size={20} className="text-orange-500"/> Transacciones de Ventas</h2>
                   <p className="text-xs text-gray-500 mt-1">Notas de Entrega · Dólares · Utilidad = Monto Base − Costo</p></div>
                 <button onClick={exportTV} className="bg-gray-800 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-black"><Printer size={14}/> PDF</button>
-                <button onClick={()=>{const th=['Fecha','Documento','Fuente','Descripci\u00f3n','Monto Bruto','I.V.A(16%)','T.Neto','Costo','Utilidad','%Util.'];const tb=rows.map(r=>[r.fecha,r.documento,r.fuente||'NE',r.descripcion,formatNum(r.montoBruto),formatNum(r.iva),formatNum(r.tNeto),formatNum(r.costo),formatNum(r.utilidad),r.pctUtil.toFixed(2)+'%']);const rH=tb.map((row,idx)=>'<tr>'+row.map((c,ci)=>'<td style="padding:4px 7px;border:1px solid #ccc;">'+(ci>=4?formatNum(parseFloat(c)||0):c)+'</td>').join('')+'</tr>').join('');const html='<html><head><meta charset="utf-8"></head><body><h2>SERVICIOS JIRET G&amp;B, C.A.</h2><h3>RIF: J-412309374</h3><h4>TRANSACCIONES DE VENTAS — Desde: '+tvDesde+' Hasta: '+tvHasta+'</h4><table style="border-collapse:collapse;width:100%"><thead><tr>'+th.map(h=>'<th style="background:#000;color:#fff;padding:5px 7px;">'+h+'</th>').join('')+'</tr></thead><tbody>'+rH+'</tbody><tfoot><tr><td colspan="4" style="background:#333;color:#fff;padding:5px 7px;">TOTALES</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.montoBruto)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.iva)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.tNeto)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.costo)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.utilidad)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+pctTot.toFixed(2)+'%</td></tr></tfoot></table></body></html>';const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='TV_'+tvDesde+'_'+tvHasta+'.xls';a.click();}} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-green-700"><Download size={14}/> Excel</button>
+                <button onClick={()=>{const th=['Fecha','Documento','Factura','Fuente','Descripci\u00f3n','Monto Bruto','I.V.A(16%)','T.Neto','Costo','Utilidad','%Útil.','Estado'];const tb=rows.map(r=>[r.fecha,r.documento,r.facturaId||'—',r.fuente||'NE',r.descripcion,formatNum(r.montoBruto),formatNum(r.iva),formatNum(r.tNeto),formatNum(r.costo),formatNum(r.utilidad),r.pctUtil.toFixed(2)+'%',r.status||'—']);const rH=tb.map((row,idx)=>'<tr>'+row.map((c,ci)=>'<td style="padding:4px 7px;border:1px solid #ccc;">'+(ci>=4?formatNum(parseFloat(c)||0):c)+'</td>').join('')+'</tr>').join('');const html='<html><head><meta charset="utf-8"></head><body><h2>SERVICIOS JIRET G&amp;B, C.A.</h2><h3>RIF: J-412309374</h3><h4>TRANSACCIONES DE VENTAS — Desde: '+tvDesde+' Hasta: '+tvHasta+'</h4><table style="border-collapse:collapse;width:100%"><thead><tr>'+th.map(h=>'<th style="background:#000;color:#fff;padding:5px 7px;">'+h+'</th>').join('')+'</tr></thead><tbody>'+rH+'</tbody><tfoot><tr><td colspan="4" style="background:#333;color:#fff;padding:5px 7px;">TOTALES</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.montoBruto)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.iva)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.tNeto)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.costo)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+formatNum(tot.utilidad)+'</td><td style="background:#333;color:#fff;padding:5px 7px;">'+pctTot.toFixed(2)+'%</td></tr></tfoot></table></body></html>';const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='TV_'+tvDesde+'_'+tvHasta+'.xls';a.click();}} className="bg-green-600 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-green-700"><Download size={14}/> Excel</button>
               </div>
               <div className="bg-white rounded-2xl border p-4 flex flex-wrap gap-3 items-end">
                 <div>
@@ -11883,21 +11941,28 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   </div>
                 </div>
              )}
-             <div className="p-6">
-               <div className="flex gap-3 flex-wrap items-end mb-4">
-                 <select value={invFiltMes} onChange={e=>{setInvFiltMes(e.target.value);setFacturaPagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
-                   <option value="">Todos los meses</option>
-                   {[...new Set((invoices||[]).map(i=>(i.fecha||'').substring(0,7)).filter(Boolean))].sort().reverse().map(ym=>{const[y,m]=ym.split('-');const mn=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1];return(<option key={ym} value={ym}>{mn} {y}</option>);})}
-                 </select>
-                 <div className="relative flex-1 max-w-lg"><Search className="absolute left-4 top-3.5 text-gray-400" size={16}/><input type="text" placeholder="Buscar factura o cliente..." value={invoiceSearchTerm} onChange={e=>{setInvoiceSearchTerm(e.target.value);setFacturaPagina(0);}} className="w-full pl-10 pr-4 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400"/></div>
-               </div>
-             {(()=>{
-               const allInv=(invoices||[]).filter(inv=>{
-                 const matchSearch=!invoiceSearchTerm||String(inv?.documento||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase())||String(inv?.clientName||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase());
-                 const matchMes=!invFiltMes||(inv?.fecha||'').startsWith(invFiltMes);
-                 return matchSearch&&matchMes;
-               });
-               const totalInv=allInv.length;
+              <div className="p-6">
+                <div className="flex gap-2 flex-wrap items-end mb-4">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Año</label>
+                    <select value={invFiltAnio} onChange={e=>{setInvFiltAnio(e.target.value);setFacturaPagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                      <option value="">Todos</option>
+                      {[...new Set((invoices||[]).map(i=>(i.fecha||'').substring(0,4)).filter(Boolean))].sort().reverse().map(y=>(<option key={y} value={y}>{y}</option>))}
+                    </select></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mes</label>
+                    <select value={invFiltMes} onChange={e=>{setInvFiltMes(e.target.value);setFacturaPagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                      <option value="">Todos</option>
+                      {['01','02','03','04','05','06','07','08','09','10','11','12'].map((m,i)=>(<option key={m} value={m}>{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][i]}</option>))}
+                    </select></div>
+                  <div className="relative flex-1 max-w-lg"><Search className="absolute left-4 top-3.5 text-gray-400" size={16}/><input type="text" placeholder="Buscar factura o cliente..." value={invoiceSearchTerm} onChange={e=>{setInvoiceSearchTerm(e.target.value);setFacturaPagina(0);}} className="w-full pl-10 pr-4 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400"/></div>
+                </div>
+              {(()=>{
+                const allInv=(invoices||[]).filter(inv=>{
+                  const matchSearch=!invoiceSearchTerm||String(inv?.documento||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase())||String(inv?.clientName||'').toUpperCase().includes(invoiceSearchTerm.toUpperCase());
+                  const matchAnio=!invFiltAnio||(inv?.fecha||'').startsWith(invFiltAnio);
+                  const matchMes=!invFiltMes||(inv?.fecha||'').substring(5,7)===invFiltMes;
+                  return matchSearch&&matchAnio&&matchMes;
+                });
+                const totalInv=allInv.length;
                const totalFact=allInv.reduce((s,inv)=>s+parseNum(inv?.montoBase||0),0);
                const pgInv=Math.max(0,Math.min(facturaPagina,Math.ceil(totalInv/PAGE_SIZE_DEFAULT)-1));
                const pageInv=allInv.slice(pgInv*PAGE_SIZE_DEFAULT,(pgInv+1)*PAGE_SIZE_DEFAULT);
@@ -11926,23 +11991,21 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
              <div className="px-8 py-5 border-b bg-white flex flex-wrap gap-3 justify-between items-center">
                <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><FileText className="text-orange-500" size={24}/> REQUISICIONES OP</h2>
-               <div className="flex gap-2 items-center flex-wrap">
-                 <select value={reqFiltMes} onChange={e=>{setReqFiltMes(e.target.value);setReqPagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
-                   <option value="">Todos los meses</option>
-                   {[...new Set((requirements||[]).map(r=>(r.fecha||''). substring(0,7)).filter(Boolean))].sort().reverse().map(ym=>{const[y,m]=ym.split('-');const mn=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1];return(<option key={ym} value={ym}>{mn} {y}</option>);})}
-                 </select>
-                 <div className="relative">
-                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-                   <input type="text" value={opsSearch} onChange={e=>setOpsSearch(e.target.value)} placeholder="Buscar OP, cliente, producto..." className="border-2 border-gray-200 rounded-xl pl-9 pr-8 py-2.5 text-xs font-bold outline-none focus:border-orange-400 w-56"/>
-                   {opsSearch && <button onClick={()=>setOpsSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500"><X size={12}/></button>}
-                 </div>
-                 <select value={opsStatusFilter} onChange={e=>setOpsStatusFilter(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-black uppercase outline-none focus:border-orange-400 bg-white">
-                   <option value="TODOS">Todos los estados</option>
-                   <option value="PENDIENTE">Pendiente</option>
-                   <option value="EN PROCESO">En Proceso</option>
-                   <option value="COMPLETADO">Completado</option>
-                   <option value="ANULADA">Anulada</option>
-                 </select>
+                <div className="flex gap-2 items-center flex-wrap">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Año</label>
+                    <select value={reqFiltAnio} onChange={e=>{setReqFiltAnio(e.target.value);setReqPagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                      <option value="">Todos</option>
+                      {[...new Set((requirements||[]).map(r=>(r.fecha||'').substring(0,4)).filter(Boolean))].sort().reverse().map(y=>(<option key={y} value={y}>{y}</option>))}
+                    </select></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mes</label>
+                    <select value={reqFiltMes} onChange={e=>{setReqFiltMes(e.target.value);setReqPagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                      <option value="">Todos</option>
+                      {['01','02','03','04','05','06','07','08','09','10','11','12'].map((m,i)=>(<option key={m} value={m}>{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][i]}</option>))}
+                    </select></div>
+                  <div className="relative"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/><input type="text" value={opsSearch} onChange={e=>setOpsSearch(e.target.value)} placeholder="Buscar OP, cliente..." className="pl-8 pr-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400 w-48"/></div>
+                  <select value={opsStatusFilter} onChange={e=>setOpsStatusFilter(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                    <option value="TODOS">Todos</option><option value="PENDIENTE">Pendiente</option><option value="EN PROCESO">En Proceso</option><option value="COMPLETADO">Completado</option><option value="ANULADA">Anulada</option>
+                  </select>
                  <button onClick={()=>setShowReqReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50">REPORTE GENERAL</button>
                  <button onClick={()=>{setShowNewReqPanel(!showNewReqPanel);setNewReqForm(initialReqForm);setEditingReqId(null);}} className="bg-black text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800">{showNewReqPanel ? 'CANCELAR' : 'NUEVA OP'}</button>
                </div>
@@ -12130,14 +12193,15 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
              )}
              <div className="p-6">
              {(()=>{
-               const opsFiltered=(requirements||[]).filter(r=>{const ms=opsStatusFilter==='TODOS'||r?.status===opsStatusFilter||(!r?.status&&opsStatusFilter==='PENDIENTE');if(!ms)return false;if(!opsSearch.trim())return true;const q=opsSearch.toUpperCase();return(r?.id||'').toUpperCase().includes(q)||(r?.client||'').toUpperCase().includes(q)||(r?.desc||'').toUpperCase().includes(q)||(r?.categoria||'').toUpperCase().includes(q);});
+               const reqAnios=[...new Set((requirements||[]).map(r=>(r.fecha||'').substring(0,4)).filter(Boolean))].sort().reverse();
+               const opsFiltered=(requirements||[]).filter(r=>{const ms=opsStatusFilter==='TODOS'||r?.status===opsStatusFilter||(!r?.status&&opsStatusFilter==='PENDIENTE');if(!ms)return false;if(reqFiltAnio&&!(r?.fecha||'').startsWith(reqFiltAnio))return false;if(reqFiltMes&&(r?.fecha||'').substring(5,7)!==reqFiltMes)return false;if(!opsSearch.trim())return true;const q=opsSearch.toUpperCase();return(r?.id||'').toUpperCase().includes(q)||(r?.client||'').toUpperCase().includes(q)||(r?.desc||'').toUpperCase().includes(q)||(r?.categoria||'').toUpperCase().includes(q);});
                const totalOP=opsFiltered.length;
                const pgOP=Math.max(0,Math.min(reqPagina,Math.ceil(totalOP/PAGE_SIZE_DEFAULT)-1));
                const pageOP=opsFiltered.slice(pgOP*PAGE_SIZE_DEFAULT,(pgOP+1)*PAGE_SIZE_DEFAULT);
                return(
                  <div>
-                   <div className="flex items-center justify-between mb-3 flex-wrap gap-2"><div className="flex items-center gap-3"><span className="text-[10px] text-gray-500 font-bold">{totalOP} órdenes</span><span className="bg-orange-50 border border-orange-200 rounded-xl px-3 py-1 text-[10px] font-black text-orange-700">KG Est.: {formatNum(opsFiltered.reduce((s,r)=>s+parseNum(r?.requestedKg||0),0))}</span></div><PaginadorUI total={totalOP} pagina={pgOP} setPagina={setReqPagina}/></div>
-                   <table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black w-1/2">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{pageOP.length===0?<tr><td colSpan="4" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin resultados</td></tr>:pageOP.map(r=>(<tr key={r?.id} className={`hover:bg-gray-50 group transition-all ${r?.status==='ANULADA'?'opacity-40 bg-red-50/20':''}`}><td className="py-4 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r?.fecha}</span></td><td className="py-4 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.desc}</span></td><td className="py-4 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-4 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table>
+                   <div className="flex items-center justify-between mb-3 flex-wrap gap-2"><span className="text-[10px] text-gray-500 font-bold">{totalOP} órdenes</span><PaginadorUI total={totalOP} pagina={pgOP} setPagina={setReqPagina}/></div>
+                   <table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black">Categoría</th><th className="py-4 px-4 text-black w-1/3">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{pageOP.length===0?<tr><td colSpan="5" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin resultados</td></tr>:pageOP.map(r=>(<tr key={r?.id} className={`hover:bg-gray-50 group transition-all ${r?.status==='ANULADA'?'opacity-40 bg-red-50/20':''}`}><td className="py-4 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r?.fecha}</span></td><td className="py-4 px-4"><span className="font-bold text-gray-700 uppercase text-xs block">{r?.categoria||'—'}</span></td><td className="py-4 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.desc}</span></td><td className="py-4 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-4 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table>
                    <div className="mt-4 flex justify-center"><PaginadorUI total={totalOP} pagina={pgOP} setPagina={setReqPagina}/></div>
                  </div>
                );
