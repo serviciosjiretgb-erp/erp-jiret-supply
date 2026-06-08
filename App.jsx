@@ -411,7 +411,7 @@ export default function App() {
   const [neInvSearch, setNeInvSearch] = useState('');
   const [neShowInvDrop, setNeShowInvDrop] = useState(false);
   // ── Estados Transacciones de Ventas ────────────────────────────────────────
-  const [tvDesde, setTvDesde] = useState(() => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`; });
+  const [tvDesde, setTvDesde] = useState(() => { const d=new Date(); return `${d.getFullYear()}-01-01`; });
   const [tvHasta, setTvHasta] = useState(getTodayDate);
   const [tvStatus, setTvStatus] = useState('TODAS');
   const [reqProdSearch, setReqProdSearch] = useState('');
@@ -9811,7 +9811,37 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             return true;
           }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
           const rows = [];
-          filtInvs.forEach(inv=>{
+          // ── Fuente 1: NEs ────────────────────────────────────────────────────
+          const facturasEnNErg = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
+          const nesRG = (notasEntrega||[]).filter(ne=>{
+            if(!ne) return false;
+            if(pvFilter && pvFilter!=='general' && !(ne.fecha||'').startsWith(pvFilter)) return false;
+            if(pvFiltCliente && !(ne.clientName||'').toUpperCase().includes(pvFiltCliente)) return false;
+            if(pvFiltDoc && !(ne.id||'').toUpperCase().includes(pvFiltDoc)) return false;
+            return true;
+          });
+          nesRG.forEach(ne=>{
+            const items = ne.items||[];
+            const costo = ne.costoTotal||(items.reduce((s,it)=>s+parseNum(it.cantidad||0)*parseNum(it.costoUnit||0),0));
+            if(items.length===0){
+              const monto=parseNum(ne.montoBase||0);
+              rows.push({fecha:ne.fecha,doc:ne.id,nroFiscal:'',vendedor:ne.vendedor||'—',cliente:ne.clientName||'—',clienteRif:'',producto:ne.id,codigo:'',cantTotal:1,monto,costo:costo,costoTotal:costo,utilidad:monto-costo,fuente:'NE'});
+            } else {
+              items.forEach(it=>{
+                const qty=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0); const cu=parseNum(it.costoUnit||0);
+                const total=precio*qty; const ct=cu*qty;
+                rows.push({fecha:ne.fecha,doc:ne.id,nroFiscal:'',vendedor:ne.vendedor||'—',cliente:ne.clientName||'—',clienteRif:'',producto:it.desc||'—',codigo:it.invCode||'',cantTotal:qty,monto:total,costo:cu,costoTotal:ct,utilidad:total-ct,fuente:'NE'});
+              });
+            }
+          });
+          // ── Fuente 2: Facturas directas (sin NE asociada) ────────────────────
+          const filtInvsDirect = filtInvs.filter(inv=>{
+            if(inv.neOrigen) return false;
+            const invId=inv.id||inv.documento||'';
+            const invDoc=(inv.documento||'').replace(/^FAC-/,'INVO-');
+            return !facturasEnNErg.has(invId)&&!facturasEnNErg.has(invDoc);
+          });
+          filtInvsDirect.forEach(inv=>{
             const items = inv.itemsFacturados||[];
             if(items.length===0){
               rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
@@ -19154,6 +19184,22 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
     const safeInventory = (inventory||[]).filter(Boolean);
     const safeOpCostsAll = (opCosts||[]).filter(Boolean);
 
+    // ── NEs como fuente canónica de ingresos (igual que Transacciones de Ventas) ──
+    const facturasEnNEkpi = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
+    const safeNEsAll = (notasEntrega||[]).filter(Boolean);
+    const safeDirectInvAll = safeInvoicesAll.filter(inv => {
+      if(inv.neOrigen) return false;
+      const invId = inv.id||inv.documento||'';
+      const invDoc = (inv.documento||'').replace(/^FAC-/,'INVO-');
+      return !facturasEnNEkpi.has(invId) && !facturasEnNEkpi.has(invDoc);
+    });
+    // "safeInvoices" ahora = NEs + facturas directas (vista unificada)
+    const _buildRow = (fecha, montoBase) => ({ fecha: fecha||'', montoBase: parseNum(montoBase||0) });
+    const safeUnifiedAll = [
+      ...safeNEsAll.map(ne => _buildRow(ne.fecha, ne.montoBase)),
+      ...safeDirectInvAll.map(inv => _buildRow(inv.fecha, inv.montoBase||inv.total))
+    ];
+
     // ── Period config ──
     const PERIODS = [
       {label:'Mensual', months:1},
@@ -19167,7 +19213,8 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
     // ── Available months for the month picker ──
     const allAvailableMonths = (() => {
       const set = new Set();
-      safeInvoicesAll.forEach(i=>{ const ym=(i.fecha||'').substring(0,7); if(ym.length===7) set.add(ym); });
+      safeNEsAll.forEach(i=>{ const ym=(i.fecha||'').substring(0,7); if(ym.length===7) set.add(ym); });
+      safeDirectInvAll.forEach(i=>{ const ym=(i.fecha||'').substring(0,7); if(ym.length===7) set.add(ym); });
       safeRequirementsAll.forEach(r=>{ const ym=(r.fecha||r.createdAt||'').substring(0,7); if(ym.length===7) set.add(ym); });
       const cur = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
       set.add(cur);
@@ -19180,8 +19227,11 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 
     // ── Filter data: Mensual = selected month only; others = last N months ──
     const safeInvoices = kpiPeriod === 1
-      ? safeInvoicesAll.filter(i=>(i.fecha||'').startsWith(activeMonth))
-      : safeInvoicesAll;
+      ? safeUnifiedAll.filter(i=>(i.fecha||'').startsWith(activeMonth))
+      : safeUnifiedAll;
+    const safeInvoicesRaw = kpiPeriod === 1     // para top clientes y productos (fuente original)
+      ? [...safeNEsAll.filter(ne=>(ne.fecha||'').startsWith(activeMonth)), ...safeDirectInvAll.filter(inv=>(inv.fecha||'').startsWith(activeMonth))]
+      : [...safeNEsAll, ...safeDirectInvAll];
     const safeRequirements = kpiPeriod === 1
       ? safeRequirementsAll.filter(r=>(r.fecha||r.createdAt||'').startsWith(activeMonth))
       : safeRequirementsAll;
@@ -19190,7 +19240,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       : safeOpCostsAll;
     // Start from earliest invoice/op date OR N months back — whichever is more recent
     const allDates = [
-      ...safeInvoices.map(i=>i.fecha||''),
+      ...safeUnifiedAll.map(i=>i.fecha||''),
       ...safeRequirements.map(r=>r.createdAt||r.fecha||''),
     ].filter(Boolean).sort();
     const earliestYM = allDates[0] ? allDates[0].substring(0,7) : null;
@@ -19218,18 +19268,20 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
     const currentYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
     const prevDate = new Date(now.getFullYear(), now.getMonth()-1, 1);
     const prevYM = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
-    const mesActual = safeInvoices.filter(i=>(i.fecha||'').startsWith(currentYM)).reduce((s,i)=>s+parseNum(i.montoBase||i.totalUSD||i.total||0),0);
-    const mesAnterior = safeInvoices.filter(i=>(i.fecha||'').startsWith(prevYM)).reduce((s,i)=>s+parseNum(i.montoBase||i.totalUSD||i.total||0),0);
+    const mesActual = safeUnifiedAll.filter(i=>(i.fecha||'').startsWith(currentYM)).reduce((s,i)=>s+parseNum(i.montoBase||0),0);
+    const mesAnterior = safeUnifiedAll.filter(i=>(i.fecha||'').startsWith(prevYM)).reduce((s,i)=>s+parseNum(i.montoBase||0),0);
     const crecimiento = mesAnterior > 0 ? ((mesActual-mesAnterior)/mesAnterior*100) : 0;
     const subioMes = mesActual >= mesAnterior;
 
     // ── KPI Totals ──
-    const totalIngresos = safeInvoices.reduce((s,i)=>s+parseNum(i.montoBase||i.totalUSD||i.total||0),0);
-    // Costos operativos + costo de ventas (costoTotal de items facturados)
+    const totalIngresos = safeInvoices.reduce((s,i)=>s+parseNum(i.montoBase||0),0);
+    // Costos operativos + costo de ventas (desde NEs e invoices directas)
     const costosOp = safeOpCosts.reduce((s,c)=>s+parseNum(c.amount||c.monto||0),0);
-    const costoVentas = safeInvoices.reduce((s,inv)=>{
-      const itemsCost = (inv.itemsFacturados||[]).reduce((ss,it)=>ss+parseNum(it.costoTotal||0),0);
-      return s + itemsCost;
+    const costoVentas = safeInvoicesRaw.reduce((s,inv)=>{
+      // Para NEs: sumar de items; para invoices: sumar de itemsFacturados
+      const itemsCostNE = (inv.items||[]).reduce((ss,it)=>ss+parseNum(it.costoUnit||0)*parseNum(it.cantidad||0),0);
+      const itemsCostInv = (inv.itemsFacturados||[]).reduce((ss,it)=>ss+parseNum(it.costoTotal||0),0);
+      return s + (itemsCostNE > 0 ? itemsCostNE : itemsCostInv);
     },0);
     const totalCostos = costosOp + costoVentas;
     const margen = totalIngresos - totalCostos;
@@ -19251,31 +19303,29 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
     // ── Ingresos por mes ──
     const ingByMonth = months.map(m=>({
       name: m.label,
-      val: safeInvoices.filter(i=>(i.fecha||'').startsWith(m.ym)).reduce((s,i)=>s+parseNum(i.montoBase||i.totalUSD||i.total||0),0)
+      val: safeInvoices.filter(i=>(i.fecha||'').startsWith(m.ym)).reduce((s,i)=>s+parseNum(i.montoBase||0),0)
     }));
     const maxIng = Math.max(...ingByMonth.map(m=>m.val), 1);
 
     // ── Top clientes ──
     const cliMap={};
-    safeInvoices.filter(i=>months.some(m=>(i.fecha||'').startsWith(m.ym))).forEach(inv=>{
-      const n = inv.clientName||inv.client||inv.cliente||'Sin nombre';
+    safeInvoicesRaw.filter(i=>months.some(m=>(i.fecha||'').startsWith(m.ym))).forEach(inv=>{
+      const n = inv.clientName||inv.client||inv.clienteName||'Sin nombre';
       if(!cliMap[n]) cliMap[n]={name:n,total:0,facturas:0};
-      cliMap[n].total+=parseNum(inv.montoBase||inv.totalUSD||inv.total||0);
+      cliMap[n].total+=parseNum(inv.montoBase||inv.total||0);
       cliMap[n].facturas++;
     });
     const topClientes = Object.values(cliMap).sort((a,b)=>b.total-a.total).slice(0,6);
     const maxCli = topClientes[0]?.total||1;
 
-    // ── Top productos vendidos (from itemsFacturados) ──
+    // ── Top productos vendidos (desde items de NEs e invoices) ──
     const prodMap={};
-    safeInvoices.filter(i=>months.some(m=>(i.fecha||'').startsWith(m.ym))).forEach(inv=>{
-      (inv.itemsFacturados||[]).forEach(it=>{
-        const k = it.desc||it.fgId||'';
-        if(!k) return;
+    safeInvoicesRaw.filter(i=>months.some(m=>(i.fecha||'').startsWith(m.ym))).forEach(inv=>{
+      const allItems = [...(inv.items||[]), ...(inv.itemsFacturados||[])];
+      allItems.forEach(it=>{ const k=it.desc||it.invCode||it.fgId||''; if(!k) return;
         if(!prodMap[k]) prodMap[k]={name:k,qty:0,ingresos:0};
-        prodMap[k].qty += parseNum(it.cantidad||0);
-        // distribute invoice total proportionally if no item-level price
-        prodMap[k].ingresos += parseNum(it.costoTotal||0)||parseNum(inv.montoBase||inv.totalUSD||inv.total||0)/Math.max((inv.itemsFacturados||[]).length,1);
+        prodMap[k].qty+=parseNum(it.cantidad||0);
+        prodMap[k].ingresos+=parseNum(it.precioUnit||0)*parseNum(it.cantidad||0)||parseNum(inv.montoBase||0);
       });
     });
     const topProductos = Object.values(prodMap).sort((a,b)=>b.ingresos-a.ingresos).slice(0,5);
