@@ -9160,6 +9160,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
       );
     }
 
+    try {
     return (
       <div className="space-y-6 animate-in fade-in">
         {ventasView === 'productos_vendidos' && (() => {
@@ -13275,6 +13276,10 @@ ${resumenHtml}
         )}
       </div>
     );
+    } catch(e) {
+      console.error('Ventas module error:', e);
+      return <div style={{padding:'20px',color:'red'}}><b>Error en módulo Ventas:</b><br/>{e.message}</div>;
+    }
   };
 
   const renderCostosOperativosModule = () => {
