@@ -9566,107 +9566,84 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <div className="border-2 border-orange-200 rounded-2xl p-4 bg-orange-50/30">
                       <h4 className="text-[10px] font-black text-orange-700 uppercase mb-3 flex items-center gap-2">
                         <Package size={13}/> Agregar Producto
-                        <span className="ml-auto text-[8px] text-orange-400 font-bold bg-orange-100 px-2 py-0.5 rounded-full uppercase">{cotizItems.length} ítem{cotizItems.length!==1?'s':''}</span>
+                        <span className="ml-auto text-[8px] text-orange-400 font-bold bg-orange-100 px-2 py-0.5 rounded-full">{cotizItems.length} ítem{cotizItems.length!==1?'s':''}</span>
                       </h4>
 
-                      {/* Selector de modo */}
-                      <div className="flex gap-2 mb-3">
-                        <button type="button" onClick={()=>setCotizProdMode('inv')}
-                          className={`flex-1 py-2 rounded-xl font-black text-[9px] uppercase transition-all border-2 ${cotizProdMode==='inv'?'bg-orange-500 text-white border-orange-500':'bg-white text-gray-600 border-gray-200 hover:border-orange-300'}`}>
-                          📦 Inventario / Productos Terminados
-                        </button>
-                        <button type="button" onClick={()=>setCotizProdMode('ref')}
-                          className={`flex-1 py-2 rounded-xl font-black text-[9px] uppercase transition-all border-2 ${cotizProdMode==='ref'?'bg-gray-700 text-white border-gray-700':'bg-white text-gray-600 border-gray-200 hover:border-gray-400'}`}>
-                          ✍️ Solo Referencia · No afecta inventario
-                        </button>
+                      {/* Buscador */}
+                      <div className="relative mb-2">
+                        <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"/>
+                        <input type="text" value={cotizProdSearch} onChange={e=>setCotizProdSearch(e.target.value)}
+                          placeholder="Buscar por código o descripción..."
+                          className="w-full border-2 border-gray-200 rounded-xl pl-8 pr-3 py-2.5 text-xs font-bold outline-none focus:border-orange-400 bg-white"/>
+                        {cotizProdSearch&&<button type="button" onClick={()=>{setCotizProdSearch('');}} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"><X size={12}/></button>}
                       </div>
 
-                      {/* Modo inventario */}
-                      {cotizProdMode==='inv'&&(
-                      <div className="mb-3 space-y-2">
-                        {/* Buscador de producto */}
-                        <div className="relative">
-                          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"/>
-                          <input type="text" value={cotizProdSearch} onChange={e=>setCotizProdSearch(e.target.value)}
-                            placeholder="Buscar producto por código o descripción..."
-                            className="w-full border-2 border-gray-200 rounded-xl pl-8 pr-4 py-2.5 text-xs font-bold outline-none focus:border-orange-400 bg-white"/>
-                        </div>
-                        {/* Select de producto filtrado */}
-                        <select value={cotizSelectedProduct}
-                          onChange={e=>{
-                            const val=e.target.value;
-                            setCotizSelectedProduct(val);
-                            if(val){
-                              const consolidated={};
-                              (inventory||[]).filter(i=>i.activo!==false).forEach(i=>{
-                                const cc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACK\d+$/i,'').toUpperCase();
-                                if(!cc) return;
-                                if(!consolidated[cc]||parseNum(i.stock)>consolidated[cc].stock) consolidated[cc]={cc,desc:i.desc||'',subcategory:i.subcategory||'',cost:parseNum(i.cost||0),stock:parseNum(i.stock||0)};
-                                const d=i.desc||''; if(d&&!d.includes('×')&&(consolidated[cc].desc.includes('×')||d.length>consolidated[cc].desc.length)) consolidated[cc].desc=d;
-                              });
-                              const item=consolidated[val];
-                              if(item){setCotizAddDesc(`${item.cc} — ${item.desc}`);setCotizAddPrecio(item.cost>0?String(item.cost):'');}
-                            }
-                          }}
-                          className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 bg-white">
-                          <option value="">— Seleccionar producto —</option>
-                          {(()=>{
-                            const q=(cotizProdSearch||'').toUpperCase();
-                            const consolidated={};
-                            (inventory||[]).filter(i=>i.activo!==false&&i.category==='Productos Terminados').forEach(i=>{
+                      {/* Select filtrado */}
+                      <select value={cotizSelectedProduct}
+                        onChange={e=>{
+                          const val=e.target.value;
+                          setCotizSelectedProduct(val);
+                          if(val){
+                            const con={};
+                            (inventory||[]).filter(i=>i.activo!==false).forEach(i=>{
                               const cc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACK\d+$/i,'').toUpperCase();
-                              if(!cc) return;
-                              if(!consolidated[cc]||parseNum(i.stock)>consolidated[cc].stock) consolidated[cc]={cc,desc:i.desc||'',subcategory:i.subcategory||'',cost:parseNum(i.cost||0)};
-                              const d=i.desc||''; if(d&&!d.includes('×')&&(consolidated[cc].desc.includes('×')||d.length>consolidated[cc].desc.length)) consolidated[cc].desc=d;
+                              if(!cc)return;
+                              if(!con[cc]||parseNum(i.stock)>con[cc].stock)con[cc]={cc,desc:i.desc||'',cost:parseNum(i.cost||0),stock:parseNum(i.stock||0)};
+                              const d=i.desc||'';if(d&&!d.includes('×')&&(con[cc].desc.includes('×')||d.length>con[cc].desc.length))con[cc].desc=d;
                             });
-                            const filtered=Object.values(consolidated).filter(c=>!q||c.cc.includes(q)||(c.desc||'').toUpperCase().includes(q)||(c.subcategory||'').toUpperCase().includes(q));
-                            const SUB_ORDER=['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Zuncho'];
-                            const subGroups={};
-                            filtered.forEach(c=>{const sub=c.subcategory||'Otros Terminados';if(!subGroups[sub])subGroups[sub]=[];subGroups[sub].push(c);});
-                            const sortedSubs=[...SUB_ORDER.filter(s=>subGroups[s]),...Object.keys(subGroups).filter(s=>!SUB_ORDER.includes(s)).sort()];
-                            if(filtered.length===0) return <option disabled>Sin resultados para "{cotizProdSearch}"</option>;
-                            return sortedSubs.flatMap(sub=>[
-                              <option key={`h-${sub}`} disabled>── {sub.toUpperCase()} ──</option>,
-                              ...(subGroups[sub]||[]).sort((a,b)=>a.cc.localeCompare(b.cc)).map(c=><option key={c.cc} value={c.cc}>{c.cc} — {c.desc}</option>)
-                            ]);
-                          })()}
-                        </select>
-                        {cotizAddDesc&&<div className="text-[9px] font-bold text-orange-700 bg-orange-50 rounded-lg px-3 py-1.5">✓ {cotizAddDesc}</div>}
-                      </div>
-                      )}
+                            const item=con[val];
+                            if(item){setCotizAddDesc(`${item.cc} — ${item.desc}`);setCotizAddPrecio(item.cost>0?String(item.cost):'');}
+                          }else{setCotizAddDesc('');setCotizAddPrecio('');}
+                        }}
+                        size={5}
+                        className="w-full border-2 border-orange-200 rounded-xl p-1 text-xs font-bold outline-none focus:border-orange-400 bg-white mb-2">
+                        <option value="">— Seleccionar —</option>
+                        {(()=>{
+                          const q=(cotizProdSearch||'').toUpperCase();
+                          const con={};
+                          (inventory||[]).filter(i=>i.activo!==false&&i.category==='Productos Terminados').forEach(i=>{
+                            const cc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACK\d+$/i,'').toUpperCase();
+                            if(!cc)return;
+                            if(!con[cc]||parseNum(i.stock)>con[cc].stock)con[cc]={cc,desc:i.desc||'',subcategory:i.subcategory||'',cost:parseNum(i.cost||0)};
+                            const d=i.desc||'';if(d&&!d.includes('×')&&(con[cc].desc.includes('×')||d.length>con[cc].desc.length))con[cc].desc=d;
+                          });
+                          const filtered=Object.values(con).filter(c=>!q||c.cc.includes(q)||(c.desc||'').toUpperCase().includes(q)||(c.subcategory||'').toUpperCase().includes(q));
+                          const SUB=['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Zuncho'];
+                          const grp={};
+                          filtered.forEach(c=>{const s=c.subcategory||'Otros';if(!grp[s])grp[s]=[];grp[s].push(c);});
+                          const sorted=[...SUB.filter(s=>grp[s]),...Object.keys(grp).filter(s=>!SUB.includes(s)).sort()];
+                          if(!filtered.length)return <option disabled>Sin resultados para "{cotizProdSearch}"</option>;
+                          return sorted.flatMap(sub=>[
+                            <option key={`h-${sub}`} disabled>── {sub.toUpperCase()} ──</option>,
+                            ...(grp[sub]||[]).sort((a,b)=>a.cc.localeCompare(b.cc)).map(c=><option key={c.cc} value={c.cc}>{c.cc} — {c.desc}</option>)
+                          ]);
+                        })()}
+                      </select>
 
-                      {/* Modo referencia manual */}
-                      {cotizProdMode==='ref'&&(
-                      <div className="mb-3">
-                        <input type="text" value={cotizAddDesc} onChange={e=>setCotizAddDesc(e.target.value.toUpperCase())}
-                          placeholder="Descripción libre (ej: STRETCH FILM 45CM × 450M × 20MIC)"
-                          className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400 uppercase bg-white"/>
-                      </div>
-                      )}
+                      {/* Descripción editable */}
+                      <input type="text" value={cotizAddDesc} onChange={e=>setCotizAddDesc(e.target.value.toUpperCase())}
+                        placeholder="Descripción del producto..."
+                        className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400 uppercase bg-white mb-3"/>
 
                       {/* Cantidad + Precio + Botón */}
                       <div className="grid grid-cols-3 gap-3 items-end">
                         <div>
                           <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cantidad</label>
-                          <input type="number" step="0.01" min="0" value={cotizAddQty}
-                            onChange={e=>setCotizAddQty(e.target.value)}
-                            className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400"
-                            placeholder="0"/>
+                          <input type="number" step="0.01" min="0" value={cotizAddQty} onChange={e=>setCotizAddQty(e.target.value)}
+                            className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="0"/>
                         </div>
                         <div>
                           <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Precio U. (USD)</label>
-                          <input type="number" step="0.01" min="0" value={cotizAddPrecio}
-                            onChange={e=>setCotizAddPrecio(e.target.value)}
-                            className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500"
-                            placeholder="0.00"/>
+                          <input type="number" step="0.01" min="0" value={cotizAddPrecio} onChange={e=>setCotizAddPrecio(e.target.value)}
+                            className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0.00"/>
                         </div>
                         <button type="button" onClick={()=>{
-                          const desc = cotizProdMode==='ref' ? cotizAddDesc : (cotizAddDesc || cotizSelectedProduct);
-                          const qty = parseNum(cotizAddQty);
-                          const precio = parseNum(cotizAddPrecio);
-                          if(!desc || qty <= 0 || precio <= 0) return;
+                          const desc=cotizAddDesc||(cotizSelectedProduct);
+                          const qty=parseNum(cotizAddQty);
+                          const precio=parseNum(cotizAddPrecio);
+                          if(!desc||qty<=0||precio<=0)return;
                           setCotizItems(prev=>[...prev,{desc,cantidad:qty,precioUnit:precio,total:qty*precio}]);
-                          setCotizSelectedProduct(''); setCotizAddDesc(''); setCotizAddQty(''); setCotizAddPrecio(''); setCotizProdSearch('');
+                          setCotizSelectedProduct('');setCotizAddDesc('');setCotizAddQty('');setCotizAddPrecio('');setCotizProdSearch('');
                         }} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2.5 rounded-xl font-black text-[10px] flex items-center gap-1 justify-center uppercase transition-all">
                           <Plus size={14}/> Agregar
                         </button>
