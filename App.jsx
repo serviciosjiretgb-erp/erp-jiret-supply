@@ -9889,7 +9889,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               const detalle = lines.join(' | ');
                               const newCond = {id:'cond_'+Date.now(), nombre, detalle};
                               setCondicionesCotiz(prev=>[...prev, newCond]);
-                              setNewCotizForm(f=>({...f, condicionId: newCond.id}));
+                              // Copiar tiempoEntrega al formulario para que aparezca en el PDF
+                              const teStr = et==='inmediata' ? 'Inmediata'
+                                : et==='2-3dias'   ? 'De 2 a 3 días hábiles'
+                                : et==='10-12dias' ? 'De 10 a 12 días hábiles'
+                                : et==='custom' && condForm.entregaCustom ? condForm.entregaCustom
+                                : '';
+                              setNewCotizForm(f=>({...f, condicionId: newCond.id, tiempoEntrega: teStr||f.tiempoEntrega}));
                               setNewCondForm({nombre:'',detalle:'',tipoPago:'',diasCredito:'',tieneAnticipo:false,pctAnticipo:'',tiempoEntrega:'',entregaCustom:'',formasPago:[]});
                               setShowCondManager(false);
                             }} className="w-full bg-orange-500 text-white py-3 rounded-2xl font-black text-[10px] uppercase hover:bg-orange-600 transition-all">
