@@ -9093,11 +9093,47 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   : items.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0);
                 const ivaAmt = inv.aplicaIva==='SI' ? parseNum(inv.iva||0)||parseFloat((base*0.16).toFixed(2)) : 0;
                 const totalFinal = parseNum(inv.total||0) > 0 ? parseNum(inv.total) : base+ivaAmt;
+                const tasa=parseNum(inv.tasa)||0;
+                const baseBs=tasa>0?parseFloat((base*tasa).toFixed(2)):0;
+                const ivaBs=tasa>0?parseFloat((ivaAmt*tasa).toFixed(2)):0;
+                const totalBs=tasa>0?parseFloat((totalFinal*tasa).toFixed(2)):0;
+                const descUsd=parseNum(inv.descuento||0);
+                const descBs=tasa>0?parseFloat((descUsd*tasa).toFixed(2)):0;
+                const fmtBs=v=>`Bs ${formatNum(v)}`;
                 return (<>
-                  <div className="flex justify-between font-bold text-sm"><span>SUBTOTAL:</span><span>${formatNum(base)}</span></div>
-                  {inv.aplicaIva === 'SI' && <div className="flex justify-between font-bold text-sm"><span>IVA (16%):</span><span>${formatNum(ivaAmt)}</span></div>}
-                  <div className="flex justify-between font-black text-2xl border-t-2 border-black pt-2 text-orange-600"><span>TOTAL:</span><span>${formatNum(totalFinal)}</span></div>
-                  {parseNum(inv.tasa)>0 && <div className="flex justify-between font-bold text-xs text-gray-600 pt-1"><span>TOTAL Bs (Tasa {formatTasa(inv.tasa)}):</span><span>Bs {formatNum(totalFinal*parseNum(inv.tasa))}</span></div>}
+                  {/* SUBTOTAL */}
+                  <div className="flex justify-between font-bold text-sm">
+                    <span>SUBTOTAL:</span>
+                    <div className="text-right">
+                      <div>${formatNum(base)}</div>
+                      {tasa>0&&<div className="text-xs text-gray-500">{fmtBs(baseBs)}</div>}
+                    </div>
+                  </div>
+                  {/* DESCUENTO */}
+                  {descUsd>0&&<div className="flex justify-between font-bold text-sm text-red-600">
+                    <span>DESCUENTO:</span>
+                    <div className="text-right">
+                      <div>-${formatNum(descUsd)}</div>
+                      {tasa>0&&<div className="text-xs">-{fmtBs(descBs)}</div>}
+                    </div>
+                  </div>}
+                  {/* IVA */}
+                  {inv.aplicaIva==='SI'&&<div className="flex justify-between font-bold text-sm">
+                    <span>IVA (16%):</span>
+                    <div className="text-right">
+                      <div>${formatNum(ivaAmt)}</div>
+                      {tasa>0&&<div className="text-xs text-gray-500">{fmtBs(ivaBs)}</div>}
+                    </div>
+                  </div>}
+                  {/* TOTAL */}
+                  <div className="flex justify-between font-black text-2xl border-t-2 border-black pt-2 text-orange-600">
+                    <span>TOTAL:</span>
+                    <span>${formatNum(totalFinal)}</span>
+                  </div>
+                  {tasa>0&&<div className="flex justify-between font-black text-base border-t border-gray-300 pt-1 text-orange-700">
+                    <span>TOTAL Bs <span className="text-xs font-bold">(Tasa {formatTasa(tasa)}):</span></span>
+                    <span>{fmtBs(totalBs)}</span>
+                  </div>}
                 </>);
               })()}
             </div>
@@ -11488,6 +11524,27 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const pctUtil=base>0?(utilidad/base*100):0;
             rows.push({fecha,documento:doc,descripcion:inv.clientName||'—',montoBruto:base,iva:ivaAmt,tNeto:total,costo,utilidad,pctUtil,neId:null,invId:inv.id,facturaId:inv.documento||inv.id,status:'PROCESADA',fuente:'FACTURA'});
           });
+          // ── Fuente 3: Notas de Crédito / Débito ─────────────────────────────
+          (notasVentaCD||[]).forEach(nc=>{
+            const fecha=nc.fecha||'';
+            if(fecha<tvDesde||fecha>tvHasta) return;
+            if(tvBuscarDoc && !(nc.nroDocumento||'').toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
+            const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
+            const ne=(notasEntrega||[]).find(e=>e.id===nc.neId);
+            const cliente=inv?.clientName||ne?.clientName||'—';
+            if(tvBuscarDesc && !cliente.toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
+            const tasaNC=parseNum(inv?.tasa||ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+            const baseImpBs=parseNum(nc.monto||0);   // stored as Base Imponible Bs.
+            const baseUsd=tasaNC>0?parseFloat((baseImpBs/tasaNC).toFixed(6)):0;
+            const ivaUsd=parseFloat((baseUsd*0.16).toFixed(6));
+            const totalUsd=baseUsd+ivaUsd;
+            // NC resta (negativo), ND suma (positivo)
+            const signo=nc.tipo==='NC'?-1:1;
+            rows.push({fecha,documento:nc.nroDocumento||nc.tipo,descripcion:cliente,
+              montoBruto:baseUsd*signo,iva:ivaUsd*signo,tNeto:totalUsd*signo,
+              costo:0,utilidad:baseUsd*signo,pctUtil:0,
+              tipo:nc.tipo,isNota:true,tasaNC});
+          });
           rows.sort((a,b)=>a.fecha.localeCompare(b.fecha));
           const tot=rows.reduce((s,r)=>({montoBruto:s.montoBruto+r.montoBruto,iva:s.iva+r.iva,tNeto:s.tNeto+r.tNeto,costo:s.costo+r.costo,utilidad:s.utilidad+r.utilidad}),{montoBruto:0,iva:0,tNeto:0,costo:0,utilidad:0});
           const pctTot=tot.montoBruto>0?(tot.utilidad/tot.montoBruto*100):0;
@@ -11718,11 +11775,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         </div>
                         <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest shadow-sm">INVOICE NRO: {newInvoiceForm.documento || generateInvoiceId()}</span>
                         {newInvoiceForm.neOrigen && <span className="bg-blue-100 text-blue-800 px-3 py-2 rounded-xl text-[10px] font-black">NE: {newInvoiceForm.neOrigen}</span>}
-                        {/* NRO FISCAL MANUAL */}
-                        <div className="flex items-center gap-2">
-                          <label className="text-[9px] font-black text-gray-500 uppercase whitespace-nowrap">Nro. Fiscal:</label>
-                          <input type="text" value={newInvoiceForm.nroFiscal||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm, nroFiscal: e.target.value.toUpperCase()})}
-                            placeholder="00001234" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-400 w-32 text-center"/>
+                        {/* NRO FISCAL Y CONTROL */}
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <label className="text-[9px] font-black text-gray-500 uppercase whitespace-nowrap">Nro. Fiscal</label>
+                            <input type="text" value={newInvoiceForm.nroFiscal||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm,nroFiscal:e.target.value.replace(/\D/g,'')})}
+                              placeholder="00001234" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold w-28 outline-none focus:border-orange-400"/>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <label className="text-[9px] font-black text-gray-500 uppercase whitespace-nowrap">Nro. Control</label>
+                            <input type="text" value={newInvoiceForm.nroControl||''} onChange={e=>setNewInvoiceForm({...newInvoiceForm,nroControl:e.target.value})}
+                              placeholder="00-001234" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold w-28 outline-none focus:border-orange-400"/>
+                          </div>
                         </div>
                         <button type="button" onClick={()=>{setShowNewInvoicePanel(false);setEditingInvoiceId(null);setNewInvoiceForm(initialInvoiceForm);}} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
                       </div>
@@ -12210,18 +12274,38 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <input value={ventaNCForm.nroDocumento} onChange={e=>setVentaNCForm(f=>({...f,nroDocumento:e.target.value.toUpperCase()}))} placeholder="NC-00001" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
                         <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Fecha</label>
                           <input type="date" value={ventaNCForm.fecha} onChange={e=>setVentaNCForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                        <div className="col-span-2">{(()=>{
+                        {(()=>{
                           const selFNC=ventaNCForm.naturaleza==='FISCAL'?(invoices||[]).find(i=>i.id===ventaNCForm.facturaId):null;
                           const selNENC=ventaNCForm.naturaleza==='NO_FISCAL'?(notasEntrega||[]).find(ne=>ne.id===ventaNCForm.neId):null;
                           const tasaNC=parseNum(selFNC?.tasa||selNENC?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-                          const montoUSD=parseNum(ventaNCForm.monto||0);
-                          const montoBs=parseFloat((montoUSD*tasaNC).toFixed(2));
+                          const baseImpBs=parseNum(ventaNCForm.monto||0);        // el campo guarda Base Imp. en Bs.
+                          const baseImpUsd=tasaNC>0?parseFloat((baseImpBs/tasaNC).toFixed(6)):0;
+                          const ivaBs16=ventaNCForm.tieneIva!==false?parseFloat((baseImpBs*0.16).toFixed(2)):0;
+                          const ivaUsd=tasaNC>0?parseFloat((ivaBs16/tasaNC).toFixed(6)):0;
+                          const totalBs=baseImpBs+ivaBs16;
+                          const totalUsd=baseImpUsd+ivaUsd;
                           return(<>
-                          <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Monto (USD) — Equivale a {formatNum(montoBs)} Bs. (tasa {formatNum(tasaNC)})</label>
-                          <input type="number" step="0.01" value={ventaNCForm.monto} onChange={e=>setVentaNCForm(f=>({...f,monto:e.target.value}))} placeholder="0.00" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
-                          {tasaNC>1&&montoUSD>0&&<div className="mt-1 bg-orange-50 border border-orange-200 rounded px-2 py-1 text-[10px] font-bold text-orange-700">= {formatNum(montoBs)} Bs. (Monto en Bs. que aparece en Libro de Ventas)</div>}
+                          <div className="col-span-2 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <label className="text-[10px] font-black text-gray-600 uppercase w-32 shrink-0">Base Imponible (Bs.)</label>
+                              <input type="number" step="0.01" value={ventaNCForm.monto} onChange={e=>setVentaNCForm(f=>({...f,monto:e.target.value}))}
+                                placeholder="0,00" className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <label className="text-[10px] font-black text-gray-600 uppercase w-32 shrink-0">IVA 16% (Bs.)</label>
+                              <input type="number" value={ivaBs16.toFixed(2)} readOnly className="flex-1 border-2 border-gray-100 bg-gray-50 rounded-xl px-3 py-2 text-xs font-bold"/>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <label className="text-[10px] font-black text-gray-600 uppercase w-32 shrink-0">Total (Bs.)</label>
+                              <input type="number" value={totalBs.toFixed(2)} readOnly className="flex-1 border-2 border-gray-100 bg-gray-50 rounded-xl px-3 py-2 text-xs font-bold text-orange-600"/>
+                            </div>
+                            {tasaNC>1&&baseImpBs>0&&<div className="bg-orange-50 border border-orange-200 rounded-xl p-2 text-[10px]">
+                              <div><span className="font-black">Tasa:</span> {formatNum(tasaNC)} Bs/$</div>
+                              <div><span className="font-black">Base USD:</span> ${formatNum(baseImpUsd)} &nbsp;|&nbsp; <span className="font-black">IVA USD:</span> ${formatNum(ivaUsd)} &nbsp;|&nbsp; <span className="font-black">Total USD:</span> ${formatNum(totalUsd)}</div>
+                            </div>}
+                          </div>
                           </>);
-                        })()}</div>
+                        })()}
                         {esFiscal&&<div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">N° Control</label>
                           <input value={ventaNCForm.nroControl||''} onChange={e=>setVentaNCForm(f=>({...f,nroControl:e.target.value}))} placeholder="00-000001" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>}
                         <div className="col-span-2"><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Descripción / Concepto</label>
@@ -19539,7 +19623,17 @@ ${resumenHtml}
     // Total ingresos = NEs + facturas directas (montoBase = base sin IVA)
     const totalIngresosNE = nesperiodo.reduce((s,ne) => s + parseNum(ne.montoBase||0), 0);
     const totalIngresosInv = facturasPeriodo.reduce((s,inv) => s + parseNum(inv.montoBase||0), 0);
-    const totalIngresos = totalIngresosNE + totalIngresosInv;
+    // NC/ND del período — ajustan ingresos
+    const notasPeriodo = (notasVentaCD||[]).filter(nc => (nc.fecha||'').startsWith(ym));
+    const ajusteNotasUsd = notasPeriodo.reduce((s,nc) => {
+      const inv = (invoices||[]).find(i=>i.id===nc.facturaId);
+      const ne  = (notasEntrega||[]).find(e=>e.id===nc.neId);
+      const tasaNC = parseNum(inv?.tasa||ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+      const baseImpBs = parseNum(nc.monto||0);
+      const baseUsd = tasaNC>0 ? parseFloat((baseImpBs/tasaNC).toFixed(6)) : 0;
+      return s + (nc.tipo==='NC' ? -baseUsd : baseUsd);
+    }, 0);
+    const totalIngresos = totalIngresosNE + totalIngresosInv + ajusteNotasUsd;
 
     // ── COSTO DE VENTAS: desde ítems con costoUnit (NEs e invoices directas) ──
     let totalCostoProd = 0;
@@ -19662,6 +19756,7 @@ ${resumenHtml}
     const resultado = totalIngresos - totalCostos;
 
     // facturasperiodo = NEs + facturas directas (para el detalle de ingresos en el UI)
+    // facturasperiodo = NEs + facturas directas + NC/ND (para el detalle de ingresos en el UI)
     const facturasperiodo = [
       ...nesperiodo.map(ne => ({
         documento: ne.id,
@@ -19678,7 +19773,18 @@ ${resumenHtml}
         fecha: inv.fecha,
         montoBase: inv.montoBase||0,
         isNE: false
-      }))
+      })),
+      ...notasPeriodo.map(nc=>{
+        const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
+        const ne2=(notasEntrega||[]).find(e=>e.id===nc.neId);
+        const tasaNC=parseNum(inv?.tasa||ne2?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+        const baseImpBs=parseNum(nc.monto||0);
+        const baseUsd=tasaNC>0?parseFloat((baseImpBs/tasaNC).toFixed(6)):0;
+        const signo=nc.tipo==='NC'?-1:1;
+        return {documento:nc.nroDocumento||nc.tipo,clientName:inv?.clientName||ne2?.clientName||'—',
+          productoMaquilado:nc.descripcion||`${nc.tipo} aplicada`,fecha:nc.fecha,
+          montoBase:baseUsd*signo,isNota:true,tipoNota:nc.tipo};
+      })
     ];
 
     return { facturasperiodo, totalIngresos, costosPorCuenta, costosPeriodo, movsProd, totalCostoProd, totalCostosOp, totalCostos, resultado, cogsRows };
