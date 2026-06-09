@@ -9488,34 +9488,58 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
                             <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Tiempo de Entrega</label>
-                            <select value={newCotizForm.tiempoEntrega||''} onChange={e=>setNewCotizForm({...newCotizForm,tiempoEntrega:e.target.value})}
-                              className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
-                              <option value="">— Seleccione —</option>
-                              <option value="Inmediata">Inmediata</option>
-                              <option value="De 2 a 3 días hábiles">2 a 3 días hábiles (Stretch Film / Otros)</option>
-                              <option value="De 10 a 12 días hábiles">10 a 12 días hábiles (Bolsas / Termos)</option>
-                              <option value="De 60 a 70 días continuos">60 a 70 días continuos (Importación)</option>
-                            </select>
+                            <input type="text" list="telOpts" value={newCotizForm.tiempoEntrega||''} onChange={e=>setNewCotizForm({...newCotizForm,tiempoEntrega:e.target.value})}
+                              placeholder="Ej: De 3 a 5 días hábiles"
+                              className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400"/>
+                            <datalist id="telOpts">
+                              <option value="Inmediata"/>
+                              <option value="De 2 a 3 días hábiles"/>
+                              <option value="De 5 a 7 días hábiles"/>
+                              <option value="De 10 a 12 días hábiles"/>
+                              <option value="De 15 a 20 días hábiles"/>
+                              <option value="De 30 días continuos"/>
+                              <option value="De 60 a 70 días continuos"/>
+                              <option value="Por confirmar"/>
+                            </datalist>
                           </div>
                           {/* Preview */}
                           <div className="bg-white rounded-xl border border-orange-200 p-3 text-[9px] font-bold text-gray-600 space-y-1">
                             <div className="text-[8px] font-black text-orange-600 uppercase mb-1">Vista previa condición:</div>
                             {newCotizForm.condicionPago==='CONTADO'&&<div>• Condición: Contado.</div>}
                             {newCotizForm.condicionPago==='CREDITO'&&<div>• Crédito a {newCotizForm.diasCredito||'__'} días.</div>}
-                            {parseNum(newCotizForm.porcentajeAnticipo)>0&&<div>• Anticipo: {newCotizForm.porcentajeAnticipo}% con la OC.</div>}
+                            {parseNum(newCotizForm.porcentajeAnticipo)>0&&<div>• Anticipo: {newCotizForm.porcentajeAnticipo}% con {newCotizForm.formaPago}.</div>}
                             {newCotizForm.tiempoEntrega&&<div>• Entrega: {newCotizForm.tiempoEntrega}.</div>}
                             {newCotizForm.formaPago&&<div>• Pago: {newCotizForm.formaPago}.</div>}
                           </div>
                         </div>
+
                       </div>
                     )}
+
+
+                    {/* Tiempo de Entrega — siempre visible cuando condiciones está cerrado */}
+                    {!showCondManager&&<div>
+                      <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block">⏱ Tiempo de Entrega</label>
+                      <input type="text" list="telOpts2" value={newCotizForm.tiempoEntrega||''} onChange={e=>setNewCotizForm({...newCotizForm,tiempoEntrega:e.target.value})}
+                        placeholder="Ej: De 3 a 5 días hábiles"
+                        className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-xs font-bold outline-none focus:bg-white focus:border-orange-500"/>
+                      <datalist id="telOpts2">
+                        <option value="Inmediata"/>
+                        <option value="De 2 a 3 días hábiles"/>
+                        <option value="De 5 a 7 días hábiles"/>
+                        <option value="De 10 a 12 días hábiles"/>
+                        <option value="De 15 a 20 días hábiles"/>
+                        <option value="De 30 días continuos"/>
+                        <option value="De 60 a 70 días continuos"/>
+                        <option value="Por confirmar"/>
+                      </datalist>
+                    </div>}
 
                     {/* Descripción general */}
                     <div>
                       <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block">Descripción / Concepto General</label>
                       <input type="text" value={newCotizForm.descripcion} onChange={e=>setNewCotizForm({...newCotizForm,descripcion:e.target.value.toUpperCase()})} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 text-sm font-black outline-none focus:bg-white focus:border-orange-500 uppercase" placeholder="Ej: COTIZACIÓN BOLSAS PLÁSTICAS"/>
                     </div>
-
                     {/* ── AGREGAR PRODUCTO ── */}
                     <div className="border-2 border-orange-200 rounded-2xl p-4 bg-orange-50/30">
                       <h4 className="text-[10px] font-black text-orange-700 uppercase mb-3 flex items-center gap-2">
