@@ -12011,6 +12011,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const totalFact=allInv.filter(inv=>
                   (inv.id||'').toUpperCase().startsWith('INVO-')||(inv.documento||'').toUpperCase().startsWith('INVO-')
                 ).reduce((s,inv)=>s+parseNum(inv?.montoBase||0),0);
+               const pgInv=Math.max(0,Math.min(facturaPagina,Math.ceil(totalInv/PAGE_SIZE_DEFAULT)-1));
                const pageInv=allInv.slice(pgInv*PAGE_SIZE_DEFAULT,(pgInv+1)*PAGE_SIZE_DEFAULT);
                return(<>
                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
