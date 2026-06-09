@@ -372,6 +372,10 @@ export default function App() {
   const [cotizAddQty, setCotizAddQty] = useState('');
   const [cotizAddPrecio, setCotizAddPrecio] = useState('');
   const [cotizSearchTerm, setCotizSearchTerm] = useState('');
+  const [cotizClientSearch, setCotizClientSearch] = useState('');
+  const [cotizClientOpen, setCotizClientOpen] = useState(false);
+  const [cotizProdMode, setCotizProdMode] = useState('inv'); // 'inv' | 'ref'
+  const [cotizProdSearch, setCotizProdSearch] = useState('');
   const [condicionesCotiz, setCondicionesCotiz] = useState([{'id': 'cond1', 'nombre': 'Contado / Entrega Inmediata', 'detalle': 'Condiciones de Pago: De contado. | Forma de Pago: Bolívares al tipo de cambio BCV vigente a la fecha de pago. | Tiempo de Entrega: Inmediata. | Validez: 1 día calendario.'}, {'id': 'cond2', 'nombre': 'Crédito Estándar (Stock Disponible)', 'detalle': 'Condiciones de Pago: Financiamiento a 7/15 días continuos. | Forma de Pago: Bolívares al tipo de cambio BCV vigente. | Tiempo de Entrega: Inmediata o 2–3 días hábiles tras confirmación de OC. | Validez: 1 día calendario.'}, {'id': 'cond3', 'nombre': 'Fabricación Nacional con Anticipo', 'detalle': 'Condiciones de Pago: Anticipo del 30%/50% con la OC; saldo a 7/21 días desde entrega. | Formas de Pago: Bolívares (BCV) o Divisas (efectivo/transferencia). | Entrega: 10 a 12 días hábiles desde OC + anticipo. | Variación: ±4–8% cantidad despachada. | Reclamos: 7 días hábiles desde recepción.'}, {'id': 'cond4', 'nombre': 'Proyectos Especiales / Importación', 'detalle': 'Condiciones de Pago: 50% anticipo al procesar OC; 50% contra entrega. | Formas de Pago: Bolívares (BCV) o Divisas (efectivo/Zelle). | Tiempo de Entrega: 60–70 días continuos aprox., sujeto a tránsito y aduana.'}]);
   const [showCondManager, setShowCondManager] = useState(false);
   const [editingCond, setEditingCond] = useState(null);
@@ -9435,13 +9439,31 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                     {/* Cliente + Vendedor */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="md:col-span-2">
+                      <div className="md:col-span-2 relative">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block">Cliente</label>
-                        <select required value={newCotizForm.clientRif} onChange={e=>{const c=(clients||[]).find(cl=>cl.rif===e.target.value);if(c){setNewCotizForm({...newCotizForm,clientRif:c.rif,clientName:c.name,vendedor:(c.vendedor||'').toUpperCase()});}else setNewCotizForm({...newCotizForm,clientRif:'',clientName:'',vendedor:''}); }}
-                          className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500">
-                          <option value="">Seleccione cliente...</option>
-                          {(clients||[]).map(c=><option key={c.rif} value={c.rif}>{c.name}</option>)}
-                        </select>
+                        <div className="relative">
+                          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"/>
+                          <input type="text"
+                            value={cotizClientSearch !== '' ? cotizClientSearch : (newCotizForm.clientName ? `${newCotizForm.clientName} — ${newCotizForm.clientRif}` : '')}
+                            onChange={e=>{setCotizClientSearch(e.target.value);setCotizClientOpen(true);if(!e.target.value){setNewCotizForm({...newCotizForm,clientRif:'',clientName:'',vendedor:''});}}}
+                            onFocus={()=>{setCotizClientSearch('');setCotizClientOpen(true);}}
+                            placeholder="Buscar por nombre o RIF..."
+                            className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl pl-9 pr-4 py-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 uppercase"/>
+                          {newCotizForm.clientRif&&!cotizClientOpen&&<span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-black text-green-600 bg-green-50 px-2 py-0.5 rounded-full">✓ {newCotizForm.clientRif}</span>}
+                        </div>
+                        {cotizClientOpen&&(
+                        <div className="absolute z-30 left-0 right-0 bg-white border-2 border-orange-200 rounded-2xl shadow-xl mt-1 overflow-hidden" style={{maxHeight:210,overflowY:"auto"}}>
+                          {(clients||[]).filter(c=>{const q=(cotizClientSearch||"").toUpperCase();return !q||(c.name||"").toUpperCase().includes(q)||(c.rif||"").toUpperCase().includes(q);}).slice(0,25).map(c=>(
+                            <div key={c.rif} className="px-4 py-2.5 hover:bg-orange-50 cursor-pointer border-b border-gray-100 last:border-0"
+                              onMouseDown={()=>{setNewCotizForm({...newCotizForm,clientRif:c.rif,clientName:c.name,vendedor:(c.vendedor||'').toUpperCase()});setCotizClientSearch('');setCotizClientOpen(false);}}>
+                              <div className="font-black text-xs text-gray-900 uppercase">{c.name}</div>
+                              <div className="text-[9px] text-orange-600 font-bold">{c.rif}</div>
+                            </div>
+                          ))}
+                          {(clients||[]).filter(c=>{const q=(cotizClientSearch||"").toUpperCase();return !q||(c.name||"").toUpperCase().includes(q)||(c.rif||"").toUpperCase().includes(q);}).length===0&&<div className="px-4 py-3 text-xs text-gray-400 font-bold text-center">Sin resultados</div>}
+                        </div>
+                        )}
+                        {cotizClientOpen&&<div className="fixed inset-0 z-20" onClick={()=>setCotizClientOpen(false)}/>}
                       </div>
                       <div>
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block">Vendedor</label>
@@ -9544,90 +9566,113 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <div className="border-2 border-orange-200 rounded-2xl p-4 bg-orange-50/30">
                       <h4 className="text-[10px] font-black text-orange-700 uppercase mb-3 flex items-center gap-2">
                         <Package size={13}/> Agregar Producto
-                        <span className="ml-auto text-[8px] text-orange-400 font-bold bg-orange-100 px-2 py-0.5 rounded-full uppercase">Solo referencia · No afecta inventario</span>
+                        <span className="ml-auto text-[8px] text-orange-400 font-bold bg-orange-100 px-2 py-0.5 rounded-full uppercase">{cotizItems.length} ítem{cotizItems.length!==1?'s':''}</span>
                       </h4>
 
-                      {/* Step 1: Select product */}
-                      <div className="mb-3">
-                        <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">1. Inventario General / Productos Terminados — Categoría / Producto</label>
-                        <select
-                          value={cotizSelectedProduct}
-                          onChange={e => {
-                            const val = e.target.value;
+                      {/* Selector de modo */}
+                      <div className="flex gap-2 mb-3">
+                        <button type="button" onClick={()=>setCotizProdMode('inv')}
+                          className={`flex-1 py-2 rounded-xl font-black text-[9px] uppercase transition-all border-2 ${cotizProdMode==='inv'?'bg-orange-500 text-white border-orange-500':'bg-white text-gray-600 border-gray-200 hover:border-orange-300'}`}>
+                          📦 Inventario / Productos Terminados
+                        </button>
+                        <button type="button" onClick={()=>setCotizProdMode('ref')}
+                          className={`flex-1 py-2 rounded-xl font-black text-[9px] uppercase transition-all border-2 ${cotizProdMode==='ref'?'bg-gray-700 text-white border-gray-700':'bg-white text-gray-600 border-gray-200 hover:border-gray-400'}`}>
+                          ✍️ Solo Referencia · No afecta inventario
+                        </button>
+                      </div>
+
+                      {/* Modo inventario */}
+                      {cotizProdMode==='inv'&&(
+                      <div className="mb-3 space-y-2">
+                        {/* Buscador de producto */}
+                        <div className="relative">
+                          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"/>
+                          <input type="text" value={cotizProdSearch} onChange={e=>setCotizProdSearch(e.target.value)}
+                            placeholder="Buscar producto por código o descripción..."
+                            className="w-full border-2 border-gray-200 rounded-xl pl-8 pr-4 py-2.5 text-xs font-bold outline-none focus:border-orange-400 bg-white"/>
+                        </div>
+                        {/* Select de producto filtrado */}
+                        <select value={cotizSelectedProduct}
+                          onChange={e=>{
+                            const val=e.target.value;
                             setCotizSelectedProduct(val);
-                            if(val) {
-                              // Build consolidated map
-                              const consolidated = {};
+                            if(val){
+                              const consolidated={};
                               (inventory||[]).filter(i=>i.activo!==false).forEach(i=>{
-                                const cc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                                const cc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACK\d+$/i,'').toUpperCase();
                                 if(!cc) return;
-                                if(!consolidated[cc]||parseNum(i.stock)>consolidated[cc].stock) consolidated[cc]={cc,desc:i.desc||'',unit:i.unit||'und',category:i.category||'Otros',subcategory:i.subcategory||getItemSubcategory(i)||'',cost:parseNum(i.cost||0),stock:parseNum(i.stock||0)};
-                                const d=i.desc||''; if(d&&!d.includes('×')&&(consolidated[cc].desc.includes('×')||d.length>=consolidated[cc].desc.length)) consolidated[cc].desc=d;
+                                if(!consolidated[cc]||parseNum(i.stock)>consolidated[cc].stock) consolidated[cc]={cc,desc:i.desc||'',subcategory:i.subcategory||'',cost:parseNum(i.cost||0),stock:parseNum(i.stock||0)};
+                                const d=i.desc||''; if(d&&!d.includes('×')&&(consolidated[cc].desc.includes('×')||d.length>consolidated[cc].desc.length)) consolidated[cc].desc=d;
                               });
-                              const item = consolidated[val];
-                              if(item) {
-                                setCotizAddDesc(`${item.cc} — ${item.desc}`);
-                                setCotizAddPrecio(item.cost > 0 ? String(item.cost) : '');
-                              }
+                              const item=consolidated[val];
+                              if(item){setCotizAddDesc(`${item.cc} — ${item.desc}`);setCotizAddPrecio(item.cost>0?String(item.cost):'');}
                             }
                           }}
-                          className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-500 bg-white mb-2">
+                          className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 bg-white">
                           <option value="">— Seleccionar producto —</option>
                           {(()=>{
-                            const consolidated = {};
-                            (inventory||[]).filter(i=>i.activo!==false && i.category==='Productos Terminados').forEach(i=>{
-                              const cc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+                            const q=(cotizProdSearch||'').toUpperCase();
+                            const consolidated={};
+                            (inventory||[]).filter(i=>i.activo!==false&&i.category==='Productos Terminados').forEach(i=>{
+                              const cc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACK\d+$/i,'').toUpperCase();
                               if(!cc) return;
-                              if(!consolidated[cc]||parseNum(i.stock)>consolidated[cc].stock) consolidated[cc]={cc,desc:i.desc||'',unit:i.unit||'und',subcategory:i.subcategory||getItemSubcategory(i)||'Otros Terminados',cost:parseNum(i.cost||0),stock:parseNum(i.stock||0)};
-                              const d=i.desc||''; if(d&&!d.includes('×')&&(consolidated[cc].desc.includes('×')||d.length>=consolidated[cc].desc.length)) consolidated[cc].desc=d;
+                              if(!consolidated[cc]||parseNum(i.stock)>consolidated[cc].stock) consolidated[cc]={cc,desc:i.desc||'',subcategory:i.subcategory||'',cost:parseNum(i.cost||0)};
+                              const d=i.desc||''; if(d&&!d.includes('×')&&(consolidated[cc].desc.includes('×')||d.length>consolidated[cc].desc.length)) consolidated[cc].desc=d;
                             });
-                            const SUB_ORDER=['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles','Otros Terminados'];
+                            const filtered=Object.values(consolidated).filter(c=>!q||c.cc.includes(q)||(c.desc||'').toUpperCase().includes(q)||(c.subcategory||'').toUpperCase().includes(q));
+                            const SUB_ORDER=['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Zuncho'];
                             const subGroups={};
-                            Object.values(consolidated).forEach(c=>{
-                              const sub=c.subcategory||'Otros Terminados';
-                              if(!subGroups[sub])subGroups[sub]=[];
-                              subGroups[sub].push(c);
-                            });
-                            const sortedSubs=[...SUB_ORDER.filter(s=>subGroups[s]),...Object.keys(subGroups).filter(s=>!SUB_ORDER.includes(s))];
+                            filtered.forEach(c=>{const sub=c.subcategory||'Otros Terminados';if(!subGroups[sub])subGroups[sub]=[];subGroups[sub].push(c);});
+                            const sortedSubs=[...SUB_ORDER.filter(s=>subGroups[s]),...Object.keys(subGroups).filter(s=>!SUB_ORDER.includes(s)).sort()];
+                            if(filtered.length===0) return <option disabled>Sin resultados para "{cotizProdSearch}"</option>;
                             return sortedSubs.flatMap(sub=>[
                               <option key={`h-${sub}`} disabled>── {sub.toUpperCase()} ──</option>,
-                              ...(subGroups[sub]||[]).sort((a,b)=>a.cc.localeCompare(b.cc)).map(c=><option key={c.cc} value={c.cc}>&nbsp;&nbsp;{c.cc} — {c.desc}</option>)
+                              ...(subGroups[sub]||[]).sort((a,b)=>a.cc.localeCompare(b.cc)).map(c=><option key={c.cc} value={c.cc}>{c.cc} — {c.desc}</option>)
                             ]);
                           })()}
                         </select>
+                        {cotizAddDesc&&<div className="text-[9px] font-bold text-orange-700 bg-orange-50 rounded-lg px-3 py-1.5">✓ {cotizAddDesc}</div>}
                       </div>
+                      )}
 
-                      {/* Step 2: Qty + Price + Agregar */}
+                      {/* Modo referencia manual */}
+                      {cotizProdMode==='ref'&&(
+                      <div className="mb-3">
+                        <input type="text" value={cotizAddDesc} onChange={e=>setCotizAddDesc(e.target.value.toUpperCase())}
+                          placeholder="Descripción libre (ej: STRETCH FILM 45CM × 450M × 20MIC)"
+                          className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400 uppercase bg-white"/>
+                      </div>
+                      )}
+
+                      {/* Cantidad + Precio + Botón */}
                       <div className="grid grid-cols-3 gap-3 items-end">
                         <div>
-                          <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">2. Cantidad</label>
+                          <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cantidad</label>
                           <input type="number" step="0.01" min="0" value={cotizAddQty}
                             onChange={e=>setCotizAddQty(e.target.value)}
-                            className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400 bg-white"
+                            className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400"
                             placeholder="0"/>
                         </div>
                         <div>
-                          <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">3. Precio U. (USD)</label>
+                          <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Precio U. (USD)</label>
                           <input type="number" step="0.01" min="0" value={cotizAddPrecio}
                             onChange={e=>setCotizAddPrecio(e.target.value)}
-                            className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500 bg-orange-50"
+                            className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500"
                             placeholder="0.00"/>
                         </div>
                         <button type="button" onClick={()=>{
-                          const desc = cotizAddDesc || cotizSelectedProduct;
+                          const desc = cotizProdMode==='ref' ? cotizAddDesc : (cotizAddDesc || cotizSelectedProduct);
                           const qty = parseNum(cotizAddQty);
                           const precio = parseNum(cotizAddPrecio);
                           if(!desc || qty <= 0 || precio <= 0) return;
                           setCotizItems(prev=>[...prev,{desc,cantidad:qty,precioUnit:precio,total:qty*precio}]);
-                          setCotizSelectedProduct('');
-                          setCotizAddDesc('');
-                          setCotizAddQty('');
-                          setCotizAddPrecio('');
-                        }} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase flex items-center gap-2 justify-center transition-colors shadow-sm">
+                          setCotizSelectedProduct(''); setCotizAddDesc(''); setCotizAddQty(''); setCotizAddPrecio(''); setCotizProdSearch('');
+                        }} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2.5 rounded-xl font-black text-[10px] flex items-center gap-1 justify-center uppercase transition-all">
                           <Plus size={14}/> Agregar
                         </button>
                       </div>
                     </div>
+
 
                     {/* Tabla ítems */}
                     <div className="border-2 border-gray-200 rounded-2xl overflow-hidden">
