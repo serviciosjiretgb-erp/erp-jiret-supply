@@ -12936,15 +12936,15 @@ ${resumenHtml}
                             <td className="py-1.5 px-2 text-center"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${r.tipo==='FACTURA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>{r.tipo}</span></td>
                             <td className="py-1.5 px-2 font-bold text-blue-700 text-center">{r.nroFactura||'—'}</td>
                             <td className="py-1.5 px-2 text-center">{r.nroControl||'—'}</td>
-                            <td className="py-1.5 px-2 text-center">—</td>
-                            <td className="py-1.5 px-2 text-center">—</td>
-                            <td className="py-1.5 px-2 text-center">—</td>
-                            <td className="py-1.5 px-2 text-right">{r.totalVentasBs>0?fmtVen(r.totalVentasBs):'—'}</td>
+                            <td className="py-1.5 px-2 text-center font-bold text-blue-700">{r.nroDebito||'—'}</td>
+                            <td className="py-1.5 px-2 text-center font-bold text-purple-700">{r.nroCredito||'—'}</td>
+                            <td className="py-1.5 px-2 text-center font-bold text-orange-600">{r.facAfectada||'—'}</td>
+                            <td className={`py-1.5 px-2 text-right font-bold ${r.totalVentasBs<0?'text-red-600':''}`}>{r.totalVentasBs!==0?fmtVen(r.totalVentasBs):'—'}</td>
                             <td className="py-1.5 px-2 text-right">0,00</td>
                             <td className="py-1.5 px-2 text-right">0,00</td>
-                            <td className="py-1.5 px-2 text-right">{r.baseImponibleBs>0?fmtVen(r.baseImponibleBs):'—'}</td>
-                            <td className="py-1.5 px-2 text-center font-bold">{r.alicuota}</td>
-                            <td className="py-1.5 px-2 text-right">{r.ivaBs>0?fmtVen(r.ivaBs):'—'}</td>
+                            <td className={`py-1.5 px-2 text-right font-bold ${r.baseImponibleBs<0?'text-red-600':''}`}>{r.baseImponibleBs!==0?fmtVen(r.baseImponibleBs):'—'}</td>
+                            <td className="py-1.5 px-2 text-center font-bold">{r.alicuota||'—'}</td>
+                            <td className={`py-1.5 px-2 text-right font-bold ${r.ivaBs<0?'text-red-600':''}`}>{r.ivaBs!==0?fmtVen(r.ivaBs):'—'}</td>
                             <td className="py-1.5 px-2 text-right font-bold text-red-600">{r.ivaRetDb>0?fmtVen(r.ivaRetDb):'—'}</td>
                             <td className="py-1.5 px-2 text-center font-bold text-orange-600">{r.nroFactAfecta||'—'}</td>
                             <td className="py-1.5 px-2 font-bold">{r.nroComprobante||'—'}</td>
@@ -19145,18 +19145,20 @@ ${resumenHtml}
                         {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-orange-600">{bs(efaData.totalIngresos)}</td>}
                       </tr>
                       {erExpanded.ingresos && (efaData.facturasperiodo.length>0 ? efaData.facturasperiodo.map((inv,i)=>(
-                        <tr key={i} className="border-b border-orange-50 hover:bg-orange-50/40">
+                        <tr key={i} className={`border-b hover:bg-orange-50/40 ${inv.isNota?(inv.tipoNota==='NC'?'bg-red-50/40':'bg-blue-50/40'):'border-orange-50'}`}>
                           <td className="py-1.5 px-4 pl-20 text-[10px] font-bold text-gray-700">
+                            {inv.isNota&&<span className={`text-[8px] font-black px-1.5 py-0.5 rounded mr-1 ${inv.tipoNota==='NC'?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{inv.tipoNota}</span>}
                             <span className="text-orange-500 font-black mr-2">{inv.documento}</span>
-                            {inv.clientName} — <span className="italic text-gray-500">{inv.productoMaquilado||inv.opAsignada||'—'}</span>
+                            {inv.clientName} — <span className="italic text-gray-500">{inv.productoMaquilado||inv.opAsignada||''}</span>
                             <span className="text-[9px] text-gray-400 ml-2">{inv.fecha}</span>
                           </td>
                           <td className="py-1.5 px-3 text-center text-[9px] text-gray-400">USD</td>
-                          <td className="py-1.5 px-3 text-right font-black text-orange-600">{formatNum(inv.montoBase)}</td>
+                          <td className={`py-1.5 px-3 text-right font-black ${inv.montoBase<0?'text-red-600':'text-orange-600'}`}>{inv.montoBase<0?'-':''}{formatNum(Math.abs(parseNum(inv.montoBase)))}</td>
                           <td className="py-1.5 px-3 text-center text-[9px]">{pctOf(parseNum(inv.montoBase),efaData.totalIngresos)}</td>
                           {tasa>1&&<td className="py-1.5 px-3 text-right text-[9px]">{bs(parseNum(inv.montoBase))}</td>}
                         </tr>
-                      )) : <tr><td colSpan={tasa>1?5:4} className="py-1.5 px-4 pl-20 text-[10px] text-gray-400 italic">Sin ingresos en este periodo</td></tr>)}
+                      )) : <tr><td colSpan={tasa>1?5:4} className="py-1.5 px-4 pl-20 text-[10px] text-gray-400 italic">Sin registros en este período</td></tr>
+                      )}
                       <tr className="bg-orange-100">
                         <td className="py-2.5 px-4 text-[10px] uppercase pl-8 text-orange-800 font-black" colSpan={2}>Total INGRESOS</td>
                         <td className="py-2.5 px-3 text-right font-black text-orange-700">{formatNum(efaData.totalIngresos)}</td>
@@ -19709,7 +19711,7 @@ ${resumenHtml}
       // Usar tasaFactura guardada en la NC/ND, o buscar en la factura, o BCV
       const tasaNC = parseNum(nc.tasaFactura||inv?.tasa||ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
       const baseImpBs = parseNum(nc.monto||0);           // monto = Base Imp. en Bs.
-      const baseUsd = tasaNC>1 ? parseFloat((baseImpBs/tasaNC).toFixed(2)) : 0;
+      const baseUsd = tasaNC>0 ? parseFloat((baseImpBs/tasaNC).toFixed(2)) : baseImpBs;
       return s + (nc.tipo==='NC' ? -baseUsd : baseUsd);
     }, 0);
     const totalIngresos = totalIngresosNE + totalIngresosInv + ajusteNotasUsd;
@@ -19858,7 +19860,7 @@ ${resumenHtml}
         const ne2=(notasEntrega||[]).find(e=>e.id===nc.neId);
         const tasaNC=parseNum(nc.tasaFactura||inv?.tasa||ne2?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
         const baseImpBs=parseNum(nc.monto||0);
-        const baseUsd=tasaNC>1?parseFloat((baseImpBs/tasaNC).toFixed(2)):0;
+        const baseUsd=tasaNC>0?parseFloat((baseImpBs/tasaNC).toFixed(2)):baseImpBs;
         const signo=nc.tipo==='NC'?-1:1;
         return {documento:nc.nroDocumento||nc.tipo,clientName:inv?.clientName||ne2?.clientName||'—',
           productoMaquilado:nc.descripcion||`${nc.tipo} aplicada`,fecha:nc.fecha,
