@@ -12536,7 +12536,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // Clave: FACTURAS se agrupan por nroFiscal (1 fila por nro fiscal, sumando bases)
             // Si no tiene nroFactura → usar invId como fallback
             const nroFac = r.nroFactura && r.nroFactura !== '—' && r.nroFactura !== '00000000' ? r.nroFactura : r.invId;
-            const key = (r.tipo==='FACTURA') ? `FAC-${nroFac}` : `${r.tipo}-${r.fecha}-${r.nroComprobante||r.seq}`;
+            // FACTURAS: agrupar por N° Fiscal (consolidar NEs con misma factura)
+            // RETENCIONES: cada una por separado aunque compartan comprobante (distinta factura afectada)
+            // NC/ND: por ID único del documento
+            const key = r.tipo==='FACTURA'   ? `FAC-${nroFac}` :
+                        r.tipo==='RETENCION' ? `RET-${r.retId||r.nroFactAfecta+'-'+r.nroComprobante+'-'+r.fecha}` :
+                        `${r.tipo}-${r.invId||r.nroDocumento||r.seq}`;
             if (!rowsMap[key]) {
               rowsMap[key] = {...r};
             } else {
