@@ -2317,7 +2317,7 @@ export default function App() {
   // ============================================================================
   const handleSaveTraslado = async () => {
     const { almacenOrigen, almacenDestino, date, notes } = trasladoForm;
-    if (!almacenOrigen || !almacenDestino) return setDialog({ title: 'Aviso', text: 'Seleccione almacenes.', type: 'alert' });
+    if (!almacenOrigen || !almacenDestino) return setDialog({ title: 'Seleccione almacenes', text: `Por favor seleccione ambos almacenes en el formulario.\nActual → Origen: "${almacenOrigen||'sin seleccionar'}" | Destino: "${almacenDestino||'sin seleccionar'}"`, type: 'alert' });
     if (almacenOrigen === almacenDestino) return setDialog({ title: 'Aviso', text: 'El almacén origen y destino deben ser diferentes.', type: 'alert' });
     if (!trasladoItems.length) return setDialog({ title: 'Aviso', text: 'Agregue al menos un artículo al traslado.', type: 'alert' });
 
@@ -5439,7 +5439,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 <p className="text-[10px] font-bold text-indigo-700 mt-0.5">Vista, filtros, reportes PDF y Excel por almacén</p>
               </div>
               <div className="flex gap-2 flex-wrap">
-                <button onClick={()=>setShowTrasladoModal(true)} className="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-indigo-700 flex items-center gap-2"><ArrowRightLeft size={13}/> Traslado</button>
+                <button onClick={()=>{setTrasladoForm(f=>({...f,almacenOrigen:depositos[0]||f.almacenOrigen,almacenDestino:depositos[1]||f.almacenDestino}));setShowTrasladoModal(true);}} className="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-indigo-700 flex items-center gap-2"><ArrowRightLeft size={13}/> Traslado</button>
                 <button onClick={()=>{
                   const almLabel=almacenesFilter.almacen==='TODOS'?'TODOS LOS ALMACENES':almacenesFilter.almacen;
                   const now=new Date().toLocaleDateString('es-VE',{day:'2-digit',month:'long',year:'numeric'});
@@ -7865,14 +7865,14 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
                         <select value={trasladoForm.almacenOrigen} onChange={e=>{ setTrasladoForm(f=>({...f,almacenOrigen:e.target.value,itemId:'',qty:''})); setTrasladoItems([]); setTrasladoSearch(''); }}
                           className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                          {depositos.map(a=><option key={a} value={a}>{a}</option>)}
+                          <option value="">— Seleccione origen —</option>{depositos.map(a=><option key={a} value={a}>{a}</option>)}
                         </select>
                       </div>
                       <div>
                         <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Almacén Destino</label>
                         <select value={trasladoForm.almacenDestino} onChange={e=>setTrasladoForm(f=>({...f,almacenDestino:e.target.value}))}
                           className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-indigo-400 bg-white">
-                          {depositos.filter(a=>a!==trasladoForm.almacenOrigen).map(a=><option key={a} value={a}>{a}</option>)}
+                          <option value="">— Seleccione destino —</option>{depositos.filter(a=>a!==trasladoForm.almacenOrigen).map(a=><option key={a} value={a}>{a}</option>)}
                         </select>
                       </div>
                       <div>
