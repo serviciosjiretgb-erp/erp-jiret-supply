@@ -13317,12 +13317,18 @@ ${resumenHtml}
                         const retPageItems=retFilt.slice(retPageSafe*PAGE_RET,(retPageSafe+1)*PAGE_RET);
                         if(retFilt.length===0) return <tr><td colSpan={7} className="py-6 text-center text-gray-400 text-[10px]">No hay retenciones para los filtros seleccionados</td></tr>;
                         return retPageItems.map(ret=>{
-                          const inv=(invoices||[]).find(i=>i.id===ret.facturaId);
-                          return (<tr key={ret.id} className="hover:bg-yellow-50">
+                          const isManual=(ret.facturaId||'').startsWith('MANUAL-');
+                          const inv=isManual?null:(invoices||[]).find(i=>i.id===ret.facturaId);
+                          const nroFac=isManual?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—');
+                          const cliente=isManual?(ret._manualCliente||'—'):(inv?.clientName||'—');
+                          return (<tr key={ret.id} className={`hover:bg-yellow-50 ${isManual?'bg-orange-50/30':''}`}>
                             <td className="py-2 px-3 font-black text-blue-700">{ret.nroRetencion}</td>
                             <td className="py-2 px-3">{ret.fechaComprobante}</td>
-                            <td className="py-2 px-3 font-bold text-orange-600">{padNum(inv?.nroFiscal,8)||inv?.documento||'—'}</td>
-                            <td className="py-2 px-3 uppercase">{inv?.clientName||'—'}</td>
+                            <td className="py-2 px-3 font-bold text-orange-600 flex items-center gap-1">
+                              {isManual&&<span className="text-[7px] bg-orange-100 text-orange-600 px-1 rounded font-black">MANUAL</span>}
+                              {nroFac}
+                            </td>
+                            <td className="py-2 px-3 uppercase">{cliente}</td>
                             <td className="py-2 px-3 text-right font-black">{fmtVen(parseNum(ret.montoRetenido||0))}</td>
                             <td className="py-2 px-3 text-center"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{ret.quincena==='1'?'I Quincena':'II Quincena'}</span></td>
                             <td className="py-2 px-3"><div className="flex justify-center gap-1">
