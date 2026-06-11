@@ -12666,7 +12666,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(!retForm.facturaId||!retForm.nroRetencion||!retForm.fechaComprobante||!retForm.montoRetenido)
               return setDialog({title:'Datos incompletos',text:'Completa todos los campos requeridos.',type:'alert'});
             try{
-              const id=`RET-${retForm.facturaId}-${Date.now()}`;
+              const id=`RET-${Date.now()}-${Math.random().toString(36).substr(2,8)}`; // ID único garantizado
               await setDoc(getDocRef('retencionesClientes',id),{id,...retForm,timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'});
               setShowRetModal(false);setRetBusqFact('');
               setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena});
@@ -13060,7 +13060,7 @@ ${resumenHtml}
                   <input value={libroFiltCliente} onChange={e=>setLibroFiltCliente(e.target.value.toUpperCase())} placeholder="Nombre o RIF..." className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-40"/></div>
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Año</label>
                   <select value={libroAnio} onChange={e=>setLibroAnio(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
-                    {['2024','2025','2026','2027'].map(y=>(<option key={y} value={y}>{y}</option>))}
+                    {(()=>{const cy=new Date().getFullYear();return Array.from({length:cy-2023+1},(_,i)=>String(2024+i)).map(y=>(<option key={y} value={y}>{y}</option>));})()}
                   </select></div>
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mes</label>
                   <select value={libroMes} onChange={e=>setLibroMes(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
@@ -13089,9 +13089,16 @@ ${resumenHtml}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {rows.length===0
-                        ? <tr><td colSpan={20} className="py-10 text-center text-gray-400 font-bold">Sin registros fiscales para esta quincena</td></tr>
-                        : rows.map((r,i)=>(
+                      {(()=>{
+                        const rowsFilt=rows.filter(r=>{
+                          if(libroFiltFact){const q=libroFiltFact.toUpperCase();
+                            if(!(r.nroFactura||"").includes(q)&&!(r.nroControl||"").includes(q)&&!(r.nroComprobante||"").includes(q)&&!(r.nroDebito||"").includes(q)&&!(r.nroCredito||"").includes(q))return false;}
+                          if(libroFiltCliente){const q=libroFiltCliente.toUpperCase();
+                            if(!(r.nombre||"").toUpperCase().includes(q)&&!(r.rif||"").toUpperCase().includes(q))return false;}
+                          return true;
+                        });
+                        if(rowsFilt.length===0) return <tr><td colSpan={20} className="py-10 text-center text-gray-400 font-bold">Sin registros para los filtros seleccionados</td></tr>;
+                        return rowsFilt.map((r,i)=>(
                           <tr key={i} className={`${i%2?'bg-gray-50':''} hover:bg-blue-50 ${r.tipo==='RETENCION'?'text-yellow-800':''}`}>
                             <td className="py-1.5 px-2 text-center font-bold">{r.seq}</td>
                             <td className="py-1.5 px-2">{r.fecha}</td>
@@ -13113,8 +13120,8 @@ ${resumenHtml}
                             <td className="py-1.5 px-2 text-center font-bold text-orange-600">{r.nroFactAfecta||'—'}</td>
                             <td className="py-1.5 px-2 font-bold">{r.nroComprobante||'—'}</td>
                           </tr>
-                        ))
-                      }
+                        ));
+                      })()}
                     </tbody>
                     <tfoot>
                       <tr className="bg-gray-800 text-white font-black">
@@ -13328,7 +13335,24 @@ ${resumenHtml}
                     </tbody>
                   </table>
                 </div>
-                {(retenciones||[]).length>15&&<div className="p-3 flex justify-center"><PaginadorUI total={(retenciones||[]).length} pagina={retPage2} setPagina={setRetPage2}/></div>}
+                {(()=>{
+                // Recalcular retFilt para el paginador inferior
+                const retFiltPag=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
+                  if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
+                  if(retFiltQ2==='1'&&parseInt(f.substring(8,10))>15)return false;
+                  if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
+                  if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
+                  const inv2=(invoices||[]).find(i=>i.id===r.facturaId);
+                  if(retFiltCli2&&!(inv2?.clientName||'').toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
+                  if(retFiltFact2&&!(inv2?.nroFiscal||inv2?.documento||'').toUpperCase().includes(retFiltFact2.toUpperCase()))return false;
+                  return true;
+                });
+                if(retFiltPag.length>15) return <div className="p-3 flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-gray-500">{retFiltPag.length} registros — pág. {retPage2+1} / {Math.ceil(retFiltPag.length/15)}</span>
+                  <PaginadorUI total={retFiltPag.length} pagina={retPage2} setPagina={setRetPage2}/>
+                </div>;
+                return null;
+              })()}
               </div>
 
               {/* MODAL REGISTRO RETENCIÓN */}
