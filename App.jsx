@@ -456,6 +456,7 @@ export default function App() {
   const [showRetModal, setShowRetModal] = useState(false);
   const [retBusqFact, setRetBusqFact] = useState('');
   const [retFactManual, setRetFactManual] = useState(false); // modo ingreso manual de factura
+  const [retClientSearch, setRetClientSearch] = useState('');
   const [retFiltMes2, setRetFiltMes2] = useState('');
   const [retFiltQ2, setRetFiltQ2] = useState('AMBAS');
   const [retFiltCli2, setRetFiltCli2] = useState('');
@@ -489,6 +490,9 @@ export default function App() {
   const [prodVendPagina, setProdVendPagina] = useState(0);
   const [reportVentasPagina, setReportVentasPagina] = useState(0);
   const [historialPagina, setHistorialPagina] = useState(0);
+  const [histTrasladoDesde, setHistTrasladoDesde] = useState('');
+  const [histTrasladoHasta, setHistTrasladoHasta] = useState('');
+  const [histTrasladoProd, setHistTrasladoProd] = useState('');
   const PAGE_SIZE_DEFAULT = 25;
   // Helper: componente de paginación reutilizable
   const PaginadorUI = ({total, pagina, setPagina, pageSize=PAGE_SIZE_DEFAULT}) => {
@@ -2326,23 +2330,42 @@ export default function App() {
         if (cantQty <= 0) continue;
 
         const allDocs = (inventory||[]).filter(i => {
-          const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
-          return cc === cleanCode;
+          const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').replace(/-COPY\d*$/i,'').toUpperCase();
+          return cc === cleanCode.toUpperCase();
         });
-        const origenDoc = allDocs.find(i => (i.almacen||'') === almacenOrigen);
-        const destinoDoc = allDocs.find(i => (i.almacen||'') === almacenDestino);
-        const repDoc = origenDoc || allDocs[0];
-        if (!repDoc) continue;
-        const stockOrigen = parseNum(origenDoc?.stock||0);
-        if (cantQty > stockOrigen) continue;
+        if(!allDocs.length) continue;
+        const repDoc = allDocs[0];
+
+        // ── Determinar stock real en almacén origen (acepta almacen field O warehouses map) ──
+        const origenDoc = allDocs.find(i => (i.almacen||'').toUpperCase() === almacenOrigen.toUpperCase());
+        // También checar si algún doc tiene el almacenOrigen en su warehouses map
+        const origenDocMap = !origenDoc ? allDocs.find(i => parseNum((i.warehouses||{})[almacenOrigen]||0)>0) : null;
+
+        const stockOrigen = origenDoc ? parseNum(origenDoc.stock||0) : (origenDocMap ? parseNum((origenDocMap.warehouses||{})[almacenOrigen]||0) : 0);
+        if (cantQty > stockOrigen + 0.001) continue; // skip if insufficient stock
 
         const t = ts + idx * 2;
-        // Descontar del origen
-        if (origenDoc) batch.update(getDocRef('inventory', origenDoc.id), { stock: Math.max(0, stockOrigen - cantQty), timestamp: t });
-        // Sumar al destino (o crear si no existe)
+
+        // ── Descontar del ORIGEN ──
+        if (origenDoc) {
+          batch.update(getDocRef('inventory', origenDoc.id), { stock: Math.max(0, stockOrigen - cantQty), timestamp: t });
+        } else if (origenDocMap) {
+          const newWH = {...(origenDocMap.warehouses||{})};
+          newWH[almacenOrigen] = Math.max(0, parseNum(newWH[almacenOrigen]||0) - cantQty);
+          batch.update(getDocRef('inventory', origenDocMap.id), { warehouses: newWH, timestamp: t });
+        }
+
+        // ── Sumar al DESTINO ──
+        const destinoDoc = allDocs.find(i => (i.almacen||'').toUpperCase() === almacenDestino.toUpperCase());
+        const destinoDocMap = !destinoDoc ? allDocs.find(i => Object.prototype.hasOwnProperty.call(i.warehouses||{}, almacenDestino)) : null;
         if (destinoDoc) {
           batch.update(getDocRef('inventory', destinoDoc.id), { stock: parseNum(destinoDoc.stock||0) + cantQty, timestamp: t + 1 });
+        } else if (destinoDocMap) {
+          const newWH2 = {...(destinoDocMap.warehouses||{})};
+          newWH2[almacenDestino] = parseNum(newWH2[almacenDestino]||0) + cantQty;
+          batch.update(getDocRef('inventory', destinoDocMap.id), { warehouses: newWH2, timestamp: t + 1 });
         } else {
+          // Crear nuevo doc para el almacén destino
           const newDocId = `${cleanCode}___${almacenDestino.replace(/\s+/g,'-')}`;
           batch.set(getDocRef('inventory', newDocId), {
             id: newDocId, displayId: cleanCode, desc: repDoc.desc,
@@ -5579,14 +5602,30 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               <h3 className="font-black text-sm uppercase text-indigo-800 mb-4 flex items-center gap-2"><ArrowRightLeft size={16}/> Historial de Traslados ({(invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO').length} registros)</h3>
 
               {(() => {
-                const allTras=(invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO').sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+                const allTras=(invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO');
+                const trasFilt=allTras.filter(m=>{
+                  if(histTrasladoDesde&&(m.date||'')<histTrasladoDesde)return false;
+                  if(histTrasladoHasta&&(m.date||'')>histTrasladoHasta)return false;
+                  if(histTrasladoProd&&!(m.itemId||'').toUpperCase().includes(histTrasladoProd.toUpperCase()))return false;
+                  return true;
+                }).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
                 if(!allTras.length) return <p className="text-xs text-gray-400 font-bold uppercase py-4 text-center">Sin traslados registrados</p>;
-                const totalT=allTras.length;
+                const totalT=trasFilt.length;
                 const pgT=Math.max(0,Math.min(historialPagina,Math.ceil(totalT/PAGE_SIZE_DEFAULT)-1));
-                const pageT=allTras.slice(pgT*PAGE_SIZE_DEFAULT,(pgT+1)*PAGE_SIZE_DEFAULT);
+                const pageT=trasFilt.slice(pgT*PAGE_SIZE_DEFAULT,(pgT+1)*PAGE_SIZE_DEFAULT);
                 return (
                   <div>
-                  <div className="flex items-center justify-between mb-3"><span className="text-[10px] text-gray-500 font-bold">{totalT} traslados</span><PaginadorUI total={totalT} pagina={pgT} setPagina={setHistorialPagina}/></div>
+                  {/* Filtros */}
+                  <div className="flex gap-2 flex-wrap items-end mb-3">
+                    <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Desde</label>
+                      <input type="date" value={histTrasladoDesde} onChange={e=>{setHistTrasladoDesde(e.target.value);setHistorialPagina(0);}} className="border border-gray-300 rounded-lg p-1.5 text-xs outline-none focus:border-indigo-400"/></div>
+                    <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Hasta</label>
+                      <input type="date" value={histTrasladoHasta} onChange={e=>{setHistTrasladoHasta(e.target.value);setHistorialPagina(0);}} className="border border-gray-300 rounded-lg p-1.5 text-xs outline-none focus:border-indigo-400"/></div>
+                    <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Artículo</label>
+                      <input value={histTrasladoProd} onChange={e=>{setHistTrasladoProd(e.target.value.toUpperCase());setHistorialPagina(0);}} placeholder="Código..." className="border border-gray-300 rounded-lg p-1.5 text-xs outline-none focus:border-indigo-400 w-32"/></div>
+                    {(histTrasladoDesde||histTrasladoHasta||histTrasladoProd)&&<button onClick={()=>{setHistTrasladoDesde('');setHistTrasladoHasta('');setHistTrasladoProd('');setHistorialPagina(0);}} className="text-[9px] font-black text-red-500 hover:text-red-700 self-end mb-1.5">✕ Limpiar</button>}
+                    <span className="text-[9px] text-gray-400 font-bold ml-auto self-end mb-1.5">{trasFilt.length} / {allTras.length} registros</span>
+                  </div>
                   <div className="overflow-x-auto rounded-xl border border-gray-200">
                     <table className="w-full text-xs">
                       <thead className="bg-gray-800 text-white"><tr className="font-black text-[9px] uppercase">
@@ -5598,38 +5637,31 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         <th className="py-2 px-3 text-center">Reversar</th>
                       </tr></thead>
                       <tbody className="divide-y divide-gray-100">
-                        {pageT.map(m=>{
-                          // Find matching ENTRADA_TRASLADO
-                          const entMovId = `TENT-${(m.timestamp||0)+1}`;
-                          const de = m.almacen || '—';
-                          const a = m.almacenDestino || (m.notes||'').split('→')[1]?.trim() || '—';
-                          return (
+                        {pageT.length===0?<tr><td colSpan={6} className="py-4 text-center text-gray-400 text-xs">Sin registros</td></tr>:pageT.map(m=>{
+                          const de=m.almacen||'—';
+                          const a=m.almacenDestino||(m.notes||'').split('→')[1]?.trim()||'—';
+                          return(
                             <tr key={m.id} className="hover:bg-indigo-50">
                               <td className="py-2 px-3 border-r font-bold">{m.date}</td>
                               <td className="py-2 px-3 border-r font-black text-orange-600">{m.itemId}</td>
                               <td className="py-2 px-3 border-r text-center font-black">{formatNum(m.qty)}</td>
                               <td className="py-2 px-3 border-r text-center text-[9px] font-bold text-red-600">{de}</td>
-                              <td className="py-2 px-3 border-r text-center text-[9px] font-bold text-green-600">{a}</td>
+                              <td className="py-2 px-3 border-r text-center text-[9px] font-bold text-green-700">{a}</td>
                               <td className="py-2 px-3 text-center">
-                                <button onClick={()=>setDialog({title:'Reversar Traslado',text:`¿Reversar traslado de ${formatNum(m.qty)} de "${de}" a "${a}"? El stock volverá al almacén de origen.`,type:'confirm',onConfirm:async()=>{
-                                  try {
-                                    // Find the item and update its almacen back
-                                    const item = (inventory||[]).find(i=>i.id===m.itemId);
-                                    if(item) {
-                                      await updateDoc(getDocRef('inventory',item.id),{almacen:de});
-                                    }
-                                    // Delete both movements
-                                    const batch = writeBatch(db);
-                                    batch.delete(getDocRef('inventoryMovements',m.id));
-                                    // Try to delete the matching ENTRADA_TRASLADO
-                                    const relatedEnts = (invMovements||[]).filter(mv=>mv.type==='ENTRADA_TRASLADO'&&mv.timestamp===(m.timestamp||0)+1);
-                                    relatedEnts.forEach(e=>batch.delete(getDocRef('inventoryMovements',e.id)));
-                                    await batch.commit();
-                                    setDialog({title:'✅ Reversado',text:'Traslado reversado. El stock volvió al almacén origen.',type:'alert'});
-                                  } catch(err){setDialog({title:'Error',text:err.message,type:'alert'});}
-                                }})} className="px-2 py-1 bg-red-100 text-red-600 rounded-lg text-[8px] font-black uppercase hover:bg-red-500 hover:text-white">
-                                  Reversar
-                                </button>
+                                <button onClick={()=>setDialog({title:'Reversar Traslado',text:`¿Reversar traslado de ${formatNum(m.qty)} ${m.itemId}?`,type:'confirm',onConfirm:async()=>{
+                                  try{
+                                    const bat=writeBatch(db);
+                                    bat.delete(getDocRef('inventoryMovements',m.id));
+                                    bat.delete(getDocRef('inventoryMovements',`TENT-${(m.timestamp||0)+1}`));
+                                    const allD=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0]).toUpperCase()===m.itemId.toUpperCase());
+                                    const orD=allD.find(i=>(i.almacen||'').toUpperCase()===de.toUpperCase());
+                                    const deD=allD.find(i=>(i.almacen||'').toUpperCase()===a.toUpperCase());
+                                    if(orD) bat.update(getDocRef('inventory',orD.id),{stock:parseNum(orD.stock||0)+parseNum(m.qty)});
+                                    if(deD) bat.update(getDocRef('inventory',deD.id),{stock:Math.max(0,parseNum(deD.stock||0)-parseNum(m.qty))});
+                                    await bat.commit();
+                                    setDialog({title:'✅ Reversado',text:'Traslado reversado.',type:'alert'});
+                                  }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                                }})} className="px-2 py-1 bg-red-50 text-red-600 rounded-lg text-[8px] font-black hover:bg-red-100">↩ Reversar</button>
                               </td>
                             </tr>
                           );
@@ -5637,7 +5669,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                       </tbody>
                     </table>
                   </div>
-                  <div className="mt-3 flex justify-center"><PaginadorUI total={totalT} pagina={pgT} setPagina={setHistorialPagina}/></div>
+                  {totalT>PAGE_SIZE_DEFAULT&&<div className="mt-3 flex justify-center"><PaginadorUI total={totalT} pagina={pgT} setPagina={setHistorialPagina}/></div>}
                   </div>
                 );
               })()}
@@ -13278,7 +13310,14 @@ ${resumenHtml}
                           <div className="grid grid-cols-2 gap-2">
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Fecha</label><input type="date" value={retForm._manualFecha||getTodayDate()} onChange={e=>setRetForm(f=>({...f,_manualFecha:e.target.value,fechaComprobante:f.fechaComprobante||e.target.value}))} className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">N° Fiscal</label><input value={retForm._manualNroFiscal||''} onChange={e=>setRetForm(f=>({...f,_manualNroFiscal:e.target.value,facturaId:'MANUAL-'+e.target.value}))} placeholder="00003025" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                            <div className="col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Cliente</label><input value={retForm._manualCliente||''} onChange={e=>setRetForm(f=>({...f,_manualCliente:e.target.value}))} placeholder="Nombre del cliente" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                            <div className="col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Cliente</label><input value={retClientSearch||retForm._manualCliente||''} onChange={e=>{setRetClientSearch(e.target.value);}} placeholder="Buscar cliente por nombre o RIF..." className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/>
+                              {retClientSearch&&(clients||[]).filter(c=>(c.name||c.nombre||'').toUpperCase().includes(retClientSearch.toUpperCase())||(c.rif||'').toUpperCase().includes(retClientSearch.toUpperCase())).slice(0,8).map(c=>(
+                                <div key={c.rif||c.id} onMouseDown={()=>{setRetForm(f=>({...f,_manualCliente:c.name||c.nombre,_manualRif:c.rif}));setRetClientSearch('');}} className="cursor-pointer px-2 py-1.5 hover:bg-orange-50 border-b border-gray-100 text-[9px]">
+                                  <span className="font-black">{c.name||c.nombre}</span> <span className="text-orange-600 ml-1">{c.rif}</span>
+                                </div>
+                              ))}
+                              {retForm._manualCliente&&!retClientSearch&&<div className="text-[9px] font-black text-green-700 mt-0.5">✓ {retForm._manualCliente} — {retForm._manualRif||'Sin RIF'}</div>}
+                            </div>
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Monto Retenido (Bs.)</label><input type="number" step="0.01" value={retForm.montoRetenido||''} onChange={e=>setRetForm(f=>({...f,montoRetenido:e.target.value}))} placeholder="0.00" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Quincena</label><select value={retForm.quincena||'1'} onChange={e=>setRetForm(f=>({...f,quincena:e.target.value}))} className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"><option value="1">I Quincena (01–15)</option><option value="2">II Quincena (16–31)</option></select></div>
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">N° Comprobante</label><input value={retForm.nroRetencion||''} onChange={e=>setRetForm(f=>({...f,nroRetencion:e.target.value}))} placeholder="Nro. comprobante" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
