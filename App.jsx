@@ -698,7 +698,7 @@ export default function App() {
   const initialMovementForm = { date: getTodayDate(), itemId: '', type: 'ENTRADA', qty: '', cost: '', reference: '', notes: '', opAsignada: '' };
   const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
   // Multialmacén — Traslados
-  const initialTrasladoForm = { date: getTodayDate(), itemId: '', almacenOrigen: 'ALMACEN ZI', almacenDestino: 'PLANTA', qty: '', notes: '' };
+  const initialTrasladoForm = { date: getTodayDate(), itemId: '', almacenOrigen: '', almacenDestino: '', qty: '', notes: '' };
   const [trasladoForm, setTrasladoForm] = useState(initialTrasladoForm);
   const [trasladoItems, setTrasladoItems] = useState([]); // lista multi-artículo
   const [showTrasladoModal, setShowTrasladoModal] = useState(false);
@@ -5659,12 +5659,33 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                                     <button onClick={async()=>{
                                       if(!editTrasladoA)return;
                                       try{
-                                        await updateDoc(getDocRef('inventoryMovements',m.id),{almacenDestino:editTrasladoA});
+                                          // 1. Actualizar el registro de movimiento
+                                        const bat=writeBatch(db);
+                                        bat.update(getDocRef('inventoryMovements',m.id),{almacenDestino:editTrasladoA});
                                         const entId=`TENT-${(m.timestamp||0)+1}`;
                                         const entDoc=(invMovements||[]).find(mv=>mv.id===entId);
-                                        if(entDoc) await updateDoc(getDocRef('inventoryMovements',entId),{almacen:editTrasladoA});
+                                        if(entDoc) bat.update(getDocRef('inventoryMovements',entId),{almacen:editTrasladoA});
+                                        // 2. Mover inventario del almacén INCORRECTO al CORRECTO
+                                        const allD=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0]).toUpperCase()===m.itemId.toUpperCase());
+                                        const oldA=m.almacenDestino||(m.notes||'').split('→')[1]?.trim()||'';
+                                        const wrongDoc=allD.find(i=>(i.almacen||'').toUpperCase()===(oldA).toUpperCase());
+                                        const rightDoc=allD.find(i=>(i.almacen||'').toUpperCase()===editTrasladoA.toUpperCase());
+                                        const movQty=parseNum(m.qty||0);
+                                        // Quitar del almacén incorrecto
+                                        if(wrongDoc) bat.update(getDocRef('inventory',wrongDoc.id),{stock:Math.max(0,parseNum(wrongDoc.stock||0)-movQty),timestamp:Date.now()});
+                                        // Agregar al almacén correcto
+                                        if(rightDoc){
+                                          bat.update(getDocRef('inventory',rightDoc.id),{stock:parseNum(rightDoc.stock||0)+movQty,timestamp:Date.now()});
+                                        } else {
+                                          const repD=allD[0];
+                                          if(repD){
+                                            const newId=`${m.itemId}___${editTrasladoA.replace(/\s+/g,'-')}`;
+                                            bat.set(getDocRef('inventory',newId),{id:newId,displayId:m.itemId,desc:repD.desc,category:repD.category,subcategory:repD.subcategory||'',unit:repD.unit,cost:repD.cost,stock:movQty,almacen:editTrasladoA,activo:true,timestamp:Date.now()});
+                                          }
+                                        }
+                                        await bat.commit();
                                         setEditingTrasladoId(null);
-                                        setDialog({title:'✅ Corregido',text:`Destino actualizado a ${editTrasladoA}.`,type:'alert'});
+                                        setDialog({title:'✅ Corregido',text:`Inventario movido de ${oldA||'destino anterior'} a ${editTrasladoA}.`,type:'alert'});
                                       }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
                                     }} className="px-1.5 py-0.5 bg-green-500 text-white rounded text-[8px] font-black">✓</button>
                                     <button onClick={()=>setEditingTrasladoId(null)} className="px-1.5 py-0.5 bg-gray-200 rounded text-[8px] font-black">✕</button>
