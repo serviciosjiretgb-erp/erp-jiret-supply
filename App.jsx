@@ -12667,7 +12667,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               return setDialog({title:'Datos incompletos',text:'Completa todos los campos requeridos.',type:'alert'});
             try{
               const id=`RET-${Date.now()}-${Math.random().toString(36).substr(2,8)}`; // ID único garantizado
-              await setDoc(getDocRef('retencionesClientes',id),{id,...retForm,timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'});
+              // Para retenciones manuales: asegurar que los datos del cliente se guarden explícitamente
+              const retDataToSave = {...retForm,
+                _manualCliente: retForm._manualCliente||retClientSearch||'',
+                _manualNroFiscal: retForm._manualNroFiscal||'',
+                _manualRif: retForm._manualRif||''
+              };
+              const {id:_oldId,...retDataClean}=retDataToSave; // quitar id viejo del spread
+              await setDoc(getDocRef('retencionesClientes',id),{...retDataClean,id,timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'});
               setShowRetModal(false);setRetBusqFact('');
               setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena});
               setDialog({title:'✅ Retención guardada',text:`Comprobante ${retForm.nroRetencion} registrado.`,type:'alert'});
@@ -13237,7 +13244,7 @@ ${resumenHtml}
                         if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
                         if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                         const inv=(invoices||[]).find(i=>i.id===r.facturaId);
-                        if(retFiltCli2&&!(inv?.clientName||'').toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
+                        const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
                         if(retFiltFact2&&!(inv?.nroFiscal||inv?.documento||'').toUpperCase().includes(retFiltFact2.toUpperCase()))return false;
                         return true;
                       });
@@ -13251,7 +13258,7 @@ ${resumenHtml}
                           if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
                           if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                           const inv=(invoices||[]).find(i=>i.id===r.facturaId);
-                          if(retFiltCli2&&!(inv?.clientName||'').toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
+                          const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
                           if(retFiltFact2&&!(inv?.nroFiscal||inv?.documento||'').toUpperCase().includes(retFiltFact2.toUpperCase()))return false;
                           return true;
                         });
@@ -13267,7 +13274,7 @@ ${resumenHtml}
                           if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
                           if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                           const inv=(invoices||[]).find(i=>i.id===r.facturaId);
-                          if(retFiltCli2&&!(inv?.clientName||'').toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
+                          const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
                           if(retFiltFact2&&!(inv?.nroFiscal||inv?.documento||'').toUpperCase().includes(retFiltFact2.toUpperCase()))return false;
                           return true;
                         });
@@ -13307,7 +13314,7 @@ ${resumenHtml}
                           if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
                           if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                           const inv=(invoices||[]).find(i=>i.id===r.facturaId);
-                          if(retFiltCli2&&!(inv?.clientName||'').toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
+                          const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
                           if(retFiltFact2&&!(inv?.nroFiscal||inv?.documento||'').toUpperCase().includes(retFiltFact2.toUpperCase()))return false;
                           return true;
                         });
@@ -13321,11 +13328,11 @@ ${resumenHtml}
                           const inv=isManual?null:(invoices||[]).find(i=>i.id===ret.facturaId);
                           const nroFac=isManual?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—');
                           const cliente=isManual?(ret._manualCliente||'—'):(inv?.clientName||'—');
-                          return (<tr key={ret.id} className={`hover:bg-yellow-50 ${isManual?'bg-orange-50/30':''}`}>
+                          return (<tr key={ret.id} className="hover:bg-yellow-50">
                             <td className="py-2 px-3 font-black text-blue-700">{ret.nroRetencion}</td>
                             <td className="py-2 px-3">{ret.fechaComprobante}</td>
                             <td className="py-2 px-3 font-bold text-orange-600 flex items-center gap-1">
-                              {isManual&&<span className="text-[7px] bg-orange-100 text-orange-600 px-1 rounded font-black">MANUAL</span>}
+                              
                               {nroFac}
                             </td>
                             <td className="py-2 px-3 uppercase">{cliente}</td>
@@ -13392,7 +13399,7 @@ ${resumenHtml}
                           <div className="grid grid-cols-2 gap-2">
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Fecha</label><input type="date" value={retForm._manualFecha||getTodayDate()} onChange={e=>setRetForm(f=>({...f,_manualFecha:e.target.value,fechaComprobante:f.fechaComprobante||e.target.value}))} className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">N° Fiscal</label><input value={retForm._manualNroFiscal||''} onChange={e=>setRetForm(f=>({...f,_manualNroFiscal:e.target.value,facturaId:'MANUAL-'+e.target.value}))} placeholder="00003025" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                            <div className="col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Cliente</label><input value={retClientSearch||retForm._manualCliente||''} onChange={e=>{setRetClientSearch(e.target.value);}} placeholder="Buscar cliente por nombre o RIF..." className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/>
+                            <div className="col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Cliente</label><input value={retClientSearch||retForm._manualCliente||''} onChange={e=>{setRetClientSearch(e.target.value);setRetForm(f=>({...f,_manualCliente:e.target.value}));}} placeholder="Buscar cliente por nombre o RIF..." className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/>
                               {retClientSearch&&(clients||[]).filter(c=>(c.name||c.nombre||'').toUpperCase().includes(retClientSearch.toUpperCase())||(c.rif||'').toUpperCase().includes(retClientSearch.toUpperCase())).slice(0,8).map(c=>(
                                 <div key={c.rif||c.id} onMouseDown={()=>{setRetForm(f=>({...f,_manualCliente:c.name||c.nombre,_manualRif:c.rif}));setRetClientSearch('');}} className="cursor-pointer px-2 py-1.5 hover:bg-orange-50 border-b border-gray-100 text-[9px]">
                                   <span className="font-black">{c.name||c.nombre}</span> <span className="text-orange-600 ml-1">{c.rif}</span>
