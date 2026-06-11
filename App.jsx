@@ -455,6 +455,7 @@ export default function App() {
   },[libroAnio,libroMes,libroQuincena]);
   const [showRetModal, setShowRetModal] = useState(false);
   const [retBusqFact, setRetBusqFact] = useState('');
+  const [retFactManual, setRetFactManual] = useState(false); // modo ingreso manual de factura
   const [retFiltMes2, setRetFiltMes2] = useState('');
   const [retFiltQ2, setRetFiltQ2] = useState('AMBAS');
   const [retFiltCli2, setRetFiltCli2] = useState('');
@@ -5154,7 +5155,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                             <optgroup key={cat} label={`── ${cat.toUpperCase()} ──`}>
                               {(catGroups[cat]||[]).sort((a,b)=>(a._cleanId||'').localeCompare(b._cleanId||'')).map(i=>(
                                 <option key={i.id} value={i.id}>
-                                  {i._cleanId} — {i.desc} ({formatNum(i.stock)} {i.unit})
+                                  {i._cleanId} — {i.desc}
                                 </option>
                               ))}
                             </optgroup>
@@ -7077,11 +7078,12 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 })
                 .filter(item => !existingCodes.has(item.id.toUpperCase())); // skip if already in inventory PT
 
-              // Final merge — deduplicate by id (case-insensitive), keep first seen
+              // Solo inventario real — excluir ítems FG- (finishedGoods)
               const seenIds = new Set();
-              const combined = [...allPTItems, ...fgPTItems].filter(item => {
+              const combined = [...allPTItems].filter(item => {
                 const key = item.id.toUpperCase();
                 if(seenIds.has(key)) return false;
+                if(key.startsWith('FG-')) return false; // excluir códigos FG-
                 seenIds.add(key);
                 return true;
               });
@@ -8303,9 +8305,22 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     required
                   >
                     <option value="">-- SELECCIONE UN ARTÍCULO --</option>
-                    {inventory.map(item => (
-                      <option key={item.id} value={item.id}>{item.id} - {item.desc} (Stock: {formatNum(item.stock)})</option>
-                    ))}
+                    {(()=>{
+                      const con={};
+                      (inventory||[]).filter(i=>i.activo!==false).forEach(i=>{
+                        const cc=(i.displayId||(i.id||'')).split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACK\d+$/i,'').toUpperCase();
+                        if(!cc)return;
+                        if(!con[cc]||parseNum(i.stock)>parseNum(con[cc].stock))con[cc]={...i,_cc:cc};
+                      });
+                      const grp={};
+                      Object.values(con).forEach(i=>{const s=i.subcategory||i.category||'Otros';if(!grp[s])grp[s]=[];grp[s].push(i);});
+                      const SUB=['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Zuncho'];
+                      const sorted=[...SUB.filter(s=>grp[s]),...Object.keys(grp).filter(s=>!SUB.includes(s)).sort()];
+                      return sorted.flatMap(sub=>[
+                        <option key={`h-${sub}`} disabled>── {sub.toUpperCase()} ──</option>,
+                        ...(grp[sub]||[]).sort((a,b)=>a._cc.localeCompare(b._cc)).map(i=><option key={i.id} value={i.id}>{i._cc} — {i.desc} ({formatNum(i.stock)} {i.unit||''})</option>)
+                      ]);
+                    })()}
                   </select>
                 </div>
 
@@ -8438,42 +8453,22 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Seleccionar Artículo</label>
                   <select value={kardexProductId} onChange={e=>setKardexProductId(e.target.value)} className="w-full border-2 border-orange-300 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500 bg-white">
                     <option value="">— Seleccione un artículo —</option>
-                    <optgroup label="── Materia Prima / Consumibles ──">
-                      {[...(inventory||[])].filter(i=>i.category!=='Semielaborados'&&i.category!=='Productos Terminados').sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc}</option>)}
-                    </optgroup>
-                    <optgroup label="── Semielaborados / Bobinas ──">
-                      {[...(inventory||[])].filter(i=>i.category==='Semielaborados').sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(i=><option key={i.id} value={i.id}>{i.id} — {i.desc} ({formatNum(i.stock)} KG)</option>)}
-                    </optgroup>
-                    <optgroup label="── Productos Terminados (FG Producción) ──">
-                      {(() => {
-                        const kardexFGMap = {};
-                        (finishedGoodsInventory||[]).forEach(fg=>{
-                          const esTermo=fg.tipoProducto==='TERMOENCOGIBLE';
-                          const prodNorm=(fg.producto||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-                          const cliNorm=(fg.cliente||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-                          const grpKey=`${prodNorm}__${cliNorm}__${fg.tipoProducto||'BOLSAS'}`;
-                          if(!kardexFGMap[grpKey]) kardexFGMap[grpKey]={key:grpKey, label:formatFGLabel(fg)||fg.producto||fg.id, ids:[fg.id], esTermo, stock:0, unit:esTermo?'KG':'Millares'};
-                          kardexFGMap[grpKey].stock += esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares);
-                          if(!kardexFGMap[grpKey].ids.includes(fg.id)) kardexFGMap[grpKey].ids.push(fg.id);
-                        });
-                        return Object.values(kardexFGMap).sort((a,b)=>a.label.localeCompare(b.label)).map(g=>(
-                          <option key={g.key} value={`FG::${g.key}`}>{g.label} ({formatNum(g.stock)} {g.unit})</option>
-                        ));
-                      })()}
-                    </optgroup>
-                    <optgroup label="── Productos Terminados (Importados / Inventario) ──">
-                      {(() => {
-                        const ptMap = {};
-                        (inventory||[]).filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i=>{
-                          const cid = i.displayId||(i.id||'').split('___')[0];
-                          if(!ptMap[cid]) ptMap[cid]={id:cid, desc:i.desc||cid, stock:0, unit:i.unit||'und'};
-                          ptMap[cid].stock += parseNum(i.stock||0);
-                        });
-                        return Object.values(ptMap).sort((a,b)=>a.desc.localeCompare(b.desc)).map(g=>(
-                          <option key={g.id} value={`INV-PT::${g.id}`}>{g.id} — {g.desc} ({formatNum(g.stock)} {g.unit})</option>
-                        ));
-                      })()}
-                    </optgroup>
+                    {(()=>{
+                      const con={};
+                      (inventory||[]).filter(i=>i.activo!==false).forEach(i=>{
+                        const cc=(i.displayId||(i.id||'')).split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACK\d+$/i,'').toUpperCase();
+                        if(!cc)return;
+                        if(!con[cc]||parseNum(i.stock)>parseNum(con[cc].stock))con[cc]={...i,_cc:cc};
+                      });
+                      const grp={};
+                      Object.values(con).forEach(i=>{const s=i.subcategory||i.category||'Otros';if(!grp[s])grp[s]=[];grp[s].push(i);});
+                      const SUB=['Bolsas Plásticas','Termoencogibles','Stretch Film','Cintas','Papel Kraft','Zuncho'];
+                      const sorted=[...SUB.filter(s=>grp[s]),...Object.keys(grp).filter(s=>!SUB.includes(s)).sort()];
+                      return sorted.flatMap(sub=>[
+                        <option key={`h-${sub}`} disabled>── {sub.toUpperCase()} ──</option>,
+                        ...(grp[sub]||[]).sort((a,b)=>a._cc.localeCompare(b._cc)).map(i=><option key={i.id} value={i.id}>{i._cc} — {i.desc}</option>)
+                      ]);
+                    })()}
                   </select>
                 </div>
                 <div className="flex-1 min-w-48">
@@ -13278,15 +13273,33 @@ ${resumenHtml}
                         <button onClick={()=>setShowRetModal(false)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
                       </div>
                       <div className="space-y-3">
-                        <div>
+                        {/* Toggle modo sistema / manual */}
+                        <div className="flex gap-2 mb-2">
+                          <button type="button" onClick={()=>{setRetFactManual(false);setRetForm(f=>({...f,facturaId:'',_manualNroFiscal:'',_manualCliente:'',_manualBaseUsd:'',_manualIvaUsd:'',_manualTasa:''}));}} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase border-2 transition-all ${!retFactManual?'bg-blue-600 text-white border-blue-600':'bg-white text-gray-600 border-gray-200'}`}>🔍 Buscar en sistema</button>
+                          <button type="button" onClick={()=>setRetFactManual(true)} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase border-2 transition-all ${retFactManual?'bg-orange-500 text-white border-orange-500':'bg-white text-gray-600 border-gray-200'}`}>✏️ Ingresar manual</button>
+                        </div>
+
+                        {!retFactManual && <div>
                           <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Buscar Factura</label>
-                          <input value={retBusqFact} onChange={e=>setRetBusqFact(e.target.value)} placeholder="Nro. fiscal, cliente o documento..." className="w-full border-2 border-blue-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500 mb-2"/>
+                          <input value={retBusqFact} onChange={e=>setRetBusqFact(e.target.value)} placeholder="Nro. fiscal o cliente..." className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold mb-1 outline-none focus:border-blue-400"/>
                           <select value={retForm.facturaId} onChange={e=>setRetForm(f=>({...f,facturaId:e.target.value}))} size={4} className="w-full border-2 border-blue-200 rounded-xl px-3 py-1 text-xs font-bold outline-none focus:border-blue-500 bg-white">
                             <option value="">— Seleccionar —</option>
-                            {factFilt.slice(0,30).map(inv=>(<option key={inv.id} value={inv.id}>{padNum(inv.nroFiscal,8)||inv.documento} · {inv.clientName} · {inv.fecha}</option>))}
+                            {factFilt.slice(0,30).map(inv=>(<option key={inv.id} value={inv.id}>{padNum(inv.nroFiscal,8)} — {inv.clientName} — ${formatNum(inv.montoBase)}</option>))}
                           </select>
-                        </div>
-                        {selFact&&(()=>{
+                        </div>}
+
+                        {retFactManual && <div className="space-y-2 bg-orange-50 border border-orange-200 rounded-xl p-3">
+                          <div className="text-[9px] font-black text-orange-700 uppercase mb-2">Factura de otro período — Datos manuales</div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">N° Fiscal</label><input value={retForm._manualNroFiscal||''} onChange={e=>setRetForm(f=>({...f,_manualNroFiscal:e.target.value,facturaId:'MANUAL-'+e.target.value}))} placeholder="00003025" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Cliente</label><input value={retForm._manualCliente||''} onChange={e=>setRetForm(f=>({...f,_manualCliente:e.target.value}))} placeholder="Nombre del cliente" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">IVA USD</label><input type="number" step="0.01" value={retForm._manualIvaUsd||''} onChange={e=>setRetForm(f=>({...f,_manualIvaUsd:e.target.value}))} placeholder="0.00" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Tasa Bs/$</label><input type="number" step="0.01" value={retForm._manualTasa||''} onChange={e=>setRetForm(f=>({...f,_manualTasa:e.target.value}))} placeholder={String(settings?.tasaBCV||'')} className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                          </div>
+                          {retForm._manualIvaUsd&&retForm._manualTasa&&<div className="text-[9px] font-black text-orange-700 mt-1">Retención sugerida (75%): Bs. {formatNum(parseNum(retForm._manualIvaUsd)*parseNum(retForm._manualTasa)*0.75)}</div>}
+                        </div>}
+
+                        {selFact&&!retFactManual&&(()=>{
                           const tasaFact=parseNum(selFact.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
                           const baseUsd=parseNum(selFact.montoBase||0);
                           const ivaUsd=parseNum(selFact.iva||0)||(selFact.aplicaIva==='SI'?parseFloat((baseUsd*0.16).toFixed(2)):0);
