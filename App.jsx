@@ -12244,7 +12244,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <td className="py-2 px-3"><span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${n.naturaleza==='FISCAL'?'bg-purple-100 text-purple-700':'bg-gray-100 text-gray-600'}`}>{n.naturaleza}</span></td>
                               <td className="py-2 px-3 font-bold text-blue-700">{docRef}</td>
                               <td className="py-2 px-3 uppercase text-sm">{cli}</td>
-                              <td className={`py-2 px-3 text-right font-black ${isNC?'text-red-600':'text-blue-700'}`}>{isNC?'−':'+'}${formatNum(parseNum(n.monto||0))}</td>
+                              <td className={`py-2 px-3 text-right font-black ${isNC?'text-red-600':'text-blue-700'}`}>{(()=>{
+                                  const tasaN=parseNum(n.tasaFactura||inv?.tasa||ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+                                  const baseUSD=tasaN>1?parseFloat((parseNum(n.monto||0)/tasaN).toFixed(2)):parseNum(n.monto||0);
+                                  return `${isNC?'−':'+'}$${formatNum(baseUSD)}`;
+                                })()}</td>
                               <td className="py-2 px-3">{n.nroControl||'—'}</td>
                               <td className="py-2 px-3 text-gray-500 max-w-xs truncate">{n.descripcion}</td>
                               <td className="py-2 px-3">
