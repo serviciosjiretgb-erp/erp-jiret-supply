@@ -1418,7 +1418,7 @@ export default function App() {
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubNotasVentaCD = onSnapshot(getColRef('notasVentaCreditoDebito'), (s)=>setNotasVentaCD(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
-    const unsubRetenciones = onSnapshot(getColRef('retencionesClientes'), (s) => setRetenciones(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    const unsubRetenciones = onSnapshot(getColRef('retencionesClientes'), (s) => setRetenciones(s.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubOpCosts = onSnapshot(getColRef('operatingCosts'), (s) => setOpCosts(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubActivity = onSnapshot(collection(db, 'userActivity'), (s) => setUserActivityLog(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
@@ -12567,13 +12567,20 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               nroComprobante:'',invId:inv.id,opRelacionada:inv.opAsignada||''});
           });
           retPeriodo.forEach(ret=>{
-            const inv=(invoices||[]).find(i=>i.id===ret.facturaId); if(!inv) return;
-            const tasa=parseNum(inv.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-            const montoRet=parseNum(ret.montoRetenido||0); // montoRetenido ya está en Bs.
-            rows.push({seq:seq++,fecha:ret.fechaComprobante||'',rif:inv.clientRif||'',nombre:inv.clientName||'',
+            const isManual=(ret.facturaId||'').startsWith('MANUAL-');
+            const inv=isManual?null:(invoices||[]).find(i=>i.id===ret.facturaId);
+            if(!inv&&!isManual) return; // saltar solo si NO es manual Y no se encuentra la factura
+            // Datos del cliente y factura afectada
+            const retNombre=isManual?(ret._manualCliente||''):(inv.clientName||'');
+            // RIF: usar el guardado, o buscar en la lista de clientes por nombre
+            const clienteEnLista=(isManual&&!ret._manualRif&&retNombre)?(clients||[]).find(c=>(c.name||c.nombre||'').toUpperCase()===retNombre.toUpperCase()):null;
+            const retRif=isManual?(ret._manualRif||clienteEnLista?.rif||''):(inv.clientRif||'');
+            const retFiscal=isManual?(ret._manualNroFiscal||''):(inv.nroFiscal||'');
+            const montoRet=parseNum(ret.montoRetenido||0);
+            rows.push({seq:seq++,fecha:ret.fechaComprobante||'',rif:retRif,nombre:retNombre,
               tipo:'RETENCION',nroFactura:'',nroControl:'',
               totalVentasBs:0,baseImponibleBs:0,alicuota:`${ret.porcentaje||75}%`,
-              ivaBs:0,ivaRetDb:montoRet,ivaRetCr:0,nroFactAfecta:padNum(inv.nroFiscal,8),
+              ivaBs:0,ivaRetDb:montoRet,ivaRetCr:0,nroFactAfecta:padNum(retFiscal,8),
               nroComprobante:ret.nroRetencion||'',retId:ret.id});
           });
 
@@ -13328,6 +13335,9 @@ ${resumenHtml}
                           const inv=isManual?null:(invoices||[]).find(i=>i.id===ret.facturaId);
                           const nroFac=isManual?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—');
                           const cliente=isManual?(ret._manualCliente||'—'):(inv?.clientName||'—');
+                          // RIF: usar el guardado o buscar por nombre en clientes
+                          const cliEnLista=(isManual&&!ret._manualRif&&ret._manualCliente)?(clients||[]).find(c=>(c.name||c.nombre||'').toUpperCase()===(ret._manualCliente||'').toUpperCase()):null;
+                          const retRifDisplay=isManual?(ret._manualRif||cliEnLista?.rif||'—'):(inv?.clientRif||'—');
                           return (<tr key={ret.id} className="hover:bg-yellow-50">
                             <td className="py-2 px-3 font-black text-blue-700">{ret.nroRetencion}</td>
                             <td className="py-2 px-3">{ret.fechaComprobante}</td>
