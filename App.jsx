@@ -491,6 +491,8 @@ export default function App() {
   const [reportVentasPagina, setReportVentasPagina] = useState(0);
   const [historialPagina, setHistorialPagina] = useState(0);
   const [histTrasladoDesde, setHistTrasladoDesde] = useState('');
+  const [editingTrasladoId, setEditingTrasladoId] = useState(null);
+  const [editTrasladoA, setEditTrasladoA] = useState('');
   const [histTrasladoHasta, setHistTrasladoHasta] = useState('');
   const [histTrasladoProd, setHistTrasladoProd] = useState('');
   const PAGE_SIZE_DEFAULT = 25;
@@ -5648,20 +5650,44 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                               <td className="py-2 px-3 border-r text-center text-[9px] font-bold text-red-600">{de}</td>
                               <td className="py-2 px-3 border-r text-center text-[9px] font-bold text-green-700">{a}</td>
                               <td className="py-2 px-3 text-center">
-                                <button onClick={()=>setDialog({title:'Reversar Traslado',text:`¿Reversar traslado de ${formatNum(m.qty)} ${m.itemId}?`,type:'confirm',onConfirm:async()=>{
-                                  try{
-                                    const bat=writeBatch(db);
-                                    bat.delete(getDocRef('inventoryMovements',m.id));
-                                    bat.delete(getDocRef('inventoryMovements',`TENT-${(m.timestamp||0)+1}`));
-                                    const allD=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0]).toUpperCase()===m.itemId.toUpperCase());
-                                    const orD=allD.find(i=>(i.almacen||'').toUpperCase()===de.toUpperCase());
-                                    const deD=allD.find(i=>(i.almacen||'').toUpperCase()===a.toUpperCase());
-                                    if(orD) bat.update(getDocRef('inventory',orD.id),{stock:parseNum(orD.stock||0)+parseNum(m.qty)});
-                                    if(deD) bat.update(getDocRef('inventory',deD.id),{stock:Math.max(0,parseNum(deD.stock||0)-parseNum(m.qty))});
-                                    await bat.commit();
-                                    setDialog({title:'✅ Reversado',text:'Traslado reversado.',type:'alert'});
-                                  }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-                                }})} className="px-2 py-1 bg-red-50 text-red-600 rounded-lg text-[8px] font-black hover:bg-red-100">↩ Reversar</button>
+                                {editingTrasladoId===m.id ? (
+                                  <div className="flex items-center gap-1">
+                                    <select value={editTrasladoA} onChange={e=>setEditTrasladoA(e.target.value)} className="border border-gray-300 rounded text-[8px] p-0.5 font-bold">
+                                      <option value="">— Destino —</option>
+                                      {(depositos||[]).map(d=><option key={d} value={d}>{d}</option>)}
+                                    </select>
+                                    <button onClick={async()=>{
+                                      if(!editTrasladoA)return;
+                                      try{
+                                        await updateDoc(getDocRef('inventoryMovements',m.id),{almacenDestino:editTrasladoA});
+                                        const entId=`TENT-${(m.timestamp||0)+1}`;
+                                        const entDoc=(invMovements||[]).find(mv=>mv.id===entId);
+                                        if(entDoc) await updateDoc(getDocRef('inventoryMovements',entId),{almacen:editTrasladoA});
+                                        setEditingTrasladoId(null);
+                                        setDialog({title:'✅ Corregido',text:`Destino actualizado a ${editTrasladoA}.`,type:'alert'});
+                                      }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                                    }} className="px-1.5 py-0.5 bg-green-500 text-white rounded text-[8px] font-black">✓</button>
+                                    <button onClick={()=>setEditingTrasladoId(null)} className="px-1.5 py-0.5 bg-gray-200 rounded text-[8px] font-black">✕</button>
+                                  </div>
+                                ) : (
+                                  <div className="flex gap-1">
+                                    <button onClick={()=>{setEditingTrasladoId(m.id);setEditTrasladoA(a==='—'?'':a);}} className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-[8px] font-black hover:bg-blue-100">✎ Editar</button>
+                                    <button onClick={()=>setDialog({title:'Reversar Traslado',text:`¿Reversar traslado de ${formatNum(m.qty)} ${m.itemId} de ${de} a ${a}?`,type:'confirm',onConfirm:async()=>{
+                                      try{
+                                        const bat=writeBatch(db);
+                                        bat.delete(getDocRef('inventoryMovements',m.id));
+                                        bat.delete(getDocRef('inventoryMovements',`TENT-${(m.timestamp||0)+1}`));
+                                        const allD=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0]).toUpperCase()===m.itemId.toUpperCase());
+                                        const orD=allD.find(i=>(i.almacen||'').toUpperCase()===de.toUpperCase());
+                                        const deD=allD.find(i=>(i.almacen||'').toUpperCase()===a.toUpperCase());
+                                        if(orD) bat.update(getDocRef('inventory',orD.id),{stock:parseNum(orD.stock||0)+parseNum(m.qty)});
+                                        if(deD) bat.update(getDocRef('inventory',deD.id),{stock:Math.max(0,parseNum(deD.stock||0)-parseNum(m.qty))});
+                                        await bat.commit();
+                                        setDialog({title:'✅ Reversado',text:'Traslado reversado.',type:'alert'});
+                                      }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                                    }})} className="px-2 py-0.5 bg-red-50 text-red-600 rounded text-[8px] font-black hover:bg-red-100">↩ Reversar</button>
+                                  </div>
+                                )}
                               </td>
                             </tr>
                           );
