@@ -5160,24 +5160,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                               ))}
                             </optgroup>
                           ))}
-                          {fgBolsas.length>0 && (
-                            <optgroup label="── BOLSAS PLÁSTICAS (FG Producción) ──">
-                              {fgBolsas.sort((a,b)=>(a.producto||'').localeCompare(b.producto||'')).map(fg=>(
-                                <option key={fg.id} value={'FG::'+fg.id}>
-                                  {(fg.producto||fg.id||'').toUpperCase()} — {formatNum(fg.millares)} Mill.
-                                </option>
-                              ))}
-                            </optgroup>
-                          )}
-                          {fgTermos.length>0 && (
-                            <optgroup label="── TERMOENCOGIBLES (FG Producción) ──">
-                              {fgTermos.sort((a,b)=>(a.producto||'').localeCompare(b.producto||'')).map(fg=>(
-                                <option key={fg.id} value={'FG::'+fg.id}>
-                                  {(fg.producto||fg.id||'').toUpperCase()} — {formatNum(fg.kgProducidos)} KG
-                                </option>
-                              ))}
-                            </optgroup>
-                          )}
+
                         </select>
                       );
                     })()}</div>
@@ -11841,10 +11824,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Dirección Fiscal</label>
                      <input type="text" value={newClientForm.direccion} onChange={e=>setNewClientForm({...newClientForm, direccion: String(e.target.value || '').toUpperCase()})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all" />
                   </div>
-                  <div>
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Vendedor Asignado</label>
-                     <input type="text" value={newClientForm.vendedor} onChange={e=>setNewClientForm({...newClientForm, vendedor: String(e.target.value || '').toUpperCase()})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all" />
-                  </div>
+                   <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Vendedor Asignado</label>
+                      <select value={newClientForm.vendedor||''} onChange={e=>setNewClientForm({...newClientForm,vendedor:e.target.value})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all uppercase">
+                        <option value="">— Sin asignar —</option>
+                        {(settings?.vendedores||[]).map(v=><option key={v} value={v}>{v}</option>)}
+                      </select>
+                   </div>
                 </div>
                 <div className="flex justify-end pt-4">
                   <button type="submit" className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-slate-800 transition-all">GUARDAR DIRECTORIO</button>
@@ -13287,18 +13273,18 @@ ${resumenHtml}
                             {factFilt.slice(0,30).map(inv=>(<option key={inv.id} value={inv.id}>{padNum(inv.nroFiscal,8)} — {inv.clientName} — ${formatNum(inv.montoBase)}</option>))}
                           </select>
                         </div>}
-
                         {retFactManual && <div className="space-y-2 bg-orange-50 border border-orange-200 rounded-xl p-3">
                           <div className="text-[9px] font-black text-orange-700 uppercase mb-2">Factura de otro período — Datos manuales</div>
                           <div className="grid grid-cols-2 gap-2">
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Fecha</label><input type="date" value={retForm._manualFecha||getTodayDate()} onChange={e=>setRetForm(f=>({...f,_manualFecha:e.target.value,fechaComprobante:f.fechaComprobante||e.target.value}))} className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">N° Fiscal</label><input value={retForm._manualNroFiscal||''} onChange={e=>setRetForm(f=>({...f,_manualNroFiscal:e.target.value,facturaId:'MANUAL-'+e.target.value}))} placeholder="00003025" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Cliente</label><input value={retForm._manualCliente||''} onChange={e=>setRetForm(f=>({...f,_manualCliente:e.target.value}))} placeholder="Nombre del cliente" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">IVA USD</label><input type="number" step="0.01" value={retForm._manualIvaUsd||''} onChange={e=>setRetForm(f=>({...f,_manualIvaUsd:e.target.value}))} placeholder="0.00" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Tasa Bs/$</label><input type="number" step="0.01" value={retForm._manualTasa||''} onChange={e=>setRetForm(f=>({...f,_manualTasa:e.target.value}))} placeholder={String(settings?.tasaBCV||'')} className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                            <div className="col-span-2"><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Cliente</label><input value={retForm._manualCliente||''} onChange={e=>setRetForm(f=>({...f,_manualCliente:e.target.value}))} placeholder="Nombre del cliente" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Monto Retenido (Bs.)</label><input type="number" step="0.01" value={retForm.montoRetenido||''} onChange={e=>setRetForm(f=>({...f,montoRetenido:e.target.value}))} placeholder="0.00" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Quincena</label><select value={retForm.quincena||'1'} onChange={e=>setRetForm(f=>({...f,quincena:e.target.value}))} className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"><option value="1">I Quincena (01–15)</option><option value="2">II Quincena (16–31)</option></select></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">N° Comprobante</label><input value={retForm.nroRetencion||''} onChange={e=>setRetForm(f=>({...f,nroRetencion:e.target.value}))} placeholder="Nro. comprobante" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Fecha Comprobante</label><input type="date" value={retForm.fechaComprobante||''} onChange={e=>setRetForm(f=>({...f,fechaComprobante:e.target.value}))} className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
                           </div>
-                          {retForm._manualIvaUsd&&retForm._manualTasa&&<div className="text-[9px] font-black text-orange-700 mt-1">Retención sugerida (75%): Bs. {formatNum(parseNum(retForm._manualIvaUsd)*parseNum(retForm._manualTasa)*0.75)}</div>}
                         </div>}
-
                         {selFact&&!retFactManual&&(()=>{
                           const tasaFact=parseNum(selFact.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
                           const baseUsd=parseNum(selFact.montoBase||0);
@@ -13328,9 +13314,11 @@ ${resumenHtml}
                                 <option value="1">I Quincena (01–15)</option><option value="2">II Quincena (16–{lastDay})</option>
                               </select></div>
                             <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">N° Comprobante</label>
-                              <input value={retForm.nroRetencion} onChange={e=>setRetForm(f=>({...f,nroRetencion:e.target.value}))} placeholder="00002986" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/></div>
-                            <div className="col-span-2"><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Fecha comprobante</label>
-                              <input type="date" value={retForm.fechaComprobante} onChange={e=>setRetForm(f=>({...f,fechaComprobante:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/></div>
+                              <input value={retForm.nroRetencion} onChange={e=>setRetForm(f=>({...f,nroRetencion:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-400"/>
+                            </div>
+                            <div className="col-span-2"><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Fecha Comprobante</label>
+                              <input type="date" value={retForm.fechaComprobante} onChange={e=>setRetForm(f=>({...f,fechaComprobante:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-400"/>
+                            </div>
                           </div>
                           </>);
                         })()}
