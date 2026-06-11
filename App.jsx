@@ -10132,8 +10132,38 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               });
             }
           });
-          const totalVentas=rows.reduce((s,r)=>s+r.total,0);
-          const totalCosto=rows.reduce((s,r)=>s+r.costoTotal,0);
+          // ── Filtrar filas sin Nro. Fiscal ──
+          const rowsFiscal = rows.filter(r => r.nroFiscal && r.nroFiscal !== '—');
+          
+          // ── Agregar NC/ND al reporte ──
+          const ncndRows = (notasVentaCD||[]).filter(nc=>{
+            const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
+            if(!inv) return false;
+            // Aplicar filtros de cliente/periodo
+            if(pvFiltCliente!=='TODOS'&&(inv.clientName||'')!==pvFiltCliente) return false;
+            if(pvFilter&&pvFilter!=='general'&&!(nc.fecha||'').startsWith(pvFilter)) return false;
+            if(invFiltAnio&&!(nc.fecha||'').startsWith(invFiltAnio)) return false;
+            if(invFiltMes&&(nc.fecha||'').substring(5,7)!==invFiltMes) return false;
+            if(pvFiltDoc){const d=nc.nroDocumento||'';const f=inv.nroFiscal||'';if(!d.toUpperCase().includes(pvFiltDoc.toUpperCase())&&!f.toUpperCase().includes(pvFiltDoc.toUpperCase()))return false;}
+            return true;
+          }).map(nc=>{
+            const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
+            const tasaN=parseNum(nc.tasaFactura||inv?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+            const baseUsd=parseFloat((parseNum(nc.monto||0)/tasaN).toFixed(2));
+            const signo=nc.tipo==='NC'?-1:1;
+            return {
+              fecha:nc.fecha, doc:nc.nroDocumento||nc.tipo, nroFiscal:inv?.nroFiscal||'',
+              vendedor:inv?.vendedor||'', op:'', cliente:inv?.clientName||'',
+              codigo:'—', producto:nc.descripcion||`${nc.tipo} aplicada`,
+              medida:'', cantidad:0, precioVenta:0,
+              total:baseUsd*signo, costo:0, costoTotal:0, utilidad:baseUsd*signo,
+              pctUtilidad:0, tasa:tasaN, isNota:true, tipoNota:nc.tipo
+            };
+          });
+          const allRows=[...rowsFiscal,...ncndRows].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+
+          const totalVentas=allRows.reduce((s,r)=>s+r.total,0);
+          const totalCosto=allRows.reduce((s,r)=>s+r.costoTotal,0);
           const totalUtil=totalVentas-totalCosto;
           const pctUtil=totalVentas>0?Math.round((totalUtil/totalVentas)*100):0;
           return (
@@ -10158,7 +10188,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <input type="text" value={pvFiltDoc} onChange={e=>setPvFiltDoc(e.target.value.toUpperCase())} placeholder="Documento / Fiscal..." className="outline-none text-xs font-bold w-36 bg-white uppercase"/>
                     {pvFiltDoc && <button onClick={()=>setPvFiltDoc('')} className="text-gray-400 hover:text-red-500"><X size={10}/></button>}
                   </div>
-                  <span className="text-[9px] font-black text-gray-400">{rows.length} reg.</span>
+                  <span className="text-[9px] font-black text-gray-400">{allRows.length} reg.</span>
                   <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=rows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.nroFiscal||'—',r.op||'—',r.vendedor||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=9&&ci<=14?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="9" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
                   <button onClick={()=>handleExportPDF('Reporte_Ventas_Costos', true)} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Printer size={12}/> Imprimir</button>
                 </div>
@@ -10172,8 +10202,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <table className="w-full border-collapse text-[8px]">
                   <thead><tr className="bg-black text-white">{['Fecha','Documento','Nro. Fiscal','OP','Vendedor','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','T. Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2 px-1.5 text-left font-black uppercase text-[7px] leading-tight">{h}</th>)}</tr></thead>
                   <tbody>
-                    {rows.map((r,i)=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return(
-                      <tr key={i} className={`border-b border-gray-50 ${i%2===0?'bg-white':'bg-gray-50'} hover:bg-orange-50`}>
+                    {allRows.map((r,i)=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return(
+                      <tr key={i} className={`border-b border-gray-50 ${r.isNota?(r.tipoNota==='NC'?'bg-red-50 text-red-800':'bg-blue-50 text-blue-800'):(i%2===0?'bg-white':'bg-gray-50')} hover:bg-orange-50`}>
                         <td className="py-1 px-1.5 font-bold text-gray-500 whitespace-nowrap">{r.fecha}</td>
                         <td className="py-1 px-1.5 font-black text-orange-600 whitespace-nowrap">{r.doc}</td>
                         <td className="py-1 px-1.5 font-bold text-gray-600 whitespace-nowrap">{r.nroFiscal||'—'}</td>
@@ -12893,10 +12923,12 @@ ${membrete}${hdrs}${dataRows}${totRow}${resumen}
 </div>`;
 
             const html=`<html><head><meta charset="utf-8"><style>
-              @page{size:A3 landscape;margin:8mm}
+              @page{size:A3 landscape;margin:8mm;@bottom-center{content:"Pág. " counter(page) " / " counter(pages);font-size:7px;font-family:Arial}}
               *{font-family:Arial,sans-serif;font-size:7px;box-sizing:border-box}
               body{padding:0;margin:0}
               table{border-collapse:collapse;width:100%}
+              thead{display:table-header-group}
+              tfoot{display:table-footer-group}
               .hdr th{background:#1f2937;color:#fff;padding:4px 3px;font-size:7px;text-align:center;border:1px solid #333;white-space:nowrap}
               td{vertical-align:middle}
             </style></head><body>
@@ -13046,8 +13078,9 @@ ${resumenHtml}
                 const retDesc=parseNum(libroRetDesc||0);
                 const totalRetenciones=retAcum+retPeriodo;
                 const saldoRet=totalRetenciones-retDesc;
-                const anticipoISLR=parseFloat((totVentasGravadas*0.01).toFixed(2));
-                const iae=parseFloat((totVentasBruta*0.01).toFixed(2));
+                // ISLR e IAE se calculan sobre los mismos totales que muestran las columnas
+                const anticipoISLR=parseFloat((totBase*0.01).toFixed(2));    // 1% × Base Imponible (columna)
+                const iae=parseFloat((totTV*0.01).toFixed(2));               // 1% × Total Ventas Bs. (columna)
                 const row2=(label,value,bold,bg)=>(
                   <div className={`flex justify-between items-center py-1.5 px-3 text-[10px] border-b border-gray-100 ${bg||''}`}>
                     <span className={bold?'font-black':'font-medium text-gray-700'}>{label}</span>
