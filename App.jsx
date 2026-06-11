@@ -9917,7 +9917,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                 : et==='10-12dias' ? 'De 10 a 12 días hábiles'
                                 : et==='custom' && condForm.entregaCustom ? condForm.entregaCustom
                                 : '';
-                              setNewCotizForm(f=>({...f, condicionId: newCond.id, tiempoEntrega: teStr||f.tiempoEntrega}));
+                              setNewCotizForm(f=>({...f,
+                                condicionId: newCond.id,
+                                tiempoEntrega: teStr||f.tiempoEntrega,
+                                condicionPago: condForm.tipoPago==='credito' ? 'CREDITO' : 'CONTADO',
+                                diasCredito: condForm.tipoPago==='credito' ? (condForm.diasCredito||'') : ''
+                              }));
                               setNewCondForm({nombre:'',detalle:'',tipoPago:'',diasCredito:'',tieneAnticipo:false,pctAnticipo:'',tiempoEntrega:'',entregaCustom:'',formasPago:[]});
                               setShowCondManager(false);
                             }} className="w-full bg-orange-500 text-white py-3 rounded-2xl font-black text-[10px] uppercase hover:bg-orange-600 transition-all">
@@ -11585,7 +11590,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const ne=(notasEntrega||[]).find(e=>e.id===nc.neId);
             const cliente=inv?.clientName||ne?.clientName||'—';
             if(tvBuscarDesc && !cliente.toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
-            const tasaNC=parseNum(inv?.tasa||ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+            const tasaNC=parseNum(nc.tasaFactura||inv?.tasa||ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
             const baseImpBs=parseNum(nc.monto||0);   // stored as Base Imponible Bs.
             const baseUsd=tasaNC>0?parseFloat((baseImpBs/tasaNC).toFixed(6)):0;
             const ivaUsd=parseFloat((baseUsd*0.16).toFixed(6));
@@ -12162,8 +12167,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               return setDialog({title:'Falta NE',text:'Selecciona la Nota de Entrega.',type:'alert'});
             try {
               const id=`VNC-${Date.now()}`;
+              // Obtener tasa de la factura afectada para conversión correcta a USD
+              const facAfect=(invoices||[]).find(i=>i.id===ventaNCForm.facturaId);
+              const neAfect=(notasEntrega||[]).find(e=>e.id===ventaNCForm.neId);
+              const tasaAfect=parseNum(facAfect?.tasa||neAfect?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
               await setDoc(getDocRef('notasVentaCreditoDebito',id),{
                 id,...ventaNCForm,monto:parseNum(ventaNCForm.monto),
+                tasaFactura:tasaAfect,
                 timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
               });
               setShowVentaNCModal(false);setVentaNCBusq('');
@@ -12455,18 +12465,30 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           Object.values(rowsMap).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).forEach((r,i)=>{r.seq=i+1;rows.push(r);});
 
           // NC/ND Fiscales → entran al libro (NC negativo, ND positivo)
+          // monto (nc.monto) = Base Imponible en Bs (ya en Bs, NO multiplicar por tasa)
           ncndFiscales.forEach(n=>{
             const inv=(invoices||[]).find(i=>i.id===n.facturaId); if(!inv) return;
-            const tasa=parseNum(inv.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-            const monto=parseNum(n.monto||0);
-            const montoConSigno=n.tipo==='NC'?-monto:monto;
-            const ivaNC=montoConSigno*0.16;
-            rows.push({seq:seq++,fecha:n.fecha,rif:inv.clientRif||'',nombre:inv.clientName||'',
-              tipo:n.tipo,nroFactura:'',nroControl:n.nroControl||'',
-              nroDebito:n.tipo==='ND'?n.nroDocumento:'',nroCredito:n.tipo==='NC'?n.nroDocumento:'',
-              facAfectada:padNum(inv.nroFiscal,8),
-              totalVentasBs:montoConSigno*tasa,baseImponibleBs:montoConSigno*tasa,alicuota:'16%',
-              ivaBs:ivaNC*tasa,ivaRetDb:0,nroFactAfecta:padNum(inv.nroFiscal,8),nroComprobante:''});
+            const baseBs = parseNum(n.monto||0);          // Base Imponible en Bs
+            const signo  = n.tipo==='NC' ? -1 : 1;
+            const baseConSigno = baseBs * signo;           // (-) NC / (+) ND
+            const ivaBsNC = parseFloat((baseConSigno*0.16).toFixed(2));
+            const totalBsNC = baseConSigno + ivaBsNC;
+            rows.push({seq:seq++, fecha:n.fecha, rif:inv.clientRif||'', nombre:inv.clientName||'',
+              tipo:n.tipo,
+              nroFactura:'',                               // vacío para NC/ND
+              nroControl: n.nroControl||'',                // N° Control del doc NC/ND
+              nroDebito:  n.tipo==='ND' ? n.nroDocumento : '',   // N° Débito solo si ND
+              nroCredito: n.tipo==='NC' ? n.nroDocumento : '',   // N° Crédito solo si NC
+              facAfectada: padNum(inv.nroFiscal,8),        // Factura afectada
+              totalVentasBs: totalBsNC,
+              baseImponibleBs: baseConSigno,               // Base en Bs con signo
+              alicuota: '16%',
+              ivaBs: ivaBsNC,                              // IVA en Bs con signo
+              ivaRetDb: 0,                                 // ← vacío: solo para retenciones
+              nroFactAfecta: '',                           // ← vacío: solo para retenciones
+              nroComprobante: '',                          // ← vacío: solo para retenciones
+              invId: n.id
+            });
           });
 
           const totTV=rows.reduce((s,r)=>s+r.totalVentasBs,0);
@@ -19680,9 +19702,10 @@ ${resumenHtml}
     const ajusteNotasUsd = notasPeriodo.reduce((s,nc) => {
       const inv = (invoices||[]).find(i=>i.id===nc.facturaId);
       const ne  = (notasEntrega||[]).find(e=>e.id===nc.neId);
-      const tasaNC = parseNum(inv?.tasa||ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-      const baseImpBs = parseNum(nc.monto||0);
-      const baseUsd = tasaNC>0 ? parseFloat((baseImpBs/tasaNC).toFixed(6)) : 0;
+      // Usar tasaFactura guardada en la NC/ND, o buscar en la factura, o BCV
+      const tasaNC = parseNum(nc.tasaFactura||inv?.tasa||ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+      const baseImpBs = parseNum(nc.monto||0);           // monto = Base Imp. en Bs.
+      const baseUsd = tasaNC>1 ? parseFloat((baseImpBs/tasaNC).toFixed(2)) : 0;
       return s + (nc.tipo==='NC' ? -baseUsd : baseUsd);
     }, 0);
     const totalIngresos = totalIngresosNE + totalIngresosInv + ajusteNotasUsd;
@@ -19829,9 +19852,9 @@ ${resumenHtml}
       ...notasPeriodo.map(nc=>{
         const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
         const ne2=(notasEntrega||[]).find(e=>e.id===nc.neId);
-        const tasaNC=parseNum(inv?.tasa||ne2?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+        const tasaNC=parseNum(nc.tasaFactura||inv?.tasa||ne2?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
         const baseImpBs=parseNum(nc.monto||0);
-        const baseUsd=tasaNC>0?parseFloat((baseImpBs/tasaNC).toFixed(6)):0;
+        const baseUsd=tasaNC>1?parseFloat((baseImpBs/tasaNC).toFixed(2)):0;
         const signo=nc.tipo==='NC'?-1:1;
         return {documento:nc.nroDocumento||nc.tipo,clientName:inv?.clientName||ne2?.clientName||'—',
           productoMaquilado:nc.descripcion||`${nc.tipo} aplicada`,fecha:nc.fecha,
