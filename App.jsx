@@ -422,10 +422,27 @@ export default function App() {
   const [libroFiltFact, setLibroFiltFact] = useState('');
   const [libroRetAcum, setLibroRetAcum] = useState('');    // Retenciones acumuladas por descontar (Bs.)
   const [libroRetDesc, setLibroRetDesc] = useState('');    // Retenciones soportadas y descontadas (Bs.)
+  const [libroRetSaving, setLibroRetSaving] = useState(false);
   const [libroFiltCliente, setLibroFiltCliente] = useState('');
   const [libroMes, setLibroMes] = useState(()=>String(new Date().getMonth()+1).padStart(2,'0'));
   const [libroQuincena, setLibroQuincena] = useState('1');
   const [retenciones, setRetenciones] = useState([]);
+  // Cargar retenciones guardadas al cambiar período del libro
+  React.useEffect(()=>{
+    const key=`${libroAnio}-${libroMes}-Q${libroQuincena}`;
+    getDocRef('libroVentasConfig',key).id && 
+    import('firebase/firestore').then(({getDoc})=>
+      getDoc(getDocRef('libroVentasConfig',key)).then(d=>{
+        if(d.exists()){
+          const dat=d.data();
+          setLibroRetAcum(dat.retAcum>0?String(dat.retAcum):'');
+          setLibroRetDesc(dat.retDesc>0?String(dat.retDesc):'');
+        } else {
+          setLibroRetAcum(''); setLibroRetDesc('');
+        }
+      }).catch(()=>{})
+    );
+  },[libroAnio,libroMes,libroQuincena]);
   const [showRetModal, setShowRetModal] = useState(false);
   const [retBusqFact, setRetBusqFact] = useState('');
   const [retFiltMes2, setRetFiltMes2] = useState('');
@@ -12468,8 +12485,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── Una fila por documento único (invId es el ID de Firebase, único por factura)
           const rowsMap = {};
           rows.forEach(r => {
-            // Clave: para FACTURAS usar el ID de Firebase (único), para otros usar seq+tipo
-            const key = (r.tipo==='FACTURA' && r.invId) ? `FAC-${r.invId}` : `${r.tipo}-${r.fecha}-${r.nroComprobante||r.seq}`;
+            // Clave: FACTURAS se agrupan por nroFiscal (1 fila por nro fiscal, sumando bases)
+            // Si no tiene nroFactura → usar invId como fallback
+            const nroFac = r.nroFactura && r.nroFactura !== '—' && r.nroFactura !== '00000000' ? r.nroFactura : r.invId;
+            const key = (r.tipo==='FACTURA') ? `FAC-${nroFac}` : `${r.tipo}-${r.fecha}-${r.nroComprobante||r.seq}`;
             if (!rowsMap[key]) {
               rowsMap[key] = {...r};
             } else {
@@ -13026,17 +13045,36 @@ ${resumenHtml}
                     {/* AUTOLIQUIDACIÓN */}
                     <div>
                       <div className="bg-gray-800 text-white font-black text-[10px] uppercase px-3 py-2">AUTOLIQUIDACIÓN</div>
-                      <div className="flex justify-between items-center py-1.5 px-3 text-[10px] border-b border-gray-100">
-                        <span className="text-gray-700">Retenciones acumuladas por descontar</span>
-                        <input type="number" step="0.01" value={libroRetAcum} onChange={e=>setLibroRetAcum(e.target.value)} placeholder="0,00" className="w-32 border border-gray-200 rounded px-2 py-0.5 text-right text-[10px] font-black outline-none focus:border-blue-400"/>
+
+                      {/* Ret. acumuladas — editable + guardar en Firebase */}
+                      <div className="flex justify-between items-center py-2 px-3 text-[10px] border-b border-gray-100 gap-2">
+                        <span className="text-gray-700 shrink-0">Ret. acumuladas por descontar</span>
+                        <div className="flex items-center gap-1">
+                          <input type="number" step="0.01" value={libroRetAcum} onChange={e=>setLibroRetAcum(e.target.value)}
+                            placeholder="0,00" className="w-28 border border-gray-300 rounded-lg px-2 py-1 text-xs text-right outline-none focus:border-orange-400"/>
+                          <button onClick={async()=>{setLibroRetSaving(true);try{await setDoc(getDocRef('libroVentasConfig',`${libroAnio}-${libroMes}-Q${libroQuincena}`),{retAcum:parseNum(libroRetAcum||0),retDesc:parseNum(libroRetDesc||0)},{merge:true});setDialog({title:'✅ Guardado',text:'Retenciones guardadas para esta quincena.',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}finally{setLibroRetSaving(false);}}}
+                            className="bg-orange-500 hover:bg-orange-600 text-white px-2 py-1 rounded-lg font-black text-[8px] uppercase whitespace-nowrap">
+                            {libroRetSaving?'...':`💾 Guardar`}
+                          </button>
+                        </div>
                       </div>
+
                       {row2('Retenciones del Período',retPeriodo,true)}
                       {row2('Créditos adquiridos por cesión',0)}
                       {row2('Recuperación de retenciones solicitado',0)}
                       {row2('Total Retenciones',totalRetenciones,true,'bg-gray-50')}
-                      <div className="flex justify-between items-center py-1.5 px-3 text-[10px] border-b border-gray-100">
-                        <span className="text-gray-700">Retenciones soportadas y descontadas</span>
-                        <input type="number" step="0.01" value={libroRetDesc} onChange={e=>setLibroRetDesc(e.target.value)} placeholder="0,00" className="w-32 border border-gray-200 rounded px-2 py-0.5 text-right text-[10px] font-black outline-none focus:border-blue-400"/>
+
+                      {/* Ret. soportadas — editable + guardar en Firebase */}
+                      <div className="flex justify-between items-center py-2 px-3 text-[10px] border-b border-gray-100 gap-2">
+                        <span className="text-gray-700 shrink-0">Ret. soportadas y descontadas</span>
+                        <div className="flex items-center gap-1">
+                          <input type="number" step="0.01" value={libroRetDesc} onChange={e=>setLibroRetDesc(e.target.value)}
+                            placeholder="0,00" className="w-28 border border-gray-300 rounded-lg px-2 py-1 text-xs text-right outline-none focus:border-orange-400"/>
+                          <button onClick={async()=>{setLibroRetSaving(true);try{await setDoc(getDocRef('libroVentasConfig',`${libroAnio}-${libroMes}-Q${libroQuincena}`),{retAcum:parseNum(libroRetAcum||0),retDesc:parseNum(libroRetDesc||0)},{merge:true});setDialog({title:'✅ Guardado',text:'Retenciones guardadas para esta quincena.',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}finally{setLibroRetSaving(false);}}}
+                            className="bg-orange-500 hover:bg-orange-600 text-white px-2 py-1 rounded-lg font-black text-[8px] uppercase whitespace-nowrap">
+                            {libroRetSaving?'...':`💾 Guardar`}
+                          </button>
+                        </div>
                       </div>
                       <div className="flex justify-between items-center py-1.5 px-3 text-[10px] border-b border-gray-100 bg-yellow-50">
                         <span className="font-black">Saldo de Retenciones IVA no aplicado</span>
