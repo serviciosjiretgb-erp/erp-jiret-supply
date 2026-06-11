@@ -13079,8 +13079,8 @@ ${resumenHtml}
                 const totalRetenciones=retAcum+retPeriodo;
                 const saldoRet=totalRetenciones-retDesc;
                 // ISLR e IAE se calculan sobre los mismos totales que muestran las columnas
-                const anticipoISLR=parseFloat((totBase*0.01).toFixed(2));    // 1% × Base Imponible (columna)
-                const iae=parseFloat((totTV*0.01).toFixed(2));               // 1% × Total Ventas Bs. (columna)
+                const anticipoISLR=parseFloat((totBase*0.01).toFixed(2));  // 1% × Base Imponible
+                const iae=parseFloat((totBase*0.01).toFixed(2));           // 1% × Base Imponible (igual)
                 const row2=(label,value,bold,bg)=>(
                   <div className={`flex justify-between items-center py-1.5 px-3 text-[10px] border-b border-gray-100 ${bg||''}`}>
                     <span className={bold?'font-black':'font-medium text-gray-700'}>{label}</span>
