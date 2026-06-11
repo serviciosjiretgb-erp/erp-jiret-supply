@@ -20,7 +20,7 @@ import {
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch } from "firebase/firestore";
+import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, getDocs } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
 // ============================================================================
@@ -1386,6 +1386,16 @@ export default function App() {
       const data = s.docs.map(d => ({ id: d.id, ...d.data() })); setInventory(data);
     });
     const unsubMovs = onSnapshot(getColRef('inventoryMovements'), (s) => setInvMovements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    // ── Limpieza única: borrar historial de traslados ya procesados ─────────────
+    if(!localStorage.getItem('jiret_traslados_v3')){
+      getDocs(getColRef('inventoryMovements')).then(snap=>{
+        const toDelete=snap.docs.filter(d=>d.data().type==='SALIDA_TRASLADO');
+        if(!toDelete.length){localStorage.setItem('jiret_traslados_v3','1');return;}
+        const bat=writeBatch(db);
+        toDelete.forEach(d=>bat.delete(d.ref));
+        bat.commit().then(()=>localStorage.setItem('jiret_traslados_v3','1')).catch(e=>console.warn('traslados cleanup:',e));
+      }).catch(()=>{});
+    }
     const unsubCli = onSnapshot(getColRef('clientes'), (s) => setClients(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubCotiz = onSnapshot(getColRef('cotizaciones'), (s) => setCotizaciones(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
@@ -5573,22 +5583,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             {/* HISTORIAL DE TRASLADOS + REVERSAR */}
             <div className="p-6 border-t border-gray-200">
               <h3 className="font-black text-sm uppercase text-indigo-800 mb-4 flex items-center gap-2"><ArrowRightLeft size={16}/> Historial de Traslados ({(invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO').length} registros)</h3>
-              <button onClick={()=>{
-                const toDelete=(invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO');
-                if(!toDelete.length)return setDialog({title:'Sin registros',text:'No hay traslados en el historial.',type:'alert'});
-                setDialog({title:"⚠️ Limpiar Historial",
-                  text:`Se eliminarán ${toDelete.length} registros del historial. El inventario NO se modifica.`,
-                  type:'confirm',onConfirm:async()=>{
-                    try{
-                      const bat=writeBatch(db);
-                      toDelete.forEach(m=>bat.delete(doc(db,'companies','jiret','invMovements',m.id)));
-                      await bat.commit();
-                      setDialog({title:"✅ Limpiado",text:`${toDelete.length} registros eliminados. Inventario intacto.`,type:"alert"});
-                    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-                  }});
-              }} className="mb-4 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-4 py-2 rounded-xl font-black text-[10px] uppercase flex items-center gap-2">
-                🗑 Limpiar Historial ({(invMovements||[]).filter(m=>m.type==="SALIDA_TRASLADO").length} registros) — No afecta inventario
-              </button>
+
               {(() => {
                 const allTras=(invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO').sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
                 if(!allTras.length) return <p className="text-xs text-gray-400 font-bold uppercase py-4 text-center">Sin traslados registrados</p>;
@@ -12501,7 +12496,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           });
           // Reemplazar rows con agrupados
           rows.length = 0;
-          Object.values(rowsMap).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).forEach((r,i)=>{r.seq=i+1;rows.push(r);});
+          // Ordenar FACTURAS por nroFactura numérico (menor→mayor), desempate por fecha
+          Object.values(rowsMap).sort((a,b)=>{
+            const nA=parseInt((a.nroFactura||'').replace(/\D/g,''))||0;
+            const nB=parseInt((b.nroFactura||'').replace(/\D/g,''))||0;
+            if(nA!==nB) return nA-nB;
+            return (a.fecha||'').localeCompare(b.fecha||'');
+          }).forEach((r,i)=>{r.seq=i+1;rows.push(r);});
 
           // NC/ND Fiscales → entran al libro (NC negativo, ND positivo)
           // monto (nc.monto) = Base Imponible en Bs (ya en Bs, NO multiplicar por tasa)
@@ -12529,6 +12530,26 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               invId: n.id
             });
           });
+
+          // Re-ordenar todo el libro: facturas+NC/ND por nroFiscal numérico, luego fecha
+          rows.sort((a,b)=>{
+            // Obtener número de referencia para la fila
+            const refA = a.tipo==='FACTURA' ? (a.nroFactura||'') :
+                         (a.tipo==='NC'||a.tipo==='ND') ? (a.facAfectada||a.fecha||'') :
+                         a.tipo==='RETENCION' ? (a.nroFactAfecta||'') : (a.fecha||'');
+            const refB = b.tipo==='FACTURA' ? (b.nroFactura||'') :
+                         (b.tipo==='NC'||b.tipo==='ND') ? (b.facAfectada||b.fecha||'') :
+                         b.tipo==='RETENCION' ? (b.nroFactAfecta||'') : (b.fecha||'');
+            const nA=parseInt((refA).replace(/\D/g,''))||0;
+            const nB=parseInt((refB).replace(/\D/g,''))||0;
+            if(nA!==nB) return nA-nB;
+            // Mismo número fiscal: factura primero, luego NC/ND por fecha, retención al final
+            const typeOrder={FACTURA:0,NC:1,ND:1,RETENCION:2};
+            const tA=typeOrder[a.tipo]??3, tB=typeOrder[b.tipo]??3;
+            if(tA!==tB) return tA-tB;
+            return (a.fecha||'').localeCompare(b.fecha||'');
+          });
+          rows.forEach((r,i)=>{r.seq=i+1;});
 
           const totTV=rows.reduce((s,r)=>s+r.totalVentasBs,0);
           const totBase=rows.reduce((s,r)=>s+r.baseImponibleBs,0);
@@ -19853,7 +19874,7 @@ ${resumenHtml}
         }
         if (costoUnit <= 0) return;
         // Correcciones de costo manuales por producto + factura
-        if ((it.invCode||it.fgId||'').includes('FG-EMBUTIDO1KIRI2') && inv.nroFiscal==='00003059') costoUnit=77.11;
+        if ((it.invCode||it.fgId||it.desc||'').toUpperCase().includes('EMBUTIDO') && (it.invCode||it.fgId||it.desc||'').toUpperCase().includes('KIRI') && String(inv.nroFiscal||'').includes('3059')) costoUnit=77.11;
         const costoTotal2 = cant * costoUnit;
         totalCostoProd += costoTotal2;
         cogsRows.push({
