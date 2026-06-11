@@ -5556,6 +5556,22 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
             {/* HISTORIAL DE TRASLADOS + REVERSAR */}
             <div className="p-6 border-t border-gray-200">
               <h3 className="font-black text-sm uppercase text-indigo-800 mb-4 flex items-center gap-2"><ArrowRightLeft size={16}/> Historial de Traslados ({(invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO').length} registros)</h3>
+              <button onClick={()=>{
+                const toDelete=(invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO');
+                if(!toDelete.length)return setDialog({title:'Sin registros',text:'No hay traslados en el historial.',type:'alert'});
+                setDialog({title:"⚠️ Limpiar Historial",
+                  text:`Se eliminarán ${toDelete.length} registros del historial. El inventario NO se modifica.`,
+                  type:'confirm',onConfirm:async()=>{
+                    try{
+                      const bat=writeBatch(db);
+                      toDelete.forEach(m=>bat.delete(doc(db,'companies','jiret','invMovements',m.id)));
+                      await bat.commit();
+                      setDialog({title:"✅ Limpiado",text:`${toDelete.length} registros eliminados. Inventario intacto.`,type:"alert"});
+                    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                  }});
+              }} className="mb-4 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-4 py-2 rounded-xl font-black text-[10px] uppercase flex items-center gap-2">
+                🗑 Limpiar Historial ({(invMovements||[]).filter(m=>m.type==="SALIDA_TRASLADO").length} registros) — No afecta inventario
+              </button>
               {(() => {
                 const allTras=(invMovements||[]).filter(m=>m.type==='SALIDA_TRASLADO').sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
                 if(!allTras.length) return <p className="text-xs text-gray-400 font-bold uppercase py-4 text-center">Sin traslados registrados</p>;
@@ -19190,15 +19206,21 @@ ${resumenHtml}
                           <td className="py-1 px-3 text-right">Total $</td>
                           {tasa>1&&<td className="py-1 px-3 text-right">Bs</td>}
                         </tr>
-                        {(efaData.cogsRows||[]).map((row,i)=>(
+                        {(efaData.cogsRows||[]).filter(row=>row.nroFiscal&&row.nroFiscal!=='').map((row,i)=>(
                           <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
                             <td className="py-1.5 px-4 pl-14">
-                              <div className="font-black text-[10px] text-orange-600">OP-{row.opNum}{row.factura&&` · ${row.factura}`}</div>
+                              <div className="font-black text-[10px] text-orange-600 flex items-center gap-2">
+                                <span>{row.fecha}</span>
+                                <span className="text-blue-700">{row.factura}</span>
+                                {row.nroFiscal&&<span className="bg-gray-100 px-1 rounded">{row.nroFiscal}</span>}
+                                <span className="text-gray-400">OP-{row.opNum}</span>
+                              </div>
                               <div className="font-bold text-[10px] uppercase">{row.producto}</div>
                               {row.cliente&&<div className="text-[9px] text-gray-400">{row.cliente}</div>}
                             </td>
                             <td className="py-1.5 px-3 text-center text-[9px] text-gray-500 font-bold">{row.unidad}</td>
-                            <td className="py-1.5 px-3 text-right font-bold text-blue-700 text-[10px]">{formatNum(row.cantVendida)} × ${formatNum(row.costoUnit)}</td>
+                            <td className="py-1.5 px-3 text-right font-bold text-blue-700 text-[10px]">{formatNum(row.cantVendida)}</td>
+                            <td className="py-1.5 px-3 text-right font-black">{formatNum(row.costoUnit)}</td>
                             <td className="py-1.5 px-3 text-right font-black">{formatNum(row.costoTotal)}</td>
                             {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-gray-600">{bs(row.costoTotal)}</td>}
                           </tr>
@@ -19744,7 +19766,9 @@ ${resumenHtml}
           costoUnit,
           costoTotal: costoTotal2,
           esTermo: false,
-          factura: ne.id,
+          factura: ne.facturaDoc||ne.id,
+          nroFiscal: ne.nroFiscalFactura||'',
+          fecha: ne.fecha||'',
           cuentaIngreso: ctaIngreso, cuentaIngresoNombre: ctaIngresoNombre,
           cuentaCosto: ctaCosto, cuentaCostoNombre: ctaCostoNombre
         });
@@ -19790,6 +19814,8 @@ ${resumenHtml}
           if (invItem) costoUnit = parseNum(invItem.cost||0);
         }
         if (costoUnit <= 0) return;
+        // Correcciones de costo manuales por producto + factura
+        if ((it.invCode||it.fgId||'').includes('FG-EMBUTIDO1KIRI2') && inv.nroFiscal==='00003059') costoUnit=77.11;
         const costoTotal2 = cant * costoUnit;
         totalCostoProd += costoTotal2;
         cogsRows.push({
@@ -19802,7 +19828,11 @@ ${resumenHtml}
           costoUnit,
           costoTotal: costoTotal2,
           esTermo: it.esTermo||false,
-          factura: inv.documento||inv.id
+          factura: inv.documento||inv.id,
+          nroFiscal: inv.nroFiscal||'',
+          fecha: inv.fecha||'',
+          invId: inv.id,
+          itemCode: it.invCode||it.fgId||''
         });
       });
     });
@@ -22687,19 +22717,19 @@ ${resumenHtml}
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
               <div className="w-full flex gap-0.5 px-2 overflow-x-auto" style={{scrollbarWidth:'none',msOverflowStyle:'none'}}>
                  {[ 
-                   {id:'dashboard',          icon:<BarChart3 size={13}/>, label:'Dashboard',        perm:'ventas_facturacion'},
-                   {id:'facturacion',        icon:<Receipt size={13}/>,   label:'Factura',       perm:'ventas_facturacion'}, 
-                   {id:'notas_entrega',      icon:<FileText size={13}/>,  label:'NE',  perm:'ventas_facturacion'},
-                   {id:'cotizaciones',       icon:<FileText size={13}/>,  label:'Cotizaciones',      perm:'ventas_facturacion'},
-                   {id:'clientes',           icon:<Users size={13}/>,     label:'Directorio',        perm:'ventas_directorio'}, 
-                   {id:'requisiciones',      icon:<FileText size={13}/>,  label:'OPs',               perm:'ventas_ops'},
-                   {id:'productos_vendidos', icon:<Package size={13}/>,   label:'Prod. Vendidos',perm:'ventas_productos_vendidos'},
-                   {id:'reporte_ventas',     icon:<BarChart3 size={13}/>, label:'Rpt. Ventas',    perm:'ventas_facturacion'},
-                   {id:'transacciones_ventas',icon:<BarChart3 size={13}/>, label:'Transac.',    perm:'ventas_facturacion'},
-                    {id:'libro_ventas',        icon:<BookOpen size={13}/>,  label:'Libro Vtas',   perm:'ventas_facturacion'},
-                    {id:'notas_cd',            icon:<FileText size={13}/>,  label:'NC / ND',          perm:'ventas_facturacion'},
-                   {id:'comisiones',         icon:<DollarSign size={13}/>,label:'Comisiones',       perm:'ventas_facturacion'},
-                   {id:'vendedores',          icon:<Users size={13}/>,     label:'Vendedores',        perm:'ventas_facturacion'},
+                   {id:'dashboard',          icon:<BarChart3 size={15}/>, label:'Dashboard',        perm:'ventas_facturacion'},
+                   {id:'facturacion',        icon:<Receipt size={15}/>,   label:'Factura',       perm:'ventas_facturacion'}, 
+                   {id:'notas_entrega',      icon:<FileText size={15}/>,  label:'NE',  perm:'ventas_facturacion'},
+                   {id:'cotizaciones',       icon:<FileText size={15}/>,  label:'Cotizaciones',      perm:'ventas_facturacion'},
+                   {id:'clientes',           icon:<Users size={15}/>,     label:'Directorio',        perm:'ventas_directorio'}, 
+                   {id:'requisiciones',      icon:<FileText size={15}/>,  label:'OPs',               perm:'ventas_ops'},
+                   {id:'productos_vendidos', icon:<Package size={15}/>,   label:'Prod. Vendidos',perm:'ventas_productos_vendidos'},
+                   {id:'reporte_ventas',     icon:<BarChart3 size={15}/>, label:'Rpt. Ventas',    perm:'ventas_facturacion'},
+                   {id:'transacciones_ventas',icon:<BarChart3 size={15}/>, label:'Transac.',    perm:'ventas_facturacion'},
+                    {id:'libro_ventas',        icon:<BookOpen size={15}/>,  label:'Libro Vtas',   perm:'ventas_facturacion'},
+                    {id:'notas_cd',            icon:<FileText size={15}/>,  label:'NC / ND',          perm:'ventas_facturacion'},
+                   {id:'comisiones',         icon:<DollarSign size={15}/>,label:'Comisiones',       perm:'ventas_facturacion'},
+                   {id:'vendedores',          icon:<Users size={15}/>,     label:'Vendedores',        perm:'ventas_facturacion'},
                  ].filter(t=>hasPerm(t.perm)||hasPerm('ventas')||appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
