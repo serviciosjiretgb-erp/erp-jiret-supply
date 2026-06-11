@@ -429,19 +429,29 @@ export default function App() {
   const [retenciones, setRetenciones] = useState([]);
   // Cargar retenciones guardadas al cambiar período del libro
   React.useEffect(()=>{
-    const key=`${libroAnio}-${libroMes}-Q${libroQuincena}`;
-    getDocRef('libroVentasConfig',key).id && 
-    import('firebase/firestore').then(({getDoc})=>
-      getDoc(getDocRef('libroVentasConfig',key)).then(d=>{
-        if(d.exists()){
-          const dat=d.data();
-          setLibroRetAcum(dat.retAcum>0?String(dat.retAcum):'');
-          setLibroRetDesc(dat.retDesc>0?String(dat.retDesc):'');
-        } else {
-          setLibroRetAcum(''); setLibroRetDesc('');
-        }
-      }).catch(()=>{})
-    );
+    import('firebase/firestore').then(({getDoc})=>{
+      if(libroQuincena==='AMBAS'){
+        // AMBAS: sumar Q1 + Q2 automáticamente
+        const k1=getDocRef('libroVentasConfig',`${libroAnio}-${libroMes}-Q1`);
+        const k2=getDocRef('libroVentasConfig',`${libroAnio}-${libroMes}-Q2`);
+        Promise.all([getDoc(k1),getDoc(k2)]).then(([d1,d2])=>{
+          const a1=d1.exists()?parseNum(d1.data().retAcum||0):0;
+          const a2=d2.exists()?parseNum(d2.data().retAcum||0):0;
+          const s1=d1.exists()?parseNum(d1.data().retDesc||0):0;
+          const s2=d2.exists()?parseNum(d2.data().retDesc||0):0;
+          setLibroRetAcum((a1+a2)>0?String(a1+a2):'');
+          setLibroRetDesc((s1+s2)>0?String(s1+s2):'');
+        }).catch(()=>{setLibroRetAcum('');setLibroRetDesc('');});
+      } else {
+        const ref=getDocRef('libroVentasConfig',`${libroAnio}-${libroMes}-Q${libroQuincena}`);
+        getDoc(ref).then(d=>{
+          if(d.exists()){const dat=d.data();
+            setLibroRetAcum(dat.retAcum>0?String(dat.retAcum):'');
+            setLibroRetDesc(dat.retDesc>0?String(dat.retDesc):'');
+          } else {setLibroRetAcum('');setLibroRetDesc('');}
+        }).catch(()=>{});
+      }
+    });
   },[libroAnio,libroMes,libroQuincena]);
   const [showRetModal, setShowRetModal] = useState(false);
   const [retBusqFact, setRetBusqFact] = useState('');
@@ -602,7 +612,7 @@ export default function App() {
   const [erMesesExtra, setErMesesExtra] = useState([]); // additional months selected
   const [erAno, setErAno] = useState(new Date().getFullYear());
   const [erTasa, setErTasa] = useState('');
-  const [erExpanded, setErExpanded] = useState({ ingresos: false, costo_ventas: false, costos_op: false });
+  const [erExpanded, setErExpanded] = useState({ ingresos: true, costo_ventas: false, costos_op: false });
   const prevMonth = () => { const d = new Date(); d.setMonth(d.getMonth()-1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
   const [varMesA, setVarMesA] = useState(new Date().toISOString().substring(0,7));
   const [varMesB, setVarMesB] = useState(prevMonth());
@@ -11886,7 +11896,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <input type="text" placeholder="🔍 Buscar NE..." onChange={e=>{const v=e.target.value.toUpperCase();document.querySelectorAll('#_ne_inv option').forEach(o=>{o.style.display=(!v||o.value===''||o.text.toUpperCase().includes(v))?'':'none';});}} className="w-full border-2 border-blue-300 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500"/>
                           <select id="_ne_inv" value={newInvoiceForm.neOrigen||''} onChange={e=>{const neId=e.target.value;if(!neId){setNewInvoiceForm(f=>({...f,neOrigen:'',clientRif:'',clientName:'',clientAddress:'',vendedor:'',opAsignada:''}));setFgItems([]);return;}const ne=(notasEntrega||[]).find(n=>n.id===neId);if(ne){setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad||0,precioUnit:it.precioUnit||0,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));setNewInvoiceForm(f=>({...f,neOrigen:neId,fecha:ne.fecha||f.fecha,clientRif:ne.clientRif||'',clientName:ne.clientName||'',clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',opAsignada:ne.opRelacionada||'',aplicaIva:ne.aplicaIva||'SI'}));}}} size={5} className="w-full border-2 border-blue-300 rounded-xl p-1 text-xs font-bold outline-none focus:border-blue-500 bg-white">
                             <option value="">— Sin NE (factura directa) —</option>
-                            {(notasEntrega||[]).filter(ne=>!ne.facturaId).sort((a,b)=>b.id.localeCompare(a.id)).map(ne=>(<option key={ne.id} value={ne.id}>{ne.id} · {ne.clientName} · {ne.fecha} · ${formatNum(ne.total||0)}</option>))}
+                            {(notasEntrega||[]).filter(ne=>!ne.facturaId&&(ne.status==='TRANSITO'||ne.status==='TRÁNSITO'||!ne.status)).sort((a,b)=>b.id.localeCompare(a.id)).map(ne=>(<option key={ne.id} value={ne.id}>{ne.id} · {ne.clientName} · {ne.fecha} · ${formatNum(ne.total||0)}</option>))}
                           </select>
                         </div>
                         {newInvoiceForm.neOrigen && <div className="text-[10px] text-blue-700 font-bold bg-blue-100 px-3 py-2.5 rounded-xl whitespace-nowrap">✅ {newInvoiceForm.neOrigen}</div>}
@@ -12803,9 +12813,10 @@ ${membrete}${hdrs}${dataRows}${totRow}${resumen}
             const fV = n => {if(!n&&n!==0)return'—';const p=Math.abs(parseNum(n)).toFixed(2).split('.');return(n<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1];};
 
             // Totales para el Resumen
-            const totVentasGravadas = rows.filter(r=>r.tipo==='FACTURA'&&r.alicuota==='16%').reduce((s,r)=>s+r.baseImponibleBs,0);
-            const totIVADebitos = rows.filter(r=>r.tipo==='FACTURA').reduce((s,r)=>s+r.ivaBs,0);
-            const totVentasBruta = rows.filter(r=>r.tipo==='FACTURA').reduce((s,r)=>s+r.totalVentasBs,0);
+            // Totales netos: FACTURAS + ajuste NC (negativo) + ND (positivo)
+            const totVentasGravadas = rows.filter(r=>['FACTURA','NC','ND'].includes(r.tipo)&&r.alicuota==='16%').reduce((s,r)=>s+r.baseImponibleBs,0);
+            const totIVADebitos = rows.filter(r=>['FACTURA','NC','ND'].includes(r.tipo)).reduce((s,r)=>s+r.ivaBs,0);
+            const totVentasBruta = rows.filter(r=>['FACTURA','NC','ND'].includes(r.tipo)).reduce((s,r)=>s+r.totalVentasBs,0);
             const retPeriodo = rows.filter(r=>r.tipo==='RETENCION').reduce((s,r)=>s+r.ivaRetDb,0);
             const retAcum = parseNum(libroRetAcum||0);
             const retDesc = parseNum(libroRetDesc||0);
@@ -12817,14 +12828,14 @@ ${membrete}${hdrs}${dataRows}${totRow}${resumen}
             const rowsHtml = rows.map(r=>`
 <tr style="border-bottom:1px solid #e5e7eb;${r.tipo!=='FACTURA'?'background:#fefce8':''}">
   <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.seq}</td>
-  <td style="padding:2px 4px;font-size:7px;border-right:1px solid #e5e7eb">${r.fecha}</td>
-  <td style="padding:2px 4px;font-size:7px;border-right:1px solid #e5e7eb">${r.rif}</td>
-  <td style="padding:2px 4px;font-size:7px;max-width:110px;border-right:1px solid #e5e7eb">${r.nombre}</td>
+  <td style="padding:2px 4px;font-size:7px;min-width:68px;white-space:nowrap;border-right:1px solid #e5e7eb">${r.fecha}</td>
+  <td style="padding:2px 4px;font-size:7px;min-width:90px;white-space:nowrap;border-right:1px solid #e5e7eb">${r.rif}</td>
+  <td style="padding:2px 4px;font-size:7px;min-width:130px;max-width:180px;word-wrap:break-word;border-right:1px solid #e5e7eb">${r.nombre}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb;background:${r.tipo==='FACTURA'?'#f0fdf4':r.tipo==='RETENCION'?'#fefce8':'#f5f3ff'};color:#111;font-weight:bold">${r.tipo}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:center;color:#1d4ed8;font-weight:bold;border-right:1px solid #e5e7eb">${pNum(r.nroFactura,8)}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${pNum(r.nroControl,8)||'—'}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.tipo==='ND'?r.nroFactura:'—'}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.tipo==='NC'?r.nroFactura:'—'}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.nroDebito||'—'}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.nroCredito||'—'}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.facAfectada?pNum(r.facAfectada,8):'—'}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb">${r.totalVentasBs>0||r.totalVentasBs<0?fV(r.totalVentasBs):'—'}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb">0,00</td>
@@ -18333,6 +18344,8 @@ ${resumenHtml}
       if (erMesesExtra.includes('ALL')) {
         const yms = new Set();
         (invoices||[]).forEach(inv => { if (inv.fecha) yms.add(inv.fecha.substring(0,7)); });
+        (notasEntrega||[]).forEach(ne => { if (ne.fecha) yms.add(ne.fecha.substring(0,7)); });
+        (notasVentaCD||[]).forEach(nc => { if (nc.fecha) yms.add(nc.fecha.substring(0,7)); });
         (opCosts||[]).forEach(c => { if (c.fecha||c.month) yms.add((c.fecha||c.month||'').substring(0,7)); });
         return yms.size > 0 ? [...yms] : [ymA];
       }
@@ -19211,9 +19224,9 @@ ${resumenHtml}
                       <tr className="bg-orange-500 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>INGRESOS</td></tr>
                       <tr className="bg-orange-50 cursor-pointer hover:bg-orange-100 select-none" onClick={()=>setErExpanded(p=>({...p,ingresos:!p.ingresos}))}>
                         <td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-orange-800" colSpan={tasa>1?4:3}>
-                          <span className="mr-2">{erExpanded.ingresos?'▼':'▶'}</span>
-                          <span className="text-orange-600 font-black mr-2">{(efaData.facturasperiodo||[]).some(f=>(notasEntrega||[]).find(ne=>ne.id===f.documento)?.opRelacionada)?'4.1.01.01.002':'4.1.01.01.001'}</span>
-                          {(efaData.facturasperiodo||[]).some(f=>(notasEntrega||[]).find(ne=>ne.id===f.documento)?.opRelacionada)?'INGRESOS POR ORDEN DE PRODUCCIÓN':'INGRESOS POR VENTAS GENERALES'}
+                           <span className="mr-2">{erExpanded.ingresos?'▼':'▶'}</span>
+                           {(efaData.facturasperiodo||[]).filter(f=>f.isNota&&f.tipoNota==='NC').length>0&&<span className="bg-red-100 text-red-700 text-[8px] font-black px-1.5 py-0.5 rounded mr-2">{(efaData.facturasperiodo||[]).filter(f=>f.isNota&&f.tipoNota==='NC').length} NC</span>}
+                           {(efaData.facturasperiodo||[]).filter(f=>f.isNota&&f.tipoNota==='ND').length>0&&<span className="bg-blue-100 text-blue-700 text-[8px] font-black px-1.5 py-0.5 rounded mr-2">{(efaData.facturasperiodo||[]).filter(f=>f.isNota&&f.tipoNota==='ND').length} ND</span>}
                           <span className="ml-3 text-[9px] text-orange-400">{erExpanded.ingresos?'contraer':'expandir facturas'}</span>
                         </td>
                         <td className="py-1.5 px-3 text-right font-black text-orange-700">{formatNum(efaData.totalIngresos)}</td>
