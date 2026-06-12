@@ -12550,7 +12550,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const fp=(v,t)=>((v/(t||1))*100).toFixed(1)+'%';
 
           const getTipo=(c,d)=>{
-            const cu=(c||'').toUpperCase(), du=(d||'').toUpperCase();
+            const cu=(c||'').toUpperCase(),du=(d||'').toUpperCase();
             if(cu.startsWith('SF')||du.includes('STRETCH')) return 'STRETCH FILM';
             if(cu.startsWith('PK')||du.includes('KRAFT')) return 'PAPEL KRAFT';
             if(cu.startsWith('BOL')||du.includes('BOLSA')) return 'BOLSAS';
@@ -12558,39 +12558,42 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(cu.startsWith('TERMO')||du.includes('TERMO')) return 'TERMOENCOGIBLE';
             return 'OTROS';
           };
-          const parseKgDesc=(desc)=>{
-            const m=(desc||'').toUpperCase().match(/(\d+(?:[.,]\d+)?)\s*KG/);
-            return m ? parseFloat(m[1].replace(',','.')) : 0;
+          // KG: para SF/PK parseamos descripción; para Termo la unidad ES kg
+          const parseKgDesc=d=>{const m=(d||'').toUpperCase().match(/(\d+(?:[.,]\d+)?)\s*KG/);return m?parseFloat(m[1].replace(',','.')):0;};
+          const getKg=(tipo,desc,cant,unit,kgF)=>{
+            if(tipo==='TERMOENCOGIBLE') return (unit||'').toLowerCase()==='kg'?parseNum(cant):parseNum(kgF||0);
+            const kpu=parseKgDesc(desc); return kpu>0?kpu*cant:parseNum(kgF||0);
           };
-          const getKg=(tipo,desc,cant,kgField)=>{
-            if(tipo==='TERMOENCOGIBLE') return parseNum(kgField||0);
-            const kpu=parseKgDesc(desc);
-            return kpu>0 ? kpu*cant : parseNum(kgField||0);
-          };
-          const CIUDADES=['MARACAIBO','VALENCIA','BARQUISIMETO','MARACAY','CARACAS','MATURIN','BARCELONA','PUERTO LA CRUZ','CIUDAD GUAYANA','MERIDA','BARINAS','CUMANA','PUNTO FIJO','CALABOZO','SAN CRISTOBAL','GUANARE'];
+          // Localidad: extraer ciudad de la dirección con más variantes
+          const CIUDADES=['MARACAIBO','MCBO','VALENCIA','VLC','BARQUISIMETO','BQTO','MARACAY','CARACAS','CCS','MATURIN','BARCELONA','PUERTO LA CRUZ','CIUDAD GUAYANA','MERIDA','BARINAS','CUMANA','PUNTO FIJO','CALABOZO','SAN CRISTOBAL','GUANARE','ACARIGUA','PORLAMAR'];
+          const CIUDADES_NORM={'MCBO':'Maracaibo','VLC':'Valencia','BQTO':'Barquisimeto','CCS':'Caracas'};
           const getLoc=(rif,nombre)=>{
-            const c=(clients||[]).find(cl=>cl.rif===rif||(cl.name||cl.nombre||cl.razonSocial||'').toUpperCase()===(nombre||'').toUpperCase());
-            const dir=((c?.direccion||c?.address||'')).toUpperCase();
-            for(const ci of CIUDADES){ if(dir.includes(ci)) return ci.charAt(0)+ci.slice(1).toLowerCase(); }
-            return dir?'Otras ciudades':'Sin localidad';
+            const c=(clients||[]).find(cl=>cl.rif===rif||(cl.name||cl.nombre||cl.razonSocial||'').toUpperCase().trim()===(nombre||'').toUpperCase().trim());
+            const dir=((c?.direccion||c?.address||c?.ciudad||'')).toUpperCase();
+            for(const ci of CIUDADES){if(dir.includes(ci)){const n=CIUDADES_NORM[ci];return n?n:ci.charAt(0)+ci.slice(1).toLowerCase();}}
+            // Fallback: tomar el primer token que parezca ciudad (empieza con mayúscula, no es número)
+            if(dir){const parts=dir.split(/[,.\n\/]+/).map(s=>s.trim()).filter(s=>s.length>3&&!/^\d/.test(s));if(parts.length) return parts[0].charAt(0)+parts[0].slice(1).toLowerCase();}
+            return 'Sin localidad';
           };
+          // Comisiones desde configuración del sistema
+          const comCfgDef={porcentaje:2,base:'montoBase',umbral:0,tipoCalculo:'porcentaje_ventas'};
+          const comCfg=settings?.comisionesConfig||comCfgDef;
 
           const allNEs=(notasEntrega||[]).map(ne=>({
-            fecha:ne.fecha||'', cliente:ne.clientName||ne.clientNombre||'',
-            rif:ne.clientRif||'', vendedor:ne.vendedor||'Directa',
+            fecha:ne.fecha||'',cliente:ne.clientName||ne.clientNombre||'',
+            rif:ne.clientRif||'',vendedor:ne.vendedor||'Directa',
             montoBase:parseNum(ne.montoBase||0),
             localidad:getLoc(ne.clientRif||'',ne.clientName||''),
             items:(ne.items||[]).map(it=>{
               const tipo=getTipo(it.invCode||it.codigo,it.desc||it.descripcion);
               const cant=parseNum(it.cantidad||it.qty||0);
+              const unit=(it.unit||it.unidad||'und').toLowerCase();
               const desc=it.desc||it.descripcion||'';
-              return{
-                codigo:it.invCode||it.codigo||'', desc, cant,
+              return{codigo:it.invCode||it.codigo||'',desc,cant,unit,
                 unidad:it.unit||it.unidad||'und',
                 precioUnit:parseNum(it.precioUnit||it.precio||0),
                 subtotal:parseNum(it.subtotal||it.total||(cant*parseNum(it.precioUnit||it.precio||0))||0),
-                tipo, kg:getKg(tipo,desc,cant,it.kg||0)
-              };
+                tipo,kg:getKg(tipo,desc,cant,unit,it.kg||0)};
             })
           }));
 
@@ -12599,14 +12602,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const vendD=[...new Set(allNEs.map(v=>v.vendedor).filter(Boolean))].sort();
 
           const nesFilt=allNEs.filter(v=>{
-            if(fVF.anio&&!v.fecha.startsWith(fVF.anio)) return false;
-            if(fVF.mes&&v.fecha.substring(5,7)!==fVF.mes) return false;
-            if(fVF.vendedor&&v.vendedor!==fVF.vendedor) return false;
+            if(fVF.anio&&!v.fecha.startsWith(fVF.anio))return false;
+            if(fVF.mes&&v.fecha.substring(5,7)!==fVF.mes)return false;
+            if(fVF.vendedor&&v.vendedor!==fVF.vendedor)return false;
             return true;
           });
 
           let totV=0,totM=0,totU=0,kgSF=0,kgPK=0,kgT=0;
-          const byProd={},byCli={},byVend={},byCat={},byLoc={};
+          const byProd={},byProdQ={},byCli={},byCliQ={},byVend={},byVendQ={},byCat={},byCatQ={},byLoc={},byLocQ={};
           const rows=[];
           nesFilt.forEach(v=>{
             totV+=v.montoBase;
@@ -12614,14 +12617,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             byVend[v.vendedor]=(byVend[v.vendedor]||0)+v.montoBase;
             byLoc[v.localidad]=(byLoc[v.localidad]||0)+v.montoBase;
             v.items.forEach(it=>{
-              if(fVF.cat&&it.tipo!==fVF.cat) return;
-              byProd[it.desc||it.codigo||'?']=(byProd[it.desc||it.codigo||'?']||0)+it.subtotal;
-              byCat[it.tipo]=(byCat[it.tipo]||0)+it.subtotal;
-              if(it.tipo==='BOLSAS') totM+=it.cant; else totU+=it.cant;
+              if(fVF.cat&&it.tipo!==fVF.cat)return;
+              const pk=it.desc||it.codigo||'?';
+              byProd[pk]=(byProd[pk]||0)+it.subtotal; byProdQ[pk]=(byProdQ[pk]||0)+it.cant;
+              byCat[it.tipo]=(byCat[it.tipo]||0)+it.subtotal; byCatQ[it.tipo]=(byCatQ[it.tipo]||0)+it.cant;
+              byCliQ[v.cliente]=(byCliQ[v.cliente]||0)+it.cant;
+              byVendQ[v.vendedor]=(byVendQ[v.vendedor]||0)+it.cant;
+              byLocQ[v.localidad]=(byLocQ[v.localidad]||0)+it.cant;
+              if(it.tipo==='BOLSAS')totM+=it.cant; else totU+=it.cant;
               kgSF+=it.tipo==='STRETCH FILM'?it.kg:0;
               kgPK+=it.tipo==='PAPEL KRAFT'?it.kg:0;
               kgT+=it.tipo==='TERMOENCOGIBLE'?it.kg:0;
-              rows.push({fecha:v.fecha,cliente:v.cliente,vendedor:v.vendedor,loc:v.localidad,prod:it.desc||it.codigo,cant:it.cant,und:it.unidad,pu:it.precioUnit,sub:it.subtotal,tipo:it.tipo});
+              rows.push({fecha:v.fecha,cliente:v.cliente,vendedor:v.vendedor,loc:v.localidad,prod:pk,cant:it.cant,und:it.unidad,pu:it.precioUnit,sub:it.subtotal,tipo:it.tipo});
             });
           });
 
@@ -12633,47 +12640,54 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const totVend=tV.reduce((s,x)=>s+x[1],0)||1;
           const totLoc=tL.reduce((s,x)=>s+x[1],0)||1;
           const totCat=tCat.reduce((s,x)=>s+x[1],0)||1;
+
+          // ── Comisiones por vendedor ───────────────────────────────────────────────
+          const pct=parseNum(comCfg.porcentaje||2)/100;
+          const comPorVend={};
+          nesFilt.forEach(v=>{
+            if(!v.vendedor||v.vendedor==='Directa'||v.vendedor==='Local')return;
+            comPorVend[v.vendedor]=(comPorVend[v.vendedor]||0)+v.montoBase*pct;
+          });
+          const comList=Object.entries(comPorVend).sort((a,b)=>b[1]-a[1]);
+          const comTotal=comList.reduce((s,x)=>s+x[1],0);
+
           const srch=fVF.srch||'';
           const rowsFilt=rows.filter(r=>!fVF.cat||r.tipo===fVF.cat).filter(r=>!srch||r.cliente.toLowerCase().includes(srch.toLowerCase())||r.vendedor.toLowerCase().includes(srch.toLowerCase()));
 
-          // ── Donut SVG puro (sin hooks) ────────────────────────────────────────────
+          // ── Donut SVG ──────────────────────────────────────────────────────────────
           const donutSegs=(()=>{
-            if(!tV.length) return [];
-            const W=260,CX=130,CY=130,R=105,IR=55;
+            if(!tV.length)return[];
+            const W=340,CX=170,CY=170,R=145,IR=75;
             let ang=-90;
             return tV.map(([lbl,val],i)=>{
-              const pct=val/totVend; const deg=pct*360; const end=ang+deg;
+              const pct2=val/totVend;const deg=pct2*360;const end=ang+deg;
               const rad=a=>a*Math.PI/180;
-              const p=(a,r)=>([CX+r*Math.cos(rad(a)), CY+r*Math.sin(rad(a))]);
-              const [x1,y1]=p(ang,R),[x2,y2]=p(end,R);
-              const [ix1,iy1]=p(ang,IR),[ix2,iy2]=p(end,IR);
+              const P=(a,r)=>[CX+r*Math.cos(rad(a)),CY+r*Math.sin(rad(a))];
+              const[x1,y1]=P(ang,R),[x2,y2]=P(end,R),[ix1,iy1]=P(ang,IR),[ix2,iy2]=P(end,IR);
               const lg=deg>180?1:0;
               const path=`M${x1},${y1} A${R},${R} 0 ${lg},1 ${x2},${y2} L${ix2},${iy2} A${IR},${IR} 0 ${lg},0 ${ix1},${iy1}Z`;
-              const [lx,ly]=p(ang+deg/2, R*0.72);
-              const res={path,color:CLRS[i%CLRS.length],lbl,val,pct,lx,ly}; ang=end; return res;
+              const[lx,ly]=P(ang+deg/2,R*0.73);
+              const res={path,color:CLRS[i%CLRS.length],lbl,val,pct:pct2,lx,ly,q:byVendQ[lbl]||0};
+              ang=end;return res;
             });
           })();
 
           return (
             <div className="p-4 space-y-4 animate-in fade-in">
-
-              {/* ── FILTROS ─────────────────────────────────────────────────── */}
+              {/* FILTROS */}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-2xl font-black text-gray-900 uppercase flex items-center gap-2">
                   <BarChart3 className="text-blue-600" size={28}/> Gráfica de Ventas
                 </h2>
                 <div className="flex flex-wrap gap-2">
                   <select value={fVF.anio||''} onChange={e=>setFVF('anio',e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-black bg-white outline-none">
-                    <option value="">Todos los años</option>
-                    {aniosD.map(a=><option key={a} value={a}>{a}</option>)}
+                    <option value="">Todos los años</option>{aniosD.map(a=><option key={a} value={a}>{a}</option>)}
                   </select>
                   <select value={fVF.mes||''} onChange={e=>setFVF('mes',e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-black bg-white outline-none">
-                    <option value="">Todos los meses</option>
-                    {mesesD.map(m=><option key={m} value={m}>{MN[parseInt(m,10)-1]}</option>)}
+                    <option value="">Todos los meses</option>{mesesD.map(m=><option key={m} value={m}>{MN[parseInt(m,10)-1]}</option>)}
                   </select>
                   <select value={fVF.vendedor||''} onChange={e=>setFVF('vendedor',e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-black bg-white outline-none">
-                    <option value="">Todos los vendedores</option>
-                    {vendD.map(v=><option key={v} value={v}>{v}</option>)}
+                    <option value="">Todos los vendedores</option>{vendD.map(v=><option key={v} value={v}>{v}</option>)}
                   </select>
                   <select value={fVF.cat||''} onChange={e=>setFVF('cat',e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-black bg-white outline-none">
                     <option value="">Todas las categorías</option>
@@ -12685,7 +12699,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 </div>
               </div>
 
-              {/* ── KPIs ────────────────────────────────────────────────────── */}
+              {/* KPIs */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 border-l-4 border-l-blue-600">
                   <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Ingresos Totales</div>
@@ -12695,47 +12709,41 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 border-l-4 border-l-indigo-600">
                   <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Volumen Despachado</div>
                   <div className="flex gap-4 mt-1">
-                    <div>
-                      <div className="text-2xl font-black text-gray-800">{formatNum(totU)}</div>
-                      <div className="text-[8px] font-black text-gray-400 uppercase">Unidades</div>
-                    </div>
+                    <div><div className="text-2xl font-black text-gray-800">{formatNum(totU)}</div><div className="text-[8px] font-black text-gray-400 uppercase">Unidades</div></div>
                     <div className="w-px bg-gray-100"/>
-                    <div>
-                      <div className="text-2xl font-black text-gray-800">{formatNum(totM)}</div>
-                      <div className="text-[8px] font-black text-gray-400 uppercase">Millares</div>
-                    </div>
+                    <div><div className="text-2xl font-black text-gray-800">{formatNum(totM)}</div><div className="text-[8px] font-black text-gray-400 uppercase">Millares</div></div>
                   </div>
                 </div>
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 border-l-4 border-l-emerald-600">
                   <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2">Masa Neta (KG)</div>
                   <div className="grid grid-cols-3 gap-1">
-                    <div>
-                      <div className="text-xl font-black text-emerald-700">{formatNum(kgSF)}</div>
-                      <div className="text-[7px] font-black text-gray-400 uppercase">Stretch</div>
-                    </div>
-                    <div className="border-x border-gray-100 px-1 text-center">
-                      <div className="text-xl font-black text-gray-700">{formatNum(kgPK)}</div>
-                      <div className="text-[7px] font-black text-gray-400 uppercase">Kraft</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xl font-black text-orange-600">{formatNum(kgT)}</div>
-                      <div className="text-[7px] font-black text-gray-400 uppercase">Termo</div>
-                    </div>
+                    <div><div className="text-xl font-black text-emerald-700">{formatNum(kgSF)}</div><div className="text-[7px] font-black text-gray-400 uppercase">Stretch</div></div>
+                    <div className="border-x border-gray-100 px-1 text-center"><div className="text-xl font-black text-gray-700">{formatNum(kgPK)}</div><div className="text-[7px] font-black text-gray-400 uppercase">Kraft</div></div>
+                    <div className="text-right"><div className="text-xl font-black text-orange-600">{formatNum(kgT)}</div><div className="text-[7px] font-black text-gray-400 uppercase">Termo</div></div>
                   </div>
                 </div>
+                {/* Comisiones card */}
                 <div className="bg-gray-900 rounded-2xl shadow-sm p-4">
-                  <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2">Por Categoría</div>
-                  {tCat.slice(0,4).map(([cat,val],ci)=>(
-                    <div key={cat} className="flex justify-between items-center mb-1.5">
-                      <span className="text-[8px] font-black text-gray-400 uppercase">{cat}</span>
-                      <span className="text-xs font-black" style={{color:CLRS[ci]}}>{fU(val)}</span>
+                  <div className="flex items-center gap-2 mb-2">
+                    <DollarSign size={14} className="text-amber-400"/>
+                    <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Comisiones</div>
+                  </div>
+                  {comList.length===0?(
+                    <p className="text-[9px] text-gray-500 italic">Sin comisiones en el período</p>
+                  ):comList.map(([vend,com])=>(
+                    <div key={vend} className="flex justify-between items-center mb-1.5 bg-gray-800 rounded-lg px-2 py-1">
+                      <span className="text-[9px] font-black text-gray-400 uppercase truncate max-w-[90px]">{vend}</span>
+                      <span className="text-xs font-black text-amber-400">{fU(com)}</span>
                     </div>
                   ))}
-                  {!tCat.length&&<p className="text-[9px] text-gray-500 italic">Sin datos</p>}
+                  <div className="pt-2 border-t border-gray-700 flex justify-between items-center mt-1">
+                    <span className="text-[9px] font-black text-gray-500 uppercase">Total</span>
+                    <span className="text-xl font-black text-amber-400">{fU(comTotal)}</span>
+                  </div>
                 </div>
               </div>
 
-              {/* ── GRÁFICAS TABS ───────────────────────────────────────────── */}
+              {/* GRÁFICAS TABS */}
               <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                 <div className="flex gap-1 p-3 bg-gray-50 border-b border-gray-100 flex-wrap">
                   {[{k:'productos',l:'📦 Productos'},{k:'clientes',l:'🏢 Clientes'},{k:'vendedores',l:'👤 Vendedores'},{k:'localidad',l:'📍 Localidad'},{k:'categorias',l:'🏷️ Categorías'}].map(tab=>(
@@ -12747,7 +12755,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 </div>
                 <div className="p-5">
 
-                  {/* Productos */}
                   {fVF.tabActiva==='productos'&&(
                     <div>
                       <h3 className="font-black text-sm uppercase text-gray-700 border-l-4 border-blue-600 pl-3 mb-5">TOP 10 Productos</h3>
@@ -12763,8 +12770,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                     <span className="text-[8px] font-black text-white whitespace-nowrap">{fp(val,t10P[0][1])}</span>
                                   </div>
                                 </div>
-                                <div className="absolute -top-7 left-0 bg-gray-900 text-white text-[10px] font-black px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap pointer-events-none">
-                                  {fU(val)} · {fp(val,t10P.reduce((s,x)=>s+x[1],0)||1)} del total
+                                <div className="absolute -top-10 left-0 bg-gray-900 text-white text-[10px] font-black px-3 py-2 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity z-20 whitespace-nowrap pointer-events-none shadow-xl">
+                                  💵 {fU(val)} · 📦 {formatNum(byProdQ[prod]||0)} uds · {fp(val,totV)} del total
                                 </div>
                               </div>
                               <span className="text-xs font-black text-gray-800 w-24 text-right flex-shrink-0">{fU(val)}</span>
@@ -12775,7 +12782,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     </div>
                   )}
 
-                  {/* Clientes */}
                   {fVF.tabActiva==='clientes'&&(
                     <div>
                       <h3 className="font-black text-sm uppercase text-gray-700 border-l-4 border-blue-600 pl-3 mb-5">TOP 10 Clientes</h3>
@@ -12791,8 +12797,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                     <span className="text-[8px] font-black text-white whitespace-nowrap">{fp(val,t10C[0][1])}</span>
                                   </div>
                                 </div>
-                                <div className="absolute -top-7 left-0 bg-gray-900 text-white text-[10px] font-black px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap pointer-events-none">
-                                  {fU(val)} · {fp(val,totV)}
+                                <div className="absolute -top-10 left-0 bg-gray-900 text-white text-[10px] font-black px-3 py-2 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity z-20 whitespace-nowrap pointer-events-none shadow-xl">
+                                  💵 {fU(val)} · 📦 {formatNum(byCliQ[cli]||0)} uds · {fp(val,totV)} del total
                                 </div>
                               </div>
                               <span className="text-xs font-black text-gray-800 w-24 text-right flex-shrink-0">{fU(val)}</span>
@@ -12803,46 +12809,52 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     </div>
                   )}
 
-                  {/* Vendedores - Donut */}
                   {fVF.tabActiva==='vendedores'&&(
                     <div>
                       <h3 className="font-black text-sm uppercase text-gray-700 border-l-4 border-blue-600 pl-3 mb-5">Rendimiento por Vendedor</h3>
                       {donutSegs.length===0?<p className="text-center text-gray-400 text-xs py-8 uppercase font-black">Sin datos</p>:(
-                        <div className="flex flex-col md:flex-row items-center gap-8">
-                          <svg width="260" height="260" viewBox="0 0 260 260" className="flex-shrink-0">
+                        <div className="flex flex-col lg:flex-row items-center gap-10">
+                          <div className="flex-shrink-0">
+                            <svg width="340" height="340" viewBox="0 0 340 340">
+                              {donutSegs.map((s,i)=>(
+                                <g key={i}>
+                                  <path d={s.path} fill={s.color} stroke="#fff" strokeWidth="3">
+                                    <title>{s.lbl}: {fU(s.val)} ({(s.pct*100).toFixed(1)}%) · {formatNum(s.q)} uds</title>
+                                  </path>
+                                  {s.pct>0.05&&(
+                                    <text x={s.lx} y={s.ly} textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight="900" fill="#fff" pointerEvents="none">
+                                      {(s.pct*100).toFixed(1)}%
+                                    </text>
+                                  )}
+                                </g>
+                              ))}
+                            </svg>
+                          </div>
+                          <div className="space-y-2 flex-1 w-full max-w-sm">
                             {donutSegs.map((s,i)=>(
-                              <g key={i} className="group/seg" style={{cursor:'pointer'}}>
-                                <path d={s.path} fill={s.color} stroke="#fff" strokeWidth="2">
-                                  <title>{s.lbl}: {fU(s.val)} ({(s.pct*100).toFixed(1)}%)</title>
-                                </path>
-                                {s.pct>0.04&&(
-                                  <text x={s.lx} y={s.ly} textAnchor="middle" dominantBaseline="middle" fontSize="11" fontWeight="900" fill="#fff" pointerEvents="none">
-                                    {(s.pct*100).toFixed(1)}%
-                                  </text>
-                                )}
-                              </g>
-                            ))}
-                          </svg>
-                          <div className="space-y-2 flex-1 w-full">
-                            {donutSegs.map((s,i)=>(
-                              <div key={i} className="flex items-center gap-3 p-2 rounded-xl hover:bg-gray-50 transition-all group/item">
-                                <div className="w-3 h-3 rounded-full flex-shrink-0" style={{background:s.color}}/>
-                                <span className="text-xs font-black text-gray-700 flex-1">{s.lbl}</span>
-                                <span className="text-xs font-bold text-gray-400">{(s.pct*100).toFixed(1)}%</span>
-                                <span className="text-sm font-black text-gray-800 w-28 text-right">{fU(s.val)}</span>
+                              <div key={i} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 transition-all border border-transparent hover:border-gray-100">
+                                <div className="w-4 h-4 rounded-full flex-shrink-0" style={{background:s.color}}/>
+                                <span className="text-sm font-black text-gray-700 flex-1">{s.lbl}</span>
+                                <div className="text-right">
+                                  <div className="text-sm font-black text-gray-800">{fU(s.val)}</div>
+                                  <div className="text-[9px] text-gray-400">{(s.pct*100).toFixed(1)}% · {formatNum(s.q)} uds</div>
+                                </div>
                               </div>
                             ))}
+                            <div className="mt-3 pt-3 border-t border-gray-100 flex justify-between items-center">
+                              <span className="text-xs font-black text-gray-500 uppercase">Total</span>
+                              <span className="text-lg font-black text-gray-900">{fU(totVend)}</span>
+                            </div>
                           </div>
                         </div>
                       )}
                     </div>
                   )}
 
-                  {/* Localidad */}
                   {fVF.tabActiva==='localidad'&&(
                     <div>
                       <h3 className="font-black text-sm uppercase text-gray-700 border-l-4 border-blue-600 pl-3 mb-5">Ventas por Localidad</h3>
-                      {tL.length===0?<p className="text-center text-gray-400 text-xs py-8 uppercase font-black">Sin datos — verifica que los clientes tengan dirección</p>:(
+                      {tL.length===0?<p className="text-center text-gray-400 text-xs py-8 uppercase font-black">Sin datos — verifica que los clientes tengan dirección registrada</p>:(
                         <div className="space-y-3">
                           {tL.map(([loc,val],i)=>(
                             <div key={loc} className="group flex items-center gap-3">
@@ -12853,8 +12865,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                     <span className="text-[8px] font-black text-white whitespace-nowrap">{fp(val,totLoc)}</span>
                                   </div>
                                 </div>
-                                <div className="absolute -top-7 left-0 bg-gray-900 text-white text-[10px] font-black px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap pointer-events-none">
-                                  {fU(val)} · {fp(val,totLoc)}
+                                <div className="absolute -top-10 left-0 bg-gray-900 text-white text-[10px] font-black px-3 py-2 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity z-20 whitespace-nowrap pointer-events-none shadow-xl">
+                                  💵 {fU(val)} · 📦 {formatNum(byLocQ[loc]||0)} uds · {fp(val,totLoc)}
                                 </div>
                               </div>
                               <span className="text-xs font-black text-gray-800 w-24 text-right flex-shrink-0">{fU(val)}</span>
@@ -12865,19 +12877,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     </div>
                   )}
 
-                  {/* Categorías */}
                   {fVF.tabActiva==='categorias'&&(
                     <div>
                       <h3 className="font-black text-sm uppercase text-gray-700 border-l-4 border-blue-600 pl-3 mb-5">Por Categoría</h3>
-                      <div className="space-y-3">
+                      <div className="space-y-4">
                         {tCat.map(([cat,val],i)=>(
-                          <div key={cat}>
+                          <div key={cat} className="group">
                             <div className="flex justify-between mb-1">
                               <span className="text-xs font-black text-gray-700 uppercase">{cat}</span>
-                              <span className="text-xs font-black text-gray-900">{fU(val)} <span className="text-gray-400">({fp(val,totCat)})</span></span>
+                              <div className="relative">
+                                <span className="text-xs font-black text-gray-900">{fU(val)} <span className="text-gray-400">({fp(val,totCat)})</span></span>
+                                <div className="absolute -top-9 right-0 bg-gray-900 text-white text-[10px] font-black px-3 py-2 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity z-20 whitespace-nowrap pointer-events-none shadow-xl">
+                                  📦 {formatNum(byCatQ[cat]||0)} uds · {fp(val,totCat)}
+                                </div>
+                              </div>
                             </div>
-                            <div className="bg-gray-100 rounded-full h-3">
-                              <div className="h-3 rounded-full transition-all" style={{width:`${(val/totCat*100).toFixed(1)}%`,background:CLRS[i%CLRS.length]}}/>
+                            <div className="bg-gray-100 rounded-full h-4">
+                              <div className="h-4 rounded-full transition-all" style={{width:`${(val/totCat*100).toFixed(1)}%`,background:CLRS[i%CLRS.length]}}/>
                             </div>
                           </div>
                         ))}
@@ -12889,10 +12905,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 </div>
               </div>
 
-              {/* ── TABLA ───────────────────────────────────────────────────── */}
+              {/* TABLA */}
               <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                 <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50 flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="font-black text-sm uppercase text-gray-800">Detalle de Transacciones — {rowsFilt.length} registros</h3>
+                  <h3 className="font-black text-sm uppercase text-gray-800">Detalle de Transacciones</h3>
                   <div className="relative">
                     <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
                     <input value={srch} onChange={e=>setFVF('srch',e.target.value)}
@@ -12904,12 +12920,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <table className="w-full text-left text-xs">
                     <thead className="bg-gray-50 text-[9px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
                       <tr>
-                        <th className="px-4 py-3">Fecha</th>
-                        <th className="px-4 py-3">Cliente</th>
-                        <th className="px-4 py-3">Vendedor</th>
-                        <th className="px-4 py-3">Localidad</th>
-                        <th className="px-4 py-3">Producto</th>
-                        <th className="px-4 py-3">Categ.</th>
+                        <th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Cliente</th>
+                        <th className="px-4 py-3">Vendedor</th><th className="px-4 py-3">Localidad</th>
+                        <th className="px-4 py-3">Producto</th><th className="px-4 py-3">Categ.</th>
                         <th className="px-4 py-3 text-right">Cant.</th>
                         <th className="px-4 py-3 text-right">P.Unit.</th>
                         <th className="px-4 py-3 text-right">Total</th>
@@ -12950,6 +12963,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             </div>
           );
         })()}
+
 
 
         {ventasView === 'libro_ventas' && (() => {
@@ -23398,6 +23412,7 @@ ${resumenHtml}
               <div className="w-full flex gap-0.5 px-2 overflow-x-auto" style={{scrollbarWidth:'none',msOverflowStyle:'none'}}>
                  {[
                    {id:'dashboard',           icon:<BarChart3 size={15}/>,  label:'Dashboard',       perm:'ventas_dashboard'},
+                   {id:'grafica_ventas',      icon:<BarChart3 size={15}/>,  label:'Gráfica',          perm:'ventas_graficas'},
                    {id:'facturacion',         icon:<Receipt size={15}/>,    label:'Factura',         perm:'ventas_facturacion'},
                    {id:'notas_entrega',       icon:<FileText size={15}/>,   label:'NE',              perm:'ventas_ne'},
                    {id:'cotizaciones',        icon:<FileText size={15}/>,   label:'Cotizaciones',    perm:'ventas_cotizaciones'},
@@ -23411,7 +23426,6 @@ ${resumenHtml}
                    {id:'notas_cd',            icon:<FileText size={15}/>,   label:'NC / ND',         perm:'ventas_nc_nd'},
                    {id:'comisiones',          icon:<DollarSign size={15}/>, label:'Comisiones',      perm:'ventas_comisiones'},
                    {id:'vendedores',          icon:<Users size={15}/>,      label:'Vendedores',      perm:'ventas_vendedores'},
-                   {id:'grafica_ventas',      icon:<BarChart3 size={15}/>,  label:'Gráfica',          perm:'ventas_graficas'},
                  ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
