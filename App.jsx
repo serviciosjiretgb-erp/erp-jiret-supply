@@ -22963,8 +22963,8 @@ ${resumenHtml}
                          timestamp: Date.now(), createdAt: getTodayDate(), text: 'Cierre de sesión' });
                      } catch(err) { console.warn('Activity log error', err); }
                    }
-                   await signOut(auth);
-                   setIsAuthenticated(false); setAppUser(null);
+                   try { await signOut(auth); } catch(e) {}
+                   setAppUser(null);
                  }} className="flex items-center gap-1 px-3 py-2 text-xs font-black text-red-500 hover:bg-red-50 rounded-xl transition-all">
                    <LogOut size={13}/> <span className="hidden sm:inline">Salir</span>
                  </button>
