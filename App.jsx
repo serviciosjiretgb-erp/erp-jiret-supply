@@ -241,6 +241,7 @@ const SYSTEM_MODULES = [
       { id: 'ventas_nc_nd',            label: 'Notas de Crédito / Débito' },
       { id: 'ventas_comisiones',       label: 'Comisiones' },
       { id: 'ventas_vendedores',       label: 'Vendedores / Equipo' },
+      { id: 'ventas_graficas',        label: 'Gráfica de Ventas' },
     ]
   },
   {
@@ -470,6 +471,7 @@ export default function App() {
   const [retBusqFact, setRetBusqFact] = useState('');
   const [retFactManual, setRetFactManual] = useState(false); // modo ingreso manual de factura
   const [retClientSearch, setRetClientSearch] = useState('');
+  const [grafVentasFiltros, setGrafVentasFiltros] = useState({ anio: '', mes: '', vendedor: '', categoria: '', tabActiva: 'productos' });
   const [retFiltMes2, setRetFiltMes2] = useState('');
   const [retFiltQ2, setRetFiltQ2] = useState('AMBAS');
   const [retFiltCli2, setRetFiltCli2] = useState('');
@@ -12539,6 +12541,96 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         })()}
 
 
+        {ventasView === 'grafica_ventas' && (() => {
+          // ── DASHBOARD DE GRÁFICA DE VENTAS ───────────────────────────────────────
+          const fVF = grafVentasFiltros;
+          const setFVF = (k,v) => setGrafVentasFiltros(p=>({...p,[k]:v}));
+
+          // Fuente: SOLO Notas de Entrega
+          const getItemTipo = (codigo, desc) => {
+            const c=(codigo||'').toUpperCase(); const d=(desc||'').toUpperCase();
+            if(c.startsWith('SF')||d.includes('STRETCH')) return 'STRETCH FILM';
+            if(c.startsWith('PK')||d.includes('KRAFT')) return 'PAPEL KRAFT';
+            if(c.startsWith('BOL')||d.includes('BOLSA')) return 'BOLSAS';
+            if(c.startsWith('CE')||d.includes('CINTA')) return 'CINTAS';
+            if(c.startsWith('TERMO')||d.includes('TERMO')) return 'TERMOENCOGIBLE';
+            return 'OTROS';
+          };
+          const allVentas2 = (notasEntrega||[]).map(ne=>({
+            fecha: ne.fecha||'', cliente: ne.clientName||ne.clientNombre||'',
+            rif: ne.clientRif||'', vendedor: ne.vendedor||'Directa',
+            montoBase: parseNum(ne.montoBase||0),
+            items: (ne.items||[]).map(it=>({
+              codigo: it.invCode||it.codigo||'', desc: it.desc||it.descripcion||'',
+              cantidad: parseNum(it.cantidad||it.qty||0), unidad: it.unit||it.unidad||'und',
+              precioUnit: parseNum(it.precioUnit||it.precio||0),
+              subtotal: parseNum(it.subtotal||it.total||(parseNum(it.cantidad||0)*parseNum(it.precioUnit||0))||0),
+              tipo: getItemTipo(it.invCode||it.codigo, it.desc||it.descripcion),
+              kg: parseNum(it.kg||0)
+            }))
+          }));
+          const aniosDis2=[...new Set(allVentas2.map(v=>v.fecha.substring(0,4)).filter(Boolean))].sort().reverse();
+          const mesesDis2=[...new Set(allVentas2.filter(v=>!fVF.anio||v.fecha.startsWith(fVF.anio)).map(v=>v.fecha.substring(5,7)).filter(Boolean))].sort().reverse();
+          const vendDis2=[...new Set(allVentas2.map(v=>v.vendedor).filter(Boolean))].sort();
+          const MNSH=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+          const ventasFilt2=allVentas2.filter(v=>{ if(fVF.anio&&!v.fecha.startsWith(fVF.anio))return false; if(fVF.mes&&v.fecha.substring(5,7)!==fVF.mes)return false; if(fVF.vendedor&&v.vendedor!==fVF.vendedor)return false; return true; });
+          let totV=0,totMill=0,totU=0,kgSF2=0,kgPK2=0,kgT2=0;
+          const byProd={},byCli={},byVend={},byCat={};
+          const tablaR=[];
+          ventasFilt2.forEach(v=>{ totV+=v.montoBase; byCli[v.cliente]=(byCli[v.cliente]||0)+v.montoBase; byVend[v.vendedor]=(byVend[v.vendedor]||0)+v.montoBase;
+            v.items.forEach(it=>{ if(fVF.categoria&&it.tipo!==fVF.categoria)return; const pk=it.desc||it.codigo||'Sin descripción'; byProd[pk]=(byProd[pk]||0)+it.subtotal; byCat[it.tipo]=(byCat[it.tipo]||0)+it.subtotal; if(it.tipo==='BOLSAS')totMill+=it.cantidad; else totU+=it.cantidad; if(it.tipo==='STRETCH FILM')kgSF2+=it.kg||0; if(it.tipo==='PAPEL KRAFT')kgPK2+=it.kg||0; if(it.tipo==='TERMOENCOGIBLE')kgT2+=it.kg||0; tablaR.push({fecha:v.fecha,cliente:v.cliente,vendedor:v.vendedor,producto:it.desc||it.codigo,cantidad:it.cantidad,unidad:it.unidad,precioUnit:it.precioUnit,subtotal:it.subtotal,tipo:it.tipo}); }); });
+          const tF2=fVF.categoria?tablaR.filter(r=>r.tipo===fVF.categoria):tablaR;
+          const t10P=Object.entries(byProd).sort((a,b)=>b[1]-a[1]).slice(0,10);
+          const t10C=Object.entries(byCli).sort((a,b)=>b[1]-a[1]).slice(0,10);
+          const tV2=Object.entries(byVend).sort((a,b)=>b[1]-a[1]);
+          const tCat=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
+          const mx=v=>Math.max(...v.map(x=>x[1]),1);
+          const totCat=tCat.reduce((s,x)=>s+x[1],0)||1;
+          const CLRS=['#2563eb','#6366f1','#f59e0b','#10b981','#f43f5e','#8b5cf6','#06b6d4','#ec4899','#71717a','#84cc16'];
+          const fU=v=>'$'+formatNum(v); const fp=(v,t)=>((v/t)*100).toFixed(1)+'%';
+          const BarRow=({label,val,max,colorIdx})=>(<div className="flex items-center gap-3 mb-2"><span className="text-xs font-black text-gray-700 w-48 truncate text-right" title={label}>{label}</span><div className="flex-1 bg-gray-100 rounded-full h-5 relative overflow-hidden"><div className="h-full rounded-full transition-all duration-500 flex items-center pl-2" style={{width:`${Math.max(2,(val/max*100)).toFixed(1)}%`,background:CLRS[colorIdx%CLRS.length]}}><span className="text-[8px] font-black text-white whitespace-nowrap">{fp(val,max)}</span></div></div><span className="text-xs font-black text-gray-800 w-24 text-right">{fU(val)}</span></div>);
+          return(<div className="p-4 space-y-4 animate-in fade-in">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-2xl font-black text-gray-900 uppercase flex items-center gap-2"><BarChart3 className="text-blue-600" size={28}/> Gráfica de Ventas</h2>
+              <div className="flex flex-wrap gap-2">
+                <select value={fVF.anio} onChange={e=>setFVF('anio',e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-black bg-white outline-none"><option value="">Todos los años</option>{aniosDis2.map(a=><option key={a} value={a}>{a}</option>)}</select>
+                <select value={fVF.mes} onChange={e=>setFVF('mes',e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-black bg-white outline-none"><option value="">Todos los meses</option>{mesesDis2.map(m=><option key={m} value={m}>{MNSH[parseInt(m,10)-1]}</option>)}</select>
+                <select value={fVF.vendedor} onChange={e=>setFVF('vendedor',e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-black bg-white outline-none"><option value="">Todos los vendedores</option>{vendDis2.map(v=><option key={v} value={v}>{v}</option>)}</select>
+                <select value={fVF.categoria} onChange={e=>setFVF('categoria',e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-black bg-white outline-none"><option value="">Todas las categorías</option>{['STRETCH FILM','BOLSAS','TERMOENCOGIBLE','CINTAS','PAPEL KRAFT','OTROS'].map(c=><option key={c} value={c}>{c}</option>)}</select>
+                {(fVF.anio||fVF.mes||fVF.vendedor||fVF.categoria)&&<button onClick={()=>setGrafVentasFiltros({anio:'',mes:'',vendedor:'',categoria:'',tabActiva:fVF.tabActiva})} className="px-3 py-2 text-xs font-black text-red-500 bg-red-50 rounded-xl hover:bg-red-100">✕ Limpiar</button>}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 border-l-4 border-l-blue-600"><div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Ingresos Totales</div><div className="text-3xl font-black text-gray-900">{fU(totV)}</div><div className="text-[9px] text-gray-400 mt-1">{ventasFilt2.length} transacciones</div></div>
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 border-l-4 border-l-indigo-600"><div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Volumen Despachado</div><div className="flex gap-4 mt-1"><div><div className="text-2xl font-black text-gray-800">{formatNum(totU)}</div><div className="text-[8px] font-black text-gray-400 uppercase">Unidades</div></div><div className="w-px bg-gray-100"/><div><div className="text-2xl font-black text-gray-800">{formatNum(totMill)}</div><div className="text-[8px] font-black text-gray-400 uppercase">Millares</div></div></div></div>
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 border-l-4 border-l-emerald-600"><div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2">Masa Neta (KG)</div><div className="grid grid-cols-3 gap-1"><div><div className="text-xl font-black text-emerald-700">{formatNum(kgSF2)}</div><div className="text-[7px] font-black text-gray-400 uppercase">Stretch</div></div><div className="border-x border-gray-100 px-1 text-center"><div className="text-xl font-black text-gray-700">{formatNum(kgPK2)}</div><div className="text-[7px] font-black text-gray-400 uppercase">Kraft</div></div><div className="text-right"><div className="text-xl font-black text-orange-600">{formatNum(kgT2)}</div><div className="text-[7px] font-black text-gray-400 uppercase">Termo</div></div></div></div>
+              <div className="bg-gray-900 rounded-2xl shadow-sm p-4">{tCat.slice(0,4).map(([cat,val],ci)=>(<div key={cat} className="flex justify-between items-center mb-1.5"><span className="text-[8px] font-black text-gray-400 uppercase">{cat}</span><span className="text-xs font-black" style={{color:CLRS[ci]}}>{fU(val)}</span></div>))}{tCat.length===0&&<p className="text-[9px] text-gray-500 italic">Sin datos</p>}</div>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+              <div className="flex gap-1 p-3 bg-gray-50 border-b border-gray-100 flex-wrap">
+                {[{k:'productos',label:'📦 Productos'},{k:'clientes',label:'🏢 Clientes'},{k:'vendedores',label:'👤 Vendedores'},{k:'categorias',label:'🏷️ Categorías'}].map(tab=>(
+                  <button key={tab.k} onClick={()=>setFVF('tabActiva',tab.k)} className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${fVF.tabActiva===tab.k?'bg-blue-600 text-white':'text-gray-500 hover:bg-gray-100'}`}>{tab.label}</button>
+                ))}
+              </div>
+              <div className="p-5">
+                {fVF.tabActiva==='productos'&&(<div><h3 className="font-black text-sm uppercase text-gray-700 border-l-4 border-blue-600 pl-3 mb-4">TOP 10 Productos</h3>{t10P.length===0?<p className="text-center text-gray-400 text-xs py-8 uppercase font-black">Sin datos</p>:t10P.map(([p,v],i)=><BarRow key={p} label={p} val={v} max={mx(t10P)} colorIdx={i}/>)}</div>)}
+                {fVF.tabActiva==='clientes'&&(<div><h3 className="font-black text-sm uppercase text-gray-700 border-l-4 border-blue-600 pl-3 mb-4">TOP 10 Clientes</h3>{t10C.length===0?<p className="text-center text-gray-400 text-xs py-8 uppercase font-black">Sin datos</p>:t10C.map(([c,v],i)=><BarRow key={c} label={c} val={v} max={mx(t10C)} colorIdx={i}/>)}</div>)}
+                {fVF.tabActiva==='vendedores'&&(<div><h3 className="font-black text-sm uppercase text-gray-700 border-l-4 border-blue-600 pl-3 mb-4">Ventas por Vendedor</h3>{tV2.length===0?<p className="text-center text-gray-400 text-xs py-8 uppercase font-black">Sin datos</p>:tV2.map(([v2,val],i)=><BarRow key={v2} label={v2} val={val} max={mx(tV2)} colorIdx={i}/>)}</div>)}
+                {fVF.tabActiva==='categorias'&&(<div><h3 className="font-black text-sm uppercase text-gray-700 border-l-4 border-blue-600 pl-3 mb-4">Por Categoría</h3><div className="space-y-3">{tCat.map(([cat,val],i)=>(<div key={cat}><div className="flex justify-between mb-1"><span className="text-xs font-black text-gray-700 uppercase">{cat}</span><span className="text-xs font-black text-gray-900">{fU(val)} <span className="text-gray-400">({fp(val,totCat)})</span></span></div><div className="bg-gray-100 rounded-full h-3"><div className="h-3 rounded-full transition-all" style={{width:`${(val/totCat*100).toFixed(1)}%`,background:CLRS[i%CLRS.length]}}/></div></div>))}{tCat.length===0&&<p className="text-center text-gray-400 text-xs py-8 uppercase font-black">Sin datos</p>}</div></div>)}
+              </div>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50"><h3 className="font-black text-sm uppercase text-gray-800">Detalle de Transacciones — {tF2.length} registros</h3></div>
+              <div className="overflow-x-auto"><table className="w-full text-left text-xs">
+                <thead className="bg-gray-50 text-[9px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100"><tr><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Cliente</th><th className="px-4 py-3">Vendedor</th><th className="px-4 py-3">Producto</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3 text-right">Cant.</th><th className="px-4 py-3 text-right">P.Unit.</th><th className="px-4 py-3 text-right">Total USD</th></tr></thead>
+                <tbody className="divide-y divide-gray-50">{tF2.length===0?<tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 uppercase font-black text-xs">Sin datos para los filtros seleccionados</td></tr>:tF2.slice(0,200).map((r,i)=>(<tr key={i} className="hover:bg-blue-50/30 transition-all"><td className="px-4 py-3 text-gray-400 font-bold">{r.fecha}</td><td className="px-4 py-3 font-black text-gray-900">{r.cliente}</td><td className="px-4 py-3 text-gray-600 font-bold">{r.vendedor}</td><td className="px-4 py-3 text-gray-600">{r.producto}</td><td className="px-4 py-3"><span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white" style={{background:CLRS[['STRETCH FILM','BOLSAS','TERMOENCOGIBLE','CINTAS','PAPEL KRAFT','OTROS'].indexOf(r.tipo)%CLRS.length]||'#71717a'}}>{r.tipo}</span></td><td className="px-4 py-3 text-right font-bold">{formatNum(r.cantidad)} {r.unidad}</td><td className="px-4 py-3 text-right text-gray-500">{fU(r.precioUnit)}</td><td className="px-4 py-3 text-right font-black text-gray-900 text-sm">{fU(r.subtotal)}</td></tr>))}
+                </tbody>
+                <tfoot className="bg-gray-900 text-white font-black"><tr><td colSpan={7} className="px-4 py-3 text-right text-gray-400 uppercase text-[9px]">Total:</td><td className="px-4 py-3 text-right text-xl text-blue-400">{fU(totV)}</td></tr></tfoot>
+              </table></div>
+            </div>
+          </div>);
+        })()}
+
         {ventasView === 'libro_ventas' && (() => {
           // ── helpers de formato venezolano ─────────────────────────────────────
           const fmtVen = n => {
@@ -22998,6 +23090,7 @@ ${resumenHtml}
                    {id:'notas_cd',            icon:<FileText size={15}/>,   label:'NC / ND',         perm:'ventas_nc_nd'},
                    {id:'comisiones',          icon:<DollarSign size={15}/>, label:'Comisiones',      perm:'ventas_comisiones'},
                    {id:'vendedores',          icon:<Users size={15}/>,      label:'Vendedores',      perm:'ventas_vendedores'},
+                   {id:'grafica_ventas',      icon:<BarChart3 size={15}/>,  label:'Gráfica',          perm:'ventas_graficas'},
                  ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
