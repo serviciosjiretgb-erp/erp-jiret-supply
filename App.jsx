@@ -12564,18 +12564,32 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(tipo==='TERMOENCOGIBLE') return (unit||'').toLowerCase()==='kg'?parseNum(cant):parseNum(kgF||0);
             const kpu=parseKgDesc(desc); return kpu>0?kpu*cant:parseNum(kgF||0);
           };
-          // Localidad: extraer ciudad de la dirección con más variantes
-          const CIUDADES=['MARACAIBO','MCBO','VALENCIA','VLC','BARQUISIMETO','BQTO','MARACAY','CARACAS','CCS','MATURIN','BARCELONA','PUERTO LA CRUZ','CIUDAD GUAYANA','MERIDA','BARINAS','CUMANA','PUNTO FIJO','CALABOZO','SAN CRISTOBAL','GUANARE','ACARIGUA','PORLAMAR'];
-          const CIUDADES_NORM={'MCBO':'Maracaibo','VLC':'Valencia','BQTO':'Barquisimeto','CCS':'Caracas'};
+          // Localidad: detectar SOLO la ciudad del directorio de clientes
+          const CIUDAD_MAP=[
+            ['MARACAIBO','Maracaibo'],['MCBO','Maracaibo'],['CIRCUNVALACION','Maracaibo'],
+            ['CIRVUNVALACION','Maracaibo'],['KM 30','Maracaibo'],['KM30','Maracaibo'],
+            ['PERIJA','Maracaibo'],['LA CA','Maracaibo'],['CONCEPCION','Maracaibo'],
+            ['SAN FRANCISCO','San Francisco'],['CABIMAS','Cabimas'],['CIUDAD OJEDA','Ciudad Ojeda'],
+            ['LAGUNILLAS','Lagunillas'],['PUNTO FIJO','Punto Fijo'],['CORO ','Coro'],
+            ['VALENCIA','Valencia'],['VLC','Valencia'],['GUACARA','Guacara'],
+            ['SAN JOAQUIN','Guacara'],['LOS GUAYOS','Los Guayos'],
+            ['PUERTO CABELLO','Puerto Cabello'],['NAGUANAGUA','Naguanagua'],
+            ['CARACAS','Caracas'],['CCS','Caracas'],['GUARENAS','Guarenas'],['GUATIRE','Guatire'],
+            ['MARACAY','Maracay'],['LA VICTORIA','La Victoria'],['CAGUA','Cagua'],
+            ['VILLA DE CURA','Villa de Cura'],['BARQUISIMETO','Barquisimeto'],['BQTO','Barquisimeto'],
+            ['CABUDARE','Cabudare'],['ARAURE','Araure'],['ACARIGUA','Acarigua'],['GUANARE','Guanare'],
+            ['MERIDA','Mérida'],['EL VIGIA','El Vigía'],['BARINAS','Barinas'],
+            ['MATURIN','Maturín'],['BARCELONA','Barcelona'],['PUERTO LA CRUZ','Puerto La Cruz'],
+            ['CIUDAD GUAYANA','Ciudad Guayana'],['PUERTO ORDAZ','Puerto Ordaz'],
+            ['CUMANA','Cumaná'],['SAN CRISTOBAL','San Cristóbal'],
+          ];
           const getLoc=(rif,nombre)=>{
             const c=(clients||[]).find(cl=>cl.rif===rif||(cl.name||cl.nombre||cl.razonSocial||'').toUpperCase().trim()===(nombre||'').toUpperCase().trim());
             const dir=((c?.direccion||c?.address||c?.ciudad||'')).toUpperCase();
-            for(const ci of CIUDADES){if(dir.includes(ci)){const n=CIUDADES_NORM[ci];return n?n:ci.charAt(0)+ci.slice(1).toLowerCase();}}
-            // Fallback: tomar el primer token que parezca ciudad (empieza con mayúscula, no es número)
-            if(dir){const parts=dir.split(/[,.\n\/]+/).map(s=>s.trim()).filter(s=>s.length>3&&!/^\d/.test(s));if(parts.length) return parts[0].charAt(0)+parts[0].slice(1).toLowerCase();}
-            return 'Sin localidad';
+            if(!dir) return 'Sin localidad';
+            for(const[k,v] of CIUDAD_MAP){if(dir.includes(k)) return v;}
+            return 'Otras ciudades';
           };
-          // Comisiones desde configuración del sistema
           const comCfgDef={porcentaje:2,base:'montoBase',umbral:0,tipoCalculo:'porcentaje_ventas'};
           const comCfg=settings?.comisionesConfig||comCfgDef;
 
@@ -12651,8 +12665,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const comList=Object.entries(comPorVend).sort((a,b)=>b[1]-a[1]);
           const comTotal=comList.reduce((s,x)=>s+x[1],0);
 
-          const srch=fVF.srch||'';
-          const rowsFilt=rows.filter(r=>!fVF.cat||r.tipo===fVF.cat).filter(r=>!srch||r.cliente.toLowerCase().includes(srch.toLowerCase())||r.vendedor.toLowerCase().includes(srch.toLowerCase()));
+
 
           // ── Donut SVG ──────────────────────────────────────────────────────────────
           const donutSegs=(()=>{
@@ -12905,60 +12918,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 </div>
               </div>
 
-              {/* TABLA */}
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50 flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="font-black text-sm uppercase text-gray-800">Detalle de Transacciones</h3>
-                  <div className="relative">
-                    <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-                    <input value={srch} onChange={e=>setFVF('srch',e.target.value)}
-                      placeholder="Buscar cliente o vendedor…"
-                      className="pl-8 pr-4 py-2 border border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400 w-64"/>
-                  </div>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-gray-50 text-[9px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                      <tr>
-                        <th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Cliente</th>
-                        <th className="px-4 py-3">Vendedor</th><th className="px-4 py-3">Localidad</th>
-                        <th className="px-4 py-3">Producto</th><th className="px-4 py-3">Categ.</th>
-                        <th className="px-4 py-3 text-right">Cant.</th>
-                        <th className="px-4 py-3 text-right">P.Unit.</th>
-                        <th className="px-4 py-3 text-right">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {rowsFilt.length===0?(
-                        <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 uppercase font-black text-xs">Sin datos</td></tr>
-                      ):rowsFilt.slice(0,300).map((r,i)=>(
-                        <tr key={i} className="hover:bg-blue-50/30 transition-all">
-                          <td className="px-4 py-3 text-gray-400 font-bold whitespace-nowrap">{r.fecha}</td>
-                          <td className="px-4 py-3 font-black text-gray-900">{r.cliente}</td>
-                          <td className="px-4 py-3 text-gray-600 font-bold whitespace-nowrap">{r.vendedor}</td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{r.loc}</td>
-                          <td className="px-4 py-3 text-gray-700 max-w-xs">{r.prod}</td>
-                          <td className="px-4 py-3">
-                            <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white whitespace-nowrap"
-                              style={{background:CLRS[['STRETCH FILM','BOLSAS','TERMOENCOGIBLE','CINTAS','PAPEL KRAFT','OTROS'].indexOf(r.tipo)%CLRS.length]||'#71717a'}}>
-                              {r.tipo}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right font-bold whitespace-nowrap">{formatNum(r.cant)} {r.und}</td>
-                          <td className="px-4 py-3 text-right text-gray-500 whitespace-nowrap">{fU(r.pu)}</td>
-                          <td className="px-4 py-3 text-right font-black text-gray-900 whitespace-nowrap">{fU(r.sub)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot className="bg-gray-900 text-white font-black">
-                      <tr>
-                        <td colSpan={8} className="px-4 py-3 text-right text-gray-400 uppercase text-[9px]">Total:</td>
-                        <td className="px-4 py-3 text-right text-xl text-blue-400">{fU(totV)}</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
+
 
             </div>
           );
