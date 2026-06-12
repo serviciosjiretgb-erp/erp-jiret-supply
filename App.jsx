@@ -3444,25 +3444,33 @@ export default function App() {
       const kgFinales = parseNum(phaseData.producedKg) || parseNum(reqDoc.requestedKg) || 0;
 
       {
-        // Imputación Directa: cierre directo sin WIP — siempre este path
-        // Generate structured code: FG-CATEGORIA-WxLx0.MIC
-        const _catRaw = (reqDoc.categoria||reqDoc.desc||'PT').toUpperCase().trim();
-        const _catShort = _catRaw.replace(/[\s\/\-&]+/g,'').substring(0,18);
-        const _w = parseFloat(reqDoc.ancho||0); const _l = parseFloat(reqDoc.largo||0);
-        let _m = parseFloat(reqDoc.micras||0);
-        const _strDims = (_w>0||_l>0) ? `${_w}x${_l}x${_m}` : '';
-        const _codigoFinal = _strDims ? `FG-${_catShort}-${_strDims}` : `FG-${_catShort}-${Date.now()}`;
-        const _descFinal = _strDims ? `${_catRaw} - ${_w}X${_l}X${Math.round(_m*1000||_m)}MIC` : _catRaw;
+        // ── El producto de destino DEBE estar asignado en la OP desde Ventas ──
+        const _productoDestId = (reqDoc.productoDestinoId||'').trim();
+        if (!_productoDestId) {
+          setDialog({
+            title: '⚠️ Producto No Asignado',
+            text: `La OP #${reqId.replace('OP-','')} no tiene un Producto de Destino asignado.\n\nVe a Ventas → Requisiciones → Editar esta OP y selecciona el producto de inventario de Terminados al que debe ir la producción.\n\nEl cierre de lote NO puede completarse sin este dato.`,
+            type: 'alert'
+          });
+          return;
+        }
+        // Buscar el producto de destino en inventario para obtener su descripción real
+        const _invDestDoc = (inventory||[]).find(i => {
+          const cc = (i.displayId||(i.id||'').split('___')[0]).trim();
+          return cc === _productoDestId || i.id === _productoDestId || (i.id||'').startsWith(_productoDestId+'___');
+        });
+        const _codigoFinalReal = _productoDestId; // SIEMPRE el producto asignado, sin excepciones
+        const _descFinalReal = _invDestDoc?.desc || reqDoc.desc || reqDoc.categoria || _productoDestId;
 
         // Crear entrada sin WIP (cierre directo)
         const finishedEntry = {
-          id: _codigoFinal,
+          id: _codigoFinalReal,
           opId: reqId,
           reqId: reqId,
           cliente: reqDoc.client || 'N/A',
           tipoProducto: reqDoc.tipoProducto || 'BOLSAS',
           categoria: reqDoc.categoria || '',
-          producto: _descFinal || reqDoc.desc || reqDoc.categoria || 'Producto',
+          producto: _descFinalReal,
           ancho: reqDoc.ancho || 0,
           largo: reqDoc.largo || 0,
           micras: reqDoc.micras || 0,
@@ -3477,7 +3485,7 @@ export default function App() {
           observaciones: phaseData.observations || '',
           timestamp: Date.now()
         };
-        await setDoc(getDocRef('finishedGoodsInventory', finishedEntry.id), finishedEntry);
+        await setDoc(getDocRef('finishedGoodsInventory', _codigoFinalReal), finishedEntry);
         // ── AUTO-SYNC FG → Inventario Terminados (ALMACEN ZI) ──
         // Find the EXISTING inventory PT doc for this product (match by cleanCode from finishedGoodsInventory)
         // Use the same cleanCode logic as the rest of the system
@@ -3516,26 +3524,33 @@ export default function App() {
           const costoUnitario = newQty > 0 && totalCostMP > 0 ? totalCostMP / newQty : 0;
 
           // ── Find the existing PT inventory doc to update ──
-          // Match strategy: (1) exact cleanCode match against finishedGoodsInventory, 
-          // (2) description match, (3) create new with structured code
+          // PRIORIDAD 1: si hay producto de destino asignado, buscarlo exacto en inventario
           let existingInvDoc = null;
           const descNorm = descFG.toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
-
-          // Try to find existing inventory PT doc by description similarity
           const ptInvDocs = (inventory||[]).filter(i => i.category==='Productos Terminados' && i.activo!==false);
-          existingInvDoc = ptInvDocs.find(i => {
-            const iNorm = (i.desc||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
-            return iNorm === descNorm;
-          }) || ptInvDocs.find(i => {
-            // match by cleanCode without ALMACEN suffix
-            const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
-            const fgCC = _codigoFinal.replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
-            return cc === fgCC;
-          });
+
+          // ── PRIMERO: usar productoDestinoId si la OP lo tiene asignado ──
+          if (_productoDestId) {
+            existingInvDoc = ptInvDocs.find(i => {
+              const cc = (i.displayId||(i.id||'').split('___')[0]).trim();
+              return cc === _productoDestId || i.id === _productoDestId || (i.id||'').startsWith(_productoDestId+'___');
+            });
+          }
+          // ── SEGUNDO: buscar por descripción normalizada ──
+          if (!existingInvDoc) {
+            existingInvDoc = ptInvDocs.find(i => {
+              const iNorm = (i.desc||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,22);
+              return iNorm === descNorm;
+            }) || ptInvDocs.find(i => {
+              const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+              const fgCC = _codigoFinalReal.replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
+              return cc === fgCC;
+            });
+          }
 
           if(existingInvDoc) {
             // ── ADD to existing stock, update cost ──
-            const existingCleanId = existingInvDoc.displayId || existingInvDoc.id.split('___')[0];
+            const existingCleanId = existingInvDoc.displayId || existingInvDoc.id.split('___')[0] || _codigoFinalReal;
             // Find all docs for this cleanCode (all warehouses)
             const allDocsForCode = (inventory||[]).filter(i => {
               const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
@@ -3559,21 +3574,13 @@ export default function App() {
               }, { merge: true });
             }
           } else {
-            // ── Create new PT inventory doc with structured cleanCode ──
-            const fgInvId = `${_codigoFinal}___ALMACEN-ZI`;
-            await setDoc(getDocRef('inventory', fgInvId), {
-              id: fgInvId, displayId: _codigoFinal,
-              desc: descFG,
-              category: 'Productos Terminados',
-              subcategory,
-              unit,
-              stock: newQty,
-              cost: costoUnitario,
-              almacen: 'ALMACEN ZI',
-              opId: reqId, cliente: finishedEntry.cliente || '',
-              activo: true,
-              timestamp: Date.now(), updatedAt: getTodayDate()
+            // ── El producto asignado NO existe en inventario → BLOQUEAR, no crear ──
+            setDialog({
+              title: '⚠️ Producto No Encontrado en Inventario',
+              text: `El producto de destino "${_productoDestId}" asignado a la OP #${reqId.replace('OP-','')} no existe en el inventario de Productos Terminados.\n\nVerifica que el código del producto sea correcto o crea primero el producto en Inventario → Terminados antes de cerrar el lote.\n\nEl lote NO fue cerrado.`,
+              type: 'alert'
             });
+            return;
           }
 
           // Also update costoUnitario on finishedGoodsInventory entry
@@ -3597,7 +3604,7 @@ export default function App() {
           allReqsKdx.forEach(r => { let cReq=0; (r.items||[]).forEach(it => { const itInv=(inventory||[]).find(i=>i.id===it.id||(i.displayId||(i.id||'').split('___')[0])===((it.id||'').split('___')[0])); const q=parseNum(it.qty||0); cReq+=q*parseNum(itInv?.cost||0); kdxQtyTotal+=q; }); if(cReq<=0) cReq=parseNum(r.costoDespachado||0); kdxCostTotal+=cReq; });
           const kdxCostUnit = fgProdQty > 0 && kdxCostTotal > 0 ? kdxCostTotal / fgProdQty : 0;
           if(fgProdQty > 0) await addDoc(getColRef('inventoryMovements'), {
-            itemId: _codigoFinal,
+            itemId: _codigoFinalReal,
             itemDesc:`${finishedEntry.producto||''} — ${finishedEntry.cliente||''}`,
             type:'ENTRADA', qty:fgProdQty, unitCost:kdxCostUnit, totalValue:fgProdQty*kdxCostUnit,
             reference:`OP-CIERRE-${reqId}`,
