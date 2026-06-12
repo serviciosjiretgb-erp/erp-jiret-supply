@@ -22991,7 +22991,7 @@ ${resumenHtml}
                    {id:'notas_cd',            icon:<FileText size={15}/>,   label:'NC / ND',         perm:'ventas_nc_nd'},
                    {id:'comisiones',          icon:<DollarSign size={15}/>, label:'Comisiones',      perm:'ventas_comisiones'},
                    {id:'vendedores',          icon:<Users size={15}/>,      label:'Vendedores',      perm:'ventas_vendedores'},
-                 ].filter(t=>hasPerm(t.perm)||hasPerm('ventas')||appUser?.role==='Master').map(t => (
+                 ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
               </div>
@@ -23002,13 +23002,13 @@ ${resumenHtml}
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[52px] sm:top-[72px] z-30">
               <div className="w-full flex items-stretch overflow-x-auto" style={{scrollbarWidth:'none', msOverflowStyle:'none'}}>
                 {/* GROUP 1: SOLICITUDES — perms: inv_planta, inv_almacen */}
-                {([{id:'requisiciones',perm:'inv_planta'},{id:'almacen',perm:'inv_almacen'}].some(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master')) && <div className="flex flex-col border-r border-gray-200">
+                {([{id:'requisiciones',perm:'inv_planta'},{id:'almacen',perm:'inv_almacen'}].some(t=>hasPerm(t.perm)||appUser?.role==='Master')) && <div className="flex flex-col border-r border-gray-200">
                   <div className="text-[8px] font-black text-orange-500 uppercase tracking-widest px-4 pt-2 pb-0.5">Solicitudes</div>
                   <div className="flex gap-0">
                     {[
                       {id:'requisiciones', icon:<ClipboardList size={14}/>, label:'Planta', perm:'inv_planta'},
                       {id:'almacen', icon:<Warehouse size={14}/>, label:'Almacén/OC', perm:'inv_almacen'},
-                    ].filter(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master').map(t=>(
+                    ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
                   </div>
@@ -23022,13 +23022,13 @@ ${resumenHtml}
                       {id:'finished',       icon:<Package size={14}/>,   label:'Terminados',   perm:'inv_terminados'},
                       {id:'alimentario',    icon:<FileText size={14}/>,  label:'Orden Salida', perm:'inv_osa'},
                       {id:'almacenes_mgmt', icon:<Warehouse size={14}/>, label:'Almacenes',    perm:'inv_almacenes'},
-                    ].filter(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master').map(t=>(
+                    ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
                   </div>
                 </div>}
                 {/* GROUP 3: OPERACIONES — perms: inv_operaciones, inv_kardex */}
-                {([{perm:'inv_operaciones'},{perm:'inv_kardex'}].some(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master')) && <div className="flex flex-col">
+                {([{perm:'inv_operaciones'},{perm:'inv_kardex'}].some(t=>hasPerm(t.perm)||appUser?.role==='Master')) && <div className="flex flex-col">
                   <div className="text-[8px] font-black text-green-600 uppercase tracking-widest px-4 pt-2 pb-0.5">Operaciones de Inventario</div>
                   <div className="flex gap-0">
                     {[
@@ -23037,7 +23037,7 @@ ${resumenHtml}
                       {id:'toma_fisica', icon:<ClipboardEdit size={14}/>,    label:'Toma Física', perm:'inv_operaciones'},
                       {id:'kardex',      icon:<History size={14}/>,          label:'Kardex',      perm:'inv_kardex'},
                       {id:'reporte177',  icon:<FileCheck size={14}/>,        label:'Mov. Unidades',     perm:'inv_movimientos'},
-                    ].filter(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master').map(t=>(
+                    ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();setShowMovForm(false);if(t.id==='entradas')setMovForm(f=>({...f,type:'ENTRADA'}));if(t.id==='salidas')setMovForm(f=>({...f,type:'AUTOCONSUMO'}));}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
                   </div>
@@ -23056,7 +23056,7 @@ ${resumenHtml}
                    {id:'activos',       icon:<PlayCircle size={16}/>,     label:'Producción Activa',  perm:'produccion_activa'}, 
                    {id:'en_proceso',    icon:<Gauge size={16}/>,          label:'Reporte en Proceso', perm:'produccion_proceso'},
                    {id:'reportes',      icon:<FileText size={16}/>,       label:'Historial / Reportes',perm:'produccion_historial'}
-                 ].filter(t => hasPerm(t.perm) || hasPerm('produccion') || appUser?.role==='Master').map(t => (
+                 ].filter(t => hasPerm(t.perm) || appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setProdView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${prodView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
               </div>
