@@ -225,12 +225,22 @@ const SYSTEM_MODULES = [
   {
     id: 'ventas',
     label: '1. MÓDULO Ventas y Facturación',
-    icon: '👥',
+    icon: '💼',
     submodules: [
-      { id: 'ventas_facturacion',        label: 'Facturación' },
-      { id: 'ventas_directorio',         label: 'Directorio' },
-      { id: 'ventas_ops',                label: 'OPs' },
+      { id: 'ventas_dashboard',        label: 'Dashboard Ventas' },
+      { id: 'ventas_facturacion',      label: 'Facturación (Facturas / Invoices)' },
+      { id: 'ventas_ne',               label: 'Notas de Entrega (NE)' },
+      { id: 'ventas_cotizaciones',     label: 'Cotizaciones' },
+      { id: 'ventas_directorio',       label: 'Directorio de Clientes' },
+      { id: 'ventas_ops',              label: 'OPs (Requisiciones)' },
       { id: 'ventas_productos_vendidos', label: 'Productos Vendidos' },
+      { id: 'ventas_reporte',          label: 'Reporte General de Ventas y Costos' },
+      { id: 'ventas_transacciones',    label: 'Transacciones de Ventas' },
+      { id: 'ventas_libro',            label: 'Libro de Ventas' },
+      { id: 'ventas_retenciones',      label: 'Retenciones de IVA' },
+      { id: 'ventas_nc_nd',            label: 'Notas de Crédito / Débito' },
+      { id: 'ventas_comisiones',       label: 'Comisiones' },
+      { id: 'ventas_vendedores',       label: 'Vendedores / Equipo' },
     ]
   },
   {
@@ -238,12 +248,12 @@ const SYSTEM_MODULES = [
     label: '2. MÓDULO Producción Planta',
     icon: '🏭',
     submodules: [
-      { id: 'produccion_proyeccion', label: 'Proyección MP' },
-      { id: 'produccion_bobinas',    label: 'Prod. Bobinas' },
-      { id: 'produccion_requisicion',label: 'Requisición' },
-      { id: 'produccion_activa',     label: 'Producción Activa' },
-      { id: 'produccion_proceso',    label: 'Reporte en Proceso' },
-      { id: 'produccion_historial',  label: 'Historial Reportes' },
+      { id: 'produccion_proyeccion',  label: 'Proyección MP' },
+      { id: 'produccion_bobinas',     label: 'Prod. Bobinas' },
+      { id: 'produccion_requisicion', label: 'Requisición' },
+      { id: 'produccion_activa',      label: 'Producción Activa' },
+      { id: 'produccion_proceso',     label: 'Reporte en Proceso' },
+      { id: 'produccion_historial',   label: 'Historial Reportes' },
     ]
   },
   {
@@ -257,12 +267,15 @@ const SYSTEM_MODULES = [
     label: '4. MÓDULO Control Inventario',
     icon: '📦',
     submodules: [
-      { id: 'inv_planta',      label: 'Solicitudes de Planta' },
-      { id: 'inv_almacen',     label: 'Almacén / OC' },
-      { id: 'inv_finished',    label: 'Inv. Productos Terminados' },
-      { id: 'inv_terminados',  label: 'Terminados' },
-      { id: 'inv_operaciones', label: 'Operaciones (Entradas, Salidas, TF)' },
-      { id: 'inv_kardex',      label: 'Kardex / Mov. Unidades' },
+      { id: 'inv_planta',       label: 'Solicitudes de Planta' },
+      { id: 'inv_almacen',      label: 'Almacén / Órdenes de Compra' },
+      { id: 'inv_general',      label: 'Inventario General' },
+      { id: 'inv_terminados',   label: 'Productos Terminados' },
+      { id: 'inv_osa',          label: 'Orden de Salida de Almacén (OSA)' },
+      { id: 'inv_almacenes',    label: 'Gestión de Almacenes (Traslados)' },
+      { id: 'inv_operaciones',  label: 'Operaciones (Entradas / Salidas / Toma Física)' },
+      { id: 'inv_kardex',       label: 'Kardex' },
+      { id: 'inv_movimientos',  label: 'Movimiento por Unidades' },
     ]
   },
   {
@@ -288,12 +301,12 @@ const SYSTEM_MODULES = [
     label: '8. MÓDULO Reportes Financieros',
     icon: '📊',
     submodules: [
-      { id: 'rep_mermas',     label: 'Mermas (OPs + Bobinas)' },
-      { id: 'rep_bobinas',    label: 'Reporte Bobinas' },
-      { id: 'rep_mensual',    label: 'Resumen Mensual' },
-      { id: 'rep_finiquito',  label: 'Finiquito por OP' },
-      { id: 'rep_estado',     label: 'Estado Financiero' },
-      { id: 'rep_variaciones',label: 'Variaciones' },
+      { id: 'rep_mermas',      label: 'Mermas (OPs + Bobinas)' },
+      { id: 'rep_bobinas',     label: 'Reporte Bobinas' },
+      { id: 'rep_mensual',     label: 'Resumen Mensual' },
+      { id: 'rep_finiquito',   label: 'Finiquito por OP' },
+      { id: 'rep_estado',      label: 'Estado Financiero' },
+      { id: 'rep_variaciones', label: 'Variaciones' },
     ]
   },
   {
@@ -301,8 +314,8 @@ const SYSTEM_MODULES = [
     label: '9. MÓDULO Configuración',
     icon: '⚙️',
     submodules: [
-      { id: 'conf_usuarios',  label: 'Usuarios y Permisos' },
-      { id: 'conf_respaldo',  label: 'Respaldo' },
+      { id: 'conf_usuarios', label: 'Usuarios y Permisos' },
+      { id: 'conf_respaldo', label: 'Respaldo y Sistema' },
     ]
   },
   {
@@ -1310,7 +1323,7 @@ export default function App() {
       foundUser = {
         id: 'Administrador', username: 'Administrador', password: MASTER_PASS,
         name: 'Administrador General', role: 'Master',
-        permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true }
+        permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true,ventas_dashboard:true,ventas_ne:true,ventas_cotizaciones:true,ventas_reporte:true,ventas_transacciones:true,ventas_libro:true,ventas_retenciones:true,ventas_nc_nd:true,ventas_comisiones:true,ventas_vendedores:true,inv_general:true,inv_osa:true,inv_almacenes:true,inv_movimientos:true }
       };
       // Recreate in Firestore — sin await para no bloquear login
       setDoc(getDocRef('users','Administrador'), {...foundUser, timestamp: Date.now()}).catch(()=>{});
@@ -1389,7 +1402,7 @@ export default function App() {
         setDoc(getDocRef('users', 'Administrador'), {
           username: 'Administrador', password: 'Supply2026.Admin',
           name: 'Administrador General', role: 'Master',
-          permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true },
+          permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true,ventas_dashboard:true,ventas_ne:true,ventas_cotizaciones:true,ventas_reporte:true,ventas_transacciones:true,ventas_libro:true,ventas_retenciones:true,ventas_nc_nd:true,ventas_comisiones:true,ventas_vendedores:true,inv_general:true,inv_osa:true,inv_almacenes:true,inv_movimientos:true },
           _seeded: true, timestamp: Date.now()
         });
       }
@@ -22947,33 +22960,38 @@ ${resumenHtml}
                        await addDoc(getColRef('userActivity'), {
                          username: appUser.username, name: appUser.name, action: 'LOGOUT',
                          module: 'Sistema', details: 'Cierre de sesión manual',
-                         timestamp: Date.now(), date: getTodayDate()
-                       });
-                     } catch(e) {}
+                         timestamp: Date.now(), createdAt: getTodayDate(), text: 'Cierre de sesión' });
+                     } catch(err) { console.warn('Activity log error', err); }
                    }
-                   setAppUser(null);
-                 }} className="p-2.5 bg-red-500/10 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all border border-red-500/20 flex items-center gap-2 text-[10px] font-black uppercase"><LogOut size={16}/> <span className="hidden sm:inline">Salir</span></button>
-              </div>
-           </div>
-        </nav>
+                   try { await import('firebase/auth').then(({getAuth,signOut})=>signOut(getAuth())); } catch(e){}
+                   setIsAuthenticated(false); setAppUser(null);
+                 }} className="flex items-center gap-1 px-3 py-2 text-xs font-black text-red-500 hover:bg-red-50 rounded-xl transition-all">
+                   <LogOut size={13}/> <span className="hidden sm:inline">Salir</span>
+                 </button>
+
+               </div>
+             </div>
+             </nav>
+        )}
 
         {activeTab === 'ventas' && (
-           <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
+           <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[52px] sm:top-[72px] z-30">
               <div className="w-full flex gap-0.5 px-2 overflow-x-auto" style={{scrollbarWidth:'none',msOverflowStyle:'none'}}>
-                 {[ 
-                   {id:'dashboard',          icon:<BarChart3 size={15}/>, label:'Dashboard',        perm:'ventas_facturacion'},
-                   {id:'facturacion',        icon:<Receipt size={15}/>,   label:'Factura',       perm:'ventas_facturacion'}, 
-                   {id:'notas_entrega',      icon:<FileText size={15}/>,  label:'NE',  perm:'ventas_facturacion'},
-                   {id:'cotizaciones',       icon:<FileText size={15}/>,  label:'Cotizaciones',      perm:'ventas_facturacion'},
-                   {id:'clientes',           icon:<Users size={15}/>,     label:'Directorio',        perm:'ventas_directorio'}, 
-                   {id:'requisiciones',      icon:<FileText size={15}/>,  label:'OPs',               perm:'ventas_ops'},
-                   {id:'productos_vendidos', icon:<Package size={15}/>,   label:'Prod. Vendidos',perm:'ventas_productos_vendidos'},
-                   {id:'reporte_ventas',     icon:<BarChart3 size={15}/>, label:'Rpt. Ventas',    perm:'ventas_facturacion'},
-                   {id:'transacciones_ventas',icon:<BarChart3 size={15}/>, label:'Transac.',    perm:'ventas_facturacion'},
-                    {id:'libro_ventas',        icon:<BookOpen size={15}/>,  label:'Libro Vtas',   perm:'ventas_facturacion'},
-                    {id:'notas_cd',            icon:<FileText size={15}/>,  label:'NC / ND',          perm:'ventas_facturacion'},
-                   {id:'comisiones',         icon:<DollarSign size={15}/>,label:'Comisiones',       perm:'ventas_facturacion'},
-                   {id:'vendedores',          icon:<Users size={15}/>,     label:'Vendedores',        perm:'ventas_facturacion'},
+                 {[
+                   {id:'dashboard',           icon:<BarChart3 size={15}/>,  label:'Dashboard',       perm:'ventas_dashboard'},
+                   {id:'facturacion',         icon:<Receipt size={15}/>,    label:'Factura',         perm:'ventas_facturacion'},
+                   {id:'notas_entrega',       icon:<FileText size={15}/>,   label:'NE',              perm:'ventas_ne'},
+                   {id:'cotizaciones',        icon:<FileText size={15}/>,   label:'Cotizaciones',    perm:'ventas_cotizaciones'},
+                   {id:'clientes',            icon:<Users size={15}/>,      label:'Directorio',      perm:'ventas_directorio'},
+                   {id:'requisiciones',       icon:<FileText size={15}/>,   label:'OPs',             perm:'ventas_ops'},
+                   {id:'productos_vendidos',  icon:<Package size={15}/>,    label:'Prod. Vendidos',  perm:'ventas_productos_vendidos'},
+                   {id:'reporte_ventas',      icon:<BarChart3 size={15}/>,  label:'Rpt. Ventas',     perm:'ventas_reporte'},
+                   {id:'transacciones_ventas',icon:<BarChart3 size={15}/>,  label:'Transac.',        perm:'ventas_transacciones'},
+                   {id:'libro_ventas',        icon:<BookOpen size={15}/>,   label:'Libro Vtas',      perm:'ventas_libro'},
+                   {id:'retenciones_iva',     icon:<FileCheck size={15}/>,  label:'Retenciones',     perm:'ventas_retenciones'},
+                   {id:'notas_cd',            icon:<FileText size={15}/>,   label:'NC / ND',         perm:'ventas_nc_nd'},
+                   {id:'comisiones',          icon:<DollarSign size={15}/>, label:'Comisiones',      perm:'ventas_comisiones'},
+                   {id:'vendedores',          icon:<Users size={15}/>,      label:'Vendedores',      perm:'ventas_vendedores'},
                  ].filter(t=>hasPerm(t.perm)||hasPerm('ventas')||appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
@@ -23001,10 +23019,10 @@ ${resumenHtml}
                   <div className="text-[8px] font-black text-blue-500 uppercase tracking-widest px-4 pt-2 pb-0.5">Inventarios</div>
                   <div className="flex gap-0">
                     {[
-                      {id:'catalogo',       icon:<Box size={14}/>,       label:'General',      perm:'inv_almacen'},
+                      {id:'catalogo',       icon:<Box size={14}/>,       label:'General',      perm:'inv_general'},
                       {id:'finished',       icon:<Package size={14}/>,   label:'Terminados',   perm:'inv_terminados'},
-                      {id:'alimentario',    icon:<FileText size={14}/>,  label:'Orden Salida', perm:'inv_operaciones'},
-                      {id:'almacenes_mgmt', icon:<Warehouse size={14}/>, label:'Almacenes',    perm:'inv_almacen'},
+                      {id:'alimentario',    icon:<FileText size={14}/>,  label:'Orden Salida', perm:'inv_osa'},
+                      {id:'almacenes_mgmt', icon:<Warehouse size={14}/>, label:'Almacenes',    perm:'inv_almacenes'},
                     ].filter(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master').map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
@@ -23019,7 +23037,7 @@ ${resumenHtml}
                       {id:'salidas',     icon:<ArrowUpFromLine size={14}/>,  label:'Salidas',     perm:'inv_operaciones'},
                       {id:'toma_fisica', icon:<ClipboardEdit size={14}/>,    label:'Toma Física', perm:'inv_operaciones'},
                       {id:'kardex',      icon:<History size={14}/>,          label:'Kardex',      perm:'inv_kardex'},
-                      {id:'reporte177',  icon:<FileCheck size={14}/>,        label:'Mov. Unidades',     perm:'inv_kardex'},
+                      {id:'reporte177',  icon:<FileCheck size={14}/>,        label:'Mov. Unidades',     perm:'inv_movimientos'},
                     ].filter(t=>hasPerm(t.perm)||hasPerm('inventario')||appUser?.role==='Master').map(t=>(
                       <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();setShowMovForm(false);if(t.id==='entradas')setMovForm(f=>({...f,type:'ENTRADA'}));if(t.id==='salidas')setMovForm(f=>({...f,type:'AUTOCONSUMO'}));}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                     ))}
