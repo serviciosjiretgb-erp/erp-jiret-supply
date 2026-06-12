@@ -22972,7 +22972,6 @@ ${resumenHtml}
                </div>
              </div>
              </nav>
-        )}
 
         {activeTab === 'ventas' && (
            <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[52px] sm:top-[72px] z-30">
