@@ -19,7 +19,7 @@ import {
   Activity, Timer, Award, PackageCheck, Calendar, ChevronDown, CheckSquare, RotateCcw, Settings, BookOpen} from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "firebase/auth";
 import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, getDocs } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
@@ -22963,7 +22963,7 @@ ${resumenHtml}
                          timestamp: Date.now(), createdAt: getTodayDate(), text: 'Cierre de sesión' });
                      } catch(err) { console.warn('Activity log error', err); }
                    }
-                   try { await import('firebase/auth').then(({getAuth,signOut})=>signOut(getAuth())); } catch(e){}
+                   await signOut(auth);
                    setIsAuthenticated(false); setAppUser(null);
                  }} className="flex items-center gap-1 px-3 py-2 text-xs font-black text-red-500 hover:bg-red-50 rounded-xl transition-all">
                    <LogOut size={13}/> <span className="hidden sm:inline">Salir</span>
