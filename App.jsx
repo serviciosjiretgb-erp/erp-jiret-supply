@@ -905,7 +905,7 @@ export default function App() {
       const tmp = document.createElement('div');
       tmp.innerHTML = contenidoHtml;
       tmp.querySelectorAll('[data-html2canvas-ignore]').forEach(el=>el.remove());
-      tmp.querySelectorAll('.pdf-header').forEach(el=>{el.style.display='block';el.classList.remove('hidden');});
+      tmp.querySelectorAll('.pdf-header').forEach(el=>el.remove()); // membrete ya en _abrirVentanaReporte
       proc = tmp.innerHTML;
     } catch(e){}
     const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;font-size:11px;color:#111;}.reporte-wrap{max-width:1000px;margin:0 auto;background:#fff;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.1);overflow:hidden;}.membrete{display:flex;justify-content:space-between;align-items:center;padding:16px 24px 12px;border-bottom:3px solid #f97316;}.logo-l1{font-size:10px;font-weight:700;color:#374151;letter-spacing:3px;text-transform:uppercase;}.logo-l2{font-size:28px;font-weight:900;color:#f97316;line-height:1;}.empresa-info{text-align:right;}.empresa-info h2{font-size:13px;font-weight:900;text-transform:uppercase;color:#111;}.empresa-info p{font-size:8.5px;color:#555;line-height:1.6;}.contenido{padding:16px 24px 24px;}.btn-print{display:block;margin:0 24px 16px;padding:12px 0;background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:4px;text-align:center;width:calc(100% - 48px);}.no-pdf,[data-html2canvas-ignore]{display:none!important;}.pdf-header{display:block!important;visibility:visible!important;}table{width:100%;border-collapse:collapse;font-size:10px;}th{background:#1f2937;color:#fff;padding:7px 10px;text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}td{padding:6px 10px;border-bottom:1px solid #e5e7eb;color:#111;vertical-align:top;}tr:nth-child(even) td{background:#f9fafb;}tfoot td{background:#1f2937!important;color:#fff;font-weight:900;padding:7px 10px;}.font-black{font-weight:900;}.font-bold{font-weight:700;}.text-xs{font-size:10px;}.text-sm{font-size:11px;}.text-lg{font-size:16px;}.text-xl{font-size:18px;}.text-2xl{font-size:20px;}.text-gray-400,.text-gray-500{color:#9ca3af;}.text-gray-600{color:#4b5563;}.text-gray-700{color:#374151;}.text-gray-900{color:#111;}.text-orange-500,.text-orange-600{color:#f97316;}.text-green-600,.text-green-700{color:#16a34a;}.text-blue-600,.text-blue-700{color:#2563eb;}.text-red-500,.text-red-600{color:#dc2626;}.text-black{color:#111;}.text-white{color:#fff;}.text-right{text-align:right;}.text-center{text-align:center;}.uppercase{text-transform:uppercase;}.border{border:1px solid #e5e7eb;}.border-b{border-bottom:1px solid #e5e7eb;}.border-r{border-right:1px solid #e5e7eb;}.rounded{border-radius:4px;}.rounded-xl{border-radius:10px;}.p-2{padding:7px;}.p-3{padding:10px;}.p-4{padding:14px;}.px-3{padding-left:10px;padding-right:10px;}.px-4{padding-left:14px;padding-right:14px;}.py-2{padding-top:7px;padding-bottom:7px;}.py-3{padding-top:10px;padding-bottom:10px;}.mb-2{margin-bottom:7px;}.mb-3{margin-bottom:10px;}.mb-4{margin-bottom:14px;}.mb-6{margin-bottom:22px;}.mt-1{margin-top:3px;}.mt-2{margin-top:7px;}.mt-4{margin-top:14px;}.flex{display:flex;}.items-center{align-items:center;}.justify-between{justify-content:space-between;}.gap-2{gap:8px;}.gap-3{gap:10px;}.gap-4{gap:14px;}.space-y-2>*+*{margin-top:7px;}.space-y-4>*+*{margin-top:14px;}.grid{display:grid;}.grid-cols-2{grid-template-columns:repeat(2,1fr);}.grid-cols-3{grid-template-columns:repeat(3,1fr);}.grid-cols-4{grid-template-columns:repeat(4,1fr);}.w-full{width:100%;}.overflow-hidden{overflow:hidden;}.bg-white{background:#fff;}.bg-gray-50{background:#f9fafb;}.bg-gray-100{background:#f3f4f6;}.bg-gray-800{background:#1f2937;}.bg-gray-900{background:#111;}.bg-orange-50{background:#fff7ed;}.bg-orange-500{background:#f97316;}.hidden{display:none;}.block{display:block;}.pdf-header{display:block!important;}.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.whitespace-nowrap{white-space:nowrap;}@media print{body{background:#fff;padding:0;}.reporte-wrap{box-shadow:none;border-radius:0;}.btn-print{display:none!important;}th{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
@@ -1553,7 +1553,7 @@ export default function App() {
       '1.1.03.01.007': 'PRODUCTOS EN PROCESO (INV-INICIAL)',
       '1.1.03.01.008': 'PRODUCTOS TERMINADOS (INV-FINAL)',
       '5.1.01.01.001': 'COSTO DE PRODUCCIÓN Y VENTAS',
-      '4.1.01.01.000': 'INGRESOS POR MAQUILA',
+      '4.1.01.01.000': 'INGRESOS POR PRODUCCIÓN',
     };
     return map[codigo] || codigo;
   };
@@ -10937,16 +10937,21 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(!d1||!d2) return 0;
             return Math.round((new Date(d2+'T00:00:00')-new Date(d1+'T00:00:00'))/(1000*60*60*24));
           };
-          // NEs del período del vendedor seleccionado
+          // NEs del vendedor — TODAS (sin filtro de mes, para ver pendientes históricos)
+          const [cobFiltro, setCobFiltro] = React.useState('pendiente');
           const nesCobranza = (notasEntrega||[]).filter(ne => {
-            const neYm = (ne.fecha||'').substring(0,7);
-            return neYm === ym && (!comVendedor || (ne.vendedor||'').toUpperCase()===comVendedor.toUpperCase());
-          });
-          const cobranzaCalc = nesCobranza.map(ne => {
+            if(!comVendedor || (ne.vendedor||'').toUpperCase()===comVendedor.toUpperCase()) {
+              // Solo filtrar por vendedor, no por mes
+              return true;
+            }
+            return false;
+          }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+          const cobranzaCalcAll = nesCobranza.map(ne => {
             const pago = (comCobranza||[]).find(c=>c.neId===ne.id)||{};
             const condicion = parseInt(ne.diasCredito||0);
             const vencimiento = ne.fechaVencimiento || calcVencCobranza(ne.fecha, condicion);
             const fechaPago = pago.fechaPago || '';
+            const cobrado = !!(pago.cobrado || fechaPago);
             const diasRetraso = fechaPago && vencimiento ? Math.max(0, diffDias(vencimiento, fechaPago)) : 0;
             const esc = fechaPago ? calcRango(diasRetraso) : null;
             const pct = esc ? esc.pct : 0;
@@ -10955,9 +10960,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             return {
               neId: ne.id, fecha: ne.fecha, cliente: ne.clientName||'',
               monto, condicion, vencimiento, fechaPago, diasRetraso,
-              rango, pct, montoPagar: monto*(pct/100)
+              rango, pct, montoPagar: monto*(pct/100), cobrado
             };
           });
+          const cobranzaCalc = cobranzaCalcAll.filter(r => 
+            cobFiltro==='todos' ? true : cobFiltro==='cobrado' ? r.cobrado : !r.cobrado
+          );
           const totalCobranza = cobranzaCalc.reduce((s,r)=>s+r.montoPagar,0);
           const updCobranza = (i,campo,val) => {
             const neId = cobranzaCalc[i]?.neId;
@@ -11168,7 +11176,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span className="text-[10px] font-black uppercase tracking-widest">3. Comisión por Cobranza (desde Notas de Entrega)</span>
                     <span className="text-[9px] text-gray-400">Solo ingresa la Fecha de Pago — todo lo demás se calcula automático</span>
                   </div>
-                  <div className="px-4 py-2 bg-gray-50 text-[8px] font-bold text-gray-500 uppercase">Escala: {(cfg.cobranzaEscala||[]).map((e,i)=>`Rango ${i+1} (${e.dMin}-${e.dMax}d): ${e.pct}%`).join('  ·  ')}</div>
+                   <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-3 flex-wrap">
+                     <span className="text-[8px] font-bold text-gray-500 uppercase">Escala: {(cfg.cobranzaEscala||[]).map((e,ei)=>`R${ei+1}: ${e.dMin}-${e.dMax}d → ${e.pct}%`).join(' | ')||'No configurada'}</span>
+                     <div className="ml-auto flex gap-1">{['pendiente','cobrado','todos'].map(f=>(<button key={f} onClick={()=>setCobFiltro(f)} className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${cobFiltro===f?'bg-orange-500 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{f==='pendiente'?`⏳ Pendientes (${cobranzaCalcAll.filter(r=>!r.cobrado).length})`:f==='cobrado'?`✅ Cobrados (${cobranzaCalcAll.filter(r=>r.cobrado).length})`:'📋 Todos'}</button>))}</div>
+                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500">
@@ -11182,7 +11193,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <th className="px-2 py-2 text-center">Días Retraso</th>
                         <th className="px-2 py-2 text-center">Rango</th>
                         <th className="px-2 py-2 text-center">%</th>
-                        <th className="px-2 py-2 text-right">A Pagar</th>
+                        <th className="px-2 py-2 text-center">Estado</th><th className="px-2 py-2 text-right">A Pagar</th>
                       </tr></thead>
                       <tbody className="divide-y divide-gray-50">
                         {cobranzaCalc.length===0 ? (
@@ -11207,7 +11218,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             </td>
                             <td className="px-2 py-1.5 text-center font-black text-blue-700">{r.rango||'—'}</td>
                             <td className="px-2 py-1.5 text-center font-black">{r.pct>0?formatNum(r.pct)+'%':'—'}</td>
-                            <td className="px-2 py-1.5 text-right font-black text-green-700">${formatNum(r.montoPagar)}</td>
+                            <td className="px-2 py-1.5 text-center">
+                               <button onClick={()=>updCobranza(i,'cobrado',!r.cobrado)} className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase transition-all ${r.cobrado?'bg-green-100 text-green-700 hover:bg-red-100 hover:text-red-600':'bg-red-50 text-red-500 hover:bg-green-100 hover:text-green-700'}`}>
+                                 {r.cobrado?'✅ Cobrado':'⏳ Pendiente'}
+                               </button>
+                             </td>
+                             <td className="px-2 py-1.5 text-right font-black text-green-700">${formatNum(r.montoPagar)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -11988,36 +12004,41 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <td className="py-4 px-4 text-center"><div className="flex justify-center gap-2">
                          <button onClick={()=>{
                            const empresa=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
-                           const diasCred=c?.diasCredito||c?.diasCredito===0?c.diasCredito:'N/A';
+                           const diasCred=c?.diasCredito!=null?c.diasCredito:'N/A';
+                           const condStr=diasCred==='0'||diasCred===0?'Contado (0 días)':(diasCred+'  días de crédito');
                            const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
-                             body{font-family:Arial,sans-serif;color:#111;padding:40px;max-width:800px;margin:0 auto;}
-                             .logo{font-size:20px;font-weight:900;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;}
-                             .subtitle{font-size:9px;text-transform:uppercase;letter-spacing:3px;color:#666;margin-bottom:32px;}
-                             h1{font-size:18px;font-weight:900;text-transform:uppercase;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:24px;}
-                             .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
-                             .field label{font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:2px;color:#999;display:block;margin-bottom:4px;}
-                             .field p{font-size:13px;font-weight:700;color:#111;margin:0;border-bottom:1px solid #eee;padding-bottom:8px;}
+                             *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}body{padding:32px;color:#111;}
+                             .header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #f97316;padding-bottom:12px;margin-bottom:20px;}
+                             .logo-s{font-size:10px;font-weight:700;color:#555;letter-spacing:3px;text-transform:uppercase;}.logo-g{font-size:26px;font-weight:900;color:#f97316;line-height:1;}
+                             .emp{text-align:right;}.emp h2{font-size:13px;font-weight:900;text-transform:uppercase;margin-bottom:3px;}.emp p{font-size:8px;color:#666;line-height:1.6;}
+                             h1{font-size:16px;font-weight:900;text-transform:uppercase;margin-bottom:4px;}
+                             .rif-badge{display:inline-block;background:#f97316;color:#fff;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:900;margin-bottom:18px;}
+                             .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;}
+                             .field label{font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:2px;color:#999;display:block;margin-bottom:3px;}
+                             .field p{font-size:12px;font-weight:700;color:#111;padding-bottom:6px;border-bottom:1px solid #eee;}
                              .field.full{grid-column:1/-1;}
-                             .badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:10px;font-weight:900;background:#f97316;color:#fff;text-transform:uppercase;}
-                             .footer{margin-top:40px;padding-top:16px;border-top:1px solid #eee;font-size:9px;color:#999;text-align:center;}
+                             .footer{margin-top:28px;padding-top:12px;border-top:1px solid #eee;font-size:8px;color:#aaa;text-align:center;}
+                             @media print{body{padding:20px;}}
                            </style></head><body>
-                             <div class="logo">${empresa}</div>
-                             <div class="subtitle">Ficha de Cliente</div>
-                             <h1>📋 ${c?.name||c?.razonSocial||'Sin nombre'}</h1>
+                             <div class="header">
+                               <div><div class="logo-s">Supply</div><div class="logo-g">G&amp;B</div></div>
+                               <div class="emp"><h2>${empresa}</h2><p>RIF: ${settings?.empresaRif||'J-412309374'}<br>${settings?.empresaDireccion||''}<br>${settings?.empresaTelefono?'Tel: '+settings.empresaTelefono:''}</p></div>
+                             </div>
+                             <h1>📋 ${c?.name||c?.razonSocial||'—'}</h1>
+                             <div class="rif-badge">${c?.rif||'—'}</div>
                              <div class="grid">
-                               <div class="field"><label>RIF</label><p>${c?.rif||'—'}</p></div>
                                <div class="field"><label>Ciudad</label><p>${c?.ciudad||'—'}</p></div>
                                <div class="field"><label>Estado</label><p>${c?.estado||'—'}</p></div>
+                               <div class="field full"><label>Dirección Fiscal</label><p>${c?.direccion||'—'}</p></div>
                                <div class="field"><label>Teléfono</label><p>${c?.telefono||'—'}</p></div>
-                               <div class="field full"><label>Dirección</label><p>${c?.direccion||'—'}</p></div>
                                <div class="field"><label>Persona de Contacto</label><p>${c?.personaContacto||'—'}</p></div>
                                <div class="field"><label>Vendedor Asignado</label><p>${c?.vendedor||'Sin asignar'}</p></div>
-                               <div class="field"><label>Condiciones de Crédito</label><p>${diasCred==='0'||diasCred===0?'Contado (0 días)':diasCred+' días de crédito'}</p></div>
-                               <div class="field"><label>Desde</label><p>${c?.fechaCreacion||(c?.timestamp?new Date(c.timestamp).toLocaleDateString('es-VE'):'—')}</p></div>
+                               <div class="field"><label>Condiciones de Crédito</label><p>${condStr}</p></div>
+                               <div class="field"><label>Cliente Desde</label><p>${c?.fechaCreacion||(c?.timestamp?new Date(c.timestamp).toLocaleDateString('es-VE'):'—')}</p></div>
                              </div>
                              <div class="footer">Generado por ${empresa} · ${new Date().toLocaleDateString('es-VE')}</div>
-                           </body></html>`;
-                           const w=window.open('','_blank');w.document.write(html);w.document.close();w.print();
+                           </body></html>\`;
+                           const w=window.open('','_blank');html);w.document.close();w.print();
                          }} className="p-2.5 bg-orange-50 text-orange-600 rounded-xl hover:bg-orange-500 hover:text-white transition-all" title="Ficha PDF">
                            <FileText size={16}/>
                          </button>
@@ -12467,7 +12488,47 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <td className="py-2 px-3 text-gray-500 max-w-xs truncate">{n.descripcion}</td>
                               <td className="py-2 px-3">
                                 <div className="flex gap-1">
-                                   <button onClick={()=>{const _nc=n.tipo==='NC';const _i=(invoices||[]).find(x=>x.id===n.facturaId);const _e=(notasEntrega||[]).find(x=>x.id===n.neId);const _c=_i?.clientName||_e?.clientName||'-';const _t=parseNum(n.tasaFactura||_i?.tasa||_e?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;const _u=_t>1?parseFloat((parseNum(n.monto||0)/_t).toFixed(2)):parseNum(n.monto||0);const _em=settings?.empresaRazonSocial||'SERVICIOS JIRET';const _doc=n.nroDocumento||'-';handlePDFFromHTML('<div style="font-family:Arial;padding:20px"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:10px;margin-bottom:16px"><div><b style="font-size:22px;color:#f97316">G&amp;B</b></div><div style="text-align:right"><b>'+_em+'</b><br><small>RIF: '+(settings?.empresaRif||'J-412309374')+'</small></div></div><h2 style="text-align:center;color:'+(_nc?'#dc2626':'#2563eb')+'">'+n.tipo+'</h2><p style="text-align:center;font-size:20px;font-weight:900;margin-bottom:16px">'+_doc+'</p><table style="width:100%;border-collapse:collapse"><tr><td style="padding:7px;border:1px solid #ddd;background:#f9fafb;font-weight:700;width:40%">Fecha</td><td style="padding:7px;border:1px solid #ddd">'+(n.fecha||'-')+'</td></tr><tr><td style="padding:7px;border:1px solid #ddd;background:#f9fafb;font-weight:700">Doc. Afectado</td><td style="padding:7px;border:1px solid #ddd;color:#1d4ed8">'+(_i?.nroFiscal||_e?.id||n.facturaId||'-')+'</td></tr><tr><td style="padding:7px;border:1px solid #ddd;background:#f9fafb;font-weight:700">Cliente</td><td style="padding:7px;border:1px solid #ddd;font-weight:700">'+_c+'</td></tr><tr><td style="padding:7px;border:1px solid #ddd;background:#f9fafb;font-weight:700">N° Control</td><td style="padding:7px;border:1px solid #ddd">'+(n.nroControl||'-')+'</td></tr><tr><td style="padding:7px;border:1px solid #ddd;background:#f9fafb;font-weight:700">Descripción</td><td style="padding:7px;border:1px solid #ddd">'+(n.descripcion||'-')+'</td></tr></table><div style="background:'+(_nc?'#fef2f2':'#eff6ff')+';border:2px solid '+(_nc?'#dc2626':'#2563eb')+';border-radius:8px;padding:14px;text-align:center;margin-top:16px"><div style="font-size:9px;color:#555;text-transform:uppercase">'+(_nc?'Monto a Deducir':'Monto a Incrementar')+'</div><div style="font-size:26px;font-weight:900;color:'+(_nc?'#dc2626':'#2563eb')+'">'+(_nc?'- ':'')+' $'+formatNum(_u)+'</div><div style="font-size:9px;color:#888">Bs. '+formatNum(parseNum(n.monto||0))+'</div></div></div>',n.tipo+'_'+_doc);}} className="p-1.5 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white transition-all" title="Ver PDF"><FileText size={13}/></button>
+                                   <button onClick={()=>{
+                                     const _nc=n.tipo==='NC';
+                                     const _inv=(invoices||[]).find(x=>x.id===n.facturaId);
+                                     const _ne=(notasEntrega||[]).find(x=>x.id===n.neId);
+                                     const _cli=_inv?.clientName||_ne?.clientName||'—';
+                                     const _rif=_inv?.clientRif||_ne?.clientRif||'—';
+                                     const _t=parseNum(n.tasaFactura||_inv?.tasa||_ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+                                     const _baseUSD=_t>1?parseFloat((parseNum(n.monto||0)/_t).toFixed(2)):parseNum(n.monto||0);
+                                     const _baseBs=parseNum(n.monto||0);
+                                     const _pctIVA=16;
+                                     const _ivaUSD=parseFloat((_baseUSD*_pctIVA/100).toFixed(2));
+                                     const _ivaBs=parseFloat((_baseBs*_pctIVA/100).toFixed(2));
+                                     const _totalUSD=parseFloat((_baseUSD+_ivaUSD).toFixed(2));
+                                     const _totalBs=parseFloat((_baseBs+_ivaBs).toFixed(2));
+                                     const _em=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+                                     const _doc=n.nroDocumento||'—';
+                                     const _color=_nc?'#dc2626':'#2563eb';
+                                     const _h=`<html><head><meta charset="utf-8"/><style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial;padding:24px;color:#111;}h1{font-size:14px;font-weight:900;text-align:center;text-transform:uppercase;color:${_color};margin:12px 0 4px;}h2{font-size:22px;font-weight:900;text-align:center;margin-bottom:16px;}.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid ${_color};padding-bottom:10px;margin-bottom:16px;}.logo{font-size:24px;font-weight:900;color:#f97316;}.emp{text-align:right;font-size:9px;color:#555;}table{width:100%;border-collapse:collapse;margin-bottom:14px;}td{padding:7px 10px;border:1px solid #ddd;}td:first-child{background:#f9fafb;font-weight:700;width:40%;}.totales{width:100%;border-collapse:collapse;}.totales td{padding:8px 12px;border:1px solid #ddd;}.totales .lbl{background:#f9fafb;font-weight:700;}.totales .val{text-align:right;font-weight:700;font-size:12px;}.totales .total-row td{background:${_color};color:#fff;font-weight:900;font-size:14px;}.badge{display:inline-block;padding:4px 12px;border-radius:20px;background:${_color};color:#fff;font-size:10px;font-weight:900;margin-bottom:12px;}</style></head><body>
+                                       <div class="header"><div><div class="logo">G&amp;B</div><small style="letter-spacing:2px;text-transform:uppercase;font-size:8px">SERVICIOS JIRET</small></div><div class="emp"><b>${_em}</b><br>RIF: ${settings?.empresaRif||'J-412309374'}<br>${settings?.empresaDireccion||''}<br>${settings?.empresaTelefono||''}</div></div>
+                                       <h1>${n.tipo==='NC'?'NOTA DE CRÉDITO':'NOTA DE DÉBITO'}</h1>
+                                       <h2>${_doc}</h2>
+                                       <div class="badge">${n.tipo}</div>
+                                       <table>
+                                         <tr><td>Fecha</td><td>${n.fecha||'—'}</td></tr>
+                                         <tr><td>Naturaleza</td><td>${n.naturaleza||'FISCAL'}</td></tr>
+                                         <tr><td>N° Control</td><td>${n.nroControl||'—'}</td></tr>
+                                         <tr><td>Doc. Afectado</td><td style="color:#1d4ed8">${_inv?.nroFiscal||_ne?.id||n.facturaId||'—'}</td></tr>
+                                         <tr><td>Fecha Comprobante</td><td>${_inv?.fecha||_ne?.fecha||'—'}</td></tr>
+                                         <tr><td>Cliente</td><td style="font-weight:700;font-size:12px">${_cli}</td></tr>
+                                         <tr><td>RIF Cliente</td><td>${_rif}</td></tr>
+                                         <tr><td>Tasa Cambio</td><td>Bs. ${formatNum(_t)} / USD</td></tr>
+                                         <tr><td>Descripción</td><td>${n.descripcion||'—'}</td></tr>
+                                       </table>
+                                       <table class="totales">
+                                         <tr><td class="lbl">Base Imponible USD</td><td class="val" style="color:#555">${_nc?'':'+'}$\${formatNum(_baseUSD)}</td><td class="lbl">Base Imponible Bs.</td><td class="val" style="color:#555">Bs. \${formatNum(_baseBs)}</td></tr>
+                                         <tr><td class="lbl">IVA (${_pctIVA}%)</td><td class="val">${_nc?'':'+'}$\${formatNum(_ivaUSD)}</td><td class="lbl">IVA Bs.</td><td class="val">Bs. \${formatNum(_ivaBs)}</td></tr>
+                                         <tr class="total-row"><td>TOTAL ${n.tipo}</td><td style="text-align:right">${_nc?'- ':''}\$\${formatNum(_totalUSD)}</td><td>TOTAL Bs.</td><td style="text-align:right">Bs. \${formatNum(_totalBs)}</td></tr>
+                                       </table>
+                                     </body></html>`;
+                                     handlePDFFromHTML(_h,n.tipo+'_'+_doc);
+                                   }} className="p-1.5 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white transition-all" title="Ver PDF"><FileText size={13}/></button>
                                   <button onClick={()=>{setVentaNCForm({...n,monto:String(n.monto||'')});setVentaNCBusq('');setShowVentaNCModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={12}/></button>
                                   <button onClick={()=>setDialog({title:`Eliminar ${n.tipo}`,text:`¿Eliminar ${n.nroDocumento}?`,type:'confirm',onConfirm:async()=>{try{await deleteDoc(getDocRef('notasVentaCreditoDebito',n.id));setDialog({title:'✅ Eliminada',text:'',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
                                 </div>
@@ -13719,8 +13780,8 @@ ${resumenHtml}
                       const rf=(retenciones||[]).filter(r=>{
                         const f=r.fechaComprobante||r.fecha||'';
                         if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
-                        if(retFiltQ2==='1'&&parseInt(f.substring(8,10))>15)return false;
-                        if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
+                        if(retFiltQ2==='1'&&r.quincena!=='1')return false;
+                         if(retFiltQ2==='2'&&r.quincena!=='2')return false;
                         if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                         const inv=(invoices||[]).find(i=>i.id===r.facturaId);
                         const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -13733,8 +13794,8 @@ ${resumenHtml}
                       <button onClick={()=>{
                         const retFilt=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
                           if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
-                          if(retFiltQ2==='1'&&parseInt(f.substring(8,10))>15)return false;
-                          if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
+                          if(retFiltQ2==='1'&&r.quincena!=='1')return false;
+                         if(retFiltQ2==='2'&&r.quincena!=='2')return false;
                           if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                           const inv=(invoices||[]).find(i=>i.id===r.facturaId);
                           const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -13749,8 +13810,8 @@ ${resumenHtml}
                       <button onClick={()=>{
                         const retFilt=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
                           if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
-                          if(retFiltQ2==='1'&&parseInt(f.substring(8,10))>15)return false;
-                          if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
+                          if(retFiltQ2==='1'&&r.quincena!=='1')return false;
+                         if(retFiltQ2==='2'&&r.quincena!=='2')return false;
                           if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                           const inv=(invoices||[]).find(i=>i.id===r.facturaId);
                           const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -13789,8 +13850,8 @@ ${resumenHtml}
                       {(()=>{
                         const retFilt=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
                           if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
-                          if(retFiltQ2==='1'&&parseInt(f.substring(8,10))>15)return false;
-                          if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
+                          if(retFiltQ2==='1'&&r.quincena!=='1')return false;
+                         if(retFiltQ2==='2'&&r.quincena!=='2')return false;
                           if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                           const inv=(invoices||[]).find(i=>i.id===r.facturaId);
                           const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -13834,8 +13895,8 @@ ${resumenHtml}
                 // Recalcular retFilt para el paginador inferior
                 const retFiltPag=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
                   if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
-                  if(retFiltQ2==='1'&&parseInt(f.substring(8,10))>15)return false;
-                  if(retFiltQ2==='2'&&parseInt(f.substring(8,10))<=15)return false;
+                  if(retFiltQ2==='1'&&r.quincena!=='1')return false;
+                         if(retFiltQ2==='2'&&r.quincena!=='2')return false;
                   if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                   const inv2=(invoices||[]).find(i=>i.id===r.facturaId);
                   if(retFiltCli2&&!(inv2?.clientName||'').toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -19805,7 +19866,7 @@ ${resumenHtml}
                       {tasa>1&&<div className="text-[9px] text-green-500 font-bold">Bs. {bs(efaData.totalIngresos)}</div>}
                     </div>
                     <div className="p-5 border-r border-gray-200 text-center">
-                      <div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Costos</div>
+                      <div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Costos de Producción</div>
                       <div className="font-black text-xl text-red-600">${formatNum(efaData.totalCostos)}</div>
                       {tasa>1&&<div className="text-[9px] text-red-500 font-bold">Bs. {bs(efaData.totalCostos)}</div>}
                     </div>
@@ -19827,7 +19888,7 @@ ${resumenHtml}
                     </thead>
                     <tbody>
                       {/* ── INGRESOS ── colapsable */}
-                      <tr className="bg-orange-500 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>INGRESOS</td></tr>
+                      <tr className="bg-orange-500 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>INGRESOS POR PRODUCCIÓN</td></tr>
                       <tr className="bg-orange-50 cursor-pointer hover:bg-orange-100 select-none" onClick={()=>setErExpanded(p=>({...p,ingresos:!p.ingresos}))}>
                         <td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-orange-800" colSpan={tasa>1?4:3}>
                            <span className="mr-2">{erExpanded.ingresos?'▼':'▶'}</span>
@@ -19854,7 +19915,7 @@ ${resumenHtml}
                       )) : <tr><td colSpan={tasa>1?5:4} className="py-1.5 px-4 pl-20 text-[10px] text-gray-400 italic">Sin registros en este período</td></tr>
                       )}
                       <tr className="bg-orange-100">
-                        <td className="py-2.5 px-4 text-[10px] uppercase pl-8 text-orange-800 font-black" colSpan={2}>Total INGRESOS</td>
+                        <td className="py-2.5 px-4 text-[10px] uppercase pl-8 text-orange-800 font-black" colSpan={2}>Total INGRESOS POR PRODUCCIÓN</td>
                         <td className="py-2.5 px-3 text-right font-black text-orange-700">{formatNum(efaData.totalIngresos)}</td>
                         <td className="py-2.5 px-3 text-center text-[9px] font-black">100.00%</td>
                         {tasa>1&&<td className="py-2.5 px-3 text-right font-black text-orange-700">{bs(efaData.totalIngresos)}</td>}
@@ -19863,14 +19924,14 @@ ${resumenHtml}
                       <tr><td colSpan={tasa>1?5:4} className="py-2"></td></tr>
 
                       {/* ── COSTOS ── */}
-                      <tr className="bg-gray-800 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>COSTOS</td></tr>
+                      <tr className="bg-gray-800 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>COSTOS DE PRODUCCIÓN</td></tr>
 
                       {/* Costo produccion — colapsable */}
                       <tr className="bg-gray-200 cursor-pointer hover:bg-gray-300 select-none"
                         onClick={()=>setErExpanded(p=>({...p,costo_ventas:!p.costo_ventas}))}>
                         <td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={tasa>1?4:3}>
                           <span className="mr-2">{erExpanded.costo_ventas?'▼':'▶'}</span>
-                          {(()=>{const conOP=(efaData.cogsRows||[]).filter(r=>r.cuentaCosto==='5.1.01.01.002').length;const sinOP=(efaData.cogsRows||[]).length-conOP;return conOP>0&&sinOP===0?'COSTO DE VENTA (PRODUCCIÓN) — 5.1.01.01.002':sinOP>0&&conOP===0?'COSTO DE VENTA (MERCANCÍA) — 5.1.01.01.001':'COSTO DE VENTA (5.1.01.01.001 / 5.1.01.01.002)';})()}
+                          {(()=>{const conOP=(efaData.cogsRows||[]).filter(r=>r.cuentaCosto==='5.1.01.01.002').length;const sinOP=(efaData.cogsRows||[]).length-conOP;return conOP>0&&sinOP===0?'COSTOS DE PRODUCCIÓN (BOLSAS / TERMOENCOGIBLES)':sinOP>0&&conOP===0?'COSTOS DE PRODUCCIÓN':'COSTOS DE PRODUCCIÓN';})()}
                           <span className="ml-3 text-[9px] text-gray-400">{erExpanded.costo_ventas?'contraer':'expandir detalle'}</span>
                         </td>
                         <td className="py-1.5 px-3 text-right font-black">${formatNum(efaData.totalCostoProd)}</td>
@@ -19907,7 +19968,7 @@ ${resumenHtml}
                       {erExpanded.costo_ventas && (efaData.cogsRows||[]).length===0 &&
                         <tr><td colSpan={tasa>1?5:4} className="py-1.5 px-4 pl-14 text-[10px] text-gray-400 italic">Sin ventas de producción</td></tr>}
                       <tr className="bg-gray-100 border-b border-gray-300">
-                        <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total COSTO DE VENTAS</td>
+                        <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={2}>Total COSTOS DE PRODUCCIÓN</td>
                         <td className="py-2 px-3 text-right font-black">{formatNum(efaData.totalCostoProd)}</td>
                         <td className="py-2 px-3 text-center text-[9px] font-black">{pctOf(efaData.totalCostoProd,efaData.totalIngresos)}</td>
                         {tasa>1&&<td className="py-2 px-3 text-right font-black">{bs(efaData.totalCostoProd)}</td>}
@@ -19998,12 +20059,12 @@ ${resumenHtml}
                       </tr>
                     </thead>
                     <tbody>
-                      <tr className="bg-orange-100"><td colSpan={9} className="py-2 px-4 font-black uppercase text-orange-800">INGRESOS</td></tr>
+                      <tr className="bg-orange-100"><td colSpan={9} className="py-2 px-4 font-black uppercase text-orange-800">INGRESOS POR PRODUCCIÓN</td></tr>
                       <tr className="bg-orange-50"><td colSpan={9} className="py-1.5 px-4 font-black text-[9px] uppercase pl-8 text-orange-700">VENTAS BRUTAS</td></tr>
                       {(()=>{
                         const a=dataA.totalIngresos,b=dataB.totalIngresos,v=a-b,vr=b!==0?((v/b)*100).toFixed(2)+'%':'—';
                         return(<tr className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>INGRESOS POR VENTAS / MAQUILA</td>
+                          <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>INGRESOS POR PRODUCCIÓN</td>
                           <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td><td className="py-2 px-3 text-right font-black text-green-600">{formatNum(a)}</td>
                           <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(b)}</td>
                           <td className="py-2 px-3 text-center text-[9px] font-black">{v>=0?'▲':'▼'} USD</td>
@@ -20014,7 +20075,7 @@ ${resumenHtml}
                       {(()=>{
                         const a=dataA.totalIngresos,b=dataB.totalIngresos,v=a-b;
                         return(<tr className="bg-orange-100">
-                          <td className="py-2 px-4 font-black text-[10px] uppercase" colSpan={2}>Total INGRESOS</td>
+                          <td className="py-2 px-4 font-black text-[10px] uppercase" colSpan={2}>Total INGRESOS POR PRODUCCIÓN</td>
                           <td className="py-2 px-3 text-center text-[9px] font-black text-orange-700">USD</td><td className="py-2 px-3 text-right font-black text-orange-700">{formatNum(a)}</td>
                           <td className="py-2 px-3 text-center text-[9px] font-black text-orange-700">USD</td><td className="py-2 px-3 text-right font-black text-orange-700">{formatNum(b)}</td>
                           <td className="py-2 px-3 text-center font-black text-[9px]">{v>=0?'▲':'▼'} USD</td>
@@ -20155,7 +20216,7 @@ ${resumenHtml}
       '1.1.03.01.004': { label: 'MATERIA PRIMA (INV-FINAL)',       tipo: 'Activo',  color: 'green'   },
       '1.1.03.01.008': { label: 'PRODUCTOS TERMINADOS (INV-FINAL)',tipo: 'Activo',  color: 'orange'  },
       '5.1.01.01.001': { label: 'COSTO DE PRODUCCIÓN Y VENTAS',    tipo: 'Gasto',   color: 'red'     },
-      '4.1.01.01.000': { label: 'INGRESOS POR MAQUILA',            tipo: 'Ingreso', color: 'emerald' },
+      '4.1.01.01.000': { label: 'INGRESOS POR PRODUCCIÓN',            tipo: 'Ingreso', color: 'emerald' },
       '1.1.01.01.001': { label: 'BANCOS / CTAS POR COBRAR',        tipo: 'Activo',  color: 'teal'    },
     };
 
@@ -20355,7 +20416,7 @@ ${resumenHtml}
                   <tr><td className="text-orange-600 font-black">5.1.01.01.001</td><td className="font-bold">COSTO PROD. Y VENTAS</td><td className="text-right text-green-700 font-black">$$$</td><td className="text-right text-gray-300">—</td></tr>
                   <tr><td className="text-orange-600 font-black">1.1.03.01.008</td><td className="font-bold">PRODUCTOS TERMINADOS</td><td className="text-right text-gray-300">—</td><td className="text-right text-red-600 font-black">$$$</td></tr>
                   <tr><td className="text-orange-600 font-black">1.1.01.01.001</td><td className="font-bold">BANCOS / CXC</td><td className="text-right text-green-700 font-black">$$$</td><td className="text-right text-gray-300">—</td></tr>
-                  <tr><td className="text-orange-600 font-black">4.1.01.01.000</td><td className="font-bold">INGRESOS POR MAQUILA</td><td className="text-right text-gray-300">—</td><td className="text-right text-red-600 font-black">$$$</td></tr>
+                  <tr><td className="text-orange-600 font-black">4.1.01.01.000</td><td className="font-bold">INGRESOS POR PRODUCCIÓN</td><td className="text-right text-gray-300">—</td><td className="text-right text-red-600 font-black">$$$</td></tr>
                 </tbody>
               </table>
             </div>
@@ -20422,7 +20483,7 @@ ${resumenHtml}
     }, 0);
     const totalIngresos = totalIngresosNE + totalIngresosInv + ajusteNotasUsd;
 
-    // ── COSTO DE VENTAS: desde ítems con costoUnit (NEs e invoices directas) ──
+    // ── COSTOS DE PRODUCCIÓN: desde ítems con costoUnit (NEs e invoices directas) ──
     let totalCostoProd = 0;
     const cogsRows = [];
 
@@ -20432,8 +20493,8 @@ ${resumenHtml}
       const tieneOP = !!(ne.opRelacionada);
       const ctaIngreso = tieneOP ? '4.1.01.01.002' : '4.1.01.01.001';
       const ctaCosto   = tieneOP ? '5.1.01.01.002' : '5.1.01.01.001';
-      const ctaIngresoNombre = tieneOP ? 'Ingresos por Orden de Producción' : 'Ingresos por Ventas Generales';
-      const ctaCostoNombre   = tieneOP ? 'Costo de Venta (Producción)'       : 'Costo de Venta (Mercancía)';
+      const ctaIngresoNombre = tieneOP ? 'Ingresos por Producción (Bolsas / Termoencogibles)' : 'Ingresos por Producción (Bolsas / Termoencogibles)';
+      const ctaCostoNombre   = tieneOP ? 'Costos de Producción'       : 'Costos de Producción';
       (ne.items||[]).forEach(it => {
         const costoUnit = parseNum(it.costoUnit||0);
         const cant = parseNum(it.cantidad||0);
@@ -20758,7 +20819,7 @@ ${resumenHtml}
               </div>
               <div className="grid grid-cols-3 gap-0 border-b-2 border-gray-300">
                 <div className="p-4 border-r border-gray-200 text-center"><div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Ingresos</div><div className="font-black text-lg text-green-600">${formatNum(dataA.totalIngresos)}</div>{tasa>1&&<div className="text-[9px] text-green-500 font-bold">Bs. {bs(dataA.totalIngresos)}</div>}</div>
-                <div className="p-4 border-r border-gray-200 text-center"><div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Costos</div><div className="font-black text-lg text-red-600">${formatNum(dataA.totalCostos)}</div>{tasa>1&&<div className="text-[9px] text-red-500 font-bold">Bs. {bs(dataA.totalCostos)}</div>}</div>
+                <div className="p-4 border-r border-gray-200 text-center"><div className="text-[9px] font-black text-gray-400 uppercase mb-1">Total Costos de Producción</div><div className="font-black text-lg text-red-600">${formatNum(dataA.totalCostos)}</div>{tasa>1&&<div className="text-[9px] text-red-500 font-bold">Bs. {bs(dataA.totalCostos)}</div>}</div>
                 <div className={`p-4 text-center ${dataA.resultado>=0?'bg-green-50':'bg-red-50'}`}><div className="text-[9px] font-black text-gray-400 uppercase mb-1">Resultado Ejercicio</div><div className={`font-black text-xl ${dataA.resultado>=0?'text-green-700':'text-red-700'}`}>${formatNum(dataA.resultado)}</div>{tasa>1&&<div className={`text-xs font-black ${dataA.resultado>=0?'text-green-600':'text-red-600'}`}>Bs. {bs(dataA.resultado)}</div>}</div>
               </div>
               <table className="w-full text-xs border-collapse">
@@ -20771,11 +20832,11 @@ ${resumenHtml}
                 </tr></thead>
                 <tbody>
                   {/* INGRESOS */}
-                  <tr className="bg-orange-500 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={colSpan}>INGRESOS</td></tr>
+                  <tr className="bg-orange-500 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={colSpan}>INGRESOS POR PRODUCCIÓN</td></tr>
                   <tr className="bg-orange-50"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-orange-800" colSpan={colSpan}>VENTAS BRUTAS</td></tr>
                   {dataA.facturasperiodo.length>0 ? (
                     <tr className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-2 px-4 font-bold text-[10px] pl-14"><span className="text-orange-600 font-black mr-2">4.1.01.01.000</span>INGRESOS POR MAQUILA</td>
+                      <td className="py-2 px-4 font-bold text-[10px] pl-14"><span className="text-orange-600 font-black mr-2">4.1.01.01.000</span>INGRESOS POR PRODUCCIÓN</td>
                       <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
                       <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalIngresos)}</td>
                       <td className="py-2 px-3 text-center text-[9px]">100.00%</td>
@@ -20783,14 +20844,14 @@ ${resumenHtml}
                     </tr>
                   ) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={colSpan}>Sin ingresos en este periodo</td></tr>}
                   <tr className="bg-orange-100">
-                    <td className="py-2.5 px-4 text-[10px] uppercase pl-8 text-orange-800 font-black" colSpan={2}>Total INGRESOS</td>
+                    <td className="py-2.5 px-4 text-[10px] uppercase pl-8 text-orange-800 font-black" colSpan={2}>Total INGRESOS POR PRODUCCIÓN</td>
                     <td className="py-2.5 px-3 text-right font-black text-orange-700">{formatNum(dataA.totalIngresos)}</td>
                     <td className="py-2.5 px-3 text-center text-[9px] font-black">100.00%</td>
                     {tasa>1&&<td className="py-2.5 px-3 text-right font-black text-orange-700">{bs(dataA.totalIngresos)}</td>}
                   </tr>
                   <tr><td colSpan={colSpan} className="py-2"></td></tr>
                   {/* COSTOS */}
-                  <tr className="bg-gray-800 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={colSpan}>COSTOS</td></tr>
+                  <tr className="bg-gray-800 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={colSpan}>COSTOS DE PRODUCCIÓN</td></tr>
                   <tr className="bg-gray-200"><td className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700" colSpan={colSpan}>COSTO DE PRODUCCIÓN VENDIDA</td></tr>
                   {/* Header de la tabla de COGS */}
                   <tr className="bg-gray-100 text-gray-600">
@@ -20814,7 +20875,7 @@ ${resumenHtml}
                     </tr>
                   )) : <tr><td className="py-2 px-4 pl-14 text-[10px] text-gray-400 italic" colSpan={colSpan}>Sin ventas de producción en este periodo</td></tr>}
                   <tr className="bg-gray-100 border-b border-gray-300">
-                    <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={tasa>1?4:3}>Total COSTO DE VENTAS</td>
+                    <td className="py-2 px-4 text-[10px] uppercase pl-8 font-black text-gray-700" colSpan={tasa>1?4:3}>Total COSTOS DE PRODUCCIÓN</td>
                     <td className="py-2 px-3 text-right font-black">{formatNum(dataA.totalCostoProd)}</td>
                     {tasa>1&&<td className="py-2 px-3 text-right font-black">{bs(dataA.totalCostoProd)}</td>}
                   </tr>
@@ -20873,14 +20934,14 @@ ${resumenHtml}
                   </thead>
                   <tbody>
                     {/* INGRESOS */}
-                    <tr className="bg-orange-100"><td colSpan={9} className="py-2 px-4 font-black uppercase text-orange-800">INGRESOS</td></tr>
+                    <tr className="bg-orange-100"><td colSpan={9} className="py-2 px-4 font-black uppercase text-orange-800">INGRESOS POR PRODUCCIÓN</td></tr>
                     <tr className="bg-orange-50"><td className="py-1.5 px-4 text-[9px] font-black uppercase pl-8 text-orange-700" colSpan={2}>VENTAS BRUTAS</td><td colSpan={7}></td></tr>
                     {(() => {
                       const a = dataA.totalIngresos; const b = dataB.totalIngresos;
                       const varAbs = a - b; const varRel = b !== 0 ? ((varAbs/b)*100).toFixed(2) : '—';
                       return (
                         <tr className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>INGRESOS POR VENTAS / MAQUILA</td>
+                          <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>INGRESOS POR PRODUCCIÓN</td>
                           <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
                           <td className="py-2 px-3 text-right font-black">{formatNum(a)}</td>
                           <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td>
@@ -20891,7 +20952,7 @@ ${resumenHtml}
                         </tr>
                       );
                     })()}
-                    <tr className="bg-orange-100 font-black"><td className="py-2 px-4 text-[10px] uppercase font-black text-orange-800" colSpan={2}>Total INGRESOS</td>
+                    <tr className="bg-orange-100 font-black"><td className="py-2 px-4 text-[10px] uppercase font-black text-orange-800" colSpan={2}>Total INGRESOS POR PRODUCCIÓN</td>
                       <td className="py-2 px-3 text-center text-[9px] text-orange-700 font-black">USD</td>
                       <td className="py-2 px-3 text-right font-black text-orange-700">{formatNum(dataA.totalIngresos)}</td>
                       <td className="py-2 px-3 text-center text-[9px] text-orange-700 font-black">USD</td>
