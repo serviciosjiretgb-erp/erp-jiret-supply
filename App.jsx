@@ -655,25 +655,29 @@ export default function App() {
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', ciudad: '', estado: '', telefono: '', personaContacto: '', vendedor: '', diasCredito: '0', fechaCreacion: getTodayDate() };
 // ── Ciudades de Venezuela con su Estado ─────────────────────────────────────
   const VE_CIUDADES = [
-    ['Maracaibo','Zulia'],['Cabimas','Zulia'],['Ciudad Ojeda','Zulia'],['San Francisco','Zulia'],
-    ['Lagunillas','Zulia'],['La Cañada de Urdaneta','Zulia'],['Punto Fijo','Falcón'],['Coro','Falcón'],
-    ['Caracas','Distrito Capital'],['Petare','Miranda'],['Guarenas','Miranda'],['Guatire','Miranda'],
-    ['Los Teques','Miranda'],['Ocumare del Tuy','Miranda'],['Barquisimeto','Lara'],['Cabudare','Lara'],
-    ['El Tocuyo','Lara'],['Quíbor','Lara'],['Valencia','Carabobo'],['Maracay','Aragua'],
-    ['Guacara','Carabobo'],['San Joaquín','Carabobo'],['Los Guayos','Carabobo'],
-    ['Puerto Cabello','Carabobo'],['Naguanagua','Carabobo'],['La Victoria','Aragua'],
-    ['Cagua','Aragua'],['Villa de Cura','Aragua'],['San Mateo','Aragua'],['Turmero','Aragua'],
-    ['Araure','Portuguesa'],['Acarigua','Portuguesa'],['Guanare','Portuguesa'],
-    ['Barinas','Barinas'],['Mérida','Mérida'],['El Vigía','Mérida'],['Ejido','Mérida'],
-    ['Maturín','Monagas'],['Punta de Mata','Monagas'],['Barcelona','Anzoátegui'],
-    ['Puerto La Cruz','Anzoátegui'],['El Tigre','Anzoátegui'],['Lechería','Anzoátegui'],
-    ['Ciudad Guayana','Bolívar'],['Puerto Ordaz','Bolívar'],['Upata','Bolívar'],['Cumaná','Sucre'],
-    ['Carúpano','Sucre'],['San Cristóbal','Táchira'],['Táriba','Táchira'],['Rubio','Táchira'],
-    ['Trujillo','Trujillo'],['Valera','Trujillo'],['San Felipe','Yaracuy'],['Nirgua','Yaracuy'],
-    ['Porlamar','Nueva Esparta'],['La Asunción','Nueva Esparta'],['Calabozo','Guárico'],
-    ['San Juan de los Morros','Guárico'],['Tucupita','Delta Amacuro'],['La Guaira','La Guaira'],
-    ['Maiquetía','La Guaira'],['Cúa','Miranda'],['Charallave','Miranda'],['San Antonio del Táchira','Táchira'],
-  ]; // Note: lazily re-initialized on reset
+    ['Acarigua','Portuguesa'],['Barinas','Barinas'],['Barcelona','Anzoátegui'],
+    ['Barquisimeto','Lara'],['Cabimas','Zulia'],['Cabudare','Lara'],['Cagua','Aragua'],
+    ['Calabozo','Guárico'],['Caracas','Distrito Capital'],['Carúpano','Sucre'],
+    ['Charallave','Miranda'],['Ciudad Guayana','Bolívar'],['Ciudad Ojeda','Zulia'],
+    ['Coro','Falcón'],['Cumaná','Sucre'],['Cúa','Miranda'],['El Tigre','Anzoátegui'],
+    ['El Tocuyo','Lara'],['El Vigía','Mérida'],['Ejido','Mérida'],['Guacara','Carabobo'],
+    ['Guanare','Portuguesa'],['Guarenas','Miranda'],['Guatire','Miranda'],
+    ['La Asunción','Nueva Esparta'],['La Cañada de Urdaneta','Zulia'],
+    ['La Guaira','La Guaira'],['La Victoria','Aragua'],['Lagunillas','Zulia'],
+    ['Lechería','Anzoátegui'],['Los Guayos','Carabobo'],['Los Teques','Miranda'],
+    ['Maiquetía','La Guaira'],['Maracaibo','Zulia'],['Maracay','Aragua'],
+    ['Maturín','Monagas'],['Mérida','Mérida'],['Naguanagua','Carabobo'],
+    ['Nirgua','Yaracuy'],['Ocumare del Tuy','Miranda'],['Petare','Miranda'],
+    ['Porlamar','Nueva Esparta'],['Puerto Cabello','Carabobo'],
+    ['Puerto La Cruz','Anzoátegui'],['Puerto Ordaz','Bolívar'],['Punto Fijo','Falcón'],
+    ['Quíbor','Lara'],['Rubio','Táchira'],['San Antonio del Táchira','Táchira'],
+    ['San Cristóbal','Táchira'],['San Felipe','Yaracuy'],['San Francisco','Zulia'],
+    ['San Joaquín','Carabobo'],['San Juan de los Morros','Guárico'],['San Mateo','Aragua'],
+    ['Táriba','Táchira'],['Trujillo','Trujillo'],['Tucupita','Delta Amacuro'],
+    ['Turmero','Aragua'],['Upata','Bolívar'],['Valera','Trujillo'],['Valencia','Carabobo'],
+    ['Villa de Cura','Aragua'],
+  ];
+ // Note: lazily re-initialized on reset
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [showAddClientForm, setShowAddClientForm] = useState(false);
   const [editingClientId, setEditingClientId] = useState(null);
@@ -12033,7 +12037,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                <div class="field"><label>Persona de Contacto</label><p>${c?.personaContacto||'—'}</p></div>
                                <div class="field"><label>Vendedor Asignado</label><p>${c?.vendedor||'Sin asignar'}</p></div>
                                <div class="field"><label>Condiciones de Crédito</label><p>${diasCred==='0'||diasCred===0?'Contado (0 días)':diasCred+' días de crédito'}</p></div>
-                               <div class="field"><label>Desde</label><p>${c?.fechaCreacion||c?.timestamp||'—'}</p></div>
+                               <div class="field"><label>Desde</label><p>${c?.fechaCreacion||(c?.timestamp?new Date(c.timestamp).toLocaleDateString('es-VE'):'—')}</p></div>
                              </div>
                              <div class="footer">Generado por ${empresa} · ${new Date().toLocaleDateString('es-VE')}</div>
                            </body></html>`;
@@ -15577,50 +15581,10 @@ ${resumenHtml}
             </div>
           </div>
 
-          {/* Sección 3 (producción) / 4 (costos): Ventas y Facturación — solo costos */}
-          {costsMode && (
-          <div className="mb-6">
-            <div className="bg-green-600 text-white px-4 py-2 text-[10px] font-black uppercase rounded-t-lg">4. Ventas y Facturación de la OP</div>
-            <div className="border-2 border-gray-200 rounded-b-lg overflow-hidden">
-              <table className="w-full text-xs">
-                <thead className="bg-gray-100"><tr className="uppercase font-black text-[9px] text-gray-600"><th className="p-3 border-r text-left">Invoice N°</th><th className="p-3 border-r text-center">Fecha</th><th className="p-3 border-r text-right">Base (Ingreso Real)</th><th className="p-3 border-r text-right">IVA (16%)</th><th className="p-3 text-right">Total Cobrado</th></tr></thead>
-                <tbody className="divide-y divide-gray-100">
-                  {relatedInvoices.length===0?(
-                    <tr><td colSpan="5" className="p-4 text-center text-gray-400 font-black uppercase">No hay facturas asociadas a esta OP.</td></tr>
-                  ):relatedInvoices.map(inv=>(
-                    <tr key={inv.id}><td className="p-3 border-r font-black text-orange-600">{inv.documento}</td><td className="p-3 border-r text-center font-bold">{inv.fecha}</td><td className="p-3 border-r text-right font-bold">${formatNum(inv.montoBase)}</td><td className="p-3 border-r text-right font-bold">${formatNum(inv.iva)}</td><td className="p-3 text-right font-black text-green-600">${formatNum(inv.total)}</td></tr>
-                  ))}
-                </tbody>
-                {relatedInvoices.length>0&&(<tfoot className="bg-gray-100 border-t-2 border-gray-300 font-black"><tr><td colSpan="4" className="p-3 text-right uppercase text-[10px]">Total Ingresos:</td><td className="p-3 text-right text-green-700 text-lg">${formatNum(totalIngresos)}</td></tr></tfoot>)}
-              </table>
-            </div>
-          </div>
-          )}
 
           {/* Sección 3.1 / 4.1 Entregas Parciales: eliminada del reporte */}
 
-          {/* Indicadores Financieros y Firmas — solo costsMode */}
-          {costsMode && (<>
-          <div className="grid grid-cols-3 gap-0 border-2 border-gray-300 rounded-xl overflow-hidden mb-6">
-            <div className="col-span-1 p-5 bg-gray-50 border-r border-gray-300">
-              <div className="text-[9px] font-black uppercase text-gray-500 mb-1">Cruce de Información Financiera</div>
-              <div className="text-xs font-black uppercase text-black">Rentabilidad y Margen Neto de la OP</div>
-              {totalMillares>0&&<div className="text-[9px] font-bold text-gray-500 mt-2">Costo/Millar: ${formatNum(costoPorMillar)}</div>}
-            </div>
-            <div className="col-span-1 p-5 text-center border-r border-gray-300">
-              <div className="text-[9px] font-black uppercase text-gray-500 mb-1">Ganancia / Pérdida</div>
-              <div className={`text-2xl font-black ${ganancia>=0?'text-blue-600':'text-red-600'}`}>${formatNum(ganancia)}</div>
-            </div>
-            <div className="col-span-1 p-5 text-center bg-gray-800">
-              <div className="text-[9px] font-black uppercase text-gray-300 mb-1">Margen Neto</div>
-              <div className={`text-2xl font-black ${margenNeto>=0?'text-green-400':'text-red-400'}`}>{margenNeto.toFixed(2)}%</div>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-16 mt-12 text-center text-[10px] font-black uppercase border-t-2 border-gray-300 pt-6">
-            <div><div className="border-t-2 border-black mx-auto pt-2 w-3/4">Departamento de Costos</div></div>
-            <div><div className="border-t-2 border-black mx-auto pt-2 w-3/4">Revisado y Aprobado (Gerencia)</div></div>
-          </div>
-          </>)}
+
         </div>
       </div>
     );
@@ -18621,6 +18585,7 @@ ${resumenHtml}
                           </div>
                           <div className="font-bold text-white uppercase mt-1">{req.client}</div>
                           <div className="text-[10px] text-gray-300 mt-0.5">{req.desc} | {req.ancho}cm×{req.largo}cm | {req.micras}mic | {req.color}</div>
+                {(()=>{const _pd=(inventory||[]).find(i=>i.id===req.productoDestinoId);const _pc=_pd?(_pd.displayId||(_pd.id||'').split('___')[0]):'';return _pd?(<div className="text-[9px] text-orange-300 font-black mt-0.5">🎯 {_pc} — {_pd.desc||''}</div>):(<div className="text-[9px] text-red-400 mt-0.5 font-bold">⚠ Sin producto asignado</div>);})()}
                           {req.categoria && <div className="mt-1"><span className="bg-orange-600 text-white text-[8px] font-black uppercase px-2 py-0.5 rounded">📦 {req.categoria}</span></div>}
                         </div>
                         <div className="text-right text-[10px]">
@@ -18926,6 +18891,7 @@ ${resumenHtml}
                           <tr key={req.id} className="hover:bg-gray-50">
                             <td className="py-3 px-4 border-r font-black text-orange-600">#{String(req.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400">{req.fecha}</span></td>
                             <td className="py-3 px-4 border-r font-bold uppercase">{req.client}</td>
+                            {(()=>{const _pd=(inventory||[]).find(i=>i.id===req.productoDestinoId);const _pc=_pd?(_pd.displayId||(_pd.id||'').split('___')[0]):'';return(<td className="py-3 px-4 border-r">{_pd?(<div><div className="text-[9px] font-black text-blue-700">{_pc}</div><div className="text-[8px] text-gray-400">{_pd.desc||''}</div></div>):(<span className="text-[8px] text-red-400 font-bold">⚠ Sin asignar</span>)}</td>);})()}
                             <td className="py-3 px-4 border-r font-bold">{req.desc}<br/><span className="text-[9px] text-gray-400">{req.ancho}×{req.largo}cm | {req.micras}mic | {req.color}</span></td>
                             <td className="py-3 px-4 border-r text-center font-black text-blue-600">{formatNum(req.requestedKg)}</td>
                             <td className="py-3 px-4 border-r text-center font-black text-green-600">{formatNum(totalKg)}</td>
@@ -19128,7 +19094,7 @@ ${resumenHtml}
                 </div>
                 <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-blue-500 pb-2">REPORTE GENERAL FINANCIERO — {selPeriodLabel}</h1></div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {[['Ingresos', selIngresos, 'green'],['Costos MP', selCostosMP, 'orange'],['Costos OP', selCostosOP, 'red'],['Utilidad', selUtilidad, selUtilidad >= 0 ? 'blue' : 'red']].map(([label, val, color]) => (
+                  {[['Costos MP', selCostosMP, 'orange'],['Costos OP', selCostosOP, 'red'],['Utilidad', selUtilidad, selUtilidad >= 0 ? 'blue' : 'red']].map(([label, val, color]) => (
                     <div key={label} className="bg-white border border-gray-200 rounded-2xl p-6">
                       <span className="text-[10px] font-black text-gray-400 uppercase block mb-1">{label}</span>
                       <span className={`text-2xl font-black text-${color}-600 block`}>${formatNum(val)}</span>
@@ -19161,17 +19127,17 @@ ${resumenHtml}
                 <div className="hidden pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-green-500 pb-2">ANÁLISIS INGRESOS VS COSTOS</h1></div>
                 <div className="overflow-x-auto rounded-xl border border-gray-200">
                   <table className="w-full text-xs text-left">
-                    <thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px] tracking-widest"><th className="py-3 px-4 border-r">Período</th><th className="py-3 px-4 border-r text-right">Ingresos</th><th className="py-3 px-4 border-r text-right">Costos MP</th><th className="py-3 px-4 border-r text-right">Costos OP</th><th className="py-3 px-4 border-r text-right">Utilidad</th><th className="py-3 px-4 text-center">% Util.</th></tr></thead>
+                    <thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px] tracking-widest"><th className="py-3 px-4 border-r">Período</th><th className="py-3 px-4 border-r text-right">Costos MP</th><th className="py-3 px-4 border-r text-right">Costos OP</th><th className="py-3 px-4 text-center">% Util.</th></tr></thead>
                     <tbody className="divide-y divide-gray-100">
                       {months.map(m => {
                         const margen = m.ingresos > 0 ? (m.utilidad / m.ingresos * 100) : 0;
                         return (
                           <tr key={m.ym} className={`hover:bg-gray-50 ${m.ym === selMonth ? 'bg-blue-50' : ''}`}>
                             <td className="py-3 px-4 border-r font-black">{m.label}</td>
-                            <td className="py-3 px-4 border-r text-right font-black text-green-600">${formatNum(m.ingresos)}</td>
+                            >
                             <td className="py-3 px-4 border-r text-right font-bold text-orange-600">${formatNum(m.costosMP)}</td>
                             <td className="py-3 px-4 border-r text-right font-bold text-red-500">${formatNum(m.costosOP)}</td>
-                            <td className={`py-3 px-4 border-r text-right font-black ${m.utilidad >= 0 ? 'text-blue-600' : 'text-red-600'}`}>${formatNum(m.utilidad)}</td>
+                            
                             <td className={`py-3 px-4 text-center font-black ${margen >= 0 ? 'text-green-600' : 'text-red-600'}`}>{margen.toFixed(1)}%</td>
                           </tr>
                         );
@@ -21430,18 +21396,20 @@ ${resumenHtml}
     const topClientes = Object.values(cliMap).sort((a,b)=>b.total-a.total).slice(0,6);
     const maxCli = topClientes[0]?.total||1;
 
-    // ── Top productos vendidos (SOLO desde Notas de Entrega) ──
+    // ── Top productos vendidos (SOLO desde Notas de Entrega, sin filtro de período) ──
     const prodMap={};
-    (notasEntrega||[]).filter(ne=>months.some(m=>(ne.fecha||'').startsWith(m.ym))).forEach(ne=>{
-      (ne.items||[]).forEach(it=>{ const k=it.desc||it.invCode||it.codigo||''; if(!k) return;
+    (notasEntrega||[]).forEach(ne=>{
+      (ne.items||[]).forEach(it=>{
+        const k=(it.desc||it.descripcion||it.invCode||it.codigo||'').trim();
+        if(!k) return;
         if(!prodMap[k]) prodMap[k]={name:k,qty:0,ingresos:0};
         const cant=parseNum(it.cantidad||it.qty||0);
         const precio=parseNum(it.precioUnit||it.precio||0);
         prodMap[k].qty+=cant;
-        prodMap[k].ingresos+=precio>0?precio*cant:parseNum(ne.montoBase||0);
+        prodMap[k].ingresos+=precio>0?precio*cant:parseNum(ne.montoBase||0)/Math.max(1,(ne.items||[]).length);
       });
     });
-    const topProductos = Object.values(prodMap).sort((a,b)=>b.ingresos-a.ingresos).slice(0,5);
+    const topProductos = Object.values(prodMap).filter(p=>p.ingresos>0).sort((a,b)=>b.ingresos-a.ingresos).slice(0,5);
     const maxProd = topProductos[0]?.ingresos||1;
 
     // ── Mermas por mes ──
@@ -21829,7 +21797,7 @@ ${resumenHtml}
               </button>
               {(appUser?.role==='Master'||appUser?.role==='Administrador') && (
                 <button onClick={()=>{
-                  if(!auditDate) return setDialog({title:'Aviso',text:'Selecciona una fecha de inicio en el filtro para limpiar registros hasta esa fecha.',type:'alert'});
+                  if(!auditDate&&!auditMes) return setDialog({title:'Aviso',text:'Selecciona una fecha o un mes en el filtro para limpiar registros.',type:'alert'});
                   setDialog({title:'🗑 Limpiar Registros de Auditoría',text:`¿Eliminar los registros de actividad filtrados actualmente? Esta acción es irreversible.`,type:'confirm',onConfirm:async()=>{
                     try {
                       // Only logs stored in Firestore (invMovements tagged as audit)
@@ -23485,7 +23453,6 @@ ${resumenHtml}
                    {id:'reporte_ventas',      icon:<BarChart3 size={15}/>,  label:'Rpt. Ventas',     perm:'ventas_reporte'},
                    {id:'transacciones_ventas',icon:<BarChart3 size={15}/>,  label:'Transac.',        perm:'ventas_transacciones'},
                    {id:'libro_ventas',        icon:<BookOpen size={15}/>,   label:'Libro Vtas',      perm:'ventas_libro'},
-                   {id:'retenciones_iva',     icon:<FileCheck size={15}/>,  label:'Retenciones',     perm:'ventas_retenciones'},
                    {id:'notas_cd',            icon:<FileText size={15}/>,   label:'NC / ND',         perm:'ventas_nc_nd'},
                    {id:'comisiones',          icon:<DollarSign size={15}/>, label:'Comisiones',      perm:'ventas_comisiones'},
                    {id:'vendedores',          icon:<Users size={15}/>,      label:'Vendedores',      perm:'ventas_vendedores'},
