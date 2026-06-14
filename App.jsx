@@ -222,36 +222,6 @@ const COSTO_CATEGORIES = [
 // CATÁLOGO DE MÓDULOS Y PERMISOS DEL SISTEMA (ESTRUCTURA EXACTA)
 // ============================================================================
 
-// ── CONFIGURACIÓN DE PORTALES ────────────────────────────────────────────────
-const PORTALES = {
-  planta: {
-    id: 'planta',
-    label: 'Planta',
-    icon: '🏭',
-    color: '#2563eb',
-    bg: 'from-blue-900 to-blue-700',
-    desc: 'Producción · Inventario · Fórmulas · Simulador',
-    tabs: ['produccion','formulas','inventario','simulador','kpi','auditoria'],
-  },
-  comercial: {
-    id: 'comercial',
-    label: 'Comercial',
-    icon: '🤝',
-    color: '#f97316',
-    bg: 'from-orange-600 to-orange-400',
-    desc: 'Ventas · Clientes · Cobranzas · Comisiones',
-    tabs: ['ventas','costos','kpi','auditoria'],
-  },
-  finanzas: {
-    id: 'finanzas',
-    label: 'Finanzas',
-    icon: '📈',
-    color: '#16a34a',
-    bg: 'from-green-800 to-green-600',
-    desc: 'Reportes Financieros · Estado de Resultado · KPI',
-    tabs: ['costos','reportes','kpi','auditoria'],
-  },
-};
 const SYSTEM_MODULES = [
   {
     id: 'ventas',
@@ -372,8 +342,7 @@ const generateDefaultPermissions = () => {
 
 export default function App() {
   const [fbUser, setFbUser] = useState(null);
-  const [appUser, setAppUser] = useState(null);
-  const [activePortal, setActivePortal] = useState(null); // 'planta' | 'comercial' | 'finanzas' | null=selección 
+  const [appUser, setAppUser] = useState(null); 
   const [systemUsers, setSystemUsers] = useState([]); 
   const [settings, setSettings] = useState({});
   const [showManageSubcats, setShowManageSubcats] = useState(false);
@@ -678,7 +647,7 @@ export default function App() {
   const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
 
   // Formularios de Configuración
-  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: generateDefaultPermissions(), portales: { planta: true, comercial: false, finanzas: false } };
+  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: generateDefaultPermissions() };
   const [newUserForm, setNewUserForm] = useState(initialUserForm);
   const [editingUserId, setEditingUserId] = useState(null);
   const [originalUsername, setOriginalUsername] = useState(null);
@@ -4246,17 +4215,7 @@ export default function App() {
         console.log(`Migración completada: ${toMigrate.length} items → ALMACEN ZI`);
       } catch(e) { console.warn('Migration error:', e); }
     })();
-  }, [inventory.length, appUser])
-
-  // ── Portal auto-select (debe estar ANTES de cualquier return condicional) ──
-  useEffect(() => {
-    if (!appUser || activePortal) return;
-    const disponibles = Object.values(PORTALES).filter(p =>
-      appUser.role === 'Master' || appUser.role === 'Administrador' ||
-      !!(appUser.portales || {})[p.id]
-    );
-    if (disponibles.length === 1) setActivePortal(disponibles[0].id);
-  }, [appUser?.username, activePortal]); // eslint-disable-line;
+  }, [inventory.length, appUser]);
 
   // ============================================================================
   const renderHome = () => {
@@ -22379,29 +22338,7 @@ ${resumenHtml}
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Nombre Completo</label><input type="text" required value={newUserForm.name} onChange={e=>setNewUserForm({...newUserForm, name: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Rol / Cargo</label><input type="text" value={newUserForm.role} onChange={e=>setNewUserForm({...newUserForm, role: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
               </div>
-              <div className="mt-6 border-t border-gray-200 pt-4">
-                <h4 className="text-sm font-black uppercase text-gray-800 mb-3 flex items-center gap-2">
-                  <LayoutDashboard size={18} className="text-orange-500"/> Acceso a Portales
-                </h4>
-                <div className="grid grid-cols-3 gap-3 mb-2">
-                  {[
-                    {id:'planta', icon:'🏭', label:'Planta', desc:'Producción · Inventario · Fórmulas', color:'bg-blue-50 border-blue-300 text-blue-700'},
-                    {id:'comercial', icon:'🤝', label:'Comercial', desc:'Ventas · Clientes · Cobranzas', color:'bg-orange-50 border-orange-300 text-orange-700'},
-                    {id:'finanzas', icon:'📈', label:'Finanzas', desc:'Reportes · Estado Financiero', color:'bg-green-50 border-green-300 text-green-700'},
-                  ].map(p=>(
-                    <label key={p.id} className={`flex items-start gap-2 p-3 rounded-xl border cursor-pointer transition-all ${newUserForm.portales?.[p.id]?p.color:'bg-gray-50 border-gray-200 hover:border-gray-300'}`}>
-                      <input type="checkbox" checked={!!newUserForm.portales?.[p.id]}
-                        onChange={e=>setNewUserForm(f=>({...f,portales:{...(f.portales||{}),[p.id]:e.target.checked}}))}
-                        className="mt-0.5 w-3.5 h-3.5 accent-orange-500 flex-shrink-0"/>
-                      <div>
-                        <div className="font-black text-xs uppercase flex items-center gap-1">{p.icon} {p.label}</div>
-                        <div className="text-[9px] text-gray-500 font-bold mt-0.5">{p.desc}</div>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-                <p className="text-[9px] text-gray-400 italic">* Master y Administrador siempre acceden a todos los portales.</p>
-              </div>
+
               <div className="mt-6 border-t border-gray-200 pt-4">
                 <h4 className="text-sm font-black uppercase text-gray-800 mb-2 flex items-center gap-2">
                   <ShieldCheck size={18} className="text-orange-500"/> Permisología del Usuario
@@ -22479,7 +22416,6 @@ ${resumenHtml}
                     <th className="py-3 px-4">Usuario / Nombre</th>
                     <th className="py-3 px-4">Rol</th>
                      <th className="py-3 px-4">Rol</th>
-                     <th className="py-3 px-4">Portales</th>
                     <th className="py-3 px-4 text-center">Acciones</th>
                   </tr>
                 </thead>
@@ -22488,23 +22424,7 @@ ${resumenHtml}
                     <tr key={u.id} className="hover:bg-gray-50">
                       <td className="py-3 px-4 font-black">{u.username}<br/><span className="text-[10px] text-gray-500 font-bold">{u.name}</span></td>
                       <td className="py-3 px-4 font-bold text-xs uppercase">{u.role}</td>
-                       <td className="py-3 px-4">
-                         <div className="flex gap-1 flex-wrap">
-                           {u.role==='Master'||u.role==='Administrador'
-                             ? <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[8px] font-black uppercase">Todos</span>
-                             : [
-                               {id:'planta',icon:'🏭',label:'Planta',cls:'bg-blue-100 text-blue-700'},
-                               {id:'comercial',icon:'🤝',label:'Comercial',cls:'bg-orange-100 text-orange-700'},
-                               {id:'finanzas',icon:'📈',label:'Finanzas',cls:'bg-green-100 text-green-700'},
-                             ].filter(p=>u.portales?.[p.id]).map(p=>(
-                               <span key={p.id} className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${p.cls}`}>{p.icon} {p.label}</span>
-                             ))
-                           }
-                           {(!u.portales||!Object.values(u.portales||{}).some(Boolean))&&u.role!=='Master'&&u.role!=='Administrador'&&(
-                             <span className="bg-red-100 text-red-500 px-2 py-0.5 rounded text-[8px] font-bold">Sin portal</span>
-                           )}
-                         </div>
-                       </td>
+
                       <td className="py-3 px-4">
                         <div className="flex gap-1 flex-wrap max-w-[280px]">
                           {u.role === 'Master' ? (
@@ -23312,76 +23232,6 @@ ${resumenHtml}
     await batch.commit();
   };
 
-  // ── PANTALLA DE SELECCIÓN DE PORTAL ─────────────────────────────────────────
-  const portalesDisponibles = appUser ? Object.values(PORTALES).filter(p =>
-    appUser?.role === 'Master' || appUser?.role === 'Administrador' ||
-    appUser?.portales?.[p.id]
-  ) : [];
-
-  if (appUser && !activePortal) {
-    return (
-      <div className="min-h-screen w-full" style={{background:'linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#0f172a 100%)'}}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-8 py-5 border-b border-white/10">
-          <div className="flex items-center gap-3">
-            <div className="text-3xl font-black text-white leading-none">Supply</div>
-            <div className="text-5xl font-black leading-none" style={{color:'#f97316'}}>G&B</div>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <div className="text-white font-black text-sm">{appUser.name}</div>
-              <div className="text-gray-400 text-xs uppercase font-bold">{appUser.role}</div>
-            </div>
-            <button onClick={()=>{try{signOut(auth);}catch(e){}setAppUser(null);setActivePortal(null);}}
-              className="px-4 py-2 rounded-xl border border-white/20 text-white text-xs font-black uppercase hover:bg-white/10 transition-all">
-              Cerrar Sesión
-            </button>
-          </div>
-        </div>
-
-        {/* Selección de portal */}
-        <div className="flex flex-col items-center justify-center min-h-[calc(100vh-80px)] px-8">
-          <div className="text-center mb-12">
-            <h1 className="text-4xl font-black text-white mb-3 uppercase tracking-widest">Seleccione su Área</h1>
-            <p className="text-gray-400 text-sm font-bold">SERVICIOS JIRET G&B, C.A.</p>
-          </div>
-
-          <div className={`grid gap-6 w-full max-w-5xl ${portalesDisponibles.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
-            {portalesDisponibles.map(portal => (
-              <button key={portal.id} onClick={() => setActivePortal(portal.id)}
-                className="group relative overflow-hidden rounded-3xl p-8 text-left transition-all duration-300 hover:scale-105 hover:shadow-2xl border border-white/10"
-                style={{background:`linear-gradient(135deg, ${portal.color}33 0%, ${portal.color}11 100%)`}}>
-                {/* Ícono */}
-                <div className="text-6xl mb-5 group-hover:scale-110 transition-transform duration-300">{portal.icon}</div>
-                {/* Nombre */}
-                <h2 className="text-2xl font-black text-white uppercase tracking-widest mb-3">{portal.label}</h2>
-                {/* Descripción */}
-                <p className="text-sm font-bold text-gray-300 mb-6 leading-relaxed">{portal.desc}</p>
-                {/* Barra inferior */}
-                <div className="absolute bottom-0 left-0 right-0 h-1 rounded-b-3xl transition-all duration-300"
-                  style={{background:portal.color, opacity:0.6}}/>
-                <div className="absolute bottom-0 left-0 h-1 rounded-b-3xl transition-all duration-300 group-hover:right-0"
-                  style={{background:portal.color, right:'100%'}}/>
-                {/* Flecha */}
-                <div className="mt-4 flex items-center gap-2 text-xs font-black uppercase text-gray-400 group-hover:text-white transition-colors">
-                  <span>Ingresar</span>
-                  <span className="group-hover:translate-x-1 transition-transform">→</span>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          {portalesDisponibles.length === 0 && (
-            <div className="text-center text-gray-500 mt-8">
-              <p className="text-lg font-black mb-2">Sin acceso asignado</p>
-              <p className="text-sm">Contacte al administrador del sistema para que le asigne acceso a un portal.</p>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
 
   return (
     <ErrorBoundary>
@@ -23524,26 +23374,16 @@ ${resumenHtml}
                     <span className="text-sm sm:text-xl font-light tracking-widest text-gray-300">Supply</span>
                     <span className="text-white font-black text-lg sm:text-2xl leading-none ml-1">G</span><div className="bg-orange-500 text-white rounded-full w-4 h-4 sm:w-5 sm:h-5 flex items-center justify-center text-[9px] sm:text-xs font-black mx-0.5">&amp;</div><span className="text-white font-black text-lg sm:text-2xl leading-none">B</span>
                  </div>
-                  {activePortal && PORTALES[activePortal] && (
-                     <div className="hidden md:flex items-center gap-2 bg-gray-900/80 border border-gray-700 rounded-xl px-3 py-1.5">
-                       <span className="text-base">{PORTALES[activePortal].icon}</span>
-                       <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">{PORTALES[activePortal].label}</span>
-                       {(appUser?.role==='Master'||appUser?.role==='Administrador'||Object.values(appUser?.portales||{}).filter(Boolean).length>1)&&(
-                         <button onClick={()=>setActivePortal(null)} className="ml-2 text-[8px] font-black text-gray-500 hover:text-orange-400 uppercase transition-colors">
-                           ⇄ Cambiar
-                         </button>
-                       )}
-                     </div>
-                  )}
+
                  <div className="hidden md:flex bg-gray-900 rounded-2xl p-1 gap-1 border border-gray-800">
                     <button onClick={() => {clearAllReports(); setActiveTab('home');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'home' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Home size={14}/> Inicio</button>
-                    {((activePortal==='comercial')||appUser?.role==='Master'||appUser?.role==='Administrador')&&hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
-                    {((activePortal==='planta')||appUser?.role==='Master'||appUser?.role==='Administrador')&&hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
-                    {((activePortal==='planta')||appUser?.role==='Master'||appUser?.role==='Administrador')&&hasPerm('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
-                    {((activePortal==='planta')||appUser?.role==='Master'||appUser?.role==='Administrador')&&hasPerm('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
-                    {((activePortal==='planta'||activePortal==='comercial'||activePortal==='finanzas')||appUser?.role==='Master'||appUser?.role==='Administrador')&&(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeTab==='kpi'?'bg-white text-black shadow-lg':'text-gray-400 hover:text-white hover:bg-white/10'}`}><BarChart3 size={14}/> KPI</button>}
-                    {((activePortal==='comercial'||activePortal==='finanzas')||appUser?.role==='Master'||appUser?.role==='Administrador')&&(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')||hasPerm('reportes'))&&!hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('reportes') ? 'reportes' : 'costos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeTab==='costos'||activeTab==='reportes'?'bg-white text-black shadow-lg':'text-gray-400 hover:text-white hover:bg-white/10'}`}><DollarSign size={14}/> Finanzas</button>}
-                    {((activePortal==='planta'||activePortal==='comercial'||activePortal==='finanzas')||appUser?.role==='Master'||appUser?.role==='Administrador')&&(hasPerm('auditoria')||appUser?.role==='Master') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeTab==='auditoria'?'bg-white text-black shadow-lg':'text-gray-400 hover:text-white hover:bg-white/10'}`}><Shield size={14}/> Auditoría</button>}
+                    {hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
+                    {hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
+                    {hasPerm('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
+                    {hasPerm('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
+                    {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeTab==='kpi'?'bg-white text-black shadow-lg':'text-gray-400 hover:text-white hover:bg-white/10'}`}><BarChart3 size={14}/> KPI</button>}
+                    {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes') ? 'reportes' : 'costos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeTab==='costos'||activeTab==='reportes'?'bg-white text-black shadow-lg':'text-gray-400 hover:text-white hover:bg-white/10'}`}><DollarSign size={14}/> Reportes</button>}
+                    {(hasPerm('auditoria')||appUser?.role==='Master') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeTab==='auditoria'?'bg-white text-black shadow-lg':'text-gray-400 hover:text-white hover:bg-white/10'}`}><Shield size={14}/> Auditoría</button>}
                  </div>
               </div>
               <div className="flex items-center gap-2 sm:gap-3">
