@@ -4152,12 +4152,27 @@ export default function App() {
     if (!appUser) return false;
     if (appUser.role === 'Master') return true;
     const pt = appUser.portales;
-    if (!pt || Object.keys(pt).length === 0) return true; // sin restricción configurada
+    if (!pt || Object.keys(pt).length === 0) return true;
     return !!pt[portalId];
   }, [appUser]);
 
-  // Decide si un tab debe mostrarse en la nav según el portal activo.
-  // 'home' siempre visible. Sin portal activo (Master sin restricción) = todo visible.
+  // Verifica si el usuario tiene al menos algún permiso sobre un módulo-tab
+  // (padre O cualquier submódulo). Permite acceso cross-portal en Option B.
+  const hasAnyModulePerm = useCallback((tabId) => {
+    if (!appUser) return false;
+    if (appUser.role === 'Master') return true;
+    // Combos especiales
+    if (tabId === 'costos_operativos') return hasPerm('costos_operativos') || hasPerm('costos');
+    if (tabId === 'kpi')               return hasPerm('kpi') || hasPerm('costos') || hasPerm('costos_reportes');
+    if (tabId === 'costos')            return hasPerm('costos') || hasPerm('costos_reportes');
+    if (tabId === 'auditoria')         return hasPerm('auditoria');
+    if (hasPerm(tabId)) return true;
+    const mod = SYSTEM_MODULES.find(m => m.id === tabId);
+    return mod ? mod.submodules.some(s => hasPerm(s.id)) : false;
+  }, [appUser, hasPerm]);
+
+  // Decide si un tab debe aparecer en la nav según el portal activo.
+  // Opción B: tab nativo del portal → sí. Tab de otro portal con permiso explícito → también sí.
   const NAV_PORTAL_TABS = {
     produccion:     ['produccion','formulas','inventario','simulador'],
     administracion: ['ventas','configuracion','auditoria'],
@@ -4165,8 +4180,9 @@ export default function App() {
   };
   const navInPortal = (tab) => {
     if (tab === 'home') return true;
-    if (!selectedPortal) return true;
-    return (NAV_PORTAL_TABS[selectedPortal] || []).includes(tab);
+    if (!selectedPortal) return true;                                    // sin portal activo → todo visible
+    if ((NAV_PORTAL_TABS[selectedPortal] || []).includes(tab)) return true; // nativo del portal
+    return hasAnyModulePerm(tab);                                        // cross-portal: permiso explícito
   };
 
   // ============================================================================
@@ -4344,8 +4360,11 @@ export default function App() {
     };
     const portalTabList = selectedPortal ? PORTAL_TABS[selectedPortal] : null;
     const visibleCards  = portalTabList
-      ? moduleCards.filter(c => portalTabList.includes(c.tab))
-      : moduleCards; // sin portal activo → muestra todo (Master sin restricción de portal)
+      ? moduleCards.filter(c =>
+          portalTabList.includes(c.tab) ||   // nativo del portal
+          hasAnyModulePerm(c.tab)            // cross-portal: tiene permiso explícito de submodulo
+        )
+      : moduleCards;
 
     // ── PLACEHOLDER FINANZAS ──────────────────────────────────────────────────
     if (selectedPortal === 'finanzas' && visibleCards.length === 0) {
@@ -23672,9 +23691,9 @@ ${resumenHtml}
             <div className="flex items-center justify-around px-1 py-2">
               {[
                 {tab:'home', icon:<Home size={20}/>, label:'Inicio'},
-                hasPerm('inventario') && navInPortal('inventario') && {tab:'inventario', icon:<Package size={20}/>, label:'Inventario', badge: pendingRequisitions.length},
-                hasPerm('ventas') && navInPortal('ventas') && {tab:'ventas', icon:<Receipt size={20}/>, label:'Ventas'},
-                hasPerm('produccion') && navInPortal('produccion') && {tab:'produccion', icon:<Factory size={20}/>, label:'Producción'},
+                hasAnyModulePerm('inventario') && navInPortal('inventario') && {tab:'inventario', icon:<Package size={20}/>, label:'Inventario', badge: pendingRequisitions.length},
+                hasAnyModulePerm('ventas') && navInPortal('ventas') && {tab:'ventas', icon:<Receipt size={20}/>, label:'Ventas'},
+                hasAnyModulePerm('produccion') && navInPortal('produccion') && {tab:'produccion', icon:<Factory size={20}/>, label:'Producción'},
                 {tab:'_menu', icon:<Menu size={20}/>, label:'Más'},
               ].filter(Boolean).map((item) => {
                 if (item.tab === '_menu') return (
@@ -23696,10 +23715,10 @@ ${resumenHtml}
             {mobileMenuOpen && (
               <div className="px-4 pb-3 pt-2 border-t border-white/10 grid grid-cols-4 gap-2">
                 {[
-                  hasPerm('formulas') && navInPortal('formulas') && {tab:'formulas', icon:<Beaker size={18}/>, label:'Fórmulas'},
+                  hasAnyModulePerm('formulas') && navInPortal('formulas') && {tab:'formulas', icon:<Beaker size={18}/>, label:'Fórmulas'},
                   hasPerm('simulador') && navInPortal('simulador') && {tab:'simulador', icon:<Calculator size={18}/>, label:'Simulador'},
                   (hasPerm('costos')||hasPerm('costos_operativos')) && navInPortal('costos_operativos') && {tab:'costos_operativos', icon:<DollarSign size={18}/>, label:'Costos Op.'},
-                  (hasPerm('costos')||hasPerm('costos_reportes')) && navInPortal('costos') && {tab:'costos', icon:<BarChart3 size={18}/>, label:'Financiero'},
+                  hasAnyModulePerm('costos') && navInPortal('costos') && {tab:'costos', icon:<BarChart3 size={18}/>, label:'Financiero'},
                   hasPerm('configuracion') && navInPortal('configuracion') && {tab:'configuracion', icon:<Settings2 size={18}/>, label:'Config'},
                   pwaInstallAvailable && {tab:'_install', icon:<Smartphone size={18}/>, label:'Instalar'},
                 ].filter(Boolean).map((item) => {
@@ -23728,13 +23747,13 @@ ${resumenHtml}
                  </div>
                  <div className="hidden md:flex bg-gray-900 rounded-2xl p-1 gap-1 border border-gray-800">
                     <button onClick={() => {clearAllReports(); setActiveTab('home');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'home' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Home size={14}/> Inicio</button>
-                    {hasPerm('ventas') && navInPortal('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
-                    {hasPerm('produccion') && navInPortal('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
-                    {hasPerm('formulas') && navInPortal('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
-                    {hasPerm('inventario') && navInPortal('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
-                    {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && navInPortal('kpi') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
-                    {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && navInPortal('costos') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
-                    {(hasPerm('auditoria')||appUser?.role==='Master') && navInPortal('auditoria') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='auditoria'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShieldCheck size={14}/> Auditoría</button>}
+                    {hasAnyModulePerm('ventas') && navInPortal('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
+                    {hasAnyModulePerm('produccion') && navInPortal('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
+                    {hasAnyModulePerm('formulas') && navInPortal('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
+                    {hasAnyModulePerm('inventario') && navInPortal('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
+                    {hasAnyModulePerm('kpi') && navInPortal('kpi') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
+                    {hasAnyModulePerm('costos') && !hasPerm('ventas') && navInPortal('costos') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
+                    {hasAnyModulePerm('auditoria') && navInPortal('auditoria') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='auditoria'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShieldCheck size={14}/> Auditoría</button>}
                  </div>
               </div>
               <div className="flex items-center gap-2 sm:gap-3">
