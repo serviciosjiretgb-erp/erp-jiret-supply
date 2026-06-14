@@ -4172,7 +4172,7 @@ export default function App() {
   }, [appUser, hasPerm]);
 
   // Decide si un tab debe aparecer en la nav según el portal activo.
-  // Opción B: tab nativo del portal → sí. Tab de otro portal con permiso explícito → también sí.
+  // Solo tabs nativos del portal. Las vistas cross-portal viven DENTRO del módulo de Ventas.
   const NAV_PORTAL_TABS = {
     produccion:     ['produccion','formulas','inventario','simulador'],
     administracion: ['ventas','configuracion','auditoria'],
@@ -4180,9 +4180,8 @@ export default function App() {
   };
   const navInPortal = (tab) => {
     if (tab === 'home') return true;
-    if (!selectedPortal) return true;                                    // sin portal activo → todo visible
-    if ((NAV_PORTAL_TABS[selectedPortal] || []).includes(tab)) return true; // nativo del portal
-    return hasAnyModulePerm(tab);                                        // cross-portal: permiso explícito
+    if (!selectedPortal) return true;
+    return (NAV_PORTAL_TABS[selectedPortal] || []).includes(tab);
   };
 
   // ============================================================================
@@ -4360,10 +4359,7 @@ export default function App() {
     };
     const portalTabList = selectedPortal ? PORTAL_TABS[selectedPortal] : null;
     const visibleCards  = portalTabList
-      ? moduleCards.filter(c =>
-          portalTabList.includes(c.tab) ||   // nativo del portal
-          hasAnyModulePerm(c.tab)            // cross-portal: tiene permiso explícito de submodulo
-        )
+      ? moduleCards.filter(c => portalTabList.includes(c.tab))
       : moduleCards;
 
     // ── PLACEHOLDER FINANZAS ──────────────────────────────────────────────────
@@ -13299,8 +13295,130 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
 
 
-        {ventasView === 'libro_ventas' && (() => {
-          // ── helpers de formato venezolano ─────────────────────────────────────
+        {/* ── VISTAS EXTENDIDAS CROSS-PORTAL DENTRO DE VENTAS ───────────────── */}
+        {ventasView === 'vext_prod' && (() => {
+          const activeOPs = (requirements||[]).filter(r=>r.status==='EN PROCESO').sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+          return (
+            <div className="p-4 sm:p-8 space-y-4 animate-in fade-in">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-1 h-8 bg-blue-500 rounded-full"/>
+                <div>
+                  <h2 className="text-lg font-black uppercase text-gray-800 flex items-center gap-2"><Factory size={20} className="text-blue-600"/> Producción Activa <span className="text-[10px] font-bold text-blue-500 bg-blue-50 px-2 py-1 rounded-lg">Vista desde Ventas</span></h2>
+                  <p className="text-[10px] text-gray-500 font-bold">{activeOPs.length} OP{activeOPs.length!==1?'s':''} en proceso</p>
+                </div>
+              </div>
+              {activeOPs.length===0 ? <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay órdenes de producción activas</div> : (
+                <div className="grid gap-4">
+                  {activeOPs.map(op=>(
+                    <div key={op.id} className="bg-white rounded-2xl border-2 border-gray-100 p-5 shadow-sm">
+                      <div className="flex flex-wrap justify-between items-start gap-3 mb-3">
+                        <div>
+                          <span className="text-orange-600 font-black text-sm">{op.id}</span>
+                          <span className="ml-3 px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-[9px] font-black uppercase">EN PROCESO</span>
+                        </div>
+                        <span className="text-[10px] text-gray-400 font-bold">{op.fechaInicio||op.fecha||'—'}</span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[10px]">
+                        <div><span className="text-gray-400 font-bold uppercase block">Cliente</span><span className="font-black text-gray-800">{op.client||'—'}</span></div>
+                        <div><span className="text-gray-400 font-bold uppercase block">Producto</span><span className="font-black text-gray-800">{op.product||'—'}</span></div>
+                        <div><span className="text-gray-400 font-bold uppercase block">Cantidad</span><span className="font-black text-gray-800">{formatNum(op.quantity||0)} {op.unit||'kg'}</span></div>
+                        <div><span className="text-gray-400 font-bold uppercase block">Fase Actual</span><span className="font-black text-blue-700">{op.currentPhase||op.phase||'—'}</span></div>
+                      </div>
+                      {hasPerm('rep_finiquito') && <button onClick={()=>setShowFiniquitoOP(op.id)} className="mt-3 px-4 py-1.5 bg-orange-500 text-white rounded-xl text-[9px] font-black uppercase hover:bg-orange-600 transition-all flex items-center gap-1"><FileText size={12}/> Ver Reporte</button>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {ventasView === 'vext_inv' && (() => {
+          const invItems = (inventory||[]).filter(i=>i.activo!==false).sort((a,b)=>(a.desc||'').localeCompare(b.desc||''));
+          const termItems = (finishedGoodsInventory||[]).sort((a,b)=>(a.desc||'').localeCompare(b.desc||''));
+          return (
+            <div className="p-4 sm:p-8 animate-in fade-in">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-1 h-8 bg-blue-500 rounded-full"/>
+                <div>
+                  <h2 className="text-lg font-black uppercase text-gray-800 flex items-center gap-2"><Package size={20} className="text-blue-600"/> Consulta de Inventario <span className="text-[10px] font-bold text-blue-500 bg-blue-50 px-2 py-1 rounded-lg">Vista desde Ventas — Solo lectura</span></h2>
+                  <p className="text-[10px] text-gray-500 font-bold">{invItems.length} ítems en inventario · {termItems.length} productos terminados</p>
+                </div>
+              </div>
+              {hasPerm('inv_terminados') && termItems.length>0 && (
+                <div className="mb-8">
+                  <h3 className="text-[11px] font-black uppercase text-green-700 mb-3 flex items-center gap-2"><PackageCheck size={14}/> Productos Terminados</h3>
+                  <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                    <table className="w-full text-[10px]">
+                      <thead className="bg-green-50 border-b border-green-200"><tr className="font-black text-green-700 uppercase">
+                        <th className="py-2 px-4 text-left">Producto</th><th className="py-2 px-4 text-center">Stock</th><th className="py-2 px-4 text-center">Unidad</th><th className="py-2 px-4 text-right">Costo Unit.</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {termItems.map(it=><tr key={it.id} className="hover:bg-gray-50"><td className="py-2 px-4 font-bold text-gray-800">{it.desc}</td><td className="py-2 px-4 text-center font-black text-green-700">{formatNum(it.stock||0)}</td><td className="py-2 px-4 text-center text-gray-500">{it.unit||'und'}</td><td className="py-2 px-4 text-right font-bold">${formatNum(it.cost||0)}</td></tr>)}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {(hasPerm('inv_general')||hasPerm('inv_almacen')||hasPerm('inv_kardex')) && invItems.length>0 && (
+                <div>
+                  <h3 className="text-[11px] font-black uppercase text-orange-700 mb-3 flex items-center gap-2"><Package size={14}/> Inventario General</h3>
+                  <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                    <table className="w-full text-[10px]">
+                      <thead className="bg-orange-50 border-b border-orange-200"><tr className="font-black text-orange-700 uppercase">
+                        <th className="py-2 px-4 text-left">Código</th><th className="py-2 px-4 text-left">Descripción</th><th className="py-2 px-4 text-center">Categoría</th><th className="py-2 px-4 text-center">Stock</th><th className="py-2 px-4 text-center">Unidad</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {invItems.map(it=><tr key={it.id} className="hover:bg-gray-50"><td className="py-2 px-4 text-gray-400 font-mono">{it.displayId||it.id}</td><td className="py-2 px-4 font-bold text-gray-800">{it.desc}</td><td className="py-2 px-4 text-center text-gray-500">{it.category||'—'}</td><td className={`py-2 px-4 text-center font-black ${(it.stock||0)<=0?'text-red-500':(it.stock||0)<5?'text-yellow-600':'text-green-700'}`}>{formatNum(it.stock||0)}</td><td className="py-2 px-4 text-center text-gray-500">{it.unit||'und'}</td></tr>)}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {ventasView === 'vext_finiquito' && (() => {
+          if (showFiniquitoOP) { const req=requirements.find(r=>r.id===showFiniquitoOP); return renderFiniquitoOP(req); }
+          const closedOPs = (requirements||[]).filter(r=>r.status==='CERRADA').sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+          return (
+            <div className="p-4 sm:p-8 animate-in fade-in">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-1 h-8 bg-blue-500 rounded-full"/>
+                <div>
+                  <h2 className="text-lg font-black uppercase text-gray-800 flex items-center gap-2"><FileText size={20} className="text-blue-600"/> Finiquito por OP <span className="text-[10px] font-bold text-blue-500 bg-blue-50 px-2 py-1 rounded-lg">Vista desde Ventas</span></h2>
+                  <p className="text-[10px] text-gray-500 font-bold">{closedOPs.length} OP{closedOPs.length!==1?'s':''} cerrada{closedOPs.length!==1?'s':''}</p>
+                </div>
+              </div>
+              {closedOPs.length===0 ? <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay órdenes cerradas</div> : (
+                <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                  <table className="w-full text-[10px] mobile-cards">
+                    <thead className="bg-gray-50 border-b-2 border-gray-100"><tr className="font-black text-gray-400 uppercase">
+                      <th className="py-3 px-4 text-left">OP</th><th className="py-3 px-4 text-left">Cliente</th><th className="py-3 px-4 text-left">Producto</th><th className="py-3 px-4 text-center">Cantidad</th><th className="py-3 px-4 text-center">Fecha Cierre</th><th className="py-3 px-4 text-center">Acción</th>
+                    </tr></thead>
+                    <tbody className="divide-y">
+                      {closedOPs.map(op=>(
+                        <tr key={op.id} className="hover:bg-gray-50">
+                          <td className="py-3 px-4 font-black text-orange-600" data-label="OP">{op.id}</td>
+                          <td className="py-3 px-4 font-bold text-gray-700" data-label="Cliente">{op.client||'—'}</td>
+                          <td className="py-3 px-4 text-gray-600" data-label="Producto">{op.product||'—'}</td>
+                          <td className="py-3 px-4 text-center font-bold" data-label="Cantidad">{formatNum(op.quantity||0)} {op.unit||'kg'}</td>
+                          <td className="py-3 px-4 text-center text-gray-500" data-label="Fecha">{op.fechaCierre||op.updatedAt||'—'}</td>
+                          <td className="py-3 px-4 text-center" data-label="Acción">
+                            <button onClick={()=>setShowFiniquitoOP(op.id)} className="px-3 py-1.5 bg-orange-500 text-white rounded-xl text-[9px] font-black uppercase hover:bg-orange-600 transition-all flex items-center gap-1 mx-auto"><FileText size={11}/> Ver Finiquito</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {ventasView === 'libro_ventas' && (() => {          // ── helpers de formato venezolano ─────────────────────────────────────
           const fmtVen = n => {
             const parts = Math.abs(parseNum(n)||0).toFixed(2).split('.');
             return (n<0?'-':'')+parts[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+parts[1];
@@ -23691,9 +23809,9 @@ ${resumenHtml}
             <div className="flex items-center justify-around px-1 py-2">
               {[
                 {tab:'home', icon:<Home size={20}/>, label:'Inicio'},
-                hasAnyModulePerm('inventario') && navInPortal('inventario') && {tab:'inventario', icon:<Package size={20}/>, label:'Inventario', badge: pendingRequisitions.length},
-                hasAnyModulePerm('ventas') && navInPortal('ventas') && {tab:'ventas', icon:<Receipt size={20}/>, label:'Ventas'},
-                hasAnyModulePerm('produccion') && navInPortal('produccion') && {tab:'produccion', icon:<Factory size={20}/>, label:'Producción'},
+                hasPerm('inventario') && navInPortal('inventario') && {tab:'inventario', icon:<Package size={20}/>, label:'Inventario', badge: pendingRequisitions.length},
+                hasPerm('ventas') && navInPortal('ventas') && {tab:'ventas', icon:<Receipt size={20}/>, label:'Ventas'},
+                hasPerm('produccion') && navInPortal('produccion') && {tab:'produccion', icon:<Factory size={20}/>, label:'Producción'},
                 {tab:'_menu', icon:<Menu size={20}/>, label:'Más'},
               ].filter(Boolean).map((item) => {
                 if (item.tab === '_menu') return (
@@ -23715,10 +23833,10 @@ ${resumenHtml}
             {mobileMenuOpen && (
               <div className="px-4 pb-3 pt-2 border-t border-white/10 grid grid-cols-4 gap-2">
                 {[
-                  hasAnyModulePerm('formulas') && navInPortal('formulas') && {tab:'formulas', icon:<Beaker size={18}/>, label:'Fórmulas'},
+                  hasPerm('formulas') && navInPortal('formulas') && {tab:'formulas', icon:<Beaker size={18}/>, label:'Fórmulas'},
                   hasPerm('simulador') && navInPortal('simulador') && {tab:'simulador', icon:<Calculator size={18}/>, label:'Simulador'},
                   (hasPerm('costos')||hasPerm('costos_operativos')) && navInPortal('costos_operativos') && {tab:'costos_operativos', icon:<DollarSign size={18}/>, label:'Costos Op.'},
-                  hasAnyModulePerm('costos') && navInPortal('costos') && {tab:'costos', icon:<BarChart3 size={18}/>, label:'Financiero'},
+                  (hasPerm('costos')||hasPerm('costos_reportes')) && navInPortal('costos') && {tab:'costos', icon:<BarChart3 size={18}/>, label:'Financiero'},
                   hasPerm('configuracion') && navInPortal('configuracion') && {tab:'configuracion', icon:<Settings2 size={18}/>, label:'Config'},
                   pwaInstallAvailable && {tab:'_install', icon:<Smartphone size={18}/>, label:'Instalar'},
                 ].filter(Boolean).map((item) => {
@@ -23747,13 +23865,13 @@ ${resumenHtml}
                  </div>
                  <div className="hidden md:flex bg-gray-900 rounded-2xl p-1 gap-1 border border-gray-800">
                     <button onClick={() => {clearAllReports(); setActiveTab('home');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'home' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Home size={14}/> Inicio</button>
-                    {hasAnyModulePerm('ventas') && navInPortal('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
-                    {hasAnyModulePerm('produccion') && navInPortal('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
-                    {hasAnyModulePerm('formulas') && navInPortal('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
-                    {hasAnyModulePerm('inventario') && navInPortal('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
-                    {hasAnyModulePerm('kpi') && navInPortal('kpi') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
-                    {hasAnyModulePerm('costos') && !hasPerm('ventas') && navInPortal('costos') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
-                    {hasAnyModulePerm('auditoria') && navInPortal('auditoria') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='auditoria'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShieldCheck size={14}/> Auditoría</button>}
+                    {hasPerm('ventas') && navInPortal('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
+                    {hasPerm('produccion') && navInPortal('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
+                    {hasPerm('formulas') && navInPortal('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
+                    {hasPerm('inventario') && navInPortal('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
+                    {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && navInPortal('kpi') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
+                    {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && navInPortal('costos') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
+                    {(hasPerm('auditoria')||appUser?.role==='Master') && navInPortal('auditoria') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='auditoria'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShieldCheck size={14}/> Auditoría</button>}
                  </div>
               </div>
               <div className="flex items-center gap-2 sm:gap-3">
@@ -23946,6 +24064,31 @@ ${resumenHtml}
                  ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
+                 {/* ── VISTAS EXTENDIDAS CROSS-PORTAL (solo si el usuario tiene el subpermiso) ── */}
+                 {(hasPerm('produccion_activa')||hasPerm('produccion_proceso')||hasPerm('rep_finiquito')||hasPerm('inv_almacen')||hasPerm('inv_general')||hasPerm('inv_terminados')||hasPerm('inv_kardex')) && (
+                   <>
+                     <div className="flex items-center px-3 py-2 flex-shrink-0">
+                       <div className="w-px h-5 bg-gray-300 mx-1"/>
+                       <span className="text-[7px] font-black text-gray-400 uppercase tracking-widest whitespace-nowrap px-1">Vista Ext.</span>
+                       <div className="w-px h-5 bg-gray-300 mx-1"/>
+                     </div>
+                     {(hasPerm('produccion_activa')||hasPerm('produccion_proceso')) && (
+                       <button onClick={()=>{setVentasView('vext_prod');clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView==='vext_prod'?'border-blue-500 text-blue-700':'border-transparent text-gray-400 hover:text-gray-700'}`}>
+                         <Factory size={13}/> Prod. Activa
+                       </button>
+                     )}
+                     {(hasPerm('inv_almacen')||hasPerm('inv_general')||hasPerm('inv_terminados')||hasPerm('inv_kardex')) && (
+                       <button onClick={()=>{setVentasView('vext_inv');clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView==='vext_inv'?'border-blue-500 text-blue-700':'border-transparent text-gray-400 hover:text-gray-700'}`}>
+                         <Package size={13}/> Consulta Inv.
+                       </button>
+                     )}
+                     {hasPerm('rep_finiquito') && (
+                       <button onClick={()=>{setVentasView('vext_finiquito');clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView==='vext_finiquito'?'border-blue-500 text-blue-700':'border-transparent text-gray-400 hover:text-gray-700'}`}>
+                         <FileText size={13}/> Finiquito OP
+                       </button>
+                     )}
+                   </>
+                 )}
               </div>
            </div>
         )}
