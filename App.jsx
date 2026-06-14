@@ -14385,10 +14385,10 @@ ${resumenHtml}
                 <h3 className="text-sm font-black uppercase text-black mb-4">Filtros</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Categoría</label>
+                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Cuenta Contable</label>
                     <select value={costFilterCategory} onChange={e => setCostFilterCategory(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500">
-                      <option value="TODAS">TODAS LAS CATEGORÍAS</option>
-                      {allCats.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
+                       <option value="TODAS">TODAS LAS CUENTAS</option>
+                       {[...new Set((opCosts||[]).map(c=>c.cuentaContable||c.category||'').filter(Boolean))].sort().map(cc=>(<option key={cc} value={cc}>{cc}</option>))}
                     </select>
                   </div>
                   <div>
@@ -14405,7 +14405,33 @@ ${resumenHtml}
               {/* Resumen por categoría */}
               <div className="bg-white p-6 rounded-2xl border border-gray-200">
               <div className="bg-white p-6 rounded-2xl border border-gray-200">
-                <h3 className="text-sm font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">Reporte Mensual de Costos</h3>
+                <div className="flex items-center justify-between flex-wrap gap-3 mb-4 border-b border-gray-200 pb-3">
+                  <h3 className="text-sm font-black uppercase text-black">Reporte Mensual de Costos</h3>
+                  <div className="flex gap-2 flex-wrap items-center">
+                    <select value={costFilterMonth} onChange={e=>setCostFilterMonth(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-1.5 text-xs font-black outline-none focus:border-green-400">
+                      <option value="TODOS">📅 Todos los meses</option>
+                      {[...new Set((opCosts||[]).map(c=>c.month||'').filter(Boolean))].sort().reverse().map(m=>(<option key={m} value={m}>{formatMonth(m)}</option>))}
+                    </select>
+                    <button onClick={()=>{
+                      const filtRows=(opCosts||[]).filter(c=>costFilterMonth==='TODOS'||c.month===costFilterMonth);
+                      const byM={};filtRows.forEach(c=>{const k=`${c.month||'—'}::${c.cuentaContable||c.category||'—'}`;if(!byM[k])byM[k]={mes:c.month||'—',cuenta:(c.cuentaContable||'—'),cat:c.category||'—',total:0,count:0};byM[k].total+=parseNum(c.amount||0);byM[k].count++;});
+                      const rows=Object.values(byM).sort((a,b)=>b.mes.localeCompare(a.mes));
+                      const empresa=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+                      const totG=rows.reduce((s,r)=>s+r.total,0);
+                      const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"/></head><body><table><thead><tr><th colspan="5" style="background:#1f2937;color:#fff;padding:8px;font-size:13px">${empresa} — REPORTE MENSUAL DE COSTOS OPERATIVOS${costFilterMonth!=='TODOS'?' — '+formatMonth(costFilterMonth):''}</th></tr><tr style="background:#374151;color:#fff"><th>Mes</th><th>Cuenta Contable</th><th>Categoría / Descripción</th><th>Total USD</th><th>N° Registros</th></tr></thead><tbody>${rows.map((r,i)=>`<tr style="${i%2?'background:#f9fafb':''}"><td>${r.mes}</td><td>${r.cuenta}</td><td>${r.cat}</td><td style="text-align:right">$${formatNum(r.total)}</td><td style="text-align:center">${r.count}</td></tr>`).join('')}</tbody><tfoot><tr style="background:#1f2937;color:#fff;font-weight:900"><td colspan="3">TOTAL</td><td style="text-align:right">$${formatNum(totG)}</td><td style="text-align:center">${rows.length}</td></tr></tfoot></table></body></html>`;
+                      const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CostosOperativos${costFilterMonth!=='TODOS'?'_'+costFilterMonth:''}.xls`;a.click();
+                    }} className="bg-green-600 text-white px-3 py-1.5 rounded-xl font-black text-[9px] uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
+                    <button onClick={()=>{
+                      const filtRows=(opCosts||[]).filter(c=>costFilterMonth==='TODOS'||c.month===costFilterMonth);
+                      const byM={};filtRows.forEach(c=>{const k=`${c.month||'—'}::${c.cuentaContable||c.category||'—'}`;if(!byM[k])byM[k]={mes:c.month||'—',cuenta:(c.cuentaContable||'—'),cat:c.category||'—',total:0,count:0};byM[k].total+=parseNum(c.amount||0);byM[k].count++;});
+                      const rows=Object.values(byM).sort((a,b)=>b.mes.localeCompare(a.mes));
+                      const empresa=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+                      const totG=rows.reduce((s,r)=>s+r.total,0);
+                      const html=`<div id="pdf-content"><div class="no-pdf" style="display:none"></div><h2 style="font-weight:900;font-size:14px;text-transform:uppercase;border-bottom:2px solid #f97316;padding-bottom:8px;margin-bottom:16px">Costos Operativos${costFilterMonth!=='TODOS'?' — '+formatMonth(costFilterMonth):' — General'}</h2><table style="width:100%;border-collapse:collapse;font-size:10px"><thead><tr style="background:#1f2937;color:#fff"><th style="padding:8px;text-align:left">Mes</th><th style="padding:8px;text-align:left">Cuenta Contable</th><th style="padding:8px;text-align:left">Categoría</th><th style="padding:8px;text-align:right">Total USD</th><th style="padding:8px;text-align:center">Reg.</th></tr></thead><tbody>${rows.map((r,i)=>`<tr style="${i%2?'background:#f9fafb':''}"><td style="padding:7px 8px">${r.mes}</td><td style="padding:7px 8px;font-family:monospace;font-size:9px">${r.cuenta}</td><td style="padding:7px 8px">${r.cat}</td><td style="padding:7px 8px;text-align:right;font-weight:700;color:#16a34a">$${formatNum(r.total)}</td><td style="padding:7px 8px;text-align:center">${r.count}</td></tr>`).join('')}</tbody><tfoot><tr style="background:#1f2937;color:#fff;font-weight:900"><td colspan="3" style="padding:8px;text-align:right;font-size:11px">TOTAL GENERAL</td><td style="padding:8px;text-align:right;font-size:14px">$${formatNum(totG)}</td><td style="padding:8px;text-align:center">${rows.reduce((s,r)=>s+r.count,0)}</td></tr></tfoot></table></div>`;
+                      handlePDFFromHTML(html,'CostosOperativos');
+                    }} className="bg-black text-white px-3 py-1.5 rounded-xl font-black text-[9px] uppercase flex items-center gap-1"><FileText size={12}/> PDF</button>
+                  </div>
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-gray-800 text-white"><tr className="font-black text-[9px] uppercase">
@@ -19104,9 +19130,12 @@ ${resumenHtml}
         totalCostosOp: res.reduce((s,r) => s+r.totalCostosOp, 0),
         totalCostos: res.reduce((s,r) => s+r.totalCostos, 0),
         resultado: res.reduce((s,r) => s+r.resultado, 0),
+        utilidadNeta: res.reduce((s,r) => s+r.utilidadNeta, 0),
+        utilidadBruta: res.reduce((s,r) => s+r.utilidadBruta, 0),
         cogsRows: res.flatMap(r => r.cogsRows||[]),
         costosPorCuenta,
         facturasperiodo: res.flatMap(r => r.facturasperiodo||[]),
+        movsProd: res.flatMap(r => r.movsProd||[]),
       };
     })();
     const efaLabel = erMesesExtra.includes('ALL') ? 'PERÍODO COMPLETO' : `${MONTH_NAMES_ES[erMes-1]} ${erAno}`;
@@ -20671,6 +20700,7 @@ ${resumenHtml}
       totalCostos: totalCostoProd + totalCostosOp,
       utilidadBruta,
       utilidadNeta,
+      resultado: utilidadNeta,
       margenBruto,
       margenNeto,
       cogsRows,
