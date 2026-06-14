@@ -796,6 +796,7 @@ export default function App() {
   const [pdcSearch, setPdcSearch] = useState('');
   const [opCosts, setOpCosts] = useState([]);
   const [costFilterCategory, setCostFilterCategory] = useState('TODAS');
+  const [opCostPage, setOpCostPage] = useState(0);
   const [costFilterMonth, setCostFilterMonth] = useState('TODOS');
 
   // Estados para Dashboard de Reportes
@@ -4182,7 +4183,10 @@ export default function App() {
   const filteredCostsMemo = useMemo(() =>
     (opCosts || []).filter(cost => {
       if (!cost) return false;
-      const matchCategory = costFilterCategory === 'TODAS' || cost.category === costFilterCategory;
+      // Filtrar por cuenta contable O categoría (según lo que esté seleccionado)
+      const matchCategory = costFilterCategory === 'TODAS' ||
+        cost.cuentaContable === costFilterCategory ||
+        cost.category === costFilterCategory;
       const matchMonth = costFilterMonth === 'TODOS' || cost.month === costFilterMonth;
       return matchCategory && matchMonth;
     }),
@@ -12507,7 +12511,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                      const _doc=n.nroDocumento||'—';
                                      const _color=_nc?'#dc2626':'#2563eb';
                                      const _h=`<html><head><meta charset="utf-8"/><style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial;padding:24px;color:#111;}h1{font-size:14px;font-weight:900;text-align:center;text-transform:uppercase;color:${_color};margin:12px 0 4px;}h2{font-size:22px;font-weight:900;text-align:center;margin-bottom:16px;}.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid ${_color};padding-bottom:10px;margin-bottom:16px;}.logo{font-size:24px;font-weight:900;color:#f97316;}.emp{text-align:right;font-size:9px;color:#555;}table{width:100%;border-collapse:collapse;margin-bottom:14px;}td{padding:7px 10px;border:1px solid #ddd;}td:first-child{background:#f9fafb;font-weight:700;width:40%;}.totales{width:100%;border-collapse:collapse;}.totales td{padding:8px 12px;border:1px solid #ddd;}.totales .lbl{background:#f9fafb;font-weight:700;}.totales .val{text-align:right;font-weight:700;font-size:12px;}.totales .total-row td{background:${_color};color:#fff;font-weight:900;font-size:14px;}.badge{display:inline-block;padding:4px 12px;border-radius:20px;background:${_color};color:#fff;font-size:10px;font-weight:900;margin-bottom:12px;}</style></head><body>
-                                       <div class="header"><div><div class="logo">G&amp;B</div><small style="letter-spacing:2px;text-transform:uppercase;font-size:8px">SERVICIOS JIRET</small></div><div class="emp"><b>${_em}</b><br>RIF: ${settings?.empresaRif||'J-412309374'}<br>${settings?.empresaDireccion||''}<br>${settings?.empresaTelefono||''}</div></div>
+                                       
                                        <h1>${n.tipo==='NC'?'NOTA DE CRÉDITO':'NOTA DE DÉBITO'}</h1>
                                        <h2>${_doc}</h2>
                                        <div class="badge">${n.tipo}</div>
@@ -14257,7 +14261,7 @@ ${resumenHtml}
 
       // Resumen por categoría — dinámico con todas las categorías conocidas
       const costsByCategory = {};
-      allCats.forEach(cat => { costsByCategory[cat] = 0; });
+      // Solo se crean entradas para categorías con costos registrados
       (opCosts || []).forEach(cost => {
         if (!cost || !cost.category) return;
         if (costsByCategory[cost.category] !== undefined) {
@@ -14398,10 +14402,55 @@ ${resumenHtml}
               </div>
 
               {/* Resumen por categoría */}
+              {/* Resumen por categoría */}
               <div className="bg-white p-6 rounded-2xl border border-gray-200">
+              <div className="bg-white p-6 rounded-2xl border border-gray-200">
+                <h3 className="text-sm font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">Reporte Mensual de Costos</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-800 text-white"><tr className="font-black text-[9px] uppercase">
+                      <th className="py-2 px-3 text-left">Mes</th>
+                      <th className="py-2 px-3 text-left">Cuenta Contable</th>
+                      <th className="py-2 px-3 text-left">Categoría</th>
+                      <th className="py-2 px-3 text-right">Total USD</th>
+                      <th className="py-2 px-3 text-center">N° Registros</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {(()=>{
+                        const byMonth={};
+                        (opCosts||[]).forEach(c=>{
+                          const key=`${c.month||'—'}::${c.cuentaContable||c.category||'—'}`;
+                          if(!byMonth[key]) byMonth[key]={mes:c.month||'—',cuenta:c.cuentaContable||'—',cat:c.category||'—',total:0,count:0};
+                          byMonth[key].total+=parseNum(c.amount||0);
+                          byMonth[key].count++;
+                        });
+                        const rows=Object.values(byMonth).sort((a,b)=>b.mes.localeCompare(a.mes));
+                        if(!rows.length) return <tr><td colSpan="5" className="py-6 text-center text-gray-400 font-bold uppercase">Sin costos registrados</td></tr>;
+                        return rows.map((r,i)=>(
+                          <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
+                            <td className="py-2 px-3 font-black text-orange-600">{formatMonth(r.mes)}</td>
+                            <td className="py-2 px-3 font-mono text-[9px] text-gray-500">{r.cuenta}</td>
+                            <td className="py-2 px-3 font-bold">{r.cat}</td>
+                            <td className="py-2 px-3 text-right font-black text-green-700">${formatNum(r.total)}</td>
+                            <td className="py-2 px-3 text-center text-gray-500">{r.count}</td>
+                          </tr>
+                        ));
+                      })()}
+                    </tbody>
+                    <tfoot className="bg-gray-900 text-white font-black">
+                      <tr>
+                        <td colSpan="3" className="py-2 px-3 text-right uppercase text-[9px]">Total General:</td>
+                        <td className="py-2 px-3 text-right">${formatNum((opCosts||[]).reduce((s,c)=>s+parseNum(c.amount||0),0))}</td>
+                        <td className="py-2 px-3 text-center">{(opCosts||[]).length}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+>
                 <h3 className="text-sm font-black uppercase text-black mb-6 border-b border-gray-200 pb-2">Resumen por Categoría (Total acumulado)</h3>
                 <div className="space-y-3">
-                  {Object.entries(costsByCategory).map(([cat, amount]) => {
+                  {Object.entries(costsByCategory).filter(([,amount])=>amount>0).map(([cat, amount]) => {
                     const percentage = totalCosts > 0 ? (amount / totalCosts * 100) : 0;
                     const barWidth = amount > 0 ? (amount / maxCategoryAmount * 100) : 0;
                     return (
@@ -14469,14 +14518,15 @@ ${resumenHtml}
                   <table className="w-full text-left">
                     <thead className="bg-gray-100 border-b-2 border-gray-200">
                       <tr className="uppercase font-black text-[10px] tracking-widest text-gray-500">
-                        <th className="py-3 px-4">Fecha</th><th className="py-3 px-4">Categoría</th><th className="py-3 px-4">Descripción</th><th className="py-3 px-4 text-right">Monto</th><th className="py-3 px-4 text-center">Acciones</th>
+                        <th className="py-3 px-4">Fecha</th><th className="py-3 px-4">Cuenta Contable</th><th className="py-3 px-4">Categoría</th><th className="py-3 px-4">Descripción</th><th className="py-3 px-4 text-right">Monto</th><th className="py-3 px-4 text-center">Acciones</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {filteredCosts.map(cost => (
+                      {filteredCosts.slice(opCostPage*15,(opCostPage+1)*15).map(cost => (
                         <tr key={cost.id} className="hover:bg-gray-50 transition-colors">
                           <td className="py-3 px-4 font-bold text-xs text-gray-600">{cost.date}</td>
-                          <td className="py-3 px-4"><span className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-[10px] font-black uppercase">{cost.category}</span></td>
+                          <td className="py-3 px-4 font-mono text-[9px] text-gray-500">{cost.cuentaContable||'—'}</td>
+                           <td className="py-3 px-4"><span className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-[10px] font-black uppercase">{cost.category}</span></td>
                           <td className="py-3 px-4 font-bold text-xs text-gray-700 uppercase">{cost.description || '—'}</td>
                           <td className="py-3 px-4 text-right font-black text-green-600">${formatNum(cost.amount)}</td>
                           <td className="py-3 px-4 text-center"><button onClick={() => handleDeleteOpCost(cost.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors"><Trash2 size={14}/></button></td>
@@ -20603,7 +20653,7 @@ ${resumenHtml}
           movs: []
         };
       }
-      costosPorCuenta[key].total += parseNum(c.monto||0);
+      costosPorCuenta[key].total += parseNum(c.amount||c.monto||0);
       costosPorCuenta[key].movs.push(c);
     });
 
@@ -20618,6 +20668,7 @@ ${resumenHtml}
       totalIngresos,
       totalCostoProd,
       totalCostosOp,
+      totalCostos: totalCostoProd + totalCostosOp,
       utilidadBruta,
       utilidadNeta,
       margenBruto,
