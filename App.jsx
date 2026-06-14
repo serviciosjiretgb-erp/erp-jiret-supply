@@ -4156,6 +4156,19 @@ export default function App() {
     return !!pt[portalId];
   }, [appUser]);
 
+  // Decide si un tab debe mostrarse en la nav según el portal activo.
+  // 'home' siempre visible. Sin portal activo (Master sin restricción) = todo visible.
+  const NAV_PORTAL_TABS = {
+    produccion:     ['produccion','formulas','inventario','simulador'],
+    administracion: ['ventas','configuracion','auditoria'],
+    finanzas:       ['costos_operativos','kpi','costos'],
+  };
+  const navInPortal = (tab) => {
+    if (tab === 'home') return true;
+    if (!selectedPortal) return true;
+    return (NAV_PORTAL_TABS[selectedPortal] || []).includes(tab);
+  };
+
   // ============================================================================
   // DATOS DERIVADOS MEMOIZADOS — Se recalculan solo cuando cambian sus dependencias
   // ============================================================================
@@ -23659,9 +23672,9 @@ ${resumenHtml}
             <div className="flex items-center justify-around px-1 py-2">
               {[
                 {tab:'home', icon:<Home size={20}/>, label:'Inicio'},
-                hasPerm('inventario') && {tab:'inventario', icon:<Package size={20}/>, label:'Inventario', badge: pendingRequisitions.length},
-                hasPerm('ventas') && {tab:'ventas', icon:<Receipt size={20}/>, label:'Ventas'},
-                hasPerm('produccion') && {tab:'produccion', icon:<Factory size={20}/>, label:'Producción'},
+                hasPerm('inventario') && navInPortal('inventario') && {tab:'inventario', icon:<Package size={20}/>, label:'Inventario', badge: pendingRequisitions.length},
+                hasPerm('ventas') && navInPortal('ventas') && {tab:'ventas', icon:<Receipt size={20}/>, label:'Ventas'},
+                hasPerm('produccion') && navInPortal('produccion') && {tab:'produccion', icon:<Factory size={20}/>, label:'Producción'},
                 {tab:'_menu', icon:<Menu size={20}/>, label:'Más'},
               ].filter(Boolean).map((item) => {
                 if (item.tab === '_menu') return (
@@ -23683,11 +23696,11 @@ ${resumenHtml}
             {mobileMenuOpen && (
               <div className="px-4 pb-3 pt-2 border-t border-white/10 grid grid-cols-4 gap-2">
                 {[
-                  hasPerm('formulas') && {tab:'formulas', icon:<Beaker size={18}/>, label:'Fórmulas'},
-                  hasPerm('simulador') && {tab:'simulador', icon:<Calculator size={18}/>, label:'Simulador'},
-                  (hasPerm('costos')||hasPerm('costos_operativos')) && {tab:'costos_operativos', icon:<DollarSign size={18}/>, label:'Costos Op.'},
-                  (hasPerm('costos')||hasPerm('costos_reportes')) && {tab:'costos', icon:<BarChart3 size={18}/>, label:'Financiero'},
-                  hasPerm('configuracion') && {tab:'configuracion', icon:<Settings2 size={18}/>, label:'Config'},
+                  hasPerm('formulas') && navInPortal('formulas') && {tab:'formulas', icon:<Beaker size={18}/>, label:'Fórmulas'},
+                  hasPerm('simulador') && navInPortal('simulador') && {tab:'simulador', icon:<Calculator size={18}/>, label:'Simulador'},
+                  (hasPerm('costos')||hasPerm('costos_operativos')) && navInPortal('costos_operativos') && {tab:'costos_operativos', icon:<DollarSign size={18}/>, label:'Costos Op.'},
+                  (hasPerm('costos')||hasPerm('costos_reportes')) && navInPortal('costos') && {tab:'costos', icon:<BarChart3 size={18}/>, label:'Financiero'},
+                  hasPerm('configuracion') && navInPortal('configuracion') && {tab:'configuracion', icon:<Settings2 size={18}/>, label:'Config'},
                   pwaInstallAvailable && {tab:'_install', icon:<Smartphone size={18}/>, label:'Instalar'},
                 ].filter(Boolean).map((item) => {
                   if(item.tab==='_install') return (
@@ -23715,13 +23728,13 @@ ${resumenHtml}
                  </div>
                  <div className="hidden md:flex bg-gray-900 rounded-2xl p-1 gap-1 border border-gray-800">
                     <button onClick={() => {clearAllReports(); setActiveTab('home');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'home' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Home size={14}/> Inicio</button>
-                    {hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
-                    {hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
-                    {hasPerm('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
-                    {hasPerm('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
-                    {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
-                    {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
-                    {(hasPerm('auditoria')||appUser?.role==='Master') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='auditoria'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShieldCheck size={14}/> Auditoría</button>}
+                    {hasPerm('ventas') && navInPortal('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
+                    {hasPerm('produccion') && navInPortal('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
+                    {hasPerm('formulas') && navInPortal('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
+                    {hasPerm('inventario') && navInPortal('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
+                    {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && navInPortal('kpi') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
+                    {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && navInPortal('costos') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
+                    {(hasPerm('auditoria')||appUser?.role==='Master') && navInPortal('auditoria') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='auditoria'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShieldCheck size={14}/> Auditoría</button>}
                  </div>
               </div>
               <div className="flex items-center gap-2 sm:gap-3">
