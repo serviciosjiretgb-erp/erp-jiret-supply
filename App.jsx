@@ -4246,7 +4246,17 @@ export default function App() {
         console.log(`Migración completada: ${toMigrate.length} items → ALMACEN ZI`);
       } catch(e) { console.warn('Migration error:', e); }
     })();
-  }, [inventory.length, appUser]);
+  }, [inventory.length, appUser])
+
+  // ── Portal auto-select (debe estar ANTES de cualquier return condicional) ──
+  useEffect(() => {
+    if (!appUser || activePortal) return;
+    const disponibles = Object.values(PORTALES).filter(p =>
+      appUser.role === 'Master' || appUser.role === 'Administrador' ||
+      !!(appUser.portales || {})[p.id]
+    );
+    if (disponibles.length === 1) setActivePortal(disponibles[0].id);
+  }, [appUser?.username, activePortal]); // eslint-disable-line;
 
   // ============================================================================
   const renderHome = () => {
@@ -23307,19 +23317,6 @@ ${resumenHtml}
     appUser?.role === 'Master' || appUser?.role === 'Administrador' ||
     appUser?.portales?.[p.id]
   ) : [];
-
-  // Auto-seleccionar portal si el usuario solo tiene uno disponible
-  React.useEffect(() => {
-    if (appUser && !activePortal) {
-      const disponibles = Object.values(PORTALES).filter(p =>
-        appUser?.role === 'Master' || appUser?.role === 'Administrador' ||
-        appUser?.portales?.[p.id]
-      );
-      if (disponibles.length === 1) {
-        setActivePortal(disponibles[0].id);
-      }
-    }
-  }, [appUser, activePortal]);
 
   if (appUser && !activePortal) {
     return (
