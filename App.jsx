@@ -19674,8 +19674,6 @@ ${resumenHtml}
                       ['Millares Totales', formatNum(totMillares)+' Mill.', 'bg-indigo-50 border-indigo-200 text-indigo-700'],
                       ['Merma Total', formatNum(totMermaKg)+' KG ('+totPctMerma+'%)', 'bg-red-50 border-red-200 text-red-700'],
                       ['Costo MP Total', '$'+formatNum(totCostoMP), 'bg-orange-50 border-orange-200 text-orange-700'],
-                      ['Ingresos Total', '$'+formatNum(totIngresos), 'bg-emerald-50 border-emerald-200 text-emerald-700'],
-                      ['Utilidad Neta', '$'+formatNum(totUtilidad), totUtilidad>=0?'bg-blue-50 border-blue-200 text-blue-700':'bg-red-50 border-red-200 text-red-700'],
                     ].map(([l,v,cls],i)=>(
                       <div key={i} className={`border rounded-xl p-3 text-center ${cls}`}>
                         <div className="text-[9px] font-black uppercase mb-1">{l}</div>
@@ -19694,13 +19692,11 @@ ${resumenHtml}
                           <tr className="font-black text-[9px] uppercase">
                             <th className="p-3 border-r border-gray-700 text-left">OP</th>
                             <th className="p-3 border-r border-gray-700 text-left">Cliente</th>
-                            <th className="p-3 border-r border-gray-700 text-left">Producto</th>
+                            <th className="p-3 border-r border-gray-700 text-left">Prod. Asignado</th>
                             <th className="p-3 border-r border-gray-700 text-center">MP (KG)</th>
                             <th className="p-3 border-r border-gray-700 text-center">Prod. Final</th>
                             <th className="p-3 border-r border-gray-700 text-center">Merma (%)</th>
                             <th className="p-3 border-r border-gray-700 text-center">Costo MP</th>
-                            <th className="p-3 border-r border-gray-700 text-center">Ingresos</th>
-                            <th className="p-3 text-center">Utilidad</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
@@ -19711,13 +19707,11 @@ ${resumenHtml}
                               <tr key={req.id} className={idx%2===0?'bg-white':'bg-gray-50'}>
                                 <td className="p-3 border-r font-black text-orange-600">#{String(req.id).replace('OP-','').padStart(5,'0')}</td>
                                 <td className="p-3 border-r font-bold uppercase text-[10px]">{req.client}</td>
-                                <td className="p-3 border-r font-bold text-[10px]">{req.desc}<div className="text-[8px] text-gray-400">{req.ancho}×{req.largo}cm {req.micras}mic</div></td>
+                                {(()=>{const _pd=(inventory||[]).find(i=>i.id===req.productoDestinoId);const _pc=_pd?(_pd.displayId||(_pd.id||'').split('___')[0]):'';return(<td className="p-3 border-r text-[10px]">{_pd?(<div><div className="font-black text-blue-700">{_pc}</div><div className="text-[8px] text-gray-400">{_pd.desc||''}</div></div>):(<div><div className="text-[9px] text-red-400 font-bold">⚠ Sin asignar</div><div className="text-[8px] text-gray-400">{req.desc}</div></div>)}</td>);})()}
                                 <td className="p-3 border-r text-center font-black text-blue-700">{formatNum(mpKg)}</td>
                                 <td className="p-3 border-r text-center font-black text-green-700">{prodFinal}</td>
                                 <td className="p-3 border-r text-center font-black text-red-600">{formatNum(merma)} kg<div className="text-[8px]">({pctMerma}%)</div></td>
                                 <td className="p-3 border-r text-center font-bold text-orange-600">${formatNum(costoMP)}</td>
-                                <td className="p-3 border-r text-center font-bold text-green-600">${formatNum(ingresos)}</td>
-                                <td className={`p-3 text-center font-black ${utilidad>=0?'text-blue-600':'text-red-600'}`}>${formatNum(utilidad)}</td>
                               </tr>
                             );
                           })}
@@ -19729,8 +19723,6 @@ ${resumenHtml}
                             <td className="p-3 text-center">{formatNum(totMillares)>0?formatNum(totMillares)+' Mill.':formatNum(totProdKg)+' kg'}</td>
                             <td className="p-3 text-center">{formatNum(totMermaKg)} kg ({totPctMerma}%)</td>
                             <td className="p-3 text-center">${formatNum(totCostoMP)}</td>
-                            <td className="p-3 text-center">${formatNum(totIngresos)}</td>
-                            <td className="p-3 text-center">${formatNum(totUtilidad)}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -19758,7 +19750,7 @@ ${resumenHtml}
                 ) : (
                   <div className="overflow-x-auto rounded-xl border border-gray-200">
                     <table className="w-full text-xs text-left">
-                      <thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px]"><th className="py-3 px-4 border-r">OP / Fecha</th><th className="py-3 px-4 border-r">Cliente</th><th className="py-3 px-4 border-r">Producto</th><th className="py-3 px-4 border-r text-right">Millares</th><th className="py-3 px-4 border-r text-right">Costo MP</th><th className="py-3 px-4 border-r text-right">Ingresos</th><th className="py-3 px-4 border-r text-right">Utilidad</th><th className="py-3 px-4 text-center">Finiquito</th></tr></thead>
+                      <thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px]"><th className="py-3 px-4 border-r">OP / Fecha</th><th className="py-3 px-4 border-r">Cliente</th><th className="py-3 px-4 border-r">Prod. Asignado</th><th className="py-3 px-4 border-r text-right">Millares</th><th className="py-3 px-4 border-r text-right">Costo MP</th><th className="py-3 px-4 text-center">Finiquito</th></tr></thead>
                       <tbody className="divide-y divide-gray-100">
                         {(requirements||[]).filter(r=>r.status==='COMPLETADO').length === 0 ? <tr><td colSpan="8" className="p-8 text-center text-gray-400 font-bold uppercase">No hay órdenes completadas</td></tr> :
                           (requirements||[]).filter(r=>r.status==='COMPLETADO').map(req => {
@@ -19768,11 +19760,9 @@ ${resumenHtml}
                               <tr key={req.id} data-finiquito-row="1" data-search={searchStr} className="hover:bg-gray-50">
                                 <td className="py-3 px-4 border-r font-black text-purple-600">#{String(req.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400">{req.fecha}</span></td>
                                 <td className="py-3 px-4 border-r font-bold uppercase">{req.client}</td>
-                                <td className="py-3 px-4 border-r font-bold">{req.desc}</td>
+                                 {(()=>{const _pd=(inventory||[]).find(i=>i.id===req.productoDestinoId);const _pc=_pd?(_pd.displayId||(_pd.id||'').split('___')[0]):'';return(<td className="py-3 px-4 border-r">{_pd?(<div><div className="text-[9px] font-black text-blue-700">{_pc}</div><div className="text-[8px] text-gray-400">{_pd.desc||''}</div></div>):(<div><span className="text-[8px] text-red-400 font-bold">⚠ Sin asignar</span><div className="text-[8px] text-gray-400">{req.desc}</div></div>)}</td>);})()}
                                 <td className="py-3 px-4 border-r text-right font-black">{fin.millares > 0 ? formatNum(fin.millares) : '—'}</td>
                                 <td className="py-3 px-4 border-r text-right font-bold text-orange-600">${formatNum(fin.costoMP)}</td>
-                                <td className="py-3 px-4 border-r text-right font-bold text-green-600">${formatNum(fin.ingresos)}</td>
-                                <td className={`py-3 px-4 border-r text-right font-black text-lg ${fin.utilidad >= 0 ? 'text-blue-600' : 'text-red-600'}`}>${formatNum(fin.utilidad)}</td>
                                 <td className="py-3 px-4 text-center">
                                   <div className="flex gap-1 justify-center">
                                     <button onClick={() => { setShowFiniquitoOP(req.id); setFiniquitoMode('resumen'); }} className="px-2 py-1 bg-gray-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-gray-700 flex items-center gap-1"><FileText size={10}/> RESUMEN</button>
@@ -20416,10 +20406,16 @@ ${resumenHtml}
     // Excluir facturas ya representadas por una NE para evitar duplicación
     const facturasEnNE = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
 
-    // NEs del período
+    // NEs del período — solo BOLSAS y TERMOENCOGIBLES (operaciones de producción propia)
+    const isBolsasOrTermo = (ne) => (ne.items||[]).some(it => {
+      const c=(it.invCode||it.codigo||'').toUpperCase();
+      const d=(it.desc||it.descripcion||'').toUpperCase();
+      return c.startsWith('BOL')||d.includes('BOLSA')||c.startsWith('TERMO')||d.includes('TERMO');
+    });
     const nesperiodo = (notasEntrega||[]).filter(ne => {
       const d = ne.fecha || '';
-      return d.startsWith(ym);
+      if (!d.startsWith(ym)) return false;
+      return isBolsasOrTermo(ne);
     });
 
     // Facturas directas del período (sin NE asociada)
@@ -21546,38 +21542,6 @@ ${resumenHtml}
           ))}
         </div>
 
-        {/* ── ROW 2: Ingresos por mes + Top Clientes ── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          {/* Ingresos por mes */}
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-            <h3 className="text-[10px] font-black text-gray-700 uppercase mb-4 flex items-center gap-2"><Receipt size={13} className="text-orange-500"/> Ingresos por Período (USD)</h3>
-            <div className="flex items-end gap-1" style={{height:120}}>
-              {ingByMonth.map((m,i)=>{
-                const pct=(m.val/maxIng)*100;
-                const isLast=i===ingByMonth.length-1;
-                return (
-                  <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                    {m.val>0&&<span className="text-[7px] font-black text-gray-500">${formatNum(m.val)}</span>}
-                    <div className="w-full rounded-t-sm" style={{height:`${Math.max(pct,3)}%`,minHeight:2,background:isLast?'#f97316':'#111'}}/>
-                    <span className="text-[7px] font-bold text-gray-400 text-center leading-tight">{m.name}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Top Clientes */}
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-            <h3 className="text-[10px] font-black text-gray-700 uppercase mb-4 flex items-center gap-2"><User size={13} className="text-purple-500"/> Desempeño por Cliente (USD)</h3>
-            {topClientes.length>0 ? (
-              <div className="space-y-2">
-                {topClientes.map((c,i)=>(
-                  <Bar key={i} pct={(c.total/maxCli)*100} color={i===0?'#f97316':'#111'} label={c.name} value={`$${formatNum(c.total)}`}/>
-                ))}
-              </div>
-            ) : <div className="text-center py-6 text-gray-300 text-xs font-bold">Sin datos en el período</div>}
-          </div>
-        </div>
 
         {/* ── ROW 3: Top Productos + Mermas ── */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
