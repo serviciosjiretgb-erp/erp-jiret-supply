@@ -382,6 +382,8 @@ export default function App() {
   const initialCotizForm = { fecha: '', clientRif: '', clientName: '', documento: '', descripcion: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', validez: '15', condicionId: '', observaciones: '', condicionPago: 'CONTADO', diasCredito: '', porcentajeAnticipo: '', tiempoEntrega: '', formaPago: 'BS A TASA BCV' };
   const [newCotizForm, setNewCotizForm] = useState({...initialCotizForm, fecha: getTodayDate()});
   const [cotizItems, setCotizItems] = useState([]);
+  const [cotizFiltVendedor, setCotizFiltVendedor] = useState(''); // filtro por vendedor
+  const [cotizOutcomeModal, setCotizOutcomeModal] = useState(null); // {id,documento,status,motivo} — resultado de la cotización
   const [cotizSelectedProduct, setCotizSelectedProduct] = useState('');
   const [cotizAddDesc, setCotizAddDesc] = useState('');
   const [cotizAddQty, setCotizAddQty] = useState('');
@@ -9515,11 +9517,64 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               setDialog({title:'✅ Cotización guardada',text:`${id} guardada correctamente.`,type:'alert'});
             } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
           };
+          const vendedoresList = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : [];
+          const MOTIVOS_NO = ['PRECIO ELEVADO','CLIENTE NO RESPONDIÓ','COMPRÓ A OTRO PROVEEDOR','FUERA DE PRESUPUESTO','TIEMPO DE ENTREGA','PRODUCTO NO DISPONIBLE','OTRO'];
+          // Editar cantidad/precio de un ítem ya agregado (recalcula total). NO afecta inventario.
+          const updateCotizItem = (idx, patch) => setCotizItems(prev => prev.map((it,i)=>{ if(i!==idx) return it; const n={...it,...patch}; n.total=parseNum(n.cantidad)*parseNum(n.precioUnit); return n; }));
+          // Marcar resultado de la cotización (para estadística de conversión)
+          const aplicarResultadoCotiz = async (mod) => {
+            try {
+              await updateDoc(getDocRef('cotizaciones', mod.id), {
+                status: mod.status,
+                motivoNoConcretada: mod.status==='NO CONCRETADA' ? (mod.motivo||'') : '',
+                statusUser: appUser?.name || '', statusDate: getTodayDate()
+              });
+              setCotizOutcomeModal(null);
+            } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+          };
+          // Convertir cotización aprobada → Nota de Entrega (prellenado). NO descuenta inventario aquí:
+          // el descuento ocurre al asignar almacén y guardar la NE. Al guardar la NE, la cotización pasa a FACTURADA.
+          const convertirCotizANE = (cot) => {
+            if(cot.status==='FACTURADA'){ setDialog({title:'Ya facturada',text:`${cot.documento} ya fue convertida (${cot.neGenerada||'NE'}).`,type:'alert'}); return; }
+            const proceder = () => {
+              const neItems = (cot.items||[]).map(it=>({
+                invCode:'', desc:it.desc||'', cantidad:parseNum(it.cantidad||0),
+                precioUnit:parseNum(it.precioUnit||0), unit:'und', costoUnit:0, warehouseQtys:{}
+              }));
+              setNeForm({
+                fecha:getTodayDate(), clientRif:cot.clientRif||'', clientName:cot.clientName||'', clientAddress:'',
+                vendedor:cot.vendedor||'', items:neItems, aplicaIva:cot.aplicaIva||'SI', status:'TRANSITO',
+                observaciones:cot.observaciones||'', facturaId:'', opRelacionada:'', ncConsignacion:'',
+                diasCredito:String(cot.diasCredito||'0'), cotizOrigen:cot.id, cotizDoc:cot.documento,
+                neClientSearch:'', neShowClientDrop:false
+              });
+              clearAllReports();
+              setVentasView('notas_entrega');
+              window.scrollTo({top:0,behavior:'smooth'});
+            };
+            if(cot.status!=='APROBADA'){
+              setDialog({title:'Cotización no aprobada',text:`${cot.documento} aún no está marcada como APROBADA. ¿Generar la Nota de Entrega de todas formas?`,type:'confirm',onConfirm:proceder});
+            } else { proceder(); }
+          };
           const filteredCotiz = (cotizaciones||[]).filter(c=>
-            !cotizSearchTerm ||
-            (c.documento||'').toUpperCase().includes(cotizSearchTerm.toUpperCase()) ||
-            (c.clientName||'').toUpperCase().includes(cotizSearchTerm.toUpperCase())
+            (!cotizSearchTerm ||
+              (c.documento||'').toUpperCase().includes(cotizSearchTerm.toUpperCase()) ||
+              (c.clientName||'').toUpperCase().includes(cotizSearchTerm.toUpperCase())) &&
+            (!cotizFiltVendedor || (c.vendedor||'').toUpperCase()===cotizFiltVendedor.toUpperCase())
           ).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+          // Estadística de resultado
+          const cotizStats = {
+            total: filteredCotiz.length,
+            facturadas: filteredCotiz.filter(c=>c.status==='FACTURADA').length,
+            aprobadas: filteredCotiz.filter(c=>c.status==='APROBADA').length,
+            noConcretadas: filteredCotiz.filter(c=>c.status==='NO CONCRETADA').length,
+            vigentes: filteredCotiz.filter(c=>!c.status||c.status==='VIGENTE').length,
+          };
+          cotizStats.conversion = cotizStats.total>0 ? Math.round((cotizStats.facturadas/cotizStats.total)*100) : 0;
+          // Paginación
+          const _cotizTotalPag = Math.max(0, Math.ceil(filteredCotiz.length/PAGE_SIZE_DEFAULT)-1);
+          const _cotizPg = Math.min(cotizPagina, _cotizTotalPag);
+          const pagedCotiz = filteredCotiz.slice(_cotizPg*PAGE_SIZE_DEFAULT, (_cotizPg+1)*PAGE_SIZE_DEFAULT);
 
           return (
             <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
@@ -9595,7 +9650,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </div>
                       <div>
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block">Vendedor</label>
-                        <input type="text" value={newCotizForm.vendedor} onChange={e=>setNewCotizForm({...newCotizForm,vendedor:e.target.value.toUpperCase()})} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 uppercase"/>
+                        <select value={newCotizForm.vendedor||''} onChange={e=>setNewCotizForm({...newCotizForm,vendedor:e.target.value})}
+                          className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 uppercase">
+                          <option value="">— Seleccionar vendedor —</option>
+                          {vendedoresList.map(v=><option key={v} value={String(v).toUpperCase()}>{String(v).toUpperCase()}</option>)}
+                          {newCotizForm.vendedor && !vendedoresList.map(v=>String(v).toUpperCase()).includes(String(newCotizForm.vendedor).toUpperCase()) && (
+                            <option value={String(newCotizForm.vendedor).toUpperCase()}>{String(newCotizForm.vendedor).toUpperCase()}</option>
+                          )}
+                        </select>
+                        {vendedoresList.length===0 && <p className="text-[8px] text-orange-500 font-bold mt-1 uppercase">Registre vendedores en el módulo Vendedores / Equipo</p>}
                       </div>
                     </div>
 
@@ -9750,15 +9813,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                       {/* Descripción editable */}
                       <input type="text" value={cotizAddDesc} onChange={e=>setCotizAddDesc(e.target.value.toUpperCase())}
-                        placeholder="Descripción del producto..."
-                        className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400 uppercase bg-white mb-3"/>
+                        placeholder="Escriba el nombre del producto (puede ir solo el nombre)..."
+                        className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-400 uppercase bg-white mb-1"/>
+                      <p className="text-[8px] text-gray-400 font-bold mb-3 ml-1">★ Si el producto no existe, escriba solo el nombre y agréguelo. Las cotizaciones NO afectan el inventario.</p>
 
                       {/* Cantidad + Precio + Botón */}
                       <div className="grid grid-cols-3 gap-3 items-end">
                         <div>
                           <label className="text-[9px] font-black text-gray-600 uppercase block mb-1">Cantidad</label>
                           <input type="number" step="0.01" min="0" value={cotizAddQty} onChange={e=>setCotizAddQty(e.target.value)}
-                            className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="0"/>
+                            className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-400" placeholder="1"/>
                         </div>
                         <div>
                           <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Precio U. (USD)</label>
@@ -9766,10 +9830,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black text-center outline-none focus:border-orange-500" placeholder="0.00"/>
                         </div>
                         <button type="button" onClick={()=>{
-                          const desc=cotizAddDesc||(cotizSelectedProduct);
-                          const qty=parseNum(cotizAddQty);
-                          const precio=parseNum(cotizAddPrecio);
-                          if(!desc||qty<=0||precio<=0)return;
+                          const desc=(cotizAddDesc||cotizSelectedProduct||'').trim();
+                          if(!desc){ setDialog({title:'Falta el nombre',text:'Escriba al menos el nombre del producto.',type:'alert'}); return; }
+                          const qty=parseNum(cotizAddQty)||1;
+                          const precio=parseNum(cotizAddPrecio)||0;
                           setCotizItems(prev=>[...prev,{desc,cantidad:qty,precioUnit:precio,total:qty*precio}]);
                           setCotizSelectedProduct('');setCotizAddDesc('');setCotizAddQty('');setCotizAddPrecio('');setCotizProdSearch('');
                         }} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2.5 rounded-xl font-black text-[10px] flex items-center gap-1 justify-center uppercase transition-all">
@@ -9792,9 +9856,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <tbody>
                           {cotizItems.length>0 ? cotizItems.map((it,i)=>(
                             <tr key={i} className={i%2===0?'bg-white':'bg-gray-50'}>
-                              <td className="py-2 px-3 font-bold text-gray-800 text-[10px]">{it.desc}</td>
-                              <td className="py-2 px-3 text-center font-black text-[10px]">{formatNum(it.cantidad)}</td>
-                              <td className="py-2 px-3 text-right font-black text-[10px]">${formatNum(it.precioUnit)}</td>
+                              <td className="py-1.5 px-2"><input type="text" value={it.desc} onChange={e=>updateCotizItem(i,{desc:e.target.value.toUpperCase()})} className="w-full bg-transparent font-bold text-gray-800 text-[10px] outline-none focus:bg-white focus:ring-1 focus:ring-orange-300 rounded px-1 py-0.5 uppercase"/></td>
+                              <td className="py-1.5 px-2"><input type="number" step="0.01" min="0" value={it.cantidad} onChange={e=>updateCotizItem(i,{cantidad:e.target.value})} className="w-full bg-transparent text-center font-black text-[10px] outline-none focus:bg-white focus:ring-1 focus:ring-orange-300 rounded px-1 py-0.5"/></td>
+                              <td className="py-1.5 px-2"><input type="number" step="0.01" min="0" value={it.precioUnit} onChange={e=>updateCotizItem(i,{precioUnit:e.target.value})} className="w-full bg-transparent text-right font-black text-[10px] outline-none focus:bg-white focus:ring-1 focus:ring-orange-300 rounded px-1 py-0.5"/></td>
                               <td className="py-2 px-3 text-right font-black text-green-700 text-[10px]">${formatNum(it.total)}</td>
                               <td className="py-2 px-3 text-center"><button onClick={()=>setCotizItems(p=>p.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={13}/></button></td>
                             </tr>
@@ -9831,33 +9895,63 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
               {/* Lista cotizaciones */}
               <div className="p-8">
-                <div className="relative max-w-2xl mb-6">
-                  <Search className="absolute left-4 top-4 text-gray-400" size={18}/>
-                  <input type="text" placeholder="BUSCAR COTIZACIÓN O CLIENTE..." value={cotizSearchTerm} onChange={e=>setCotizSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-4 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white"/>
+                {/* Estadística de resultado */}
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
+                  <div className="bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3"><div className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Total</div><div className="text-2xl font-black text-gray-800">{cotizStats.total}</div></div>
+                  <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3"><div className="text-[8px] font-black text-blue-400 uppercase tracking-widest">Vigentes</div><div className="text-2xl font-black text-blue-700">{cotizStats.vigentes}</div></div>
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-2xl px-4 py-3"><div className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Aprobadas</div><div className="text-2xl font-black text-indigo-700">{cotizStats.aprobadas}</div></div>
+                  <div className="bg-green-50 border border-green-200 rounded-2xl px-4 py-3"><div className="text-[8px] font-black text-green-500 uppercase tracking-widest">Facturadas</div><div className="text-2xl font-black text-green-700">{cotizStats.facturadas}</div></div>
+                  <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3"><div className="text-[8px] font-black text-red-400 uppercase tracking-widest">No concretadas</div><div className="text-2xl font-black text-red-600">{cotizStats.noConcretadas}</div></div>
+                  <div className="bg-orange-50 border border-orange-200 rounded-2xl px-4 py-3"><div className="text-[8px] font-black text-orange-400 uppercase tracking-widest">Conversión</div><div className="text-2xl font-black text-orange-600">{cotizStats.conversion}%</div></div>
+                </div>
+                <div className="flex flex-wrap gap-3 mb-6 items-center">
+                  <div className="relative flex-1 min-w-[240px] max-w-2xl">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18}/>
+                    <input type="text" placeholder="BUSCAR COTIZACIÓN O CLIENTE..." value={cotizSearchTerm} onChange={e=>{setCotizSearchTerm(e.target.value);setCotizPagina(0);}} className="w-full pl-12 pr-4 py-4 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white"/>
+                  </div>
+                  <div className="relative min-w-[200px]">
+                    <select value={cotizFiltVendedor} onChange={e=>{setCotizFiltVendedor(e.target.value);setCotizPagina(0);}}
+                      className="w-full py-4 px-4 border-2 border-gray-100 bg-gray-50/50 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white focus:border-orange-400">
+                      <option value="">TODOS LOS VENDEDORES</option>
+                      {vendedoresList.map(v=><option key={v} value={String(v).toUpperCase()}>{String(v).toUpperCase()}</option>)}
+                    </select>
+                  </div>
+                  {(cotizSearchTerm||cotizFiltVendedor) && <button onClick={()=>{setCotizSearchTerm('');setCotizFiltVendedor('');setCotizPagina(0);}} className="px-4 py-4 bg-gray-100 hover:bg-gray-200 rounded-2xl text-[10px] font-black text-gray-500 uppercase">Limpiar</button>}
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest">
                       <th className="py-4 px-4">Nro / Fecha</th>
                       <th className="py-4 px-4">Cliente</th>
+                      <th className="py-4 px-4">Vendedor</th>
                       <th className="py-4 px-4">Descripción</th>
                       <th className="py-4 px-4 text-center">Validez</th>
                       <th className="py-4 px-4 text-right">Total USD</th>
                       <th className="py-4 px-4 text-center">Estatus</th>
                       <th className="py-4 px-4 text-center">Acciones</th>
                     </tr></thead>
-                    <tbody className="divide-y">{filteredCotiz.map(cot=>(
+                    <tbody className="divide-y">{pagedCotiz.map(cot=>(
                       <tr key={cot.id} className="hover:bg-gray-50">
                         <td className="py-4 px-4 font-black text-orange-600">{cot.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{cot.fecha}</span></td>
                         <td className="py-4 px-4 font-bold text-gray-700 uppercase">{cot.clientName||'—'}</td>
+                        <td className="py-4 px-4 font-bold text-gray-600 text-[10px] uppercase">{cot.vendedor||'—'}</td>
                         <td className="py-4 px-4 font-bold text-gray-500 text-[10px] max-w-[200px] truncate">{cot.descripcion||'—'}</td>
                         <td className="py-4 px-4 text-center text-[10px] font-bold">{cot.validez||'15'} días</td>
                         <td className="py-4 px-4 text-right font-black text-green-600 text-lg">${formatNum(cot.total)}</td>
                         <td className="py-4 px-4 text-center">
-                          <span className={`px-2 py-0.5 rounded text-[8px] font-black ${cot.status==='VIGENTE'?'bg-green-100 text-green-700':cot.status==='APROBADA'?'bg-blue-100 text-blue-700':'bg-gray-100 text-gray-600'}`}>{cot.status||'VIGENTE'}</span>
+                          {(()=>{ const st=cot.status||'VIGENTE'; const sty=st==='FACTURADA'?'bg-green-100 text-green-700':st==='NO CONCRETADA'?'bg-red-100 text-red-700':st==='APROBADA'?'bg-blue-100 text-blue-700':'bg-amber-100 text-amber-700'; return (
+                            <div className="flex flex-col items-center gap-1">
+                              <span className={`px-2 py-0.5 rounded text-[8px] font-black ${sty}`}>{st}</span>
+                              {st==='NO CONCRETADA'&&cot.motivoNoConcretada&&<span className="text-[7px] text-red-400 font-bold uppercase max-w-[110px] truncate" title={cot.motivoNoConcretada}>{cot.motivoNoConcretada}</span>}
+                            </div>
+                          ); })()}
                         </td>
                         <td className="py-4 px-4">
-                          <div className="flex justify-center gap-2">
+                          <div className="flex justify-center items-center gap-2 flex-wrap">
+                            {cot.status==='FACTURADA' && cot.neGenerada
+                              ? <span className="px-2 py-1 bg-green-100 text-green-700 rounded-lg text-[8px] font-black uppercase flex items-center gap-1" title={`Convertida en ${cot.neGenerada}`}><PackageCheck size={12}/> {cot.neGenerada}</span>
+                              : <button onClick={()=>convertirCotizANE(cot)} title="Generar Nota de Entrega desde esta cotización" className="p-2.5 bg-orange-50 text-orange-600 rounded-xl hover:bg-orange-600 hover:text-white transition-all"><PackageCheck size={16}/></button>}
+                            <button onClick={()=>setCotizOutcomeModal({id:cot.id,documento:cot.documento,status:cot.status||'VIGENTE',motivo:cot.motivoNoConcretada||''})} title="Marcar resultado (vigente / aprobada / facturada / no concretada)" className="p-2.5 bg-green-50 text-green-600 rounded-xl hover:bg-green-600 hover:text-white transition-all"><CheckSquare size={16}/></button>
                             <button onClick={()=>{setEditingCotizId(cot.id);setNewCotizForm({...cot});setCotizItems(cot.items||[]);setShowNewCotizPanel(true);window.scrollTo({top:0,behavior:'smooth'});}} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button>
                             <button onClick={()=>{
                               const w=window.open('','_blank');
@@ -9901,7 +9995,53 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   </table>
                   {filteredCotiz.length===0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay cotizaciones registradas</div>}
                 </div>
+                {filteredCotiz.length>PAGE_SIZE_DEFAULT && <div className="mt-6 flex justify-center"><PaginadorUI total={filteredCotiz.length} pagina={_cotizPg} setPagina={setCotizPagina}/></div>}
               </div>
+
+              {/* ── MODAL RESULTADO DE COTIZACIÓN ── */}
+              {cotizOutcomeModal && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.55)'}}>
+                  <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden">
+                    <div className="px-7 py-5 border-b bg-gray-50 flex justify-between items-center">
+                      <div>
+                        <h3 className="text-sm font-black uppercase flex items-center gap-2"><CheckSquare size={18} className="text-green-600"/> Resultado de Cotización</h3>
+                        <p className="text-[10px] text-orange-600 font-black mt-0.5">{cotizOutcomeModal.documento}</p>
+                      </div>
+                      <button onClick={()=>setCotizOutcomeModal(null)} className="p-2 hover:bg-gray-200 rounded-xl"><X size={18}/></button>
+                    </div>
+                    <div className="p-7 space-y-5">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Estatus</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {[['VIGENTE','bg-amber-500'],['APROBADA','bg-indigo-600'],['FACTURADA','bg-green-600'],['NO CONCRETADA','bg-red-500']].map(([st,cls])=>(
+                            <button key={st} onClick={()=>setCotizOutcomeModal(m=>({...m,status:st}))}
+                              className={`py-3 px-2 rounded-xl text-[9px] font-black uppercase transition-all ${cotizOutcomeModal.status===st?`${cls} text-white shadow-md`:'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{st}</button>
+                          ))}
+                        </div>
+                      </div>
+                      {cotizOutcomeModal.status==='NO CONCRETADA' && (
+                        <div className="animate-in fade-in">
+                          <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Motivo (¿por qué no se concretó?)</label>
+                          <select value={MOTIVOS_NO.includes(cotizOutcomeModal.motivo)?cotizOutcomeModal.motivo:(cotizOutcomeModal.motivo?'OTRO':'')}
+                            onChange={e=>setCotizOutcomeModal(m=>({...m,motivo:e.target.value==='OTRO'?'':e.target.value}))}
+                            className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-red-400 uppercase mb-2">
+                            <option value="">— Seleccionar motivo —</option>
+                            {MOTIVOS_NO.map(m=><option key={m} value={m}>{m}</option>)}
+                          </select>
+                          {(cotizOutcomeModal.motivo===''||!MOTIVOS_NO.slice(0,-1).includes(cotizOutcomeModal.motivo)) && (
+                            <input type="text" value={cotizOutcomeModal.motivo} onChange={e=>setCotizOutcomeModal(m=>({...m,motivo:e.target.value.toUpperCase()}))}
+                              placeholder="Especifique el motivo..." className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-red-400 uppercase"/>
+                          )}
+                        </div>
+                      )}
+                      <button onClick={()=>aplicarResultadoCotiz(cotizOutcomeModal)}
+                        className="w-full bg-orange-500 hover:bg-orange-600 text-white py-4 rounded-2xl font-black text-[11px] uppercase shadow-lg transition-all">
+                        Guardar Resultado
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* ── MODAL GESTIÓN DE CONDICIONES ESTRUCTURADO ── */}
               {showCondManager && (
@@ -11291,6 +11431,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 updatedAt: Date.now(), user: appUser?.name||'Sistema' };
               delete data.neClientSearch; delete data.neShowClientDrop;
               await setDoc(getDocRef('notasEntrega', id), data);
+              // ── Enlace con Cotización: si esta NE proviene de una cotización, marcarla FACTURADA ──
+              if(!editId && form.cotizOrigen){
+                try {
+                  await updateDoc(getDocRef('cotizaciones', form.cotizOrigen), {
+                    status:'FACTURADA', neGenerada:id, statusUser:appUser?.name||'Sistema', statusDate:getTodayDate()
+                  });
+                } catch(err){ console.warn('No se pudo actualizar la cotización origen:', err); }
+              }
               // ── Descuento de inventario usando warehouseQtys ──────────────────
               const itemsConCodigo = data.items.filter(it=>it.invCode);
               if(itemsConCodigo.length > 0) {
@@ -11412,6 +11560,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <button onClick={()=>{setNeView('lista');setNeForm(null);setNeInvSearch('');setNeShowInvDrop(false);}} className="flex items-center gap-1 text-[10px] font-black text-gray-500 uppercase hover:text-orange-600"><ArrowRight size={12} className="rotate-180"/> Volver</button>
                   <span className="font-black text-xl text-orange-600">{form._editId||'Nueva Nota de Entrega'}</span>
                 </div>
+                {form.cotizOrigen && !form._editId && (
+                  <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl px-4 py-3 flex items-center gap-2">
+                    <PackageCheck size={16} className="text-orange-600"/>
+                    <span className="text-[11px] font-black text-orange-700 uppercase">Generada desde la cotización {form.cotizDoc||form.cotizOrigen}. Al guardar, la cotización pasará a FACTURADA.</span>
+                  </div>
+                )}
                 <div className="bg-white rounded-3xl shadow-sm border p-6 space-y-5">
                   <div className="grid grid-cols-4 gap-4">
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Fecha</label>
