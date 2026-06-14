@@ -793,6 +793,7 @@ export default function App() {
   // Formularios Costos Operativos
   const initialOpCostForm = { date: getTodayDate(), category: 'Electricidad', description: '', amount: '', cuentaContable: '' };
   const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
+  const [pdcSearch, setPdcSearch] = useState('');
   const [opCosts, setOpCosts] = useState([]);
   const [costFilterCategory, setCostFilterCategory] = useState('TODAS');
   const [costFilterMonth, setCostFilterMonth] = useState('TODOS');
@@ -909,7 +910,7 @@ export default function App() {
       tmp.querySelectorAll('.pdf-header').forEach(el=>el.remove()); // membrete ya en _abrirVentanaReporte
       proc = tmp.innerHTML;
     } catch(e){}
-    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;font-size:11px;color:#111;}.reporte-wrap{max-width:1000px;margin:0 auto;background:#fff;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.1);overflow:hidden;}.membrete{display:flex;justify-content:space-between;align-items:center;padding:16px 24px 12px;border-bottom:3px solid #f97316;}.logo-l1{font-size:10px;font-weight:700;color:#374151;letter-spacing:3px;text-transform:uppercase;}.logo-l2{font-size:28px;font-weight:900;color:#f97316;line-height:1;}.empresa-info{text-align:right;}.empresa-info h2{font-size:13px;font-weight:900;text-transform:uppercase;color:#111;}.empresa-info p{font-size:8.5px;color:#555;line-height:1.6;}.contenido{padding:16px 24px 24px;}.btn-print{display:block;margin:0 24px 16px;padding:12px 0;background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:4px;text-align:center;width:calc(100% - 48px);}.no-pdf,[data-html2canvas-ignore]{display:none!important;}.pdf-header{display:block!important;visibility:visible!important;}table{width:100%;border-collapse:collapse;font-size:10px;}th{background:#1f2937;color:#fff;padding:7px 10px;text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}td{padding:6px 10px;border-bottom:1px solid #e5e7eb;color:#111;vertical-align:top;}tr:nth-child(even) td{background:#f9fafb;}tfoot td{background:#1f2937!important;color:#fff;font-weight:900;padding:7px 10px;}.font-black{font-weight:900;}.font-bold{font-weight:700;}.text-xs{font-size:10px;}.text-sm{font-size:11px;}.text-lg{font-size:16px;}.text-xl{font-size:18px;}.text-2xl{font-size:20px;}.text-gray-400,.text-gray-500{color:#9ca3af;}.text-gray-600{color:#4b5563;}.text-gray-700{color:#374151;}.text-gray-900{color:#111;}.text-orange-500,.text-orange-600{color:#f97316;}.text-green-600,.text-green-700{color:#16a34a;}.text-blue-600,.text-blue-700{color:#2563eb;}.text-red-500,.text-red-600{color:#dc2626;}.text-black{color:#111;}.text-white{color:#fff;}.text-right{text-align:right;}.text-center{text-align:center;}.uppercase{text-transform:uppercase;}.border{border:1px solid #e5e7eb;}.border-b{border-bottom:1px solid #e5e7eb;}.border-r{border-right:1px solid #e5e7eb;}.rounded{border-radius:4px;}.rounded-xl{border-radius:10px;}.p-2{padding:7px;}.p-3{padding:10px;}.p-4{padding:14px;}.px-3{padding-left:10px;padding-right:10px;}.px-4{padding-left:14px;padding-right:14px;}.py-2{padding-top:7px;padding-bottom:7px;}.py-3{padding-top:10px;padding-bottom:10px;}.mb-2{margin-bottom:7px;}.mb-3{margin-bottom:10px;}.mb-4{margin-bottom:14px;}.mb-6{margin-bottom:22px;}.mt-1{margin-top:3px;}.mt-2{margin-top:7px;}.mt-4{margin-top:14px;}.flex{display:flex;}.items-center{align-items:center;}.justify-between{justify-content:space-between;}.gap-2{gap:8px;}.gap-3{gap:10px;}.gap-4{gap:14px;}.space-y-2>*+*{margin-top:7px;}.space-y-4>*+*{margin-top:14px;}.grid{display:grid;}.grid-cols-2{grid-template-columns:repeat(2,1fr);}.grid-cols-3{grid-template-columns:repeat(3,1fr);}.grid-cols-4{grid-template-columns:repeat(4,1fr);}.w-full{width:100%;}.overflow-hidden{overflow:hidden;}.bg-white{background:#fff;}.bg-gray-50{background:#f9fafb;}.bg-gray-100{background:#f3f4f6;}.bg-gray-800{background:#1f2937;}.bg-gray-900{background:#111;}.bg-orange-50{background:#fff7ed;}.bg-orange-500{background:#f97316;}.hidden{display:none;}.block{display:block;}.pdf-header{display:block!important;}.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.whitespace-nowrap{white-space:nowrap;}@media print{body{background:#fff;padding:0;}.reporte-wrap{box-shadow:none;border-radius:0;}.btn-print{display:none!important;}th{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
+    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;font-size:11px;color:#111;}.reporte-wrap{max-width:1000px;margin:0 auto;background:#fff;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.1);overflow:hidden;}.membrete{display:flex;justify-content:space-between;align-items:center;padding:16px 24px 12px;border-bottom:3px solid #f97316;}.logo-l1{font-size:10px;font-weight:700;color:#374151;letter-spacing:3px;text-transform:uppercase;}.logo-l2{font-size:28px;font-weight:900;color:#f97316;line-height:1;}.empresa-info{text-align:right;}.empresa-info h2{font-size:13px;font-weight:900;text-transform:uppercase;color:#111;}.empresa-info p{font-size:8.5px;color:#555;line-height:1.6;}.contenido{padding:16px 24px 24px;}.btn-print{display:block;margin:0 24px 16px;padding:12px 0;background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:4px;text-align:center;width:calc(100% - 48px);}.no-pdf,[data-html2canvas-ignore]{display:none!important;}.pdf-header{display:block!important;visibility:visible!important;}table{width:100%;border-collapse:collapse;font-size:10px;}th{background:#1f2937;color:#fff;padding:7px 10px;text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}td{padding:6px 10px;border-bottom:1px solid #e5e7eb;color:#111;vertical-align:top;}tr:nth-child(even) td{background:#f9fafb;}tfoot td{background:#1f2937!important;color:#fff;font-weight:900;padding:7px 10px;}.font-black{font-weight:900;}.font-bold{font-weight:700;}.text-xs{font-size:10px;}.text-sm{font-size:11px;}.text-lg{font-size:16px;}.text-xl{font-size:18px;}.text-2xl{font-size:20px;}.text-gray-400,.text-gray-500{color:#9ca3af;}.text-gray-600{color:#4b5563;}.text-gray-700{color:#374151;}.text-gray-900{color:#111;}.text-orange-500,.text-orange-600{color:#f97316;}.text-green-600,.text-green-700{color:#16a34a;}.text-blue-600,.text-blue-700{color:#2563eb;}.text-red-500,.text-red-600{color:#dc2626;}.text-black{color:#111;}.text-white{color:#fff;}.text-right{text-align:right;}.text-center{text-align:center;}.uppercase{text-transform:uppercase;}.border{border:1px solid #e5e7eb;}.border-b{border-bottom:1px solid #e5e7eb;}.border-r{border-right:1px solid #e5e7eb;}.rounded{border-radius:4px;}.rounded-xl{border-radius:10px;}.p-2{padding:7px;}.p-3{padding:10px;}.p-4{padding:14px;}.px-3{padding-left:10px;padding-right:10px;}.px-4{padding-left:14px;padding-right:14px;}.py-2{padding-top:7px;padding-bottom:7px;}.py-3{padding-top:10px;padding-bottom:10px;}.mb-2{margin-bottom:7px;}.mb-3{margin-bottom:10px;}.mb-4{margin-bottom:14px;}.mb-6{margin-bottom:22px;}.mt-1{margin-top:3px;}.mt-2{margin-top:7px;}.mt-4{margin-top:14px;}.flex{display:flex;}.items-center{align-items:center;}.justify-between{justify-content:space-between;}.gap-2{gap:8px;}.gap-3{gap:10px;}.gap-4{gap:14px;}.space-y-2>*+*{margin-top:7px;}.space-y-4>*+*{margin-top:14px;}.grid{display:grid;}.grid-cols-2{grid-template-columns:repeat(2,1fr);}.grid-cols-3{grid-template-columns:repeat(3,1fr);}.grid-cols-4{grid-template-columns:repeat(4,1fr);}.w-full{width:100%;}.overflow-hidden{overflow:hidden;}.bg-white{background:#fff;}.bg-gray-50{background:#f9fafb;}.bg-gray-100{background:#f3f4f6;}.bg-gray-800{background:#1f2937;}.bg-gray-900{background:#111;}.bg-orange-50{background:#fff7ed;}.bg-orange-500{background:#f97316;}.hidden{display:none;}.block{display:block;}.pdf-header{display:none!important;} /* membrete en _abrirVentanaReporte */.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.whitespace-nowrap{white-space:nowrap;}@media print{body{background:#fff;padding:0;}.reporte-wrap{box-shadow:none;border-radius:0;}.btn-print{display:none!important;}th{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
     const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${titulo}</title><style>${css}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${empresa}</h2><p>RIF: ${rif}</p><p>${dir}</p>${tel?`<p>Tel: ${tel}</p>`:''}</div></div><button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button><div class="contenido">${proc}</div></div></body></html>`;
     const w = window.open('', '_blank');
     if(w){ w.document.write(html); w.document.close(); }
@@ -14316,8 +14317,16 @@ ${resumenHtml}
                       Nombre / Cuenta {planDeCuentas.length > 0 ? <span className="text-green-600 font-black">(Plan de Cuentas activo)</span> : <span className="text-gray-400">(Categoria manual)</span>}
                     </label>
                     {planDeCuentas.length > 0 ? (
-                      <select
+                      <>
+                       <input
+                         type="text"
+                         placeholder="🔍 Buscar cuenta (nombre o código)..."
+                         value={pdcSearch||''}
+                         onChange={e=>setPdcSearch(e.target.value)}
+                         className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-green-400 mb-1"
+                       />
                         value={newOpCostForm.cuentaContable}
+                      <select
                         onChange={e => {
                           const codigo = e.target.value;
                           const pdc = planDeCuentas.find(p => p.codigo === codigo);
@@ -14331,12 +14340,13 @@ ${resumenHtml}
                         required
                       >
                         <option value="">Seleccione cuenta contable...</option>
-                        {planDeCuentas.map(p => (
+                        {(pdcSearch?planDeCuentas.filter(p=>(p.codigo+p.nombre+p.grupo||"").toLowerCase().includes((pdcSearch||"").toLowerCase())):planDeCuentas).map(p => (
                           <option key={p.id} value={p.codigo}>
                             {p.codigo} — {p.nombre}{p.grupo ? ` [${p.grupo}]` : ''}
                           </option>
                         ))}
                       </select>
+                      </>
                     ) : (
                       <div className="flex gap-2 items-center">
                         <select value={newOpCostForm.category} onChange={e => setNewOpCostForm({...newOpCostForm, category: e.target.value})} className="flex-1 border-2 border-gray-200 rounded-xl p-3 font-bold text-xs outline-none focus:border-green-500" required>
@@ -20481,31 +20491,30 @@ ${resumenHtml}
         totalIngresosItems += subTotal;
         invTieneItemsValidos = true;
 
-        // Costo congelado (misma cadena que Prod. Vendidos)
+        // Costo congelado — EXACTA misma cadena que Prod. Vendidos (usa fgId limpio)
         let costoU = parseNum(it.costoUnit || 0);
-        if (costoU <= 0 && code) {
-          const fg = (finishedGoodsInventory||[]).find(f => f.id === code);
-          if (fg) {
-            const esTermo = it.esTermo ?? (fg.tipoProducto === 'TERMOENCOGIBLE');
-            costoU = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-          }
+        // fgId limpio (sin sufijo ___uid): igual que como lo usa productos_vendidos
+        const fgIdLimpio = it.fgId || (it.invCode||'').split('___')[0] || code.split('___')[0];
+        const fgRec = fgIdLimpio ? (finishedGoodsInventory||[]).find(f => f.id === fgIdLimpio) : null;
+        if (costoU <= 0 && fgRec) {
+          const esTermo2 = it.esTermo ?? (fgRec.tipoProducto === 'TERMOENCOGIBLE');
+          costoU = esTermo2 ? parseNum(fgRec.costoUnitario||0) : parseNum(fgRec.costoUnitarioMillar||0);
         }
-        if (costoU <= 0 && code) {
+        if (costoU <= 0 && fgIdLimpio) {
           const km = (invMovements||[]).find(m =>
-            m.itemId === `FG::${code}` && m.type === 'SALIDA' &&
-            (m.docRef||'').includes(inv.documento||inv.id) && parseNum(m.unitCost||0) > 0
+            m.itemId === `FG::${fgIdLimpio}` && m.type === 'SALIDA' &&
+            (m.docRef||'').includes(inv.documento||inv.id||'') && parseNum(m.unitCost||0) > 0
           );
           if (km) costoU = parseNum(km.unitCost||0);
         }
-        if (costoU <= 0 && code) {
+        if (costoU <= 0 && fgIdLimpio) {
           const km2 = (invMovements||[]).find(m =>
-            m.itemId === `FG::${code}` && m.type === 'SALIDA' && parseNum(m.unitCost||0) > 0
+            m.itemId === `FG::${fgIdLimpio}` && m.type === 'SALIDA' && parseNum(m.unitCost||0) > 0
           );
           if (km2) costoU = parseNum(km2.unitCost||0);
         }
-        if (costoU <= 0 && code) {
-          const fg2 = (finishedGoodsInventory||[]).find(f => f.id === code);
-          if (fg2) costoU = parseNum(fg2.costoUnitario || fg2.costoUnitarioMillar || 0);
+        if (costoU <= 0 && fgRec) {
+          costoU = parseNum(fgRec.costoUnitario || fgRec.costoUnitarioMillar || 0);
         }
 
         const costoTotal2 = costoU * cant;
