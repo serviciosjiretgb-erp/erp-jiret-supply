@@ -4529,6 +4529,65 @@ export default function App() {
               })}
             </div>
           </div>
+
+          {/* ── TARJETAS DE ACCESO EXTENDIDO (solo portal Administración) ──────── */}
+          {selectedPortal === 'administracion' && (() => {
+            const EXT_CARDS = [
+              { id:'vext_prod',      title:'Producción en Proceso', icon:<Factory size={22}/>,       color:'#3b82f6', perms:['produccion_activa','produccion_proceso'], sub:'OPs activas en planta',       chart:[30,55,40,70,50,80] },
+              { id:'vext_historial', title:'Historial de OPs',      icon:<ClipboardList size={22}/>, color:'#8b5cf6', perms:['produccion_historial'],                 sub:'Órdenes finalizadas',          chart:[80,60,75,50,70,65] },
+              { id:'vext_inv',       title:'Control de Inventario', icon:<Package size={22}/>,       color:'#22c55e', perms:['inv_almacen','inv_general','inv_terminados','inv_kardex','inv_movimientos'], sub:'Existencias y movimientos', chart:[60,45,70,55,80,65] },
+              { id:'vext_finiquito', title:'Finiquito por OP',      icon:<FileText size={22}/>,      color:'#f59e0b', perms:['rep_finiquito'],                        sub:'Reportes de cierre de OP',     chart:[40,65,50,75,55,70] },
+            ];
+            const hasExtPerm = (card) => appUser?.role==='Master' || card.perms.some(p=>hasPerm(p));
+            return (
+              <div className="mt-6 px-6 pb-8">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-1 h-6 bg-blue-500 rounded-full"/>
+                  <h2 className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Acceso Extendido — Vista Ventas</h2>
+                  <div className="flex-1 h-px bg-gray-200"/>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(min(100%,260px),1fr))',gap:14}}>
+                  {EXT_CARDS.map(card => {
+                    const allowed = hasExtPerm(card);
+                    return (
+                      <div key={card.id} style={{
+                        background:allowed?'#1e293b':'#f1f5f9', borderRadius:20, padding:20,
+                        borderLeft:`5px solid ${allowed?card.color:'#cbd5e1'}`,
+                        opacity:allowed?1:0.6, position:'relative',
+                        boxShadow:allowed?'0 4px 18px rgba(0,0,0,0.18)':'none',
+                        transition:'transform 0.2s, box-shadow 0.2s',
+                      }}
+                        onMouseEnter={e=>{if(allowed){e.currentTarget.style.transform='translateY(-4px)';e.currentTarget.style.boxShadow=`0 10px 28px ${card.color}44`;}}}
+                        onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow=allowed?'0 4px 18px rgba(0,0,0,0.18)':'none';}}>
+                        {!allowed && (
+                          <div style={{position:'absolute',top:12,right:12,display:'flex',alignItems:'center',gap:4,background:'rgba(0,0,0,0.08)',borderRadius:8,padding:'3px 8px'}}>
+                            <Lock size={11} style={{color:'#94a3b8'}}/><span style={{fontSize:'0.6rem',fontWeight:800,color:'#94a3b8',textTransform:'uppercase'}}>Sin permiso</span>
+                          </div>
+                        )}
+                        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+                          <div style={{color:allowed?card.color:'#94a3b8'}}>{card.icon}</div>
+                          <div>
+                            <h3 style={{margin:0,fontSize:'0.82rem',fontWeight:900,textTransform:'uppercase',color:allowed?'white':'#94a3b8'}}>{card.title}</h3>
+                            <p style={{margin:0,fontSize:'0.65rem',color:allowed?'rgba(255,255,255,0.5)':'#94a3b8',fontWeight:600}}>{card.sub}</p>
+                          </div>
+                        </div>
+                        <div style={{display:'flex',alignItems:'flex-end',gap:3,height:38,marginBottom:12}}>
+                          {card.chart.map((h,ci)=>(
+                            <div key={ci} style={{flex:1,height:`${h}%`,background:allowed?(ci===card.chart.length-1?card.color:card.color+'55'):'#cbd5e1',borderRadius:'3px 3px 0 0'}}/>
+                          ))}
+                        </div>
+                        <button onClick={()=>{if(!allowed)return; clearAllReports(); setActiveTab('ventas'); setVentasView(card.id);}} disabled={!allowed}
+                          style={{background:allowed?card.color:'#94a3b8',color:'white',border:'none',padding:'9px 16px',borderRadius:16,fontWeight:700,fontSize:'0.75rem',cursor:allowed?'pointer':'not-allowed',width:'100%'}}>
+                          {allowed?'Ir a módulo →':'🔒 Sin acceso'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
         </div>
       </div>
     );
@@ -13408,6 +13467,42 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <td className="py-3 px-4 text-center" data-label="Acción">
                             <button onClick={()=>setShowFiniquitoOP(op.id)} className="px-3 py-1.5 bg-orange-500 text-white rounded-xl text-[9px] font-black uppercase hover:bg-orange-600 transition-all flex items-center gap-1 mx-auto"><FileText size={11}/> Ver Finiquito</button>
                           </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {ventasView === 'vext_historial' && (() => {
+          const closedOPs = (requirements||[]).filter(r=>r.status==='CERRADA'||r.status==='FINALIZADA').sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+          return (
+            <div className="p-4 sm:p-8 animate-in fade-in">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-1 h-8 bg-purple-500 rounded-full"/>
+                <div>
+                  <h2 className="text-lg font-black uppercase text-gray-800 flex items-center gap-2"><ClipboardList size={20} className="text-purple-600"/> Historial de OPs <span className="text-[10px] font-bold text-purple-500 bg-purple-50 px-2 py-1 rounded-lg">Vista desde Ventas</span></h2>
+                  <p className="text-[10px] text-gray-500 font-bold">{closedOPs.length} OP{closedOPs.length!==1?'s':''} finalizada{closedOPs.length!==1?'s':''}</p>
+                </div>
+              </div>
+              {closedOPs.length===0 ? <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay órdenes finalizadas</div> : (
+                <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                  <table className="w-full text-[10px] mobile-cards">
+                    <thead className="bg-purple-50 border-b-2 border-purple-100"><tr className="font-black text-purple-500 uppercase">
+                      <th className="py-3 px-4 text-left">OP</th><th className="py-3 px-4 text-left">Cliente</th><th className="py-3 px-4 text-left">Producto</th><th className="py-3 px-4 text-center">Cantidad</th><th className="py-3 px-4 text-center">Estado</th><th className="py-3 px-4 text-center">Fecha</th>
+                    </tr></thead>
+                    <tbody className="divide-y">
+                      {closedOPs.map(op=>(
+                        <tr key={op.id} className="hover:bg-gray-50">
+                          <td className="py-3 px-4 font-black text-purple-600" data-label="OP">{op.id}</td>
+                          <td className="py-3 px-4 font-bold text-gray-700" data-label="Cliente">{op.client||'—'}</td>
+                          <td className="py-3 px-4 text-gray-600" data-label="Producto">{op.product||'—'}</td>
+                          <td className="py-3 px-4 text-center font-bold" data-label="Cantidad">{formatNum(op.quantity||0)} {op.unit||'kg'}</td>
+                          <td className="py-3 px-4 text-center" data-label="Estado"><span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[8px] font-black uppercase">{op.status||'CERRADA'}</span></td>
+                          <td className="py-3 px-4 text-center text-gray-500" data-label="Fecha">{op.fechaCierre||op.updatedAt||'—'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -24075,6 +24170,11 @@ ${resumenHtml}
                      {(hasPerm('produccion_activa')||hasPerm('produccion_proceso')) && (
                        <button onClick={()=>{setVentasView('vext_prod');clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView==='vext_prod'?'border-blue-500 text-blue-700':'border-transparent text-gray-400 hover:text-gray-700'}`}>
                          <Factory size={13}/> Prod. Activa
+                       </button>
+                     )}
+                     {hasPerm('produccion_historial') && (
+                       <button onClick={()=>{setVentasView('vext_historial');clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView==='vext_historial'?'border-purple-500 text-purple-700':'border-transparent text-gray-400 hover:text-gray-700'}`}>
+                         <ClipboardList size={13}/> Historial OPs
                        </button>
                      )}
                      {(hasPerm('inv_almacen')||hasPerm('inv_general')||hasPerm('inv_terminados')||hasPerm('inv_kardex')) && (
