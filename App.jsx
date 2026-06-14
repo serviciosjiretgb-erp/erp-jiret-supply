@@ -221,7 +221,6 @@ const COSTO_CATEGORIES = [
 // ============================================================================
 // CATÁLOGO DE MÓDULOS Y PERMISOS DEL SISTEMA (ESTRUCTURA EXACTA)
 // ============================================================================
-
 const SYSTEM_MODULES = [
   {
     id: 'ventas',
@@ -372,6 +371,7 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
 
   const [activeTab, setActiveTab] = useState('home'); 
+  const [selectedPortal, setSelectedPortal] = useState(null); // 'produccion' | 'administracion' | 'finanzas'
   const [ventasView, setVentasView] = useState('facturacion');
   const [pvFilter, setPvFilter] = useState('general');
   const [pvFiltCliente, setPvFiltCliente] = useState('');
@@ -1371,6 +1371,8 @@ export default function App() {
   // html2pdf removido — se usa window.print() para imprimir
 
   useEffect(() => { signInAnonymously(auth).catch(err => console.error(err)); const unsubscribe = onAuthStateChanged(auth, setFbUser); return () => unsubscribe(); }, []);
+  // Al cerrar sesión, volver a la pantalla de selección de portal en el próximo login
+  useEffect(() => { if (!appUser) setSelectedPortal(null); }, [appUser]);
   
   useEffect(() => {
     if (!fbUser) return;
@@ -21127,41 +21129,12 @@ ${resumenHtml}
   const handleBackupData = async (includeAppJsx = false) => {
     try {
       const ts = getTodayDate();
-      const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
       const backup = {
-        _meta: {
-          fecha: ts, timestamp: Date.now(), version: '2.0',
-          empresa, totalColecciones: 22,
-          generadoPor: appUser?.name || 'Sistema'
-        },
-        // ── INVENTARIO ─────────────────────────────────────────────────────
-        inventory,
-        inventoryMovements: invMovements,
-        finishedGoodsInventory,
-        wipInventory,
-        tomasFisicas,
-        invRequisitions,
-        // ── VENTAS ─────────────────────────────────────────────────────────
-        notasEntrega,
-        maquilaInvoices: invoices,
-        cotizaciones,
-        notasVentaCreditoDebito: notasVentaCD,
-        retencionesClientes,
-        // ── CLIENTES Y PROVEEDORES ─────────────────────────────────────────
-        clientes: clients,
-        purchaseOrders,
-        // ── PRODUCCIÓN ─────────────────────────────────────────────────────
-        requirements,
-        inventoryRequisitions: invRequisitions,
-        bobinaProductions,
-        formulas,
-        // ── FINANZAS ───────────────────────────────────────────────────────
-        operatingCosts: opCosts,
-        planDeCuentas,
-        asientosContables,
-        // ── SISTEMA ────────────────────────────────────────────────────────
-        users: systemUsers,
-        configuracion: settings ? [{ id: 'main', ...settings }] : [],
+        _meta: { fecha: ts, timestamp: Date.now(), version: '1.0', empresa: 'SERVICIOS JIRET G&B, C.A.' },
+        inventory, inventoryMovements: invMovements, clientes: clients, requirements,
+        maquilaInvoices: invoices, inventoryRequisitions: invRequisitions,
+        operatingCosts: opCosts, purchaseOrders, wipInventory, finishedGoodsInventory,
+        planDeCuentas, asientosContables,
       };
       // Descargar JSON de datos
       const jsonBlob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
@@ -21176,9 +21149,7 @@ ${resumenHtml}
       localStorage.setItem('backupLastRun', ts);
       setBackupLastRun(ts);
 
-      setDialog({ title: '✅ Respaldo Completo Exitoso',
-        text: `Archivo: Respaldo_GYB_Datos_${ts}.json\n\nIncluye 22 colecciones:\n• Inventario (6): inventory, FG, WIP, movimientos, tomas físicas, requisiciones\n• Ventas (5): NEs, facturas, cotizaciones, NC/ND, retenciones\n• Producción (4): OPs, bobinas, fórmulas, req. almacén\n• Finanzas (3): costos, plan de cuentas, asientos\n• Clientes/Proveedores (2): clientes, órdenes de compra\n• Usuarios (1): usuarios del sistema\n\nGuárdelo en lugar seguro (nube, USB, email).`,
-        type: 'alert' });
+      setDialog({ title: '✅ Respaldo de Datos Exitoso', text: `Archivo: Respaldo_GYB_Datos_${ts}.json descargado. Guárdelo en su carpeta de respaldos.`, type: 'alert' });
     } catch (err) {
       setDialog({ title: 'Error', text: 'No se pudo generar el respaldo: ' + err.message, type: 'alert' });
     }
@@ -21236,19 +21207,10 @@ ${resumenHtml}
   // RESETEO TOTAL DEL SISTEMA (requiere clave admin)
   // ============================================================================
   const RESET_COLLECTIONS = [
-    // Inventario
-    'inventory', 'inventoryMovements', 'finishedGoodsInventory', 'wipInventory',
-    'tomasFisicas', 'invRequisitions',
-    // Ventas
-    'notasEntrega', 'maquilaInvoices', 'cotizaciones',
-    'notasVentaCreditoDebito', 'retencionesClientes',
-    // Clientes y Proveedores
-    'clientes', 'purchaseOrders',
-    // Producción
-    'requirements', 'inventoryRequisitions', 'bobinaProductions', 'formulas',
-    // Finanzas
-    'operatingCosts', 'planDeCuentas', 'asientosContables',
-    // NOTA: 'users' y 'settings' NO se resetean para preservar acceso al sistema
+    'inventory', 'inventoryMovements', 'clientes', 'requirements',
+    'maquilaInvoices', 'inventoryRequisitions', 'operatingCosts',
+    'purchaseOrders', 'wipInventory', 'finishedGoodsInventory',
+    'planDeCuentas', 'asientosContables',
   ];
 
   const handleResetSystem = () => {
@@ -22338,7 +22300,6 @@ ${resumenHtml}
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Nombre Completo</label><input type="text" required value={newUserForm.name} onChange={e=>setNewUserForm({...newUserForm, name: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Rol / Cargo</label><input type="text" value={newUserForm.role} onChange={e=>setNewUserForm({...newUserForm, role: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
               </div>
-
               <div className="mt-6 border-t border-gray-200 pt-4">
                 <h4 className="text-sm font-black uppercase text-gray-800 mb-2 flex items-center gap-2">
                   <ShieldCheck size={18} className="text-orange-500"/> Permisología del Usuario
@@ -22415,7 +22376,7 @@ ${resumenHtml}
                   <tr className="uppercase font-black text-[10px] text-gray-500 tracking-widest">
                     <th className="py-3 px-4">Usuario / Nombre</th>
                     <th className="py-3 px-4">Rol</th>
-                     <th className="py-3 px-4">Rol</th>
+                    <th className="py-3 px-4">Permisos</th>
                     <th className="py-3 px-4 text-center">Acciones</th>
                   </tr>
                 </thead>
@@ -22424,7 +22385,6 @@ ${resumenHtml}
                     <tr key={u.id} className="hover:bg-gray-50">
                       <td className="py-3 px-4 font-black">{u.username}<br/><span className="text-[10px] text-gray-500 font-bold">{u.name}</span></td>
                       <td className="py-3 px-4 font-bold text-xs uppercase">{u.role}</td>
-
                       <td className="py-3 px-4">
                         <div className="flex gap-1 flex-wrap max-w-[280px]">
                           {u.role === 'Master' ? (
@@ -23232,6 +23192,95 @@ ${resumenHtml}
     await batch.commit();
   };
 
+  // ============================================================================
+  // PANTALLA DE SELECCIÓN DE PORTAL (post-login) — Master / Producción / Administración / Finanzas
+  // ============================================================================
+  if (appUser && !selectedPortal) {
+    const PORTALES = [
+      { id:'produccion',     title:'PRODUCCIÓN',     desc:'Planta, fórmulas, inventario y simulador de OP', icon:<Factory size={34}/>,    color:'#f97316' },
+      { id:'administracion', title:'ADMINISTRACIÓN', desc:'Ventas, facturación, clientes y configuración',  icon:<Users size={34}/>,      color:'#3b82f6' },
+      { id:'finanzas',       title:'FINANZAS',       desc:'Costos, reportes financieros y KPI gerencial',   icon:<DollarSign size={34}/>, color:'#22c55e' },
+    ];
+    return (
+      <div className="min-h-screen w-full relative overflow-hidden" style={{background:'#111'}}>
+        {/* Fondo: video/imagen del login o gradiente por defecto */}
+        <div className="absolute inset-0">
+          {settings?.loginBg ? (
+            <img src={settings.loginBg} className="w-full h-full object-cover object-center" alt="bg"/>
+          ) : (
+            <div className="w-full h-full" style={{background:'linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)'}}/>
+          )}
+          <div className="absolute inset-0" style={{background:'linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.78) 100%)'}}/>
+          {/* Grid técnico sutil */}
+          <svg width="100%" height="100%" style={{position:'absolute',inset:0,opacity:0.5}} xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <pattern id="portalGrid" width="40" height="40" patternUnits="userSpaceOnUse">
+                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(249,115,22,0.06)" strokeWidth="0.8"/>
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#portalGrid)"/>
+          </svg>
+        </div>
+
+        {/* HEADER */}
+        <header className="absolute top-0 left-0 w-full z-20 flex justify-between items-center px-5 sm:px-8 py-3" style={{background:'rgba(18,18,18,0.92)',borderBottom:'2px solid #f97316'}}>
+          <div className="flex items-center">
+            <span className="text-white font-black text-lg sm:text-xl">Supply </span>
+            <span className="text-white font-black text-xl sm:text-2xl">G</span>
+            <div className="bg-orange-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-sm font-black mx-0.5">&amp;</div>
+            <span className="text-white font-black text-xl sm:text-2xl">B</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:flex items-center gap-2 bg-white/10 rounded-xl px-3 py-2">
+              <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center"><User size={14} className="text-white"/></div>
+              <span className="text-white text-xs font-bold">{appUser?.name || 'Usuario'}</span>
+            </div>
+            <button onClick={async()=>{ try{ if(appUser?.role!=='Master'){ await deleteDoc(getDocRef('activeSessions', appUser.username)); } }catch(e){} try{ await signOut(auth);}catch(e){} setAppUser(null); }}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-black text-red-400 hover:text-white hover:bg-red-500/30 rounded-xl transition-all border border-red-500/30">
+              <LogOut size={14}/> <span>Salir</span>
+            </button>
+          </div>
+        </header>
+
+        {/* CONTENIDO CENTRAL */}
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center px-4 pt-20 pb-10">
+          <div className="text-center mb-8">
+            <h2 className="text-orange-400 text-xs sm:text-sm font-bold uppercase tracking-[0.25em] mb-2">Sistema ERP — Servicios Jiret G&amp;B</h2>
+            <h1 className="text-white text-2xl sm:text-4xl font-black uppercase tracking-wider">Seleccione un Portal</h1>
+            <div className="w-16 h-1 bg-orange-500 mx-auto mt-3 rounded-full"/>
+            <p className="text-white/50 text-xs sm:text-sm mt-3">Bienvenido, <span className="text-white font-bold">{appUser?.name || 'Usuario'}</span>. Elija el área de trabajo.</p>
+          </div>
+
+          <div className="w-full" style={{maxWidth:1000}}>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,260px),1fr))', gap:20}}>
+              {PORTALES.map(p => (
+                <button key={p.id} onClick={()=>{ clearAllReports(); setSelectedPortal(p.id); setActiveTab('home'); }}
+                  style={{textAlign:'left', background:'rgba(30,30,40,0.92)', backdropFilter:'blur(14px)', WebkitBackdropFilter:'blur(14px)',
+                    border:'1px solid rgba(255,255,255,0.1)', borderLeft:`5px solid ${p.color}`, borderRadius:16, padding:'28px 24px',
+                    cursor:'pointer', color:'white', transition:'transform 0.2s, box-shadow 0.2s, border-color 0.2s', boxShadow:'0 4px 18px rgba(0,0,0,0.35)'}}
+                  onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-6px)';e.currentTarget.style.boxShadow=`0 12px 32px ${p.color}55`;}}
+                  onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='0 4px 18px rgba(0,0,0,0.35)';}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'center',width:64,height:64,borderRadius:14,background:`${p.color}22`,color:p.color,marginBottom:18}}>
+                    {p.icon}
+                  </div>
+                  <h3 style={{fontSize:'1.15rem',fontWeight:900,margin:0,letterSpacing:'0.05em'}}>{p.title}</h3>
+                  <p style={{fontSize:'0.78rem',color:'#9ca3af',margin:'8px 0 18px',lineHeight:1.5,minHeight:38}}>{p.desc}</p>
+                  <div style={{display:'flex',alignItems:'center',gap:8,color:p.color,fontWeight:800,fontSize:'0.8rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
+                    Entrar al portal <ArrowRight size={16}/>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* FOOTER */}
+        <footer className="absolute bottom-0 left-0 w-full z-20 flex justify-center items-center px-8 py-2" style={{background:'rgba(18,18,18,0.85)',borderTop:'1px solid rgba(255,255,255,0.1)'}}>
+          <span className="text-white/25 text-[9px] uppercase tracking-[0.3em]">SUPPLY G&amp;B — SISTEMA ERP — SERVICIOS JIRET</span>
+        </footer>
+      </div>
+    );
+  }
 
   return (
     <ErrorBoundary>
@@ -23374,16 +23423,15 @@ ${resumenHtml}
                     <span className="text-sm sm:text-xl font-light tracking-widest text-gray-300">Supply</span>
                     <span className="text-white font-black text-lg sm:text-2xl leading-none ml-1">G</span><div className="bg-orange-500 text-white rounded-full w-4 h-4 sm:w-5 sm:h-5 flex items-center justify-center text-[9px] sm:text-xs font-black mx-0.5">&amp;</div><span className="text-white font-black text-lg sm:text-2xl leading-none">B</span>
                  </div>
-
                  <div className="hidden md:flex bg-gray-900 rounded-2xl p-1 gap-1 border border-gray-800">
                     <button onClick={() => {clearAllReports(); setActiveTab('home');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'home' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Home size={14}/> Inicio</button>
                     {hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
                     {hasPerm('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
                     {hasPerm('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
                     {hasPerm('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
-                    {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeTab==='kpi'?'bg-white text-black shadow-lg':'text-gray-400 hover:text-white hover:bg-white/10'}`}><BarChart3 size={14}/> KPI</button>}
-                    {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes') ? 'reportes' : 'costos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeTab==='costos'||activeTab==='reportes'?'bg-white text-black shadow-lg':'text-gray-400 hover:text-white hover:bg-white/10'}`}><DollarSign size={14}/> Reportes</button>}
-                    {(hasPerm('auditoria')||appUser?.role==='Master') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${activeTab==='auditoria'?'bg-white text-black shadow-lg':'text-gray-400 hover:text-white hover:bg-white/10'}`}><Shield size={14}/> Auditoría</button>}
+                    {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
+                    {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
+                    {(hasPerm('auditoria')||appUser?.role==='Master') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='auditoria'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShieldCheck size={14}/> Auditoría</button>}
                  </div>
               </div>
               <div className="flex items-center gap-2 sm:gap-3">
@@ -23529,6 +23577,11 @@ ${resumenHtml}
                  )}
                  {/* Online indicator */}
                  {!isOnline && <div className="flex items-center gap-1 text-red-400 text-[9px] font-black"><WifiOff size={12}/> <span className="hidden sm:inline">Sin red</span></div>}
+
+                 <button onClick={()=>{ clearAllReports(); setSelectedPortal(null); }} title="Cambiar de portal"
+                   className="flex items-center gap-1 px-3 py-2 text-xs font-black text-orange-600 hover:bg-orange-50 rounded-xl transition-all">
+                   <LayoutDashboard size={13}/> <span className="hidden sm:inline">Portales</span>
+                 </button>
 
                  <button onClick={async () => {
                    if (appUser?.role !== 'Master') {
