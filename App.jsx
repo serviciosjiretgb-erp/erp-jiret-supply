@@ -23303,17 +23303,25 @@ ${resumenHtml}
   };
 
   // ── PANTALLA DE SELECCIÓN DE PORTAL ─────────────────────────────────────────
-  const portalesDisponibles = Object.values(PORTALES).filter(p =>
+  const portalesDisponibles = appUser ? Object.values(PORTALES).filter(p =>
     appUser?.role === 'Master' || appUser?.role === 'Administrador' ||
     appUser?.portales?.[p.id]
-  );
+  ) : [];
+
+  // Auto-seleccionar portal si el usuario solo tiene uno disponible
+  React.useEffect(() => {
+    if (appUser && !activePortal) {
+      const disponibles = Object.values(PORTALES).filter(p =>
+        appUser?.role === 'Master' || appUser?.role === 'Administrador' ||
+        appUser?.portales?.[p.id]
+      );
+      if (disponibles.length === 1) {
+        setActivePortal(disponibles[0].id);
+      }
+    }
+  }, [appUser, activePortal]);
 
   if (appUser && !activePortal) {
-    // Si solo tiene acceso a un portal, ir directo
-    if (portalesDisponibles.length === 1) {
-      setActivePortal(portalesDisponibles[0].id);
-      return null;
-    }
     return (
       <div className="min-h-screen w-full" style={{background:'linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#0f172a 100%)'}}>
         {/* Header */}
