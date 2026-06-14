@@ -20440,147 +20440,139 @@ ${resumenHtml}
   // ── FIN renderLibroDiarioModule ──
   // ============================================================================
   const calcEstadoData = (ym) => {
-    // ── INGRESOS: usar NEs como fuente canónica (misma lógica que Transacciones de Ventas) ──
-    // Excluir facturas ya representadas por una NE para evitar duplicación
-    const facturasEnNE = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
+    // ── Detectar si un item es Bolsa o Termoencogible ──────────────────────────
+    const esBolsaOrTermo = (code, desc) => {
+      const c = (code||'').toUpperCase();
+      const d = (desc||'').toUpperCase();
+      return c.startsWith('BOL') || c.startsWith('TERMO') || c.startsWith('FG-') ||
+             d.includes('BOLSA') || d.includes('TERMO') || d.includes('PAÑAL') ||
+             d.includes('EMBUTIDO') || d.includes('CHUPETA') ||
+             d.includes('TERMO') || d.includes('TERMOENCOGIBLE');
+    };
 
-    // NEs del período — solo BOLSAS y TERMOENCOGIBLES (operaciones de producción propia)
-    const isBolsasOrTermo = (ne) => (ne.items||[]).some(it => {
-      const c=(it.invCode||it.codigo||'').toUpperCase();
-      const d=(it.desc||it.descripcion||'').toUpperCase();
-      return c.startsWith('BOL')||d.includes('BOLSA')||c.startsWith('TERMO')||d.includes('TERMO');
-    });
-    const nesperiodo = (notasEntrega||[]).filter(ne => {
-      const d = ne.fecha || '';
-      if (!d.startsWith(ym)) return false;
-      return isBolsasOrTermo(ne);
-    });
-
-    // Facturas directas del período (sin NE asociada)
-    const facturasPeriodo = (invoices||[]).filter(inv => {
-      const d = inv.fecha || (typeof inv.timestamp==='number' ? new Date(inv.timestamp).toISOString().substring(0,7) : '');
-      if (!d.startsWith(ym)) return false;
-      if (inv.neOrigen) return false; // ya representada por NE
-      const invId = inv.id || inv.documento || '';
-      const invDoc = (inv.documento||'').replace(/^FAC-/,'INVO-');
-      if (facturasEnNE.has(invId) || facturasEnNE.has(invDoc)) return false;
-      return true;
+    // ── INGRESOS y COSTOS: misma lógica que "Productos Vendidos" ──────────────
+    // Lee TODAS las facturas del período con itemsFacturados de bolsas/termoencogibles
+    const facturasDelPeriodo = (invoices||[]).filter(inv => {
+      const d = inv.fecha || '';
+      return d.startsWith(ym);
     });
 
-    // Total ingresos = NEs + facturas directas (montoBase = base sin IVA)
-    const totalIngresosNE = nesperiodo.reduce((s,ne) => s + parseNum(ne.montoBase||0), 0);
-    const totalIngresosInv = facturasPeriodo.reduce((s,inv) => s + parseNum(inv.montoBase||0), 0);
+    const cogsRows = [];
+    let totalCostoProd = 0;
+    let totalIngresosItems = 0;
+    const facturasContadas = new Set();
+
+    facturasDelPeriodo.forEach(inv => {
+      const allItems = (inv.itemsFacturados||[]).length > 0
+        ? inv.itemsFacturados
+        : (inv.fgId ? [{ fgId: inv.fgId, cantidad: parseNum(inv.fgCantidad||0), desc: '', costoUnit: 0, precio: parseNum(inv.precioUnit||0) }] : []);
+
+      let invTieneItemsValidos = false;
+      allItems.forEach(it => {
+        const code = it.invCode || it.fgId || it.codigo || '';
+        const desc = it.desc || it.descripcion || '';
+        if (!esBolsaOrTermo(code, desc)) return;
+        const cant = parseNum(it.cantidad || it.qty || 0);
+        if (cant <= 0) return;
+
+        // Ingreso del ítem
+        const precioUnit = parseNum(it.precioUnit || it.precio || 0);
+        const subTotal = precioUnit > 0 ? precioUnit * cant : 0;
+        totalIngresosItems += subTotal;
+        invTieneItemsValidos = true;
+
+        // Costo congelado (misma cadena que Prod. Vendidos)
+        let costoU = parseNum(it.costoUnit || 0);
+        if (costoU <= 0 && code) {
+          const fg = (finishedGoodsInventory||[]).find(f => f.id === code);
+          if (fg) {
+            const esTermo = it.esTermo ?? (fg.tipoProducto === 'TERMOENCOGIBLE');
+            costoU = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+          }
+        }
+        if (costoU <= 0 && code) {
+          const km = (invMovements||[]).find(m =>
+            m.itemId === `FG::${code}` && m.type === 'SALIDA' &&
+            (m.docRef||'').includes(inv.documento||inv.id) && parseNum(m.unitCost||0) > 0
+          );
+          if (km) costoU = parseNum(km.unitCost||0);
+        }
+        if (costoU <= 0 && code) {
+          const km2 = (invMovements||[]).find(m =>
+            m.itemId === `FG::${code}` && m.type === 'SALIDA' && parseNum(m.unitCost||0) > 0
+          );
+          if (km2) costoU = parseNum(km2.unitCost||0);
+        }
+        if (costoU <= 0 && code) {
+          const fg2 = (finishedGoodsInventory||[]).find(f => f.id === code);
+          if (fg2) costoU = parseNum(fg2.costoUnitario || fg2.costoUnitarioMillar || 0);
+        }
+
+        const costoTotal2 = costoU * cant;
+        totalCostoProd += costoTotal2;
+
+        cogsRows.push({
+          opId: inv.opAsignada || '—',
+          opNum: String(inv.opAsignada||'').replace('OP-','').padStart(5,'0'),
+          producto: desc || code,
+          cliente: inv.clientName || inv.clientRif || '',
+          cantVendida: cant,
+          unidad: it.unidad || it.unit || 'und',
+          costoUnit: costoU,
+          costoTotal: costoTotal2,
+          esTermo: it.esTermo || false,
+          factura: inv.documento || inv.id,
+          nroFiscal: inv.nroFiscal || '',
+          fecha: inv.fecha || '',
+          invId: inv.id,
+          itemCode: code,
+          cuentaIngreso: '4.1.01.01.002',
+          cuentaIngresoNombre: 'Ingresos por Producción (Bolsas / Termoencogibles)',
+          cuentaCosto: '5.1.01.01.002',
+          cuentaCostoNombre: 'Costos de Producción'
+        });
+      });
+
+      // Si la factura tiene ítems válidos, contarla para ingresos
+      // (si no hubo ítems válidos pero sí montoBase con OP, incluir el montoBase)
+      if (!invTieneItemsValidos && inv.opAsignada) {
+        const base = parseNum(inv.montoBase || 0);
+        if (base > 0) {
+          totalIngresosItems += base;
+          facturasContadas.add(inv.id);
+        }
+      }
+    });
+
+    // Ingresos: suma de (precioUnit × cantidad) de ítems válidos
+    // Si alguna factura no tiene ítems desglosados, usar montoBase
+    // Recalcular desde ítems es más preciso
+    const totalIngresosNE = totalIngresosItems;
+    const totalIngresosInv = 0; // ya incluido arriba
+
     // NC/ND del período — ajustan ingresos
     const notasPeriodo = (notasVentaCD||[]).filter(nc => (nc.fecha||'').startsWith(ym));
     const ajusteNotasUsd = notasPeriodo.reduce((s,nc) => {
       const inv = (invoices||[]).find(i=>i.id===nc.facturaId);
       const ne  = (notasEntrega||[]).find(e=>e.id===nc.neId);
-      // Usar tasaFactura guardada en la NC/ND, o buscar en la factura, o BCV
       const tasaNC = parseNum(nc.tasaFactura||inv?.tasa||ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-      const baseImpBs = parseNum(nc.monto||0);           // monto = Base Imp. en Bs.
+      const baseImpBs = parseNum(nc.monto||0);
       const baseUsd = tasaNC>0 ? parseFloat((baseImpBs/tasaNC).toFixed(2)) : baseImpBs;
       return s + (nc.tipo==='NC' ? -baseUsd : baseUsd);
     }, 0);
+
     const totalIngresos = totalIngresosNE + totalIngresosInv + ajusteNotasUsd;
 
-    // ── COSTOS DE PRODUCCIÓN: desde ítems con costoUnit (NEs e invoices directas) ──
-    let totalCostoProd = 0;
-    const cogsRows = [];
-
-    // Costos desde NEs
-    // Costos desde NEs
-    nesperiodo.forEach(ne => {
-      const tieneOP = !!(ne.opRelacionada);
-      const ctaIngreso = tieneOP ? '4.1.01.01.002' : '4.1.01.01.001';
-      const ctaCosto   = tieneOP ? '5.1.01.01.002' : '5.1.01.01.001';
-      const ctaIngresoNombre = tieneOP ? 'Ingresos por Producción (Bolsas / Termoencogibles)' : 'Ingresos por Producción (Bolsas / Termoencogibles)';
-      const ctaCostoNombre   = tieneOP ? 'Costos de Producción'       : 'Costos de Producción';
-      (ne.items||[]).forEach(it => {
-        const costoUnit = parseNum(it.costoUnit||0);
-        const cant = parseNum(it.cantidad||0);
-        if (costoUnit <= 0 || cant <= 0) return;
-        const costoTotal2 = costoUnit * cant;
-        totalCostoProd += costoTotal2;
-        cogsRows.push({
-          opId: ne.opRelacionada||'—',
-          opNum: String(ne.opRelacionada||'').replace('OP-','').padStart(5,'0'),
-          producto: it.desc||'',
-          cliente: ne.clientName||'',
-          cantVendida: cant,
-          unidad: it.unit||'und',
-          costoUnit,
-          costoTotal: costoTotal2,
-          esTermo: false,
-          factura: ne.facturaDoc||ne.id,
-          nroFiscal: ne.nroFiscalFactura||'',
-          fecha: ne.fecha||'',
-          cuentaIngreso: ctaIngreso, cuentaIngresoNombre: ctaIngresoNombre,
-          cuentaCosto: ctaCosto, cuentaCostoNombre: ctaCostoNombre
-        });
-      });
-      // Fallback: si la NE tiene costoTotal registrado pero sin items con costo
-      if (cogsRows.filter(r=>r.factura===ne.id).length===0 && parseNum(ne.costoTotal||0)>0) {
-        totalCostoProd += parseNum(ne.costoTotal);
-        cogsRows.push({
-          opId: ne.opRelacionada||'—',
-          opNum: String(ne.opRelacionada||'').replace('OP-','').padStart(5,'0'),
-          producto: ne.clientName||'NE sin detalle',
-          cliente: ne.clientName||'',
-          cantVendida: 1,
-          unidad: 'global',
-          costoUnit: parseNum(ne.costoTotal||0),
-          costoTotal: parseNum(ne.costoTotal||0),
-          esTermo: false,
-          factura: ne.id
-        });
-      }
-    });
-
-    // Costos desde facturas directas (items con costoUnit)
-    facturasPeriodo.forEach(inv => {
-      const allItems = (inv.itemsFacturados||[]).length > 0
-        ? inv.itemsFacturados
-        : (inv.fgId ? [{ fgId: inv.fgId, cantidad: parseNum(inv.fgCantidad||0), costoUnit: 0 }] : []);
-
-      allItems.forEach(it => {
-        const cant = parseNum(it.cantidad||0);
-        if (cant <= 0) return;
-        // Intentar costo: directo del ítem, luego finishedGoods, luego inventario
-        let costoUnit = parseNum(it.costoUnit||0);
-        if (costoUnit <= 0 && it.fgId) {
-          const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
-          if (fg) {
-            const esTermo = it.esTermo ?? (fg.tipoProducto==='TERMOENCOGIBLE');
-            costoUnit = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-          }
-        }
-        if (costoUnit <= 0 && it.invCode) {
-          const invItem = (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode);
-          if (invItem) costoUnit = parseNum(invItem.cost||0);
-        }
-        if (costoUnit <= 0) return;
-        // Correcciones de costo manuales por producto + factura
-        if ((it.invCode||it.fgId||it.desc||'').toUpperCase().includes('EMBUTIDO') && (it.invCode||it.fgId||it.desc||'').toUpperCase().includes('KIRI') && String(inv.nroFiscal||'').includes('3059')) costoUnit=77.11;
-        const costoTotal2 = cant * costoUnit;
-        totalCostoProd += costoTotal2;
-        cogsRows.push({
-          opId: inv.opAsignada||'—',
-          opNum: String(inv.opAsignada||'').replace('OP-','').padStart(5,'0'),
-          producto: it.desc||'',
-          cliente: inv.clientName||'',
-          cantVendida: cant,
-          unidad: it.unidad||'und',
-          costoUnit,
-          costoTotal: costoTotal2,
-          esTermo: it.esTermo||false,
-          factura: inv.documento||inv.id,
-          nroFiscal: inv.nroFiscal||'',
-          fecha: inv.fecha||'',
-          invId: inv.id,
-          itemCode: it.invCode||it.fgId||''
-        });
-      });
-    });
+    // Facturasperiodo para el desglose del PDF (mostrar en INGRESOS colapsable)
+    const facturasperiodo = facturasDelPeriodo
+      .filter(inv => (inv.itemsFacturados||[]).some(it => esBolsaOrTermo(it.invCode||it.fgId||it.codigo||'', it.desc||'')))
+      .map(inv => ({
+        ...inv,
+        documento: inv.documento || inv.id,
+        clientName: inv.clientName || '',
+        montoBase: parseNum(inv.montoBase || 0),
+        isNota: false
+      }));
 
     // Costos operativos del periodo, agrupados por cuenta contable
     const costosPeriodo = (opCosts || []).filter(c => (c.month || (c.date||'').substring(0,7) || '').startsWith(ym));
@@ -20598,53 +20590,36 @@ ${resumenHtml}
         costosPorCuenta[key] = {
           codigo: c.cuentaContable || '',
           nombre: pdc ? pdc.nombre : (c.category || 'OTROS'),
-          grupo: pdc ? pdc.grupo : 'COSTOS OPERATIVOS',
-          subGrupo: pdc ? pdc.subGrupo : c.category || 'OTROS',
-          total: 0, movs: []
+          total: 0,
+          movs: []
         };
       }
-      costosPorCuenta[key].total += parseNum(c.amount);
+      costosPorCuenta[key].total += parseNum(c.monto||0);
       costosPorCuenta[key].movs.push(c);
     });
 
-    const totalCostosOp = costosPeriodo.reduce((s,c) => s + parseNum(c.amount), 0);
-    const totalCostos = totalCostoProd + totalCostosOp;
-    const resultado = totalIngresos - totalCostos;
+    const totalCostosOp = Object.values(costosPorCuenta).reduce((s,c) => s+c.total, 0);
 
-    // facturasperiodo = NEs + facturas directas (para el detalle de ingresos en el UI)
-    // facturasperiodo = NEs + facturas directas + NC/ND (para el detalle de ingresos en el UI)
-    const facturasperiodo = [
-      ...nesperiodo.map(ne => ({
-        documento: ne.id,
-        clientName: ne.clientName||'',
-        productoMaquilado: (ne.items||[]).map(i=>i.desc||'').filter(Boolean).join(' / '),
-        fecha: ne.fecha,
-        montoBase: ne.montoBase||0,
-        isNE: true
-      })),
-      ...facturasPeriodo.map(inv => ({
-        documento: inv.documento||inv.id,
-        clientName: inv.clientName||'',
-        productoMaquilado: inv.productoMaquilado||'',
-        fecha: inv.fecha,
-        montoBase: inv.montoBase||0,
-        isNE: false
-      })),
-      ...notasPeriodo.map(nc=>{
-        const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
-        const ne2=(notasEntrega||[]).find(e=>e.id===nc.neId);
-        const tasaNC=parseNum(nc.tasaFactura||inv?.tasa||ne2?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-        const baseImpBs=parseNum(nc.monto||0);
-        const baseUsd=tasaNC>0?parseFloat((baseImpBs/tasaNC).toFixed(2)):baseImpBs;
-        const signo=nc.tipo==='NC'?-1:1;
-        return {documento:nc.nroDocumento||nc.tipo,clientName:inv?.clientName||ne2?.clientName||'—',
-          productoMaquilado:nc.descripcion||`${nc.tipo} aplicada`,fecha:nc.fecha,
-          montoBase:baseUsd*signo,isNota:true,tipoNota:nc.tipo};
-      })
-    ];
+    const utilidadBruta = totalIngresos - totalCostoProd;
+    const utilidadNeta  = utilidadBruta - totalCostosOp;
+    const margenBruto   = totalIngresos > 0 ? (utilidadBruta / totalIngresos * 100) : 0;
+    const margenNeto    = totalIngresos > 0 ? (utilidadNeta  / totalIngresos * 100) : 0;
 
-    return { facturasperiodo, totalIngresos, costosPorCuenta, costosPeriodo, movsProd, totalCostoProd, totalCostosOp, totalCostos, resultado, cogsRows };
+    return {
+      totalIngresos,
+      totalCostoProd,
+      totalCostosOp,
+      utilidadBruta,
+      utilidadNeta,
+      margenBruto,
+      margenNeto,
+      cogsRows,
+      costosPorCuenta,
+      facturasperiodo,
+      movsProd,
+    };
   };
+
 
   // ============================================================================
   // RENDER — ESTADO DE RESULTADO
