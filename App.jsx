@@ -327,6 +327,13 @@ const SYSTEM_MODULES = [
   }
 ];
 
+// Portales del sistema (selección post-login). El permiso se controla por usuario en user.portales
+const SYSTEM_PORTALS = [
+  { id:'produccion',     title:'PRODUCCIÓN',     desc:'Planta, fórmulas, inventario y simulador de OP', color:'#f97316' },
+  { id:'administracion', title:'ADMINISTRACIÓN', desc:'Ventas, facturación, clientes y configuración',  color:'#3b82f6' },
+  { id:'finanzas',       title:'FINANZAS',       desc:'Costos, reportes financieros y KPI gerencial',   color:'#22c55e' },
+];
+
 // Genera el objeto de permisos por defecto (todos en false) desde SYSTEM_MODULES
 const generateDefaultPermissions = () => {
   const perms = {};
@@ -372,6 +379,7 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState('home'); 
   const [selectedPortal, setSelectedPortal] = useState(null); // 'produccion' | 'administracion' | 'finanzas'
+  const [portalDenied, setPortalDenied] = useState(''); // aviso "no posee permiso" en pantalla de portales
   const [ventasView, setVentasView] = useState('facturacion');
   const [pvFilter, setPvFilter] = useState('general');
   const [pvFiltCliente, setPvFiltCliente] = useState('');
@@ -649,7 +657,7 @@ export default function App() {
   const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
 
   // Formularios de Configuración
-  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: generateDefaultPermissions() };
+  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: generateDefaultPermissions(), portales: { produccion:true, administracion:true, finanzas:true } };
   const [newUserForm, setNewUserForm] = useState(initialUserForm);
   const [editingUserId, setEditingUserId] = useState(null);
   const [originalUsername, setOriginalUsername] = useState(null);
@@ -1374,7 +1382,7 @@ export default function App() {
 
   useEffect(() => { signInAnonymously(auth).catch(err => console.error(err)); const unsubscribe = onAuthStateChanged(auth, setFbUser); return () => unsubscribe(); }, []);
   // Al cerrar sesión, volver a la pantalla de selección de portal en el próximo login
-  useEffect(() => { if (!appUser) setSelectedPortal(null); }, [appUser]);
+  useEffect(() => { if (!appUser) { setSelectedPortal(null); setPortalDenied(''); } }, [appUser]);
   
   useEffect(() => {
     if (!fbUser) return;
@@ -1762,9 +1770,10 @@ export default function App() {
     const defaultPerms = generateDefaultPermissions();
     // Fusionar permisos por defecto con los del usuario (asegura que módulos nuevos aparezcan en false)
     const mergedPerms = { ...defaultPerms, ...(u.permissions || {}) };
+    const mergedPortales = { produccion:true, administracion:true, finanzas:true, ...(u.portales || {}) };
     setEditingUserId(u.username);
     setOriginalUsername(u.username);
-    setNewUserForm({ ...u, permissions: mergedPerms });
+    setNewUserForm({ ...u, permissions: mergedPerms, portales: mergedPortales });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   const handleDeleteUser = (usernameOrId) => {
@@ -4136,6 +4145,15 @@ export default function App() {
     if (appUser.role === 'Master') return true;
     const p = appUser.permissions || {};
     return !!p[module];
+  }, [appUser]);
+
+  // Permiso de acceso por PORTAL. Compatibilidad: usuario sin campo 'portales' definido => acceso total.
+  const hasPortal = useCallback((portalId) => {
+    if (!appUser) return false;
+    if (appUser.role === 'Master') return true;
+    const pt = appUser.portales;
+    if (!pt || Object.keys(pt).length === 0) return true; // sin restricción configurada
+    return !!pt[portalId];
   }, [appUser]);
 
   // ============================================================================
@@ -22462,6 +22480,27 @@ ${resumenHtml}
                   💡 <strong>Para dar acceso parcial</strong>: marca SOLO los submódulos deseados sin marcar el módulo padre. 
                   El usuario verá la tarjeta del módulo en el Panel Principal y SÓLO las secciones marcadas.
                 </p>
+
+                {/* ── ACCESO POR PORTAL ── */}
+                <div className="mb-5 bg-orange-50 border-2 border-orange-200 rounded-2xl p-4">
+                  <h5 className="text-[11px] font-black text-orange-700 uppercase flex items-center gap-2 mb-1"><LayoutDashboard size={14}/> Acceso por Portal</h5>
+                  <p className="text-[9px] font-bold text-gray-500 mb-3">Todos los portales se muestran al iniciar sesión. Si un portal NO está marcado, el usuario verá un aviso de que no posee permiso al intentar entrar. (Los usuarios Master siempre tienen acceso total.)</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {SYSTEM_PORTALS.map(pt => {
+                      const checked = !!(newUserForm.portales||{})[pt.id];
+                      return (
+                        <label key={pt.id} className={`flex items-center gap-2 cursor-pointer rounded-xl px-3 py-2.5 border-2 transition-all ${checked?'bg-white border-orange-300':'bg-gray-50 border-gray-200 hover:border-orange-200'}`}>
+                          <input type="checkbox" checked={checked}
+                            onChange={e=>setNewUserForm(f=>({...f, portales:{...(f.portales||{}), [pt.id]: e.target.checked}}))}
+                            className="w-4 h-4 accent-orange-500"/>
+                          <span style={{width:10,height:10,borderRadius:3,background:pt.color,flexShrink:0}}/>
+                          <span className={`text-[11px] font-black uppercase ${checked?'text-gray-800':'text-gray-400'}`}>{pt.title}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                   {SYSTEM_MODULES.map(mod => {
                     const allSubsChecked = mod.submodules.length > 0 && mod.submodules.every(s => !!newUserForm.permissions[s.id]);
@@ -23405,25 +23444,36 @@ ${resumenHtml}
             <p className="text-white/50 text-xs sm:text-sm mt-3">Bienvenido, <span className="text-white font-bold">{appUser?.name || 'Usuario'}</span>. Elija el área de trabajo.</p>
           </div>
 
+          {portalDenied && (
+            <div className="mb-6 flex items-center gap-3 px-5 py-3 rounded-2xl animate-in fade-in" style={{background:'rgba(239,68,68,0.15)',border:'1px solid rgba(239,68,68,0.4)'}}>
+              <Lock size={18} className="text-red-300 flex-shrink-0"/>
+              <span className="text-red-200 text-xs sm:text-sm font-bold">No posee permiso para acceder al portal <b className="text-white">{portalDenied}</b>. Solicite acceso a un administrador.</span>
+              <button onClick={()=>setPortalDenied('')} className="ml-auto text-red-200 hover:text-white"><X size={16}/></button>
+            </div>
+          )}
           <div className="w-full" style={{maxWidth:1000}}>
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,260px),1fr))', gap:20}}>
-              {PORTALES.map(p => (
-                <button key={p.id} onClick={()=>{ clearAllReports(); setSelectedPortal(p.id); setActiveTab('home'); }}
-                  style={{textAlign:'left', background:'rgba(30,30,40,0.92)', backdropFilter:'blur(14px)', WebkitBackdropFilter:'blur(14px)',
-                    border:'1px solid rgba(255,255,255,0.1)', borderLeft:`5px solid ${p.color}`, borderRadius:16, padding:'28px 24px',
-                    cursor:'pointer', color:'white', transition:'transform 0.2s, box-shadow 0.2s, border-color 0.2s', boxShadow:'0 4px 18px rgba(0,0,0,0.35)'}}
-                  onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-6px)';e.currentTarget.style.boxShadow=`0 12px 32px ${p.color}55`;}}
+              {PORTALES.map(p => {
+                const allowed = hasPortal(p.id);
+                return (
+                <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); setActiveTab('home'); } else { setPortalDenied(p.title); } }}
+                  style={{textAlign:'left', position:'relative', background:allowed?'rgba(30,30,40,0.92)':'rgba(30,30,40,0.6)', backdropFilter:'blur(14px)', WebkitBackdropFilter:'blur(14px)',
+                    border:'1px solid rgba(255,255,255,0.1)', borderLeft:`5px solid ${allowed?p.color:'#6b7280'}`, borderRadius:16, padding:'28px 24px',
+                    cursor:'pointer', color:'white', opacity:allowed?1:0.65, transition:'transform 0.2s, box-shadow 0.2s, border-color 0.2s', boxShadow:'0 4px 18px rgba(0,0,0,0.35)'}}
+                  onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-6px)';e.currentTarget.style.boxShadow=allowed?`0 12px 32px ${p.color}55`:'0 8px 22px rgba(0,0,0,0.45)';}}
                   onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='0 4px 18px rgba(0,0,0,0.35)';}}>
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'center',width:64,height:64,borderRadius:14,background:`${p.color}22`,color:p.color,marginBottom:18}}>
+                  {!allowed && <div style={{position:'absolute',top:14,right:14,display:'flex',alignItems:'center',gap:4,background:'rgba(0,0,0,0.4)',borderRadius:8,padding:'4px 8px'}}><Lock size={12} className="text-gray-300"/><span style={{fontSize:'0.6rem',fontWeight:800,color:'#d1d5db',textTransform:'uppercase'}}>Sin acceso</span></div>}
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'center',width:64,height:64,borderRadius:14,background:`${allowed?p.color:'#6b7280'}22`,color:allowed?p.color:'#9ca3af',marginBottom:18}}>
                     {p.icon}
                   </div>
                   <h3 style={{fontSize:'1.15rem',fontWeight:900,margin:0,letterSpacing:'0.05em'}}>{p.title}</h3>
                   <p style={{fontSize:'0.78rem',color:'#9ca3af',margin:'8px 0 18px',lineHeight:1.5,minHeight:38}}>{p.desc}</p>
-                  <div style={{display:'flex',alignItems:'center',gap:8,color:p.color,fontWeight:800,fontSize:'0.8rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
-                    Entrar al portal <ArrowRight size={16}/>
+                  <div style={{display:'flex',alignItems:'center',gap:8,color:allowed?p.color:'#9ca3af',fontWeight:800,fontSize:'0.8rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
+                    {allowed ? <>Entrar al portal <ArrowRight size={16}/></> : <><Lock size={14}/> Acceso restringido</>}
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
