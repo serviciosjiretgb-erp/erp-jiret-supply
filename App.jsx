@@ -4320,7 +4320,40 @@ export default function App() {
       },
     ].filter(Boolean);
 
-    // Build card visual config matching the HTML spec
+    // ── FILTRO POR PORTAL ──────────────────────────────────────────────────────
+    // Define qué tarjetas pertenecen a cada portal. Los módulos que no están
+    // asignados al portal activo se ocultan del Panel Principal. El código de cada
+    // módulo sigue intacto — solo se controla su visibilidad en el home.
+    const PORTAL_TABS = {
+      produccion:     ['produccion','formulas','inventario','simulador'],
+      administracion: ['ventas','configuracion','auditoria'],
+      finanzas:       ['costos_operativos','kpi','costos'],
+    };
+    const portalTabList = selectedPortal ? PORTAL_TABS[selectedPortal] : null;
+    const visibleCards  = portalTabList
+      ? moduleCards.filter(c => portalTabList.includes(c.tab))
+      : moduleCards; // sin portal activo → muestra todo (Master sin restricción de portal)
+
+    // ── PLACEHOLDER FINANZAS ──────────────────────────────────────────────────
+    if (selectedPortal === 'finanzas' && visibleCards.length === 0) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[70vh] gap-6 animate-in fade-in">
+          <div className="text-center">
+            <h1 className="text-2xl font-black uppercase tracking-widest text-gray-900 mb-2">
+              PANEL PRINCIPAL ERP — FINANZAS
+            </h1>
+            <div className="w-16 h-1 bg-green-500 mx-auto rounded-full mb-8"/>
+            <div className="w-24 h-24 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-5">
+              <TrendingUp size={44} className="text-green-600"/>
+            </div>
+            <h2 className="text-lg font-black text-gray-700 uppercase tracking-wide mb-2">Módulo en Desarrollo</h2>
+            <p className="text-sm text-gray-500 font-bold max-w-sm mx-auto">
+              Los módulos de <span className="text-green-600">Costos Operativos</span>, <span className="text-green-600">KPI Gerencial</span> y <span className="text-green-600">Reportes Financieros</span> se integrarán aquí en la próxima etapa.
+            </p>
+          </div>
+        </div>
+      );
+    }
     const CARD_CONFIG = {
       ventas:       {dark:true,  borderColor:'#ffd700', chartType:'bars',       barData:card=>card.chart?card.chart():null},
       produccion:   {dark:true,  borderColor:'#f97316', chartType:'lineSvg',    svgPts1:'0,25 15,10 30,20 45,5 60,15 75,10 90,20 100,25', svgPts2:'0,20 15,5 30,15 45,0 60,10 75,5 90,15 100,20'},
@@ -4374,7 +4407,7 @@ export default function App() {
           {/* Grid — responsive: 1 col mobile, 2 tablet, 3 desktop */}
           <div className="px-4 sm:px-6 pb-8">
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(min(100%,340px),1fr))', gap:16}}>
-              {moduleCards.map((card, i) => {
+              {visibleCards.map((card, i) => {
                 const cfg = CARD_CONFIG[card.tab] || {dark:false,borderColor:card.color,chartType:'configText'};
                 const stats = card.stats ? card.stats() : {};
                 const bars = card.chart ? card.chart() : [];
