@@ -12037,8 +12037,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                <div class="field"><label>Cliente Desde</label><p>${c?.fechaCreacion||(c?.timestamp?new Date(c.timestamp).toLocaleDateString('es-VE'):'—')}</p></div>
                              </div>
                              <div class="footer">Generado por ${empresa} · ${new Date().toLocaleDateString('es-VE')}</div>
-                           </body></html>\`;
-                           const w=window.open('','_blank');html);w.document.close();w.print();
+                           </body></html>`;
+                           const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();w.print();}
                          }} className="p-2.5 bg-orange-50 text-orange-600 rounded-xl hover:bg-orange-500 hover:text-white transition-all" title="Ficha PDF">
                            <FileText size={16}/>
                          </button>
