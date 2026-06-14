@@ -652,7 +652,28 @@ export default function App() {
   const [originalUsername, setOriginalUsername] = useState(null);
 
   // Formularios de Ventas
-  const initialClientForm = { rif: '', razonSocial: '', direccion: '', telefono: '', personaContacto: '', vendedor: '', fechaCreacion: getTodayDate() }; // Note: lazily re-initialized on reset
+  const initialClientForm = { rif: '', razonSocial: '', direccion: '', ciudad: '', estado: '', telefono: '', personaContacto: '', vendedor: '', diasCredito: '0', fechaCreacion: getTodayDate() };
+// ── Ciudades de Venezuela con su Estado ─────────────────────────────────────
+  const VE_CIUDADES = [
+    ['Maracaibo','Zulia'],['Cabimas','Zulia'],['Ciudad Ojeda','Zulia'],['San Francisco','Zulia'],
+    ['Lagunillas','Zulia'],['La Cañada de Urdaneta','Zulia'],['Punto Fijo','Falcón'],['Coro','Falcón'],
+    ['Caracas','Distrito Capital'],['Petare','Miranda'],['Guarenas','Miranda'],['Guatire','Miranda'],
+    ['Los Teques','Miranda'],['Ocumare del Tuy','Miranda'],['Barquisimeto','Lara'],['Cabudare','Lara'],
+    ['El Tocuyo','Lara'],['Quíbor','Lara'],['Valencia','Carabobo'],['Maracay','Aragua'],
+    ['Guacara','Carabobo'],['San Joaquín','Carabobo'],['Los Guayos','Carabobo'],
+    ['Puerto Cabello','Carabobo'],['Naguanagua','Carabobo'],['La Victoria','Aragua'],
+    ['Cagua','Aragua'],['Villa de Cura','Aragua'],['San Mateo','Aragua'],['Turmero','Aragua'],
+    ['Araure','Portuguesa'],['Acarigua','Portuguesa'],['Guanare','Portuguesa'],
+    ['Barinas','Barinas'],['Mérida','Mérida'],['El Vigía','Mérida'],['Ejido','Mérida'],
+    ['Maturín','Monagas'],['Punta de Mata','Monagas'],['Barcelona','Anzoátegui'],
+    ['Puerto La Cruz','Anzoátegui'],['El Tigre','Anzoátegui'],['Lechería','Anzoátegui'],
+    ['Ciudad Guayana','Bolívar'],['Puerto Ordaz','Bolívar'],['Upata','Bolívar'],['Cumaná','Sucre'],
+    ['Carúpano','Sucre'],['San Cristóbal','Táchira'],['Táriba','Táchira'],['Rubio','Táchira'],
+    ['Trujillo','Trujillo'],['Valera','Trujillo'],['San Felipe','Yaracuy'],['Nirgua','Yaracuy'],
+    ['Porlamar','Nueva Esparta'],['La Asunción','Nueva Esparta'],['Calabozo','Guárico'],
+    ['San Juan de los Morros','Guárico'],['Tucupita','Delta Amacuro'],['La Guaira','La Guaira'],
+    ['Maiquetía','La Guaira'],['Cúa','Miranda'],['Charallave','Miranda'],['San Antonio del Táchira','Táchira'],
+  ]; // Note: lazily re-initialized on reset
   const [newClientForm, setNewClientForm] = useState(initialClientForm);
   const [showAddClientForm, setShowAddClientForm] = useState(false);
   const [editingClientId, setEditingClientId] = useState(null);
@@ -810,6 +831,7 @@ export default function App() {
   const [auditModuleFilter, setAuditModuleFilter] = useState('Todos');
   const [auditTipoFilter, setAuditTipoFilter] = useState('Todos');
   const [auditDate, setAuditDate] = useState('');
+  const [auditMes, setAuditMes] = useState('');
   const [auditPage, setAuditPage] = useState(1);
   const [activitySearch, setActivitySearch] = useState('');
   const [activityDateFrom, setActivityDateFrom] = useState('');
@@ -2829,7 +2851,7 @@ export default function App() {
     const rif = newClientForm.rif.toUpperCase().trim();
     try { await setDoc(getDocRef('clientes', rif), { ...newClientForm, name: newClientForm.razonSocial.toUpperCase().trim(), rif, timestamp: Date.now() }, { merge: true }); setNewClientForm(initialClientForm); setEditingClientId(null); setDialog({ title: '¡Éxito!', text: 'Cliente guardado.', type: 'alert' }); } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
-  const startEditClient = (c) => { setEditingClientId(c.rif); setNewClientForm({ ...c, razonSocial: c.name }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const startEditClient = (c) => { setEditingClientId(c.rif); setNewClientForm({ ...c, razonSocial: c.name||c.razonSocial||'', ciudad:c.ciudad||'', estado:c.estado||'', diasCredito:c.diasCredito!=null?String(c.diasCredito):'0' }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteClient = (rif) => {
     setDialog({ 
       title: 'Eliminar Cliente', 
@@ -11920,18 +11942,44 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <input type="text" value={newClientForm.telefono} onChange={e=>setNewClientForm({...newClientForm, telefono: e.target.value})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none border-2 border-transparent" />
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                   <div className="md:col-span-2">
-                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Dirección Fiscal</label>
-                     <input type="text" value={newClientForm.direccion} onChange={e=>setNewClientForm({...newClientForm, direccion: String(e.target.value || '').toUpperCase()})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all" />
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Dirección Fiscal</label>
+                    <input type="text" value={newClientForm.direccion} onChange={e=>setNewClientForm({...newClientForm,direccion:e.target.value})}
+                      className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400" placeholder="Dirección completa"/>
                   </div>
-                   <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Vendedor Asignado</label>
-                      <select value={newClientForm.vendedor||''} onChange={e=>setNewClientForm({...newClientForm,vendedor:e.target.value})} className="w-full bg-slate-100/70 p-4 rounded-2xl font-black text-xs outline-none focus:bg-white focus:border-orange-500 border-2 border-transparent transition-all uppercase">
-                        <option value="">— Sin asignar —</option>
-                        {(settings?.vendedores||[]).map(v=><option key={v} value={v}>{v}</option>)}
-                      </select>
-                   </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Ciudad</label>
+                    <select value={newClientForm.ciudad||''} onChange={e=>{const c=VE_CIUDADES.find(([city])=>city===e.target.value);setNewClientForm({...newClientForm,ciudad:e.target.value,estado:c?c[1]:''});}}
+                      className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400">
+                      <option value="">— Seleccionar ciudad —</option>
+                      {VE_CIUDADES.map(([city])=><option key={city} value={city}>{city}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Estado</label>
+                    <input type="text" readOnly value={newClientForm.estado||''} className="w-full border-2 border-gray-100 bg-gray-50 rounded-2xl p-3 text-xs font-bold outline-none text-gray-500" placeholder="Auto al elegir ciudad"/>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Persona de Contacto</label>
+                    <input type="text" value={newClientForm.personaContacto||''} onChange={e=>setNewClientForm({...newClientForm,personaContacto:e.target.value})}
+                      className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400" placeholder="Nombre del contacto"/>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Vendedor Asignado</label>
+                    <select value={newClientForm.vendedor||''} onChange={e=>setNewClientForm({...newClientForm,vendedor:e.target.value})}
+                      className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400">
+                      <option value="">— Sin asignar —</option>
+                      {(settings?.vendedores||[]).map(v=><option key={v} value={v}>{v}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Días de Crédito</label>
+                    <input type="number" min="0" value={newClientForm.diasCredito||'0'} onChange={e=>setNewClientForm({...newClientForm,diasCredito:e.target.value})}
+                      className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400" placeholder="0 = contado"/>
+                  </div>
                 </div>
                 <div className="flex justify-end pt-4">
                   <button type="submit" className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-slate-800 transition-all">GUARDAR DIRECTORIO</button>
@@ -11957,7 +12005,43 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <td className="py-4 px-4 font-black">{c?.rif}</td>
                       <td className="py-4 px-4"><span className="font-black uppercase block text-sm">{c?.name}</span><span className="text-[10px] font-bold text-gray-400 block">{c?.direccion}</span></td>
                       <td className="py-4 px-4"><span className="font-bold text-gray-700 text-xs">{c?.personaContacto}</span></td>
-                      <td className="py-4 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>{startEditClient(c);setShowAddClientForm(true);}} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c?.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td>
+                      <td className="py-4 px-4 text-center"><div className="flex justify-center gap-2">
+                         <button onClick={()=>{
+                           const empresa=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+                           const diasCred=c?.diasCredito||c?.diasCredito===0?c.diasCredito:'N/A';
+                           const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
+                             body{font-family:Arial,sans-serif;color:#111;padding:40px;max-width:800px;margin:0 auto;}
+                             .logo{font-size:20px;font-weight:900;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;}
+                             .subtitle{font-size:9px;text-transform:uppercase;letter-spacing:3px;color:#666;margin-bottom:32px;}
+                             h1{font-size:18px;font-weight:900;text-transform:uppercase;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:24px;}
+                             .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+                             .field label{font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:2px;color:#999;display:block;margin-bottom:4px;}
+                             .field p{font-size:13px;font-weight:700;color:#111;margin:0;border-bottom:1px solid #eee;padding-bottom:8px;}
+                             .field.full{grid-column:1/-1;}
+                             .badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:10px;font-weight:900;background:#f97316;color:#fff;text-transform:uppercase;}
+                             .footer{margin-top:40px;padding-top:16px;border-top:1px solid #eee;font-size:9px;color:#999;text-align:center;}
+                           </style></head><body>
+                             <div class="logo">${empresa}</div>
+                             <div class="subtitle">Ficha de Cliente</div>
+                             <h1>📋 ${c?.name||c?.razonSocial||'Sin nombre'}</h1>
+                             <div class="grid">
+                               <div class="field"><label>RIF</label><p>${c?.rif||'—'}</p></div>
+                               <div class="field"><label>Ciudad</label><p>${c?.ciudad||'—'}</p></div>
+                               <div class="field"><label>Estado</label><p>${c?.estado||'—'}</p></div>
+                               <div class="field"><label>Teléfono</label><p>${c?.telefono||'—'}</p></div>
+                               <div class="field full"><label>Dirección</label><p>${c?.direccion||'—'}</p></div>
+                               <div class="field"><label>Persona de Contacto</label><p>${c?.personaContacto||'—'}</p></div>
+                               <div class="field"><label>Vendedor Asignado</label><p>${c?.vendedor||'Sin asignar'}</p></div>
+                               <div class="field"><label>Condiciones de Crédito</label><p>${diasCred==='0'||diasCred===0?'Contado (0 días)':diasCred+' días de crédito'}</p></div>
+                               <div class="field"><label>Desde</label><p>${c?.fechaCreacion||c?.timestamp||'—'}</p></div>
+                             </div>
+                             <div class="footer">Generado por ${empresa} · ${new Date().toLocaleDateString('es-VE')}</div>
+                           </body></html>`;
+                           const w=window.open('','_blank');w.document.write(html);w.document.close();w.print();
+                         }} className="p-2.5 bg-orange-50 text-orange-600 rounded-xl hover:bg-orange-500 hover:text-white transition-all" title="Ficha PDF">
+                           <FileText size={16}/>
+                         </button>
+                         <button onClick={()=>{startEditClient(c);setShowAddClientForm(true);}} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c?.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td>
                     </tr>
                   ))}
                   </tbody></table></div>
@@ -14094,7 +14178,17 @@ ${resumenHtml}
                return(
                  <div>
                    <div className="flex items-center justify-between mb-3 flex-wrap gap-2"><span className="text-[10px] text-gray-500 font-bold">{totalOP} órdenes</span><PaginadorUI total={totalOP} pagina={pgOP} setPagina={setReqPagina}/></div>
-                   <table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N° / Fecha</th><th className="py-4 px-4 text-black">Categoría</th><th className="py-4 px-4 text-black w-1/3">Cliente / Descripción</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{pageOP.length===0?<tr><td colSpan="5" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin resultados</td></tr>:pageOP.map(r=>(<tr key={r?.id} className={`hover:bg-gray-50 group transition-all ${r?.status==='ANULADA'?'opacity-40 bg-red-50/20':''}`}><td className="py-4 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}<br/><span className="text-[9px] text-gray-400 font-bold">{r?.fecha}</span></td><td className="py-4 px-4"><span className="font-bold text-gray-700 uppercase text-xs block">{r?.categoria||'—'}</span></td><td className="py-4 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.desc}</span></td><td className="py-4 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-4 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>))}</tbody></table>
+                   <table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">N°</th><th className="py-4 px-4 text-black">Fecha</th><th className="py-4 px-4 text-black">Tipo / Categ.</th><th className="py-4 px-4 text-black">Cliente / Desc.</th><th className="py-4 px-4 text-black">Prod. Asignado</th><th className="py-4 px-4 text-right text-black">KG Est.</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100">{pageOP.length===0?<tr><td colSpan="7" className="py-12 text-center text-gray-400 font-bold uppercase text-xs">Sin resultados</td></tr>:pageOP.map(r=>{
+                      const prodDest=(inventory||[]).find(i=>i.id===r?.productoDestinoId);
+                      const prodCode=prodDest?.displayId||(prodDest?.id||'').split('___')[0]||'';
+                      return(<tr key={r?.id} className={`hover:bg-gray-50 group transition-all ${r?.status==='ANULADA'?'opacity-40 bg-red-50/20':''}`}>
+                        <td className="py-4 px-4 font-black text-orange-500">#{String(r?.id).replace('OP-','').padStart(5,'0')}</td>
+                        <td className="py-4 px-4 text-[10px] text-gray-500 font-bold whitespace-nowrap">{r?.fecha}</td>
+                        <td className="py-4 px-4"><span className="text-[9px] font-black text-orange-500 uppercase block">{r?.tipoProducto||'—'}</span><span className="font-bold text-gray-700 uppercase text-xs block">{r?.categoria||'—'}</span></td>
+                        <td className="py-4 px-4"><span className="font-black text-black uppercase block text-sm">{r?.client}</span><span className="text-[10px] text-gray-400 font-bold uppercase block">{r?.desc}</span></td>
+                        <td className="py-4 px-4">{r?.productoDestinoId?(<div><span className="text-[9px] font-black text-blue-600 block">{prodCode}</span><span className="text-[8px] text-gray-400">{prodDest?.desc||''}</span></div>):(<span className="text-[8px] text-red-400 font-bold">⚠ Sin asignar</span>)}</td>
+                        <td className="py-4 px-4 text-right font-black text-black text-lg">{formatNum(r?.requestedKg)}</td><td className="py-4 px-4 text-center"><div className="flex justify-center gap-2"><button onClick={()=>setShowSingleReqReport(r?.id)} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all" title="Imprimir"><Printer size={16}/></button><button onClick={()=>startEditReq(r)} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all" title="Editar"><Edit size={16}/></button><button onClick={()=>handleDeleteReq(r?.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all" title="Eliminar"><Trash2 size={16}/></button></div></td></tr>);})}
+                   </tbody></table>
                    <div className="mt-4 flex justify-center"><PaginadorUI total={totalOP} pagina={pgOP} setPagina={setReqPagina}/></div>
                  </div>
                );
@@ -21336,14 +21430,15 @@ ${resumenHtml}
     const topClientes = Object.values(cliMap).sort((a,b)=>b.total-a.total).slice(0,6);
     const maxCli = topClientes[0]?.total||1;
 
-    // ── Top productos vendidos (desde items de NEs e invoices) ──
+    // ── Top productos vendidos (SOLO desde Notas de Entrega) ──
     const prodMap={};
-    safeInvoicesRaw.filter(i=>months.some(m=>(i.fecha||'').startsWith(m.ym))).forEach(inv=>{
-      const allItems = [...(inv.items||[]), ...(inv.itemsFacturados||[])];
-      allItems.forEach(it=>{ const k=it.desc||it.invCode||it.fgId||''; if(!k) return;
+    (notasEntrega||[]).filter(ne=>months.some(m=>(ne.fecha||'').startsWith(m.ym))).forEach(ne=>{
+      (ne.items||[]).forEach(it=>{ const k=it.desc||it.invCode||it.codigo||''; if(!k) return;
         if(!prodMap[k]) prodMap[k]={name:k,qty:0,ingresos:0};
-        prodMap[k].qty+=parseNum(it.cantidad||0);
-        prodMap[k].ingresos+=parseNum(it.precioUnit||0)*parseNum(it.cantidad||0)||parseNum(inv.montoBase||0);
+        const cant=parseNum(it.cantidad||it.qty||0);
+        const precio=parseNum(it.precioUnit||it.precio||0);
+        prodMap[k].qty+=cant;
+        prodMap[k].ingresos+=precio>0?precio*cant:parseNum(ne.montoBase||0);
       });
     });
     const topProductos = Object.values(prodMap).sort((a,b)=>b.ingresos-a.ingresos).slice(0,5);
@@ -21695,6 +21790,7 @@ ${resumenHtml}
       if(auditModuleFilter!=='Todos' && l.modulo!==auditModuleFilter) return false;
       if(auditTipoFilter!=='Todos' && l.tipo!==auditTipoFilter) return false;
       if(auditDate && !(l.fecha||'').startsWith(auditDate)) return false;
+      if(auditMes && (l.fecha||'').substring(5,7)!==auditMes) return false;
       return true;
     });
 
@@ -21738,7 +21834,7 @@ ${resumenHtml}
                     try {
                       // Only logs stored in Firestore (invMovements tagged as audit)
                       // For now just clear in-memory filter state and show confirmation
-                      setAuditSearch('');setAuditModuleFilter('Todos');setAuditTipoFilter('Todos');setAuditDate('');setAuditPage(1);
+                      setAuditSearch('');setAuditMes('');setAuditModuleFilter('Todos');setAuditTipoFilter('Todos');setAuditDate('');setAuditPage(1);
                       setDialog({title:'✅ Filtros limpiados',text:'Los filtros de auditoría han sido limpiados.',type:'alert'});
                     } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
                   }});
@@ -21767,6 +21863,13 @@ ${resumenHtml}
             </select>
             <input type="date" value={auditDate} onChange={e=>{setAuditDate(e.target.value);setAuditPage(1);}}
               className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500 bg-white"/>
+            <select value={auditMes||''} onChange={e=>{setAuditMes(e.target.value);setAuditPage(1);}}
+              className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-400">
+              <option value="">Todos los meses</option>
+              {['01','02','03','04','05','06','07','08','09','10','11','12'].map((m2,i)=>(
+                <option key={m2} value={m2}>{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][i]}</option>
+              ))}
+            </select>
             {(auditSearch||auditModuleFilter!=='Todos'||auditTipoFilter!=='Todos'||auditDate) && (
               <button onClick={()=>{setAuditSearch('');setAuditModuleFilter('Todos');setAuditTipoFilter('Todos');setAuditDate('');setAuditPage(1);}}
                 className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-red-50 text-red-600 border-2 border-red-200 hover:bg-red-100">
@@ -23368,7 +23471,7 @@ ${resumenHtml}
              </nav>
 
         {activeTab === 'ventas' && (
-           <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[52px] sm:top-[72px] z-30">
+           <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[52px] sm:top-[72px] z-[100]">
               <div className="w-full flex gap-0.5 px-2 overflow-x-auto" style={{scrollbarWidth:'none',msOverflowStyle:'none'}}>
                  {[
                    {id:'dashboard',           icon:<BarChart3 size={15}/>,  label:'Dashboard',       perm:'ventas_dashboard'},
@@ -23394,7 +23497,7 @@ ${resumenHtml}
         )}
 
         {activeTab === 'inventario' && (
-           <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[52px] sm:top-[72px] z-30">
+           <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[52px] sm:top-[72px] z-[100]">
               <div className="w-full flex items-stretch overflow-x-auto" style={{scrollbarWidth:'none', msOverflowStyle:'none'}}>
                 {/* GROUP 1: SOLICITUDES — perms: inv_planta, inv_almacen */}
                 {([{id:'requisiciones',perm:'inv_planta'},{id:'almacen',perm:'inv_almacen'}].some(t=>hasPerm(t.perm)||appUser?.role==='Master')) && <div className="flex flex-col border-r border-gray-200">
