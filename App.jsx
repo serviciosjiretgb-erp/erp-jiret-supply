@@ -4365,7 +4365,9 @@ export default function App() {
         <div className="relative" style={{zIndex:2}}>
           {/* Title */}
           <div className="text-center pt-7 pb-5">
-            <h1 className="text-2xl font-black uppercase tracking-widest text-gray-900">PANEL PRINCIPAL ERP</h1>
+            <h1 className="text-2xl font-black uppercase tracking-widest text-gray-900">
+              PANEL PRINCIPAL ERP{selectedPortal ? ` — ${selectedPortal==='produccion'?'PRODUCCIÓN':selectedPortal==='administracion'?'ADMINISTRACIÓN':'FINANZAS'}` : ''}
+            </h1>
             <div className="w-16 h-1 bg-orange-500 mx-auto mt-2 rounded-full"/>
           </div>
 
@@ -23390,9 +23392,60 @@ ${resumenHtml}
   // ============================================================================
   if (appUser && !selectedPortal) {
     const PORTALES = [
-      { id:'produccion',     title:'PRODUCCIÓN',     desc:'Planta, fórmulas, inventario y simulador de OP', icon:<Factory size={34}/>,    color:'#f97316' },
-      { id:'administracion', title:'ADMINISTRACIÓN', desc:'Ventas, facturación, clientes y configuración',  icon:<Users size={34}/>,      color:'#3b82f6' },
-      { id:'finanzas',       title:'FINANZAS',       desc:'Costos, reportes financieros y KPI gerencial',   icon:<DollarSign size={34}/>, color:'#22c55e' },
+      { id:'produccion', title:'PRODUCCIÓN', desc:'Planta, fórmulas, inventario y simulador de OP', color:'#f97316',
+        icon:(
+          <svg viewBox="0 0 64 64" width="76" height="76" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="5" y="50" width="54" height="5" rx="2" fill="#c2410c"/>
+            <rect x="9" y="26" width="14" height="24" rx="2.5" fill="#fb923c" stroke="#c2410c" strokeWidth="1.6"/>
+            <ellipse cx="16" cy="26" rx="7" ry="3" fill="#fdba74" stroke="#c2410c" strokeWidth="1.6"/>
+            <rect x="11" y="33" width="10" height="2.4" rx="1.2" fill="#c2410c"/>
+            <rect x="11" y="40" width="10" height="2.4" rx="1.2" fill="#c2410c"/>
+            <rect x="26" y="16" width="11" height="34" rx="2.5" fill="#f97316" stroke="#c2410c" strokeWidth="1.6"/>
+            <ellipse cx="31.5" cy="16" rx="5.5" ry="2.6" fill="#fdba74" stroke="#c2410c" strokeWidth="1.6"/>
+            <rect x="28.5" y="24" width="6" height="2.2" rx="1.1" fill="#c2410c"/>
+            <rect x="28.5" y="31" width="6" height="2.2" rx="1.1" fill="#c2410c"/>
+            <rect x="40" y="30" width="6.5" height="20" rx="1.5" fill="#ea580c" stroke="#c2410c" strokeWidth="1.5"/>
+            <path d="M51 22 l0 5 l4.5 8.2 a2.6 2.6 0 0 1 -2.3 3.9 h-4.4 a2.6 2.6 0 0 1 -2.3 -3.9 l4.5 -8.2 l0 -5 z" fill="#fdba74" stroke="#c2410c" strokeWidth="1.5"/>
+            <rect x="47.5" y="19.5" width="8" height="3" rx="1.5" fill="#c2410c"/>
+            <circle cx="43.3" cy="25" r="2.2" fill="#fdba74" opacity="0.85"/>
+            <circle cx="42" cy="21" r="1.6" fill="#fdba74" opacity="0.6"/>
+          </svg>
+        ) },
+      { id:'administracion', title:'ADMINISTRACIÓN', desc:'Ventas, facturación, clientes y configuración', color:'#3b82f6',
+        icon:(
+          <svg viewBox="0 0 64 64" width="76" height="76" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <g fill="#3b82f6">
+              {[0,45,90,135,180,225,270,315].map(a=><rect key={a} x="29.5" y="6" width="5" height="6" rx="1.2" transform={`rotate(${a} 32 19)`}/>)}
+              <circle cx="32" cy="19" r="9"/>
+            </g>
+            <circle cx="32" cy="19" r="4" fill="#1e3a8a"/>
+            <g fill="#60a5fa">
+              {[0,60,120,180,240,300].map(a=><rect key={a} x="45" y="22" width="3.4" height="4" rx="0.8" transform={`rotate(${a} 46.7 31)`}/>)}
+              <circle cx="46.7" cy="31" r="5.5"/>
+            </g>
+            <circle cx="46.7" cy="31" r="2.3" fill="#1e3a8a"/>
+            <circle cx="19" cy="36" r="6" fill="#1d4ed8"/>
+            <path d="M8 56 v-4 a11 11 0 0 1 22 0 v4 z" fill="#2563eb"/>
+            <circle cx="44" cy="40" r="5.5" fill="#1e40af"/>
+            <path d="M33 56 v-3.5 a10 10 0 0 1 20 0 v3.5 z" fill="#1d4ed8"/>
+          </svg>
+        ) },
+      { id:'finanzas', title:'FINANZAS', desc:'Costos, reportes financieros y KPI gerencial', color:'#22c55e',
+        icon:(
+          <svg viewBox="0 0 64 64" width="76" height="76" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="7" y="49" width="44" height="3.5" rx="1.7" fill="#15803d"/>
+            <rect x="10" y="38" width="7.5" height="11" rx="1.5" fill="#4ade80"/>
+            <rect x="20" y="31" width="7.5" height="18" rx="1.5" fill="#22c55e"/>
+            <rect x="30" y="23" width="7.5" height="26" rx="1.5" fill="#16a34a"/>
+            <rect x="40" y="15" width="7.5" height="34" rx="1.5" fill="#15803d"/>
+            <path d="M11 39 L24 31 L34 24 L49 12" stroke="#bbf7d0" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M49 12 l-7 0.5 M49 12 l-0.6 7" stroke="#bbf7d0" strokeWidth="2.6" strokeLinecap="round"/>
+            <circle cx="52" cy="43" r="9" fill="#22c55e" stroke="#bbf7d0" strokeWidth="1.6"/>
+            <text x="52" y="47.5" textAnchor="middle" fontSize="11" fontWeight="900" fill="#ffffff" fontFamily="Arial">$</text>
+            <circle cx="15" cy="20" r="6.5" fill="#16a34a" stroke="#bbf7d0" strokeWidth="1.3"/>
+            <text x="15" y="23.5" textAnchor="middle" fontSize="8" fontWeight="900" fill="#ffffff" fontFamily="Arial">%</text>
+          </svg>
+        ) },
     ];
     return (
       <div className="min-h-screen w-full relative overflow-hidden" style={{background:'#111'}}>
@@ -23457,19 +23510,19 @@ ${resumenHtml}
                 const allowed = hasPortal(p.id);
                 return (
                 <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); setActiveTab('home'); } else { setPortalDenied(p.title); } }}
-                  style={{textAlign:'left', position:'relative', background:allowed?'rgba(30,30,40,0.92)':'rgba(30,30,40,0.6)', backdropFilter:'blur(14px)', WebkitBackdropFilter:'blur(14px)',
-                    border:'1px solid rgba(255,255,255,0.1)', borderLeft:`5px solid ${allowed?p.color:'#6b7280'}`, borderRadius:16, padding:'28px 24px',
-                    cursor:'pointer', color:'white', opacity:allowed?1:0.65, transition:'transform 0.2s, box-shadow 0.2s, border-color 0.2s', boxShadow:'0 4px 18px rgba(0,0,0,0.35)'}}
-                  onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-6px)';e.currentTarget.style.boxShadow=allowed?`0 12px 32px ${p.color}55`:'0 8px 22px rgba(0,0,0,0.45)';}}
-                  onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='0 4px 18px rgba(0,0,0,0.35)';}}>
-                  {!allowed && <div style={{position:'absolute',top:14,right:14,display:'flex',alignItems:'center',gap:4,background:'rgba(0,0,0,0.4)',borderRadius:8,padding:'4px 8px'}}><Lock size={12} className="text-gray-300"/><span style={{fontSize:'0.6rem',fontWeight:800,color:'#d1d5db',textTransform:'uppercase'}}>Sin acceso</span></div>}
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'center',width:64,height:64,borderRadius:14,background:`${allowed?p.color:'#6b7280'}22`,color:allowed?p.color:'#9ca3af',marginBottom:18}}>
+                  style={{textAlign:'left', position:'relative', background:allowed?'#ffffff':'rgba(255,255,255,0.55)',
+                    border:'none', borderLeft:`5px solid ${allowed?p.color:'#9ca3af'}`, borderRadius:16, padding:'28px 24px',
+                    cursor:'pointer', color:allowed?'#111':'#6b7280', opacity:allowed?1:0.7, transition:'transform 0.2s, box-shadow 0.2s', boxShadow:'0 4px 24px rgba(0,0,0,0.22)'}}
+                  onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-6px)';e.currentTarget.style.boxShadow=allowed?`0 14px 36px ${p.color}44`:'0 8px 22px rgba(0,0,0,0.18)';}}
+                  onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='0 4px 24px rgba(0,0,0,0.22)';}}>
+                  {!allowed && <div style={{position:'absolute',top:14,right:14,display:'flex',alignItems:'center',gap:4,background:'rgba(0,0,0,0.08)',borderRadius:8,padding:'4px 8px'}}><Lock size={12} style={{color:'#9ca3af'}}/><span style={{fontSize:'0.6rem',fontWeight:800,color:'#9ca3af',textTransform:'uppercase'}}>Sin acceso</span></div>}
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'flex-start',height:76,marginBottom:14,filter:allowed?'none':'grayscale(0.6)',opacity:allowed?1:0.6}}>
                     {p.icon}
                   </div>
-                  <h3 style={{fontSize:'1.15rem',fontWeight:900,margin:0,letterSpacing:'0.05em'}}>{p.title}</h3>
-                  <p style={{fontSize:'0.78rem',color:'#9ca3af',margin:'8px 0 18px',lineHeight:1.5,minHeight:38}}>{p.desc}</p>
-                  <div style={{display:'flex',alignItems:'center',gap:8,color:allowed?p.color:'#9ca3af',fontWeight:800,fontSize:'0.8rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
-                    {allowed ? <>Entrar al portal <ArrowRight size={16}/></> : <><Lock size={14}/> Acceso restringido</>}
+                  <h3 style={{fontSize:'1.15rem',fontWeight:900,margin:0,letterSpacing:'0.05em',color:allowed?'#111827':'#9ca3af'}}>{p.title}</h3>
+                  <p style={{fontSize:'0.78rem',color:'#6b7280',margin:'8px 0 18px',lineHeight:1.5,minHeight:38}}>{p.desc}</p>
+                  <div style={{display:'flex',alignItems:'center',gap:8,color:allowed?p.color:'#9ca3af',fontWeight:900,fontSize:'0.8rem',textTransform:'uppercase',letterSpacing:'0.06em'}}>
+                    {allowed ? <>ENTRAR AL PORTAL <ArrowRight size={16}/></> : <><Lock size={14}/> ACCESO RESTRINGIDO</>}
                   </div>
                 </button>
                 );
