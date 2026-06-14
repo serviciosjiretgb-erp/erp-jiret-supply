@@ -806,7 +806,8 @@ export default function App() {
   const [comVendedor, setComVendedor] = useState('');
   const [comMes, setComMes] = useState(new Date().getMonth()+1);
   const [comAnio, setComAnio] = useState(new Date().getFullYear());
-  const [comCobranza, setComCobranza] = useState([]); // tabla manual de cobranza (estado de edición)
+  const [comCobranza, setComCobranza] = useState([]);
+  const [cobFiltro, setCobFiltro] = useState('pendiente'); // tabla manual de cobranza (estado de edición)
   const [comBonos, setComBonos] = useState(null); // bonos editables del vendedor/mes
   // ── Dashboard de ventas ──
   const [dashMes, setDashMes] = useState(new Date().getMonth()+1);
@@ -10938,7 +10939,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             return Math.round((new Date(d2+'T00:00:00')-new Date(d1+'T00:00:00'))/(1000*60*60*24));
           };
           // NEs del vendedor — TODAS (sin filtro de mes, para ver pendientes históricos)
-          const [cobFiltro, setCobFiltro] = React.useState('pendiente');
           const nesCobranza = (notasEntrega||[]).filter(ne => {
             if(!comVendedor || (ne.vendedor||'').toUpperCase()===comVendedor.toUpperCase()) {
               // Solo filtrar por vendedor, no por mes
@@ -12522,9 +12522,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                          <tr><td>Descripción</td><td>${n.descripcion||'—'}</td></tr>
                                        </table>
                                        <table class="totales">
-                                         <tr><td class="lbl">Base Imponible USD</td><td class="val" style="color:#555">${_nc?'':'+'}$\${formatNum(_baseUSD)}</td><td class="lbl">Base Imponible Bs.</td><td class="val" style="color:#555">Bs. \${formatNum(_baseBs)}</td></tr>
-                                         <tr><td class="lbl">IVA (${_pctIVA}%)</td><td class="val">${_nc?'':'+'}$\${formatNum(_ivaUSD)}</td><td class="lbl">IVA Bs.</td><td class="val">Bs. \${formatNum(_ivaBs)}</td></tr>
-                                         <tr class="total-row"><td>TOTAL ${n.tipo}</td><td style="text-align:right">${_nc?'- ':''}\$\${formatNum(_totalUSD)}</td><td>TOTAL Bs.</td><td style="text-align:right">Bs. \${formatNum(_totalBs)}</td></tr>
+                                         <tr><td class="lbl">Base Imponible USD</td><td class="val" style="color:#555">${_nc?'':'+'}$${formatNum(_baseUSD)}</td><td class="lbl">Base Imponible Bs.</td><td class="val" style="color:#555">Bs. ${formatNum(_baseBs)}</td></tr>
+                                         <tr><td class="lbl">IVA (${_pctIVA}%)</td><td class="val">${_nc?'':'+'}$${formatNum(_ivaUSD)}</td><td class="lbl">IVA Bs.</td><td class="val">Bs. ${formatNum(_ivaBs)}</td></tr>
+                                         <tr class="total-row"><td>TOTAL ${n.tipo}</td><td style="text-align:right">${_nc?'- ':''}$${formatNum(_totalUSD)}</td><td>TOTAL Bs.</td><td style="text-align:right">Bs. ${formatNum(_totalBs)}</td></tr>
                                        </table>
                                      </body></html>`;
                                      handlePDFFromHTML(_h,n.tipo+'_'+_doc);
