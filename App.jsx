@@ -2078,7 +2078,7 @@ const DENOM_USD = [100,50,20,10,5,2,1];
 
 // --- FIN CONSTANTES ---
 
-export default function BancoApp({ fbUser, onBack }) {
+function BancoApp({ fbUser, onBack }) {
   // Uses ERP Firebase: getColRef/getDocRef/db
   const [sec, setSec] = useState('dashboard');
   const [cuentas,    setCuentas]  = useState([]);
