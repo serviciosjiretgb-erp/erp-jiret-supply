@@ -4533,10 +4533,14 @@ export default function App() {
           {/* ── TARJETAS DE ACCESO EXTENDIDO (solo portal Administración) ──────── */}
           {selectedPortal === 'administracion' && (() => {
             const EXT_CARDS = [
-              { id:'vext_prod',      title:'Producción en Proceso', icon:<Factory size={22}/>,       color:'#3b82f6', perms:['produccion_activa','produccion_proceso'], sub:'OPs activas en planta',       chart:[30,55,40,70,50,80] },
-              { id:'vext_historial', title:'Historial de OPs',      icon:<ClipboardList size={22}/>, color:'#8b5cf6', perms:['produccion_historial'],                 sub:'Órdenes finalizadas',          chart:[80,60,75,50,70,65] },
-              { id:'vext_inv',       title:'Control de Inventario', icon:<Package size={22}/>,       color:'#22c55e', perms:['inv_almacen','inv_general','inv_terminados','inv_kardex','inv_movimientos'], sub:'Existencias y movimientos', chart:[60,45,70,55,80,65] },
-              { id:'vext_finiquito', title:'Finiquito por OP',      icon:<FileText size={22}/>,      color:'#f59e0b', perms:['rep_finiquito'],                        sub:'Reportes de cierre de OP',     chart:[40,65,50,75,55,70] },
+              { id:'vext_prod',      title:'Producción en Proceso', icon:<Factory size={22}/>,       color:'#3b82f6', perms:['produccion_activa','produccion_proceso'], sub:'OPs activas en planta',       chart:[30,55,40,70,50,80],
+                go: ()=>{ clearAllReports(); setActiveTab('produccion'); setProdView('en_proceso'); } },
+              { id:'vext_historial', title:'Historial de OPs',      icon:<ClipboardList size={22}/>, color:'#8b5cf6', perms:['produccion_historial'],                 sub:'Órdenes finalizadas',          chart:[80,60,75,50,70,65],
+                go: ()=>{ clearAllReports(); setActiveTab('produccion'); setProdView('reportes'); } },
+              { id:'vext_inv',       title:'Control de Inventario', icon:<Package size={22}/>,       color:'#22c55e', perms:['inv_almacen','inv_general','inv_terminados','inv_kardex','inv_movimientos'], sub:'Existencias y movimientos', chart:[60,45,70,55,80,65],
+                go: ()=>{ clearAllReports(); setActiveTab('inventario'); setInvView(getFirstInvView()); } },
+              { id:'vext_finiquito', title:'Finiquito por OP',      icon:<FileText size={22}/>,      color:'#f59e0b', perms:['rep_finiquito'],                        sub:'Reportes de cierre de OP',     chart:[40,65,50,75,55,70],
+                go: ()=>{ clearAllReports(); setActiveTab('produccion'); setProdView('reportes'); } },
             ];
             const hasExtPerm = (card) => appUser?.role==='Master' || card.perms.some(p=>hasPerm(p));
             return (
@@ -4576,7 +4580,7 @@ export default function App() {
                             <div key={ci} style={{flex:1,height:`${h}%`,background:allowed?(ci===card.chart.length-1?card.color:card.color+'55'):'#cbd5e1',borderRadius:'3px 3px 0 0'}}/>
                           ))}
                         </div>
-                        <button onClick={()=>{if(!allowed)return; clearAllReports(); setActiveTab('ventas'); setVentasView(card.id);}} disabled={!allowed}
+                        <button onClick={()=>{ if(!allowed) return; card.go(); }} disabled={!allowed}
                           style={{background:allowed?card.color:'#94a3b8',color:'white',border:'none',padding:'9px 16px',borderRadius:16,fontWeight:700,fontSize:'0.75rem',cursor:allowed?'pointer':'not-allowed',width:'100%'}}>
                           {allowed?'Ir a módulo →':'🔒 Sin acceso'}
                         </button>
@@ -13354,164 +13358,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
 
 
-        {/* ── VISTAS EXTENDIDAS CROSS-PORTAL DENTRO DE VENTAS ───────────────── */}
-        {ventasView === 'vext_prod' && (() => {
-          const activeOPs = (requirements||[]).filter(r=>r.status==='EN PROCESO').sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-          return (
-            <div className="p-4 sm:p-8 space-y-4 animate-in fade-in">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-1 h-8 bg-blue-500 rounded-full"/>
-                <div>
-                  <h2 className="text-lg font-black uppercase text-gray-800 flex items-center gap-2"><Factory size={20} className="text-blue-600"/> Producción Activa <span className="text-[10px] font-bold text-blue-500 bg-blue-50 px-2 py-1 rounded-lg">Vista desde Ventas</span></h2>
-                  <p className="text-[10px] text-gray-500 font-bold">{activeOPs.length} OP{activeOPs.length!==1?'s':''} en proceso</p>
-                </div>
-              </div>
-              {activeOPs.length===0 ? <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay órdenes de producción activas</div> : (
-                <div className="grid gap-4">
-                  {activeOPs.map(op=>(
-                    <div key={op.id} className="bg-white rounded-2xl border-2 border-gray-100 p-5 shadow-sm">
-                      <div className="flex flex-wrap justify-between items-start gap-3 mb-3">
-                        <div>
-                          <span className="text-orange-600 font-black text-sm">{op.id}</span>
-                          <span className="ml-3 px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-[9px] font-black uppercase">EN PROCESO</span>
-                        </div>
-                        <span className="text-[10px] text-gray-400 font-bold">{op.fechaInicio||op.fecha||'—'}</span>
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[10px]">
-                        <div><span className="text-gray-400 font-bold uppercase block">Cliente</span><span className="font-black text-gray-800">{op.client||'—'}</span></div>
-                        <div><span className="text-gray-400 font-bold uppercase block">Producto</span><span className="font-black text-gray-800">{op.product||'—'}</span></div>
-                        <div><span className="text-gray-400 font-bold uppercase block">Cantidad</span><span className="font-black text-gray-800">{formatNum(op.quantity||0)} {op.unit||'kg'}</span></div>
-                        <div><span className="text-gray-400 font-bold uppercase block">Fase Actual</span><span className="font-black text-blue-700">{op.currentPhase||op.phase||'—'}</span></div>
-                      </div>
-                      {hasPerm('rep_finiquito') && <button onClick={()=>setShowFiniquitoOP(op.id)} className="mt-3 px-4 py-1.5 bg-orange-500 text-white rounded-xl text-[9px] font-black uppercase hover:bg-orange-600 transition-all flex items-center gap-1"><FileText size={12}/> Ver Reporte</button>}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-
-        {ventasView === 'vext_inv' && (() => {
-          const invItems = (inventory||[]).filter(i=>i.activo!==false).sort((a,b)=>(a.desc||'').localeCompare(b.desc||''));
-          const termItems = (finishedGoodsInventory||[]).sort((a,b)=>(a.desc||'').localeCompare(b.desc||''));
-          return (
-            <div className="p-4 sm:p-8 animate-in fade-in">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-1 h-8 bg-blue-500 rounded-full"/>
-                <div>
-                  <h2 className="text-lg font-black uppercase text-gray-800 flex items-center gap-2"><Package size={20} className="text-blue-600"/> Consulta de Inventario <span className="text-[10px] font-bold text-blue-500 bg-blue-50 px-2 py-1 rounded-lg">Vista desde Ventas — Solo lectura</span></h2>
-                  <p className="text-[10px] text-gray-500 font-bold">{invItems.length} ítems en inventario · {termItems.length} productos terminados</p>
-                </div>
-              </div>
-              {hasPerm('inv_terminados') && termItems.length>0 && (
-                <div className="mb-8">
-                  <h3 className="text-[11px] font-black uppercase text-green-700 mb-3 flex items-center gap-2"><PackageCheck size={14}/> Productos Terminados</h3>
-                  <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                    <table className="w-full text-[10px]">
-                      <thead className="bg-green-50 border-b border-green-200"><tr className="font-black text-green-700 uppercase">
-                        <th className="py-2 px-4 text-left">Producto</th><th className="py-2 px-4 text-center">Stock</th><th className="py-2 px-4 text-center">Unidad</th><th className="py-2 px-4 text-right">Costo Unit.</th>
-                      </tr></thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {termItems.map(it=><tr key={it.id} className="hover:bg-gray-50"><td className="py-2 px-4 font-bold text-gray-800">{it.desc}</td><td className="py-2 px-4 text-center font-black text-green-700">{formatNum(it.stock||0)}</td><td className="py-2 px-4 text-center text-gray-500">{it.unit||'und'}</td><td className="py-2 px-4 text-right font-bold">${formatNum(it.cost||0)}</td></tr>)}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-              {(hasPerm('inv_general')||hasPerm('inv_almacen')||hasPerm('inv_kardex')) && invItems.length>0 && (
-                <div>
-                  <h3 className="text-[11px] font-black uppercase text-orange-700 mb-3 flex items-center gap-2"><Package size={14}/> Inventario General</h3>
-                  <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                    <table className="w-full text-[10px]">
-                      <thead className="bg-orange-50 border-b border-orange-200"><tr className="font-black text-orange-700 uppercase">
-                        <th className="py-2 px-4 text-left">Código</th><th className="py-2 px-4 text-left">Descripción</th><th className="py-2 px-4 text-center">Categoría</th><th className="py-2 px-4 text-center">Stock</th><th className="py-2 px-4 text-center">Unidad</th>
-                      </tr></thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {invItems.map(it=><tr key={it.id} className="hover:bg-gray-50"><td className="py-2 px-4 text-gray-400 font-mono">{it.displayId||it.id}</td><td className="py-2 px-4 font-bold text-gray-800">{it.desc}</td><td className="py-2 px-4 text-center text-gray-500">{it.category||'—'}</td><td className={`py-2 px-4 text-center font-black ${(it.stock||0)<=0?'text-red-500':(it.stock||0)<5?'text-yellow-600':'text-green-700'}`}>{formatNum(it.stock||0)}</td><td className="py-2 px-4 text-center text-gray-500">{it.unit||'und'}</td></tr>)}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })()}
-
-        {ventasView === 'vext_finiquito' && (() => {
-          if (showFiniquitoOP) { const req=requirements.find(r=>r.id===showFiniquitoOP); return renderFiniquitoOP(req); }
-          const closedOPs = (requirements||[]).filter(r=>r.status==='CERRADA').sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-          return (
-            <div className="p-4 sm:p-8 animate-in fade-in">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-1 h-8 bg-blue-500 rounded-full"/>
-                <div>
-                  <h2 className="text-lg font-black uppercase text-gray-800 flex items-center gap-2"><FileText size={20} className="text-blue-600"/> Finiquito por OP <span className="text-[10px] font-bold text-blue-500 bg-blue-50 px-2 py-1 rounded-lg">Vista desde Ventas</span></h2>
-                  <p className="text-[10px] text-gray-500 font-bold">{closedOPs.length} OP{closedOPs.length!==1?'s':''} cerrada{closedOPs.length!==1?'s':''}</p>
-                </div>
-              </div>
-              {closedOPs.length===0 ? <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay órdenes cerradas</div> : (
-                <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                  <table className="w-full text-[10px] mobile-cards">
-                    <thead className="bg-gray-50 border-b-2 border-gray-100"><tr className="font-black text-gray-400 uppercase">
-                      <th className="py-3 px-4 text-left">OP</th><th className="py-3 px-4 text-left">Cliente</th><th className="py-3 px-4 text-left">Producto</th><th className="py-3 px-4 text-center">Cantidad</th><th className="py-3 px-4 text-center">Fecha Cierre</th><th className="py-3 px-4 text-center">Acción</th>
-                    </tr></thead>
-                    <tbody className="divide-y">
-                      {closedOPs.map(op=>(
-                        <tr key={op.id} className="hover:bg-gray-50">
-                          <td className="py-3 px-4 font-black text-orange-600" data-label="OP">{op.id}</td>
-                          <td className="py-3 px-4 font-bold text-gray-700" data-label="Cliente">{op.client||'—'}</td>
-                          <td className="py-3 px-4 text-gray-600" data-label="Producto">{op.product||'—'}</td>
-                          <td className="py-3 px-4 text-center font-bold" data-label="Cantidad">{formatNum(op.quantity||0)} {op.unit||'kg'}</td>
-                          <td className="py-3 px-4 text-center text-gray-500" data-label="Fecha">{op.fechaCierre||op.updatedAt||'—'}</td>
-                          <td className="py-3 px-4 text-center" data-label="Acción">
-                            <button onClick={()=>setShowFiniquitoOP(op.id)} className="px-3 py-1.5 bg-orange-500 text-white rounded-xl text-[9px] font-black uppercase hover:bg-orange-600 transition-all flex items-center gap-1 mx-auto"><FileText size={11}/> Ver Finiquito</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          );
-        })()}
-
-        {ventasView === 'vext_historial' && (() => {
-          const closedOPs = (requirements||[]).filter(r=>r.status==='CERRADA'||r.status==='FINALIZADA').sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-          return (
-            <div className="p-4 sm:p-8 animate-in fade-in">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-1 h-8 bg-purple-500 rounded-full"/>
-                <div>
-                  <h2 className="text-lg font-black uppercase text-gray-800 flex items-center gap-2"><ClipboardList size={20} className="text-purple-600"/> Historial de OPs <span className="text-[10px] font-bold text-purple-500 bg-purple-50 px-2 py-1 rounded-lg">Vista desde Ventas</span></h2>
-                  <p className="text-[10px] text-gray-500 font-bold">{closedOPs.length} OP{closedOPs.length!==1?'s':''} finalizada{closedOPs.length!==1?'s':''}</p>
-                </div>
-              </div>
-              {closedOPs.length===0 ? <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">No hay órdenes finalizadas</div> : (
-                <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                  <table className="w-full text-[10px] mobile-cards">
-                    <thead className="bg-purple-50 border-b-2 border-purple-100"><tr className="font-black text-purple-500 uppercase">
-                      <th className="py-3 px-4 text-left">OP</th><th className="py-3 px-4 text-left">Cliente</th><th className="py-3 px-4 text-left">Producto</th><th className="py-3 px-4 text-center">Cantidad</th><th className="py-3 px-4 text-center">Estado</th><th className="py-3 px-4 text-center">Fecha</th>
-                    </tr></thead>
-                    <tbody className="divide-y">
-                      {closedOPs.map(op=>(
-                        <tr key={op.id} className="hover:bg-gray-50">
-                          <td className="py-3 px-4 font-black text-purple-600" data-label="OP">{op.id}</td>
-                          <td className="py-3 px-4 font-bold text-gray-700" data-label="Cliente">{op.client||'—'}</td>
-                          <td className="py-3 px-4 text-gray-600" data-label="Producto">{op.product||'—'}</td>
-                          <td className="py-3 px-4 text-center font-bold" data-label="Cantidad">{formatNum(op.quantity||0)} {op.unit||'kg'}</td>
-                          <td className="py-3 px-4 text-center" data-label="Estado"><span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[8px] font-black uppercase">{op.status||'CERRADA'}</span></td>
-                          <td className="py-3 px-4 text-center text-gray-500" data-label="Fecha">{op.fechaCierre||op.updatedAt||'—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          );
-        })()}
 
         {ventasView === 'libro_ventas' && (() => {          // ── helpers de formato venezolano ─────────────────────────────────────
           const fmtVen = n => {
@@ -24159,36 +24005,6 @@ ${resumenHtml}
                  ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
                  ))}
-                 {/* ── VISTAS EXTENDIDAS CROSS-PORTAL (solo si el usuario tiene el subpermiso) ── */}
-                 {(hasPerm('produccion_activa')||hasPerm('produccion_proceso')||hasPerm('rep_finiquito')||hasPerm('inv_almacen')||hasPerm('inv_general')||hasPerm('inv_terminados')||hasPerm('inv_kardex')) && (
-                   <>
-                     <div className="flex items-center px-3 py-2 flex-shrink-0">
-                       <div className="w-px h-5 bg-gray-300 mx-1"/>
-                       <span className="text-[7px] font-black text-gray-400 uppercase tracking-widest whitespace-nowrap px-1">Vista Ext.</span>
-                       <div className="w-px h-5 bg-gray-300 mx-1"/>
-                     </div>
-                     {(hasPerm('produccion_activa')||hasPerm('produccion_proceso')) && (
-                       <button onClick={()=>{setVentasView('vext_prod');clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView==='vext_prod'?'border-blue-500 text-blue-700':'border-transparent text-gray-400 hover:text-gray-700'}`}>
-                         <Factory size={13}/> Prod. Activa
-                       </button>
-                     )}
-                     {hasPerm('produccion_historial') && (
-                       <button onClick={()=>{setVentasView('vext_historial');clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView==='vext_historial'?'border-purple-500 text-purple-700':'border-transparent text-gray-400 hover:text-gray-700'}`}>
-                         <ClipboardList size={13}/> Historial OPs
-                       </button>
-                     )}
-                     {(hasPerm('inv_almacen')||hasPerm('inv_general')||hasPerm('inv_terminados')||hasPerm('inv_kardex')) && (
-                       <button onClick={()=>{setVentasView('vext_inv');clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView==='vext_inv'?'border-blue-500 text-blue-700':'border-transparent text-gray-400 hover:text-gray-700'}`}>
-                         <Package size={13}/> Consulta Inv.
-                       </button>
-                     )}
-                     {hasPerm('rep_finiquito') && (
-                       <button onClick={()=>{setVentasView('vext_finiquito');clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView==='vext_finiquito'?'border-blue-500 text-blue-700':'border-transparent text-gray-400 hover:text-gray-700'}`}>
-                         <FileText size={13}/> Finiquito OP
-                       </button>
-                     )}
-                   </>
-                 )}
               </div>
            </div>
         )}
