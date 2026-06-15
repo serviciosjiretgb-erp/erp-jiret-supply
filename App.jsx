@@ -698,7 +698,9 @@ export default function App() {
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '', productoDestinoId: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
-  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', clientAddress: '', documento: '', nroFiscal: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '', ncAsignada: '' };
+  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', clientAddress: '', documento: '', nroFiscal: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '', ncAsignada: '',
+    baseGravableBs: '', ivaBs: '', totalBs: '' // Valores en Bs para Libro de Ventas (entrada manual)
+  };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
   // ── Cálculos de totales en tiempo real (usados en el formulario de factura) ──
   const _invBase = fgItems&&fgItems.length>0 ? fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0) : parseNum(newInvoiceForm?.montoBase||0);
@@ -12677,7 +12679,55 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         </div>
                       </div>
                     
-                    <div className="flex justify-end pt-4"><button type="button" onClick={handleCreateInvoice} className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all">GUARDAR FACTURA DE VENTA</button></div>
+                    <div className="flex justify-end pt-4">
+
+                      {/* ── REGISTRO EN BOLÍVARES (entrada manual para Libro de Ventas) ── */}
+                      <div className="w-full mr-4 bg-amber-50 border-2 border-amber-200 rounded-2xl p-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-1 h-5 bg-amber-500 rounded-full"/>
+                          <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">Registro en Bolívares — Libro de Ventas</span>
+                          <span className="text-[8px] text-amber-500 font-bold">(ingreso manual)</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div>
+                            <label className="text-[8px] font-black text-amber-700 uppercase block mb-1">Base Gravable Bs.</label>
+                            <div className="relative">
+                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-black text-amber-600">Bs.</span>
+                              <input type="number" step="0.01" min="0"
+                                value={newInvoiceForm.baseGravableBs}
+                                onChange={e=>setNewInvoiceForm({...newInvoiceForm, baseGravableBs:e.target.value})}
+                                placeholder={(()=>{ const base=fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0); const dv=parseNum(descuentoVal||0);const da=descuentoTipo==='pct'?base*(dv/100):dv;const sub=Math.max(0,base-da); const t=parseNum(newInvoiceForm.tasa||settings?.tasaBCV||0); return t>0?(sub*t).toFixed(2):'0.00'; })()}
+                                className="w-full pl-7 pr-2 py-2 border-2 border-amber-300 rounded-xl text-[10px] font-black outline-none focus:border-amber-500 bg-white"/>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-[8px] font-black text-amber-700 uppercase block mb-1">IVA Bs.</label>
+                            <div className="relative">
+                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-black text-amber-600">Bs.</span>
+                              <input type="number" step="0.01" min="0"
+                                value={newInvoiceForm.ivaBs}
+                                onChange={e=>setNewInvoiceForm({...newInvoiceForm, ivaBs:e.target.value})}
+                                placeholder={newInvoiceForm.aplicaIva==='SI'?(()=>{ const base=fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0); const dv=parseNum(descuentoVal||0);const da=descuentoTipo==='pct'?base*(dv/100):dv;const sub=Math.max(0,base-da); const t=parseNum(newInvoiceForm.tasa||settings?.tasaBCV||0); return t>0?(sub*0.16*t).toFixed(2):'0.00'; })():'0.00'}
+                                className="w-full pl-7 pr-2 py-2 border-2 border-amber-300 rounded-xl text-[10px] font-black outline-none focus:border-amber-500 bg-white"/>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-[8px] font-black text-amber-700 uppercase block mb-1">Total Bs.</label>
+                            <div className="relative">
+                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-black text-amber-600">Bs.</span>
+                              <input type="number" step="0.01" min="0"
+                                value={newInvoiceForm.totalBs}
+                                onChange={e=>setNewInvoiceForm({...newInvoiceForm, totalBs:e.target.value})}
+                                placeholder={(()=>{ const base=fgItems.length>0?fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0):parseNum(newInvoiceForm.montoBase||0); const dv=parseNum(descuentoVal||0);const da=descuentoTipo==='pct'?base*(dv/100):dv;const sub=Math.max(0,base-da); const iva=newInvoiceForm.aplicaIva==='SI'?parseFloat((sub*0.16).toFixed(2)):0; const t=parseNum(newInvoiceForm.tasa||settings?.tasaBCV||0); return t>0?((sub+iva)*t).toFixed(2):'0.00'; })()}
+                                className="w-full pl-7 pr-2 py-2 border-2 border-amber-300 rounded-xl text-[10px] font-black outline-none focus:border-amber-500 bg-white"/>
+                            </div>
+                          </div>
+                        </div>
+                        <p className="text-[7px] text-amber-600 font-bold mt-2">★ Si deja los campos vacíos, el sistema calculará automáticamente Bs = USD × Tasa. Los valores ingresados aquí son los que aparecen en el Libro de Ventas.</p>
+                      </div>
+
+                      <button type="button" onClick={handleCreateInvoice} className="bg-orange-500 text-white px-12 py-5 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600 transition-all self-end whitespace-nowrap">GUARDAR FACTURA DE VENTA</button>
+                    </div>
                   </div>
                 </div>
              )}
@@ -13435,7 +13485,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const ret=retPeriodo.find(r=>r.facturaId===inv.id);
             rows.push({seq:seq++,fecha:inv.fecha,rif:inv.clientRif||'',nombre:inv.clientName||'',
               tipo:'FACTURA',nroFactura:padNum(inv.nroFiscal,8),nroControl:padNum(inv.nroControl,8),
-              totalVentasBs:total*tasa,baseImponibleBs:base*tasa,alicuota:inv.aplicaIva==='SI'?'16%':'0%',
+              totalVentasBs: parseNum(inv.totalBs||0)||total*tasa, baseImponibleBs: parseNum(inv.baseGravableBs||0)||base*tasa, ivaBsLibro: parseNum(inv.ivaBs||0)||(newInvoiceForm.aplicaIva==='SI'?parseFloat((base*tasa*0.16).toFixed(2)):0), alicuota:inv.aplicaIva==='SI'?'16%':'0%',
               ivaBs:ivaAmt*tasa,ivaRetDb:0,ivaRetCr:0,nroFactAfecta:'',
               nroComprobante:'',invId:inv.id,opRelacionada:inv.opAsignada||''});
           });
