@@ -1412,6 +1412,17 @@ export default function App() {
       const loadedUsers = s.docs.map(d => ({ id: d.id, ...d.data() }));
       setSystemUsers(loadedUsers);
 
+      // ── SINCRONIZACIÓN EN VIVO: si el usuario logueado fue editado (por él mismo
+      //    o por un admin), actualizar appUser en memoria automáticamente.
+      //    Esto corrige: nombre que no cambia, portales que no aplican, permisos desactualizados.
+      setAppUser(prev => {
+        if (!prev) return prev;
+        const updated = loadedUsers.find(u => u.username === prev.username);
+        if (!updated) return prev;
+        // Preservar _sessionId y solo actualizar los campos que vienen de Firebase
+        return { ...prev, ...updated, _sessionId: prev._sessionId };
+      });
+
       // Ensure the master Administrador account always exists
       const hasMaster = loadedUsers.some(u =>
         (u.role === 'Master' || u.role === 'Administrador') &&
@@ -22614,7 +22625,7 @@ ${resumenHtml}
                 {/* ── ACCESO POR PORTAL ── */}
                 <div className="mb-5 bg-orange-50 border-2 border-orange-200 rounded-2xl p-4">
                   <h5 className="text-[11px] font-black text-orange-700 uppercase flex items-center gap-2 mb-1"><LayoutDashboard size={14}/> Acceso por Portal</h5>
-                  <p className="text-[9px] font-bold text-gray-500 mb-3">Todos los portales se muestran al iniciar sesión. Si un portal NO está marcado, el usuario verá un aviso de que no posee permiso al intentar entrar. (Los usuarios Master siempre tienen acceso total.)</p>
+                  <p className="text-[9px] font-bold text-gray-500 mb-3">Todos los portales se muestran al iniciar sesión. Si un portal NO está marcado, el usuario verá un aviso de que no posee permiso al intentar entrar. Los cambios aplican <b className="text-orange-600">en tiempo real</b> sin necesidad de que el usuario cierre sesión. (Los usuarios Master siempre tienen acceso total.)</p>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {SYSTEM_PORTALS.map(pt => {
                       const checked = !!(newUserForm.portales||{})[pt.id];
