@@ -4189,10 +4189,10 @@ export default function App() {
   // Decide si un tab debe aparecer en la nav según el portal activo.
   // Solo tabs nativos del portal. Las vistas cross-portal viven DENTRO del módulo de Ventas.
   const NAV_PORTAL_TABS = {
-    produccion:          ['produccion','formulas','inventario','simulador'],
+    produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi','costos'],
     administracion:      ['ventas'],
-    finanzas:            ['costos_operativos','kpi','costos'],
-    contabilidad:        [], // módulos futuros
+    finanzas:            [],
+    contabilidad:        [],
     configuracion_portal:['configuracion','auditoria'],
   };
   const navInPortal = (tab) => {
@@ -4370,9 +4370,9 @@ export default function App() {
     // asignados al portal activo se ocultan del Panel Principal. El código de cada
     // módulo sigue intacto — solo se controla su visibilidad en el home.
     const PORTAL_TABS = {
-      produccion:          ['produccion','formulas','inventario','simulador'],
+      produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi','costos'],
       administracion:      ['ventas'],
-      finanzas:            ['costos_operativos','kpi','costos'],
+      finanzas:            [],
       contabilidad:        [],
       configuracion_portal:['configuracion','auditoria'],
     };
@@ -4569,7 +4569,7 @@ export default function App() {
               { id:'vext_finiquito', title:'Finiquito por OP', icon:<FileText size={22}/>, color:'#f59e0b',
                 perms:['rep_finiquito'],
                 sub:'Reportes Financieros — Por orden individual', chart:[40,65,50,75,55,70],
-                portalGate: 'finanzas',
+                portalGate: 'produccion',
                 go: ()=>{ clearAllReports(); setActiveTab('costos'); } },
             ];
             const hasExtPerm = (card) => appUser?.role==='Master' || card.perms.some(p=>hasPerm(p));
