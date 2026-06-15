@@ -349,6 +349,7 @@ const generateDefaultPermissions = () => {
 export default function App() {
   const [fbUser, setFbUser] = useState(null);
   const [appUser, setAppUser] = useState(null); 
+  const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
   const [systemUsers, setSystemUsers] = useState([]); 
   const [settings, setSettings] = useState({});
   const [showManageSubcats, setShowManageSubcats] = useState(false);
@@ -1411,6 +1412,7 @@ export default function App() {
     const unsubUsers = onSnapshot(getColRef('users'), (s) => {
       const loadedUsers = s.docs.map(d => ({ id: d.id, ...d.data() }));
       setSystemUsers(loadedUsers);
+      setUsersLoaded(true); // Firebase respondió — el login ya puede validar credenciales
 
       // ── SINCRONIZACIÓN EN VIVO: si el usuario logueado fue editado (por él mismo
       //    o por un admin), actualizar appUser en memoria automáticamente.
@@ -23452,9 +23454,20 @@ ${resumenHtml}
               </div>
             </div>
             {loginError && <div style={{background:'rgba(239,68,68,0.15)',color:'#f87171',fontSize:'0.7rem',padding:'10px 14px',borderRadius:8,marginBottom:12,textAlign:'center',border:'1px solid rgba(239,68,68,0.3)',textTransform:'uppercase',fontWeight:700}}>{loginError}</div>}
-            <button type="submit" style={{width:'100%',background:'#f97316',color:'white',border:'none',padding:'14px',borderRadius:8,fontSize:'0.95rem',fontWeight:900,cursor:'pointer',letterSpacing:'0.05em',transition:'background 0.2s'}}
-              onMouseEnter={e=>e.target.style.background='#ea580c'} onMouseLeave={e=>e.target.style.background='#f97316'}>
-              INGRESAR AL SISTEMA →
+            {!usersLoaded && (
+              <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,background:'rgba(249,115,22,0.1)',border:'1px solid rgba(249,115,22,0.3)',borderRadius:8,padding:'9px 14px',marginBottom:12}}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{animation:'spin 1s linear infinite',flexShrink:0}}>
+                  <style>{'@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}'}</style>
+                  <circle cx="12" cy="12" r="10" stroke="rgba(249,115,22,0.25)" strokeWidth="3"/>
+                  <path d="M12 2a10 10 0 0 1 10 10" stroke="#f97316" strokeWidth="3" strokeLinecap="round"/>
+                </svg>
+                <span style={{color:'#f97316',fontSize:'0.68rem',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.08em'}}>Conectando con el sistema…</span>
+              </div>
+            )}
+            <button type="submit" disabled={!usersLoaded}
+              style={{width:'100%',background:usersLoaded?'#f97316':'#444',color:'white',border:'none',padding:'14px',borderRadius:8,fontSize:'0.95rem',fontWeight:900,cursor:usersLoaded?'pointer':'not-allowed',letterSpacing:'0.05em',transition:'all 0.3s',opacity:usersLoaded?1:0.65}}
+              onMouseEnter={e=>{if(usersLoaded)e.currentTarget.style.background='#ea580c';}} onMouseLeave={e=>{if(usersLoaded)e.currentTarget.style.background='#f97316';}}>
+              {usersLoaded?'INGRESAR AL SISTEMA →':'CARGANDO…'}
             </button>
           </form>
 
