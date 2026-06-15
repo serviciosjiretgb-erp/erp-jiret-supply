@@ -698,9 +698,8 @@ export default function App() {
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '', productoDestinoId: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
-  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', clientAddress: '', documento: '', nroFiscal: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '', ncAsignada: '',
-    baseGravableBs: '', ivaBs: '', totalBs: '' // Valores en Bs para Libro de Ventas (entrada manual)
-  };
+  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', clientAddress: '', documento: '', nroFiscal: '', nroControl: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '', ncAsignada: '', neOrigen: '',
+    baseGravableBs: '', ivaBs: '', totalBs: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
   // ── Cálculos de totales en tiempo real (usados en el formulario de factura) ──
   const _invBase = fgItems&&fgItems.length>0 ? fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0) : parseNum(newInvoiceForm?.montoBase||0);
@@ -3109,7 +3108,36 @@ export default function App() {
   };
   const startEditInvoice = (inv) => {
     setEditingInvoiceId(inv.id);
-    setNewInvoiceForm({ fecha: inv.fecha || getTodayDate(), clientRif: inv.clientRif || '', clientName: inv.clientName || '', documento: inv.documento || '', nroFiscal: inv.nroFiscal || '', productoMaquilado: inv.productoMaquilado || '', vendedor: inv.vendedor || '', montoBase: String(inv.montoBase || ''), iva: String(inv.iva || ''), total: String(inv.total || ''), aplicaIva: inv.aplicaIva || 'SI', opAsignada: inv.opAsignada || '', opData: inv.opData || null, fgId: '', timestamp: inv.timestamp });
+    setNewInvoiceForm({
+      fecha:             inv.fecha || getTodayDate(),
+      clientRif:         inv.clientRif || '',
+      clientName:        inv.clientName || '',
+      clientAddress:     inv.clientAddress || '',
+      documento:         inv.documento || '',
+      nroFiscal:         inv.nroFiscal || '',
+      nroControl:        inv.nroControl || '',
+      tasa:              String(inv.tasa || ''),
+      productoMaquilado: inv.productoMaquilado || '',
+      vendedor:          inv.vendedor || '',
+      montoBase:         String(inv.montoBase || ''),
+      iva:               String(inv.iva || ''),
+      total:             String(inv.total || ''),
+      aplicaIva:         inv.aplicaIva || 'SI',
+      opAsignada:        inv.opAsignada || '',
+      opData:            inv.opData || null,
+      fgId:              '',
+      fgCantidad:        inv.fgCantidad || '',
+      ncAsignada:        inv.ncAsignada || '',
+      neOrigen:          inv.neOrigen || '',
+      timestamp:         inv.timestamp,
+      // Valores en Bs — restituir entrada manual para Libro de Ventas
+      baseGravableBs:    String(inv.baseGravableBs || ''),
+      ivaBs:             String(inv.ivaBs || ''),
+      totalBs:           String(inv.totalBs || ''),
+    });
+    // Restaurar descuento
+    setDescuentoTipo(inv.descuentoTipo || 'monto');
+    setDescuentoVal(String(inv.descuentoVal || ''));
     
     // Restore fgItems from saved invoice data
     const restoredItems = [];
@@ -13485,8 +13513,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const ret=retPeriodo.find(r=>r.facturaId===inv.id);
             rows.push({seq:seq++,fecha:inv.fecha,rif:inv.clientRif||'',nombre:inv.clientName||'',
               tipo:'FACTURA',nroFactura:padNum(inv.nroFiscal,8),nroControl:padNum(inv.nroControl,8),
-              totalVentasBs: parseNum(inv.totalBs||0)||total*tasa, baseImponibleBs: parseNum(inv.baseGravableBs||0)||base*tasa, ivaBsLibro: parseNum(inv.ivaBs||0)||(newInvoiceForm.aplicaIva==='SI'?parseFloat((base*tasa*0.16).toFixed(2)):0), alicuota:inv.aplicaIva==='SI'?'16%':'0%',
-              ivaBs:ivaAmt*tasa,ivaRetDb:0,ivaRetCr:0,nroFactAfecta:'',
+              totalVentasBs: parseNum(inv.totalBs||0)||total*tasa, baseImponibleBs: parseNum(inv.baseGravableBs||0)||base*tasa, alicuota:inv.aplicaIva==='SI'?'16%':'0%',
+              ivaBs: parseNum(inv.ivaBs||0) || ivaAmt*tasa,ivaRetDb:0,ivaRetCr:0,nroFactAfecta:'',
               nroComprobante:'',invId:inv.id,opRelacionada:inv.opAsignada||''});
           });
           retPeriodo.forEach(ret=>{
