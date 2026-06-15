@@ -4533,14 +4533,18 @@ export default function App() {
           {/* ── TARJETAS DE ACCESO EXTENDIDO (solo portal Administración) ──────── */}
           {selectedPortal === 'administracion' && (() => {
             const EXT_CARDS = [
-              { id:'vext_prod',      title:'Producción en Proceso', icon:<Factory size={22}/>,       color:'#3b82f6', perms:['produccion_activa','produccion_proceso'], sub:'OPs activas en planta',       chart:[30,55,40,70,50,80],
-                go: ()=>{ clearAllReports(); setActiveTab('produccion'); setProdView('en_proceso'); } },
-              { id:'vext_historial', title:'Historial de OPs',      icon:<ClipboardList size={22}/>, color:'#8b5cf6', perms:['produccion_historial'],                 sub:'Órdenes finalizadas',          chart:[80,60,75,50,70,65],
-                go: ()=>{ clearAllReports(); setActiveTab('produccion'); setProdView('reportes'); } },
-              { id:'vext_inv',       title:'Control de Inventario', icon:<Package size={22}/>,       color:'#22c55e', perms:['inv_almacen','inv_general','inv_terminados','inv_kardex','inv_movimientos'], sub:'Existencias y movimientos', chart:[60,45,70,55,80,65],
+              { id:'vext_prod', title:'Producción Planta', icon:<Factory size={22}/>, color:'#3b82f6',
+                perms:['produccion_activa','produccion_proceso','produccion_historial'],
+                sub:'OPs activas e historial de planta', chart:[30,55,40,70,50,80],
+                go: ()=>{ clearAllReports(); setActiveTab('produccion'); setProdView(getFirstProdView()); } },
+              { id:'vext_inv', title:'Control de Inventario', icon:<Package size={22}/>, color:'#22c55e',
+                perms:['inv_almacen','inv_general','inv_terminados','inv_kardex','inv_movimientos'],
+                sub:'Existencias y movimientos', chart:[60,45,70,55,80,65],
                 go: ()=>{ clearAllReports(); setActiveTab('inventario'); setInvView(getFirstInvView()); } },
-              { id:'vext_finiquito', title:'Finiquito por OP',      icon:<FileText size={22}/>,      color:'#f59e0b', perms:['rep_finiquito'],                        sub:'Reportes de cierre de OP',     chart:[40,65,50,75,55,70],
-                go: ()=>{ clearAllReports(); setActiveTab('produccion'); setProdView('reportes'); } },
+              { id:'vext_finiquito', title:'Finiquito por OP', icon:<FileText size={22}/>, color:'#f59e0b',
+                perms:['rep_finiquito'],
+                sub:'Reportes Financieros — Por orden individual', chart:[40,65,50,75,55,70],
+                go: ()=>{ clearAllReports(); setActiveTab('costos'); } },
             ];
             const hasExtPerm = (card) => appUser?.role==='Master' || card.perms.some(p=>hasPerm(p));
             return (
