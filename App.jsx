@@ -24120,7 +24120,7 @@ ${resumenHtml}
            {activeTab === 'simulador' && renderSimuladorModule()}
            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
            {activeTab === 'configuracion' && renderConfiguracionModule()}
-           {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && renderReportesFinancierosModule()}
+           {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && renderReportesFinancierosModule()}
            {activeTab === 'estado_resultado' && renderEstadoResultadoModule()}
            {activeTab === 'libro_diario' && renderLibroDiarioModule()}
            {activeTab === 'kpi' && (hasPerm('kpi') || hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && renderKPIModule()}
