@@ -35,10 +35,13 @@ const _bancoDB  = getFirestore(_bancoApp, "us-central");
 const getColRef = (n) => collection(_bancoDB, n);
 const getDocRef = (n, id) => doc(_bancoDB, n, String(id));
 
-// ── Colores de acento ──────────────────────────────────────────────────────
-const BLUE  = '#3b82f6';
-const GREEN = '#22c55e';
-const SLATE = '#64748b';
+// ── Colores / tokens de diseño (del sistema original) ─────────────────────
+const DARK   = '#000000';
+const ORANGE = '#f97316';
+const BLUE   = '#3b82f6';
+const GREEN  = '#22c55e';
+const SLATE  = '#64748b';
+const BG     = '#ffffff';
 
 // BANCO MODULE — Utility functions & shared components (prefixed with B_)
 // ============================================================================
@@ -1070,10 +1073,10 @@ function FacturacionApp({ fbUser, tasasList, onBack }) {
           <p className="text-slate-500 text-xs mt-2">Tasa activa: <strong className="text-white">{tasaActiva} Bs./$</strong></p>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <KPI label="Ventas del Mes" value={`$${bancoFmt(ventasMes)}`} accent="blue" Icon={TrendingUp} sub={bancoMesActual()} />
-          <KPI label="Cobrado del Mes" value={`$${bancoFmt(cobradoMes)}`} accent="green" Icon={CheckCircle} />
-          <KPI label="Por Vencer" value={`$${bancoFmt(porVencer)}`} accent="gold" Icon={Clock} />
-          <KPI label="Cartera Vencida" value={`$${bancoFmt(vencidas)}`} accent="red" Icon={AlertTriangle} />
+          <BKPI label="Ventas del Mes" value={`$${bancoFmt(ventasMes)}`} accent="blue" Icon={TrendingUp} sub={bancoMesActual()} />
+          <BKPI label="Cobrado del Mes" value={`$${bancoFmt(cobradoMes)}`} accent="green" Icon={CheckCircle} />
+          <BKPI label="Por Vencer" value={`$${bancoFmt(porVencer)}`} accent="gold" Icon={Clock} />
+          <BKPI label="Cartera Vencida" value={`$${bancoFmt(vencidas)}`} accent="red" Icon={AlertTriangle} />
         </div>
         <div className="grid lg:grid-cols-2 gap-5">
           <Card title="Últimas Facturas Emitidas">
@@ -1262,25 +1265,25 @@ function FacturacionApp({ fbUser, tasasList, onBack }) {
         <Modal open={modal} onClose={()=>{setModal(false);setForm(initForm());setEditando(false);setDetalle(null);}} title={editando?`Editar: ${detalle?.nombre}`:'Registrar Nuevo Cliente'}
           footer={<><Bo onClick={()=>{setModal(false);setForm(initForm());setEditando(false);setDetalle(null);}}>Cancelar</Bo><Bg onClick={save} disabled={busy}>{busy?'Guardando...':(editando?'Guardar Cambios':'Guardar Cliente')}</Bg></>}>
           <div className="grid grid-cols-2 gap-4">
-            <FG label="RIF / NIT *"><input className={inp} value={form.rif} onChange={e=>{const rif=e.target.value.toUpperCase();setForm({...form,rif,codigo:form.codigo||rifToCodigo(rif)});}} placeholder="J-12345678-9"/></FG>
-            <FG label="Código (auto: RIF sin guiones)"><input className={inp} value={form.codigo} onChange={e=>setForm({...form,codigo:e.target.value.toUpperCase()})} placeholder={rifToCodigo(form.rif)||'J412345789'}/></FG>
-            <FG label="Razón Social *" full><input className={inp} value={form.nombre} onChange={e=>setForm({...form,nombre:e.target.value.toUpperCase()})} placeholder="EMPRESA EJEMPLO C.A."/></FG>
-            <FG label="Teléfono"><input className={inp} value={form.telefono} onChange={e=>setForm({...form,telefono:e.target.value})} placeholder="0414-0000000"/></FG>
-            <FG label="Email"><input type="email" className={inp} value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="contacto@empresa.com"/></FG>
-            <FG label="Días de Crédito"><input type="number" className={inp} value={form.diasCredito} onChange={e=>setForm({...form,diasCredito:e.target.value})} placeholder="15"/></FG>
-            <FG label="Dirección Fiscal" full><input className={inp} value={form.direccion} onChange={e=>setForm({...form,direccion:e.target.value})}/></FG>
-            <FG label="Cuenta Contable Asociada (PUC)" full>
+            <BFG label="RIF / NIT *"><input className={inp} value={form.rif} onChange={e=>{const rif=e.target.value.toUpperCase();setForm({...form,rif,codigo:form.codigo||rifToCodigo(rif)});}} placeholder="J-12345678-9"/></BFG>
+            <BFG label="Código (auto: RIF sin guiones)"><input className={inp} value={form.codigo} onChange={e=>setForm({...form,codigo:e.target.value.toUpperCase()})} placeholder={rifToCodigo(form.rif)||'J412345789'}/></BFG>
+            <BFG label="Razón Social *" full><input className={inp} value={form.nombre} onChange={e=>setForm({...form,nombre:e.target.value.toUpperCase()})} placeholder="EMPRESA EJEMPLO C.A."/></BFG>
+            <BFG label="Teléfono"><input className={inp} value={form.telefono} onChange={e=>setForm({...form,telefono:e.target.value})} placeholder="0414-0000000"/></BFG>
+            <BFG label="Email"><input type="email" className={inp} value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="contacto@empresa.com"/></BFG>
+            <BFG label="Días de Crédito"><input type="number" className={inp} value={form.diasCredito} onChange={e=>setForm({...form,diasCredito:e.target.value})} placeholder="15"/></BFG>
+            <BFG label="Dirección Fiscal" full><input className={inp} value={form.direccion} onChange={e=>setForm({...form,direccion:e.target.value})}/></BFG>
+            <BFG label="Cuenta Contable Asociada (PUC)" full>
               <select className={sel} value={form.cuentaContableCod} onChange={e=>{const c=contCuentas.find(x=>x.codigo===e.target.value);setForm({...form,cuentaContableCod:e.target.value,cuentaContableNom:c?.nombre||''});}}>
                 <option value="">— Sin cuenta asociada —</option>
                 {contCuentas.filter(c=>String(c.codigo).startsWith('1')).sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo))).map(c=><option key={c.id} value={c.codigo}>{c.codigo} · {c.nombre}</option>)}
               </select>
               {form.cuentaContableCod&&<p className="text-[10px] text-blue-600 font-black mt-1">✓ {form.cuentaContableCod} · {form.cuentaContableNom}</p>}
-            </FG>
-            <FG label="Estado">
+            </BFG>
+            <BFG label="Estado">
               <div className="flex gap-2">
                 {['Activo','Inactivo'].map(s=><button key={s} onClick={()=>setForm({...form,activo:s==='Activo'})} className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase border-2 transition-all ${(form.activo&&s==='Activo')||(!form.activo&&s==='Inactivo')?'bg-slate-900 text-white border-slate-900':'bg-white text-slate-500 border-slate-200'}`}>{s}</button>)}
               </div>
-            </FG>
+            </BFG>
           </div>
         </Modal>
 
@@ -1371,9 +1374,9 @@ function FacturacionApp({ fbUser, tasasList, onBack }) {
         </Card>
         <Modal open={modal} onClose={() => setModal(false)} title="Emisión de Nueva Factura" wide footer={<><Bo onClick={() => setModal(false)}>Cancelar</Bo><Bg onClick={save} disabled={busy}>{busy ? 'Procesando...' : 'Emitir Factura'}</Bg></>}>
           <div className="grid grid-cols-2 gap-4 mb-6 pb-6 border-b border-slate-100">
-            <FG label="Cliente" full><select className={sel} value={form.clienteId} onChange={e => setForm({ ...form, clienteId: e.target.value })}><option value="">— Seleccione cliente —</option>{clientes.map(c => <option key={c.id} value={c.id}>{c.rif} · {c.nombre}</option>)}</select></FG>
-            <FG label="Fecha Emisión"><input type="date" className={inp} value={form.fechaEmision} onChange={e => setForm({ ...form, fechaEmision: e.target.value })} /></FG>
-            <FG label="Moneda"><select className={sel} value={form.moneda} onChange={e => setForm({ ...form, moneda: e.target.value })}><option>USD</option><option>EUR</option></select></FG>
+            <BFG label="Cliente" full><select className={sel} value={form.clienteId} onChange={e => setForm({ ...form, clienteId: e.target.value })}><option value="">— Seleccione cliente —</option>{clientes.map(c => <option key={c.id} value={c.id}>{c.rif} · {c.nombre}</option>)}</select></BFG>
+            <BFG label="Fecha Emisión"><input type="date" className={inp} value={form.fechaEmision} onChange={e => setForm({ ...form, fechaEmision: e.target.value })} /></BFG>
+            <BFG label="Moneda"><select className={sel} value={form.moneda} onChange={e => setForm({ ...form, moneda: e.target.value })}><option>USD</option><option>EUR</option></select></BFG>
           </div>
           <div className="flex justify-between items-center mb-3">
             <h4 className="text-xs font-black uppercase text-slate-700 tracking-wide">Líneas de Facturación</h4>
@@ -1429,9 +1432,9 @@ function FacturacionApp({ fbUser, tasasList, onBack }) {
     return (
       <div>
         <div className="grid grid-cols-3 gap-4 mb-5">
-          <KPI label="Facturas Pendientes" value={pendientes.length} accent="gold" Icon={Clock} />
-          <KPI label="Saldo Total CxC" value={`$${bancoFmt(pendientes.reduce((a, f) => a + (f.saldoUSD || 0), 0))}`} accent="orange" Icon={Wallet} />
-          <KPI label="Vencidas Críticas" value={pendientes.filter(f => f.fechaVencimiento < getTodayDate()).length} accent="red" Icon={AlertTriangle} />
+          <BKPI label="Facturas Pendientes" value={pendientes.length} accent="gold" Icon={Clock} />
+          <BKPI label="Saldo Total CxC" value={`$${bancoFmt(pendientes.reduce((a, f) => a + (f.saldoUSD || 0), 0))}`} accent="orange" Icon={Wallet} />
+          <BKPI label="Vencidas Críticas" value={pendientes.filter(f => f.fechaVencimiento < getTodayDate()).length} accent="red" Icon={AlertTriangle} />
         </div>
         <Card title="Cuentas por Cobrar" subtitle="Facturas con saldo deudor pendiente">
           <div className="overflow-x-auto">
@@ -1465,10 +1468,10 @@ function FacturacionApp({ fbUser, tasasList, onBack }) {
               <div className="text-right"><p className="text-[10px] text-slate-400 font-black uppercase mb-0.5">Saldo Pendiente</p><p className="font-mono font-black text-2xl text-orange-500">{'$'+bancoFmt(fActiva.saldoUSD)}</p></div>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <FG label="Fecha de Cobro"><input type="date" className={inp} value={formPago.fecha} onChange={e => setFormPago({ ...formPago, fecha: e.target.value })} /></FG>
-              <FG label="Monto USD a Abonar"><input type="number" step="0.01" className={inp} value={formPago.monto} onChange={e => setFormPago({ ...formPago, monto: e.target.value })} /></FG>
-              <FG label="Método de Pago"><select className={sel} value={formPago.metodo} onChange={e => setFormPago({ ...formPago, metodo: e.target.value })}><option>Transferencia Bs</option><option>Efectivo Divisas</option><option>Zelle</option><option>Efectivo Bs</option></select></FG>
-              <FG label="N° Referencia / Comprobante"><input className={inp} value={formPago.ref} onChange={e => setFormPago({ ...formPago, ref: e.target.value })} placeholder="REF-0000000" /></FG>
+              <BFG label="Fecha de Cobro"><input type="date" className={inp} value={formPago.fecha} onChange={e => setFormPago({ ...formPago, fecha: e.target.value })} /></BFG>
+              <BFG label="Monto USD a Abonar"><input type="number" step="0.01" className={inp} value={formPago.monto} onChange={e => setFormPago({ ...formPago, monto: e.target.value })} /></BFG>
+              <BFG label="Método de Pago"><select className={sel} value={formPago.metodo} onChange={e => setFormPago({ ...formPago, metodo: e.target.value })}><option>Transferencia Bs</option><option>Efectivo Divisas</option><option>Zelle</option><option>Efectivo Bs</option></select></BFG>
+              <BFG label="N° Referencia / Comprobante"><input className={inp} value={formPago.ref} onChange={e => setFormPago({ ...formPago, ref: e.target.value })} placeholder="REF-0000000" /></BFG>
             </div>
             {formPago.metodo === 'Transferencia Bs' && abonoUSD > 0 && (
               <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 grid grid-cols-3 gap-3">
@@ -1534,10 +1537,10 @@ function InventarioApp({ fbUser, onBack }) {
     return (
       <div className="space-y-6">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <KPI label="Productos Activos" value={productos.length} accent="blue" Icon={Package} />
-          <KPI label="Valor en Inventario" value={`$${bancoFmt(valorInventario)}`} accent="green" Icon={DollarSign} sub="A precio de costo" />
-          <KPI label="Alertas Stock Bajo" value={bajoMinimo.length} accent={bajoMinimo.length > 0 ? 'red' : 'green'} Icon={AlertTriangle} />
-          <KPI label="Categorías" value={categorias.length} accent="purple" Icon={Tag} />
+          <BKPI label="Productos Activos" value={productos.length} accent="blue" Icon={Package} />
+          <BKPI label="Valor en Inventario" value={`$${bancoFmt(valorInventario)}`} accent="green" Icon={DollarSign} sub="A precio de costo" />
+          <BKPI label="Alertas Stock Bajo" value={bajoMinimo.length} accent={bajoMinimo.length > 0 ? 'red' : 'green'} Icon={AlertTriangle} />
+          <BKPI label="Categorías" value={categorias.length} accent="purple" Icon={Tag} />
         </div>
 
         {bajoMinimo.length > 0 && (
@@ -1605,8 +1608,8 @@ function InventarioApp({ fbUser, onBack }) {
         </Card>
         <Modal open={modal} onClose={() => setModal(false)} title="Nueva Categoría" footer={<><Bo onClick={() => setModal(false)}>Cancelar</Bo><Bg onClick={save} disabled={busy}>{busy ? 'Guardando...' : 'Guardar'}</Bg></>}>
           <div className="space-y-4">
-            <FG label="Nombre de Categoría"><input className={inp} value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value.toUpperCase() })} placeholder="REPUESTOS ELÉCTRICOS" /></FG>
-            <FG label="Descripción (Opcional)"><input className={inp} value={form.descripcion} onChange={e => setForm({ ...form, descripcion: e.target.value })} placeholder="Descripción breve..." /></FG>
+            <BFG label="Nombre de Categoría"><input className={inp} value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value.toUpperCase() })} placeholder="REPUESTOS ELÉCTRICOS" /></BFG>
+            <BFG label="Descripción (Opcional)"><input className={inp} value={form.descripcion} onChange={e => setForm({ ...form, descripcion: e.target.value })} placeholder="Descripción breve..." /></BFG>
           </div>
         </Modal>
       </div>
@@ -1660,14 +1663,14 @@ function InventarioApp({ fbUser, onBack }) {
 
         <Modal open={modal} onClose={() => setModal(false)} title="Registrar Producto" wide footer={<><Bo onClick={() => setModal(false)}>Cancelar</Bo><Bg onClick={save} disabled={busy}>{busy ? 'Guardando...' : 'Guardar Producto'}</Bg></>}>
           <div className="grid grid-cols-2 gap-4">
-            <FG label="Código / SKU"><input className={inp} value={form.codigo} onChange={e => setForm({ ...form, codigo: e.target.value.toUpperCase() })} placeholder="PROD-001" /></FG>
-            <FG label="Nombre del Producto"><input className={inp} value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value.toUpperCase() })} placeholder="CABLE ELÉCTRICO 2.5MM" /></FG>
-            <FG label="Categoría"><select className={sel} value={form.categoriaId} onChange={e => setForm({ ...form, categoriaId: e.target.value })}><option value="">— Sin categoría —</option>{categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select></FG>
-            <FG label="Unidad de Medida"><select className={sel} value={form.unidad} onChange={e => setForm({ ...form, unidad: e.target.value })}><option>UND</option><option>KG</option><option>GR</option><option>LT</option><option>MT</option><option>M2</option><option>CAJA</option><option>PAR</option></select></FG>
-            <FG label="Precio de Costo ($)"><input type="number" step="0.01" className={inp} value={form.precioCosto} onChange={e => setForm({ ...form, precioCosto: e.target.value })} placeholder="0.00" /></FG>
-            <FG label="Precio de Venta ($)"><input type="number" step="0.01" className={inp} value={form.precioVenta} onChange={e => setForm({ ...form, precioVenta: e.target.value })} placeholder="0.00" /></FG>
-            <FG label="Stock Inicial"><input type="number" className={inp} value={form.stockActual} onChange={e => setForm({ ...form, stockActual: e.target.value })} /></FG>
-            <FG label="Stock Mínimo (Alerta)"><input type="number" className={inp} value={form.stockMinimo} onChange={e => setForm({ ...form, stockMinimo: e.target.value })} /></FG>
+            <BFG label="Código / SKU"><input className={inp} value={form.codigo} onChange={e => setForm({ ...form, codigo: e.target.value.toUpperCase() })} placeholder="PROD-001" /></BFG>
+            <BFG label="Nombre del Producto"><input className={inp} value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value.toUpperCase() })} placeholder="CABLE ELÉCTRICO 2.5MM" /></BFG>
+            <BFG label="Categoría"><select className={sel} value={form.categoriaId} onChange={e => setForm({ ...form, categoriaId: e.target.value })}><option value="">— Sin categoría —</option>{categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select></BFG>
+            <BFG label="Unidad de Medida"><select className={sel} value={form.unidad} onChange={e => setForm({ ...form, unidad: e.target.value })}><option>UND</option><option>KG</option><option>GR</option><option>LT</option><option>MT</option><option>M2</option><option>CAJA</option><option>PAR</option></select></BFG>
+            <BFG label="Precio de Costo ($)"><input type="number" step="0.01" className={inp} value={form.precioCosto} onChange={e => setForm({ ...form, precioCosto: e.target.value })} placeholder="0.00" /></BFG>
+            <BFG label="Precio de Venta ($)"><input type="number" step="0.01" className={inp} value={form.precioVenta} onChange={e => setForm({ ...form, precioVenta: e.target.value })} placeholder="0.00" /></BFG>
+            <BFG label="Stock Inicial"><input type="number" className={inp} value={form.stockActual} onChange={e => setForm({ ...form, stockActual: e.target.value })} /></BFG>
+            <BFG label="Stock Mínimo (Alerta)"><input type="number" className={inp} value={form.stockMinimo} onChange={e => setForm({ ...form, stockMinimo: e.target.value })} /></BFG>
           </div>
         </Modal>
       </div>
@@ -1719,12 +1722,12 @@ function InventarioApp({ fbUser, onBack }) {
         </Card>
         <Modal open={modal} onClose={() => setModal(false)} title="Registrar Movimiento de Inventario" footer={<><Bo onClick={() => setModal(false)}>Cancelar</Bo><Bg onClick={save} disabled={busy}>{busy ? 'Registrando...' : 'Registrar'}</Bg></>}>
           <div className="grid grid-cols-2 gap-4">
-            <FG label="Fecha"><input type="date" className={inp} value={form.fecha} onChange={e => setForm({ ...form, fecha: e.target.value })} /></FG>
-            <FG label="Tipo de Movimiento"><select className={sel} value={form.tipo} onChange={e => setForm({ ...form, tipo: e.target.value })}><option>Entrada</option><option>Salida</option><option>Ajuste</option><option>Devolución</option></select></FG>
-            <FG label="Producto" full><select className={sel} value={form.productoId} onChange={e => setForm({ ...form, productoId: e.target.value })}><option value="">— Seleccione producto —</option>{productos.map(p => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre} (Stock: {p.stockActual})</option>)}</select></FG>
-            <FG label="Cantidad"><input type="number" min="0.01" step="0.01" className={inp} value={form.cantidad} onChange={e => setForm({ ...form, cantidad: e.target.value })} /></FG>
-            <FG label="Referencia"><input className={inp} value={form.referencia} onChange={e => setForm({ ...form, referencia: e.target.value })} placeholder="OC-001 / FACT-001" /></FG>
-            <FG label="Descripción" full><input className={inp} value={form.descripcion} onChange={e => setForm({ ...form, descripcion: e.target.value })} placeholder="Descripción del movimiento..." /></FG>
+            <BFG label="Fecha"><input type="date" className={inp} value={form.fecha} onChange={e => setForm({ ...form, fecha: e.target.value })} /></BFG>
+            <BFG label="Tipo de Movimiento"><select className={sel} value={form.tipo} onChange={e => setForm({ ...form, tipo: e.target.value })}><option>Entrada</option><option>Salida</option><option>Ajuste</option><option>Devolución</option></select></BFG>
+            <BFG label="Producto" full><select className={sel} value={form.productoId} onChange={e => setForm({ ...form, productoId: e.target.value })}><option value="">— Seleccione producto —</option>{productos.map(p => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre} (Stock: {p.stockActual})</option>)}</select></BFG>
+            <BFG label="Cantidad"><input type="number" min="0.01" step="0.01" className={inp} value={form.cantidad} onChange={e => setForm({ ...form, cantidad: e.target.value })} /></BFG>
+            <BFG label="Referencia"><input className={inp} value={form.referencia} onChange={e => setForm({ ...form, referencia: e.target.value })} placeholder="OC-001 / FACT-001" /></BFG>
+            <BFG label="Descripción" full><input className={inp} value={form.descripcion} onChange={e => setForm({ ...form, descripcion: e.target.value })} placeholder="Descripción del movimiento..." /></BFG>
           </div>
         </Modal>
       </div>
