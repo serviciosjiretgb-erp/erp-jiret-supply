@@ -3317,10 +3317,10 @@ function BancoApp({ fbUser, onBack }) {
 
         {/* ── MODAL NUEVO MOVIMIENTO — DISEÑO BICOLUMNA ── */}
         <BModal open={modal} onClose={()=>{setModal(false);setForm(initF());}} title="" wide noHeader>
-          <div style={{display:'flex',height:'82vh',overflow:'hidden',margin:'-24px',borderRadius:'inherit'}}>
+          <div style={{display:'flex',height:'82vh',overflow:'hidden',margin:'-24px',borderRadius:'16px'}}>
 
             {/* ══ COLUMNA IZQUIERDA: FORMULARIO ══ */}
-            <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
+            <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0,borderRadius:'16px 0 0 16px'}}>
               {/* Header */}
               <div className="px-4 py-3 flex justify-between items-center flex-shrink-0" style={{background:'#0f172a'}}>
                 <div className="flex items-center gap-2">
@@ -3501,7 +3501,7 @@ function BancoApp({ fbUser, onBack }) {
                       </button>
                       {form.tipo!=='Transferencia'&&form.tipo!=='Traslado de Fondo'&&form.tipo!=='Nota de Débito'&&form.tipo!=='Nota de Crédito'&&cuentaSel&&mNat>0&&AsientoAlerta({form,bs,montoBs,montoUSD,tasa,fmt})}
                       {form.tipo==='Traslado Banco→Caja'&&cuentaSel&&mNat>0&&(
-                        <TrasladoRebancarizacion form={form} setForm={setForm} bs={bs} mNat={mNat} tasa={tasa} tasaActiva={tasaActiva} contCuentas={contCuentas} inp={inp} fmt={fmt} BFG={BFG} cuentasSel={cuentas} onSaveDone={()=>{setModal(false);setForm(initF());}}/>
+                        <TrasladoRebancarizacion form={form} setForm={setForm} bs={bs} mNat={mNat} tasa={tasa} tasaActiva={tasaActiva} contCuentas={contCuentas} inp={inp} fmt={bancoFmt} BFG={BFG} cuentasSel={cuentas} onSaveDone={()=>{setModal(false);setForm(initF());}}/>
                       )}
                     </div>
                   </div>
@@ -3551,7 +3551,7 @@ function BancoApp({ fbUser, onBack }) {
               </div>
             </div>
             {/* ══ COLUMNA DERECHA: RESUMEN BANCO + PREVIEW ASIENTO ══ */}
-            <div style={{width:260,flexShrink:0,display:'flex',flexDirection:'column',background:'#f8fafc',borderLeft:'1px solid #e2e8f0',overflowY:'auto'}}>
+            <div style={{width:260,flexShrink:0,display:'flex',flexDirection:'column',background:'#f8fafc',borderLeft:'1px solid #e2e8f0',overflowY:'auto',borderRadius:'0 16px 16px 0'}}>
               {/* Header columna derecha */}
               <div className="px-5 py-4 border-b border-slate-200 flex-shrink-0 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-2"><Activity size={13}/> Estado Operativo</p>
