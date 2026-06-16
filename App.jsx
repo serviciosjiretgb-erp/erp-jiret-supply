@@ -13014,44 +13014,29 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                      handlePDFFromHTML(_h,n.tipo+'_'+_doc);
                                    }} className="p-1.5 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white transition-all" title="Ver PDF"><FileText size={13}/></button>
                                   <button onClick={()=>{setVentaNCForm({...n,monto:String(n.monto||'')});setVentaNCBusq('');setShowVentaNCModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={12}/></button>
-                                  <button onClick={()=>setDialog({title:`Eliminar ${n.tipo} — ${n.nroDocumento}`,text:`¿Eliminar ${n.nroDocumento}? ${n.tipo==='NC'&&n.modoOp!=='ajuste'&&(n.itemsRevertidos||[]).length>0?'Se deshará la reversión de inventario (se descontará el stock devuelto).':'Esta operación no afecta inventario.'}`,type:'confirm',onConfirm:async()=>{
+                                  <button onClick={()=>setDialog({title:`Eliminar ${n.tipo} — ${n.nroDocumento}`,text:`¿Eliminar ${n.nroDocumento}? ${n.tipo==='NC'&&n.modoOp!=='ajuste'&&(n.itemsRevertidos||[]).length>0?'Se deshará la reversión de inventario.':'No afecta inventario.'}`,type:'confirm',onConfirm:async()=>{
                                       try{
-                                        const batch=writeBatch(db);
-                                        // 1. Eliminar la NC/ND
-                                        batch.delete(getDocRef('notasVentaCreditoDebito',n.id));
-                                        // 2. Si era NC Devolución: revertir el inventario (descontar lo que se había devuelto)
-                                        if(n.tipo==='NC'&&n.modoOp!=='ajuste'){
-                                          const items=n.itemsRevertidos||[];
-                                          for(const it of items){
+                                        // 1. Revertir inventario si era NC Devolución
+                                        if(n.tipo==='NC'&&n.modoOp!=='ajuste'&&(n.itemsRevertidos||[]).length>0){
+                                          const batch=writeBatch(db);
+                                          for(const it of (n.itemsRevertidos||[])){
                                             const cantRev=parseNum(it.cantidad||0);
                                             if(cantRev<=0) continue;
                                             const cleanId=(it.invCode||it.fgId||'').split('___')[0].trim();
                                             if(!cleanId) continue;
-                                            // Buscar en inventory y descontar
                                             const invDocs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===cleanId);
                                             if(invDocs.length>0){
-                                              batch.update(getDocRef('inventory',invDocs[0].id),{
-                                                stock:Math.max(0,parseNum(invDocs[0].stock||0)-cantRev),
-                                                timestamp:Date.now()
-                                              });
+                                              batch.update(getDocRef('inventory',invDocs[0].id),{stock:Math.max(0,parseNum(invDocs[0].stock||0)-cantRev),timestamp:Date.now()});
                                             }
-                                            // Movimiento de reversión
-                                            const movId=`MOV-NC-REV-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,5)}`;
-                                            batch.set(getDocRef('inventoryMovements',movId),{
-                                              id:movId,date:getTodayDate(),timestamp:Date.now(),
-                                              itemId:cleanId,itemName:it.desc||cleanId,
-                                              type:'SALIDA ANULACIÓN NC',
-                                              qty:cantRev,cost:parseNum(it.costoUnit||0),
-                                              totalValue:cantRev*parseNum(it.costoUnit||0),
-                                              reference:n.nroDocumento,
-                                              notes:`Anulación NC ${n.nroDocumento}`,
-                                              user:appUser?.name||'Sistema'
-                                            });
+                                            const movId=`MOV-NC-REV-${Date.now().toString(36).slice(-6)}-${it.fgId||cleanId}`;
+                                            batch.set(getDocRef('inventoryMovements',movId),{id:movId,date:getTodayDate(),timestamp:Date.now(),itemId:cleanId,itemName:it.desc||cleanId,type:'SALIDA ANULACIÓN NC',qty:cantRev,cost:parseNum(it.costoUnit||0),totalValue:cantRev*parseNum(it.costoUnit||0),reference:n.nroDocumento,notes:`Anulación NC ${n.nroDocumento}`,user:appUser?.name||'Sistema'});
                                           }
+                                          await batch.commit();
                                         }
-                                        await batch.commit();
-                                        setDialog({title:'✅ Eliminada',text:`${n.tipo} ${n.nroDocumento} anulada.${n.tipo==='NC'&&n.modoOp!=='ajuste'&&(n.itemsRevertidos||[]).length>0?' Inventario revertido.':''}`,type:'alert'});
-                                      }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                                        // 2. Eliminar la NC/ND
+                                        await deleteDoc(getDocRef('notasVentaCreditoDebito',n.id));
+                                        setDialog({title:'✅ Eliminada',text:`${n.tipo} ${n.nroDocumento} eliminada.${n.tipo==='NC'&&(n.itemsRevertidos||[]).length>0?' Inventario revertido.':''}`,type:'alert'});
+                                      }catch(e){setDialog({title:'Error al eliminar',text:e.message,type:'alert'});}
                                     }})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
                                 </div>
                               </td>
@@ -13081,7 +13066,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const selInv=esFiscal?(invoices||[]).find(i=>i.id===ventaNCForm.facturaId):null;
                 const selNE=!esFiscal?(notasEntrega||[]).find(ne=>ne.id===ventaNCForm.neId):null;
                 const docSel=selInv||selNE;
-                const tasaNC=parseNum(docSel?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+                const tasaNC=parseNum(docSel?.tasa||docSel?.tasaBCV||docSel?.tasaFactura||docSel?.tasa_bcv||0)||parseNum(settings?.tasaBCV||0)||1;
                 const itemsDoc=(docSel?.itemsFacturados||[]);
                 const itemsNC=ventaNCForm.itemsNC||itemsDoc.map(it=>({...it,seleccionado:true,cantNC:parseNum(it.cantidad||0)}));
                 const setItemsNC=(upd)=>setVentaNCForm(f=>({...f,itemsNC:upd}));
@@ -13782,9 +13767,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             .reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCV;return s+(t>0?parseNum(n.monto||0)/t:0);},0);
           // Retenciones en USD: montoRetenido Bs / tasa factura vinculada
           const getRetUSDNE=(ne)=>{
-            const invLinked=(invoices||[]).find(inv=>inv.neOrigen===ne.id);
-            const tasa=parseNum(invLinked?.tasa||ne.tasa||0)||tasaBCV;
-            const rets=(retenciones||[]).filter(r=>r.facturaId===(invLinked?.id||'')||r.neId===ne.id);
+            const invLinked=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.id===ne.facturaVinculada);
+            const tasa=parseNum(invLinked?.tasa||ne.tasa||ne.tasaBCV||0)||tasaBCV;
+            const rets=(retenciones||[]).filter(r=>r.facturaId===(invLinked?.id||'NONE')||r.neId===ne.id||r.facturaId===ne.id);
             return rets.reduce((s,r)=>s+(tasa>0?parseNum(r.montoRetenido||0)/tasa:0),0);
           };
           const getCobradoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
@@ -14185,12 +14170,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                         <tr className="font-black text-blue-700 uppercase border-b border-blue-200">
                                           <th className="py-2 px-2 text-left">Documento</th>
                                           <th className="py-2 px-2 text-center">Emisión</th><th className="py-2 px-2 text-center">Vence</th>
+                                          <th className="py-2 px-2 text-center text-purple-600">Días Cred.</th>
+                                          <th className="py-2 px-2 text-center text-indigo-600">Doc. Fiscal</th>
                                           <th className="py-2 px-2 text-right">Total USD</th>
                                           <th className="py-2 px-2 text-right text-green-600">Cobrado</th>
-                                          <th className="py-2 px-2 text-right text-blue-600">NC</th>
+                                          <th className="py-2 px-2 text-right text-blue-600">NC/ND</th>
                                           <th className="py-2 px-2 text-right text-amber-600">Ret.IVA</th>
                                           <th className="py-2 px-2 text-right">Saldo USD</th>
-                                          <th className="py-2 px-2 text-right text-gray-400">Saldo Bs.</th>
                                           <th className="py-2 px-2 text-center">Vend.</th>
                                           <th className="py-2 px-2 text-center">Cobrar</th>
                                         </tr>
@@ -14202,19 +14188,28 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           const d=getAgingDays(ne,fechaRef);
                                           const dc=d<=0?'text-green-700':d<=30?'text-amber-700':d<=60?'text-orange-700':'text-red-700 font-black';
                                           const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
-                                          const ncsNE=(notasVentaCD||[]).filter(n=>n.neOrigen===ne.id&&n.tipo==='NC'&&(!fechaRef||(n.fecha||'')<=fechaRef));
+                                          const ncsNE=(notasVentaCD||[]).filter(n=>(n.neOrigen===ne.id||n.neId===ne.id)&&(!fechaRef||(n.fecha||'')<=fechaRef));
+                                          // Factura vinculada a esta NE
+                                          const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id);
+                                          const docFiscal=invVinc?(invVinc.nroFiscal||invVinc.nroControl||invVinc.documento||'—'):(ne.nroFiscal||'—');
+                                          // Retenciones con comprobante
+                                          const retsNE=(retenciones||[]).filter(r=>r.facturaId===(invVinc?.id||'NONE')||r.neId===ne.id||r.facturaId===ne.id);
+                                          const retTooltip=retsNE.map(r=>r.nroRetencion||r.nroComprobante||'').filter(Boolean).join(' · ')||'';
                                           return (
                                             <React.Fragment key={ne.id}>
                                               <tr className="border-b border-blue-100 hover:bg-blue-100">
                                                 <td className="py-2 px-2 font-black text-orange-600">{ne.documento||ne.id}</td>
                                                 <td className="py-2 px-2 text-center text-gray-500">{ne.fecha||'—'}</td>
                                                 <td className="py-2 px-2 text-center text-gray-500">{getVence(ne)}</td>
+                                                <td className="py-2 px-2 text-center text-purple-600 font-bold">{parseNum(ne.diasCredito||0)>0?`${parseNum(ne.diasCredito)}d`:'—'}</td>
+                                                <td className="py-2 px-2 text-center text-indigo-600 font-bold text-[8px]">{docFiscal!=='—'?docFiscal:'—'}</td>
                                                 <td className="py-2 px-2 text-right font-bold">${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td>
                                                 <td className="py-2 px-2 text-right text-green-700">{cobNE>0?`$${formatNum(cobNE)}`:'—'}</td>
                                                 <td className="py-2 px-2 text-right text-blue-600">{ncNE>0?`-$${formatNum(ncNE)}`:'—'}</td>
-                                                <td className="py-2 px-2 text-right text-amber-600">{retNE>0?`$${formatNum(retNE)}`:'—'}</td>
+                                                <td className="py-2 px-2 text-right text-amber-600" title={retTooltip}>
+                                                  {retNE>0?<span className="cursor-help">${formatNum(retNE)}{retTooltip&&<span className="text-[7px] block text-amber-400">{retTooltip}</span>}</span>:'—'}
+                                                </td>
                                                 <td className="py-2 px-2 text-right font-black text-red-600">${formatNum(saldo)}</td>
-                                                <td className="py-2 px-2 text-right text-gray-400">{formatNum(saldo*tasa)}</td>
                                                 <td className="py-2 px-2 text-center text-gray-500">{ne.vendedor||'—'}</td>
                                                 <td className="py-2 px-2 text-center">
                                                   <button onClick={()=>setCxcCobroModal({neId:ne.id,neDoc:ne.documento||ne.id,clientName:ne.clientName||cl.clientName,saldo:getSaldoNE(ne),total:parseNum(ne.total||ne.totalUSD||0),cobrado:getCobradoNEAtFecha(ne,null),vendedor:ne.vendedor||'',fecha:getTodayDate(),monto:String(getSaldoNE(ne)),metodo:'Transferencia',referencia:'',cuentaId:'',cuentaNombre:'',tipo:'Total'})}
