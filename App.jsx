@@ -13494,69 +13494,60 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
         {ventasView === 'cxc' && (() => {
           // ══ CUENTAS POR COBRAR ══════════════════════════════════════════
+          const tasaBCV = parseNum(settings?.tasaBCV||0)||1;
 
-          const XLS_HEADER = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:10pt}table{border-collapse:collapse;width:100%}th{background:#1e293b;color:#ffffff;font-weight:bold;padding:6px 8px;border:1px solid #334155;text-align:center;font-size:9pt}td{padding:5px 8px;border:1px solid #cbd5e1;font-size:9pt}.hdr{background:#f1f5f9;font-weight:bold}.tot{background:#1e293b;color:#f97316;font-weight:bold}.g{color:#16a34a;font-weight:bold}.r{color:#dc2626;font-weight:bold}.a{color:#b45309;font-weight:bold}.o{color:#c2410c;font-weight:bold}.right{text-align:right}.center{text-align:center}</style></head><body>`;
-          const XLS_EMPRESA = `<p style="font-size:14pt;font-weight:bold;margin:0">SERVICIOS JIRET G&amp;B, C.A. &nbsp;·&nbsp; RIF: J-412309374</p><p style="color:#64748b;margin:0 0 8px">Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9 · Maracaibo-Zulia</p>`;
-
-          // ── Saldo por NE (opcionalmente hasta una fecha de corte) ─────
-          const getSaldoNEAtFecha = (ne, fechaRef) => {
-            const cobrados = (cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
-            return Math.max(0, parseNum(ne.total||ne.totalUSD||0)-cobrados.reduce((s,c)=>s+parseNum(c.monto||0),0));
+          // ── Helpers de saldo con fecha de corte ────────────────────────
+          const getSaldoNEAtFecha = (ne, fRef) => {
+            const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+            const ncAplicadas=(notasVentaCD||[]).filter(n=>n.neOrigen===ne.id&&n.tipo==='NC'&&(!fRef||(n.fecha||'')<=fRef)).reduce((s,n)=>s+parseNum(n.monto||n.totalNeto||0),0);
+            return Math.max(0, parseNum(ne.total||ne.totalUSD||0)-cobrado-ncAplicadas);
           };
-          const getCobradoNEAtFecha = (ne, fechaRef) => (cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-          const getSaldoNE   = (ne) => getSaldoNEAtFecha(ne, null);
-          const getCobradoNE = (ne) => getCobradoNEAtFecha(ne, null);
+          const getCobradoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+          const getNCNEAtFecha=(ne,fRef)=>(notasVentaCD||[]).filter(n=>n.neOrigen===ne.id&&n.tipo==='NC'&&(!fRef||(n.fecha||'')<=fRef)).reduce((s,n)=>s+parseNum(n.monto||n.totalNeto||0),0);
+          const getRetNE=(ne)=>(retenciones||[]).filter(r=>r.facturaId===ne.id||r.neId===ne.id).reduce((s,r)=>s+parseNum(r.montoRetenido||0),0);
+          const getSaldoNE=(ne)=>getSaldoNEAtFecha(ne,null);
 
-          // ── Fecha de corte ─────────────────────────────────────────────
-          const fechaRef = cxcModo==='fecha' ? cxcFechaRef : null;
+          const fechaRef=cxcModo==='fecha'?cxcFechaRef:null;
+          const today=new Date(); today.setHours(0,0,0,0);
+          const getAgingDays=(ne,fRef)=>{const f=new Date(ne.fecha||ne.fechaEmision||getTodayDate());f.setDate(f.getDate()+parseNum(ne.diasCredito||0));const b=fRef?new Date(fRef):today;return Math.floor((b-f)/86400000);};
+          const getVence=(ne)=>{const f=new Date(ne.fecha||ne.fechaEmision||getTodayDate());f.setDate(f.getDate()+parseNum(ne.diasCredito||0));return f.toISOString().split('T')[0];};
+          const getTasa=(ne)=>parseNum(ne.tasa||ne.tasaBCV||0)||tasaBCV;
 
-          // ── NEs aplicables (según fecha de corte) ─────────────────────
-          const today = new Date(); today.setHours(0,0,0,0);
-          const getAgingDays = (ne, fRef) => {
-            const f = new Date(ne.fecha||ne.fechaEmision||getTodayDate());
-            f.setDate(f.getDate()+parseNum(ne.diasCredito||0));
-            const base = fRef ? new Date(fRef) : today;
-            return Math.floor((base-f)/86400000);
-          };
-          const getVence = (ne) => { const f=new Date(ne.fecha||ne.fechaEmision||getTodayDate()); f.setDate(f.getDate()+parseNum(ne.diasCredito||0)); return f.toISOString().split('T')[0]; };
-
-          const nesBase = (notasEntrega||[]).filter(ne => {
+          const nesBase=(notasEntrega||[]).filter(ne=>{
             if(ne.status==='ANULADA') return false;
-            if(fechaRef && (ne.fecha||'') > fechaRef) return false; // NE posterior al corte
-            return getSaldoNEAtFecha(ne, fechaRef) > 0.01;
+            if(fechaRef&&(ne.fecha||'')>fechaRef) return false;
+            return getSaldoNEAtFecha(ne,fechaRef)>0.01;
           });
+          const nesAbiertas=cxcSearch.trim()
+            ?nesBase.filter(ne=>(ne.documento||'').toUpperCase().includes(cxcSearch.toUpperCase())||(ne.clientName||'').toUpperCase().includes(cxcSearch.toUpperCase())||(ne.clientRif||'').toUpperCase().includes(cxcSearch.toUpperCase()))
+            :nesBase;
 
-          // ── Búsqueda ───────────────────────────────────────────────────
-          const nesAbiertas = cxcSearch.trim()
-            ? nesBase.filter(ne=>(ne.documento||'').toUpperCase().includes(cxcSearch.toUpperCase())||(ne.clientName||'').toUpperCase().includes(cxcSearch.toUpperCase())||(ne.clientRif||'').toUpperCase().includes(cxcSearch.toUpperCase()))
-            : nesBase;
+          // Métricas
+          const totalCartera=nesAbiertas.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
+          const corriente=nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)<=0).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
+          const v1_30=nesAbiertas.filter(ne=>{const d=getAgingDays(ne,fechaRef);return d>0&&d<=30;}).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
+          const v31_60=nesAbiertas.filter(ne=>{const d=getAgingDays(ne,fechaRef);return d>30&&d<=60;}).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
+          const vMas60=nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)>60).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
+          const mesActual=getTodayDate().substring(0,7);
+          const cobradoMes=(cobrosCxc||[]).filter(c=>(c.fecha||'').startsWith(mesActual)).reduce((s,c)=>s+parseNum(c.monto||0),0);
 
-          // ── Métricas ───────────────────────────────────────────────────
-          const totalCartera = nesAbiertas.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
-          const corriente    = nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)<=0).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
-          const v1_30        = nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)>0&&getAgingDays(ne,fechaRef)<=30).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
-          const v31_60       = nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)>30&&getAgingDays(ne,fechaRef)<=60).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
-          const vMas60       = nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)>60).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
-          const mesActual    = getTodayDate().substring(0,7);
-          const cobradoMes   = (cobrosCxc||[]).filter(c=>(c.fecha||'').startsWith(mesActual)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-
-          // ── Agrupar por cliente ────────────────────────────────────────
-          const porCliente = {};
+          // Por cliente
+          const porCliente={};
           nesAbiertas.forEach(ne=>{
             const k=ne.clientRif||ne.clientName||'SIN-RIF';
             if(!porCliente[k]) porCliente[k]={clientName:ne.clientName||k,clientRif:k,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
-            const saldo=getSaldoNEAtFecha(ne,fechaRef); const d=getAgingDays(ne,fechaRef);
+            const saldo=getSaldoNEAtFecha(ne,fechaRef);const d=getAgingDays(ne,fechaRef);
             if(d<=0) porCliente[k].corriente+=saldo; else if(d<=30) porCliente[k].v1_30+=saldo;
             else if(d<=60) porCliente[k].v31_60+=saldo; else porCliente[k].vMas60+=saldo;
             porCliente[k].total+=saldo; porCliente[k].nes.push(ne);
           });
-          const clientesList = Object.values(porCliente).sort((a,b)=>b.total-a.total);
+          const clientesList=Object.values(porCliente).sort((a,b)=>b.total-a.total);
 
           // ── GUARDAR COBRO ──────────────────────────────────────────────
-          const guardarCobro = async () => {
+          const guardarCobro=async()=>{
             const m=cxcCobroModal;
             if(!m||parseNum(m.monto)<=0){setDialog({title:'Falta monto',text:'Ingrese el monto cobrado.',type:'alert'});return;}
-            if(!m.referencia||!m.referencia.trim()){setDialog({title:'Falta referencia',text:'Ingrese número de referencia.',type:'alert'});return;}
+            if(!(m.referencia||'').trim()){setDialog({title:'Falta referencia',text:'Ingrese número de referencia.',type:'alert'});return;}
             try{
               const id=`COB-${Date.now().toString(36).toUpperCase()}`;
               const monto=parseNum(m.monto);
@@ -13565,104 +13556,167 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const nuevoStatus=nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
               const batch=writeBatch(db);
               batch.set(getDocRef('cobros_cxc',id),{id,neId:m.neId,neDocumento:m.neDoc,clientName:m.clientName,monto,metodo:m.metodo,referencia:m.referencia,cuentaBancariaId:m.cuentaId||'',cuentaBancoNombre:m.cuentaNombre||'',fecha:m.fecha,vendedor:m.vendedor,tipo:m.tipo,timestamp:Date.now()});
-              if(ne) batch.update(getDocRef('notasEntrega',m.neId),{statusCxC:nuevoStatus,montoCobrado:getCobradoNE(ne)+monto,saldoPendiente:nuevoSaldo,fechaUltimoCobro:m.fecha,refUltimoCobro:m.referencia});
+              if(ne) batch.update(getDocRef('notasEntrega',m.neId),{statusCxC:nuevoStatus,montoCobrado:getCobradoNEAtFecha(ne,null)+monto,saldoPendiente:nuevoSaldo,fechaUltimoCobro:m.fecha,refUltimoCobro:m.referencia});
               const mvId=`MV-${Date.now().toString(36).toUpperCase()}`;
               const cta=(cuentasBanco||[]).find(c=>c.id===m.cuentaId);
-              batch.set(getDocRef('banco_movimientos',mvId),{id:mvId,fecha:m.fecha,tipo:'Ingreso',origenIngreso:'Cobro NE',neId:m.neId,concepto:`Cobro ${m.neDoc} · ${m.clientName}`,referencia:m.referencia,cuentaId:m.cuentaId||'',cuentaNombre:cta?.banco||m.cuentaNombre||'',montoUSD:monto,montoBs:0,tasa:0,montoNativo:monto,terceroNombre:m.clientName,vendedor:m.vendedor,estatus:'No Conciliado',timestamp:Date.now()});
+              batch.set(getDocRef('banco_movimientos',mvId),{id:mvId,fecha:m.fecha,tipo:'Ingreso',origenIngreso:'Cobro NE',neId:m.neId,concepto:`Cobro ${m.neDoc} · ${m.clientName}`,referencia:m.referencia,cuentaId:m.cuentaId||'',cuentaNombre:cta?.banco||m.cuentaNombre||'',montoUSD:monto,montoBs:monto*getTasa(ne||{}),tasa:getTasa(ne||{}),montoNativo:monto,terceroNombre:m.clientName,vendedor:m.vendedor,estatus:'No Conciliado',timestamp:Date.now()});
               if(cta) batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+monto});
               await batch.commit();
               setCxcCobroModal(null);
-              setDialog({title:'✅ Cobro registrado',text:`$${formatNum(monto)} cobrado para ${m.clientName}. NE → ${nuevoStatus}.`,type:'alert'});
-            }catch(e){setDialog({title:'Error al guardar',text:e.message,type:'alert'});}
+              setDialog({title:'✅ Cobro registrado',text:`$${formatNum(monto)} cobrado. NE → ${nuevoStatus}.`,type:'alert'});
+            }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           };
 
-          // ── EXCEL PROFESIONAL ──────────────────────────────────────────
-          const exportarExcel = (tipo) => {
-            const corte = fechaRef||getTodayDate();
-            const titulo = tipo==='aging'?'Análisis de Vencimiento':'Cuentas por Cobrar';
-            const rowsAging = clientesList.map((cl,i)=>`<tr style="background:${i%2===0?'#f8fafc':'#ffffff'}">
-              <td>${cl.clientName}</td><td class="center">${cl.clientRif}</td>
-              <td class="right g">$${formatNum(cl.corriente)}</td>
-              <td class="right a">$${formatNum(cl.v1_30)}</td>
-              <td class="right o">$${formatNum(cl.v31_60)}</td>
-              <td class="right r">$${formatNum(cl.vMas60)}</td>
-              <td class="right" style="font-weight:bold">$${formatNum(cl.total)}</td>
-            </tr>`).join('');
-            const rowsCxC = nesAbiertas.map((ne,i)=>{
-              const d=getAgingDays(ne,fechaRef); const saldo=getSaldoNEAtFecha(ne,fechaRef);
-              const cobrado=getCobradoNEAtFecha(ne,fechaRef);
-              const bucket=d<=0?'Corriente':d<=30?'1-30d':d<=60?'31-60d':'+60d';
-              const bc=d<=0?'g':d<=30?'a':d<=60?'o':'r';
-              return `<tr style="background:${i%2===0?'#f8fafc':'#ffffff'}">
-                <td style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td>
-                <td>${ne.clientName||'—'}</td><td class="center">${ne.clientRif||'—'}</td>
-                <td>${ne.vendedor||'—'}</td><td class="center">${ne.fecha||'—'}</td>
-                <td class="center">${getVence(ne)}</td>
-                <td class="right">$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td>
-                <td class="right g">$${formatNum(cobrado)}</td>
-                <td class="right r" style="font-weight:bold">$${formatNum(saldo)}</td>
-                <td class="center ${bc}">${bucket}</td>
-                <td class="center">${d<=0?`${Math.abs(d)}d rest.`:`${d}d venc.`}</td>
-              </tr>`;}).join('');
-            const html = XLS_HEADER + XLS_EMPRESA +
-              `<h3 style="margin:4px 0 2px;font-size:13pt">${titulo}</h3>` +
-              `<p style="color:#64748b;margin:0 0 10px;font-size:9pt">Corte: ${corte} &nbsp;·&nbsp; Total: $${formatNum(totalCartera)} &nbsp;·&nbsp; ${nesAbiertas.length} documentos</p>` +
-              (tipo==='aging' ? `
-                <table>
-                  <thead><tr><th>Cliente</th><th>RIF</th><th>Corriente</th><th>1–30d</th><th>31–60d</th><th>+60d</th><th>Total</th></tr></thead>
-                  <tbody>${rowsAging}</tbody>
-                  <tfoot><tr class="tot"><td colspan="2">TOTALES</td>
-                    <td class="right">$${formatNum(corriente)}</td><td class="right">$${formatNum(v1_30)}</td>
-                    <td class="right">$${formatNum(v31_60)}</td><td class="right">$${formatNum(vMas60)}</td>
-                    <td class="right">$${formatNum(totalCartera)}</td></tr></tfoot>
-                </table>` : `
-                <table>
-                  <thead><tr><th>Documento</th><th>Cliente</th><th>RIF</th><th>Vendedor</th><th>Emisión</th><th>Vence</th><th>Total</th><th>Cobrado</th><th>Saldo</th><th>Bucket</th><th>Días</th></tr></thead>
-                  <tbody>${rowsCxC}</tbody>
-                  <tfoot><tr class="tot"><td colspan="6">TOTALES</td>
-                    <td class="right">$${formatNum(nesAbiertas.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</td>
-                    <td class="right">$${formatNum(nesAbiertas.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0))}</td>
-                    <td class="right">$${formatNum(totalCartera)}</td><td colspan="2"></td></tr></tfoot>
-                </table>`) +
-              `</body></html>`;
-            const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});
-            const url=URL.createObjectURL(blob); const a=document.createElement('a');
-            a.href=url; a.download=`CxC_${titulo.replace(/ /g,'_')}_${corte}.xls`; a.click(); URL.revokeObjectURL(url);
-          };
-
-          // ── PDF ────────────────────────────────────────────────────────
-          const exportarPDF = (tipo) => {
+          // ── EXPORTAR PDF DETALLADO ─────────────────────────────────────
+          const exportarPDF=(tipo)=>{
             const corte=fechaRef||getTodayDate();
-            const titulo=tipo==='aging'?'Análisis de Vencimiento':'Cuentas por Cobrar a la Fecha';
-            const rows = tipo==='aging'
-              ? clientesList.map(cl=>`<tr><td>${cl.clientName}</td><td style="text-align:center">${cl.clientRif}</td>
-                  <td style="text-align:right;color:#16a34a">$${formatNum(cl.corriente)}</td>
-                  <td style="text-align:right;color:#b45309">$${formatNum(cl.v1_30)}</td>
-                  <td style="text-align:right;color:#c2410c">$${formatNum(cl.v31_60)}</td>
-                  <td style="text-align:right;color:#dc2626;font-weight:bold">$${formatNum(cl.vMas60)}</td>
-                  <td style="text-align:right;font-weight:bold">$${formatNum(cl.total)}</td></tr>`).join('')
-              : nesAbiertas.map((ne,i)=>{const d=getAgingDays(ne,fechaRef);const saldo=getSaldoNEAtFecha(ne,fechaRef);const bc=d<=0?'#16a34a':d<=30?'#b45309':d<=60?'#c2410c':'#dc2626';
-                  return `<tr style="background:${i%2===0?'#f8fafc':'#fff'}">
-                    <td style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td>
-                    <td>${ne.clientName||'—'}</td><td>${ne.vendedor||'—'}</td>
-                    <td style="text-align:center">${ne.fecha||'—'}</td><td style="text-align:center">${getVence(ne)}</td>
-                    <td style="text-align:right">$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td>
-                    <td style="text-align:right;color:#16a34a">$${formatNum(getCobradoNEAtFecha(ne,fechaRef))}</td>
-                    <td style="text-align:right;font-weight:bold;color:${bc}">$${formatNum(saldo)}</td>
-                    <td style="text-align:center;color:${bc};font-weight:bold">${d<=0?'Corriente':d<=30?'1-30d':d<=60?'31-60d':'+60d'}</td>
-                  </tr>`;}).join('');
-            const headers = tipo==='aging'
-              ? '<tr><th>Cliente</th><th>RIF</th><th>Corriente</th><th>1–30d</th><th>31–60d</th><th>+60d</th><th>Total</th></tr>'
-              : '<tr><th>Documento</th><th>Cliente</th><th>Vendedor</th><th>Emisión</th><th>Vence</th><th>Total</th><th>Cobrado</th><th>Saldo</th><th>Bucket</th></tr>';
-            const totales = tipo==='aging'
-              ? `<tr style="background:#000;color:#f97316;font-weight:bold"><td colspan="2">TOTALES</td><td style="text-align:right">$${formatNum(corriente)}</td><td style="text-align:right">$${formatNum(v1_30)}</td><td style="text-align:right">$${formatNum(v31_60)}</td><td style="text-align:right">$${formatNum(vMas60)}</td><td style="text-align:right">$${formatNum(totalCartera)}</td></tr>`
-              : `<tr style="background:#000;color:#f97316;font-weight:bold"><td colspan="5">TOTAL CARTERA</td><td style="text-align:right">$${formatNum(nesAbiertas.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</td><td style="text-align:right;color:#4ade80">$${formatNum(nesAbiertas.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0))}</td><td style="text-align:right">$${formatNum(totalCartera)}</td><td></td></tr>`;
-            const html = _abrirVentanaReporte(`
-              <h2 style="text-align:center;text-transform:uppercase;letter-spacing:2px;margin:0 0 2px">${titulo}</h2>
-              <p style="text-align:center;color:#64748b;font-size:10px;margin:0 0 12px">Corte: ${corte} &nbsp;·&nbsp; Total cartera: $${formatNum(totalCartera)} &nbsp;·&nbsp; ${nesAbiertas.length} documentos</p>
-              <table><thead>${headers}</thead><tbody>${rows}</tbody><tfoot>${totales}</tfoot></table>
-            `, titulo, 'SERVICIOS JIRET G&B, C.A. — RIF: J-412309374');
-            _abrirVentanaReporte(html, titulo);
+            const titulo=tipo==='aging'?'Análisis de Vencimiento — Cartera':'Cuentas por Cobrar Detallado';
+            const ESTILOS=`body{font-family:Arial,sans-serif;margin:0;padding:0;color:#1e293b;font-size:10px}
+              .co-hdr{background:#0f172a;color:#f97316;padding:12px 16px;font-weight:900;font-size:11px;text-transform:uppercase;letter-spacing:1px}
+              .ne-row{padding:5px 16px;border-bottom:1px solid #e2e8f0;display:grid}
+              .abono{background:#f0fdf4;padding:3px 16px 3px 32px;border-left:3px solid #22c55e;font-size:9px;display:grid}
+              .nc{background:#eff6ff;padding:3px 16px 3px 32px;border-left:3px solid #3b82f6;font-size:9px;display:grid}
+              .ret{background:#fef3c7;padding:3px 16px 3px 32px;border-left:3px solid #f59e0b;font-size:9px;display:grid}
+              .cl-tot{background:#f8fafc;padding:5px 16px;font-weight:bold;font-size:10px;display:grid;border-top:2px solid #cbd5e1}
+              .gran-tot{background:#0f172a;color:#f97316;padding:8px 16px;font-weight:900;font-size:11px;display:grid}
+              table.aging{width:100%;border-collapse:collapse}
+              table.aging th{background:#0f172a;color:#f97316;padding:6px 8px;font-size:9px;text-align:right}
+              table.aging th:first-child{text-align:left}
+              table.aging td{padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:9px;text-align:right}
+              table.aging td:first-child{text-align:left}
+              table.aging tr:nth-child(even) td{background:#f8fafc}
+              table.aging tfoot td{background:#0f172a;color:#f97316;font-weight:bold;padding:6px 8px}
+              @media print{@page{margin:1.2cm}}`;
+
+            let body='';
+            if(tipo==='aging'){
+              const rows=clientesList.map((cl,i)=>{const bc=cl.vMas60>0?'#dc2626':cl.v31_60>0?'#c2410c':cl.v1_30>0?'#b45309':'#16a34a';
+                return `<tr><td style="font-weight:bold">${cl.clientName}</td><td style="text-align:center;font-size:9px;color:#64748b">${cl.clientRif}</td>
+                  <td style="color:#16a34a;font-weight:bold">$${formatNum(cl.corriente)}</td>
+                  <td style="color:#b45309">$${formatNum(cl.v1_30)}</td>
+                  <td style="color:#c2410c">$${formatNum(cl.v31_60)}</td>
+                  <td style="color:#dc2626;font-weight:bold">$${formatNum(cl.vMas60)}</td>
+                  <td style="font-weight:bold;color:${bc}">$${formatNum(cl.total)}</td>
+                  <td>${formatNum(cl.total*tasaBCV)}</td></tr>`;}).join('');
+              body=`<table class="aging"><thead><tr><th>Cliente</th><th>RIF</th><th>Corriente</th><th>1–30d</th><th>31–60d</th><th>+60d</th><th>Total USD</th><th>Total Bs.</th></tr></thead>
+                <tbody>${rows}</tbody>
+                <tfoot><tr><td colspan="2">TOTALES</td><td>$${formatNum(corriente)}</td><td>$${formatNum(v1_30)}</td><td>$${formatNum(v31_60)}</td><td>$${formatNum(vMas60)}</td><td>$${formatNum(totalCartera)}</td><td>${formatNum(totalCartera*tasaBCV)}</td></tr></tfoot></table>`;
+            } else {
+              // Detallado por cliente
+              let gTotUSD=0;
+              body=clientesList.map(cl=>{
+                const d=getAgingDays(cl.nes[0]||{},fechaRef);
+                const estado=cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
+                const cols9='grid-template-columns:1.5fr 1fr 1fr .8fr .8fr .8fr .8fr .8fr .8fr';
+                let clTotal=0;
+                const neRows=cl.nes.map(ne=>{
+                  const saldo=getSaldoNEAtFecha(ne,fechaRef);
+                  const cobradoNE=getCobradoNEAtFecha(ne,fechaRef);
+                  const ncNE=getNCNEAtFecha(ne,fechaRef);
+                  const retNE=getRetNE(ne);
+                  const tasa=getTasa(ne);
+                  const totalUSD=parseNum(ne.total||ne.totalUSD||0);
+                  const d2=getAgingDays(ne,fechaRef);
+                  const bc2=d2<=0?'#16a34a':d2<=30?'#b45309':d2<=60?'#c2410c':'#dc2626';
+                  clTotal+=saldo; gTotUSD+=saldo;
+                  // Cobros parciales
+                  const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
+                  const ncsNE=(notasVentaCD||[]).filter(n=>n.neOrigen===ne.id&&n.tipo==='NC'&&(!fechaRef||(n.fecha||'')<=fechaRef));
+                  const retsNE=(retenciones||[]).filter(r=>(r.facturaId===ne.id||r.neId===ne.id));
+                  const detalles=[
+                    ...cobrosNE.map(cb=>`<div class="abono" style="${cols9}"><span style="padding-left:8px">✓ Abono · ${cb.fecha}</span><span style="font-size:9px;color:#64748b">${cb.referencia||'—'}</span><span style="color:#64748b">${cb.metodo||'—'}</span><span></span><span></span><span style="color:#16a34a;font-weight:bold">$${formatNum(parseNum(cb.monto))}</span><span style="color:#64748b">${formatNum(parseNum(cb.monto)*tasa)}</span><span></span><span></span></div>`),
+                    ...ncsNE.map(nc=>`<div class="nc" style="${cols9}"><span style="padding-left:8px">NC · ${nc.fecha||'—'}</span><span style="font-size:9px">${nc.nroDocumento||nc.documento||'—'}</span><span></span><span></span><span></span><span style="color:#3b82f6;font-weight:bold">-$${formatNum(parseNum(nc.monto||nc.totalNeto||0))}</span><span style="color:#64748b">${formatNum(parseNum(nc.monto||nc.totalNeto||0)*tasa)}</span><span></span><span></span></div>`),
+                    ...retsNE.map(r=>`<div class="ret" style="${cols9}"><span style="padding-left:8px">RET · ${r.fechaComprobante||r.fecha||'—'}</span><span style="font-size:9px">${r.nroRetencion||'—'}</span><span></span><span></span><span></span><span></span><span></span><span style="color:#b45309;font-weight:bold">$${formatNum(parseNum(r.montoRetenido||0))}</span><span></span></div>`),
+                  ].join('');
+                  return `<div class="ne-row" style="${cols9}">
+                    <span style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</span>
+                    <span style="font-size:9px;color:#64748b">${ne.fecha||'—'}</span>
+                    <span style="font-size:9px;color:#64748b">${getVence(ne)}</span>
+                    <span style="text-align:right">$${formatNum(totalUSD)}</span>
+                    <span style="text-align:right;color:#16a34a">$${formatNum(cobradoNE)}</span>
+                    <span style="text-align:right;color:#3b82f6">${ncNE>0?'-$'+formatNum(ncNE):'—'}</span>
+                    <span style="text-align:right;font-weight:bold;color:${bc2}">$${formatNum(saldo)}</span>
+                    <span style="text-align:right;color:#64748b">${formatNum(saldo*tasa)}</span>
+                    <span style="text-align:right;font-size:9px;color:${bc2}">${d2<=0?`${Math.abs(d2)}d`:d2+'d +'}</span>
+                  </div>${detalles}`;
+                }).join('');
+                return `<div style="margin-bottom:16px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
+                  <div class="co-hdr" style="display:grid;grid-template-columns:1fr auto auto">
+                    <span>${cl.clientName}</span>
+                    <span style="font-size:9px;color:#94a3b8;padding-right:16px">${cl.clientRif}</span>
+                    <span style="color:#fbbf24">${estado}</span>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .8fr .8fr .8fr .8fr .8fr .8fr;background:#f1f5f9;padding:4px 16px;font-size:9px;font-weight:bold;text-transform:uppercase;color:#64748b">
+                    <span>Documento</span><span>Emisión</span><span>Vence</span>
+                    <span style="text-align:right">Total USD</span><span style="text-align:right">Cobrado</span>
+                    <span style="text-align:right">NC</span><span style="text-align:right">Saldo USD</span>
+                    <span style="text-align:right">Saldo Bs.</span><span style="text-align:right">Días</span>
+                  </div>
+                  ${neRows}
+                  <div class="cl-tot" style="grid-template-columns:1.5fr 1fr 1fr .8fr .8fr .8fr .8fr .8fr .8fr">
+                    <span>Subtotal ${cl.nes.length} doc${cl.nes.length>1?'s':''}</span><span></span><span></span>
+                    <span style="text-align:right">$${formatNum(cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</span>
+                    <span style="text-align:right;color:#16a34a">$${formatNum(cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0))}</span>
+                    <span style="text-align:right;color:#3b82f6">$${formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0))}</span>
+                    <span style="text-align:right;font-weight:bold;color:#dc2626">$${formatNum(clTotal)}</span>
+                    <span style="text-align:right;color:#64748b">${formatNum(clTotal*tasaBCV)}</span>
+                    <span></span>
+                  </div>
+                </div>`;
+              }).join('');
+              body+=`<div class="gran-tot" style="grid-template-columns:1fr 1fr 1fr 1fr;margin-top:8px;border-radius:6px">
+                <span>TOTAL CARTERA · ${nesAbiertas.length} documentos</span>
+                <span style="text-align:right">USD: $${formatNum(gTotUSD)}</span>
+                <span style="text-align:right">Bs.: ${formatNum(gTotUSD*tasaBCV)}</span>
+                <span style="text-align:right;color:#fbbf24">Tasa: ${formatNum(tasaBCV)}</span>
+              </div>`;
+            }
+            const html=`<html><head><meta charset="utf-8"><title>${titulo}</title><style>${ESTILOS}</style></head><body>
+              <div style="background:#0f172a;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <div><p style="color:#f97316;font-size:18px;font-weight:900;margin:0">Supply G&B</p><p style="color:#94a3b8;font-size:10px;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p></div>
+                <div style="text-align:right"><p style="color:#fff;font-weight:900;font-size:13px;margin:0;text-transform:uppercase">${titulo}</p>
+                  <p style="color:#94a3b8;font-size:9px;margin:0">Corte: ${corte} · Tasa BCV: ${formatNum(tasaBCV)} Bs/$</p></div>
+              </div>
+              <div style="padding:12px 0">${body}</div>
+              <div style="text-align:center;font-size:8px;color:#94a3b8;margin-top:12px;border-top:1px solid #e2e8f0;padding-top:8px">
+                Supply ERP · SERVICIOS JIRET G&B, C.A. · Generado: ${getTodayDate()}
+              </div>
+              <script>window.onload=()=>window.print();</script></body></html>`;
+            const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+          };
+
+          // ── EXPORTAR EXCEL ─────────────────────────────────────────────
+          const exportarExcel=(tipo)=>{
+            const corte=fechaRef||getTodayDate();
+            const XH=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:10pt}table{border-collapse:collapse;width:100%}th{background:#0f172a;color:#f97316;font-weight:bold;padding:5px 7px;border:1px solid #334155;font-size:9pt;text-align:right}th.left{text-align:left}td{padding:4px 7px;border:1px solid #cbd5e1;font-size:9pt;text-align:right}.left{text-align:left}.hdr{background:#1e293b;color:#fff;font-weight:bold;font-size:9pt}.tot{background:#0f172a;color:#f97316;font-weight:bold}.g{color:#16a34a}.r{color:#dc2626}.a{color:#b45309}.o{color:#c2410c}.b{color:#3b82f6}.alt{background:#f8fafc}.sub{background:#f0fdf4;font-size:9pt}.nc{background:#eff6ff;font-size:9pt}.ret{background:#fef3c7;font-size:9pt}</style></head><body>`;
+            const EMPRESA=`<p style="font-size:14pt;font-weight:bold;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p><h3 style="margin:2px 0 6px;font-size:12pt">${tipo==='aging'?'Análisis de Vencimiento':'Cuentas por Cobrar Detallado'} · Corte: ${corte}</h3><p style="color:#64748b;margin:0 0 10px;font-size:9pt">Tasa BCV: ${formatNum(tasaBCV)} Bs/$ · Total: $${formatNum(totalCartera)} · ${nesAbiertas.length} documentos</p>`;
+            let rows='';
+            if(tipo==='aging'){
+              rows=clientesList.map((cl,i)=>`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold">${cl.clientName}</td><td class="left">${cl.clientRif}</td><td class="g">$${formatNum(cl.corriente)}</td><td class="a">$${formatNum(cl.v1_30)}</td><td class="o">$${formatNum(cl.v31_60)}</td><td class="r">$${formatNum(cl.vMas60)}</td><td style="font-weight:bold">$${formatNum(cl.total)}</td><td>${formatNum(cl.total*tasaBCV)}</td></tr>`).join('');
+              const html=XH+EMPRESA+`<table><thead><tr><th class="left">Cliente</th><th class="left">RIF</th><th>Corriente</th><th>1–30d</th><th>31–60d</th><th>+60d</th><th>Total USD</th><th>Total Bs.</th></tr></thead><tbody>${rows}</tbody><tfoot><tr class="tot"><td class="left">TOTALES</td><td></td><td>$${formatNum(corriente)}</td><td>$${formatNum(v1_30)}</td><td>$${formatNum(v31_60)}</td><td>$${formatNum(vMas60)}</td><td>$${formatNum(totalCartera)}</td><td>${formatNum(totalCartera*tasaBCV)}</td></tr></tfoot></table></body></html>`;
+              const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Aging_${corte}.xls`;a.click();URL.revokeObjectURL(url);
+            } else {
+              let body='';
+              clientesList.forEach(cl=>{
+                body+=`<tr class="hdr"><td colspan="10" class="left" style="font-size:10pt;padding:6px 7px">${cl.clientName} · ${cl.clientRif}</td></tr>`;
+                body+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">Documento</td><td class="left">Emisión</td><td class="left">Vence</td><td>Total USD</td><td>Cobrado</td><td>NC Aplicada</td><td>Ret. IVA</td><td>Saldo USD</td><td>Saldo Bs.</td><td class="left">Bucket</td></tr>`;
+                cl.nes.forEach((ne,i)=>{
+                  const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
+                  const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const tasa=getTasa(ne);const d=getAgingDays(ne,fechaRef);
+                  const bucket=d<=0?'Corriente':d<=30?'1-30d':d<=60?'31-60d':'+60d';
+                  body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td>${formatNum(saldo*tasa)}</td><td class="left">${bucket}</td></tr>`;
+                  const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
+                  cobrosNE.forEach(cb=>{body+=`<tr class="sub"><td class="left" style="padding-left:20px">✓ Abono</td><td class="left">${cb.fecha||'—'}</td><td class="left">${cb.referencia||'—'}</td><td></td><td class="left">${cb.metodo||'—'}</td><td></td><td></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}</td><td>${formatNum(parseNum(cb.monto)*getTasa(ne))}</td><td></td></tr>`;});
+                  const ncsNE=(notasVentaCD||[]).filter(n=>n.neOrigen===ne.id&&n.tipo==='NC'&&(!fechaRef||(n.fecha||'')<=fechaRef));
+                  ncsNE.forEach(nc=>{body+=`<tr class="nc"><td class="left" style="padding-left:20px">NC</td><td class="left">${nc.fecha||'—'}</td><td class="left">${nc.nroDocumento||'—'}</td><td></td><td></td><td class="b">-$${formatNum(parseNum(nc.monto||nc.totalNeto||0))}</td><td></td><td></td><td></td><td></td></tr>`;});
+                });
+                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
+                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="7">SUBTOTAL ${cl.clientName}</td><td style="color:#dc2626">$${formatNum(clTot)}</td><td>${formatNum(clTot*tasaBCV)}</td><td></td></tr><tr><td colspan="10"></td></tr>`;
+              });
+              body+=`<tr class="tot"><td class="left" colspan="7">TOTAL CARTERA</td><td>$${formatNum(totalCartera)}</td><td>${formatNum(totalCartera*tasaBCV)}</td><td></td></tr>`;
+              const html=XH+EMPRESA+`<table>${body}</table></body></html>`;
+              const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Detallado_${corte}.xls`;a.click();URL.revokeObjectURL(url);
+            }
           };
 
           // ── MODAL COBRO ────────────────────────────────────────────────
@@ -13677,11 +13731,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
                     <div className="flex justify-between items-start mb-2">
                       <div><p className="font-black text-sm">{cxcCobroModal.neDoc}</p><p className="text-[11px] text-gray-500">{cxcCobroModal.clientName}</p></div>
-                      <div className="text-right"><p className="text-[9px] text-gray-400 uppercase">Saldo pendiente</p><p className="text-2xl font-black text-red-600">${formatNum(cxcCobroModal.saldo)}</p></div>
+                      <div className="text-right"><p className="text-[9px] text-gray-400 uppercase">Saldo pendiente</p><p className="text-2xl font-black text-red-600">${formatNum(cxcCobroModal.saldo)}</p><p className="text-[10px] text-gray-400">Bs. {formatNum(cxcCobroModal.saldo*tasaBCV)}</p></div>
                     </div>
                     <div className="flex gap-4 text-[10px] text-gray-500">
                       <span>Total: <b className="text-gray-800">${formatNum(cxcCobroModal.total)}</b></span>
-                      <span>Ya cobrado: <b className="text-green-700">${formatNum(cxcCobroModal.cobrado)}</b></span>
+                      <span>Cobrado: <b className="text-green-700">${formatNum(cxcCobroModal.cobrado)}</b></span>
+                      <span>Tasa: <b className="text-blue-600">{formatNum(tasaBCV)} Bs/$</b></span>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
@@ -13694,22 +13749,27 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <div className="grid grid-cols-2 gap-3">
                     <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Monto cobrado (USD)</label>
                       <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-xs">$</span>
-                        <input type="number" step="0.01" min="0" value={cxcCobroModal.monto} onChange={e=>setCxcCobroModal(m=>({...m,monto:e.target.value}))} className="w-full pl-6 border-2 border-orange-300 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="0.00"/></div></div>
+                        <input type="number" step="0.01" min="0" value={cxcCobroModal.monto} onChange={e=>setCxcCobroModal(m=>({...m,monto:e.target.value}))} className="w-full pl-6 border-2 border-orange-300 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="0.00"/>
+                      </div>
+                      {parseNum(cxcCobroModal.monto)>0 && <p className="text-[9px] text-gray-400 mt-1">≈ Bs. {formatNum(parseNum(cxcCobroModal.monto)*tasaBCV)}</p>}
+                    </div>
                     <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Método de pago</label>
                       <select value={cxcCobroModal.metodo} onChange={e=>setCxcCobroModal(m=>({...m,metodo:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
                         <option>Transferencia</option><option>Efectivo USD</option><option>Efectivo Bs.</option><option>Zelle</option><option>Cheque</option><option>Pago Móvil</option></select></div>
                   </div>
                   <div><label className="text-[9px] font-black text-blue-600 uppercase block mb-1">Cuenta bancaria destino</label>
                     <select value={cxcCobroModal.cuentaId||''} onChange={e=>{const ct=(cuentasBanco||[]).find(c=>c.id===e.target.value);setCxcCobroModal(m=>({...m,cuentaId:e.target.value,cuentaNombre:ct?`${ct.banco} · ${ct.numeroCuenta}`:''}));}} className="w-full border-2 border-blue-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-400">
-                      <option value="">— Seleccione cuenta bancaria —</option>
-                      {(cuentasBanco||[]).map(ct=><option key={ct.id} value={ct.id}>{ct.banco} · {ct.numeroCuenta} · {ct.moneda} · Saldo: {formatNum(ct.saldo||0)}</option>)}
-                    </select></div>
+                      <option value="">— Seleccione cuenta —</option>
+                      {(cuentasBanco||[]).map(ct=><option key={ct.id} value={ct.id}>{ct.banco} · {ct.numeroCuenta} · {ct.moneda}</option>)}
+                    </select>
+                    {(cuentasBanco||[]).length===0 && <p className="text-[9px] text-amber-600 font-bold mt-1">★ Agregue cuentas en el módulo Bancos para seleccionarlas aquí</p>}
+                  </div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Referencia / Comprobante</label>
                     <input type="text" value={cxcCobroModal.referencia} onChange={e=>setCxcCobroModal(m=>({...m,referencia:e.target.value.toUpperCase()}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="REF-0000000"/></div>
                   {parseNum(cxcCobroModal.monto)>0 && (
                     <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex justify-between items-center">
                       <span className="text-[11px] font-black text-green-700">NE → <b>{parseNum(cxcCobroModal.monto)>=cxcCobroModal.saldo-0.01?'COBRADA TOTAL':'COBRADA PARCIAL'}</b></span>
-                      <span className="text-[11px] text-green-600">Saldo restante: <b>${formatNum(Math.max(0,cxcCobroModal.saldo-parseNum(cxcCobroModal.monto)))}</b></span>
+                      <span className="text-[11px] text-green-600">Saldo: <b>${formatNum(Math.max(0,cxcCobroModal.saldo-parseNum(cxcCobroModal.monto)))}</b></span>
                     </div>
                   )}
                   <button onClick={guardarCobro} className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-2xl font-black text-[11px] uppercase transition-all flex items-center justify-center gap-2">
@@ -13723,72 +13783,63 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── VISTA PRINCIPAL ────────────────────────────────────────────
           return (
             <div className="p-4 sm:p-6 space-y-5 animate-in fade-in">
-
               {/* Toolbar */}
               <div className="bg-white border-2 border-gray-100 rounded-2xl p-4">
                 <div className="flex flex-wrap gap-3 items-end">
-                  {/* Buscador */}
-                  <div className="relative flex-1 min-w-[200px]">
+                  <div className="relative flex-1 min-w-[180px]">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14}/>
                     <input type="text" placeholder="Buscar cliente, RIF o documento..." value={cxcSearch} onChange={e=>setCxcSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400 uppercase"/>
                   </div>
-                  {/* Modo fecha */}
                   <div className="flex items-center gap-2">
-                    <label className="text-[9px] font-black text-gray-500 uppercase">Vista:</label>
+                    <label className="text-[9px] font-black text-gray-500 uppercase whitespace-nowrap">Vista:</label>
                     <select value={cxcModo} onChange={e=>setCxcModo(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-orange-400">
-                      <option value="actual">Actual (saldo real)</option>
+                      <option value="actual">Saldo actual</option>
                       <option value="fecha">A la fecha de corte</option>
                     </select>
                   </div>
-                  {cxcModo==='fecha' && (
-                    <div className="flex items-center gap-2">
-                      <label className="text-[9px] font-black text-gray-500 uppercase">Corte:</label>
-                      <input type="date" value={cxcFechaRef} onChange={e=>setCxcFechaRef(e.target.value)} className="border-2 border-orange-300 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-orange-500"/>
-                    </div>
-                  )}
-                  {/* Expandir/Contraer todo */}
-                  <button onClick={()=>setCxcExpandAll(v=>!v)} className="flex items-center gap-1.5 px-3 py-2.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100 transition-all">
+                  {cxcModo==='fecha' && <input type="date" value={cxcFechaRef} onChange={e=>setCxcFechaRef(e.target.value)} className="border-2 border-orange-300 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-orange-500"/>}
+                  <button onClick={()=>setCxcExpandAll(v=>!v)} className="flex items-center gap-1.5 px-3 py-2.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100">
                     {cxcExpandAll?'▲ Contraer todo':'▼ Expandir todo'}
                   </button>
-                  {/* Exportar */}
-                  <button onClick={()=>exportarPDF('aging')} className="flex items-center gap-1 px-3 py-2.5 bg-red-50 text-red-700 border border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-100 transition-all"><FileText size={12}/>Aging PDF</button>
-                  <button onClick={()=>exportarExcel('aging')} className="flex items-center gap-1 px-3 py-2.5 bg-green-50 text-green-700 border border-green-200 rounded-xl text-[10px] font-black uppercase hover:bg-green-100 transition-all"><Download size={12}/>Aging XLS</button>
-                  <button onClick={()=>exportarPDF('cxc')} className="flex items-center gap-1 px-3 py-2.5 bg-red-50 text-red-700 border border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-100 transition-all"><FileText size={12}/>CxC PDF</button>
-                  <button onClick={()=>exportarExcel('cxc')} className="flex items-center gap-1 px-3 py-2.5 bg-green-50 text-green-700 border border-green-200 rounded-xl text-[10px] font-black uppercase hover:bg-green-100 transition-all"><Download size={12}/>CxC XLS</button>
+                  <button onClick={()=>exportarPDF('cxc')} className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-700 border border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-100"><FileText size={12}/>CxC PDF</button>
+                  <button onClick={()=>exportarExcel('cxc')} className="flex items-center gap-1 px-3 py-2 bg-green-50 text-green-700 border border-green-200 rounded-xl text-[10px] font-black uppercase hover:bg-green-100"><Download size={12}/>CxC XLS</button>
+                  <button onClick={()=>exportarPDF('aging')} className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-700 border border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-100"><FileText size={12}/>Aging PDF</button>
+                  <button onClick={()=>exportarExcel('aging')} className="flex items-center gap-1 px-3 py-2 bg-green-50 text-green-700 border border-green-200 rounded-xl text-[10px] font-black uppercase hover:bg-green-100"><Download size={12}/>Aging XLS</button>
                 </div>
-                {cxcModo==='fecha' && <p className="text-[9px] text-orange-600 font-bold mt-2">★ Mostrando cartera al {cxcFechaRef} — incluye NEs emitidas antes de esa fecha con saldo pendiente en ese momento.</p>}
+                {cxcModo==='fecha'&&<p className="text-[9px] text-orange-600 font-bold mt-2">★ Cartera al {cxcFechaRef} — Tasa BCV: {formatNum(tasaBCV)} Bs/$</p>}
               </div>
 
               {/* Métricas */}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                 {[
-                  {label:'Cartera total',val:`$${formatNum(totalCartera)}`,color:'text-gray-800',bg:'bg-gray-50',brd:'border-gray-200'},
-                  {label:'Corriente',val:`$${formatNum(corriente)}`,color:'text-green-700',bg:'bg-green-50',brd:'border-green-200'},
-                  {label:'1–30 días',val:`$${formatNum(v1_30)}`,color:'text-amber-700',bg:'bg-amber-50',brd:'border-amber-200'},
-                  {label:'31–60 días',val:`$${formatNum(v31_60)}`,color:'text-orange-700',bg:'bg-orange-50',brd:'border-orange-200'},
-                  {label:'+60 días',val:`$${formatNum(vMas60)}`,color:'text-red-700',bg:'bg-red-50',brd:'border-red-200'},
-                  {label:'Cobrado este mes',val:`$${formatNum(cobradoMes)}`,color:'text-blue-700',bg:'bg-blue-50',brd:'border-blue-200'},
+                  {l:'Cartera total',v:`$${formatNum(totalCartera)}`,s:`Bs. ${formatNum(totalCartera*tasaBCV)}`,c:'text-gray-800',bg:'bg-gray-50',br:'border-gray-200'},
+                  {l:'Corriente',v:`$${formatNum(corriente)}`,s:`Bs. ${formatNum(corriente*tasaBCV)}`,c:'text-green-700',bg:'bg-green-50',br:'border-green-200'},
+                  {l:'1–30 días',v:`$${formatNum(v1_30)}`,s:`Bs. ${formatNum(v1_30*tasaBCV)}`,c:'text-amber-700',bg:'bg-amber-50',br:'border-amber-200'},
+                  {l:'31–60 días',v:`$${formatNum(v31_60)}`,s:`Bs. ${formatNum(v31_60*tasaBCV)}`,c:'text-orange-700',bg:'bg-orange-50',br:'border-orange-200'},
+                  {l:'+60 días',v:`$${formatNum(vMas60)}`,s:`Bs. ${formatNum(vMas60*tasaBCV)}`,c:'text-red-700',bg:'bg-red-50',br:'border-red-200'},
+                  {l:'Cobrado este mes',v:`$${formatNum(cobradoMes)}`,s:`Bs. ${formatNum(cobradoMes*tasaBCV)}`,c:'text-blue-700',bg:'bg-blue-50',br:'border-blue-200'},
                 ].map((m,i)=>(
-                  <div key={i} className={`rounded-2xl px-4 py-3 border-2 ${m.bg} ${m.brd}`}>
-                    <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">{m.label}</p>
-                    <p className={`text-xl font-black ${m.color}`}>{m.val}</p>
+                  <div key={i} className={`rounded-2xl px-4 py-3 border-2 ${m.bg} ${m.br}`}>
+                    <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">{m.l}</p>
+                    <p className={`text-xl font-black ${m.c}`}>{m.v}</p>
+                    <p className="text-[8px] text-gray-400">{m.s}</p>
                   </div>
                 ))}
               </div>
 
               {/* Aging bars */}
-              {totalCartera>0 && (
+              {totalCartera>0&&(
                 <div className="bg-white border-2 border-gray-100 rounded-2xl p-5">
-                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3">Distribución por antigüedad</p>
-                  {[{l:'Corriente',v:corriente,c:'#22c55e'},{l:'1–30 días',v:v1_30,c:'#f59e0b'},{l:'31–60 días',v:v31_60,c:'#f97316'},{l:'+60 días',v:vMas60,c:'#dc2626'}].map((b,i)=>(
+                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3">Distribución · Tasa BCV: {formatNum(tasaBCV)} Bs/$</p>
+                  {[{l:'Corriente',v:corriente,c:'#22c55e'},{l:'1–30d',v:v1_30,c:'#f59e0b'},{l:'31–60d',v:v31_60,c:'#f97316'},{l:'+60d',v:vMas60,c:'#dc2626'}].map((b,i)=>(
                     <div key={i} className="flex items-center gap-3 mb-2">
-                      <span className="text-[9px] font-bold text-gray-500 w-20 flex-shrink-0">{b.l}</span>
+                      <span className="text-[9px] font-bold text-gray-500 w-16 flex-shrink-0">{b.l}</span>
                       <div className="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden">
-                        <div style={{width:`${totalCartera>0?(b.v/totalCartera*100):0}%`,background:b.c,minWidth:b.v>0?'2px':'0'}} className="h-full rounded-full flex items-center pl-2 transition-all">
-                          {b.v>0&&<span className="text-white text-[8px] font-black whitespace-nowrap">${formatNum(b.v)}</span>}
+                        <div style={{width:`${totalCartera>0?(b.v/totalCartera*100):0}%`,background:b.c,minWidth:b.v>0?'2px':'0'}} className="h-full rounded-full flex items-center pl-2">
+                          {b.v>0&&<span className="text-white text-[8px] font-black whitespace-nowrap">${formatNum(b.v)} · Bs.{formatNum(b.v*tasaBCV)}</span>}
                         </div>
                       </div>
-                      <span className="text-[9px] font-black text-gray-500 w-12 text-right">{totalCartera>0?Math.round(b.v/totalCartera*100):0}%</span>
+                      <span className="text-[9px] font-black text-gray-500 w-10 text-right">{totalCartera>0?Math.round(b.v/totalCartera*100):0}%</span>
                     </div>
                   ))}
                 </div>
@@ -13798,108 +13849,119 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               <div className="bg-white border-2 border-gray-100 rounded-2xl overflow-hidden">
                 <div className="flex items-center justify-between px-5 py-4 border-b-2 border-gray-100">
                   <h3 className="font-black text-sm uppercase text-gray-800">Análisis por cliente</h3>
-                  <span className="text-[10px] text-gray-400 font-bold">{clientesList.length} clientes · {nesAbiertas.length} documentos</span>
+                  <span className="text-[10px] text-gray-400 font-bold">{clientesList.length} clientes · {nesAbiertas.length} docs</span>
                 </div>
-                {clientesList.length===0 ? (
+                {clientesList.length===0?(
                   <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">Sin cartera pendiente</div>
-                ) : (
+                ):(
                   <div className="overflow-x-auto">
                     <table className="w-full text-[10px]">
                       <thead className="bg-gray-50 border-b-2 border-gray-100">
-                        <tr className="font-black text-gray-400 uppercase tracking-widest">
+                        <tr className="font-black text-gray-400 uppercase">
                           <th className="py-3 px-4 text-left">Cliente</th>
                           <th className="py-3 px-4 text-right text-green-600">Corriente</th>
                           <th className="py-3 px-4 text-right text-amber-600">1–30d</th>
                           <th className="py-3 px-4 text-right text-orange-600">31–60d</th>
                           <th className="py-3 px-4 text-right text-red-600">+60d</th>
-                          <th className="py-3 px-4 text-right">Total</th>
+                          <th className="py-3 px-4 text-right">Total USD</th>
+                          <th className="py-3 px-4 text-right text-gray-400">Total Bs.</th>
                           <th className="py-3 px-4 text-center">Estado</th>
-                          <th className="py-3 px-4 text-center">
-                            <button onClick={()=>setCxcExpandAll(v=>!v)} className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded-lg text-[8px] font-black uppercase">
-                              {cxcExpandAll?'▲ Todo':'▼ Todo'}
-                            </button>
-                          </th>
+                          <th className="py-3 px-4 text-center"><button onClick={()=>setCxcExpandAll(v=>!v)} className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded-lg text-[8px] font-black uppercase">{cxcExpandAll?'▲':'▼'} Todo</button></th>
                         </tr>
                       </thead>
                       <tbody>
-                        {clientesList.map((cl,i)=>{
-                          const sel = cxcExpandAll || cxcSelectedClient===cl.clientRif;
+                        {clientesList.map((cl)=>{
+                          const sel=cxcExpandAll||cxcSelectedClient===cl.clientRif;
                           const estado=cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
                           const eBg={CRÍTICO:'bg-red-100 text-red-700',VENCIDO:'bg-orange-100 text-orange-700','POR COBRAR':'bg-amber-100 text-amber-700','AL DÍA':'bg-green-100 text-green-700'}[estado];
                           return (
                             <React.Fragment key={cl.clientRif}>
                               <tr className={`border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${sel?'bg-blue-50':''}`} onClick={()=>setCxcSelectedClient(cxcSelectedClient===cl.clientRif?'':cl.clientRif)}>
-                                <td className="py-3 px-4"><p className="font-bold text-gray-800">{cl.clientName}</p><p className="text-gray-400">{cl.clientRif}</p></td>
+                                <td className="py-3 px-4"><p className="font-bold text-gray-800">{cl.clientName}</p><p className="text-gray-400 text-[9px]">{cl.clientRif}</p></td>
                                 <td className="py-3 px-4 text-right font-bold text-green-700">{cl.corriente>0?`$${formatNum(cl.corriente)}`:'—'}</td>
                                 <td className="py-3 px-4 text-right font-bold text-amber-600">{cl.v1_30>0?`$${formatNum(cl.v1_30)}`:'—'}</td>
                                 <td className="py-3 px-4 text-right font-bold text-orange-600">{cl.v31_60>0?`$${formatNum(cl.v31_60)}`:'—'}</td>
                                 <td className="py-3 px-4 text-right font-bold text-red-600">{cl.vMas60>0?`$${formatNum(cl.vMas60)}`:'—'}</td>
                                 <td className="py-3 px-4 text-right font-black text-gray-800">${formatNum(cl.total)}</td>
+                                <td className="py-3 px-4 text-right text-gray-400 text-[9px]">{formatNum(cl.total*tasaBCV)}</td>
                                 <td className="py-3 px-4 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black ${eBg}`}>{estado}</span></td>
                                 <td className="py-3 px-4 text-center" onClick={e=>e.stopPropagation()}>
                                   <button onClick={()=>setCxcSelectedClient(cxcSelectedClient===cl.clientRif?'':cl.clientRif)}
                                     className={`px-3 py-1.5 rounded-xl text-[9px] font-black transition-all ${sel&&!cxcExpandAll?'bg-blue-600 text-white':'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'}`}>
-                                    {sel&&!cxcExpandAll?'▲ Cerrar':'▼ Expandir'}
+                                    {sel&&!cxcExpandAll?'▲ Cerrar':'▼ Detalle'}
                                   </button>
                                 </td>
                               </tr>
-                              {sel && (
-                                <tr>
-                                  <td colSpan={8} className="p-0">
-                                    <div className="bg-blue-50 border-t border-blue-200 p-4">
-                                      <table className="w-full text-[9px]">
-                                        <thead>
-                                          <tr className="font-black text-blue-700 uppercase border-b border-blue-200">
-                                            <th className="py-2 px-2 text-left">Documento</th>
-                                            <th className="py-2 px-2 text-center">Emisión</th>
-                                            <th className="py-2 px-2 text-center">Vence</th>
-                                            <th className="py-2 px-2 text-right">Total</th>
-                                            <th className="py-2 px-2 text-right">Cobrado</th>
-                                            <th className="py-2 px-2 text-right">Saldo</th>
-                                            <th className="py-2 px-2 text-center">Antigüedad</th>
-                                            <th className="py-2 px-2 text-center">Vendedor</th>
-                                            <th className="py-2 px-2 text-center">Cobrar</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {cl.nes.map(ne=>{
-                                            const d=getAgingDays(ne,fechaRef); const saldo=getSaldoNEAtFecha(ne,fechaRef); const cobNE=getCobradoNEAtFecha(ne,fechaRef);
-                                            const dc=d<=0?'text-green-700':d<=30?'text-amber-700':d<=60?'text-orange-700':'text-red-700 font-black';
-                                            const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id);
-                                            return (
-                                              <React.Fragment key={ne.id}>
-                                                <tr className="border-b border-blue-100 hover:bg-blue-100">
-                                                  <td className="py-2 px-2 font-black text-orange-600">{ne.documento||ne.id}</td>
-                                                  <td className="py-2 px-2 text-center text-gray-500">{ne.fecha||'—'}</td>
-                                                  <td className="py-2 px-2 text-center text-gray-500">{getVence(ne)}</td>
-                                                  <td className="py-2 px-2 text-right font-bold">${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td>
-                                                  <td className="py-2 px-2 text-right text-green-700">{cobNE>0?`$${formatNum(cobNE)}`:'—'}</td>
-                                                  <td className="py-2 px-2 text-right font-black text-red-600">${formatNum(saldo)}</td>
-                                                  <td className={`py-2 px-2 text-center ${dc}`}>{d<=0?`${Math.abs(d)}d rest.`:`${d}d venc.`}</td>
-                                                  <td className="py-2 px-2 text-center text-gray-500">{ne.vendedor||'—'}</td>
-                                                  <td className="py-2 px-2 text-center">
-                                                    <button onClick={()=>setCxcCobroModal({neId:ne.id,neDoc:ne.documento||ne.id,clientName:ne.clientName||cl.clientName,saldo:getSaldoNE(ne),total:parseNum(ne.total||ne.totalUSD||0),cobrado:getCobradoNE(ne),vendedor:ne.vendedor||'',fecha:getTodayDate(),monto:String(getSaldoNE(ne)),metodo:'Transferencia',referencia:'',cuentaId:'',cuentaNombre:'',tipo:'Total'})}
-                                                      className="px-3 py-1 bg-green-600 text-white rounded-lg font-black hover:bg-green-700 transition-all whitespace-nowrap">
-                                                      💰 Cobrar
-                                                    </button>
-                                                  </td>
+                              {sel&&(
+                                <tr><td colSpan={9} className="p-0">
+                                  <div className="bg-blue-50 border-t border-blue-200 p-4">
+                                    <table className="w-full text-[9px]">
+                                      <thead>
+                                        <tr className="font-black text-blue-700 uppercase border-b border-blue-200">
+                                          <th className="py-2 px-2 text-left">Documento</th>
+                                          <th className="py-2 px-2 text-center">Emisión</th><th className="py-2 px-2 text-center">Vence</th>
+                                          <th className="py-2 px-2 text-right">Total USD</th>
+                                          <th className="py-2 px-2 text-right text-green-600">Cobrado</th>
+                                          <th className="py-2 px-2 text-right text-blue-600">NC</th>
+                                          <th className="py-2 px-2 text-right text-amber-600">Ret.IVA</th>
+                                          <th className="py-2 px-2 text-right">Saldo USD</th>
+                                          <th className="py-2 px-2 text-right text-gray-400">Saldo Bs.</th>
+                                          <th className="py-2 px-2 text-center">Vend.</th>
+                                          <th className="py-2 px-2 text-center">Cobrar</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {cl.nes.map(ne=>{
+                                          const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
+                                          const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const tasa=getTasa(ne);
+                                          const d=getAgingDays(ne,fechaRef);
+                                          const dc=d<=0?'text-green-700':d<=30?'text-amber-700':d<=60?'text-orange-700':'text-red-700 font-black';
+                                          const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
+                                          const ncsNE=(notasVentaCD||[]).filter(n=>n.neOrigen===ne.id&&n.tipo==='NC'&&(!fechaRef||(n.fecha||'')<=fechaRef));
+                                          return (
+                                            <React.Fragment key={ne.id}>
+                                              <tr className="border-b border-blue-100 hover:bg-blue-100">
+                                                <td className="py-2 px-2 font-black text-orange-600">{ne.documento||ne.id}</td>
+                                                <td className="py-2 px-2 text-center text-gray-500">{ne.fecha||'—'}</td>
+                                                <td className="py-2 px-2 text-center text-gray-500">{getVence(ne)}</td>
+                                                <td className="py-2 px-2 text-right font-bold">${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td>
+                                                <td className="py-2 px-2 text-right text-green-700">{cobNE>0?`$${formatNum(cobNE)}`:'—'}</td>
+                                                <td className="py-2 px-2 text-right text-blue-600">{ncNE>0?`-$${formatNum(ncNE)}`:'—'}</td>
+                                                <td className="py-2 px-2 text-right text-amber-600">{retNE>0?`$${formatNum(retNE)}`:'—'}</td>
+                                                <td className="py-2 px-2 text-right font-black text-red-600">${formatNum(saldo)}</td>
+                                                <td className="py-2 px-2 text-right text-gray-400">{formatNum(saldo*tasa)}</td>
+                                                <td className="py-2 px-2 text-center text-gray-500">{ne.vendedor||'—'}</td>
+                                                <td className="py-2 px-2 text-center">
+                                                  <button onClick={()=>setCxcCobroModal({neId:ne.id,neDoc:ne.documento||ne.id,clientName:ne.clientName||cl.clientName,saldo:getSaldoNE(ne),total:parseNum(ne.total||ne.totalUSD||0),cobrado:getCobradoNEAtFecha(ne,null),vendedor:ne.vendedor||'',fecha:getTodayDate(),monto:String(getSaldoNE(ne)),metodo:'Transferencia',referencia:'',cuentaId:'',cuentaNombre:'',tipo:'Total'})}
+                                                    className="px-3 py-1 bg-green-600 text-white rounded-lg font-black hover:bg-green-700 transition-all">💰 Cobrar</button>
+                                                </td>
+                                              </tr>
+                                              {cobrosNE.map(cb=>(
+                                                <tr key={cb.id} className="bg-green-50 text-[8px]">
+                                                  <td colSpan={2} className="py-1 px-4 text-green-700 font-bold">✓ Abono · {cb.fecha}</td>
+                                                  <td className="py-1 px-2 text-center text-gray-400 font-mono">{cb.referencia}</td>
+                                                  <td></td><td className="py-1 px-2 text-right text-green-700 font-black" colSpan={2}>$${formatNum(parseNum(cb.monto))}</td>
+                                                  <td></td><td className="py-1 px-2 text-right text-green-700 font-black">${formatNum(parseNum(cb.monto))}</td>
+                                                  <td className="py-1 px-2 text-right text-gray-400">{formatNum(parseNum(cb.monto)*tasa)}</td>
+                                                  <td className="py-1 px-2 text-center text-gray-400">{cb.metodo}</td><td></td>
                                                 </tr>
-                                                {cobrosNE.map(cb=>(
-                                                  <tr key={cb.id} className="bg-green-50 text-[8px]">
-                                                    <td colSpan={3} className="py-1 px-4 text-green-700 font-bold">✓ {cb.fecha} · {cb.metodo}</td>
-                                                    <td colSpan={2} className="py-1 px-2 text-center text-gray-400 font-mono">{cb.referencia}</td>
-                                                    <td className="py-1 px-2 text-right text-green-700 font-black">${formatNum(parseNum(cb.monto))}</td>
-                                                    <td colSpan={3} className="py-1 px-2 text-gray-400">{cb.cuentaBancoNombre||cb.cuentaBancariaId||'—'}</td>
-                                                  </tr>
-                                                ))}
-                                              </React.Fragment>
-                                            );
-                                          })}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  </td>
-                                </tr>
+                                              ))}
+                                              {ncsNE.map(nc=>(
+                                                <tr key={nc.id} className="bg-blue-50 text-[8px]">
+                                                  <td colSpan={2} className="py-1 px-4 text-blue-700 font-bold">NC · {nc.fecha||'—'}</td>
+                                                  <td className="py-1 px-2 text-center text-blue-500">{nc.nroDocumento||'—'}</td>
+                                                  <td></td><td></td>
+                                                  <td className="py-1 px-2 text-right text-blue-700 font-black">-${formatNum(parseNum(nc.monto||nc.totalNeto||0))}</td>
+                                                  <td></td><td colSpan={4}></td>
+                                                </tr>
+                                              ))}
+                                            </React.Fragment>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </td></tr>
                               )}
                             </React.Fragment>
                           );
@@ -13911,6 +13973,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <td className="py-3 px-4 text-right text-orange-700">${formatNum(v31_60)}</td>
                           <td className="py-3 px-4 text-right text-red-700">${formatNum(vMas60)}</td>
                           <td className="py-3 px-4 text-right">${formatNum(totalCartera)}</td>
+                          <td className="py-3 px-4 text-right text-gray-400">{formatNum(totalCartera*tasaBCV)}</td>
                           <td colSpan={2}></td>
                         </tr>
                       </tbody>
@@ -13920,7 +13983,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               </div>
 
               {/* Historial cobros */}
-              {(cobrosCxc||[]).length>0 && (
+              {(cobrosCxc||[]).length>0&&(
                 <div className="bg-white border-2 border-gray-100 rounded-2xl overflow-hidden">
                   <div className="px-5 py-4 border-b-2 border-gray-100 flex justify-between items-center">
                     <h3 className="font-black text-sm uppercase text-gray-800 flex items-center gap-2"><CheckCircle size={16} className="text-green-600"/>Historial de cobros</h3>
@@ -13932,9 +13995,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <tr className="font-black text-gray-400 uppercase">
                           <th className="py-3 px-4 text-left">Fecha</th><th className="py-3 px-4 text-left">Documento</th>
                           <th className="py-3 px-4 text-left">Cliente</th><th className="py-3 px-4 text-left">Vendedor</th>
-                          <th className="py-3 px-4 text-left">Cuenta Banco</th>
-                          <th className="py-3 px-4 text-left">Método</th><th className="py-3 px-4 text-left">Referencia</th>
-                          <th className="py-3 px-4 text-right">Monto</th><th className="py-3 px-4 text-center">Tipo</th>
+                          <th className="py-3 px-4 text-left">Cuenta</th><th className="py-3 px-4 text-left">Método</th>
+                          <th className="py-3 px-4 text-left">Referencia</th>
+                          <th className="py-3 px-4 text-right">Monto USD</th><th className="py-3 px-4 text-center">Tipo</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -13946,7 +14009,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             <td className="py-2.5 px-4 text-gray-500">{cb.vendedor||'—'}</td>
                             <td className="py-2.5 px-4 text-gray-500 text-[9px]">{cb.cuentaBancoNombre||'—'}</td>
                             <td className="py-2.5 px-4 text-gray-500">{cb.metodo||'—'}</td>
-                            <td className="py-2.5 px-4 text-gray-500 font-mono">{cb.referencia||'—'}</td>
+                            <td className="py-2.5 px-4 text-gray-500 font-mono text-[9px]">{cb.referencia||'—'}</td>
                             <td className="py-2.5 px-4 text-right font-black text-green-700">${formatNum(parseNum(cb.monto))}</td>
                             <td className="py-2.5 px-4 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black ${cb.tipo==='Total'?'bg-green-100 text-green-700':'bg-blue-100 text-blue-700'}`}>{cb.tipo||'Total'}</span></td>
                           </tr>
