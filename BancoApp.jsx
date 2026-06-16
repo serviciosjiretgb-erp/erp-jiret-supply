@@ -35,6 +35,11 @@ const _bancoDB  = getFirestore(_bancoApp, "us-central");
 const getColRef = (n) => collection(_bancoDB, n);
 const getDocRef = (n, id) => doc(_bancoDB, n, String(id));
 
+// ── Colores de acento ──────────────────────────────────────────────────────
+const BLUE  = '#3b82f6';
+const GREEN = '#22c55e';
+const SLATE = '#64748b';
+
 // BANCO MODULE — Utility functions & shared components (prefixed with B_)
 // ============================================================================
 const bancoFmt   = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
