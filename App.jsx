@@ -13972,8 +13972,36 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const EMPRESA=`<p style="font-size:14pt;font-weight:bold;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p><h3 style="margin:2px 0 6px;font-size:12pt">${tipo==='aging'?'Análisis de Vencimiento':'Cuentas por Cobrar Detallado'} · Corte: ${corte}</h3><p style="color:#64748b;margin:0 0 10px;font-size:9pt">Total cartera: $${formatNum(totalCartera)} · ${nesAbiertas.length} documentos · Corte: ${corte}</p>`;
             let rows='';
             if(tipo==='aging'){
-              rows=clientesList.map((cl,i)=>`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold">${cl.clientName}</td><td class="left">${cl.clientRif}</td><td class="g">$${formatNum(cl.corriente)}</td><td class="a">$${formatNum(cl.v1_30)}</td><td class="o">$${formatNum(cl.v31_60)}</td><td class="r">$${formatNum(cl.vMas60)}</td><td style="font-weight:bold">$${formatNum(cl.total)}</td><td>${formatNum(cl.total*tasaBCV)}</td></tr>`).join('');
-              const html=XH+EMPRESA+`<table><thead><tr><th class="left">Cliente</th><th class="left">RIF</th><th>Corriente</th><th>1–30d</th><th>31–60d</th><th>+60d</th><th>Total USD</th><th>Total Bs.</th></tr></thead><tbody>${rows}</tbody><tfoot><tr class="tot"><td class="left">TOTALES</td><td></td><td>$${formatNum(corriente)}</td><td>$${formatNum(v1_30)}</td><td>$${formatNum(v31_60)}</td><td>$${formatNum(vMas60)}</td><td>$${formatNum(totalCartera)}</td><td>${formatNum(totalCartera*tasaBCV)}</td></tr></tfoot></table></body></html>`;
+              // Resumen por cliente
+              const sumRows=clientesList.map((cl,i)=>`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold">${cl.clientName}</td><td class="left">${cl.clientRif}</td><td class="g">$${formatNum(cl.corriente)}</td><td class="a">$${formatNum(cl.v1_30)}</td><td class="o">$${formatNum(cl.v31_60)}</td><td class="r">$${formatNum(cl.vMas60)}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(cl.total)}</td></tr>`).join('');
+              // Detalle por documento
+              let detRows='';
+              clientesList.forEach(cl=>{
+                detRows+=`<tr class="hdr"><td colspan="11" class="left" style="font-size:10pt;padding:6px">${cl.clientName} · ${cl.clientRif}</td></tr>`;
+                detRows+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">Documento</td><td class="left">Emisión</td><td class="left">Vence</td><td class="center" style="color:#7c3aed">Días Cred.</td><td class="center" style="color:#4338ca">Doc. Fiscal</td><td>Total USD</td><td>Cobrado</td><td>NC/ND</td><td>Ret.IVA</td><td>Saldo USD</td><td class="left">Bucket</td></tr>`;
+                cl.nes.forEach((ne,i)=>{
+                  const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
+                  const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const d=getAgingDays(ne,fechaRef);
+                  const bucket=d<=0?'Corriente':d<=30?'1-30d':d<=60?'31-60d':'+60d';
+                  const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id);
+                  const docFisc=invVinc?(invVinc.nroFiscal||invVinc.documento||'—'):'—';
+                  const diasCred=parseNum(ne.diasCredito||0);
+                  const retsNE=(retenciones||[]).filter(r=>r.facturaId===(invVinc?.id||'NONE')||r.neId===ne.id);
+                  const retComp=retsNE.map(r=>r.nroRetencion||'').filter(Boolean).join(' / ');
+                  detRows+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCred>0?diasCred+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFisc}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE)+(retComp?' ('+retComp+')':''):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td></tr>`;
+                  const cobrosNE=(cobrosCxc||[]).filter(cx=>cx.neId===ne.id&&(!fechaRef||(cx.fecha||'')<=fechaRef));
+                  cobrosNE.forEach(cb=>{detRows+=`<tr class="sub"><td class="left" style="padding-left:16px">✓ Abono · ${cb.fecha}</td><td class="left">${cb.referencia||'—'}</td><td class="left">${cb.metodo||'—'}</td><td colspan="4"></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}</td><td colspan="3"></td></tr>`;});
+                  retsNE.forEach(r=>{detRows+=`<tr class="ret"><td class="left" style="padding-left:16px">RET · ${r.fechaComprobante||r.fecha||'—'}</td><td class="left">${r.nroRetencion||'—'}</td><td colspan="7"></td><td class="a">$${formatNum(parseNum(r.montoRetenido||0))}</td><td></td></tr>`;});
+                });
+                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
+                detRows+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="9">SUBTOTAL</td><td style="color:#dc2626">$${formatNum(clTot)}</td><td></td></tr><tr><td colspan="11"></td></tr>`;
+              });
+              const html=XH+EMPRESA
+                +`<h4 style="font-size:11pt;margin:8px 0 4px;color:#0f172a">RESUMEN POR CLIENTE — ANÁLISIS DE VENCIMIENTO</h4>`
+                +`<table><thead><tr><th class="left">Cliente</th><th class="left">RIF</th><th>Corriente</th><th>1–30d</th><th>31–60d</th><th>+60d</th><th>Total USD</th></tr></thead><tbody>${sumRows}</tbody><tfoot><tr class="tot"><td class="left">TOTALES</td><td></td><td>$${formatNum(corriente)}</td><td>$${formatNum(v1_30)}</td><td>$${formatNum(v31_60)}</td><td>$${formatNum(vMas60)}</td><td>$${formatNum(totalCartera)}</td></tr></tfoot></table>`
+                +`<h4 style="font-size:11pt;margin:16px 0 4px;color:#0f172a">DETALLE POR DOCUMENTO</h4>`
+                +`<table>${detRows}<tr class="tot"><td class="left" colspan="9">TOTAL CARTERA · ${nesAbiertas.length} documentos</td><td>$${formatNum(totalCartera)}</td><td></td></tr></table>`
+                +`</body></html>`;
               const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Aging_${corte}.xls`;a.click();URL.revokeObjectURL(url);
             } else {
               let body='';
@@ -14014,13 +14042,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
                     <div className="flex justify-between items-start mb-2">
                       <div><p className="font-black text-sm">{cxcCobroModal.neDoc}</p><p className="text-[11px] text-gray-500">{cxcCobroModal.clientName}</p></div>
-                      <div className="text-right"><p className="text-[9px] text-gray-400 uppercase">Saldo pendiente</p><p className="text-2xl font-black text-red-600">${formatNum(cxcCobroModal.saldo)}</p><p className="text-[10px] text-gray-400">Bs. {formatNum(cxcCobroModal.saldo*tasaBCV)}</p></div>
+                      <div className="text-right"><p className="text-[9px] text-gray-400 uppercase">Saldo pendiente</p><p className="text-2xl font-black text-red-600">${formatNum(cxcCobroModal.saldo)}</p>{parseNum(cxcCobroModal.tasaCobro)>0&&<p className="text-[10px] text-gray-400">≈ Bs. {formatNum(cxcCobroModal.saldo*parseNum(cxcCobroModal.tasaCobro))}</p>}</div>
                     </div>
                     <div className="flex gap-4 text-[10px] text-gray-500">
                       <span>Total: <b className="text-gray-800">${formatNum(cxcCobroModal.total)}</b></span>
                       <span>Cobrado: <b className="text-green-700">${formatNum(cxcCobroModal.cobrado)}</b></span>
-                      <span>Tasa: <b className="text-blue-600">{formatNum(tasaBCV)} Bs/$</b></span>
+                      
                     </div>
+                     <div className="mt-2 flex items-center gap-2">
+                       <label className="text-[9px] font-black text-blue-600 uppercase whitespace-nowrap">Tasa Bs/$:</label>
+                       <input type="number" step="0.0001" min="1" value={cxcCobroModal.tasaCobro||''} onChange={e=>setCxcCobroModal(m=>({...m,tasaCobro:e.target.value}))} placeholder="Ej: 526.0264" className="flex-1 border-2 border-blue-200 rounded-lg px-2 py-1 text-[10px] font-black outline-none focus:border-blue-500"/>
+                       {parseNum(cxcCobroModal.monto)>0&&parseNum(cxcCobroModal.tasaCobro)>0&&<span className="text-[9px] text-blue-600 font-bold whitespace-nowrap">≈ Bs. {formatNum(parseNum(cxcCobroModal.monto)*parseNum(cxcCobroModal.tasaCobro))}</span>}
+                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
@@ -14089,7 +14122,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <button onClick={()=>exportarPDF('aging')} className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-700 border border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-100"><FileText size={12}/>Aging PDF</button>
                   <button onClick={()=>exportarExcel('aging')} className="flex items-center gap-1 px-3 py-2 bg-green-50 text-green-700 border border-green-200 rounded-xl text-[10px] font-black uppercase hover:bg-green-100"><Download size={12}/>Aging XLS</button>
                 </div>
-                {cxcModo==='fecha'&&<p className="text-[9px] text-orange-600 font-bold mt-2">★ Cartera al {cxcFechaRef} — Tasa BCV: {formatNum(tasaBCV)} Bs/$</p>}
+                {cxcModo==='fecha'&&<p className="text-[9px] text-orange-600 font-bold mt-2">★ Mostrando cartera al {cxcFechaRef}</p>}
               </div>
 
               {/* Métricas */}
@@ -14113,7 +14146,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               {/* Aging bars */}
               {totalCartera>0&&(
                 <div className="bg-white border-2 border-gray-100 rounded-2xl p-5">
-                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3">Distribución · Tasa BCV: {formatNum(tasaBCV)} Bs/$</p>
+                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3">Distribución por antigüedad</p>
                   {[{l:'Corriente',v:corriente,c:'#22c55e'},{l:'1–30d',v:v1_30,c:'#f59e0b'},{l:'31–60d',v:v31_60,c:'#f97316'},{l:'+60d',v:vMas60,c:'#dc2626'}].map((b,i)=>(
                     <div key={i} className="flex items-center gap-3 mb-2">
                       <span className="text-[9px] font-bold text-gray-500 w-16 flex-shrink-0">{b.l}</span>
@@ -14204,6 +14237,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           const ncsNE=(notasVentaCD||[]).filter(n=>(n.neOrigen===ne.id||n.neId===ne.id)&&(!fechaRef||(n.fecha||'')<=fechaRef));
                                           // Factura vinculada a esta NE
                                           const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id);
+                                          const invLinkedIds=invVinc?[invVinc.id]:[];
                                           const docFiscal=invVinc?(invVinc.nroFiscal||invVinc.nroControl||invVinc.documento||'—'):(ne.nroFiscal||'—');
                                           // Retenciones con comprobante
                                           const retsNE=(retenciones||[]).filter(r=>r.facturaId===(invVinc?.id||'NONE')||r.neId===ne.id||r.facturaId===ne.id);
@@ -14225,7 +14259,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                 <td className="py-2 px-2 text-right font-black text-red-600">${formatNum(saldo)}</td>
                                                 <td className="py-2 px-2 text-center text-gray-500">{ne.vendedor||'—'}</td>
                                                 <td className="py-2 px-2 text-center">
-                                                  <button onClick={()=>setCxcCobroModal({neId:ne.id,neDoc:ne.documento||ne.id,clientName:ne.clientName||cl.clientName,saldo:getSaldoNE(ne),total:parseNum(ne.total||ne.totalUSD||0),cobrado:getCobradoNEAtFecha(ne,null),vendedor:ne.vendedor||'',fecha:getTodayDate(),monto:String(getSaldoNE(ne)),metodo:'Transferencia',referencia:'',cuentaId:'',cuentaNombre:'',tipo:'Total'})}
+                                                  <button onClick={()=>setCxcCobroModal({neId:ne.id,neDoc:ne.documento||ne.id,clientName:ne.clientName||cl.clientName,saldo:getSaldoNE(ne),total:parseNum(ne.total||ne.totalUSD||0),cobrado:getCobradoNEAtFecha(ne,null),vendedor:ne.vendedor||'',fecha:getTodayDate(),monto:String(getSaldoNE(ne)),metodo:'Transferencia',referencia:'',cuentaId:'',cuentaNombre:'',tipo:'Total',tasaCobro:String(parseNum(ne.tasa||ne.tasaBCV||0)||'')})}
                                                     className="px-3 py-1 bg-green-600 text-white rounded-lg font-black hover:bg-green-700 transition-all">💰 Cobrar</button>
                                                 </td>
                                               </tr>
@@ -14248,6 +14282,31 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                   <td></td><td colSpan={4}></td>
                                                 </tr>
                                               ))}
+                                              {/* Detalle: Doc Fiscal + Retenciones con comprobante */}
+                                              {(()=>{
+                                                const retsThisNE=(retenciones||[]).filter(r=>r.facturaId===(invVinc?.id||'NONE')||r.neId===ne.id||(invLinkedIds||[]).includes(r.facturaId)||r.facturaId===ne.id);
+                                                if(!invVinc&&retsThisNE.length===0) return null;
+                                                return(
+                                                  <tr className="bg-indigo-50 text-[8px] border-b border-indigo-100">
+                                                    <td colSpan={12} className="py-1.5 px-4">
+                                                      <div className="flex flex-wrap gap-4">
+                                                        {invVinc&&<span className="text-indigo-700 font-bold">
+                                                          📋 NE: <b>{ne.documento||ne.id}</b> &nbsp;·&nbsp;
+                                                          Fac. Fiscal: <b className="text-orange-600">{invVinc.nroFiscal||invVinc.documento||'—'}</b>
+                                                          {invVinc.nroControl&&<> &nbsp;·&nbsp; Control: <b>{invVinc.nroControl}</b></>}
+                                                        </span>}
+                                                        {retsThisNE.map((r,ri)=>(
+                                                          <span key={ri} className="text-amber-700 font-bold">
+                                                            🧾 RET N°{ri+1}: Comprobante <b className="text-amber-800">{r.nroRetencion||r.nroComprobante||'—'}</b>
+                                                            {(r.fechaComprobante||r.fecha)&&<> &nbsp;·&nbsp; Fecha: <b>{r.fechaComprobante||r.fecha}</b></>}
+                                                            {parseNum(r.montoRetenido||0)>0&&<> &nbsp;·&nbsp; <b className="text-amber-600">Bs. {formatNum(parseNum(r.montoRetenido))}</b></>}
+                                                          </span>
+                                                        ))}
+                                                      </div>
+                                                    </td>
+                                                  </tr>
+                                                );
+                                              })()}
                                             </React.Fragment>
                                           );
                                         })}
