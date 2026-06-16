@@ -4413,25 +4413,29 @@ function App() {
       ? moduleCards.filter(c => portalTabList.includes(c.tab))
       : moduleCards;
 
-    // ── PLACEHOLDER FINANZAS ──────────────────────────────────────────────────
-    if ((selectedPortal === 'finanzas' || selectedPortal === 'contabilidad') && visibleCards.length === 0) {
-      const isContab = selectedPortal === 'contabilidad';
+    // ── PLACEHOLDER: portales sin tarjetas visibles ───────────────────────────
+    if (selectedPortal && visibleCards.length === 0) {
+      const labelMap = {produccion:'PRODUCCIÓN',administracion:'ADMINISTRACIÓN',finanzas:'FINANZAS',contabilidad:'CONTABILIDAD',configuracion_portal:'CONFIGURACIÓN'};
+      const colorMap = {produccion:'#f97316',administracion:'#3b82f6',finanzas:'#22c55e',contabilidad:'#06b6d4',configuracion_portal:'#64748b'};
+      const color = colorMap[selectedPortal]||'#6b7280';
+      const isInDev = ['finanzas','contabilidad'].includes(selectedPortal);
       return (
         <div className="flex flex-col items-center justify-center min-h-[70vh] gap-6 animate-in fade-in">
           <div className="text-center">
             <h1 className="text-2xl font-black uppercase tracking-widest text-gray-900 mb-2">
-              PANEL PRINCIPAL ERP — {isContab ? 'CONTABILIDAD' : 'FINANZAS'}
+              PANEL PRINCIPAL ERP — {labelMap[selectedPortal]||selectedPortal.toUpperCase()}
             </h1>
-            <div className={`w-16 h-1 mx-auto rounded-full mb-8 ${isContab ? 'bg-cyan-500' : 'bg-green-500'}`}/>
-            <div className={`w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-5 ${isContab ? 'bg-cyan-100' : 'bg-green-100'}`}>
-              <TrendingUp size={44} className={isContab ? 'text-cyan-600' : 'text-green-600'}/>
+            <div className="w-16 h-1 mx-auto rounded-full mb-8" style={{background:color}}/>
+            <div className="w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-5" style={{background:color+'22'}}>
+              <TrendingUp size={44} style={{color}}/>
             </div>
-            <h2 className="text-lg font-black text-gray-700 uppercase tracking-wide mb-2">Módulo en Desarrollo</h2>
+            <h2 className="text-lg font-black text-gray-700 uppercase tracking-wide mb-2">
+              {isInDev ? 'Módulo en Desarrollo' : 'Sin módulos asignados'}
+            </h2>
             <p className="text-sm text-gray-500 font-bold max-w-sm mx-auto">
-              {isContab
-                ? <>Los módulos de <span className="text-cyan-600">Balance General</span>, <span className="text-cyan-600">Mayor Analítico</span> y <span className="text-cyan-600">Activo Fijo</span> se integrarán aquí en la próxima etapa.</>
-                : <>Los módulos de <span className="text-green-600">Costos Operativos</span>, <span className="text-green-600">KPI Gerencial</span> y <span className="text-green-600">Reportes Financieros</span> se integrarán aquí en la próxima etapa.</>
-              }
+              {isInDev
+                ? 'Los módulos de este portal se integrarán en la próxima etapa.'
+                : 'Su usuario no tiene permisos para ningún módulo de este portal. Contacte al administrador.'}
             </p>
           </div>
         </div>
