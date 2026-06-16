@@ -1815,6 +1815,7 @@ function BancoApp({ fbUser, onBack }) {
   }, [fbUser]);
 
   const tasaActiva = tasas.find(t=>t.modulo==='Banco'||t.modulo==='Todos')?.tasaRef || tasas[0]?.tasaRef || 39.50;
+  const cuentasContables = contCuentas; // alias para compatibilidad con MovimientosView
 
   // ══════════════════════════════════════════════════════════════════════
   // 1. DASHBOARD
