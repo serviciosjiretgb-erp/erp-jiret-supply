@@ -3316,8 +3316,8 @@ function BancoApp({ fbUser, onBack }) {
         )}
 
         {/* ── MODAL NUEVO MOVIMIENTO — DISEÑO BICOLUMNA ── */}
-        <BModal open={modal} onClose={()=>{setModal(false);setForm(initF());}} title="" xwide noHeader>
-          <div className="flex -m-6 h-full overflow-hidden rounded-2xl">
+        <BModal open={modal} onClose={()=>{setModal(false);setForm(initF());}} title="" wide noHeader>
+          <div className="flex -m-6 rounded-2xl overflow-auto" style={{maxHeight:'85vh'}}>
 
             {/* ══ COLUMNA IZQUIERDA: FORMULARIO ══ */}
             <div className="flex-1 flex flex-col overflow-hidden">
