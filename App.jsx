@@ -24208,7 +24208,8 @@ ${resumenHtml}
            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
            {activeTab === 'configuracion' && renderConfiguracionModule()}
            {/* ── BANCO & TESORERÍA ── */}
-           {activeTab === 'banco' && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}/>}
+           {activeTab === 'banco' && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
+             ventasMode={!!(hasPerm('ventas') && !hasPerm('banco') && appUser?.role !== 'Master')}/>}
            {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && renderReportesFinancierosModule()}
            {activeTab === 'estado_resultado' && renderEstadoResultadoModule()}
            {activeTab === 'libro_diario' && renderLibroDiarioModule()}
