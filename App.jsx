@@ -4395,6 +4395,10 @@ function App() {
         stats: ()=>{ const tot=(invoices||[]).length+(invMovements||[]).length; return {s1:`${tot} eventos registrados`, s2:'Registro de actividad'};},
         chart:null
       },
+      { tab:'banco', icon:<Building2 size={20}/>, title:'Bancos & Tesorería', color:'#7c3aed',
+        stats: ()=>({ s1:'Cuentas, movimientos y conciliación', s2:'Módulo de Banco'}),
+        chart:null
+      },
     ].filter(Boolean);
 
     // ── FILTRO POR PORTAL ──────────────────────────────────────────────────────
@@ -4452,6 +4456,7 @@ function App() {
       costos:       {dark:false, borderColor:'#3b82f6', chartType:'lineSvgSmall', svgPts:'0,15 20,5 40,10 60,0 80,10 100,5'},
       configuracion:{dark:false, borderColor:'#6b7280', chartType:'configText'},
       auditoria:    {dark:false, borderColor:'#dc2626', chartType:'configText'},
+      banco:        {dark:true,  borderColor:'#7c3aed', chartType:'configText'},
     };
 
     return (
