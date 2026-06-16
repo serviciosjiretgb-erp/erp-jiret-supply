@@ -1478,7 +1478,7 @@ function App() {
     const unsubCuentasBanco = onSnapshot(getColRef('banco_cuentas'), (s) => setCuentasBanco(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
-    const unsubNotasVentaCD = onSnapshot(getColRef('notasVentaCreditoDebito'), (s)=>setNotasVentaCD(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    const unsubNotasVentaCD = onSnapshot(getColRef('notasVentaCreditoDebito'), (s)=>setNotasVentaCD(s.docs.map(d=>({_fsId:d.id, id:d.id, ...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubRetenciones = onSnapshot(getColRef('retencionesClientes'), (s) => setRetenciones(s.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubOpCosts = onSnapshot(getColRef('operatingCosts'), (s) => setOpCosts(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
@@ -13033,8 +13033,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           }
                                           await batch.commit();
                                         }
-                                        // 2. Eliminar la NC/ND
-                                        await deleteDoc(getDocRef('notasVentaCreditoDebito',n.id));
+                                        // 2. Eliminar la NC/ND usando el key real de Firestore
+                                        await deleteDoc(getDocRef('notasVentaCreditoDebito', n._fsId||n.id));
                                         setDialog({title:'✅ Eliminada',text:`${n.tipo} ${n.nroDocumento} eliminada.${n.tipo==='NC'&&(n.itemsRevertidos||[]).length>0?' Inventario revertido.':''}`,type:'alert'});
                                       }catch(e){setDialog({title:'Error al eliminar',text:e.message,type:'alert'});}
                                     }})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
@@ -13761,10 +13761,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const ncUSD=getNCUSDNEAtFecha(ne,fRef);
             return Math.max(0, parseNum(ne.total||ne.totalUSD||0)-cobrado-ncUSD);
           };
-          // NC en USD: monto en Bs → dividir por tasa de la factura afectada
-          const getNCUSDNEAtFecha=(ne,fRef)=>(notasVentaCD||[])
-            .filter(n=>n.tipo==='NC'&&(n.neId===ne.id||n.neOrigen===ne.id)&&(!fRef||(n.fecha||'')<=fRef))
-            .reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCV;return s+(t>0?parseNum(n.monto||0)/t:0);},0);
+          // NC/ND en USD: incluye NCs fiscales (via factura vinculada) y no fiscales (via neId/neOrigen)
+          const getNCUSDNEAtFecha=(ne,fRef)=>{
+            const invLinkedIds=(invoices||[]).filter(inv=>inv.neOrigen===ne.id).map(inv=>inv.id);
+            return (notasVentaCD||[])
+              .filter(n=>(n.neId===ne.id||n.neOrigen===ne.id||invLinkedIds.includes(n.facturaId))&&(!fRef||(n.fecha||'')<=fRef))
+              .reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCV;return s+(t>0?parseNum(n.monto||0)/t:0);},0);
+          };
           // Retenciones en USD: montoRetenido Bs / tasa factura vinculada
           const getRetUSDNE=(ne)=>{
             const invLinked=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.id===ne.facturaVinculada);
@@ -13877,7 +13880,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               body=clientesList.map(cl=>{
                 const d=getAgingDays(cl.nes[0]||{},fechaRef);
                 const estado=cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
-                const cols9='grid-template-columns:1.5fr 1fr 1fr .8fr .8fr .8fr .8fr .8fr .8fr';
+                const cols9='grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr';
                 let clTotal=0;
                 const neRows=cl.nes.map(ne=>{
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);
@@ -13898,16 +13901,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     ...ncsNE.map(nc=>`<div class="nc" style="${cols9}"><span style="padding-left:8px">NC · ${nc.fecha||'—'}</span><span style="font-size:9px">${nc.nroDocumento||nc.documento||'—'}</span><span></span><span></span><span></span><span style="color:#3b82f6;font-weight:bold">-$${formatNum(parseNum(nc.monto||nc.totalNeto||0))}</span><span style="color:#64748b">${formatNum(parseNum(nc.monto||nc.totalNeto||0)*tasa)}</span><span></span><span></span></div>`),
                     ...retsNE.map(r=>`<div class="ret" style="${cols9}"><span style="padding-left:8px">RET · ${r.fechaComprobante||r.fecha||'—'}</span><span style="font-size:9px">${r.nroRetencion||'—'}</span><span></span><span></span><span></span><span></span><span></span><span style="color:#b45309;font-weight:bold">$${formatNum(parseNum(r.montoRetenido||0))}</span><span></span></div>`),
                   ].join('');
+                  const invVincPDF=(invoices||[]).find(inv=>inv.neOrigen===ne.id);
+                  const docFiscalPDF=invVincPDF?(invVincPDF.nroFiscal||invVincPDF.documento||'—'):'—';
+                  const diasCredPDF=parseNum(ne.diasCredito||0);
+                  const invLinkedIdsPDF=(invoices||[]).filter(inv=>inv.neOrigen===ne.id).map(inv=>inv.id);
+                  const retsNEPDF=(retenciones||[]).filter(r=>r.facturaId===(invVincPDF?.id||'NONE')||r.neId===ne.id||invLinkedIdsPDF.includes(r.facturaId));
+                  const retCompPDF=retsNEPDF.map(r=>r.nroRetencion||r.nroComprobante||'').filter(Boolean).join(' · ')||'';
                   return `<div class="ne-row" style="${cols9}">
                     <span style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</span>
                     <span style="font-size:9px;color:#64748b">${ne.fecha||'—'}</span>
                     <span style="font-size:9px;color:#64748b">${getVence(ne)}</span>
+                    <span style="text-align:center;color:#7c3aed">${diasCredPDF>0?diasCredPDF+'d':'—'}</span>
+                    <span style="text-align:center;color:#4338ca;font-size:8px">${docFiscalPDF}</span>
                     <span style="text-align:right">$${formatNum(totalUSD)}</span>
                     <span style="text-align:right;color:#16a34a">$${formatNum(cobradoNE)}</span>
                     <span style="text-align:right;color:#3b82f6">${ncNE>0?'-$'+formatNum(ncNE):'—'}</span>
+                    <span style="text-align:right;color:#b45309">${retNE>0?'$'+formatNum(retNE)+(retCompPDF?' ('+retCompPDF+')':''):'—'}</span>
                     <span style="text-align:right;font-weight:bold;color:${bc2}">$${formatNum(saldo)}</span>
-                    <span style="text-align:right;color:#64748b">${formatNum(saldo*tasa)}</span>
-                    <span style="text-align:right;font-size:9px;color:${bc2}">${d2<=0?`${Math.abs(d2)}d`:d2+'d +'}</span>
                   </div>${detalles}`;
                 }).join('');
                 return `<div style="margin-bottom:16px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
@@ -13916,36 +13926,36 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span style="font-size:9px;color:#94a3b8;padding-right:16px">${cl.clientRif}</span>
                     <span style="color:#fbbf24">${estado}</span>
                   </div>
-                  <div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .8fr .8fr .8fr .8fr .8fr .8fr;background:#f1f5f9;padding:4px 16px;font-size:9px;font-weight:bold;text-transform:uppercase;color:#64748b">
+                  <div style="display:grid;grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr;background:#f1f5f9;padding:4px 16px;font-size:9px;font-weight:bold;text-transform:uppercase;color:#64748b">
                     <span>Documento</span><span>Emisión</span><span>Vence</span>
+                    <span style="text-align:center;color:#7c3aed">Días Cred.</span>
+                    <span style="text-align:center;color:#4338ca">Doc. Fiscal</span>
                     <span style="text-align:right">Total USD</span><span style="text-align:right">Cobrado</span>
-                    <span style="text-align:right">NC</span><span style="text-align:right">Saldo USD</span>
-                    <span style="text-align:right">Saldo Bs.</span><span style="text-align:right">Días</span>
+                    <span style="text-align:right;color:#3b82f6">NC/ND</span>
+                    <span style="text-align:right;color:#b45309">Ret.IVA</span>
+                    <span style="text-align:right">Saldo USD</span>
                   </div>
                   ${neRows}
-                  <div class="cl-tot" style="grid-template-columns:1.5fr 1fr 1fr .8fr .8fr .8fr .8fr .8fr .8fr">
-                    <span>Subtotal ${cl.nes.length} doc${cl.nes.length>1?'s':''}</span><span></span><span></span>
+                  <div class="cl-tot" style="grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr">
+                    <span>Subtotal ${cl.nes.length} doc${cl.nes.length>1?'s':''}</span><span></span><span></span><span></span><span></span>
                     <span style="text-align:right">$${formatNum(cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</span>
                     <span style="text-align:right;color:#16a34a">$${formatNum(cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0))}</span>
                     <span style="text-align:right;color:#3b82f6">$${formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0))}</span>
-                    <span style="text-align:right;font-weight:bold;color:#dc2626">$${formatNum(clTotal)}</span>
-                    <span style="text-align:right;color:#64748b">${formatNum(clTotal*tasaBCV)}</span>
                     <span></span>
+                    <span style="text-align:right;font-weight:bold;color:#dc2626">$${formatNum(clTotal)}</span>
                   </div>
                 </div>`;
               }).join('');
-              body+=`<div class="gran-tot" style="grid-template-columns:1fr 1fr 1fr 1fr;margin-top:8px;border-radius:6px">
-                <span>TOTAL CARTERA · ${nesAbiertas.length} documentos</span>
-                <span style="text-align:right">USD: $${formatNum(gTotUSD)}</span>
-                <span style="text-align:right">Bs.: ${formatNum(gTotUSD*tasaBCV)}</span>
-                <span style="text-align:right;color:#fbbf24">Tasa: ${formatNum(tasaBCV)}</span>
+              body+=`<div class="gran-tot" style="grid-template-columns:1fr 1fr;margin-top:8px;border-radius:6px">
+                <span>TOTAL CARTERA · ${nesAbiertas.length} documentos · Corte: ${corte}</span>
+                <span style="text-align:right">TOTAL USD: $${formatNum(gTotUSD)}</span>
               </div>`;
             }
             const html=`<html><head><meta charset="utf-8"><title>${titulo}</title><style>${ESTILOS}</style></head><body>
               <div style="background:#0f172a;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
                 <div><p style="color:#f97316;font-size:18px;font-weight:900;margin:0">Supply G&B</p><p style="color:#94a3b8;font-size:10px;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p></div>
                 <div style="text-align:right"><p style="color:#fff;font-weight:900;font-size:13px;margin:0;text-transform:uppercase">${titulo}</p>
-                  <p style="color:#94a3b8;font-size:9px;margin:0">Corte: ${corte} · Tasa BCV: ${formatNum(tasaBCV)} Bs/$</p></div>
+                  <p style="color:#94a3b8;font-size:9px;margin:0">Corte: ${corte} · ${nesAbiertas.length} documentos · Total: $${formatNum(totalCartera)}</p></div>
               </div>
               <div style="padding:12px 0">${body}</div>
               <div style="text-align:center;font-size:8px;color:#94a3b8;margin-top:12px;border-top:1px solid #e2e8f0;padding-top:8px">
@@ -13959,7 +13969,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const exportarExcel=(tipo)=>{
             const corte=fechaRef||getTodayDate();
             const XH=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:10pt}table{border-collapse:collapse;width:100%}th{background:#0f172a;color:#f97316;font-weight:bold;padding:5px 7px;border:1px solid #334155;font-size:9pt;text-align:right}th.left{text-align:left}td{padding:4px 7px;border:1px solid #cbd5e1;font-size:9pt;text-align:right}.left{text-align:left}.hdr{background:#1e293b;color:#fff;font-weight:bold;font-size:9pt}.tot{background:#0f172a;color:#f97316;font-weight:bold}.g{color:#16a34a}.r{color:#dc2626}.a{color:#b45309}.o{color:#c2410c}.b{color:#3b82f6}.alt{background:#f8fafc}.sub{background:#f0fdf4;font-size:9pt}.nc{background:#eff6ff;font-size:9pt}.ret{background:#fef3c7;font-size:9pt}</style></head><body>`;
-            const EMPRESA=`<p style="font-size:14pt;font-weight:bold;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p><h3 style="margin:2px 0 6px;font-size:12pt">${tipo==='aging'?'Análisis de Vencimiento':'Cuentas por Cobrar Detallado'} · Corte: ${corte}</h3><p style="color:#64748b;margin:0 0 10px;font-size:9pt">Tasa BCV: ${formatNum(tasaBCV)} Bs/$ · Total: $${formatNum(totalCartera)} · ${nesAbiertas.length} documentos</p>`;
+            const EMPRESA=`<p style="font-size:14pt;font-weight:bold;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p><h3 style="margin:2px 0 6px;font-size:12pt">${tipo==='aging'?'Análisis de Vencimiento':'Cuentas por Cobrar Detallado'} · Corte: ${corte}</h3><p style="color:#64748b;margin:0 0 10px;font-size:9pt">Total cartera: $${formatNum(totalCartera)} · ${nesAbiertas.length} documentos · Corte: ${corte}</p>`;
             let rows='';
             if(tipo==='aging'){
               rows=clientesList.map((cl,i)=>`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold">${cl.clientName}</td><td class="left">${cl.clientRif}</td><td class="g">$${formatNum(cl.corriente)}</td><td class="a">$${formatNum(cl.v1_30)}</td><td class="o">$${formatNum(cl.v31_60)}</td><td class="r">$${formatNum(cl.vMas60)}</td><td style="font-weight:bold">$${formatNum(cl.total)}</td><td>${formatNum(cl.total*tasaBCV)}</td></tr>`).join('');
@@ -13969,21 +13979,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               let body='';
               clientesList.forEach(cl=>{
                 body+=`<tr class="hdr"><td colspan="10" class="left" style="font-size:10pt;padding:6px 7px">${cl.clientName} · ${cl.clientRif}</td></tr>`;
-                body+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">Documento</td><td class="left">Emisión</td><td class="left">Vence</td><td>Total USD</td><td>Cobrado</td><td>NC Aplicada</td><td>Ret. IVA</td><td>Saldo USD</td><td>Saldo Bs.</td><td class="left">Bucket</td></tr>`;
+                body+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">Documento</td><td class="left">Emisión</td><td class="left">Vence</td><td class="center" style="color:#7c3aed">Días Cred.</td><td class="center" style="color:#4338ca">Doc. Fiscal</td><td>Total USD</td><td>Cobrado</td><td>NC/ND</td><td>Ret. IVA</td><td>Saldo USD</td><td class="left">Bucket</td></tr>`;
                 cl.nes.forEach((ne,i)=>{
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
                   const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const tasa=getTasa(ne);const d=getAgingDays(ne,fechaRef);
                   const bucket=d<=0?'Corriente':d<=30?'1-30d':d<=60?'31-60d':'+60d';
-                  body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td>${formatNum(saldo*tasa)}</td><td class="left">${bucket}</td></tr>`;
+                  const invVincXLS=(invoices||[]).find(inv=>inv.neOrigen===ne.id);
+                  const docFiscalXLS=invVincXLS?(invVincXLS.nroFiscal||invVincXLS.documento||'—'):'—';
+                  const diasCredXLS=parseNum(ne.diasCredito||0);
+                  body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCredXLS>0?diasCredXLS+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFiscalXLS}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td></tr>`;
                   const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
                   cobrosNE.forEach(cb=>{body+=`<tr class="sub"><td class="left" style="padding-left:20px">✓ Abono</td><td class="left">${cb.fecha||'—'}</td><td class="left">${cb.referencia||'—'}</td><td></td><td class="left">${cb.metodo||'—'}</td><td></td><td></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}</td><td>${formatNum(parseNum(cb.monto)*getTasa(ne))}</td><td></td></tr>`;});
                   const ncsNE=(notasVentaCD||[]).filter(n=>n.neOrigen===ne.id&&n.tipo==='NC'&&(!fechaRef||(n.fecha||'')<=fechaRef));
                   ncsNE.forEach(nc=>{body+=`<tr class="nc"><td class="left" style="padding-left:20px">NC</td><td class="left">${nc.fecha||'—'}</td><td class="left">${nc.nroDocumento||'—'}</td><td></td><td></td><td class="b">-$${formatNum(parseNum(nc.monto||nc.totalNeto||0))}</td><td></td><td></td><td></td><td></td></tr>`;});
                 });
                 const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
-                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="7">SUBTOTAL ${cl.clientName}</td><td style="color:#dc2626">$${formatNum(clTot)}</td><td>${formatNum(clTot*tasaBCV)}</td><td></td></tr><tr><td colspan="10"></td></tr>`;
+                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="9">SUBTOTAL ${cl.clientName}</td><td style="color:#dc2626">$${formatNum(clTot)}</td><td></td></tr><tr><td colspan="11"></td></tr>`;
               });
-              body+=`<tr class="tot"><td class="left" colspan="7">TOTAL CARTERA</td><td>$${formatNum(totalCartera)}</td><td>${formatNum(totalCartera*tasaBCV)}</td><td></td></tr>`;
+              body+=`<tr class="tot"><td class="left" colspan="9">TOTAL CARTERA · Corte: ${corte}</td><td>$${formatNum(totalCartera)}</td><td></td></tr>`;
               const html=XH+EMPRESA+`<table>${body}</table></body></html>`;
               const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Detallado_${corte}.xls`;a.click();URL.revokeObjectURL(url);
             }
