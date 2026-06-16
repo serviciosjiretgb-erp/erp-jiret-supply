@@ -1779,7 +1779,7 @@ const DENOM_USD = [100,50,20,10,5,2,1];
 
 // --- FIN CONSTANTES ---
 
-function BancoApp({ fbUser, onBack }) {
+function BancoApp({ fbUser, onBack, ventasMode = false }) {
   // Uses ERP Firebase: getColRef/getDocRef/db
   const [sec, setSec] = useState('dashboard');
   const [cuentas,    setCuentas]  = useState([]);
@@ -2425,7 +2425,7 @@ function BancoApp({ fbUser, onBack }) {
     );
   };
 
-  const MovimientosView = () => {
+  const MovimientosView = ({ ventasOnlyIngreso = false }) => {
     const [monedaVista, setMonedaVista] = useState('USD');
     const [searchTercero, setSearchTercero] = useState('');
     const [searchBanco,   setSearchBanco]   = useState('');
@@ -2434,7 +2434,7 @@ function BancoApp({ fbUser, onBack }) {
     const [filtHasta,setFiltH]   = useState(getTodayDate());
     const [detalleId,setDetalle] = useState(null);
     const [editId,   setEditId]  = useState(null);
-    const [modal,    setModal]   = useState(false);
+    const [modal,    setModal]   = useState(ventasOnlyIngreso); // auto-open for ventas
     const [busqCtas, setBusqCtas]= useState({});
     const [busy,     setBusy]    = useState(false);
     const [comprobante, setComprobante] = useState(null); // modal de comprobante imprimible
@@ -4600,6 +4600,30 @@ function BancoApp({ fbUser, onBack }) {
   };
   const allTabs = navGroups.flatMap(g => g.items.map(i => ({...i, group:g.group, color:g.color})));
   const curNav  = allTabs.find(n => n.id === sec);
+
+  // ── MODO VENTAS: solo registro de ingresos bancarios ─────────────────────
+  if (ventasMode) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center"><Building2 size={16} className="text-white"/></div>
+            <div>
+              <h2 className="text-sm font-black uppercase text-gray-800">Registro de Cobro / Ingreso Bancario</h2>
+              <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest">Módulo Bancos — Vista Ventas</p>
+            </div>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-full px-3 py-1 flex items-center gap-1.5">
+            <DollarSign size={11} className="text-blue-500"/>
+            <span className="text-[9px] font-black text-blue-700 font-mono">BCV: {tasaActiva} Bs/$</span>
+          </div>
+        </div>
+        <div className="p-6 max-w-3xl mx-auto">
+          <MovimientosView ventasOnlyIngreso={true}/>
+        </div>
+      </div>
+    );
+  }
   const curGroup = navGroups.find(g => g.items.find(i => i.id === sec));
 
   return (
