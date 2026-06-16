@@ -12153,9 +12153,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const totalUsd=baseUsd+ivaUsd;
             // NC resta (negativo), ND suma (positivo)
             const signo=nc.tipo==='NC'?-1:1;
+            // Costo proporcional de la factura/NE afectada
+            const costoAfect=(()=>{
+              const src=inv||ne;
+              if(!src) return 0;
+              const items=(src.itemsFacturados||src.items||[]);
+              const srcBase=parseNum(src.montoBase||0)||items.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||parseNum(src.total||src.totalUSD||0);
+              const srcCosto=items.reduce((s,it)=>s+parseNum(it.costoTotal||0)||(parseNum(it.costoUnit||0)*parseNum(it.cantidad||0)),0)||parseNum(src.costoTotal||src.costo||0);
+              if(srcBase>0&&srcCosto>0) return baseUsd*(srcCosto/srcBase);
+              return 0;
+            })();
+            const costoNC=costoAfect*signo;
+            const utilidadNC=(baseUsd*signo)-costoNC;
+            const pctUtilNC=baseUsd>0?Math.abs(utilidadNC/baseUsd)*100:0;
             rows.push({fecha,documento:nc.nroDocumento||nc.tipo,descripcion:cliente,
               montoBruto:baseUsd*signo,iva:ivaUsd*signo,tNeto:totalUsd*signo,
-              costo:0,utilidad:baseUsd*signo,pctUtil:0,
+              costo:costoNC,utilidad:utilidadNC,pctUtil:pctUtilNC,
               tipo:nc.tipo,isNota:true,tasaNC});
           });
           rows.sort((a,b)=>a.fecha.localeCompare(b.fecha));
@@ -12833,26 +12846,56 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         {ventasView === 'notas_cd' && (() => {
           // ── Guardar NC/ND ─────────────────────────────────────────────────────
           const handleSaveVentaNC = async () => {
-            if(!ventaNCForm.monto||!ventaNCForm.fecha||!ventaNCForm.nroDocumento)
-              return setDialog({title:'Datos incompletos',text:'Completa N° documento, fecha y monto.',type:'alert'});
+            if(!ventaNCForm.fecha||!ventaNCForm.nroDocumento)
+              return setDialog({title:'Datos incompletos',text:'Completa N° documento y fecha.',type:'alert'});
             if(ventaNCForm.naturaleza==='FISCAL'&&!ventaNCForm.facturaId)
               return setDialog({title:'Falta factura',text:'Selecciona la factura a la que aplica.',type:'alert'});
             if(ventaNCForm.naturaleza==='NO_FISCAL'&&!ventaNCForm.neId)
               return setDialog({title:'Falta NE',text:'Selecciona la Nota de Entrega.',type:'alert'});
             try {
               const id=`VNC-${Date.now()}`;
-              // Obtener tasa de la factura afectada para conversión correcta a USD
               const facAfect=(invoices||[]).find(i=>i.id===ventaNCForm.facturaId);
               const neAfect=(notasEntrega||[]).find(e=>e.id===ventaNCForm.neId);
               const tasaAfect=parseNum(facAfect?.tasa||neAfect?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-              await setDoc(getDocRef('notasVentaCreditoDebito',id),{
-                id,...ventaNCForm,monto:parseNum(ventaNCForm.monto),
-                tasaFactura:tasaAfect,
+              const docSel=facAfect||neAfect;
+              const modoAnulacion=ventaNCForm.modoAnulacion||'total';
+              const itemsNCForm=ventaNCForm.itemsNC||(docSel?.itemsFacturados||[]).map(it=>({...it,seleccionado:true,cantNC:parseNum(it.cantidad||0)}));
+              const itemsARevertir=modoAnulacion==='total'
+                ?itemsNCForm
+                :itemsNCForm.filter(it=>it.seleccionado&&parseNum(it.cantNC||0)>0);
+              const baseUSDCalc=itemsARevertir.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantNC||it.cantidad||0),0);
+              const montoFinal=ventaNCForm.monto?parseNum(ventaNCForm.monto):parseFloat((baseUSDCalc*tasaAfect).toFixed(2));
+              const batch=writeBatch(db);
+              // 1. Guardar NC
+              batch.set(getDocRef('notasVentaCreditoDebito',id),{
+                id,...ventaNCForm,monto:montoFinal,tasaFactura:tasaAfect,modoAnulacion,
+                itemsRevertidos:itemsARevertir.map(it=>({fgId:it.fgId||'',invCode:it.invCode||'',desc:it.desc||'',cantidad:parseNum(it.cantNC||it.cantidad||0),costoUnit:parseNum(it.costoUnit||0)})),
                 timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
               });
-              setShowVentaNCModal(false);setVentaNCBusq('');
-              setVentaNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:''});
-              setDialog({title:'✅ Guardada',text:`${ventaNCForm.tipo} ${ventaNCForm.nroDocumento} registrada.`,type:'alert'});
+              // 2. Reversar inventario (solo NC)
+              if(ventaNCForm.tipo==='NC'){
+                for(const it of itemsARevertir){
+                  const cantRev=parseNum(it.cantNC||it.cantidad||0);
+                  if(cantRev<=0) continue;
+                  const cleanId=(it.invCode||it.fgId||'').split('___')[0].trim();
+                  if(!cleanId) continue;
+                  const invDocs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===cleanId);
+                  if(invDocs.length>0){
+                    batch.update(getDocRef('inventory',invDocs[0].id),{stock:parseNum(invDocs[0].stock||0)+cantRev,timestamp:Date.now()});
+                  }
+                  const movId=`MOV-NC-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,5)}`;
+                  batch.set(getDocRef('inventoryMovements',movId),{
+                    id:movId,date:ventaNCForm.fecha,timestamp:Date.now(),
+                    itemId:cleanId,itemName:it.desc||cleanId,type:'ENTRADA DEVOLUCIÓN NC',
+                    qty:cantRev,cost:parseNum(it.costoUnit||0),totalValue:cantRev*parseNum(it.costoUnit||0),
+                    reference:ventaNCForm.nroDocumento,notes:`NC ${ventaNCForm.nroDocumento} · ${docSel?.clientName||'—'}`,user:appUser?.name||'Sistema'
+                  });
+                }
+              }
+              await batch.commit();
+              setShowVentaNCModal(false); setVentaNCBusq('');
+              setVentaNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',itemsNC:undefined,modoAnulacion:'total',_prevDocId:''});
+              setDialog({title:'✅ Guardada',text:`${ventaNCForm.tipo} ${ventaNCForm.nroDocumento} registrada.${ventaNCForm.tipo==='NC'&&itemsARevertir.length>0?' '+itemsARevertir.length+' producto(s) reversados al inventario.':''}`,type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           };
 
@@ -12991,116 +13034,257 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 ));
                 const selInv=esFiscal?(invoices||[]).find(i=>i.id===ventaNCForm.facturaId):null;
                 const selNE=!esFiscal?(notasEntrega||[]).find(ne=>ne.id===ventaNCForm.neId):null;
+                const docSel=selInv||selNE;
+                const tasaNC=parseNum(docSel?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+                // Items del documento seleccionado
+                const itemsDoc=(docSel?.itemsFacturados||[]);
+                // Estado de selección parcial / total (guardado en ventaNCForm.itemsNC)
+                const itemsNC=ventaNCForm.itemsNC||itemsDoc.map(it=>({...it,seleccionado:true,cantNC:parseNum(it.cantidad||0)}));
+                const setItemsNC=(upd)=>setVentaNCForm(f=>({...f,itemsNC:upd}));
+                const modoAnulacion=ventaNCForm.modoAnulacion||'total';
+                const setModo=(m)=>setVentaNCForm(f=>({...f,modoAnulacion:m,itemsNC:itemsDoc.map(it=>({...it,seleccionado:true,cantNC:parseNum(it.cantidad||0)}))}));
+                // Cuando cambia el doc seleccionado → resetear items
+                const prevDocId=ventaNCForm._prevDocId||'';
+                const curDocId=docSel?.id||'';
+                if(curDocId&&curDocId!==prevDocId){
+                  setVentaNCForm(f=>({...f,_prevDocId:curDocId,
+                    itemsNC:itemsDoc.map(it=>({...it,seleccionado:true,cantNC:parseNum(it.cantidad||0)})),
+                    modoAnulacion:'total'
+                  }));
+                }
+                // Calcular totales de ítems seleccionados
+                const itemsActivos=modoAnulacion==='total'
+                  ?itemsNC
+                  :itemsNC.filter(it=>it.seleccionado);
+                const baseUSDCalc=itemsActivos.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantNC||it.cantidad||0),0);
+                const baseImpBs=ventaNCForm.monto?parseNum(ventaNCForm.monto):parseFloat((baseUSDCalc*tasaNC).toFixed(2));
+                const ivaBs16=parseFloat((baseImpBs*0.16).toFixed(2));
+                const totalBs=baseImpBs+ivaBs16;
+                const totalUsd=tasaNC>0?totalBs/tasaNC:0;
                 return(
-                  <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl p-6 space-y-4 max-h-[92vh] overflow-y-auto">
-                      <div className="flex items-center justify-between">
-                        <h3 className="font-black text-lg">📄 Nueva Nota de Crédito / Débito</h3>
-                        <button onClick={()=>setShowVentaNCModal(false)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
-                      </div>
-
-                      {/* Tipo */}
-                      <div>
-                        <label className="text-[10px] font-black text-gray-600 uppercase block mb-2">Tipo de Nota</label>
-                        <div className="flex gap-2">
-                          {['NC','ND'].map(t=>(
-                            <button key={t} onClick={()=>setVentaNCForm(f=>({...f,tipo:t}))} className={`flex-1 py-3 rounded-xl font-black text-sm ${ventaNCForm.tipo===t?(t==='NC'?'bg-red-500 text-white':'bg-blue-600 text-white'):'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                              {t==='NC'?'📉 NOTA DE CRÉDITO':'📈 NOTA DE DÉBITO'}
-                            </button>
-                          ))}
-                        </div>
-                        <p className="text-[9px] text-gray-500 mt-1">{ventaNCForm.tipo==='NC'?'NC: resta del Libro de Ventas (valor negativo)':'ND: suma al Libro de Ventas (valor positivo)'}</p>
-                      </div>
-
-                      {/* Naturaleza */}
-                      <div>
-                        <label className="text-[10px] font-black text-gray-600 uppercase block mb-2">Naturaleza</label>
-                        <div className="flex gap-2">
-                          {['FISCAL','NO_FISCAL'].map(n=>(
-                            <button key={n} onClick={()=>setVentaNCForm(f=>({...f,naturaleza:n,facturaId:'',neId:''}))} className={`flex-1 py-2.5 rounded-xl font-black text-xs ${ventaNCForm.naturaleza===n?'bg-purple-600 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                              {n==='FISCAL'?'🏛 FISCAL (Factura con N° Fiscal)':'📦 NO FISCAL (Nota de Entrega)'}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Buscador de Factura / NE */}
-                      <div>
-                        <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">{esFiscal?'Buscar y Seleccionar Factura':'Buscar y Seleccionar Nota de Entrega'}</label>
-                        <input value={ventaNCBusq} onChange={e=>setVentaNCBusq(e.target.value)} placeholder={esFiscal?'N° fiscal, cliente...':'N° NE, cliente...'} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500 mb-2"/>
-                        {esFiscal
-                          ? <select value={ventaNCForm.facturaId} onChange={e=>setVentaNCForm(f=>({...f,facturaId:e.target.value}))} size={5} className="w-full border-2 border-orange-200 rounded-xl px-2 py-1 text-xs font-bold outline-none bg-white">
-                              <option value="">— Seleccionar factura —</option>
-                              {factsFilt.slice(0,30).map(inv=>(<option key={inv.id} value={inv.id}>{inv.nroFiscal||inv.documento} · {inv.clientName} · {inv.fecha} · ${formatNum(parseNum(inv.total||0))}</option>))}
-                            </select>
-                          : <select value={ventaNCForm.neId} onChange={e=>setVentaNCForm(f=>({...f,neId:e.target.value}))} size={5} className="w-full border-2 border-orange-200 rounded-xl px-2 py-1 text-xs font-bold outline-none bg-white">
-                              <option value="">— Seleccionar NE —</option>
-                              {nesFilt.slice(0,30).map(ne=>(<option key={ne.id} value={ne.id}>{ne.id} · {ne.clientName} · {ne.fecha} · ${formatNum(parseNum(ne.total||0))}</option>))}
-                            </select>
-                        }
-                        {(selInv||selNE)&&(
-                          <div className="mt-2 bg-orange-50 border border-orange-200 rounded-xl p-3 text-[10px] space-y-1">
-                            <div><span className="font-black">Cliente:</span> {selInv?.clientName||selNE?.clientName}</div>
-                            <div><span className="font-black">RIF:</span> {selInv?.clientRif||selNE?.clientRif}
-                              {selInv&&<> &nbsp;|&nbsp; <span className="font-black">N° Fiscal:</span> {selInv.nroFiscal||'—'} &nbsp;|&nbsp; <span className="font-black">Control:</span> {selInv.nroControl||'—'}</>}
-                            </div>
-                            <div><span className="font-black">Monto original:</span> ${formatNum(parseNum(selInv?.total||selNE?.total||0))}</div>
+                  <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden" style={{maxHeight:'94vh'}}>
+                      {/* Header */}
+                      <div className="flex items-center justify-between px-6 py-3 border-b-2 border-gray-100" style={{background:'#0f172a'}}>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xl">📄</span>
+                          <div>
+                            <h3 className="font-black text-white text-sm uppercase tracking-wide">Nueva Nota de Crédito / Débito</h3>
+                            <p className="text-[9px] text-gray-400">{ventaNCForm.tipo==='NC'?'NC reversa inventario · resta del Libro de Ventas':'ND suma al Libro de Ventas'}</p>
                           </div>
-                        )}
+                        </div>
+                        <button onClick={()=>setShowVentaNCModal(false)} className="text-gray-400 hover:text-red-400 font-black text-lg w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-800">✕</button>
                       </div>
+                      {/* Body: 3 columns */}
+                      <div style={{display:'flex',maxHeight:'calc(94vh - 64px)',overflow:'hidden'}}>
 
-                      {/* Datos del documento */}
-                      <div className="grid grid-cols-2 gap-3">
-                        <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">N° Documento</label>
-                          <input value={ventaNCForm.nroDocumento} onChange={e=>setVentaNCForm(f=>({...f,nroDocumento:e.target.value.toUpperCase()}))} placeholder="NC-00001" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                        <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Fecha</label>
-                          <input type="date" value={ventaNCForm.fecha} onChange={e=>setVentaNCForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                        {(()=>{
-                          const selFNC=ventaNCForm.naturaleza==='FISCAL'?(invoices||[]).find(i=>i.id===ventaNCForm.facturaId):null;
-                          const selNENC=ventaNCForm.naturaleza==='NO_FISCAL'?(notasEntrega||[]).find(ne=>ne.id===ventaNCForm.neId):null;
-                          const tasaNC=parseNum(selFNC?.tasa||selNENC?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-                          const baseImpBs=parseNum(ventaNCForm.monto||0);        // el campo guarda Base Imp. en Bs.
-                          const baseImpUsd=tasaNC>0?parseFloat((baseImpBs/tasaNC).toFixed(6)):0;
-                          const ivaBs16=ventaNCForm.tieneIva!==false?parseFloat((baseImpBs*0.16).toFixed(2)):0;
-                          const ivaUsd=tasaNC>0?parseFloat((ivaBs16/tasaNC).toFixed(6)):0;
-                          const totalBs=baseImpBs+ivaBs16;
-                          const totalUsd=baseImpUsd+ivaUsd;
-                          return(<>
-                          <div className="col-span-2 space-y-2">
-                            <div className="flex items-center gap-2">
-                              <label className="text-[10px] font-black text-gray-600 uppercase w-32 shrink-0">Base Imponible (Bs.)</label>
-                              <input type="number" step="0.01" value={ventaNCForm.monto} onChange={e=>setVentaNCForm(f=>({...f,monto:e.target.value}))}
-                                placeholder="0,00" className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                        {/* COL 1 — Tipo + Búsqueda */}
+                        <div style={{width:'28%',flexShrink:0,background:'#f8fafc',borderRight:'2px solid #f1f5f9',display:'flex',flexDirection:'column',overflowY:'auto'}}>
+                          <div className="p-4 space-y-4">
+                            {/* Tipo */}
+                            <div>
+                              <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">Tipo de Nota</label>
+                              <div className="flex gap-2">
+                                {['NC','ND'].map(t=>(
+                                  <button key={t} onClick={()=>setVentaNCForm(f=>({...f,tipo:t}))} className={`flex-1 py-2 rounded-xl font-black text-[10px] transition-all ${ventaNCForm.tipo===t?(t==='NC'?'bg-red-500 text-white shadow-md':'bg-blue-600 text-white shadow-md'):'bg-white text-gray-600 border-2 border-gray-200 hover:border-gray-300'}`}>
+                                    {t==='NC'?'📉 NC':'📈 ND'}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <label className="text-[10px] font-black text-gray-600 uppercase w-32 shrink-0">IVA 16% (Bs.)</label>
-                              <input type="number" value={ivaBs16.toFixed(2)} readOnly className="flex-1 border-2 border-gray-100 bg-gray-50 rounded-xl px-3 py-2 text-xs font-bold"/>
+                            {/* Naturaleza */}
+                            <div>
+                              <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">Naturaleza</label>
+                              <div className="flex gap-2">
+                                {['FISCAL','NO_FISCAL'].map(n=>(
+                                  <button key={n} onClick={()=>setVentaNCForm(f=>({...f,naturaleza:n,facturaId:'',neId:'',itemsNC:undefined,_prevDocId:''}))} className={`flex-1 py-2 rounded-xl font-black text-[9px] transition-all ${ventaNCForm.naturaleza===n?'bg-purple-600 text-white shadow-md':'bg-white text-gray-600 border-2 border-gray-200 hover:border-gray-300'}`}>
+                                    {n==='FISCAL'?'🏛 FISCAL':'📦 NO FISCAL'}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <label className="text-[10px] font-black text-gray-600 uppercase w-32 shrink-0">Total (Bs.)</label>
-                              <input type="number" value={totalBs.toFixed(2)} readOnly className="flex-1 border-2 border-gray-100 bg-gray-50 rounded-xl px-3 py-2 text-xs font-bold text-orange-600"/>
+                            {/* Buscador */}
+                            <div>
+                              <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">{esFiscal?'Seleccionar Factura':'Seleccionar NE'}</label>
+                              <input value={ventaNCBusq} onChange={e=>setVentaNCBusq(e.target.value)} placeholder={esFiscal?'N° fiscal, cliente...':'N° NE, cliente...'} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-500 mb-2 bg-white"/>
+                              {esFiscal
+                                ?<select value={ventaNCForm.facturaId} onChange={e=>setVentaNCForm(f=>({...f,facturaId:e.target.value,itemsNC:undefined,_prevDocId:''}))} size={12} className="w-full border-2 border-orange-200 rounded-xl px-2 py-1 text-[10px] font-bold outline-none bg-white">
+                                    <option value="">— Seleccionar factura —</option>
+                                    {factsFilt.slice(0,60).map(inv=>(<option key={inv.id} value={inv.id}>{inv.nroFiscal||inv.documento} · {inv.clientName}</option>))}
+                                  </select>
+                                :<select value={ventaNCForm.neId} onChange={e=>setVentaNCForm(f=>({...f,neId:e.target.value,itemsNC:undefined,_prevDocId:''}))} size={12} className="w-full border-2 border-orange-200 rounded-xl px-2 py-1 text-[10px] font-bold outline-none bg-white">
+                                    <option value="">— Seleccionar NE —</option>
+                                    {nesFilt.slice(0,60).map(ne=>(<option key={ne.id} value={ne.id}>{ne.documento||ne.id} · {ne.clientName}</option>))}
+                                  </select>
+                              }
                             </div>
-                            {tasaNC>1&&baseImpBs>0&&<div className="bg-orange-50 border border-orange-200 rounded-xl p-2 text-[10px]">
-                              <div><span className="font-black">Tasa:</span> {formatNum(tasaNC)} Bs/$</div>
-                              <div><span className="font-black">Base USD:</span> ${formatNum(baseImpUsd)} &nbsp;|&nbsp; <span className="font-black">IVA USD:</span> ${formatNum(ivaUsd)} &nbsp;|&nbsp; <span className="font-black">Total USD:</span> ${formatNum(totalUsd)}</div>
+                          </div>
+                        </div>
+
+                        {/* COL 2 — Productos de la factura */}
+                        <div style={{width:'40%',flexShrink:0,borderRight:'2px solid #f1f5f9',display:'flex',flexDirection:'column',overflowY:'auto'}}>
+                          {!docSel?(
+                            <div className="flex-1 flex items-center justify-center text-gray-400 text-xs font-bold text-center p-8">← Seleccione {esFiscal?'una factura':'una NE'}</div>
+                          ):(
+                            <div className="p-4 space-y-3 flex-1">
+                              {/* Info doc */}
+                              <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-3">
+                                <p className="text-[8px] font-black text-orange-600 uppercase tracking-widest mb-1">📋 Documento seleccionado</p>
+                                <p className="font-black text-sm text-gray-800">{docSel.clientName}</p>
+                                <div className="flex flex-wrap gap-3 text-[9px] text-gray-500 mt-1">
+                                  {selInv&&<span>N° Fiscal: <b>{selInv.nroFiscal||'—'}</b></span>}
+                                  <span>Fecha: <b>{docSel.fecha}</b></span>
+                                  <span>Tasa: <b className="text-blue-600">{formatNum(tasaNC)} Bs/$</b></span>
+                                  <span>Total: <b className="text-orange-600">${formatNum(parseNum(docSel.total||0))}</b></span>
+                                </div>
+                              </div>
+
+                              {/* Modo anulación */}
+                              <div>
+                                <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">Tipo de Anulación</label>
+                                <div className="flex gap-2">
+                                  {[{k:'total',l:'✅ Anulación Total',c:'bg-red-500'},{k:'parcial',l:'🔀 Anulación Parcial',c:'bg-amber-500'}].map(({k,l,c})=>(
+                                    <button key={k} onClick={()=>setModo(k)} className={`flex-1 py-2 rounded-xl font-black text-[9px] transition-all ${modoAnulacion===k?c+' text-white shadow-md':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{l}</button>
+                                  ))}
+                                </div>
+                                <p className="text-[8px] text-gray-400 mt-1">{modoAnulacion==='total'?'Se anula la factura completa y se reversan TODOS los productos al inventario':'Selecciona los productos a anular y edita cantidades'}</p>
+                              </div>
+
+                              {/* Tabla productos */}
+                              {itemsDoc.length>0?(
+                                <div className="border-2 border-gray-200 rounded-2xl overflow-hidden">
+                                  <table className="w-full text-[9px]">
+                                    <thead className="bg-gray-800 text-white">
+                                      <tr>
+                                        {modoAnulacion==='parcial'&&<th className="py-2 px-2 text-center">✓</th>}
+                                        <th className="py-2 px-2 text-left">Producto</th>
+                                        <th className="py-2 px-2 text-right">Precio U.</th>
+                                        <th className="py-2 px-2 text-right">{modoAnulacion==='parcial'?'Cant. NC':'Cant.'}</th>
+                                        <th className="py-2 px-2 text-right">Total USD</th>
+                                        <th className="py-2 px-2 text-right">Costo U.</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {itemsNC.map((it,i)=>{
+                                        const activo=modoAnulacion==='total'||it.seleccionado;
+                                        const totalIt=parseNum(it.precioUnit||0)*parseNum(it.cantNC||it.cantidad||0);
+                                        return(
+                                          <tr key={i} className={`border-b border-gray-100 ${activo?'':'opacity-40'} ${i%2===0?'bg-white':'bg-gray-50'}`}>
+                                            {modoAnulacion==='parcial'&&(
+                                              <td className="py-2 px-2 text-center">
+                                                <input type="checkbox" checked={it.seleccionado!==false} onChange={e=>{const upd=[...itemsNC];upd[i]={...upd[i],seleccionado:e.target.checked};setItemsNC(upd);}} className="w-4 h-4 accent-orange-500"/>
+                                              </td>
+                                            )}
+                                            <td className="py-2 px-2">
+                                              <p className="font-bold text-gray-800 leading-tight">{it.desc||it.fgId||'—'}</p>
+                                              <p className="text-gray-400 text-[8px]">{it.unidad}</p>
+                                            </td>
+                                            <td className="py-2 px-2 text-right font-bold">${formatNum(parseNum(it.precioUnit||0))}</td>
+                                            <td className="py-2 px-2 text-right">
+                                              {modoAnulacion==='parcial'&&it.seleccionado?(
+                                                <input type="number" min="0" max={parseNum(it.cantidad||0)} step="1" value={it.cantNC||it.cantidad||0}
+                                                  onChange={e=>{const upd=[...itemsNC];upd[i]={...upd[i],cantNC:parseNum(e.target.value)};setItemsNC(upd);}}
+                                                  className="w-16 border border-orange-300 rounded-lg px-1 py-0.5 text-[9px] font-black text-center outline-none focus:border-orange-500"/>
+                                              ):(
+                                                <span className="font-bold">{modoAnulacion==='parcial'?it.cantNC||it.cantidad||0:it.cantidad||0}</span>
+                                              )}
+                                            </td>
+                                            <td className="py-2 px-2 text-right font-black text-orange-600">${formatNum(totalIt)}</td>
+                                            <td className="py-2 px-2 text-right text-gray-400">${formatNum(parseNum(it.costoUnit||0))}</td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                    <tfoot className="bg-gray-100 border-t-2 border-gray-300">
+                                      <tr className="font-black text-[9px]">
+                                        {modoAnulacion==='parcial'&&<td></td>}
+                                        <td className="py-2 px-2 text-gray-600 uppercase">Total NC</td>
+                                        <td></td>
+                                        <td className="py-2 px-2 text-right">{itemsActivos.reduce((s,it)=>s+parseNum(it.cantNC||it.cantidad||0),0)}</td>
+                                        <td className="py-2 px-2 text-right text-orange-600">${formatNum(baseUSDCalc)}</td>
+                                        <td></td>
+                                      </tr>
+                                    </tfoot>
+                                  </table>
+                                </div>
+                              ):(
+                                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 font-bold text-center">
+                                  ⚠ Esta factura no tiene ítems registrados. Ingrese el monto manualmente.
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* COL 3 — Montos + Datos NC */}
+                        <div style={{flex:1,display:'flex',flexDirection:'column',overflowY:'auto',padding:'16px',gap:'12px'}}>
+
+                          {/* Montos en Bs y USD */}
+                          <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 space-y-3">
+                            <p className="text-[9px] font-black text-blue-600 uppercase tracking-widest">💰 Montos de la Nota</p>
+                            <div>
+                              <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Base Imponible (Bs.) <span className="text-gray-400 font-normal">— editable</span></label>
+                              <input type="number" step="0.01" value={ventaNCForm.monto||baseImpBs||''} onChange={e=>setVentaNCForm(f=>({...f,monto:e.target.value}))}
+                                placeholder={baseImpBs.toFixed(2)} className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/>
+                              {!ventaNCForm.monto&&baseImpBs>0&&<p className="text-[8px] text-gray-400 mt-0.5">★ Calculado desde ítems: Bs. {formatNum(baseImpBs)}</p>}
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">IVA 16% (Bs.)</label>
+                                <input type="number" value={ivaBs16.toFixed(2)} readOnly className="w-full border-2 border-gray-100 bg-white rounded-xl px-3 py-2 text-xs font-bold"/>
+                              </div>
+                              <div>
+                                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Total (Bs.)</label>
+                                <input type="number" value={totalBs.toFixed(2)} readOnly className="w-full border-2 border-gray-100 bg-orange-50 rounded-xl px-3 py-2 text-xs font-black text-orange-600"/>
+                              </div>
+                            </div>
+                            {/* Equivalencia USD */}
+                            <div className="bg-white border border-blue-200 rounded-xl p-3 grid grid-cols-2 gap-2 text-[9px]">
+                              <div><p className="text-gray-400 uppercase font-bold">Base USD (tasa {formatNum(tasaNC)})</p><p className="font-black text-blue-700 text-sm">${formatNum(baseImpBs/tasaNC)}</p></div>
+                              <div><p className="text-gray-400 uppercase font-bold">Total USD con IVA</p><p className="font-black text-blue-700 text-sm">${formatNum(totalBs/tasaNC)}</p></div>
+                            </div>
+                            {ventaNCForm.tipo==='NC'&&itemsActivos.length>0&&(
+                              <div className="bg-green-50 border border-green-200 rounded-xl p-2 text-[8px] text-green-700 font-bold">
+                                ↩ Se reversarán {itemsActivos.length} producto(s) al inventario al guardar
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Datos del documento */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Documento</label>
+                              <input value={ventaNCForm.nroDocumento} onChange={e=>setVentaNCForm(f=>({...f,nroDocumento:e.target.value.toUpperCase()}))} placeholder="NC-00001" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                              <input type="date" value={ventaNCForm.fecha} onChange={e=>setVentaNCForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                            </div>
+                            {esFiscal&&<div className="col-span-2">
+                              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Control</label>
+                              <input value={ventaNCForm.nroControl||''} onChange={e=>setVentaNCForm(f=>({...f,nroControl:e.target.value}))} placeholder="00-000001" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
                             </div>}
                           </div>
-                          </>);
-                        })()}
-                        {esFiscal&&<div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">N° Control</label>
-                          <input value={ventaNCForm.nroControl||''} onChange={e=>setVentaNCForm(f=>({...f,nroControl:e.target.value}))} placeholder="00-000001" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>}
-                        <div className="col-span-2"><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Descripción / Concepto</label>
-                          <input value={ventaNCForm.descripcion||''} onChange={e=>setVentaNCForm(f=>({...f,descripcion:e.target.value}))} placeholder="Motivo de la nota..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                      </div>
 
-                      <div className="flex gap-3">
-                        <button onClick={()=>setShowVentaNCModal(false)} className="flex-1 py-2.5 border-2 border-gray-200 rounded-xl font-black text-xs hover:bg-gray-50">Cancelar</button>
-                        <button onClick={handleSaveVentaNC} className={`flex-1 py-2.5 text-white rounded-xl font-black text-xs ${ventaNCForm.tipo==='NC'?'bg-red-500 hover:bg-red-600':'bg-blue-600 hover:bg-blue-700'}`}>✅ Guardar {ventaNCForm.tipo}</button>
+                          {/* Descripción */}
+                          <div>
+                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Descripción / Concepto</label>
+                            <input value={ventaNCForm.descripcion||''} onChange={e=>setVentaNCForm(f=>({...f,descripcion:e.target.value}))} placeholder="Motivo de la nota..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                          </div>
+
+                          {/* Botones */}
+                          <div className="flex gap-3 mt-auto pt-2">
+                            <button onClick={()=>setShowVentaNCModal(false)} className="flex-1 py-3 border-2 border-gray-200 rounded-xl font-black text-xs hover:bg-gray-50">Cancelar</button>
+                            <button onClick={handleSaveVentaNC} className={`flex-1 py-3 text-white rounded-xl font-black text-xs ${ventaNCForm.tipo==='NC'?'bg-red-500 hover:bg-red-600':'bg-blue-600 hover:bg-blue-700'}`}>
+                              ✅ Guardar {ventaNCForm.tipo} {modoAnulacion==='total'?'Total':'Parcial'}
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
                 );
-              })()}
+              })()} 
             </div>
           );
         })()}
@@ -13499,12 +13683,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── Helpers de saldo con fecha de corte ────────────────────────
           const getSaldoNEAtFecha = (ne, fRef) => {
             const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-            const ncAplicadas=(notasVentaCD||[]).filter(n=>n.neOrigen===ne.id&&n.tipo==='NC'&&(!fRef||(n.fecha||'')<=fRef)).reduce((s,n)=>s+parseNum(n.monto||n.totalNeto||0),0);
-            return Math.max(0, parseNum(ne.total||ne.totalUSD||0)-cobrado-ncAplicadas);
+            const ncUSD=getNCUSDNEAtFecha(ne,fRef);
+            return Math.max(0, parseNum(ne.total||ne.totalUSD||0)-cobrado-ncUSD);
+          };
+          // NC en USD: monto en Bs → dividir por tasa de la factura afectada
+          const getNCUSDNEAtFecha=(ne,fRef)=>(notasVentaCD||[])
+            .filter(n=>n.tipo==='NC'&&(n.neId===ne.id||n.neOrigen===ne.id)&&(!fRef||(n.fecha||'')<=fRef))
+            .reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCV;return s+(t>0?parseNum(n.monto||0)/t:0);},0);
+          // Retenciones en USD: montoRetenido Bs / tasa factura vinculada
+          const getRetUSDNE=(ne)=>{
+            const invLinked=(invoices||[]).find(inv=>inv.neOrigen===ne.id);
+            const tasa=parseNum(invLinked?.tasa||ne.tasa||0)||tasaBCV;
+            const rets=(retenciones||[]).filter(r=>r.facturaId===(invLinked?.id||'')||r.neId===ne.id);
+            return rets.reduce((s,r)=>s+(tasa>0?parseNum(r.montoRetenido||0)/tasa:0),0);
           };
           const getCobradoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-          const getNCNEAtFecha=(ne,fRef)=>(notasVentaCD||[]).filter(n=>n.neOrigen===ne.id&&n.tipo==='NC'&&(!fRef||(n.fecha||'')<=fRef)).reduce((s,n)=>s+parseNum(n.monto||n.totalNeto||0),0);
-          const getRetNE=(ne)=>(retenciones||[]).filter(r=>r.facturaId===ne.id||r.neId===ne.id).reduce((s,r)=>s+parseNum(r.montoRetenido||0),0);
+          const getNCNEAtFecha=(ne,fRef)=>getNCUSDNEAtFecha(ne,fRef);
+          const getRetNE=(ne)=>getRetUSDNE(ne);
           const getSaldoNE=(ne)=>getSaldoNEAtFecha(ne,null);
 
           const fechaRef=cxcModo==='fecha'?cxcFechaRef:null;
