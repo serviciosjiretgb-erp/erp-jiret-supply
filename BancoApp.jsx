@@ -139,11 +139,11 @@ const BCard = ({ title, subtitle, action, children, noPad }) => (
   </div>
 );
 
-const BModal = ({ open, onClose, title, children, footer, wide, xwide, noHeader, noClip }) => {
+const BModal = ({ open, onClose, title, children, footer, wide, xlwide, xwide, noHeader, noClip }) => {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6" style={{ background: 'rgba(15,23,42,.85)', backdropFilter: 'blur(4px)' }} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className={`bg-white w-full ${xwide ? 'w-[98vw] max-w-[98vw] h-[98vh]' : wide ? 'max-w-[95vw] md:max-w-3xl max-h-[90vh]' : 'max-w-[95vw] sm:max-w-lg max-h-[90vh]'} rounded-2xl flex flex-col shadow-2xl relative ${noClip ? '' : 'overflow-hidden'}`}>
+      <div className={`bg-white w-full ${xwide ? 'w-[98vw] max-w-[98vw] h-[98vh]' : xlwide ? 'max-w-[92vw] max-h-[92vh]' : wide ? 'max-w-[95vw] md:max-w-3xl max-h-[90vh]' : 'max-w-[95vw] sm:max-w-lg max-h-[90vh]'} rounded-2xl flex flex-col shadow-2xl relative ${noClip ? '' : 'overflow-hidden'}`}>
         {!noHeader && (
           <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0" style={{ background: 'linear-gradient(135deg,#0f172a,#1e293b)' }}>
             <h2 className="font-black text-white uppercase tracking-widest text-sm">{title}</h2>
@@ -3316,7 +3316,7 @@ function BancoApp({ fbUser, onBack }) {
         )}
 
         {/* ── MODAL NUEVO MOVIMIENTO — DISEÑO BICOLUMNA ── */}
-        <BModal open={modal} onClose={()=>{setModal(false);setForm(initF());}} title="" wide noHeader noClip>
+        <BModal open={modal} onClose={()=>{setModal(false);setForm(initF());}} title="" xlwide noHeader noClip>
           <div style={{display:'flex',height:'78vh',overflow:'hidden'}}>
 
             {/* ══ COLUMNA IZQUIERDA: FORMULARIO ══ */}
