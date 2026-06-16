@@ -35,6 +35,12 @@ const _bancoDB  = getFirestore(_bancoApp, "us-central");
 const getColRef = (n) => collection(_bancoDB, n);
 const getDocRef = (n, id) => doc(_bancoDB, n, String(id));
 
+// ── Utilidades de fecha (replicadas del ERP principal) ────────────────────
+const getTodayDate = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+};
+
 // ── Colores / tokens de diseño (del sistema original) ─────────────────────
 const DARK   = '#000000';
 const ORANGE = '#f97316';
@@ -4596,19 +4602,45 @@ function BancoApp({ fbUser, onBack }) {
     rpt_libro:<RepLibroDiarioView/>,
     tasas:<TasasView/>
   };
-  const curNav = navGroups.flatMap(g=>g.items).find(n=>n.id===sec);
+  const allTabs = navGroups.flatMap(g => g.items.map(i => ({...i, group:g.group, color:g.color})));
+  const curNav  = allTabs.find(n => n.id === sec);
+  const curGroup = navGroups.find(g => g.items.find(i => i.id === sec));
 
   return (
-    <BSidebarLayout brand="Supply G&B" brandSub="Bancos & Caja" navGroups={navGroups} activeId={sec} onNav={setSec} onBack={onBack} accentColor={BLUE}
-      headerContent={<>
-        <div><h1 className="font-black text-slate-800 text-sm uppercase tracking-wide">{curNav?.label}</h1><p className="text-[9px] text-slate-400 font-medium uppercase tracking-widest">Tesorería <ChevronRight size={8} className="inline"/> {navGroups.find(g=>g.items.find(i=>i.id===sec))?.group?.replace(/[🏦💵]/g,'').trim()}</p></div>
-        <div className="flex items-center gap-3">
-          <div className="bg-blue-50 border border-blue-200 rounded-full px-3 py-1.5 flex items-center gap-1.5"><DollarSign size={12} className="text-blue-500"/><span className="text-[10px] font-black text-blue-700 font-mono">BCV: {tasaActiva} Bs/$</span></div>
-          <BBg onClick={()=>setSec(sec.startsWith('caja')||sec==='arqueo'?'caja_op':'movimientos')} sm><Plus size={12}/> Nuevo</BBg>
+    <div className="min-h-screen bg-gray-50">
+      {/* ── Sub-nav horizontal estilo ERP ── */}
+      <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
+        <div className="flex items-center overflow-x-auto scrollbar-hide px-4 gap-0.5">
+          {allTabs.map(t => {
+            const Icon = t.icon;
+            const active = sec === t.id;
+            return (
+              <button key={t.id} onClick={() => setSec(t.id)}
+                className={`flex items-center gap-1.5 py-3.5 px-2 text-[9px] font-black uppercase tracking-wide whitespace-nowrap transition-all border-b-4 flex-shrink-0 ${
+                  active ? 'border-orange-500 text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-700 hover:border-gray-200'
+                }`}>
+                {Icon && <Icon size={13}/>} {t.label}
+              </button>
+            );
+          })}
+          {/* BCV indicator + Nuevo button */}
+          <div className="ml-auto flex items-center gap-3 pl-4 flex-shrink-0 py-2">
+            <div className="bg-blue-50 border border-blue-200 rounded-full px-3 py-1 flex items-center gap-1.5">
+              <DollarSign size={11} className="text-blue-500"/>
+              <span className="text-[9px] font-black text-blue-700 font-mono">BCV: {tasaActiva} Bs/$</span>
+            </div>
+            <button onClick={() => setSec(sec.startsWith('caja') || sec === 'arqueo' ? 'caja_op' : 'movimientos')}
+              className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[9px] font-black uppercase transition-all">
+              <Plus size={12}/> Nuevo
+            </button>
+          </div>
         </div>
-      </>}>
-      {views[sec]||<DashboardView/>}
-    </BSidebarLayout>
+      </div>
+      {/* ── Contenido ── */}
+      <div>
+        {views[sec] || <DashboardView/>}
+      </div>
+    </div>
   );
 }
 
