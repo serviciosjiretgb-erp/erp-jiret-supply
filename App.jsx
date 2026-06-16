@@ -24207,12 +24207,8 @@ ${resumenHtml}
            {activeTab === 'simulador' && renderSimuladorModule()}
            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
            {activeTab === 'configuracion' && renderConfiguracionModule()}
-           {/* ── BANCO & TESORERÍA — full screen module ── */}
-           {activeTab === 'banco' && (
-             <div style={{position:'fixed',inset:0,zIndex:60,background:'#ffffff'}}>
-               <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}/>
-             </div>
-           )}
+           {/* ── BANCO & TESORERÍA ── */}
+           {activeTab === 'banco' && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}/>}
            {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && renderReportesFinancierosModule()}
            {activeTab === 'estado_resultado' && renderEstadoResultadoModule()}
            {activeTab === 'libro_diario' && renderLibroDiarioModule()}
