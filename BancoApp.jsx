@@ -139,11 +139,11 @@ const BCard = ({ title, subtitle, action, children, noPad }) => (
   </div>
 );
 
-const BModal = ({ open, onClose, title, children, footer, wide, xwide, noHeader }) => {
+const BModal = ({ open, onClose, title, children, footer, wide, xwide, noHeader, noClip }) => {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6" style={{ background: 'rgba(15,23,42,.85)', backdropFilter: 'blur(4px)' }} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className={`bg-white w-full ${xwide ? 'w-[98vw] max-w-[98vw] h-[98vh]' : wide ? 'max-w-[95vw] md:max-w-3xl max-h-[90vh]' : 'max-w-[95vw] sm:max-w-lg max-h-[90vh]'} rounded-2xl flex flex-col shadow-2xl overflow-hidden relative`}>
+      <div className={`bg-white w-full ${xwide ? 'w-[98vw] max-w-[98vw] h-[98vh]' : wide ? 'max-w-[95vw] md:max-w-3xl max-h-[90vh]' : 'max-w-[95vw] sm:max-w-lg max-h-[90vh]'} rounded-2xl flex flex-col shadow-2xl relative ${noClip ? '' : 'overflow-hidden'}`}>
         {!noHeader && (
           <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0" style={{ background: 'linear-gradient(135deg,#0f172a,#1e293b)' }}>
             <h2 className="font-black text-white uppercase tracking-widest text-sm">{title}</h2>
@@ -2276,7 +2276,7 @@ function BancoApp({ fbUser, onBack }) {
   // 3. MOVIMIENTOS BANCARIOS — Ver / Editar / Eliminar + Asiento Contable
   // ══════════════════════════════════════════════════════════════════════
   // Helper functions for asiento contable (avoids IIFE-in-JSX esbuild issue)
-  const AsientoTotales = ({form,bs,montoBs,montoUSD,tasa,mNat,fmt}) => {
+  const AsientoTotales = ({form,bs,montoBs,montoUSD,tasa,mNat,fmt:bancoFmt}) => {
     const dBs=form.lineasContra.reduce((a,l)=>a+Number(l.debeBs||0),0);
     const hBs=form.lineasContra.reduce((a,l)=>a+Number(l.haberBs||0),0);
     const dUSD=form.lineasContra.reduce((a,l)=>a+Number(l.debeUSD||0),0);
@@ -2299,7 +2299,7 @@ function BancoApp({ fbUser, onBack }) {
     );
   };
 
-  const AsientoAlerta = ({form,bs,montoBs,montoUSD,tasa,fmt}) => {
+  const AsientoAlerta = ({form,bs,montoBs,montoUSD,tasa,fmt:bancoFmt}) => {
     const tc=form.lineasContra.reduce((a,l)=>a+Number(l.debeBs||0)+Number(l.haberBs||0),0);
     const ba=bs?montoBs:montoUSD*tasa;
     const df=Math.abs(tc-ba);
@@ -2310,7 +2310,7 @@ function BancoApp({ fbUser, onBack }) {
   };
 
   // ── Subcomponente para asistente de Traslado Banco→Caja (fuera del JSX anidado para evitar issues con esbuild)
-  const TrasladoRebancarizacion = ({form,setForm,bs,mNat,tasa,tasaActiva,contCuentas,inp,fmt,BFG,cuentasSel,onSaveDone}) => {
+  const TrasladoRebancarizacion = ({form,setForm,bs,mNat,tasa,tasaActiva,contCuentas,inp,fmt:bancoFmt,BFG,cuentasSel,onSaveDone}) => {
     const tBanco = Number(form.tasaBanco||form.tasa)||tasa;
     const tBcv   = Number(form.tasaBcv||tasaActiva)||tasa;
     const bsSalidos = bs?mNat:mNat*tBanco;
@@ -3316,11 +3316,11 @@ function BancoApp({ fbUser, onBack }) {
         )}
 
         {/* ── MODAL NUEVO MOVIMIENTO — DISEÑO BICOLUMNA ── */}
-        <BModal open={modal} onClose={()=>{setModal(false);setForm(initF());}} title="" wide noHeader>
-          <div style={{display:'flex',height:'82vh',overflow:'hidden',margin:'-24px',borderRadius:'16px'}}>
+        <BModal open={modal} onClose={()=>{setModal(false);setForm(initF());}} title="" wide noHeader noClip>
+          <div style={{display:'flex',height:'78vh',overflow:'hidden'}}>
 
             {/* ══ COLUMNA IZQUIERDA: FORMULARIO ══ */}
-            <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0,borderRadius:'16px 0 0 16px'}}>
+            <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
               {/* Header */}
               <div className="px-4 py-3 flex justify-between items-center flex-shrink-0" style={{background:'#0f172a'}}>
                 <div className="flex items-center gap-2">
@@ -3494,12 +3494,12 @@ function BancoApp({ fbUser, onBack }) {
                           </div>
                         );
                       })}
-                      {cuentaSel&&AsientoTotales({form,bs,montoBs,montoUSD,tasa,mNat,fmt})}
+                      {cuentaSel&&AsientoTotales({form,bs,montoBs,montoUSD,tasa,mNat,fmt:bancoFmt})}
                       <button onClick={()=>setForm({...form,lineasContra:[...form.lineasContra,{ctaId:'',ctaNom:'',debeBs:'',haberBs:'',debeUSD:'',haberUSD:''}]})}
                         className="flex items-center gap-1.5 text-[10px] font-black uppercase text-blue-600 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors">
                         <Plus size={12}/> Agregar Cuenta Contrapartida
                       </button>
-                      {form.tipo!=='Transferencia'&&form.tipo!=='Traslado de Fondo'&&form.tipo!=='Nota de Débito'&&form.tipo!=='Nota de Crédito'&&cuentaSel&&mNat>0&&AsientoAlerta({form,bs,montoBs,montoUSD,tasa,fmt})}
+                      {form.tipo!=='Transferencia'&&form.tipo!=='Traslado de Fondo'&&form.tipo!=='Nota de Débito'&&form.tipo!=='Nota de Crédito'&&cuentaSel&&mNat>0&&AsientoAlerta({form,bs,montoBs,montoUSD,tasa,fmt:bancoFmt})}
                       {form.tipo==='Traslado Banco→Caja'&&cuentaSel&&mNat>0&&(
                         <TrasladoRebancarizacion form={form} setForm={setForm} bs={bs} mNat={mNat} tasa={tasa} tasaActiva={tasaActiva} contCuentas={contCuentas} inp={inp} fmt={bancoFmt} BFG={BFG} cuentasSel={cuentas} onSaveDone={()=>{setModal(false);setForm(initF());}}/>
                       )}
@@ -3551,7 +3551,7 @@ function BancoApp({ fbUser, onBack }) {
               </div>
             </div>
             {/* ══ COLUMNA DERECHA: RESUMEN BANCO + PREVIEW ASIENTO ══ */}
-            <div style={{width:260,flexShrink:0,display:'flex',flexDirection:'column',background:'#f8fafc',borderLeft:'1px solid #e2e8f0',overflowY:'auto',borderRadius:'0 16px 16px 0'}}>
+            <div style={{width:260,flexShrink:0,display:'flex',flexDirection:'column',background:'#f8fafc',borderLeft:'1px solid #e2e8f0',overflowY:'auto'}}>
               {/* Header columna derecha */}
               <div className="px-5 py-4 border-b border-slate-200 flex-shrink-0 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-2"><Activity size={13}/> Estado Operativo</p>
