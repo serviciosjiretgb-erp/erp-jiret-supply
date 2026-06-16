@@ -3317,10 +3317,10 @@ function BancoApp({ fbUser, onBack }) {
 
         {/* ── MODAL NUEVO MOVIMIENTO — DISEÑO BICOLUMNA ── */}
         <BModal open={modal} onClose={()=>{setModal(false);setForm(initF());}} title="" wide noHeader>
-          <div className="flex -m-6 rounded-2xl overflow-auto" style={{maxHeight:'85vh'}}>
+          <div style={{display:'flex',height:'82vh',overflow:'hidden',margin:'-24px',borderRadius:'inherit'}}>
 
             {/* ══ COLUMNA IZQUIERDA: FORMULARIO ══ */}
-            <div className="flex-1 flex flex-col overflow-hidden">
+            <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
               {/* Header */}
               <div className="px-4 py-3 flex justify-between items-center flex-shrink-0" style={{background:'#0f172a'}}>
                 <div className="flex items-center gap-2">
@@ -3340,13 +3340,8 @@ function BancoApp({ fbUser, onBack }) {
 <div className="grid grid-cols-12 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-100">
     {/* ── Fila 1: Datos Básicos ── */}
   <div className="col-span-12 md:col-span-3">
-    <BFG label="Caja Origen">
-      <select className={sel} value={form.cuentaId} onChange={e=>setForm({...form,cuentaId:e.target.value})}>
-        <option value="">— Seleccione Caja —</option>
-        {cuentas.filter(c => c.tipo === 'CAJA').map(c => (
-          <option key={c.id} value={c.id}>{c.nombre} · ${bancoFmt(c.saldo)}</option>
-        ))}
-      </select>
+    <BFG label="Cuenta Bancaria">
+      <CuentaSelector value={form.cuentaId} onChange={v=>setForm({...form,cuentaId:v})} label="Cuenta Bancaria"/>
     </BFG>
   </div>
     <div className="col-span-12 md:col-span-3">
@@ -3556,7 +3551,7 @@ function BancoApp({ fbUser, onBack }) {
               </div>
             </div>
             {/* ══ COLUMNA DERECHA: RESUMEN BANCO + PREVIEW ASIENTO ══ */}
-            <div className="w-72 flex-shrink-0 flex flex-col bg-slate-50 border-l border-slate-200 overflow-y-auto">
+            <div style={{width:260,flexShrink:0,display:'flex',flexDirection:'column',background:'#f8fafc',borderLeft:'1px solid #e2e8f0',overflowY:'auto'}}>
               {/* Header columna derecha */}
               <div className="px-5 py-4 border-b border-slate-200 flex-shrink-0 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-2"><Activity size={13}/> Estado Operativo</p>
