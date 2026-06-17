@@ -13760,44 +13760,54 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const getSaldoNEAtFecha = (ne, fRef) => {
             const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
             const ncUSD=getNCUSDNEAtFecha(ne,fRef);
-            const retUSD=getRetUSDNE(ne); // Ret.IVA reduce el saldo pendiente
+            const retUSD=getRetUSDNE(ne);
             return Math.max(0, parseNum(ne.total||ne.totalUSD||0)-cobrado-ncUSD-retUSD);
           };
-          // NC/ND en USD — cubre variantes de cómo se guardó el link NC→NE/Factura
+
+          // NC/ND en USD — solo matchea si los campos no están vacíos (evita undefined===undefined)
           const getNCUSDNEAtFecha=(ne,fRef)=>{
-            // Solo IDs de Firestore + documentos (sin nroFiscal para evitar falsos positivos)
+            const neId=ne.id||''; const neDoc=ne.documento||'';
             const linkedInvIds=new Set([
-              ...(invoices||[]).filter(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento).map(inv=>inv.id),
+              ...(invoices||[]).filter(inv=>
+                (neId&&inv.neOrigen===neId)||(neDoc&&inv.neOrigen===neDoc)
+              ).map(inv=>inv.id),
               ...(ne.facturaId?(invoices||[]).filter(inv=>inv.id===ne.facturaId||inv.documento===ne.facturaId).map(inv=>inv.id):[])
             ]);
-            if(ne.facturaId) linkedInvIds.add(ne.facturaId); // por si facturaId ya es el ID directo
+            if(ne.facturaId) linkedInvIds.add(ne.facturaId);
             return (notasVentaCD||[])
-              .filter(n=>(
-                n.neId===ne.id||n.neId===ne.documento||
-                n.neOrigen===ne.id||n.neOrigen===ne.documento||
-                linkedInvIds.has(n.facturaId)
-              )&&(!fRef||(n.fecha||'')<=fRef))
+              .filter(n=>{
+                const nNeId=n.neId||''; const nNeO=n.neOrigen||''; const nFId=n.facturaId||'';
+                return (
+                  (neId&&nNeId===neId)||(neDoc&&nNeId===neDoc)||
+                  (neId&&nNeO===neId)||(neDoc&&nNeO===neDoc)||
+                  (nFId&&linkedInvIds.has(nFId))
+                )&&(!fRef||(n.fecha||'')<=fRef);
+              })
               .reduce((s,n)=>{
                 const t=parseNum(n.tasaFactura||0)||tasaBCV;
+                if(!t||t<2) return s; // sin tasa válida → no aplicar NC
                 const baseBs=parseNum(n.monto||0);
+                // monto = Base Imponible Bs; NC total con IVA 16% = base × 1.16
                 const totalBs=n.tieneIva===false?baseBs:baseBs*1.16;
-                return s+(t>0?totalBs/t:0);
+                return s+(totalBs/t);
               },0);
           };
-          // Ret.IVA en USD: montoRetenido Bs / tasa factura vinculada
+
+          // Ret.IVA en USD: montoRetenido Bs / tasa de la factura fiscal vinculada
+          // SOLO se calcula si hay una tasa válida (> 10 Bs/$); si no, retorna 0 para no distorsionar el saldo
           const getRetUSDNE=(ne)=>{
-            const invLinked=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.id===ne.facturaId||inv.id===ne.facturaVinculada);
-            const tasa=parseNum(invLinked?.tasa||invLinked?.tasaBCV||ne.tasa||0)||1;
+            const invLinked=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||inv.id===ne.facturaId||inv.documento===ne.facturaId);
+            const tasa=parseNum(invLinked?.tasa||invLinked?.tasaBCV||ne.tasa||0);
+            if(!tasa||tasa<10) return 0; // sin tasa válida → no deducir (evita $11.000 por Bs/1)
             const rets=(retenciones||[]).filter(r=>{
               if(!invLinked) return r.neId===ne.id;
               return r.facturaId===invLinked.id
                 ||r.facturaId===invLinked.nroFiscal
                 ||r.facturaId===invLinked.documento
                 ||r.nroFiscal===invLinked.nroFiscal
-                ||(invLinked.nroFiscal&&r.nroFactura===invLinked.nroFiscal)
                 ||r.neId===ne.id;
             });
-            return rets.reduce((s,r)=>s+(tasa>0?parseNum(r.montoRetenido||r.montoIVARetenido||0)/tasa:0),0);
+            return rets.reduce((s,r)=>s+parseNum(r.montoRetenido||r.montoIVARetenido||0)/tasa,0);
           };
           const getCobradoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
           const getNCNEAtFecha=(ne,fRef)=>getNCUSDNEAtFecha(ne,fRef);
