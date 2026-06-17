@@ -13772,7 +13772,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // Retenciones en USD: montoRetenido Bs / tasa de la factura vinculada
           const getRetUSDNE=(ne)=>{
             // 1. Buscar la factura fiscal vinculada a esta NE
-            const invLinked=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.id===ne.facturaVinculada);
+            const invLinked=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.id===ne.facturaId||inv.id===ne.facturaVinculada);
             // 2. Tasa de la factura (fuente más confiable)
             const tasa=parseNum(invLinked?.tasa||invLinked?.tasaBCV||ne.tasa||0)||1;
             // 3. Retenciones: buscar por múltiples campos posibles
@@ -13914,7 +13914,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     ...ncsNE.map(nc=>`<div class="nc" style="${cols9}"><span style="padding-left:8px">NC · ${nc.fecha||'—'}</span><span style="font-size:9px">${nc.nroDocumento||nc.documento||'—'}</span><span></span><span></span><span></span><span style="color:#3b82f6;font-weight:bold">-$${formatNum(parseNum(nc.monto||nc.totalNeto||0))}</span><span style="color:#64748b">${formatNum(parseNum(nc.monto||nc.totalNeto||0)*tasa)}</span><span></span><span></span></div>`),
                     ...retsNE.map(r=>`<div class="ret" style="${cols9}"><span style="padding-left:8px">RET · ${r.fechaComprobante||r.fecha||'—'}</span><span style="font-size:9px">${r.nroRetencion||'—'}</span><span></span><span></span><span></span><span></span><span></span><span style="color:#b45309;font-weight:bold">$${formatNum(parseNum(r.montoRetenido||0))}</span><span></span></div>`),
                   ].join('');
-                  const invVincPDF=(invoices||[]).find(inv=>inv.neOrigen===ne.id);
+                  const invVincPDF=(invoices||[]).find(inv=>inv.neOrigen===ne.id)||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId):null);
                   const docFiscalPDF=invVincPDF?(invVincPDF.nroFiscal||invVincPDF.documento||'—'):'—';
                   const diasCredPDF=parseNum(ne.diasCredito||0);
                   const invLinkedIdsPDF=(invoices||[]).filter(inv=>inv.neOrigen===ne.id).map(inv=>inv.id);
@@ -14025,7 +14025,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
                   const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const tasa=getTasa(ne);const d=getAgingDays(ne,fechaRef);
                   const bucket=d<=0?'Corriente':d<=30?'1-30d':d<=60?'31-60d':'+60d';
-                  const invVincXLS=(invoices||[]).find(inv=>inv.neOrigen===ne.id);
+                  const invVincXLS=(invoices||[]).find(inv=>inv.neOrigen===ne.id)||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId):null);
                   const docFiscalXLS=invVincXLS?(invVincXLS.nroFiscal||invVincXLS.documento||'—'):'—';
                   const diasCredXLS=parseNum(ne.diasCredito||0);
                   body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCredXLS>0?diasCredXLS+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFiscalXLS}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td></tr>`;
@@ -14205,15 +14205,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           const eBg={CRÍTICO:'bg-red-100 text-red-700',VENCIDO:'bg-orange-100 text-orange-700','POR COBRAR':'bg-amber-100 text-amber-700','AL DÍA':'bg-green-100 text-green-700'}[estado];
                           return (
                             <React.Fragment key={cl.clientRif}>
-                              <tr className={`border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${sel?'bg-blue-50':''}`} onClick={()=>setCxcSelectedClient(cxcSelectedClient===cl.clientRif?'':cl.clientRif)}>
-                                <td className="py-3 px-4"><p className="font-bold text-gray-800">{cl.clientName}</p><p className="text-gray-400 text-[9px]">{cl.clientRif}</p></td>
-                                <td className="py-3 px-4 text-right font-bold text-green-700">{cl.corriente>0?`$${formatNum(cl.corriente)}`:'—'}</td>
-                                <td className="py-3 px-4 text-right font-bold text-amber-600">{cl.v1_30>0?`$${formatNum(cl.v1_30)}`:'—'}</td>
-                                <td className="py-3 px-4 text-right font-bold text-orange-600">{cl.v31_60>0?`$${formatNum(cl.v31_60)}`:'—'}</td>
-                                <td className="py-3 px-4 text-right font-bold text-red-600">{cl.vMas60>0?`$${formatNum(cl.vMas60)}`:'—'}</td>
-                                <td className="py-3 px-4 text-right font-black text-gray-800">${formatNum(cl.total)}</td>
+                              <tr className={`border-b-2 border-gray-200 hover:bg-gray-50 cursor-pointer ${sel?'bg-blue-50 border-blue-200':''}`} onClick={()=>setCxcSelectedClient(cxcSelectedClient===cl.clientRif?'':cl.clientRif)}>
+                                <td className="py-3 px-4"><p className="font-black text-gray-900 text-[11px]">{cl.clientName}</p><p className="text-gray-400 text-[9px] font-mono">{cl.clientRif}</p></td>
+                                <td className="py-3 px-4 text-right"><span className="font-black text-green-700 bg-green-50 px-2 py-0.5 rounded-lg">{cl.corriente>0?`$${formatNum(cl.corriente)}`:'—'}</span></td>
+                                <td className="py-3 px-4 text-right"><span className={`font-black px-2 py-0.5 rounded-lg ${cl.v1_30>0?'text-amber-700 bg-amber-50':'text-gray-300'}`}>{cl.v1_30>0?`$${formatNum(cl.v1_30)}`:'—'}</span></td>
+                                <td className="py-3 px-4 text-right"><span className={`font-black px-2 py-0.5 rounded-lg ${cl.v31_60>0?'text-orange-700 bg-orange-50':'text-gray-300'}`}>{cl.v31_60>0?`$${formatNum(cl.v31_60)}`:'—'}</span></td>
+                                <td className="py-3 px-4 text-right"><span className={`font-black px-2 py-0.5 rounded-lg ${cl.vMas60>0?'text-red-700 bg-red-50':'text-gray-300'}`}>{cl.vMas60>0?`$${formatNum(cl.vMas60)}`:'—'}</span></td>
+                                <td className="py-3 px-4 text-right font-black text-gray-900 text-[11px]">${formatNum(cl.total)}</td>
                                 <td className="py-3 px-4 text-right text-gray-400 text-[9px]">{formatNum(cl.total*tasaBCV)}</td>
-                                <td className="py-3 px-4 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black ${eBg}`}>{estado}</span></td>
+                                <td className="py-3 px-4 text-center"><span className={`px-3 py-1 rounded-full text-[9px] font-black border ${
+                                  {CRÍTICO:'bg-red-600 text-white border-red-700',VENCIDO:'bg-orange-500 text-white border-orange-600','POR COBRAR':'bg-amber-400 text-amber-900 border-amber-500','AL DÍA':'bg-green-500 text-white border-green-600'}[estado]
+                                }`}>{estado}</span></td>
                                 <td className="py-3 px-4 text-center" onClick={e=>e.stopPropagation()}>
                                   <button onClick={()=>setCxcSelectedClient(cxcSelectedClient===cl.clientRif?'':cl.clientRif)}
                                     className={`px-3 py-1.5 rounded-xl text-[9px] font-black transition-all ${sel&&!cxcExpandAll?'bg-blue-600 text-white':'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'}`}>
@@ -14226,18 +14228,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   <div className="bg-blue-50 border-t border-blue-200 p-4">
                                     <table className="w-full text-[9px]">
                                       <thead>
-                                        <tr className="font-black text-blue-700 uppercase border-b border-blue-200">
-                                          <th className="py-2 px-2 text-left">Documento</th>
-                                          <th className="py-2 px-2 text-center">Emisión</th><th className="py-2 px-2 text-center">Vence</th>
-                                          <th className="py-2 px-2 text-center text-purple-600">Días Cred.</th>
-                                          <th className="py-2 px-2 text-center text-indigo-600">Doc. Fiscal</th>
-                                          <th className="py-2 px-2 text-right">Total USD</th>
-                                          <th className="py-2 px-2 text-right text-green-600">Cobrado</th>
-                                          <th className="py-2 px-2 text-right text-blue-600">NC/ND</th>
-                                          <th className="py-2 px-2 text-right text-amber-600">Ret.IVA</th>
-                                          <th className="py-2 px-2 text-right">Saldo USD</th>
-                                          <th className="py-2 px-2 text-center">Vend.</th>
-                                          <th className="py-2 px-2 text-center">Cobrar</th>
+                                        <tr style={{background:'#0f172a'}} className="text-white">
+                                          <th className="py-2 px-2 text-left text-[8px] uppercase tracking-wide">Documento</th>
+                                          <th className="py-2 px-2 text-center text-[8px] uppercase tracking-wide">Emisión</th><th className="py-2 px-2 text-center text-[8px] uppercase tracking-wide">Vence</th>
+                                          <th className="py-2 px-2 text-center text-purple-300 text-[8px] uppercase">Días Cred.</th>
+                                          <th className="py-2 px-2 text-center text-indigo-300 text-[8px] uppercase">Doc. Fiscal</th>
+                                          <th className="py-2 px-2 text-right text-[8px] uppercase">Total USD</th>
+                                          <th className="py-2 px-2 text-right text-green-400 text-[8px] uppercase">Cobrado</th>
+                                          <th className="py-2 px-2 text-right text-blue-400 text-[8px] uppercase">NC/ND</th>
+                                          <th className="py-2 px-2 text-right text-amber-400 text-[8px] uppercase">Ret.IVA</th>
+                                          <th className="py-2 px-2 text-right text-orange-400 text-[8px] uppercase">Saldo USD</th>
+                                          <th className="py-2 px-2 text-center text-[8px] uppercase">Vend.</th>
+                                          <th className="py-2 px-2 text-center text-[8px] uppercase">Cobrar</th>
                                         </tr>
                                       </thead>
                                       <tbody>
@@ -14248,8 +14250,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           const dc=d<=0?'text-green-700':d<=30?'text-amber-700':d<=60?'text-orange-700':'text-red-700 font-black';
                                           const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
                                           const ncsNE=(notasVentaCD||[]).filter(n=>(n.neOrigen===ne.id||n.neId===ne.id)&&(!fechaRef||(n.fecha||'')<=fechaRef));
-                                          // Factura vinculada a esta NE
-                                          const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id);
+                                          // Factura vinculada: buscar por neOrigen (nuevo) o ne.facturaId (legacy)
+                                          const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id)||
+                                                         (ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId):null);
                                           const invLinkedIds=invVinc?[invVinc.id]:[];
                                           const docFiscal=invVinc?(invVinc.nroFiscal||invVinc.nroControl||invVinc.documento||'—'):(ne.nroFiscal||'—');
                                           // Retenciones con comprobante
@@ -14257,23 +14260,33 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           const retTooltip=retsNE.map(r=>r.nroRetencion||r.nroComprobante||'').filter(Boolean).join(' · ')||'';
                                           return (
                                             <React.Fragment key={ne.id}>
-                                              <tr className="border-b border-blue-100 hover:bg-blue-100">
-                                                <td className="py-2 px-2 font-black text-orange-600">{ne.documento||ne.id}</td>
-                                                <td className="py-2 px-2 text-center text-gray-500">{ne.fecha||'—'}</td>
-                                                <td className="py-2 px-2 text-center text-gray-500">{getVence(ne)}</td>
-                                                <td className="py-2 px-2 text-center text-purple-600 font-bold">{parseNum(ne.diasCredito||0)>0?`${parseNum(ne.diasCredito)}d`:'—'}</td>
-                                                <td className="py-2 px-2 text-center text-indigo-600 font-bold text-[8px]">{docFiscal!=='—'?docFiscal:'—'}</td>
-                                                <td className="py-2 px-2 text-right font-bold">${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td>
-                                                <td className="py-2 px-2 text-right text-green-700">{cobNE>0?`$${formatNum(cobNE)}`:'—'}</td>
-                                                <td className="py-2 px-2 text-right text-blue-600">{ncNE>0?`-$${formatNum(ncNE)}`:'—'}</td>
-                                                <td className="py-2 px-2 text-right text-amber-600" title={retTooltip}>
-                                                  {retNE>0?<span className="cursor-help">${formatNum(retNE)}{retTooltip&&<span className="text-[7px] block text-amber-400">{retTooltip}</span>}</span>:'—'}
-                                                </td>
-                                                <td className="py-2 px-2 text-right font-black text-red-600">${formatNum(saldo)}</td>
-                                                <td className="py-2 px-2 text-center text-gray-500">{ne.vendedor||'—'}</td>
+                                              <tr className={`border-b border-gray-100 hover:bg-orange-50 transition-colors ${i%2===0?'bg-white':'bg-slate-50'}`}>
+                                                <td className="py-2 px-2 font-black text-orange-600 text-[9px]">{ne.documento||ne.id}</td>
+                                                <td className="py-2 px-2 text-center text-gray-500 text-[9px]">{ne.fecha||'—'}</td>
+                                                <td className={`py-2 px-2 text-center text-[9px] font-bold ${d>0?'text-red-500':'text-gray-400'}`}>{getVence(ne)}</td>
                                                 <td className="py-2 px-2 text-center">
-                                                  <button onClick={()=>setCxcCobroModal({neId:ne.id,neDoc:ne.documento||ne.id,clientName:ne.clientName||cl.clientName,saldo:getSaldoNE(ne),total:parseNum(ne.total||ne.totalUSD||0),cobrado:getCobradoNEAtFecha(ne,null),vendedor:ne.vendedor||'',fecha:getTodayDate(),monto:String(getSaldoNE(ne)),metodo:'Transferencia',referencia:'',cuentaId:'',cuentaNombre:'',tipo:'Total',tasaCobro:(()=>{const _inv=(invoices||[]).find(i=>i.neOrigen===ne.id);const _t=parseNum(_inv?.tasa||_inv?.tasaBCV||0);return _t>0?String(_t):'';})()})}
-                                                    className="px-3 py-1 bg-green-600 text-white rounded-lg font-black hover:bg-green-700 transition-all">💰 Cobrar</button>
+                                                  {parseNum(ne.diasCredito||0)>0?<span className="font-black text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded-md text-[9px]">{parseNum(ne.diasCredito)}d</span>:<span className="text-gray-300 text-[9px]">—</span>}
+                                                </td>
+                                                <td className="py-2 px-2 text-center">
+                                                  {docFiscal!=='—'?<span className="font-black text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded-md text-[8px]">{docFiscal}</span>:<span className="text-gray-300 text-[9px]">—</span>}
+                                                </td>
+                                                <td className="py-2 px-2 text-right font-bold text-gray-700 text-[9px]">${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td>
+                                                <td className="py-2 px-2 text-right">
+                                                  {cobNE>0?<span className="font-black text-green-700 bg-green-50 px-1.5 py-0.5 rounded-md text-[9px]">${formatNum(cobNE)}</span>:<span className="text-gray-300 text-[9px]">—</span>}
+                                                </td>
+                                                <td className="py-2 px-2 text-right">
+                                                  {ncNE>0?<span className="font-black text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded-md text-[9px]">-${formatNum(ncNE)}</span>:<span className="text-gray-300 text-[9px]">—</span>}
+                                                </td>
+                                                <td className="py-2 px-2 text-right" title={retTooltip}>
+                                                  {retNE>0?<span className="font-black text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-md text-[9px] cursor-help">${formatNum(retNE)}</span>:<span className="text-gray-300 text-[9px]">—</span>}
+                                                </td>
+                                                <td className="py-2 px-2 text-right">
+                                                  <span className={`font-black px-2 py-0.5 rounded-md text-[9px] ${saldo<=0?'text-green-700 bg-green-50':d<=0?'text-blue-700 bg-blue-50':d<=30?'text-amber-700 bg-amber-50':d<=60?'text-orange-700 bg-orange-50':'text-red-700 bg-red-50'}`}>${formatNum(saldo)}</span>
+                                                </td>
+                                                <td className="py-2 px-2 text-center text-gray-500 text-[9px] uppercase">{ne.vendedor||'—'}</td>
+                                                <td className="py-2 px-2 text-center">
+                                                  <button onClick={()=>setCxcCobroModal({neId:ne.id,neDoc:ne.documento||ne.id,clientName:ne.clientName||cl.clientName,saldo:getSaldoNE(ne),total:parseNum(ne.total||ne.totalUSD||0),cobrado:getCobradoNEAtFecha(ne,null),vendedor:ne.vendedor||'',fecha:getTodayDate(),monto:String(getSaldoNE(ne)),metodo:'Transferencia',referencia:'',cuentaId:'',cuentaNombre:'',tipo:'Total',tasaCobro:(()=>{const _inv=(invoices||[]).find(i=>i.neOrigen===ne.id||i.id===ne.facturaId);const _t=parseNum(_inv?.tasa||_inv?.tasaBCV||0);return _t>0?String(_t):'';})()})}
+                                                    className="px-3 py-1 bg-green-600 text-white rounded-lg font-black hover:bg-green-700 transition-all text-[9px]">💰 Cobrar</button>
                                                 </td>
                                               </tr>
                                               {cobrosNE.map(cb=>(
