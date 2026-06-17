@@ -10474,7 +10474,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           filtInvs.forEach(inv=>{
             const items = inv.itemsFacturados||[];
             if(items.length===0){
-              rows.push({fecha:inv.fecha,doc:inv.documento,neDoc:(()=>{const _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen);return _ne?.documento||inv.neOrigen||'—';})(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+              rows.push({fecha:inv.fecha,doc:inv.documento,neDoc:(()=>{const _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen)||(notasEntrega||[]).find(n=>n.facturaId===inv.id);return _ne?.documento||_ne?.id||inv.neOrigen||'—';})(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
             } else {
               items.forEach(it=>{
                 const qty=parseNum(it.cantidad||1);
@@ -14243,7 +14243,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {cl.nes.map(ne=>{
+                                        {cl.nes.map((ne,i)=>{
                                           const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
                                           const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const tasa=getTasa(ne);
                                           const d=getAgingDays(ne,fechaRef);
