@@ -14250,7 +14250,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               {sel&&(
                                 <tr><td colSpan={9} className="p-0">
                                   <div className="bg-blue-50 border-t border-blue-200 p-4">
-                                    <table className="w-full text-[9px]">
+                                    <table className="w-full text-[9px]" style={{tableLayout:'fixed'}}>
+                                      <colgroup>
+                                        <col style={{width:'12%'}}/>
+                                        <col style={{width:'7%'}}/>
+                                        <col style={{width:'7%'}}/>
+                                        <col style={{width:'5%'}}/>
+                                        <col style={{width:'8%'}}/>
+                                        <col style={{width:'8%'}}/>
+                                        <col style={{width:'7%'}}/>
+                                        <col style={{width:'7%'}}/>
+                                        <col style={{width:'8%'}}/>
+                                        <col style={{width:'8%'}}/>
+                                        <col style={{width:'6%'}}/>
+                                        <col style={{width:'6%'}}/>
+                                        <col style={{width:'11%'}}/>
+                                      </colgroup>
                                       <thead>
                                         <tr style={{background:'#0f172a'}} className="text-white">
                                           <th className="py-2 px-2 text-left text-[8px] uppercase tracking-wide">Documento</th>
@@ -14407,7 +14422,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           <td className="py-2 px-2 text-right text-blue-400 font-black">{cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)>0?'-$'+formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-amber-400 font-black">{cl.nes.reduce((s,ne)=>s+getRetNE(ne),0)>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getRetNE(ne),0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-orange-400 font-black">${formatNum(cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0))}</td>
-                                          <td colSpan={2}></td>
+                                          <td colSpan={3}></td>
                                         </tr>
                                       </tfoot>
                                     </table>
