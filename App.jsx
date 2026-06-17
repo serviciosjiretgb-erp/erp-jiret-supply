@@ -13914,7 +13914,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               body=clientesList.map(cl=>{
                 const d=getAgingDays(cl.nes[0]||{},fechaRef);
                 const estado=cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
-                const cols9='grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr';
+                const cols9='grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr 1.2fr';
                 let clTotal=0;
                 const neRows=cl.nes.map(ne=>{
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);
@@ -13952,6 +13952,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span style="text-align:right;color:#3b82f6">${ncNE>0?'-$'+formatNum(ncNE):'—'}</span>
                     <span style="text-align:right;color:#b45309">${retNE>0?'$'+formatNum(retNE)+(retCompPDF?' ('+retCompPDF+')':''):'—'}</span>
                     <span style="text-align:right;font-weight:bold;color:${bc2}">$${formatNum(saldo)}</span>
+                    <span style="font-size:8px;color:#64748b;font-style:italic">${ne.observacionCxC||''}</span>
                   </div>${detalles}`;
                 }).join('');
                 return `<div style="margin-bottom:16px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
@@ -13968,6 +13969,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span style="text-align:right;color:#3b82f6">NC/ND</span>
                     <span style="text-align:right;color:#b45309">Ret.IVA</span>
                     <span style="text-align:right">Saldo USD</span>
+                    <span>Observación</span>
                   </div>
                   ${neRows}
                   <div class="cl-tot" style="grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr">
@@ -13977,6 +13979,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span style="text-align:right;color:#3b82f6">$${formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0))}</span>
                     <span style="text-align:right;color:#b45309">$${formatNum(cl.nes.reduce((s,ne)=>s+getRetNE(ne),0))}</span>
                     <span style="text-align:right;font-weight:bold;color:#dc2626">$${formatNum(clTotal)}</span>
+                    <span></span>
                   </div>
                 </div>`;
               }).join('');
@@ -14022,7 +14025,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const diasCred=parseNum(ne.diasCredito||0);
                   const retsNE=(retenciones||[]).filter(r=>r.facturaId===(invVinc?.id||'NONE')||r.neId===ne.id);
                   const retComp=retsNE.map(r=>r.nroRetencion||'').filter(Boolean).join(' / ');
-                  detRows+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCred>0?diasCred+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFisc}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE)+(retComp?' ('+retComp+')':''):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td></tr>`;
+                  detRows+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCred>0?diasCred+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFisc}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE)+(retComp?' ('+retComp+')':''):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
                   const cobrosNE=(cobrosCxc||[]).filter(cx=>cx.neId===ne.id&&(!fechaRef||(cx.fecha||'')<=fechaRef));
                   cobrosNE.forEach(cb=>{detRows+=`<tr class="sub"><td class="left" style="padding-left:16px">✓ Abono · ${cb.fecha}</td><td class="left">${cb.referencia||'—'}</td><td class="left">${cb.metodo||'—'}</td><td colspan="4"></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}</td><td colspan="3"></td></tr>`;});
                   retsNE.forEach(r=>{detRows+=`<tr class="ret"><td class="left" style="padding-left:16px">RET · ${r.fechaComprobante||r.fecha||'—'}</td><td class="left">${r.nroRetencion||'—'}</td><td colspan="7"></td><td class="a">$${formatNum(parseNum(r.montoRetenido||0))}</td><td></td></tr>`;});
@@ -14041,7 +14044,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               let body='';
               clientesList.forEach(cl=>{
                 body+=`<tr class="hdr"><td colspan="10" class="left" style="font-size:10pt;padding:6px 7px">${cl.clientName} · ${cl.clientRif}</td></tr>`;
-                body+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">Documento</td><td class="left">Emisión</td><td class="left">Vence</td><td class="center" style="color:#7c3aed">Días Cred.</td><td class="center" style="color:#4338ca">Doc. Fiscal</td><td>Total USD</td><td>Cobrado</td><td>NC/ND</td><td>Ret. IVA</td><td>Saldo USD</td><td class="left">Bucket</td></tr>`;
+                body+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">Documento</td><td class="left">Emisión</td><td class="left">Vence</td><td class="center" style="color:#7c3aed">Días Cred.</td><td class="center" style="color:#4338ca">Doc. Fiscal</td><td>Total USD</td><td>Cobrado</td><td>NC/ND</td><td>Ret. IVA</td><td>Saldo USD</td><td class="left">Bucket</td><td class="left" style="color:#92400e">Observación</td></tr>`;
                 cl.nes.forEach((ne,i)=>{
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
                   const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const tasa=getTasa(ne);const d=getAgingDays(ne,fechaRef);
@@ -14049,16 +14052,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const invVincXLS=(invoices||[]).find(inv=>inv.neOrigen===ne.id)||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId):null);
                   const docFiscalXLS=invVincXLS?(invVincXLS.nroFiscal||invVincXLS.documento||'—'):'—';
                   const diasCredXLS=parseNum(ne.diasCredito||0);
-                  body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCredXLS>0?diasCredXLS+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFiscalXLS}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td></tr>`;
+                  body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCredXLS>0?diasCredXLS+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFiscalXLS}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
                   const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
                   cobrosNE.forEach(cb=>{body+=`<tr class="sub"><td class="left" style="padding-left:20px">✓ Abono</td><td class="left">${cb.fecha||'—'}</td><td class="left">${cb.referencia||'—'}</td><td></td><td class="left">${cb.metodo||'—'}</td><td></td><td></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}</td><td>${formatNum(parseNum(cb.monto)*getTasa(ne))}</td><td></td></tr>`;});
                   const ncsNE=(notasVentaCD||[]).filter(n=>n.neOrigen===ne.id&&n.tipo==='NC'&&(!fechaRef||(n.fecha||'')<=fechaRef));
                   ncsNE.forEach(nc=>{body+=`<tr class="nc"><td class="left" style="padding-left:20px">NC</td><td class="left">${nc.fecha||'—'}</td><td class="left">${nc.nroDocumento||'—'}</td><td></td><td></td><td class="b">-$${formatNum(parseNum(nc.monto||nc.totalNeto||0))}</td><td></td><td></td><td></td><td></td></tr>`;});
                 });
                 const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
-                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="9">SUBTOTAL ${cl.clientName}</td><td style="color:#dc2626">$${formatNum(clTot)}</td><td></td></tr><tr><td colspan="11"></td></tr>`;
+                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="9">SUBTOTAL ${cl.clientName}</td><td style="color:#dc2626">$${formatNum(clTot)}</td><td></td><td></td></tr><tr><td colspan="12"></td></tr>`;
               });
-              body+=`<tr class="tot"><td class="left" colspan="9">TOTAL CARTERA · Corte: ${corte}</td><td>$${formatNum(totalCartera)}</td><td></td></tr>`;
+              body+=`<tr class="tot"><td class="left" colspan="9">TOTAL CARTERA · Corte: ${corte}</td><td>$${formatNum(totalCartera)}</td><td></td><td></td></tr>`;
               const html=XH+EMPRESA+`<table>${body}</table></body></html>`;
               const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Detallado_${corte}.xls`;a.click();URL.revokeObjectURL(url);
             }
@@ -14261,6 +14264,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           <th className="py-2 px-2 text-right text-orange-400 text-[8px] uppercase">Saldo USD</th>
                                           <th className="py-2 px-2 text-center text-[8px] uppercase">Vend.</th>
                                           <th className="py-2 px-2 text-center text-[8px] uppercase">Cobrar</th>
+                                          <th className="py-2 px-2 text-left text-gray-400 text-[8px] uppercase">Observación</th>
                                         </tr>
                                       </thead>
                                       <tbody>
@@ -14270,15 +14274,37 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           const d=getAgingDays(ne,fechaRef);
                                           const dc=d<=0?'text-green-700':d<=30?'text-amber-700':d<=60?'text-orange-700':'text-red-700 font-black';
                                           const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
-                                          const ncsNE=(notasVentaCD||[]).filter(n=>(n.neOrigen===ne.id||n.neId===ne.id)&&(!fechaRef||(n.fecha||'')<=fechaRef));
-                                          // Factura vinculada: buscar por neOrigen (nuevo) o ne.facturaId (legacy)
-                                          const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id)||
-                                                         (ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId):null);
-                                          const invLinkedIds=invVinc?[invVinc.id]:[];
+                                          // Factura vinculada (ambas direcciones)
+                                          const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento)||
+                                                         (ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId||inv.documento===ne.facturaId):null);
                                           const docFiscal=invVinc?(invVinc.nroFiscal||invVinc.nroControl||invVinc.documento||'—'):(ne.nroFiscal||'—');
-                                          // Retenciones con comprobante
-                                          const retsNE=(retenciones||[]).filter(r=>r.facturaId===(invVinc?.id||'NONE')||r.neId===ne.id||r.facturaId===ne.id);
+                                          // IDs de facturas vinculadas para lookup de NC/Ret
+                                          const _neId2=ne.id||''; const _neDoc2=ne.documento||'';
+                                          const _lnkIds=new Set([
+                                            ...(invVinc?[invVinc.id]:[]),
+                                            ...(ne.facturaId?[ne.facturaId]:[])
+                                          ]);
+                                          // NCs/NDs para sub-filas — lookup completo igual que getNCUSDNEAtFecha
+                                          const ncsNE=(notasVentaCD||[]).filter(n=>{
+                                            const ni=n.neId||'',no=n.neOrigen||'',nf=n.facturaId||'';
+                                            return ((_neId2&&(ni===_neId2||no===_neId2))||(_neDoc2&&(ni===_neDoc2||no===_neDoc2))||(nf&&_lnkIds.has(nf)))
+                                                   &&(!fechaRef||(n.fecha||'')<=fechaRef);
+                                          });
+                                          // Retenciones con comprobante — lookup por factura vinculada
+                                          const retsNE=(retenciones||[]).filter(r=>{
+                                            const rf=r.facturaId||'';
+                                            if(invVinc) return (invVinc.id&&rf===invVinc.id)||(invVinc.nroFiscal&&rf===invVinc.nroFiscal)||
+                                              (invVinc.documento&&rf===invVinc.documento)||(_neId2&&r.neId===_neId2);
+                                            return (_neId2&&r.neId===_neId2)||(_neDoc2&&r.neId===_neDoc2);
+                                          });
+                                          const invLinkedIds=invVinc?[invVinc.id]:[];
                                           const retTooltip=retsNE.map(r=>r.nroRetencion||r.nroComprobante||'').filter(Boolean).join(' · ')||'';
+                                          const obsActual=ne.observacionCxC||'';
+                                          const saveObs=async(txt)=>{
+                                            if(txt===obsActual) return;
+                                            try{await updateDoc(getDocRef('notasEntrega',ne.id),{observacionCxC:txt,timestamp:Date.now()});}
+                                            catch(e){console.warn('obs save',e);}
+                                          };
                                           return (
                                             <React.Fragment key={ne.id}>
                                               <tr className={`border-b border-gray-100 hover:bg-orange-50 transition-colors ${i%2===0?'bg-white':'bg-slate-50'}`}>
@@ -14306,8 +14332,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                 </td>
                                                 <td className="py-2 px-2 text-center text-gray-500 text-[9px] uppercase">{ne.vendedor||'—'}</td>
                                                 <td className="py-2 px-2 text-center">
-                                                  <button onClick={()=>setCxcCobroModal({neId:ne.id,neDoc:ne.documento||ne.id,clientName:ne.clientName||cl.clientName,saldo:getSaldoNE(ne),total:parseNum(ne.total||ne.totalUSD||0),cobrado:getCobradoNEAtFecha(ne,null),vendedor:ne.vendedor||'',fecha:getTodayDate(),monto:String(getSaldoNE(ne)),metodo:'Transferencia',referencia:'',cuentaId:'',cuentaNombre:'',tipo:'Total',tasaCobro:(()=>{const _inv=(invoices||[]).find(i=>i.neOrigen===ne.id||i.id===ne.facturaId);const _t=parseNum(_inv?.tasa||_inv?.tasaBCV||0);return _t>0?String(_t):'';})()})}
+                                                  <button onClick={()=>{const _inv=(invoices||[]).find(i=>i.neOrigen===ne.id||i.id===ne.facturaId);const _t=parseNum(_inv?.tasa||_inv?.tasaBCV||0);setCxcCobroModal({neId:ne.id,neDoc:ne.documento||ne.id,clientName:ne.clientName||cl.clientName,saldo:getSaldoNE(ne),total:parseNum(ne.total||ne.totalUSD||0),cobrado:getCobradoNEAtFecha(ne,null),vendedor:ne.vendedor||'',fecha:getTodayDate(),monto:String(getSaldoNE(ne)),metodo:'Transferencia',referencia:'',cuentaId:'',cuentaNombre:'',tipo:'Total',tasaCobro:_t>0?String(_t):''})}}
                                                     className="px-3 py-1 bg-green-600 text-white rounded-lg font-black hover:bg-green-700 transition-all text-[9px]">💰 Cobrar</button>
+                                                </td>
+                                                <td className="py-1 px-2" style={{minWidth:'120px'}}>
+                                                  <input
+                                                    type="text"
+                                                    defaultValue={obsActual}
+                                                    onBlur={e=>saveObs(e.target.value.trim())}
+                                                    onKeyDown={e=>{if(e.key==='Enter'){e.target.blur();}}}
+                                                    placeholder="Agregar observación..."
+                                                    className="w-full text-[9px] border border-gray-200 rounded-lg px-2 py-1 outline-none focus:border-orange-400 bg-yellow-50 placeholder-gray-300"
+                                                  />
                                                 </td>
                                               </tr>
                                               {cobrosNE.map(cb=>(
@@ -14320,19 +14356,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                   <td className="py-1 px-2 text-center text-gray-400">{cb.metodo}</td><td></td>
                                                 </tr>
                                               ))}
-                                              {ncsNE.map(nc=>(
+                                              {ncsNE.map(nc=>{
+                                                const tNC=parseNum(nc.tasaFactura||0)||tasaBCV;
+                                                const baseBs=parseNum(nc.monto||0);
+                                                const totalBs=nc.tieneIva===false?baseBs:baseBs*1.16;
+                                                const ncUSD=tNC>1?totalBs/tNC:0;
+                                                return(
                                                 <tr key={nc.id} className="bg-blue-50 text-[8px]">
-                                                  <td colSpan={2} className="py-1 px-4 text-blue-700 font-bold">NC · {nc.fecha||'—'}</td>
-                                                  <td className="py-1 px-2 text-center text-blue-500">{nc.nroDocumento||'—'}</td>
-                                                  <td></td><td></td>
-                                                  <td className="py-1 px-2 text-right text-blue-700 font-black">-${formatNum(parseNum(nc.monto||nc.totalNeto||0))}</td>
-                                                  <td></td><td colSpan={4}></td>
-                                                </tr>
-                                              ))}
+                                                  <td colSpan={2} className="py-1 px-4 text-blue-700 font-bold">{nc.tipo||'NC'} · {nc.fecha||'—'} · <span className="font-mono">{nc.nroDocumento||'—'}</span></td>
+                                                  <td colSpan={2} className="py-1 px-2 text-gray-500 italic">{nc.descripcion||'—'}</td>
+                                                  <td></td>
+                                                  <td className="py-1 px-2 text-right text-blue-700 font-black">{ncUSD>0?`-$${formatNum(ncUSD)}`:`Bs.${formatNum(totalBs)}`}</td>
+                                                  <td colSpan={6}></td>
+                                                </tr>);
+                                              })}
                                               {/* Detalle: Doc Fiscal + Retenciones con comprobante */}
                                               {(()=>{
-                                                const retsThisNE=(retenciones||[]).filter(r=>r.facturaId===(invVinc?.id||'NONE')||r.neId===ne.id||(invLinkedIds||[]).includes(r.facturaId)||r.facturaId===ne.id);
-                                                if(!invVinc&&retsThisNE.length===0) return null;
+                                                
+                                                if(!invVinc&&retsNE.length===0) return null;
                                                 return(
                                                   <tr className="bg-indigo-50 text-[8px] border-b border-indigo-100">
                                                     <td colSpan={12} className="py-1.5 px-4">
@@ -14342,7 +14383,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                           Fac. Fiscal: <b className="text-orange-600">{invVinc.nroFiscal||invVinc.documento||'—'}</b>
                                                           {invVinc.nroControl&&<> &nbsp;·&nbsp; Control: <b>{invVinc.nroControl}</b></>}
                                                         </span>}
-                                                        {retsThisNE.map((r,ri)=>(
+                                                        {retsNE.map((r,ri)=>(
                                                           <span key={ri} className="text-amber-700 font-bold">
                                                             🧾 RET N°{ri+1}: Comprobante <b className="text-amber-800">{r.nroRetencion||r.nroComprobante||'—'}</b>
                                                             {(r.fechaComprobante||r.fecha)&&<> &nbsp;·&nbsp; Fecha: <b>{r.fechaComprobante||r.fecha}</b></>}
