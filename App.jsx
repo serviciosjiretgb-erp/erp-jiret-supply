@@ -13760,22 +13760,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const getSaldoNEAtFecha = (ne, fRef) => {
             const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
             const ncUSD=getNCUSDNEAtFecha(ne,fRef);
-            return Math.max(0, parseNum(ne.total||ne.totalUSD||0)-cobrado-ncUSD);
+            const retUSD=getRetUSDNE(ne); // Ret.IVA reduce el saldo pendiente
+            return Math.max(0, parseNum(ne.total||ne.totalUSD||0)-cobrado-ncUSD-retUSD);
           };
-          // NC/ND en USD: incluye NCs fiscales (via factura vinculada) y no fiscales (via neId/neOrigen)
+          // NC/ND en USD — busca por neId, neOrigen, Y por facturaId (invoice linked via neOrigen o ne.facturaId)
           const getNCUSDNEAtFecha=(ne,fRef)=>{
-            const invLinkedIds=(invoices||[]).filter(inv=>inv.neOrigen===ne.id).map(inv=>inv.id);
+            // IDs de facturas vinculadas a esta NE (ambas direcciones)
+            const invLinkedIds=[
+              ...(invoices||[]).filter(inv=>inv.neOrigen===ne.id).map(inv=>inv.id),
+              ...(ne.facturaId?[ne.facturaId]:[])
+            ];
             return (notasVentaCD||[])
               .filter(n=>(n.neId===ne.id||n.neOrigen===ne.id||invLinkedIds.includes(n.facturaId))&&(!fRef||(n.fecha||'')<=fRef))
               .reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCV;return s+(t>0?parseNum(n.monto||0)/t:0);},0);
           };
-          // Retenciones en USD: montoRetenido Bs / tasa de la factura vinculada
+          // Ret.IVA en USD: montoRetenido Bs / tasa factura vinculada
           const getRetUSDNE=(ne)=>{
-            // 1. Buscar la factura fiscal vinculada a esta NE
             const invLinked=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.id===ne.facturaId||inv.id===ne.facturaVinculada);
-            // 2. Tasa de la factura (fuente más confiable)
             const tasa=parseNum(invLinked?.tasa||invLinked?.tasaBCV||ne.tasa||0)||1;
-            // 3. Retenciones: buscar por múltiples campos posibles
             const rets=(retenciones||[]).filter(r=>{
               if(!invLinked) return r.neId===ne.id;
               return r.facturaId===invLinked.id
@@ -13785,7 +13787,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 ||(invLinked.nroFiscal&&r.nroFactura===invLinked.nroFiscal)
                 ||r.neId===ne.id;
             });
-            // 4. USD = montoRetenido Bs / tasa factura
             return rets.reduce((s,r)=>s+(tasa>0?parseNum(r.montoRetenido||r.montoIVARetenido||0)/tasa:0),0);
           };
           const getCobradoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
@@ -13954,7 +13955,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span style="text-align:right">$${formatNum(cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</span>
                     <span style="text-align:right;color:#16a34a">$${formatNum(cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0))}</span>
                     <span style="text-align:right;color:#3b82f6">$${formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0))}</span>
-                    <span></span>
+                    <span style="text-align:right;color:#b45309">$${formatNum(cl.nes.reduce((s,ne)=>s+getRetNE(ne),0))}</span>
                     <span style="text-align:right;font-weight:bold;color:#dc2626">$${formatNum(clTotal)}</span>
                   </div>
                 </div>`;
@@ -14337,6 +14338,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           );
                                         })}
                                       </tbody>
+                                      <tfoot>
+                                        <tr style={{background:'#0f172a'}} className="text-[9px]">
+                                          <td colSpan={5} className="py-2 px-2 text-white font-black uppercase">Subtotal {cl.nes.length} doc{cl.nes.length>1?'s':''}</td>
+                                          <td className="py-2 px-2 text-right text-gray-300 font-bold">${formatNum(cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</td>
+                                          <td className="py-2 px-2 text-right text-green-400 font-black">{cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0)>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0)):'—'}</td>
+                                          <td className="py-2 px-2 text-right text-blue-400 font-black">{cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)>0?'-$'+formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)):'—'}</td>
+                                          <td className="py-2 px-2 text-right text-amber-400 font-black">{cl.nes.reduce((s,ne)=>s+getRetNE(ne),0)>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getRetNE(ne),0)):'—'}</td>
+                                          <td className="py-2 px-2 text-right text-orange-400 font-black">${formatNum(cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0))}</td>
+                                          <td colSpan={2}></td>
+                                        </tr>
+                                      </tfoot>
                                     </table>
                                   </div>
                                 </td></tr>
