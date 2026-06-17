@@ -10474,7 +10474,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           filtInvs.forEach(inv=>{
             const items = inv.itemsFacturados||[];
             if(items.length===0){
-              rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+              rows.push({fecha:inv.fecha,doc:inv.documento,neDoc:(()=>{const _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen);return _ne?.documento||inv.neOrigen||'—';})(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
             } else {
               items.forEach(it=>{
                 const qty=parseNum(it.cantidad||1);
@@ -10648,7 +10648,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     {pvFiltDoc && <button onClick={()=>setPvFiltDoc('')} className="text-gray-400 hover:text-red-500"><X size={10}/></button>}
                   </div>
                   <span className="text-[9px] font-black text-gray-400">{allRows.length} reg.</span>
-                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=rows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.nroFiscal||'—',r.op||'—',r.vendedor||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=9&&ci<=14?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="9" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
+                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','NE Origen','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=rows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.neDoc||'—',r.nroFiscal||'—',r.op||'—',r.vendedor||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=9&&ci<=14?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="9" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
                   <button onClick={()=>handleExportPDF('Reporte_Ventas_Costos', true)} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Printer size={12}/> Imprimir</button>
                 </div>
               </div>
@@ -10659,12 +10659,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               </div>
               <div className="overflow-x-auto rounded-xl border border-gray-100">
                 <table className="w-full border-collapse text-[8px]">
-                  <thead><tr className="bg-black text-white">{['Fecha','Documento','Nro. Fiscal','OP','Vendedor','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','T. Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2 px-1.5 text-left font-black uppercase text-[7px] leading-tight">{h}</th>)}</tr></thead>
+                  <thead><tr className="bg-black text-white">{['Fecha','Documento','NE Origen','Nro. Fiscal','OP','Vendedor','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','T. Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2 px-1.5 text-left font-black uppercase text-[7px] leading-tight">{h}</th>)}</tr></thead>
                   <tbody>
                     {allRows.map((r,i)=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return(
                       <tr key={i} className={`border-b border-gray-50 ${r.isNota?(r.tipoNota==='NC'?'bg-red-50 text-red-800':'bg-blue-50 text-blue-800'):(i%2===0?'bg-white':'bg-gray-50')} hover:bg-orange-50`}>
                         <td className="py-1 px-1.5 font-bold text-gray-500 whitespace-nowrap">{r.fecha}</td>
                         <td className="py-1 px-1.5 font-black text-orange-600 whitespace-nowrap">{r.doc}</td>
+                        <td className="py-1 px-1.5 font-bold text-purple-600 whitespace-nowrap text-[7px]">{r.neDoc||'—'}</td>
                         <td className="py-1 px-1.5 font-bold text-gray-600 whitespace-nowrap">{r.nroFiscal||'—'}</td>
                         <td className="py-1 px-1.5 font-black text-orange-600 whitespace-nowrap">{r.op||'—'}</td>
                         <td className="py-1 px-1.5 font-black text-blue-700 uppercase whitespace-nowrap">{r.vendedor||'—'}</td>
@@ -13768,12 +13769,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               .filter(n=>(n.neId===ne.id||n.neOrigen===ne.id||invLinkedIds.includes(n.facturaId))&&(!fRef||(n.fecha||'')<=fRef))
               .reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCV;return s+(t>0?parseNum(n.monto||0)/t:0);},0);
           };
-          // Retenciones en USD: montoRetenido Bs / tasa factura vinculada
+          // Retenciones en USD: montoRetenido Bs / tasa de la factura vinculada
           const getRetUSDNE=(ne)=>{
+            // 1. Buscar la factura fiscal vinculada a esta NE
             const invLinked=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.id===ne.facturaVinculada);
-            const tasa=parseNum(invLinked?.tasa||ne.tasa||ne.tasaBCV||0)||tasaBCV;
-            const rets=(retenciones||[]).filter(r=>r.facturaId===(invLinked?.id||'NONE')||r.neId===ne.id||r.facturaId===ne.id);
-            return rets.reduce((s,r)=>s+(tasa>0?parseNum(r.montoRetenido||0)/tasa:0),0);
+            // 2. Tasa de la factura (fuente más confiable)
+            const tasa=parseNum(invLinked?.tasa||invLinked?.tasaBCV||ne.tasa||0)||1;
+            // 3. Retenciones: buscar por múltiples campos posibles
+            const rets=(retenciones||[]).filter(r=>{
+              if(!invLinked) return r.neId===ne.id;
+              return r.facturaId===invLinked.id
+                ||r.facturaId===invLinked.nroFiscal
+                ||r.facturaId===invLinked.documento
+                ||r.nroFiscal===invLinked.nroFiscal
+                ||(invLinked.nroFiscal&&r.nroFactura===invLinked.nroFiscal)
+                ||r.neId===ne.id;
+            });
+            // 4. USD = montoRetenido Bs / tasa factura
+            return rets.reduce((s,r)=>s+(tasa>0?parseNum(r.montoRetenido||r.montoIVARetenido||0)/tasa:0),0);
           };
           const getCobradoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
           const getNCNEAtFecha=(ne,fRef)=>getNCUSDNEAtFecha(ne,fRef);
@@ -14259,7 +14272,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                 <td className="py-2 px-2 text-right font-black text-red-600">${formatNum(saldo)}</td>
                                                 <td className="py-2 px-2 text-center text-gray-500">{ne.vendedor||'—'}</td>
                                                 <td className="py-2 px-2 text-center">
-                                                  <button onClick={()=>setCxcCobroModal({neId:ne.id,neDoc:ne.documento||ne.id,clientName:ne.clientName||cl.clientName,saldo:getSaldoNE(ne),total:parseNum(ne.total||ne.totalUSD||0),cobrado:getCobradoNEAtFecha(ne,null),vendedor:ne.vendedor||'',fecha:getTodayDate(),monto:String(getSaldoNE(ne)),metodo:'Transferencia',referencia:'',cuentaId:'',cuentaNombre:'',tipo:'Total',tasaCobro:String(parseNum(ne.tasa||ne.tasaBCV||0)||'')})}
+                                                  <button onClick={()=>setCxcCobroModal({neId:ne.id,neDoc:ne.documento||ne.id,clientName:ne.clientName||cl.clientName,saldo:getSaldoNE(ne),total:parseNum(ne.total||ne.totalUSD||0),cobrado:getCobradoNEAtFecha(ne,null),vendedor:ne.vendedor||'',fecha:getTodayDate(),monto:String(getSaldoNE(ne)),metodo:'Transferencia',referencia:'',cuentaId:'',cuentaNombre:'',tipo:'Total',tasaCobro:(()=>{const _inv=(invoices||[]).find(i=>i.neOrigen===ne.id);const _t=parseNum(_inv?.tasa||_inv?.tasaBCV||0);return _t>0?String(_t):'';})()})}
                                                     className="px-3 py-1 bg-green-600 text-white rounded-lg font-black hover:bg-green-700 transition-all">💰 Cobrar</button>
                                                 </td>
                                               </tr>
