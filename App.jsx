@@ -13767,13 +13767,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // NC/ND en USD — solo matchea si los campos no están vacíos (evita undefined===undefined)
           const getNCUSDNEAtFecha=(ne,fRef)=>{
             const neId=ne.id||''; const neDoc=ne.documento||'';
+            const _linkedInvs=[
+              ...(invoices||[]).filter(inv=>(neId&&inv.neOrigen===neId)||(neDoc&&inv.neOrigen===neDoc)),
+              ...(ne.facturaId?(invoices||[]).filter(inv=>inv.id===ne.facturaId||inv.documento===ne.facturaId):[]),
+              ...(ne.nroFiscal?(invoices||[]).filter(inv=>inv.nroFiscal===ne.nroFiscal):[])
+            ];
             const linkedInvIds=new Set([
-              ...(invoices||[]).filter(inv=>
-                (neId&&inv.neOrigen===neId)||(neDoc&&inv.neOrigen===neDoc)
-              ).map(inv=>inv.id),
-              ...(ne.facturaId?(invoices||[]).filter(inv=>inv.id===ne.facturaId||inv.documento===ne.facturaId).map(inv=>inv.id):[])
+              ..._linkedInvs.flatMap(inv=>[inv.id,inv.nroFiscal,inv.documento].filter(Boolean)),
+              ...(ne.facturaId?[ne.facturaId]:[])
             ]);
-            if(ne.facturaId) linkedInvIds.add(ne.facturaId);
             return (notasVentaCD||[])
               .filter(n=>{
                 const nNeId=n.neId||''; const nNeO=n.neOrigen||''; const nFId=n.facturaId||'';
@@ -13796,9 +13798,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // Ret.IVA en USD: montoRetenido Bs / tasa de la factura fiscal vinculada
           // SOLO se calcula si hay una tasa válida (> 10 Bs/$); si no, retorna 0 para no distorsionar el saldo
           const getRetUSDNE=(ne)=>{
-            const invLinked=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||inv.id===ne.facturaId||inv.documento===ne.facturaId);
-            const tasa=parseNum(invLinked?.tasa||invLinked?.tasaBCV||ne.tasa||0);
-            if(!tasa||tasa<10) return 0; // sin tasa válida → no deducir (evita $11.000 por Bs/1)
+            const invLinked=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId))||(ne.nroFiscal&&inv.nroFiscal===ne.nroFiscal));
+            const tasa=parseNum(invLinked?.tasa||invLinked?.tasaBCV||ne.tasa||0)||tasaBCV;
+            if(!tasa||tasa<2) return 0; // sin tasa alguna → no deducir
             const rets=(retenciones||[]).filter(r=>{
               if(!invLinked) return r.neId===ne.id;
               return r.facturaId===invLinked.id
@@ -13848,7 +13850,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             else if(d<=60) porCliente[k].v31_60+=saldo; else porCliente[k].vMas60+=saldo;
             porCliente[k].total+=saldo; porCliente[k].nes.push(ne);
           });
-          const clientesList=Object.values(porCliente).sort((a,b)=>b.total-a.total);
+          const clientesList=Object.values(porCliente).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
 
           // ── GUARDAR COBRO ──────────────────────────────────────────────
           const guardarCobro=async()=>{
@@ -13961,7 +13963,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span style="font-size:9px;color:#94a3b8;padding-right:16px">${cl.clientRif}</span>
                     <span style="color:#fbbf24">${estado}</span>
                   </div>
-                  <div style="display:grid;grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr;background:#f1f5f9;padding:4px 16px;font-size:9px;font-weight:bold;text-transform:uppercase;color:#64748b">
+                  <div style="display:grid;grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr 1.2fr;background:#f1f5f9;padding:4px 16px;font-size:9px;font-weight:bold;text-transform:uppercase;color:#64748b">
                     <span>Documento</span><span>Emisión</span><span>Vence</span>
                     <span style="text-align:center;color:#7c3aed">Días Cred.</span>
                     <span style="text-align:center;color:#4338ca">Doc. Fiscal</span>
@@ -13972,7 +13974,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span>Observación</span>
                   </div>
                   ${neRows}
-                  <div class="cl-tot" style="grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr">
+                  <div class="cl-tot" style="grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr 1.2fr">
                     <span>Subtotal ${cl.nes.length} doc${cl.nes.length>1?'s':''}</span><span></span><span></span><span></span><span></span>
                     <span style="text-align:right">$${formatNum(cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</span>
                     <span style="text-align:right;color:#16a34a">$${formatNum(cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0))}</span>
@@ -13981,7 +13983,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span style="text-align:right;font-weight:bold;color:#dc2626">$${formatNum(clTotal)}</span>
                     <span></span>
                   </div>
-                </div>`;
+                </div>`; 
               }).join('');
               body+=`<div class="gran-tot" style="grid-template-columns:1fr 1fr;margin-top:8px;border-radius:6px">
                 <span>TOTAL CARTERA · ${nesAbiertas.length} documentos · Corte: ${corte}</span>
@@ -14250,36 +14252,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               {sel&&(
                                 <tr><td colSpan={9} className="p-0">
                                   <div className="bg-blue-50 border-t border-blue-200 p-4">
-                                    <table className="w-full text-[9px]" style={{tableLayout:'fixed'}}>
-                                      <colgroup>
-                                        <col style={{width:'12%'}}/>
-                                        <col style={{width:'7%'}}/>
-                                        <col style={{width:'7%'}}/>
-                                        <col style={{width:'5%'}}/>
-                                        <col style={{width:'8%'}}/>
-                                        <col style={{width:'8%'}}/>
-                                        <col style={{width:'7%'}}/>
-                                        <col style={{width:'7%'}}/>
-                                        <col style={{width:'8%'}}/>
-                                        <col style={{width:'8%'}}/>
-                                        <col style={{width:'6%'}}/>
-                                        <col style={{width:'6%'}}/>
-                                        <col style={{width:'11%'}}/>
-                                      </colgroup>
+                                    <table className="w-full text-[9px]">
                                       <thead>
                                         <tr style={{background:'#0f172a'}} className="text-white">
-                                          <th className="py-2 px-2 text-left text-[8px] uppercase tracking-wide">Documento</th>
-                                          <th className="py-2 px-2 text-center text-[8px] uppercase tracking-wide">Emisión</th><th className="py-2 px-2 text-center text-[8px] uppercase tracking-wide">Vence</th>
-                                          <th className="py-2 px-2 text-center text-purple-300 text-[8px] uppercase">Días Cred.</th>
-                                          <th className="py-2 px-2 text-center text-indigo-300 text-[8px] uppercase">Doc. Fiscal</th>
-                                          <th className="py-2 px-2 text-right text-[8px] uppercase">Total USD</th>
-                                          <th className="py-2 px-2 text-right text-green-400 text-[8px] uppercase">Cobrado</th>
-                                          <th className="py-2 px-2 text-right text-blue-400 text-[8px] uppercase">NC/ND</th>
-                                          <th className="py-2 px-2 text-right text-amber-400 text-[8px] uppercase">Ret.IVA</th>
-                                          <th className="py-2 px-2 text-right text-orange-400 text-[8px] uppercase">Saldo USD</th>
-                                          <th className="py-2 px-2 text-center text-[8px] uppercase">Vend.</th>
-                                          <th className="py-2 px-2 text-center text-[8px] uppercase">Cobrar</th>
-                                          <th className="py-2 px-2 text-left text-gray-400 text-[8px] uppercase">Observación</th>
+                                          <th className="py-2 px-2 text-left text-[8px] uppercase tracking-wide whitespace-nowrap" style={{minWidth:'90px'}}>Documento</th>
+                                          <th className="py-2 px-2 text-center text-[8px] uppercase tracking-wide whitespace-nowrap" style={{minWidth:'75px'}}>Emisión</th>
+                                          <th className="py-2 px-2 text-center text-[8px] uppercase tracking-wide whitespace-nowrap" style={{minWidth:'75px'}}>Vence</th>
+                                          <th className="py-2 px-2 text-center text-purple-300 text-[8px] uppercase whitespace-nowrap" style={{minWidth:'55px'}}>Días Cred.</th>
+                                          <th className="py-2 px-2 text-center text-indigo-300 text-[8px] uppercase whitespace-nowrap" style={{minWidth:'70px'}}>Doc. Fiscal</th>
+                                          <th className="py-2 px-2 text-right text-[8px] uppercase whitespace-nowrap" style={{minWidth:'75px'}}>Total USD</th>
+                                          <th className="py-2 px-2 text-right text-green-400 text-[8px] uppercase whitespace-nowrap" style={{minWidth:'65px'}}>Cobrado</th>
+                                          <th className="py-2 px-2 text-right text-blue-400 text-[8px] uppercase whitespace-nowrap" style={{minWidth:'55px'}}>NC/ND</th>
+                                          <th className="py-2 px-2 text-right text-amber-400 text-[8px] uppercase whitespace-nowrap" style={{minWidth:'70px'}}>Ret.IVA</th>
+                                          <th className="py-2 px-2 text-right text-orange-400 text-[8px] uppercase whitespace-nowrap" style={{minWidth:'70px'}}>Saldo USD</th>
+                                          <th className="py-2 px-2 text-center text-[8px] uppercase whitespace-nowrap" style={{minWidth:'55px'}}>Vend.</th>
+                                          <th className="py-2 px-2 text-center text-[8px] uppercase whitespace-nowrap" style={{minWidth:'60px'}}>Cobrar</th>
+                                          <th className="py-2 px-2 text-left text-gray-400 text-[8px] uppercase whitespace-nowrap" style={{minWidth:'100px'}}>Observación</th>
                                         </tr>
                                       </thead>
                                       <tbody>
@@ -14291,12 +14279,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
                                           // Factura vinculada (ambas direcciones)
                                           const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento)||
-                                                         (ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId||inv.documento===ne.facturaId):null);
+                                                         (ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId||inv.documento===ne.facturaId):null)||
+                                                         (ne.nroFiscal?(invoices||[]).find(inv=>inv.nroFiscal===ne.nroFiscal):null);
                                           const docFiscal=invVinc?(invVinc.nroFiscal||invVinc.nroControl||invVinc.documento||'—'):(ne.nroFiscal||'—');
                                           // IDs de facturas vinculadas para lookup de NC/Ret
                                           const _neId2=ne.id||''; const _neDoc2=ne.documento||'';
                                           const _lnkIds=new Set([
-                                            ...(invVinc?[invVinc.id]:[]),
+                                            ...(invVinc?[invVinc.id,invVinc.nroFiscal,invVinc.documento].filter(Boolean):[]),
                                             ...(ne.facturaId?[ne.facturaId]:[])
                                           ]);
                                           // NCs/NDs para sub-filas — lookup completo igual que getNCUSDNEAtFecha
