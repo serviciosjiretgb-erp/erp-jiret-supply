@@ -10474,7 +10474,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           filtInvs.forEach(inv=>{
             const items = inv.itemsFacturados||[];
             if(items.length===0){
-              rows.push({fecha:inv.fecha,doc:inv.documento,neDoc:(()=>{const _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen)||(notasEntrega||[]).find(n=>n.facturaId===inv.id);return _ne?.documento||_ne?.id||inv.neOrigen||'—';})(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+              rows.push({fecha:inv.fecha,doc:inv.documento,neDoc:(()=>{const _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento);return _ne?.documento||_ne?.id||inv.neOrigen||'—';})(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
             } else {
               items.forEach(it=>{
                 const qty=parseNum(it.cantidad||1);
@@ -10587,7 +10587,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                 // 4. Fallback: invCode clean if anything
                 if(!codigo) codigo = _cc || getClean(it.fgId||'') || '—';
-                rows.push({fecha:inv.fecha,doc:inv.documento,nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+                rows.push({fecha:inv.fecha,doc:inv.documento,neDoc:(()=>{const _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento);return _ne?.documento||_ne?.id||inv.neOrigen||'—';})(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
           });
@@ -13763,16 +13763,21 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const retUSD=getRetUSDNE(ne); // Ret.IVA reduce el saldo pendiente
             return Math.max(0, parseNum(ne.total||ne.totalUSD||0)-cobrado-ncUSD-retUSD);
           };
-          // NC/ND en USD — busca por neId, neOrigen, Y por facturaId (invoice linked via neOrigen o ne.facturaId)
+          // NC/ND en USD — incluye IVA 16% en el total (monto guardado es base imponible)
           const getNCUSDNEAtFecha=(ne,fRef)=>{
-            // IDs de facturas vinculadas a esta NE (ambas direcciones)
             const invLinkedIds=[
               ...(invoices||[]).filter(inv=>inv.neOrigen===ne.id).map(inv=>inv.id),
               ...(ne.facturaId?[ne.facturaId]:[])
             ];
             return (notasVentaCD||[])
-              .filter(n=>(n.neId===ne.id||n.neOrigen===ne.id||invLinkedIds.includes(n.facturaId))&&(!fRef||(n.fecha||'')<=fRef))
-              .reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCV;return s+(t>0?parseNum(n.monto||0)/t:0);},0);
+              .filter(n=>(n.neId===ne.id||n.neOrigen===ne.id||invLinkedIds.includes(n.facturaId)||invLinkedIds.includes(n.facturaId))&&(!fRef||(n.fecha||'')<=fRef))
+              .reduce((s,n)=>{
+                const t=parseNum(n.tasaFactura||0)||tasaBCV;
+                const baseBs=parseNum(n.monto||0);
+                // Incluir IVA: monto guardado es base imponible; total NC = base × 1.16
+                const totalBs=n.tieneIva===false?baseBs:baseBs*1.16;
+                return s+(t>0?totalBs/t:0);
+              },0);
           };
           // Ret.IVA en USD: montoRetenido Bs / tasa factura vinculada
           const getRetUSDNE=(ne)=>{
