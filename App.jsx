@@ -13763,18 +13763,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const retUSD=getRetUSDNE(ne); // Ret.IVA reduce el saldo pendiente
             return Math.max(0, parseNum(ne.total||ne.totalUSD||0)-cobrado-ncUSD-retUSD);
           };
-          // NC/ND en USD — incluye IVA 16% en el total (monto guardado es base imponible)
+          // NC/ND en USD — cubre todas las variantes de cómo se guardó el link NC→NE
           const getNCUSDNEAtFecha=(ne,fRef)=>{
-            const invLinkedIds=[
-              ...(invoices||[]).filter(inv=>inv.neOrigen===ne.id).map(inv=>inv.id),
-              ...(ne.facturaId?[ne.facturaId]:[])
+            // Facturas vinculadas a esta NE (ambas direcciones, IDs Y documento numbers)
+            const linkedInvs=[
+              ...(invoices||[]).filter(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento),
+              ...(ne.facturaId?(invoices||[]).filter(inv=>inv.id===ne.facturaId||inv.documento===ne.facturaId):[])
             ];
+            const invLinkedIds=[...new Set(linkedInvs.flatMap(inv=>[inv.id,inv.documento,inv.nroFiscal].filter(Boolean)))];
             return (notasVentaCD||[])
-              .filter(n=>(n.neId===ne.id||n.neOrigen===ne.id||invLinkedIds.includes(n.facturaId)||invLinkedIds.includes(n.facturaId))&&(!fRef||(n.fecha||'')<=fRef))
+              .filter(n=>(
+                n.neId===ne.id||n.neId===ne.documento||          // NC guarda ID o doc# de la NE
+                n.neOrigen===ne.id||n.neOrigen===ne.documento||  // o campo neOrigen
+                invLinkedIds.includes(n.facturaId)               // o facturaId coincide con la factura vinculada
+              )&&(!fRef||(n.fecha||'')<=fRef))
               .reduce((s,n)=>{
                 const t=parseNum(n.tasaFactura||0)||tasaBCV;
                 const baseBs=parseNum(n.monto||0);
-                // Incluir IVA: monto guardado es base imponible; total NC = base × 1.16
+                // monto = base imponible; total NC con IVA = base × 1.16
                 const totalBs=n.tieneIva===false?baseBs:baseBs*1.16;
                 return s+(t>0?totalBs/t:0);
               },0);
