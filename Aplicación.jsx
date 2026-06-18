@@ -12104,7 +12104,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const rows=[];
           // ── Fuente 1: Notas de Entrega ──────────────────────────────────────
           (notasEntrega||[]).forEach(ne=>{
-            if(ne.fecha<tvDesde||ne.fecha>tvHasta) return;
+            if(ne.fecha&&(ne.fecha<tvDesde||ne.fecha>tvHasta)) return;
             if(tvStatus!=='TODAS'&&ne.status!==tvStatus) return;
             const doc=ne.id+(ne.status==='PROCESADA'?'P':'T');
             if(tvBuscarDoc && !doc.toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
