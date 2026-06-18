@@ -11805,7 +11805,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <input value={form.neClientSearch!==undefined?form.neClientSearch:form.clientName} onChange={e=>setForm(f=>({...f,neClientSearch:e.target.value}))} onFocus={()=>setForm(f=>({...f,neShowClientDrop:true}))} onBlur={()=>setTimeout(()=>setForm(f=>({...f,neShowClientDrop:false})),200)}
                         className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="Buscar cliente..."/>
                       {form.neShowClientDrop&&clientResults.length>0&&(<div className="absolute z-50 w-full bg-white border-2 border-orange-300 rounded-xl mt-1 shadow-xl max-h-48 overflow-y-auto">
-                        {clientResults.map(c=>(<button key={c.id||c.rif} onMouseDown={()=>setForm(f=>({...f,clientRif:c.rif||'',clientName:c.name||c.nombre||'',clientAddress:c.direccion||c.address||'',neClientSearch:'',neShowClientDrop:false}))} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0"><span className="font-black text-orange-600">{c.rif}</span> — {c.name||c.nombre}</button>))}
+                        {clientResults.map(c=>(<button key={c.id||c.rif} onMouseDown={()=>setForm(f=>({...f,clientRif:c.rif||'',clientName:c.name||c.nombre||'',clientAddress:c.direccion||c.address||'',neClientSearch:c.name||c.nombre||'',neShowClientDrop:false}))} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0"><span className="font-black text-orange-600">{c.rif}</span> — {c.name||c.nombre}</button>))}
                       </div>)}
                     </div>
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">RIF</label>
@@ -13951,7 +13951,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <tfoot><tr><td colspan="2">TOTALES</td><td>$${formatNum(corriente)}</td><td>$${formatNum(v1_30)}</td><td>$${formatNum(v31_60)}</td><td>$${formatNum(vMas60)}</td><td>$${formatNum(totalCartera)}</td><td>${formatNum(totalCartera*tasaBCV)}</td></tr></tfoot></table>`;
             } else {
               // Detallado por cliente
-              let gTotUSD=0;
+              let gTotUSD=0,gTotTotal=0,gTotCob=0,gTotNC=0,gTotRet=0;
               body=clientesList.map(cl=>{
                 const d=getAgingDays(cl.nes[0]||{},fechaRef);
                 const estado=cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
@@ -13966,7 +13966,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const totalUSD=parseNum(ne.total||ne.totalUSD||0);
                   const d2=getAgingDays(ne,fechaRef);
                   const bc2=d2<=0?'#16a34a':d2<=30?'#b45309':d2<=60?'#c2410c':'#dc2626';
-                  clTotal+=saldo; gTotUSD+=saldo;
+                  clTotal+=saldo; gTotUSD+=saldo; gTotTotal+=totalUSD; gTotCob+=cobradoNE; gTotNC+=ncNE; gTotRet+=retNE;
                   // Cobros parciales
                   const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
                   const ncsNE=(notasVentaCD||[]).filter(n=>n.neOrigen===ne.id&&n.tipo==='NC'&&(!fechaRef||(n.fecha||'')<=fechaRef));
@@ -14024,9 +14024,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   </div>
                 </div>`; 
               }).join('');
-              body+=`<div class="gran-tot" style="grid-template-columns:1fr 1fr;margin-top:8px;border-radius:6px">
-                <span>TOTAL CARTERA · ${nesAbiertas.length} documentos · Corte: ${corte}</span>
-                <span style="text-align:right">TOTAL USD: $${formatNum(gTotUSD)}</span>
+              body+=`<div class="gran-tot" style="display:grid;grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr 1.2fr;margin-top:8px;border-radius:6px;gap:0">
+                <span style="grid-column:span 5">TOTAL CARTERA · ${nesAbiertas.length} docs · Corte: ${corte}</span>
+                <span style="text-align:right">$${formatNum(gTotTotal)}</span>
+                <span style="text-align:right;color:#16a34a">$${formatNum(gTotCob)}</span>
+                <span style="text-align:right;color:#3b82f6">-$${formatNum(gTotNC)}</span>
+                <span style="text-align:right;color:#b45309">$${formatNum(gTotRet)}</span>
+                <span style="text-align:right;font-weight:bold;color:#f97316">$${formatNum(gTotUSD)}</span>
+                <span></span>
               </div>`;
             }
             const html=`<html><head><meta charset="utf-8"><title>${titulo}</title><style>${ESTILOS}</style></head><body>
@@ -14100,9 +14105,19 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   ncsNE.forEach(nc=>{body+=`<tr class="nc"><td class="left" style="padding-left:20px">NC</td><td class="left">${nc.fecha||'—'}</td><td class="left">${nc.nroDocumento||'—'}</td><td></td><td></td><td class="b">-$${formatNum(parseNum(nc.monto||nc.totalNeto||0))}</td><td></td><td></td><td></td><td></td></tr>`;});
                 });
                 const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
-                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="9">SUBTOTAL ${cl.clientName}</td><td style="color:#dc2626">$${formatNum(clTot)}</td><td></td><td></td></tr><tr><td colspan="12"></td></tr>`;
+                const clTotUSD=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0);
+                const clTotCob=cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0);
+                const clTotNC=cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0);
+                const clTotRet=cl.nes.reduce((s,ne)=>s+getRetNE(ne),0);
+                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="5">SUBTOTAL ${cl.clientName}</td><td>$${formatNum(clTotUSD)}</td><td class="g">$${formatNum(clTotCob)}</td><td class="b">${clTotNC>0?'-$'+formatNum(clTotNC):'—'}</td><td class="a">${clTotRet>0?'$'+formatNum(clTotRet):'—'}</td><td style="color:#dc2626">$${formatNum(clTot)}</td><td></td><td></td></tr><tr><td colspan="12"></td></tr>`;
               });
-              body+=`<tr class="tot"><td class="left" colspan="9">TOTAL CARTERA · Corte: ${corte}</td><td>$${formatNum(totalCartera)}</td><td></td><td></td></tr>`;
+              const gTotXLS=clientesList.reduce((s,cl)=>({
+  total:s.total+cl.nes.reduce((ss,ne)=>ss+parseNum(ne.total||ne.totalUSD||0),0),
+  cob:s.cob+cl.nes.reduce((ss,ne)=>ss+getCobradoNEAtFecha(ne,fechaRef),0),
+  nc:s.nc+cl.nes.reduce((ss,ne)=>ss+getNCNEAtFecha(ne,fechaRef),0),
+  ret:s.ret+cl.nes.reduce((ss,ne)=>ss+getRetNE(ne),0),
+}),{total:0,cob:0,nc:0,ret:0});
+body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiertas.length} docs · Corte: ${corte}</td><td>$${formatNum(gTotXLS.total)}</td><td class="g">$${formatNum(gTotXLS.cob)}</td><td class="b">${gTotXLS.nc>0?'-$'+formatNum(gTotXLS.nc):'—'}</td><td class="a">${gTotXLS.ret>0?'$'+formatNum(gTotXLS.ret):'—'}</td><td style="color:#f97316;font-weight:bold">$${formatNum(totalCartera)}</td><td></td><td></td></tr>`;
               const html=XH+EMPRESA+`<table>${body}</table></body></html>`;
               const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Detallado_${corte}.xls`;a.click();URL.revokeObjectURL(url);
             }
@@ -14207,6 +14222,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                 {[
                   {l:'Cartera total',v:`$${formatNum(totalCartera)}`,s:`Bs. ${formatNum(totalCartera*tasaBCV)}`,c:'text-gray-800',bg:'bg-gray-50',br:'border-gray-200'},
+                  {l:'Total facturado',v:`$${formatNum(nesAbiertas.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}`,s:`NC/ND: -$${formatNum(nesAbiertas.reduce((s,ne)=>s+getNCNEAtFecha(ne,null),0))} · Ret: -$${formatNum(nesAbiertas.reduce((s,ne)=>s+getRetNE(ne),0))}`,c:'text-gray-500',bg:'bg-gray-50',br:'border-gray-100'},
                   {l:'Corriente',v:`$${formatNum(corriente)}`,s:`Bs. ${formatNum(corriente*tasaBCV)}`,c:'text-green-700',bg:'bg-green-50',br:'border-green-200'},
                   {l:'1–30 días',v:`$${formatNum(v1_30)}`,s:`Bs. ${formatNum(v1_30*tasaBCV)}`,c:'text-amber-700',bg:'bg-amber-50',br:'border-amber-200'},
                   {l:'31–60 días',v:`$${formatNum(v31_60)}`,s:`Bs. ${formatNum(v31_60*tasaBCV)}`,c:'text-orange-700',bg:'bg-orange-50',br:'border-orange-200'},
@@ -14656,23 +14672,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             });
           });
 
-          // Re-ordenar todo el libro: facturas+NC/ND por nroFiscal numérico, luego fecha
+          // Ordenar TODO el libro por FECHA cronológica (facturas + retenciones + NC/ND juntas)
           rows.sort((a,b)=>{
-            // Obtener número de referencia para la fila
-            const refA = a.tipo==='FACTURA' ? (a.nroFactura||'') :
-                         (a.tipo==='NC'||a.tipo==='ND') ? (a.facAfectada||a.fecha||'') :
-                         a.tipo==='RETENCION' ? (a.nroFactAfecta||'') : (a.fecha||'');
-            const refB = b.tipo==='FACTURA' ? (b.nroFactura||'') :
-                         (b.tipo==='NC'||b.tipo==='ND') ? (b.facAfectada||b.fecha||'') :
-                         b.tipo==='RETENCION' ? (b.nroFactAfecta||'') : (b.fecha||'');
-            const nA=parseInt((refA).replace(/\D/g,''))||0;
-            const nB=parseInt((refB).replace(/\D/g,''))||0;
-            if(nA!==nB) return nA-nB;
-            // Mismo número fiscal: factura primero, luego NC/ND por fecha, retención al final
+            const fA=toISO(a.fecha); const fB=toISO(b.fecha);
+            if(fA!==fB) return fA.localeCompare(fB);
+            // Mismo día: FACTURA → NC/ND → RETENCION
             const typeOrder={FACTURA:0,NC:1,ND:1,RETENCION:2};
-            const tA=typeOrder[a.tipo]??3, tB=typeOrder[b.tipo]??3;
+            const tA=typeOrder[a.tipo]??3; const tB=typeOrder[b.tipo]??3;
             if(tA!==tB) return tA-tB;
-            return (a.fecha||'').localeCompare(b.fecha||'');
+            // Mismo tipo y fecha: por número de factura
+            const nA=parseInt((a.nroFactura||a.nroFactAfecta||'').replace(/\D/g,''))||0;
+            const nB=parseInt((b.nroFactura||b.nroFactAfecta||'').replace(/\D/g,''))||0;
+            return nA-nB;
           });
           rows.forEach((r,i)=>{r.seq=i+1;});
 
@@ -14706,230 +14717,116 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           };
 
           // ── Excel con membrete ────────────────────────────────────────────────
-          const exportExcel=()=>{
-            // ── Helpers ────────────────────────────────────────────────────────
-            const num = v => (parseNum(v)||0);                    // raw number
-            const rawFact = s => String(s||'').replace(/^0+/,'') || '';   // 3014 (sin ceros)
-            const ctrl = s => {                                   // 00-003109
-              const c = String(s||'').trim();
-              if(!c) return '';
-              if(c.includes('-')) return c;
-              return c.length>2 ? `${c.slice(0,2)}-${c.slice(2)}` : c;
-            };
-            const fV = n => {                                     // 3.354.362,74 (formato VEN)
-              if(!n&&n!==0)return'';
-              const p=Math.abs(parseNum(n)).toFixed(2).split('.');
-              return(n<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1];
-            };
-            const dateFmt = d => {
-              if(!d) return '';
-              const parts = String(d).split('-');
-              if(parts.length===3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
-              return d;
-            };
+          const exportExcel=async()=>{
+            // Cargar SheetJS dinámicamente si no está disponible
+            if(!window.XLSX){
+              await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+            }
+            const XL=window.XLSX;
+            const mes2=String(libroMes).padStart(2,'0');
+            const mesesLabel=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+            const mesLabel=mesesLabel[parseInt(libroMes,10)-1]||'';
+            const lastDay=new Date(parseInt(libroAnio),parseInt(libroMes),0).getDate();
+            const desde=libroQuincena==='2'?`${libroAnio}-${mes2}-16`:`${libroAnio}-${mes2}-01`;
+            const hasta=libroQuincena==='1'?`${libroAnio}-${mes2}-15`:`${libroAnio}-${mes2}-${String(lastDay).padStart(2,'0')}`;
+            const fmtFecha=d=>{if(!d)return'';const p=String(d).split('-');return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:d;};
+            const fmtNum=n=>{if(!n&&n!==0)return '';const a=Math.abs(parseNum(n));const s=a.toFixed(2).split('.');const fmt=s[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+s[1];return parseNum(n)<0?'-'+fmt:fmt;};
+            const pFac=s=>String(s||'').trim()?String(s).trim().replace(/^0+/,'').padStart(8,'0'):'—';
+            const pCtrl=s=>{const c=String(s||'').trim();if(!c)return'—';if(c.includes('-'))return c;return c.length>2?`${c.slice(0,2)}-${c.slice(2)}`:c;};
+            const Q=libroQuincena==='1'?'I QUINCENA':libroQuincena==='2'?'II QUINCENA':'MES COMPLETO';
+            const periodoStr=libroQuincena==='AMBAS'?`01/${mes2}/${libroAnio} AL ${String(lastDay).padStart(2,'0')}/${mes2}/${libroAnio}`:`${fmtFecha(desde)} AL ${fmtFecha(hasta)}`;
 
-            // ── Totales ────────────────────────────────────────────────────────
-            const totVG  = rows.filter(r=>r.tipo==='FACTURA'&&r.alicuota==='16%').reduce((s,r)=>s+r.baseImponibleBs,0);
-            const totIVAD= rows.filter(r=>r.tipo==='FACTURA').reduce((s,r)=>s+r.ivaBs,0);
-            const totVBrt= rows.filter(r=>r.tipo==='FACTURA').reduce((s,r)=>s+r.totalVentasBs,0);
-            const retPer = rows.filter(r=>r.tipo==='RETENCION').reduce((s,r)=>s+r.ivaRetDb,0);
-            const retAc  = parseNum(libroRetAcum||0);
-            const retDe  = parseNum(libroRetDesc||0);
-            const totRet = retAc+retPer;
-            const saldo  = totRet-retDe;
-            const islr   = parseFloat((totVG*0.01).toFixed(2));
-            const iae    = parseFloat((totVBrt*0.01).toFixed(2));
-
-            // ── HTML del libro (formato modelo LVENTAS) ────────────────────────
-            const th = (txt,bg='#1f2937',color='#fff',w='',align='center',colspan=1,rowspan=1) =>
-              `<th colspan="${colspan}" rowspan="${rowspan}" style="background:${bg};color:${color};font-weight:900;font-size:7.5px;padding:3px 4px;border:1px solid #555;text-align:${align};vertical-align:middle;white-space:nowrap;${w?`width:${w};`:''}mso-number-format:'@'">${txt}</th>`;
-            const td = (txt,align='left',color='',bold='',bg='',colspan=1) =>
-              `<td colspan="${colspan}" style="padding:2px 4px;border:1px solid #d1d5db;font-size:7.5px;text-align:${align};color:${color||'inherit'};font-weight:${bold||'normal'};background:${bg||'transparent'};vertical-align:middle;mso-number-format:'@'">${txt}</td>`;
-            const tdN = (n,bold='',color='') =>
-              `<td style="padding:2px 4px;border:1px solid #d1d5db;font-size:7.5px;text-align:right;color:${color||'inherit'};font-weight:${bold||'normal'};vertical-align:middle;mso-number-format:Comma">${n!==0&&n!==''?fV(n):''}</td>`;
-
-            // Membrete (filas 1-7)
-            const colWidths='<colgroup><col style="width:8px"/><col style="width:30px"/><col style="width:70px"/><col style="width:80px"/><col style="width:180px"/><col style="width:70px"/><col style="width:55px"/><col style="width:65px"/><col style="width:45px"/><col style="width:45px"/><col style="width:55px"/><col style="width:80px"/><col style="width:45px"/><col style="width:60px"/><col style="width:80px"/><col style="width:40px"/><col style="width:70px"/><col style="width:70px"/><col style="width:60px"/><col style="width:80px"/></colgroup>';
-            const nc=20; // número de columnas
-            const blk=`<td style="border:none"></td>`;
-            const periodoStr=libroQuincena==='AMBAS'?'MES COMPLETO':(libroQuincena==='1'?'I QUINCENA':'II QUINCENA');
-            const desdeStr=periodoDesde.split('-').reverse().join('/');
-            const hastaStr=periodoHasta.split('-').reverse().join('/');
-
-            const membrete=`
-<tr style="height:20px">
-  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
-  <td colspan="3" style="font-weight:900;font-size:9px;text-align:center;vertical-align:middle;background:#1f2937;color:#fff;padding:4px">IMPUESTO AL VALOR AGREGADO</td>
-</tr>
-<tr style="height:18px">
-  ${blk}${blk}${blk}${blk}
-  <td style="font-weight:900;font-size:9px;padding:2px 4px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</td>
-  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
-  <td colspan="3" style="font-size:8px;text-align:center;padding:2px 4px;border:1px solid #ddd">FORMA 99030</td>
-</tr>
-<tr style="height:16px">
-  ${blk}${blk}${blk}${blk}
-  <td style="font-size:8px;padding:2px 4px">RIF: ${settings?.empresaRIF||'J-412309374'}</td>
-  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
-</tr>
-<tr style="height:16px">
-  ${blk}${blk}${blk}${blk}
-  <td style="font-size:7.5px;padding:2px 4px">${settings?.empresaDireccion||''}</td>
-  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
-  <td style="font-size:8px;font-weight:900;text-align:center;background:#f3f4f6;padding:2px 4px;border:1px solid #ddd">MES</td>
-  <td style="font-size:8px;font-weight:900;text-align:center;padding:2px 4px;border:1px solid #ddd">${mesLabel.toUpperCase()}</td>
-  ${blk}
-</tr>
-<tr style="height:16px">
-  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
-  <td colspan="3" style="font-size:8px;font-weight:900;text-align:center;background:#374151;color:#fff;padding:2px 4px">PERIODO: ${periodoStr}</td>
-</tr>
-<tr style="height:16px">
-  ${blk}${blk}${blk}${blk}
-  <td style="font-size:9px;font-weight:900;text-decoration:underline;padding:2px 4px">LIBRO DE VENTAS</td>
-  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
-  <td colspan="3" style="font-size:7.5px;text-align:center;padding:2px 4px;border:1px solid #ddd">DEL ${desdeStr} AL ${hastaStr}</td>
-</tr>
-<tr style="height:12px">
-  ${blk}${blk}${blk}${blk}
-  <td colspan="8" style="font-size:7px;text-align:center;padding:2px;border:1px solid #ddd">Ventas internas o Exportaciones</td>
-  ${blk}${blk}${blk}${blk}${blk}${blk}${blk}${blk}
-</tr>`;
-
-            // Headers (fila 8 y 9 del modelo)
-            const hdrs=`
-<tr style="background:#1f2937;color:#fff">
-  ${th('')}${th('Nº','#1f2937','#fff','30px')}${th('Fecha','#1f2937','#fff','70px')}${th('Nº R.I.F.','#1f2937','#fff','80px')}
-  ${th('Nombre y Apellido o Razón Social','#1f2937','#fff','180px','left')}
-  ${th('Tipo de Transacción','#1f2937','#fff','70px')}
-  ${th('N° de Factura','#1f2937','#fff','55px')}
-  ${th('N° Control de Factura','#1f2937','#fff','65px')}
-  ${th('N° Nota de Débito','#1f2937','#fff','45px')}
-  ${th('N° Nota de Crédito','#1f2937','#fff','45px')}
-  ${th('Nº Factura Afectada','#1f2937','#fff','55px')}
-  ${th('Valor Total de Ventas','#1f2937','#fff','80px','right')}
-  ${th('Igtf Percibido','#1f2937','#fff','45px','right')}
-  ${th('Ventas internas no gravables','#1f2937','#fff','60px','right')}
-  ${th('Base Imponible','#1f2937','#fff','80px','right')}
-  ${th('%  Alicuota','#1f2937','#fff','40px','right')}
-  ${th('Impuesto I.V.A (16%)','#1f2937','#fff','70px','right')}
-  ${th('IVA Retenido','#1f2937','#fff','70px','right')}
-  ${th('N° Factura que afecta','#1f2937','#fff','60px')}
-  ${th('N° Comprobante de retención','#1f2937','#fff','80px')}
-</tr>
-<tr style="background:#374151;color:#fff">
-  ${th('')}${th('')}${th('Documento','#374151','#fff')}${th('o C.I.','#374151','#fff')}
-  ${th('','#374151')}${th('','#374151')}${th('','#374151')}${th('','#374151')}
-  ${th('Débito','#374151','#fff')}${th('Crédito','#374151','#fff')}${th('Afectada','#374151','#fff')}
-  ${th('','#374151')}${th('','#374151')}${th('','#374151')}${th('','#374151')}
-  ${th('','#374151')}${th('','#374151')}${th('','#374151')}${th('','#374151')}${th('','#374151')}
-</tr>`;
-
+            // ── Armar AOA (array of arrays) ──────────────────────────────────
+            const aoa=[];
+            // Filas 1-6: membrete
+            aoa.push(['','SERVICIOS JIRET G&B, C.A.','','','','','','','','','','','','','','','','','IMPUESTO AL VALOR AGREGADO']);
+            aoa.push(['','RIF: J-412309374','','','','','','','','','','','','','','','','','FORMA 99030']);
+            aoa.push(['',''+(settings?.direccion||'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA')]);
+            aoa.push(['','LIBRO DE VENTAS','','','','','','','','','','','','','','','','MES',mesLabel.toUpperCase()]);
+            aoa.push(['','','','','','','','','','','','','','','','','','PERIODO:',Q]);
+            aoa.push(['','','','','','','','','','','','','','','','','','DEL',periodoStr]);
+            aoa.push(['','','','','','','','','','','','Ventas internas o Exportaciones Gravadas']);
+            // Fila 8-9: encabezados dobles
+            aoa.push(['Nº','Fecha','Nº R.I.F.','Nombre y Apellido o Razón Social','Tipo de Transacción',
+              'N° de Factura','N° Control de Factura','N° Nota de','N° Nota de','Nº Factura',
+              'Valor Total de Ventas','Igtf Percibido','Ventas internas no gravables','Base Imponible',
+              '% Alícuota','Impuesto I.V.A (16%)','IVA Retenido','N° Factura que afecta','N° Comprobante de retención']);
+            aoa.push(['','Documento','o C.I.','','','','','Débito','Crédito','Afectada']);
             // Filas de datos
-            const dataRows = rows.map((r,i)=>{
-              const isNC = r.tipo==='NC';
-              const isND = r.tipo==='ND';
-              const isRET= r.tipo==='RETENCION';
-              const rowBg= isRET?'#fefce8':isNC||isND?'#f5f3ff':(i%2?'#f9fafb':'#fff');
-              const nFact = rawFact(r.nroFactura);   // sin ceros: 3014
-              return `<tr style="background:${rowBg}">
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7px"></td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center">${isRET||isNC?'':r.seq||''}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px">${dateFmt(r.fecha)}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px">${r.rif}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:left">${r.nombre}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center;font-weight:bold;background:${r.tipo==='FACTURA'?'#f0fdf4':isRET?'#fef3c7':'#ede9fe'}">${r.tipo}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center;color:#1d4ed8;font-weight:bold">${isRET?'':nFact}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center">${isRET?'':ctrl(r.nroControl)||'-'}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center">${isND?nFact:'-'}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center">${isNC?nFact:'-'}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center">${r.facAfectada?rawFact(r.facAfectada):'-'}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right">${isRET?fV(0):fV(r.totalVentasBs)}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right">0</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right">0</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right;font-weight:bold">${isRET?fV(0):fV(r.baseImponibleBs)}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right">${isRET?'0,75':r.alicuota==='16%'?'0,16':r.alicuota==='0%'?'0':'0,16'}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right">${isRET?fV(0):fV(r.ivaBs)}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:right;color:#dc2626;font-weight:bold">${r.ivaRetDb>0?fV(r.ivaRetDb):''}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px;text-align:center;color:#ea580c">${r.nroFactAfecta?rawFact(r.nroFactAfecta):isRET?String(r.nroFactAfecta||'').replace(/^0+/,'')||'':''}</td>
-  <td style="padding:2px 3px;border:1px solid #d1d5db;font-size:7.5px">${r.nroComprobante||''}</td>
-</tr>`;
-            }).join('');
+            rows.forEach(r=>{
+              const isFac=r.tipo==='FACTURA';
+              const isRet=r.tipo==='RETENCION';
+              const isNC=r.tipo==='NC';
+              const isND=r.tipo==='ND';
+              aoa.push([
+                r.seq||'',
+                fmtFecha(r.fecha),
+                r.rif||'',
+                r.nombre||'',
+                r.tipo||'',
+                isFac?(pFac(r.nroFactura)):'—',
+                isFac?(pCtrl(r.nroControl)):isNC||isND?(pCtrl(r.nroControl)||'—'):'—',
+                isND?(r.nroDebito||'—'):'—',
+                isNC?(r.nroCredito||'—'):'—',
+                isNC||isND?(pFac(r.facAfectada)||'—'):'—',
+                isFac||isNC||isND?parseNum(r.totalVentasBs||0):0,
+                parseNum(r.igtf||0),
+                parseNum(r.noGravable||0),
+                isFac||isNC||isND?parseNum(r.baseImponibleBs||0):'',
+                isRet?'75%':(r.alicuota||'16%'),
+                isFac||isNC||isND?parseNum(r.ivaBs||0):'',
+                isRet?parseNum(r.ivaRetDb||0):'',
+                isRet?(pFac(r.nroFactAfecta)||'—'):'—',
+                isRet?(r.nroComprobante||'—'):'—',
+              ]);
+            });
+            // Fila TOTAL
+            const totTV=rows.reduce((s,r)=>s+(r.tipo==='RETENCION'?0:parseNum(r.totalVentasBs||0)),0);
+            const totBase=rows.reduce((s,r)=>s+(r.tipo==='RETENCION'?0:parseNum(r.baseImponibleBs||0)),0);
+            const totIVA=rows.reduce((s,r)=>s+(r.tipo==='RETENCION'?0:parseNum(r.ivaBs||0)),0);
+            const totRet=rows.reduce((s,r)=>s+parseNum(r.ivaRetDb||0),0);
+            aoa.push(['TOTAL','','','','','','','','','',totTV,0,0,totBase,'',totIVA,totRet,'','']);
+            // Resumen
+            aoa.push([]);
+            aoa.push(['','','','RESUMEN LIBRO DE VENTAS']);
+            aoa.push(['','','','DÉBITOS FISCALES']);
+            aoa.push(['','','','Ventas internas no gravadas','',0]);
+            aoa.push(['','','','Ventas de exportación','',0]);
+            aoa.push(['','','','Ventas internas gravadas alícuota general (16%)','',totBase]);
+            aoa.push(['','','','Ventas internas gravadas alícuota general + adicional','',0]);
+            aoa.push(['','','','Ventas internas gravadas alícuota reducida','',0]);
+            aoa.push(['','','','Total ventas y débitos fiscales para determinación','',totBase]);
+            aoa.push(['','','','Ajuste a los débitos fiscales de períodos anteriores','',0]);
+            aoa.push(['','','','Certificados de Créditos Fiscales para determinación','',0]);
+            aoa.push(['','','','Total débitos fiscales','',totIVA]);
+            aoa.push([]);
+            aoa.push(['','','','AUTOLIQUIDACIÓN']);
+            aoa.push(['','','','Retenciones acumuladas por descontar','',parseNum(libroRetAcum||0)]);
+            aoa.push(['','','','Retenciones del Período','',totRet]);
+            aoa.push(['','','','Créditos adquiridos por cesión de retenciones','',0]);
+            aoa.push(['','','','Recuperación de retenciones solicitado','',0]);
+            aoa.push(['','','','Total Retenciones','',parseNum(libroRetAcum||0)+totRet]);
+            aoa.push(['','','','Retenciones soportadas y descontadas en esta declaración','',parseNum(libroRetDesc||0)]);
+            aoa.push(['','','','Saldo de Retenciones de IVA no aplicado','',(parseNum(libroRetAcum||0)+totRet)-parseNum(libroRetDesc||0)]);
+            aoa.push(['','','','Total Retenciones','',(parseNum(libroRetAcum||0)+totRet)-parseNum(libroRetDesc||0)]);
 
-            // Fila de totales
-            const totRow=`<tr style="background:#1f2937;color:#fff;font-weight:900">
-  <td style="padding:3px 4px;font-size:8px;border:1px solid #374151"></td>
-  <td colspan="10" style="padding:3px 4px;font-size:8px;border:1px solid #374151">TOTALES — ${rows.length} operaciones</td>
-  <td style="padding:3px 4px;font-size:8px;text-align:right;border:1px solid #374151">${fV(totTV)}</td>
-  <td style="padding:3px 4px;font-size:8px;text-align:right;border:1px solid #374151">${fV(0)}</td>
-  <td style="padding:3px 4px;font-size:8px;text-align:right;border:1px solid #374151">${fV(0)}</td>
-  <td style="padding:3px 4px;font-size:8px;text-align:right;border:1px solid #374151;font-weight:900">${fV(totBase)}</td>
-  <td style="padding:3px 4px;font-size:8px;border:1px solid #374151"></td>
-  <td style="padding:3px 4px;font-size:8px;text-align:right;border:1px solid #374151">${fV(totIva)}</td>
-  <td style="padding:3px 4px;font-size:8px;text-align:right;border:1px solid #374151;color:#fca5a5">${fV(totRetDb)}</td>
-  <td colspan="2" style="padding:3px 4px;font-size:8px;border:1px solid #374151"></td>
-</tr>`;
-
-            // Resumen al final
-            const resumen=`
-<tr><td colspan="${nc}" style="padding:6px;border:none"></td></tr>
-<tr>
-  <td colspan="${nc}" style="padding:5px 6px;background:#1f2937;color:#fff;font-size:9px;font-weight:900;border:1px solid #374151">
-    RESUMEN DEL LIBRO DE VENTAS — ${mesLabel.toUpperCase()} ${libroAnio} — ${periodoStr}
-  </td>
-</tr>
-<tr>
-  <td colspan="5" style="padding:4px 6px;background:#374151;color:#fff;font-size:8px;font-weight:900;border:1px solid #555">DÉBITOS FISCALES</td>
-  <td colspan="8" style="padding:4px 6px;background:#374151;color:#fff;font-size:8px;font-weight:900;border:1px solid #555">AUTOLIQUIDACIÓN</td>
-  <td colspan="7" style="padding:4px 6px;background:#374151;color:#fff;font-size:8px;font-weight:900;border:1px solid #555">OTROS IMPUESTOS</td>
-</tr>
-<tr>
-  <td colspan="4" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Ventas internas no gravadas</td><td style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right">${fV(0)}</td>
-  <td colspan="3" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Retenciones acumuladas por descontar</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right">${fV(retAc)}</td>
-  <td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Anticipo ISLR (1% × Base)</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold;color:#1d4ed8">${fV(islr)}</td>
-  <td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">I.A.E. (1% × Ventas Brutas)</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold;color:#1d4ed8">${fV(iae)}</td>
-  <td style="border:1px solid #d1d5db"></td>
-</tr>
-<tr>
-  <td colspan="4" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Ventas gravadas alícuota 16%</td><td style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold">${fV(totVG)}</td>
-  <td colspan="3" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Retenciones del Período</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold">${fV(retPer)}</td>
-  <td colspan="4" style="border:1px solid #d1d5db"></td><td colspan="2" style="border:1px solid #d1d5db"></td><td style="border:1px solid #d1d5db"></td>
-</tr>
-<tr>
-  <td colspan="4" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;font-weight:bold;background:#f9fafb">Total Débitos Fiscales</td><td style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:900;background:#f9fafb">${fV(totIVAD)}</td>
-  <td colspan="3" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Total Retenciones</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:bold">${fV(totRet)}</td>
-  <td colspan="4" style="border:1px solid #d1d5db"></td><td colspan="2" style="border:1px solid #d1d5db"></td><td style="border:1px solid #d1d5db"></td>
-</tr>
-<tr>
-  <td colspan="5" style="border:1px solid #d1d5db"></td>
-  <td colspan="3" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px">Ret. soportadas y descontadas</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right">${fV(retDe)}</td>
-  <td colspan="${nc-10}" style="border:1px solid #d1d5db"></td>
-</tr>
-<tr>
-  <td colspan="5" style="border:1px solid #d1d5db"></td>
-  <td colspan="3" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;font-weight:bold;background:#fef3c7">Saldo Retenciones IVA no aplicado</td><td colspan="2" style="padding:3px 6px;border:1px solid #d1d5db;font-size:8px;text-align:right;font-weight:900;background:#fef3c7;color:#ea580c">${fV(saldo)}</td>
-  <td colspan="${nc-10}" style="border:1px solid #d1d5db"></td>
-</tr>`;
-
-            const html=`<html xmlns:x="urn:schemas-microsoft-com:office:excel">
-<head><meta charset="utf-8">
-<xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
-<x:Name>Libro de Ventas</x:Name>
-<x:WorksheetOptions><x:FitToPage/></x:WorksheetOptions>
-</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml>
-<style>
-  * { font-family: Arial, sans-serif; }
-  table { border-collapse: collapse; width: 100%; }
-  body { padding: 6px; }
-</style>
-</head><body>
-<table>${colWidths}<tbody>
-${membrete}${hdrs}${dataRows}${totRow}${resumen}
-</tbody></table>
-</body></html>`;
-
-            const blob=new Blob(['\ufeff'+html],{type:'application/vnd.ms-excel;charset=utf-8'});
-            Object.assign(document.createElement('a'),{href:URL.createObjectURL(blob),download:`LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}.xls`}).click();
+            // ── Crear hoja ───────────────────────────────────────────────────
+            const ws=XL.utils.aoa_to_sheet(aoa);
+            // Anchos de columna (unidades: caracteres)
+            ws['!cols']=[{wch:5},{wch:11},{wch:14},{wch:38},{wch:11},{wch:10},{wch:12},{wch:8},{wch:8},{wch:10},{wch:18},{wch:8},{wch:10},{wch:18},{wch:7},{wch:18},{wch:18},{wch:12},{wch:22}];
+            // Formato de número para celdas numéricas (columnas K-Q = índices 10-16)
+            const numFmt='#,##0.00';
+            const firstDataRow=9; // 0-indexed (fila 10 en Excel)
+            for(let ri=firstDataRow;ri<firstDataRow+rows.length+1;ri++){
+              for(let ci=10;ci<=16;ci++){
+                const addr=XL.utils.encode_cell({r:ri,c:ci});
+                if(ws[addr]&&ws[addr].t==='n') ws[addr].z=numFmt;
+              }
+            }
+            // Crear libro y exportar
+            const wb=XL.utils.book_new();
+            XL.utils.book_append_sheet(wb,ws,'LVENTAS');
+            XL.writeFile(wb,`LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}.xlsx`);
           };
 
 
@@ -15077,7 +14974,7 @@ ${resumenHtml}
                       <span className="bg-gray-700 text-white px-2 py-0.5 text-[10px]">MES</span>
                       <span className="bg-gray-100 px-2 py-0.5 uppercase text-[10px]">{mesLabel.toUpperCase()}</span>
                     </div>
-                    <div className="text-[9px] font-bold text-center bg-gray-700 text-white px-3 py-1">PERIODO: {libroQuincena==='AMBAS'?'MES COMPLETO':libroQuincena==='1'?'I QUINCENA':'II QUINCENA'}</div>
+                    <div className="text-[9px] font-bold text-center bg-gray-700 text-white px-3 py-1">PERIODO: {libroQuincena==='AMBAS'?'MES COMPLETO':libroQuincena==='1'?'I QUINCENA':'II QUINCENA'} — {periodoDesde} AL {periodoHasta} — {rows.length} reg.</div>
                     <div className="text-[9px] font-bold text-center bg-gray-100 px-3 py-1">DEL {periodoDesde.split('-').reverse().join('/')} AL {periodoHasta.split('-').reverse().join('/')}</div>
                   </div>
                 </div>
