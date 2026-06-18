@@ -14546,14 +14546,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             return true;
           }).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
 
-          // ── Retenciones del período — usa campo quincena guardado al registrar ──
+          // ── Retenciones del período — filtra por rango de fechas del período ──
           const retPeriodo=(retenciones||[]).filter(r=>{
             const f=r.fechaComprobante||r.fecha||'';
-            const mismoMes=f.startsWith(`${libroAnio}-${mes2}`);
-            if(!mismoMes) return false;
-            if(libroQuincena==='AMBAS') return true;
-            // Usar quincena guardada al registrar; si no existe, usar fecha
-            if(r.quincena) return r.quincena===libroQuincena;
             return f>=periodoDesde&&f<=periodoHasta;
           }).sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
 
@@ -14616,9 +14611,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           });
           // Reemplazar rows con agrupados
           rows.length = 0;
+          // Normalizar fecha a YYYY-MM-DD para sort correcto (maneja YYYYMMDD, DD/MM/YYYY, DD-MM-YYYY)
+          const toISO=d=>{if(!d)return'';const s=String(d).trim();
+            if(/^\d{4}-\d{2}-\d{2}$/.test(s))return s;
+            const dmy=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+            if(dmy)return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
+            if(/^\d{8}$/.test(s))return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
+            return s;
+          };
           // Ordenar por FECHA ascendente (cronológico 01→31), luego tipo, luego nroFactura
           Object.values(rowsMap).sort((a,b)=>{
-            const fA=a.fecha||''; const fB=b.fecha||'';
+            const fA=toISO(a.fecha); const fB=toISO(b.fecha);
             if(fA!==fB) return fA.localeCompare(fB);
             if(a.tipo!==b.tipo) return a.tipo==='FACTURA'?-1:1;
             const nA=parseInt((a.nroFactura||'').replace(/\D/g,''))||0;
