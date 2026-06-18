@@ -2874,15 +2874,15 @@ function App() {
   const handleAddClient = async (e) => {
     if (e) e.preventDefault(); if (!newClientForm.rif || !newClientForm.razonSocial) return setDialog({ title: 'Aviso', text: 'RIF y Razón Social obligatorios.', type: 'alert' });
     const rif = newClientForm.rif.toUpperCase().trim();
-    try { await setDoc(getDocRef('clientes', rif), { ...newClientForm, name: newClientForm.razonSocial.toUpperCase().trim(), rif, timestamp: Date.now() }, { merge: true }); setNewClientForm(initialClientForm); setEditingClientId(null); setDialog({ title: '¡Éxito!', text: 'Cliente guardado.', type: 'alert' }); } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
+    const docKey = editingClientId||rif; try { await setDoc(getDocRef('clientes', docKey), { ...newClientForm, name: newClientForm.razonSocial.toUpperCase().trim(), rif, timestamp: Date.now() }, { merge: true }); setNewClientForm(initialClientForm); setEditingClientId(null); setDialog({ title: '¡Éxito!', text: 'Cliente guardado.', type: 'alert' }); } catch(err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
-  const startEditClient = (c) => { setEditingClientId(c.rif); setNewClientForm({ ...c, razonSocial: c.name||c.razonSocial||'', ciudad:c.ciudad||'', estado:c.estado||'', diasCredito:c.diasCredito!=null?String(c.diasCredito):'0' }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const startEditClient = (c) => { setEditingClientId(c.id||c.rif); setNewClientForm({ ...c, razonSocial: c.name||c.razonSocial||'', ciudad:c.ciudad||'', estado:c.estado||'', diasCredito:c.diasCredito!=null?String(c.diasCredito):'0' }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleDeleteClient = (rif) => {
     setDialog({ 
       title: 'Eliminar Cliente', 
       text: `¿Desea eliminar el cliente ${rif}?`, 
       type: 'confirm', 
-      onConfirm: async () => await deleteDoc(getDocRef('clientes', rif))
+      onConfirm: async () => await deleteDoc(getDocRef('clientes', rif||'__INVALID__'))
     });
   };
   const generateInvoiceId = () => `INVO-${((invoices || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(4, '0')}`;
@@ -12447,7 +12447,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                          }} className="p-2.5 bg-orange-50 text-orange-600 rounded-xl hover:bg-orange-500 hover:text-white transition-all" title="Ficha PDF">
                            <FileText size={16}/>
                          </button>
-                         <button onClick={()=>{startEditClient(c);setShowAddClientForm(true);}} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c?.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td>
+                         <button onClick={()=>{startEditClient(c);setShowAddClientForm(true);}} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c?.id||c?.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td>
                     </tr>
                   ))}
                   </tbody></table></div>
@@ -13796,22 +13796,32 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           };
 
           // Ret.IVA en USD: montoRetenido Bs / tasa de la factura fiscal vinculada
-          // SOLO se calcula si hay una tasa válida (> 10 Bs/$); si no, retorna 0 para no distorsionar el saldo
+          // Ret.IVA en USD: montoRetenido Bs / tasa de la factura fiscal vinculada
           const getRetUSDNE=(ne)=>{
-            const invLinked=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId))||(ne.nroFiscal&&inv.nroFiscal===ne.nroFiscal));
-            const tasa=parseNum(invLinked?.tasa||invLinked?.tasaBCV||ne.tasa||0)||tasaBCV;
-            if(!tasa||tasa<2) return 0; // sin tasa alguna → no deducir
-            const rets=(retenciones||[]).filter(r=>{
-              if(!invLinked) return r.neId===ne.id;
-              return r.facturaId===invLinked.id
-                ||r.facturaId===invLinked.nroFiscal
-                ||r.facturaId===invLinked.documento
-                ||r.nroFiscal===invLinked.nroFiscal
-                ||r.neId===ne.id;
-            });
-            return rets.reduce((s,r)=>s+parseNum(r.montoRetenido||r.montoIVARetenido||0)/tasa,0);
+            const neId=ne.id||''; const neDoc=ne.documento||'';
+            // Lookup INVERSO: desde cada retención → su invoice → verificar si ese invoice pertenece a esta NE
+            return (retenciones||[]).reduce((s,r)=>{
+              const rf=r.facturaId||'';
+              if(!rf&&!(neId&&r.neId===neId)) return s;
+              // Si la retención tiene neId directo a esta NE
+              if(neId&&r.neId===neId){
+                const invDirect=(invoices||[]).find(i=>i.neOrigen===neId||i.neOrigen===neDoc||(ne.facturaId&&i.id===ne.facturaId));
+                const t=parseNum(invDirect?.tasa||invDirect?.tasaBCV||ne.tasa||0)||tasaBCV;
+                return t>=1.5?s+parseNum(r.montoRetenido||r.montoIVARetenido||0)/t:s;
+              }
+              if(!rf) return s;
+              // Buscar el invoice de esta retención por facturaId (puede ser ID, nroFiscal o documento)
+              const invOfRet=(invoices||[]).find(i=>i.id===rf||i.nroFiscal===rf||i.documento===rf);
+              if(!invOfRet) return s;
+              // Verificar que ese invoice pertenece a esta NE
+              const linked=(neId&&invOfRet.neOrigen===neId)||(neDoc&&invOfRet.neOrigen===neDoc)||
+                (ne.facturaId&&(invOfRet.id===ne.facturaId||invOfRet.documento===ne.facturaId))||
+                (ne.nroFiscal&&invOfRet.nroFiscal===ne.nroFiscal);
+              if(!linked) return s;
+              const t=parseNum(invOfRet.tasa||invOfRet.tasaBCV||0)||tasaBCV;
+              return t>=1.5?s+parseNum(r.montoRetenido||r.montoIVARetenido||0)/t:s;
+            },0);
           };
-          const getCobradoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
           const getNCNEAtFecha=(ne,fRef)=>getNCUSDNEAtFecha(ne,fRef);
           const getRetNE=(ne)=>getRetUSDNE(ne);
           const getSaldoNE=(ne)=>getSaldoNEAtFecha(ne,null);
@@ -14297,9 +14307,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           // Retenciones con comprobante — lookup por factura vinculada
                                           const retsNE=(retenciones||[]).filter(r=>{
                                             const rf=r.facturaId||'';
-                                            if(invVinc) return (invVinc.id&&rf===invVinc.id)||(invVinc.nroFiscal&&rf===invVinc.nroFiscal)||
-                                              (invVinc.documento&&rf===invVinc.documento)||(_neId2&&r.neId===_neId2);
-                                            return (_neId2&&r.neId===_neId2)||(_neDoc2&&r.neId===_neDoc2);
+                                            if(_neId2&&r.neId===_neId2) return true;
+                                            if(!rf) return false;
+                                            const _invR=(invoices||[]).find(i=>i.id===rf||i.nroFiscal===rf||i.documento===rf);
+                                            if(!_invR) return false;
+                                            return (_neId2&&_invR.neOrigen===_neId2)||(_neDoc2&&_invR.neOrigen===_neDoc2)||
+                                              (ne.facturaId&&(_invR.id===ne.facturaId||_invR.documento===ne.facturaId))||
+                                              (ne.nroFiscal&&_invR.nroFiscal===ne.nroFiscal)||
+                                              (invVinc&&_invR.id===invVinc.id);
                                           });
                                           const invLinkedIds=invVinc?[invVinc.id]:[];
                                           const retTooltip=retsNE.map(r=>r.nroRetencion||r.nroComprobante||'').filter(Boolean).join(' · ')||'';
@@ -16268,7 +16283,12 @@ ${resumenHtml}
 
       // ── Si la OP tiene un Producto Destino vinculado → actualizar su stock y costo ──
       if (req.productoDestinoId) {
-        const prod = (inventory||[]).find(i => i.id === req.productoDestinoId);
+        const _destId = String(req.productoDestinoId).split('___')[0].trim();
+        const prod = (inventory||[]).find(i =>
+          i.id === req.productoDestinoId ||
+          (i.displayId && i.displayId === _destId) ||
+          (i.id||'').split('___')[0] === _destId
+        );
         if (prod) {
           // Calcular unidades producidas en la última fase de este lote
           const matchFormula = (formulas||[]).find(f => f.categoria && req.categoria && f.categoria.toUpperCase() === (req.categoria||'').toUpperCase());
