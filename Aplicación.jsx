@@ -13851,6 +13851,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             _retCache.set(ne.id,result); return result;
           };
           const getSaldoNE=(ne)=>getSaldoNEAtFecha(ne,null);
+          const getCobradoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+          const getNCNEAtFecha=(ne,fRef)=>getNCUSDNEAtFecha(ne,fRef);
+          const getRetNE=(ne)=>getRetUSDNE(ne);
 
           const fechaRef=cxcModo==='fecha'?cxcFechaRef:null;
           const today=new Date(); today.setHours(0,0,0,0);
@@ -14543,9 +14546,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             return true;
           }).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
 
-          // ── Retenciones del período ───────────────────────────────────────────
+          // ── Retenciones del período — usa campo quincena guardado al registrar ──
           const retPeriodo=(retenciones||[]).filter(r=>{
-            const f=r.fechaComprobante||r.fecha||''; return f>=periodoDesde&&f<=periodoHasta;
+            const f=r.fechaComprobante||r.fecha||'';
+            const mismoMes=f.startsWith(`${libroAnio}-${mes2}`);
+            if(!mismoMes) return false;
+            if(libroQuincena==='AMBAS') return true;
+            // Usar quincena guardada al registrar; si no existe, usar fecha
+            if(r.quincena) return r.quincena===libroQuincena;
+            return f>=periodoDesde&&f<=periodoHasta;
           }).sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
 
           // ── NC/ND Fiscales del período ────────────────────────────────────────
@@ -14607,12 +14616,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           });
           // Reemplazar rows con agrupados
           rows.length = 0;
-          // Ordenar FACTURAS por nroFactura numérico (menor→mayor), desempate por fecha
+          // Ordenar por FECHA ascendente (cronológico 01→31), luego tipo, luego nroFactura
           Object.values(rowsMap).sort((a,b)=>{
+            const fA=a.fecha||''; const fB=b.fecha||'';
+            if(fA!==fB) return fA.localeCompare(fB);
+            if(a.tipo!==b.tipo) return a.tipo==='FACTURA'?-1:1;
             const nA=parseInt((a.nroFactura||'').replace(/\D/g,''))||0;
             const nB=parseInt((b.nroFactura||'').replace(/\D/g,''))||0;
-            if(nA!==nB) return nA-nB;
-            return (a.fecha||'').localeCompare(b.fecha||'');
+            return nA-nB;
           }).forEach((r,i)=>{r.seq=i+1;rows.push(r);});
 
           // NC/ND Fiscales → entran al libro (NC negativo, ND positivo)
