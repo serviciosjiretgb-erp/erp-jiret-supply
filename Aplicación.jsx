@@ -20020,7 +20020,10 @@ ${resumenHtml}
                                                   return <span className={`font-bold ${col}`}>{formatNum(b.mermaKg)} KG merma{pct>0?` (${pct}% ${ico})`:''}</span>;
                                                 })()}
                                                 {!esTermo && b.techParams?.millares > 0 && <span className="font-bold text-blue-600">{formatNum(b.techParams.millares)} Mill.</span>}
-                                                <div className="flex gap-1 shrink-0">
+                                                <div className="flex gap-1 shrink-0 ml-auto">
+                                                  {req.productoDestinoId && (
+                                                    <button onClick={()=>handleRecalcInventarioLote(req, Number(b.loteIndex??0))} className="p-1 bg-orange-50 text-orange-600 rounded hover:bg-orange-500 hover:text-white transition-all font-black text-[8px] px-2" title="Actualizar inventario con producción de este lote">📦</button>
+                                                  )}
                                                   <button onClick={()=>requireAdminPassword(()=>handleEditBatch(req.id, activePhaseTab, b.id),'Editar lote de producción')} className="p-1 bg-orange-50 text-orange-500 rounded hover:bg-orange-500 hover:text-white transition-all" title="Editar lote"><Edit size={10}/></button>
                                                   <button onClick={()=>requireAdminPassword(()=>handleDeleteBatch(req.id, activePhaseTab, b.id),'Eliminar lote de producción')} className="p-1 bg-red-50 text-red-400 rounded hover:bg-red-500 hover:text-white transition-all" title="Eliminar lote"><Trash2 size={10}/></button>
                                                 </div>
