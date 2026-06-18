@@ -14683,18 +14683,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(!retForm.facturaId||!retForm.nroRetencion||!retForm.fechaComprobante||!retForm.montoRetenido)
               return setDialog({title:'Datos incompletos',text:'Completa todos los campos requeridos.',type:'alert'});
             try{
-              const id=`RET-${Date.now()}-${Math.random().toString(36).substr(2,8)}`; // ID único garantizado
-              // Para retenciones manuales: asegurar que los datos del cliente se guarden explícitamente
-              const retDataToSave = {...retForm,
-                _manualCliente: retForm._manualCliente||retClientSearch||'',
-                _manualNroFiscal: retForm._manualNroFiscal||'',
-                _manualRif: retForm._manualRif||''
+              const isEditing=!!(retForm.id||retForm._fsId);
+              const id=isEditing?(retForm.id||retForm._fsId):`RET-${Date.now()}-${Math.random().toString(36).substr(2,8)}`;
+              const retDataToSave={...retForm,
+                _manualCliente:retForm._manualCliente||retClientSearch||'',
+                _manualNroFiscal:retForm._manualNroFiscal||'',
+                _manualRif:retForm._manualRif||''
               };
-              const {id:_oldId,...retDataClean}=retDataToSave; // quitar id viejo del spread
-              await setDoc(getDocRef('retencionesClientes',id),{...retDataClean,id,timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'});
+              const {id:_oldId,_fsId:_oldFs,...retDataClean}=retDataToSave;
+              if(isEditing){
+                await updateDoc(getDocRef('retencionesClientes',id),{...retDataClean,updatedAt:getTodayDate(),user:appUser?.name||'Sistema'});
+              }else{
+                await setDoc(getDocRef('retencionesClientes',id),{...retDataClean,id,timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'});
+              }
               setShowRetModal(false);setRetBusqFact('');
               setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena});
-              setDialog({title:'✅ Retención guardada',text:`Comprobante ${retForm.nroRetencion} registrado.`,type:'alert'});
+              setDialog({title:'✅ Retención guardada',text:`Comprobante ${retForm.nroRetencion} ${isEditing?'actualizado':'registrado'}.`,type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           };
 
@@ -15280,7 +15284,7 @@ ${resumenHtml}
                           return true;
                         });
                         const totRet=retFilt.reduce((s,r)=>s+parseNum(r.montoRetenido||0),0);
-                        const rH=retFilt.map((ret,i)=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);return `<tr style="border-bottom:1px solid #eee;${i%2?'background:#f9fafb':''}"><td style="padding:4px 5px;font-size:8px">${ret.fechaComprobante||'—'}</td><td style="padding:4px 5px;font-size:8px;font-weight:700">${ret.nroRetencion||'—'}</td><td style="padding:4px 5px;font-size:8px;color:#1d4ed8">${(ret?.facturaId||'').startsWith('MANUAL-')?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—')}</td><td style="padding:4px 5px;font-size:8px">${(ret?.facturaId||'').startsWith('MANUAL-')?(ret._manualCliente||'—'):(inv?.clientName||'—')}</td><td style="padding:4px 5px;font-size:8px">${(ret?.facturaId||'').startsWith('MANUAL-')?(ret._manualRif||'—'):(inv?.clientRif||'—')}</td><td style="padding:4px 5px;font-size:8px;text-align:right;font-weight:700">${fmtVen(ret.montoRetenido||0)}</td><td style="padding:4px 5px;font-size:8px;text-align:center">${ret.quincena==='1'?'I Quincena':'II Quincena'}</td></tr>`;}).join('');
+                        const rH=retFilt.map((ret,i)=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);return `<tr style="border-bottom:1px solid #eee;${i%2?'background:#f9fafb':''}"><td style="padding:4px 5px;font-size:8px">${ret.fechaComprobante||'—'}</td><td style="padding:4px 5px;font-size:8px;font-weight:700">${ret.nroRetencion||'—'}</td><td style="padding:4px 5px;font-size:8px;color:#1d4ed8">${(ret?.facturaId||'').startsWith('MANUAL-')?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—')}</td><td style="padding:4px 5px;font-size:8px">${(ret?.facturaId||'').startsWith('MANUAL-')?(ret._manualCliente||'—'):(inv?.clientName||'—')}</td><td style="padding:4px 5px;font-size:8px">${(ret?.facturaId||'').startsWith('MANUAL-')?(ret._manualRif||'—'):(inv?.clientRif||'—')}</td><td style="padding:4px 5px;font-size:8px;text-align:right;font-weight:700">${fmtVen(ret.montoRetenido||0)}</td><td style="padding:4px 5px;font-size:8px;text-align:center">${(ret.quincena||((parseInt((ret.fechaComprobante||'').split('-')[2]||'16')<=15)?'1':'2'))==='1'?'I Quincena':'II Quincena'}</td></tr>`;}).join('');
                         const h=`<div style="font-family:Arial;padding:16px"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:10px"><div><div style="font-weight:900;font-size:13px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div><div style="font-size:10px">RIF: ${settings?.empresaRIF||''}</div><div style="font-weight:900;font-size:11px;margin-top:4px">REPORTE DE RETENCIONES DE IVA</div></div><div style="text-align:right;font-size:9px"><div>Período: ${mesLabel.toUpperCase()} ${libroAnio}</div><div>${retFilt.length} registros · Total: ${fmtVen(totRet)} Bs.</div></div></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#1f2937;color:#fff"><th style="padding:5px;font-size:8px">Fecha</th><th style="padding:5px;font-size:8px">N° Comp.</th><th style="padding:5px;font-size:8px">N° Factura</th><th style="padding:5px;font-size:8px">Cliente</th><th style="padding:5px;font-size:8px">RIF</th><th style="padding:5px;font-size:8px;text-align:right">Monto Ret. Bs.</th><th style="padding:5px;font-size:8px">Quincena</th></tr></thead><tbody>${rH}</tbody><tfoot><tr style="background:#374151;color:#fff;font-weight:900"><td colspan="5" style="padding:4px 5px;font-size:8px">TOTAL</td><td style="padding:4px 5px;font-size:8px;text-align:right">${fmtVen(totRet)}</td><td></td></tr></tfoot></table></div>`;
                         handlePDFFromHTML(h,`Retenciones_${libroAnio}_${mes2}`,false);
                       }} className="bg-gray-800 text-white px-3 py-1.5 rounded-xl font-black text-[10px] flex items-center gap-1 hover:bg-black"><Printer size={12}/>PDF</button>
@@ -15357,7 +15361,7 @@ ${resumenHtml}
                             </td>
                             <td className="py-2 px-3 uppercase">{cliente}</td>
                             <td className="py-2 px-3 text-right font-black">{fmtVen(parseNum(ret.montoRetenido||0))}</td>
-                            <td className="py-2 px-3 text-center"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{ret.quincena==='1'?'I Quincena':'II Quincena'}</span></td>
+                            <td className="py-2 px-3 text-center"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{(ret.quincena||((parseInt((ret.fechaComprobante||'').split('-')[2]||'16')<=15)?'1':'2'))==='1'?'I Quincena':'II Quincena'}</span></td>
                             <td className="py-2 px-3"><div className="flex justify-center gap-1">
                               <button onClick={()=>{setRetForm({...ret});setRetBusqFact(inv?.nroFiscal||'');setShowRetModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
                               <button onClick={()=>setDialog({title:'Eliminar retención',text:`¿Eliminar comprobante ${ret.nroRetencion}?`,type:'confirm',onConfirm:async()=>{try{await deleteDoc(getDocRef('retencionesClientes',ret.id));setDialog({title:'✅ Eliminada',text:'',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
