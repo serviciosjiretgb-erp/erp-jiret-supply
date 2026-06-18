@@ -12114,30 +12114,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const pctUtil=(ne.montoBase||0)>0?(utilidad/(ne.montoBase||0)*100):0;
             rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,facturaId:ne.facturaId||'',status:ne.status,fuente:'NE'});
           });
-          // ── Fuente 2: Facturas SIN NE asociada ──────────────────────────────
-          const facturasEnNE=new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
-          (invoices||[]).forEach(inv=>{
-            if(!inv) return;
-            const fecha=inv.fecha||'';
-            if(fecha<tvDesde||fecha>tvHasta) return;
-            if(inv.neOrigen) return;
-            const invId=inv.id||inv.documento||'';
-            const invDoc=(inv.documento||'').replace(/^FAC-/,'INVO-');
-            if(facturasEnNE.has(invId)||facturasEnNE.has(invDoc)) return;
-            if(tvStatus!=='TODAS'&&tvStatus!=='PROCESADA') return;
-            const doc=invDoc||invId;
-            if(tvBuscarDoc && !doc.toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
-            if(tvBuscarDesc && !(inv.clientName||'').toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
-            const base=parseNum(inv.montoBase||0)||(()=>{const its=inv.itemsFacturados||[];return its.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0);})();
-            const ivaAmt=parseNum(inv.iva||0);
-            const total=parseNum(inv.total||0)||base+ivaAmt;
-            // Costo total = suma de (costoTotal por item) o (costoUnit × cantidad)
-            const items=inv.itemsFacturados||[];
-            const costo=items.reduce((s,it)=>s+parseNum(it.costoTotal||0||parseNum(it.costoUnit||0)*parseNum(it.cantidad||0)),0);
-            const utilidad=base-costo;
-            const pctUtil=base>0?(utilidad/base*100):0;
-            rows.push({fecha,documento:doc,descripcion:inv.clientName||'—',montoBruto:base,iva:ivaAmt,tNeto:total,costo,utilidad,pctUtil,neId:null,invId:inv.id,facturaId:inv.documento||inv.id,status:'PROCESADA',fuente:'FACTURA'});
-          });
           // ── Fuente 3: Notas de Crédito / Débito ─────────────────────────────
           (notasVentaCD||[]).forEach(nc=>{
             const fecha=nc.fecha||'';
@@ -13866,9 +13842,20 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(fechaRef&&(ne.fecha||'')>fechaRef) return false;
             return getSaldoNEAtFecha(ne,fechaRef)>0.01;
           });
+          // nesTotal: TODAS las NEs (incluye saldo=0 por NC completa) para que Total coincida con NE view
+          const nesTotal=(notasEntrega||[]).filter(ne=>{
+            if(ne.status==='ANULADA') return false;
+            if(fechaRef&&(ne.fecha||'')>fechaRef) return false;
+            return true;
+          });
           const nesAbiertas=cxcSearch.trim()
             ?nesBase.filter(ne=>(ne.documento||'').toUpperCase().includes(cxcSearch.toUpperCase())||(ne.clientName||'').toUpperCase().includes(cxcSearch.toUpperCase())||(ne.clientRif||'').toUpperCase().includes(cxcSearch.toUpperCase()))
             :nesBase;
+
+          // Métricas — totalBruto usa nesTotal para coincidir con Transacciones y NE view
+          const totalBrutoNEs=nesTotal.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0);
+          const totalNCNEs=nesTotal.reduce((s,ne)=>s+getNCNEAtFecha(ne,null),0);
+          const totalRetNEs=nesTotal.reduce((s,ne)=>s+getRetNE(ne),0);
 
           // Métricas
           const totalCartera=nesAbiertas.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
@@ -14222,7 +14209,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                 {[
                   {l:'Cartera total',v:`$${formatNum(totalCartera)}`,s:`Bs. ${formatNum(totalCartera*tasaBCV)}`,c:'text-gray-800',bg:'bg-gray-50',br:'border-gray-200'},
-                  {l:'Total facturado',v:`$${formatNum(nesAbiertas.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}`,s:`NC/ND: -$${formatNum(nesAbiertas.reduce((s,ne)=>s+getNCNEAtFecha(ne,null),0))} · Ret: -$${formatNum(nesAbiertas.reduce((s,ne)=>s+getRetNE(ne),0))}`,c:'text-gray-500',bg:'bg-gray-50',br:'border-gray-100'},
+                  {l:`Total facturado · ${nesTotal.length} NEs`,v:`$${formatNum(totalBrutoNEs)}`,s:`NC/ND: -$${formatNum(totalNCNEs)} · Ret: -$${formatNum(totalRetNEs)}`,c:'text-gray-500',bg:'bg-gray-50',br:'border-gray-100'},
                   {l:'Corriente',v:`$${formatNum(corriente)}`,s:`Bs. ${formatNum(corriente*tasaBCV)}`,c:'text-green-700',bg:'bg-green-50',br:'border-green-200'},
                   {l:'1–30 días',v:`$${formatNum(v1_30)}`,s:`Bs. ${formatNum(v1_30*tasaBCV)}`,c:'text-amber-700',bg:'bg-amber-50',br:'border-amber-200'},
                   {l:'31–60 días',v:`$${formatNum(v31_60)}`,s:`Bs. ${formatNum(v31_60*tasaBCV)}`,c:'text-orange-700',bg:'bg-orange-50',br:'border-orange-200'},
