@@ -9565,43 +9565,28 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         {ventasView === 'productos_vendidos' && (() => {
           // Build sold products from invoices - always read itemsFacturados (now always saved)
           const soldItems = [];
-          (invoices||[]).forEach(inv => {
-            const allItems = [];
-            if((inv.itemsFacturados||[]).length > 0) {
-              inv.itemsFacturados.forEach(it => allItems.push({fgId:it.fgId, cantidad:parseNum(it.cantidad||0), desc:it.desc||'', unidad:it.unidad||'', esTermo:it.esTermo, costoUnit:parseNum(it.costoUnit||0)}));
-            } else if(inv.fgId) {
-              allItems.push({fgId:inv.fgId, cantidad:parseNum(inv.fgCantidad||0), desc:'', unidad:'', costoUnit:0});
-            }
-            allItems.forEach(it => {
-              if(!it.fgId || it.cantidad <= 0) return;
-              const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
-              const esTermo = it.esTermo ?? (fg?.tipoProducto==='TERMOENCOGIBLE');
-              // Usar costo congelado al momento de facturar (it.costoUnit),
-              // con fallback al Kardex y luego al FG actual
-              let costoU = parseNum(it.costoUnit||0);
-              if(costoU <= 0 && fg) costoU = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
-              if(costoU <= 0) {
-                const km = (invMovements||[]).find(m=>m.itemId===`FG::${it.fgId}`&&m.type==='SALIDA'&&(m.docRef||'').includes(inv.documento||inv.id)&&parseNum(m.unitCost||0)>0);
-                if(km) costoU = parseNum(km.unitCost||0);
-              }
-              // FIX 5: Buscar en cualquier movimiento del FG
-              if(costoU <= 0) {
-                const km2 = (invMovements||[]).find(m=>m.itemId===`FG::${it.fgId}`&&m.type==='SALIDA'&&parseNum(m.unitCost||0)>0);
-                if(km2) costoU = parseNum(km2.unitCost||0);
-              }
-              // Último recurso: costo actual del FG
-              if(costoU <= 0 && fg) costoU = esTermo ? parseNum(fg.costoUnitario||0) : parseNum(fg.costoUnitarioMillar||0);
+          (notasEntrega||[]).forEach(ne => {
+            if(ne.status==='ANULADA') return;
+            (ne.items||[]).forEach(it => {
+              if(!it.fgId&&!it.invCode&&!it.desc) return;
+              const cantidad=parseNum(it.cantidad||0); if(cantidad<=0) return;
+              const costoUnd=parseNum(it.costoUnit||0);
+              const precioVenta=parseNum(it.precioUnit||0);
+              const totalVenta=cantidad*precioVenta;
               soldItems.push({
-                factura: inv.documento||inv.id,
-                nroFiscal: inv.nroFiscal||'',
-                vendedor: inv.vendedor||'',
-                fecha: inv.fecha,
-                cliente: inv.clientName||inv.clientRif||'—',
-                producto: it.desc || (fg ? (formatFGLabel(fg)||fg.producto||fg.id) : (it.fgId||'—')),
-                medida: it.unidad || (esTermo?'KG':'Millares'),
-                cantidad: it.cantidad,
-                costoUnd: costoU,
-                opId: inv.opAsignada||'—'
+                factura: ne.documento||ne.id,
+                nroFiscal: ne.nroFiscal||ne.facturaId||'—',
+                vendedor: ne.vendedor||'—',
+                fecha: ne.fecha||'',
+                cliente: ne.clientName||ne.clientRif||'—',
+                producto: it.desc||it.invCode||it.fgId||'—',
+                medida: it.unit||it.unidad||'und',
+                cantidad,
+                costoUnd,
+                totalCosto: cantidad*costoUnd,
+                precioVenta,
+                totalVenta,
+                opId: ne.opId||ne.opRelacionada||'—'
               });
             });
           });
@@ -9611,10 +9596,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const pvProductos = ['TODOS', ...Array.from(new Set(sorted.map(s=>s.producto))).sort()];
           const [pvFiltCliente, pvSetCliente] = [pvClienteFilter, setPvClienteFilter];
           const [pvFiltProducto, pvSetProducto] = [pvProductoFilter, setPvProductoFilter];
+          // Periodo filter helper: semestre, trimestre o mes
+          const pvMatchPeriod=(fecha)=>{
+            if(!pvFilter||pvFilter==='general') return true;
+            const f=fecha||''; const y=f.substring(0,4); const m=parseInt(f.substring(5,7),10);
+            if(pvFilter===`SEM1_${y}`) return m>=1&&m<=6;
+            if(pvFilter===`SEM2_${y}`) return m>=7&&m<=12;
+            if(pvFilter===`Q1_${y}`) return m>=1&&m<=3;
+            if(pvFilter===`Q2_${y}`) return m>=4&&m<=6;
+            if(pvFilter===`Q3_${y}`) return m>=7&&m<=9;
+            if(pvFilter===`Q4_${y}`) return m>=10&&m<=12;
+            return f.startsWith(pvFilter); // mes exacto YYYY-MM
+          };
           const pvFiltered = sorted.filter(s =>
-            (pvFiltCliente === 'TODOS' || s.cliente === pvFiltCliente) &&
-            (pvFiltProducto === 'TODOS' || s.producto === pvFiltProducto) &&
-            (!pvFilter || pvFilter === 'general' || (s.fecha||'').startsWith(pvFilter))
+            (!pvFiltCliente||pvFiltCliente==='TODOS'||s.cliente.toUpperCase().includes(pvFiltCliente.toUpperCase())) &&
+            (!pvFiltProducto||pvFiltProducto==='TODOS'||s.producto.toUpperCase().includes(pvFiltProducto.toUpperCase())) &&
+            pvMatchPeriod(s.fecha)
           );
           return (
             <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden" id="pdf-content">
@@ -9625,27 +9622,38 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <select value={pvFilter||'general'} onChange={e=>setPvFilter(e.target.value)}
                       className="border-2 border-green-200 rounded-xl px-3 py-1.5 text-xs font-black outline-none focus:border-green-400 bg-white">
                       <option value="general">📊 General (Todo)</option>
-                      {Array.from(new Set((invoices||[]).filter(Boolean).map(i=>(i.fecha||'').substring(0,7)).filter(ym=>ym&&ym.length===7))).sort().map(ym=>{const [y,m]=ym.split('-');const label=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1]+' '+y;return <option key={ym} value={ym}>{label}</option>;})}
+                      {(()=>{
+                        const yrs=[...new Set((invoices||[]).filter(Boolean).map(i=>(i.fecha||'').substring(0,4)).filter(y=>y&&y.length===4))].sort().reverse();
+                        const months=[...new Set((invoices||[]).filter(Boolean).map(i=>(i.fecha||'').substring(0,7)).filter(ym=>ym&&ym.length===7))].sort().reverse();
+                        const mL=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                        return <>
+                          {yrs.map(y=><optgroup key={`sg-${y}`} label={`── ${y} ──`}>
+                            <option value={`SEM1_${y}`}>I Semestre {y} (Ene–Jun)</option>
+                            <option value={`SEM2_${y}`}>II Semestre {y} (Jul–Dic)</option>
+                            <option value={`Q1_${y}`}>Q1 {y} (Ene–Mar)</option>
+                            <option value={`Q2_${y}`}>Q2 {y} (Abr–Jun)</option>
+                            <option value={`Q3_${y}`}>Q3 {y} (Jul–Sep)</option>
+                            <option value={`Q4_${y}`}>Q4 {y} (Oct–Dic)</option>
+                          </optgroup>)}
+                          <optgroup label="── Mensual ──">
+                            {months.map(ym=>{const[y,m]=ym.split('-');return <option key={ym} value={ym}>{mL[parseInt(m,10)-1]+' '+y}</option>;})}
+                          </optgroup>
+                        </>;
+                      })()}
                     </select>
                   </div>
                   <p className="text-[10px] font-bold text-green-700 mt-0.5">{pvFiltered.length} de {sorted.length} líneas</p>
                 </div>
                 <div className="flex gap-3 items-center flex-wrap">
-                  {/* Filter by client */}
                   <div>
-                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Cliente</label>
-                    <select value={pvFiltCliente} onChange={e=>pvSetCliente(e.target.value)}
-                      className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black uppercase outline-none focus:border-green-400 bg-white min-w-36">
-                      {pvClientes.map(c=><option key={c} value={c}>{c}</option>)}
-                    </select>
+                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">🔍 Cliente</label>
+                    <input value={pvFiltCliente==='TODOS'?'':pvFiltCliente} onChange={e=>pvSetCliente(e.target.value||'TODOS')} placeholder="Buscar cliente..."
+                      className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black outline-none focus:border-green-400 bg-white w-44" />
                   </div>
-                  {/* Filter by product */}
                   <div>
-                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Producto</label>
-                    <select value={pvFiltProducto} onChange={e=>pvSetProducto(e.target.value)}
-                      className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black uppercase outline-none focus:border-green-400 bg-white min-w-44">
-                      {pvProductos.map(p=><option key={p} value={p}>{p.length>40?p.substring(0,40)+'…':p}</option>)}
-                    </select>
+                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">🔍 Producto</label>
+                    <input value={pvFiltProducto==='TODOS'?'':pvFiltProducto} onChange={e=>pvSetProducto(e.target.value||'TODOS')} placeholder="Buscar producto..."
+                      className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black outline-none focus:border-green-400 bg-white w-44" />
                   </div>
                   {(pvFiltCliente !== 'TODOS' || pvFiltProducto !== 'TODOS') && (
                     <button onClick={()=>{pvSetCliente('TODOS');pvSetProducto('TODOS');}} className="text-[9px] font-black text-red-500 uppercase hover:underline mt-4">✕ Limpiar</button>
@@ -9688,7 +9696,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <th className="py-3 px-4 border-r border-gray-700 text-center">Medida</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-right">Cantidad</th>
                       <th className="py-3 px-4 border-r border-gray-700 text-right">Costo Unit.</th>
-                      <th className="py-3 px-4 text-right">Costo Total</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-right">Costo Total</th>
+                      <th className="py-3 px-4 border-r border-gray-700 text-right">Precio Venta</th>
+                      <th className="py-3 px-4 text-right">Total Venta</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -9706,7 +9716,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <td className="py-3 px-4 border-r text-center"><span className="bg-blue-100 text-blue-700 font-black text-[9px] px-2 py-0.5 rounded">{s.medida}</span></td>
                         <td className="py-3 px-4 border-r text-right font-black">{formatNum(s.cantidad)}</td>
                         <td className="py-3 px-4 border-r text-right font-bold text-gray-600">${formatNum(s.costoUnd)}</td>
-                        <td className="py-3 px-4 text-right font-black">${formatNum(s.cantidad * s.costoUnd)}</td>
+                        <td className="py-3 px-4 border-r text-right font-black text-red-700">${formatNum(s.totalCosto||s.cantidad*s.costoUnd)}</td>
+                        <td className="py-3 px-4 border-r text-right font-bold text-green-700">${formatNum(s.precioVenta||0)}</td>
+                        <td className="py-3 px-4 text-right font-black text-green-800">${formatNum(s.totalVenta||0)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -9716,7 +9728,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <td colSpan="8" className="py-3 px-4 text-[10px] uppercase text-gray-500">Total: {pvFiltered.length} líneas · Pág. {pgPV+1}</td>
                         <td className="py-3 px-4 text-right">{formatNum(pvFiltered.reduce((s,r)=>s+r.cantidad,0))}</td>
                         <td></td>
-                        <td className="py-3 px-4 text-right text-orange-600">${formatNum(pvFiltered.reduce((s,r)=>s+r.cantidad*r.costoUnd,0))}</td>
+                        <td className="py-3 px-4 text-right text-red-700">${formatNum(pvFiltered.reduce((s,r)=>s+(r.totalCosto||r.cantidad*r.costoUnd),0))}</td>
+                        <td></td>
+                        <td className="py-3 px-4 text-right text-green-800">${formatNum(pvFiltered.reduce((s,r)=>s+(r.totalVenta||0),0))}</td>
                       </tr>
                     </tfoot>
                   )}
