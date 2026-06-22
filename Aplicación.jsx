@@ -390,6 +390,7 @@ function App() {
   const [resenaSaving, setResenaSaving] = useState(false);
   const [resenaImages, setResenaImages] = useState({}); // key→base64, guardado en colección aparte
   const [resenaMaqSel, setResenaMaqSel] = useState(0); // índice máquina seleccionada
+  const [resenaVehSel, setResenaVehSel] = useState(0); // índice vehículo seleccionado
   const [selectedPortal, setSelectedPortal] = useState(null); // 'produccion' | 'administracion' | 'finanzas'
   const [portalDenied, setPortalDenied] = useState(''); // aviso "no posee permiso" en pantalla de portales
   const [ventasView, setVentasView] = useState('facturacion');
@@ -25268,43 +25269,32 @@ ${resumenHtml}
                empresa:{razonSocial:'SERVICIOS JIRET G&B, COMPAÑÍA ANÓNIMA',actividad:'Fabricación de Empaques Plásticos · Bolsas · Termos Encogibles · Fardos',constitucion:'12 de noviembre de 2018 · Nro. 46, Tomo 153-A 485',expediente:'485-45189',registro:'Mercantil Tercero de la Circunscripción Judicial del Estado Zulia',domicilio:'Av. Circunvalación 2, CC El Dividivi, PB Local G-9, Maracaibo',accionistas:'Juan Carlos Bohórquez U. — 50% · Luis Guillermo Bohórquez U. — 50%',presidente:'Juan Carlos Bohórquez Urdaneta · V-10.919.878',vicepresidente:'Luis Guillermo Bohórquez Urdaneta · V-13.297.424',capitalSocial:7500000,acciones:100,valorAccion:75000,fechaRegistro:'17 de junio de 2026 · Tomo 95-A · Nro. 9'},
                planta:{ubicacion:'Calle 148, vía Palito Blanco, Parroquia Luis Hurtado Higuera, Maracaibo',terreno:4655.21,areaConstruida:1680,cubierta:1806,columnas:'24 columnas tubo doble 3½" a 6 m',portones:'2 metálicos 6×4 m + 2 puertas 2,10×1 m',servicios:'Aguas blancas/negras · Tanque · 3 pozos sépticos',valorInmueble:1300000},
                maquinaria:[
-                 {id:1,nombre:'Extrusora Film Soplado #1',modelo:'VM/HL-50EZ',costo:43400,proveedor:'Asian Machinery U.S.A. Inc.',specs:[
-                   {k:'Tipo',v:'Extrusora de Film Soplado'},{k:'Materiales',v:'HDPE · LDPE · LLDPE · EVA'},{k:'Capacidad',v:'Hasta 60 kg/h'},{k:'Ancho Película',v:'80 mm'},{k:'Espesor',v:'0,015 – 0,20 mm'},{k:'Tornillo',v:'φ45 – φ90 mm VFD'},{k:'Control Temp.',v:'PID + SCR · Resistencias cerámicas'},{k:'Accionamiento',v:'Motores AC con variadores de frecuencia'},{k:'Bobinado',v:'Automático'},{k:'Proveedor',v:'Asian Machinery U.S.A. Inc.'}]},
-                 {id:2,nombre:'Extrusora Film Soplado #2',modelo:'VM/HL-40EZ',costo:27860,proveedor:'Asian Machinery U.S.A. Inc.',specs:[
+                 {id:1,nombre:'Extrusora de Película',modelo:'VM/HL-50EZ',costo:43400,proveedor:'Asian Machinery U.S.A. Inc.',specs:[
+                   {k:'Tipo',v:'Extrusora de Film Soplado'},{k:'Materiales',v:'HDPE · LDPE · LLDPE · EVA'},{k:'Capacidad',v:'Hasta 60 kg/h'},{k:'Ancho Película',v:'80 mm'},{k:'Espesor',v:'0,015 – 0,20 mm'},{k:'Tornillo',v:'φ45 – φ90 mm VFD'},{k:'Control Temperatura',v:'PID + SCR · Resistencias cerámicas'},{k:'Accionamiento',v:'Motores AC con variadores de frecuencia'},{k:'Bobinado',v:'Automático'},{k:'Proveedor',v:'Asian Machinery U.S.A. Inc.'}]},
+                 {id:2,nombre:'Extrusora de Película #2',modelo:'VM/HL-40EZ',costo:27860,proveedor:'Asian Machinery U.S.A. Inc.',specs:[
                    {k:'Tipo',v:'Extrusora de Film Soplado (HDPE/LDPE)'},{k:'Materiales',v:'HDPE · LDPE · LLDPE'},{k:'Capacidad',v:'Hasta 35 kg/h'},{k:'Ancho Película',v:'400 – 1.000 mm'},{k:'Espesor',v:'0,009 – 0,15 mm'},{k:'Control',v:'Panel digital multifunción'},{k:'Torre',v:'Compacta con bobinado integrado'},{k:'Motor',v:'AC con inversor de frecuencia'},{k:'Proveedor',v:'Asian Machinery U.S.A. Inc.'}]},
                  {id:3,nombre:'Impresora Flexográfica 6 Colores',modelo:'VM-61000',costo:95200,proveedor:'',specs:[
                    {k:'Ancho Máx. Pliego',v:'1.000 mm'},{k:'Ancho Máx. Impresión',v:'960 mm'},{k:'Largo de Impresión',v:'191 – 914 mm'},{k:'Diám. Máx. Rollo',v:'450 mm'},{k:'Velocidad',v:'5 – 50 m/min'},{k:'Potencia Total',v:'18 KW'},{k:'Peso Total',v:'5.000 kg'},{k:'Dimensiones',v:'5.100 × 2.060 × 2.950 mm'},{k:'Rodillos Anilox',v:'300 líneas · Goma Neoprán'},{k:'Incluye',v:'36 rodillos (250–600mm) + caja herramientas'}]},
                  {id:4,nombre:'Selladora Fondo Cuatro Pista',modelo:'VMAB-500AX2',costo:32760,proveedor:'',specs:[
                    {k:'Tipo',v:'Selladora Fondo Doble Pista Sello Curvo'},{k:'Pistas',v:'2 líneas independientes'},{k:'Capacidad',v:'120 – 250 ciclos/min por pista'},{k:'Longitud Bolsa',v:'100 – 1.200 mm'},{k:'Ancho Bolsa',v:'50 – 800 mm por pista'},{k:'Control',v:'Servomotores Yaskawa/Panasonic + HMI táctil'},{k:'Materiales',v:'HDPE · LDPE · PP'},{k:'Alimentación',v:'Fotocelda para marca de impresión'},{k:'Sensores',v:'Parada automática por fin de bobina/atasco'}]},
-                 {id:5,nombre:'Selladora VMAB-500A',modelo:'VMAB-500A',costo:10319.21,proveedor:'',specs:[
-                   {k:'Tipo',v:'Selladora Automática Bolsa Camiseta'},{k:'Ancho Bolsa',v:'100 – 400 mm'},{k:'Largo Bolsa',v:'100 – 500 mm'},{k:'Velocidad',v:'50 – 120 pcs/min'},{k:'Potencia',v:'5 KW'},{k:'Materiales',v:'HDPE · LDPE · PP'}]},
-                 {id:6,nombre:'Selladora Fondo + Pre-Camiseta',modelo:'VMDF-1100 X2',costo:33620,proveedor:'',specs:[
+                 {id:5,nombre:'Selladora Fondo + Pre-Camiseta',modelo:'VMDF-1100 X2',costo:33620,proveedor:'',specs:[
                    {k:'Tipo',v:'Selladora Fondo + Pre-Camiseta 100 cm'},{k:'Ancho de Bolsa',v:'100 – 400 mm'},{k:'Largo de Bolsa',v:'100 – 700 mm (Arco: 60 mm)'},{k:'Espesor Película',v:'0,01 – 0,1 mm'},{k:'Velocidad',v:'50 – 120 pcs/min'},{k:'Precisión de Corte',v:'± 0,2 – 0,5 mm'},{k:'Potencia Total',v:'5 KW'},{k:'Peso Total',v:'850 kg'},{k:'Dimensiones',v:'3.000 × 1.130 × 1.350 mm'},{k:'Voltaje',v:'220 V o 440 V · 3 fases · 60 Hz'}]},
-                 {id:7,nombre:'Cortadora y Rebobinadora de Film',modelo:'REBOBINADO',costo:8700,proveedor:'',specs:[
-                   {k:'Tipo',v:'Cortadora/Rebobinadora Semiautomática Film'},{k:'Ancho Rollo Madre',v:'Hasta 500 mm'},{k:'Ancho Rollo Terminado',v:'50 – 500 mm'},{k:'Diám. Rollo Madre',v:'Hasta 400 mm'},{k:'Diám. Rollo Terminado',v:'150 – 300 mm'},{k:'Velocidad Lineal',v:'200 – 600 m/min'},{k:'Material',v:'PE · PVC'},{k:'Grosor Película',v:'8 – 30 micras'},{k:'Longitud Rebobinado',v:'30 – 1.500 m (programable)'},{k:'Potencia Motor',v:'2,2 – 4,0 KW con inversor de frecuencia'}]},
-                 {id:8,nombre:'Empaletadora Automática de Paletas',modelo:'Smart Wasp NEW X0ps',costo:4800,proveedor:'',specs:[
+                 {id:6,nombre:'Cortadora y Rebobinadora de Film',modelo:'REBOBINADO',costo:8700,proveedor:'',specs:[
+                   {k:'Tipo',v:'Cortadora/Rebobinadora Semiautomática Film'},{k:'Ancho Rollo Madre',v:'Hasta 500 mm'},{k:'Ancho Rollo Terminado',v:'50 – 500 mm'},{k:'Diám. Rollo Madre',v:'Hasta 400 mm'},{k:'Diám. Rollo Terminado',v:'150 – 300 mm'},{k:'Velocidad Lineal',v:'200 – 600 m/min'},{k:'Material Compatible',v:'PE · PVC'},{k:'Grosor de Película',v:'8 – 30 micras'},{k:'Longitud Rebobinado',v:'30 – 1.500 m (programable)'},{k:'Potencia Motor',v:'2,2 – 4,0 KW con inversor de frecuencia'}]},
+                 {id:7,nombre:'Empaletadora Automática de Paletas',modelo:'Smart Wasp NEW X0ps',costo:4800,proveedor:'',specs:[
                    {k:'Tipo',v:'Empaletadora Automática Stretch Wrapping'},{k:'Plataforma',v:'Ø 1.650 mm · Carga máx. 2.000 kg'},{k:'Paleta Máxima',v:'1,2 × 1,2 m'},{k:'Altura Máx. Envoltura',v:'2.200 mm'},{k:'Vel. Envoltura',v:'30 cargas / hora'},{k:'Vel. Plataforma',v:'3 – 12 RPM'},{k:'Pre-estiramiento',v:'300% (1 m → 3 m)'},{k:'Ancho Film',v:'500 mm'},{k:'Potencia',v:'1,5 KW · 220 V / 50 Hz'},{k:'Peso Máquina',v:'550 kg'}]},
-                 {id:9,nombre:'Generador Eléctrico Industrial',modelo:'VP Power CS200D6',costo:40150,proveedor:'VP Power Solution',specs:[
+                 {id:8,nombre:'Generador Eléctrico Industrial',modelo:'VP Power CS200D6',costo:40150,proveedor:'VP Power Solution',specs:[
                    {k:'Marca',v:'VP Power Solution · Stamford / Cummins'},{k:'Potencia Prime',v:'160 kW / 200 kVA'},{k:'Fases',v:'3 (Trifásico)'},{k:'Voltaje',v:'208 / 120 V'},{k:'Corriente',v:'555 A (208V) · 962 A (120V)'},{k:'Frecuencia',v:'60 Hz'},{k:'Factor de Potencia',v:'0,8'},{k:'Vel. Nominal',v:'1.800 RPM'},{k:'Vel. Máx.',v:'1.980 RPM'},{k:'Peso / Año',v:'1.980 kg · Fabricación 2024'}]},
-                 {id:10,nombre:'Tanque Almacenamiento Gasoil',modelo:'Tanque Gasoil 5.000 L',costo:6000,proveedor:'',specs:[
+                 {id:9,nombre:'Tanque de Almacenamiento Gasoil',modelo:'Tanque Gasoil 5.000 L',costo:6000,proveedor:'',specs:[
                    {k:'Tipo',v:'Tanque Almacenamiento Combustible (Gasoil)'},{k:'Capacidad',v:'5.000 litros'},{k:'Material',v:'Acero al carbono alta resistencia'},{k:'Dimensiones',v:'3.150 × 2.080 × 2.170 mm'},{k:'Peso Vacío',v:'~1.834 kg'},{k:'Acabado',v:'Esmalte industrial / poliuretano anticorrosivo'},{k:'Accesorios',v:'Boca inspección · venteo emergencia · izaje'},{k:'Señalización',v:'Rombo NFPA · indicativos Inflamable'}]},
-                 {id:11,nombre:'Montacargas Industrial',modelo:'Toyota GLP/Diésel',costo:8000,proveedor:'Toyota',specs:[
+                 {id:10,nombre:'Montacargas Industrial',modelo:'Toyota GLP/Diésel',costo:8000,proveedor:'Toyota',specs:[
                    {k:'Marca',v:'Toyota'},{k:'Tipo',v:'Montacargas Combustión Interna'},{k:'Capacidad de Carga',v:'2.000 – 4.000 kg'},{k:'Altura de Elevación',v:'3,0 m estándar (hasta 4,5 m torre triple)'},{k:'Motor',v:'Diésel / Gasolina / GLP Dual'},{k:'Transmisión',v:'Hidráulica automática / Powershift'},{k:'Seguridad',v:'Sistema Estabilidad Activa (SAS) Toyota'}]},
-               ],
-               proyeccion:[
-                 {mes:'Jul 2026',kg:40000,ingresos:40000*4,costoMin:40000*0.15,costoMax:40000*0.20,nota:'Inicio 24h/5d'},
-                 {mes:'Ago 2026',kg:40000,ingresos:40000*4,costoMin:40000*0.15,costoMax:40000*0.20,nota:''},
-                 {mes:'Sep 2026',kg:80000,ingresos:80000*4,costoMin:80000*0.15,costoMax:80000*0.20,nota:'Capacidad plena'},
-                 {mes:'Oct 2026',kg:80000,ingresos:80000*4,costoMin:80000*0.15,costoMax:80000*0.20,nota:''},
-                 {mes:'Nov 2026',kg:80000,ingresos:80000*4,costoMin:80000*0.15,costoMax:80000*0.20,nota:''},
-                 {mes:'Dic 2026',kg:80000,ingresos:80000*4,costoMin:80000*0.15,costoMax:80000*0.20,nota:''},
-                 {mes:'Ene 2027',kg:1700,ingresos:1700*4,costoMin:1700*0.15,costoMax:1700*0.20,nota:'Prom. diario'},
                ],
                vehiculos:[
                  {id:'v1',nombre:'Camioneta JAC T6',marca:'JAC',modelo:'HFC1037KF2G / 4X4DOBLECABINA',costo:23879.54,placa:'A53AW4B',specs:[
-                   {k:'Placa',v:'A53AW4B'},{k:'Serial NIV',v:'8XR5PBSC6PU000038'},{k:'Serial Motor',v:'N3010143'},{k:'Clase',v:'CAMIONETA'},{k:'Tipo',v:'PICK-UP DOBLE CABINA'},{k:'Año Fabricación',v:'2022'},{k:'Año Modelo',v:'2023'},{k:'Color',v:'BLANCO'},{k:'Uso',v:'CARGA · PRIVADO'},{k:'Nro. Puestos',v:'5 · Nro. Ejes: 2'},{k:'Tara',v:'1.840 kg'},{k:'Cap. Carga',v:'820 kg'},{k:'Combustible',v:'GAS 95'},{k:'Certificado',v:'31 de Mayo de 2024'}]},
-                 {id:'v2',nombre:'Camioneta FOTON CAVA',marca:'FOTON',modelo:'BJ1036V5JV5-A1',costo:23056.51,placa:'A23AU1R',specs:[
-                   {k:'Placa',v:'A23AU1R'},{k:'Serial NIV',v:'LVAV2JVB8SE319238'},{k:'Serial Carrozado',v:'LVAV2JVB8SE319238'},{k:'Serial Motor',v:'253000099ZV'},{k:'Clase',v:'CAMIONETA'},{k:'Tipo',v:'CAVA'},{k:'Año Fabricación',v:'2025'},{k:'Año Modelo',v:'2025'},{k:'Color',v:'BLANCO'},{k:'Uso',v:'CARGA · PRIVADO'},{k:'Nro. Puestos',v:'2 · Nro. Ejes: 2'},{k:'Tara',v:'2.500 kg'},{k:'Cap. Carga',v:'1.340 kg'},{k:'Combustible',v:'GAS 91'},{k:'Certificado',v:'23 de Octubre de 2025'}]},
+                   {k:'Placa',v:'A53AW4B'},{k:'Propietario',v:'SERVICIOS JIRET G&B CA · J412309374'},{k:'Clase / Tipo',v:'Camioneta / Pick-Up D/Cabina'},{k:'Año Fab. / Modelo',v:'2022 / 2023'},{k:'Color',v:'Blanco'},{k:'Cap. de Carga',v:'820 kg'},{k:'Tara',v:'1.840 kg'},{k:'Nro. Puestos',v:'5'},{k:'Uso / Servicio',v:'Carga / Privado'},{k:'Combustible',v:'GAS 95'}]},
+                 {id:'v2',nombre:'Camioneta Foton Cava',marca:'FOTON',modelo:'BJ1036V5JV5-A1',costo:23056.51,placa:'A23AU1R',specs:[
+                   {k:'Placa',v:'A23AU1R'},{k:'Propietario',v:'SERVICIOS JIRET G&B CA · J412309374'},{k:'Clase / Tipo',v:'Camioneta / Cava'},{k:'Año Fab. / Modelo',v:'2025 / 2025'},{k:'Color',v:'Blanco'},{k:'Cap. de Carga',v:'1.340 kg'},{k:'Tara',v:'2.500 kg'},{k:'Nro. Puestos',v:'2'},{k:'Uso / Servicio',v:'Carga / Privado'},{k:'Combustible',v:'GAS 91'}]},
                ],
                imagenes:{}
              };
@@ -25312,15 +25302,20 @@ ${resumenHtml}
              const totalVeh=(DATA.vehiculos||[]).reduce((s,v)=>s+parseNum(v.costo||0),0);
              const totalActivos=totalMaq+totalVeh+parseNum(DATA.planta?.valorInmueble||0);
              const fmtUSD=n=>`$${parseNum(n).toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).replace(/,/g,'X').replace(/\./g,',').replace(/X/g,'.')}`;
-             // Guardar campo en Firestore
+             // ── Guardar campo en Firestore (solo ese campo, sin sobreescribir todo) ──
              const saveField=async(path,val)=>{
                setResenaSaving(true);
                try{
                  const ref=getDocRef('resenaConfig','main');
-                 const upd={};upd[path]=val;
-                 await setDoc(ref,{...DATA,...upd},{merge:true});
-                 setResenaData(prev=>{ const n={...prev||DATA};const parts=path.split('.');let obj=n;for(let i=0;i<parts.length-1;i++){obj=obj[parts[i]]=obj[parts[i]]||{};}obj[parts[parts.length-1]]=val;return n;});
-               }catch(e){console.error(e);}
+                 // updateDoc con campo específico evita conflictos y el bug del costo en 0
+                 await setDoc(ref,{[path]:val},{merge:true});
+                 setResenaData(prev=>{
+                   const n={...(prev||DATA)};
+                   const parts=path.split('.');let obj=n;
+                   for(let i=0;i<parts.length-1;i++){obj=obj[parts[i]]=obj[parts[i]]||{};}
+                   obj[parts[parts.length-1]]=val;return n;
+                 });
+               }catch(e){console.error('saveField error:',e);alert('Error al guardar: '+e.message);}
                setResenaSaving(false);setResenaEdit(null);
              };
              const saveMaq=(idx,field,val)=>{
@@ -25475,15 +25470,17 @@ ${resumenHtml}
                {resenaTab==='empresa' && <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                  {/* Left: logo + capital */}
                  <div className="space-y-4">
-                   <div style={{background:'#F5EDD8',borderRadius:12}} className="p-6 text-center cursor-pointer" onClick={()=>document.getElementById('img-logo').click()}>
+                   <div style={{background:'#F5EDD8',borderRadius:12,padding:16,textAlign:'center',cursor:'pointer',border:`2px dashed ${resenaImages['logo']?'transparent':ORG}`}}
+                     onClick={()=>document.getElementById('img-logo').click()}>
                      {resenaImages['logo']
-                       ? <img src={DATA.imagenes.logo} alt="Logo" className="mx-auto max-h-40 object-contain"/>
-                       : <div>
-                           <div className="text-5xl font-black text-black leading-none">Supply</div>
-                           <div style={{color:ORG}} className="text-3xl font-black">G&B</div>
-                           <div className="text-gray-500 text-xs mt-2">Clic para cargar logo</div>
+                       ? <img src={resenaImages['logo']} alt="Logo" style={{maxHeight:140,maxWidth:'100%',objectFit:'contain',display:'block',margin:'0 auto'}}/>
+                       : <div style={{padding:'20px 0'}}>
+                           <div style={{fontSize:32,marginBottom:8}}>🖼️</div>
+                           <div style={{color:ORG,fontWeight:700,fontSize:12}}>Adjuntar imagen</div>
+                           <div style={{color:'#aaa',fontSize:10,marginTop:4}}>Logo de la empresa</div>
                          </div>}
                      <input id="img-logo" type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload('logo',e)}/>
+                     {resenaImages['logo'] && <div style={{color:'#999',fontSize:10,marginTop:6}}>Clic para cambiar</div>}
                    </div>
                    <div style={{background:'#F5EDD8',borderRadius:12,border:`3px solid ${ORG}`}} className="p-5 text-center text-black">
                      <div style={{color:'#555',borderBottom:`2px solid ${ORG}`}} className="text-[10px] font-black uppercase tracking-widest pb-2 mb-3">CAPITAL SOCIAL</div>
@@ -25562,168 +25559,136 @@ ${resumenHtml}
                </div>}
 
                {/* ══ MAQUINARIA ══ */}
-               {resenaTab==='maquinaria' && <div className="flex gap-4" style={{height:'70vh',minHeight:520}}>
-                 {/* Lista izquierda */}
-                 <div style={{width:240,minWidth:200,background:CARD2,borderRadius:12,border:'1px solid #3A3A5E',overflowY:'auto'}} className="flex-shrink-0">
-                   <div style={{background:ORG,borderRadius:'12px 12px 0 0'}} className="px-4 py-3">
-                     <div className="text-black font-black text-xs uppercase tracking-wider">⚙️ Equipos ({DATA.maquinaria?.length})</div>
-                   </div>
-                   {(DATA.maquinaria||[]).map((m,idx)=>(
-                     <button key={m.id} onClick={()=>setResenaMaqSel(idx)}
-                       style={resenaMaqSel===idx?{background:ORG+'33',borderLeft:`3px solid ${ORG}`}:{borderLeft:'3px solid transparent'}}
-                       className="w-full text-left px-3 py-3 hover:bg-white/5 transition-all border-b border-gray-800/50">
-                       <div style={{color:resenaMaqSel===idx?ORG:'#aaa'}} className="text-[10px] font-black">{String(m.id).padStart(2,'0')}</div>
-                       <div className="text-white text-xs font-bold leading-tight mt-0.5 line-clamp-2">{m.nombre}</div>
-                       <div className="text-gray-500 text-[9px] mt-0.5">{fmtUSD(m.costo)}</div>
-                     </button>
-                   ))}
-                 </div>
-                 {/* Ficha técnica derecha */}
-                 {(()=>{
-                   const m=(DATA.maquinaria||[])[resenaMaqSel];
-                   if(!m) return null;
-                   const imgKey=`maq_${m.id}`;
-                   return <div style={{flex:1,background:CARD,borderRadius:12,border:'1px solid #3A3A5E',overflowY:'auto'}}>
-                     {/* Header */}
-                     <div style={{background:'linear-gradient(135deg,#1A1A2E,#2A1A0E)'}} className="px-6 py-4 flex justify-between items-start">
-                       <div>
-                         <div style={{color:ORG}} className="text-[10px] font-black uppercase tracking-widest">Equipo {String(m.id).padStart(2,'0')} / {DATA.maquinaria.length}</div>
-                         <div className="text-white font-black text-xl mt-1">{m.nombre}</div>
-                         <div className="text-gray-400 text-sm">{m.modelo}</div>
-                       </div>
-                       <div style={{background:ORG,borderRadius:8}} className="px-4 py-2 text-black font-black text-sm">{fmtUSD(m.costo)}</div>
+               {resenaTab==='maquinaria' && (()=>{
+                 const m=(DATA.maquinaria||[])[resenaMaqSel];
+                 if(!m) return null;
+                 const imgKey=`maq_${m.id}`;
+                 const LG='#EBEBEB';
+                 return <div style={{background:LG,borderRadius:14,overflow:'hidden',boxShadow:'0 4px 24px rgba(0,0,0,0.18)'}}>
+                   <div style={{background:ORG,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 24px'}}>
+                     <div style={{fontSize:22,fontWeight:900,color:'#fff',letterSpacing:1,textTransform:'uppercase'}}>{m.nombre.toUpperCase()}</div>
+                     <div style={{background:'#1C1C1C',color:'#fff',padding:'6px 14px',borderRadius:6,fontSize:11,fontWeight:700,whiteSpace:'nowrap'}}>
+                       03 · MAQUINARIA — EQUIPO {String(m.id).padStart(2,'0')} DE {DATA.maquinaria.length}
                      </div>
-                     {/* Content */}
-                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-5">
-                       {/* Foto del equipo */}
-                       <div style={{background:'#1A1A2E',borderRadius:10,minHeight:240}} className="relative overflow-hidden flex items-center justify-center cursor-pointer group"
+                   </div>
+                   <div style={{padding:'18px 20px'}}>
+                     <div style={{display:'flex',gap:12,marginBottom:16}}>
+                       <div style={{background:ORG,padding:'10px 20px',borderRadius:8}}>
+                         <span style={{color:'#fff',fontWeight:900,fontSize:13}}>MODELO: {m.modelo}</span>
+                       </div>
+                       <div style={{background:'#1C1C1C',padding:'10px 20px',borderRadius:8}}>
+                         <span style={{color:ORG,fontWeight:900,fontSize:16}}>{fmtUSD(m.costo)}</span>
+                       </div>
+                     </div>
+                     <div style={{display:'grid',gridTemplateColumns:'55% 43%',gap:16,alignItems:'start'}}>
+                       <div style={{background:'#fff',borderRadius:12,border:'2px solid #ccc',overflow:'hidden',minHeight:380,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',position:'relative'}} className="group"
                          onClick={()=>document.getElementById(`img-maq-${m.id}`).click()}>
                          {resenaImages[imgKey]
-                           ? <>
-                               <img src={resenaImages[imgKey]} alt={m.nombre} className="w-full h-full object-contain absolute inset-0 p-2"/>
-                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all flex items-center justify-center">
-                                 <span className="opacity-0 group-hover:opacity-100 text-white text-xs font-black bg-black/70 px-3 py-1.5 rounded-full">Cambiar foto</span>
-                               </div>
-                             </>
-                           : <div className="text-center text-gray-600">
-                               <div className="text-5xl mb-3">⚙️</div>
-                               <div className="text-xs text-gray-500 font-bold">Clic para cargar foto</div>
-                               <div className="text-[10px] text-gray-600 mt-1">{m.nombre}</div>
+                           ? <><img src={resenaImages[imgKey]} alt={m.nombre} style={{width:'100%',objectFit:'contain',padding:16,maxHeight:400}}/>
+                               <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}} className="bg-black/0 group-hover:bg-black/30 transition-all">
+                                 <span style={{background:'rgba(0,0,0,0.7)',color:'#fff',padding:'6px 16px',borderRadius:20,fontSize:11,fontWeight:700}} className="opacity-0 group-hover:opacity-100 transition-opacity">Cambiar foto</span>
+                               </div></>
+                           : <div style={{textAlign:'center',color:'#aaa',padding:48}}>
+                               <div style={{fontSize:64,marginBottom:12}}>📷</div>
+                               <div style={{fontWeight:700,fontSize:13}}>Clic para cargar foto</div>
                              </div>}
                          <input id={`img-maq-${m.id}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
-                         {resenaSaving && <div className="absolute top-2 right-2 text-[9px] text-orange-400 bg-black/70 px-2 py-1 rounded animate-pulse">Guardando…</div>}
+                         {resenaSaving&&<div style={{position:'absolute',top:8,right:8,background:'rgba(0,0,0,0.7)',color:ORG,fontSize:10,padding:'3px 8px',borderRadius:4}} className="animate-pulse">Guardando…</div>}
                        </div>
-                       {/* Especificaciones técnicas */}
-                       <div className="space-y-1.5">
-                         <div style={{color:ORG}} className="text-[10px] font-black uppercase tracking-widest mb-3">Especificaciones Técnicas</div>
-                         {(Array.isArray(m.specs)?m.specs:(m.specs||'').split('·').map(s=>({k:'',v:s.trim()}))).map((s,i)=>(
-                           <div key={i} style={{background:CARD2,borderRadius:6}} className="flex gap-2 px-3 py-2">
-                             {s.k&&<span style={{color:ORG,minWidth:115,flexShrink:0}} className="text-[10px] font-black">{s.k}:</span>}
-                             {!s.k&&<span style={{color:ORG}} className="text-xs mr-1">▸</span>}
-                             <span className="text-gray-300 text-xs">{s.v||s}</span>
+                       <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                         {(Array.isArray(m.specs)?m.specs:[]).map((s,i)=>(
+                           <div key={i} style={{background:'#2A2A2A',borderRadius:6,display:'flex',overflow:'hidden'}}>
+                             <div style={{padding:'8px 10px',minWidth:130,maxWidth:145,flexShrink:0}}>
+                               <span style={{color:ORG,fontWeight:700,fontSize:11}}>{s.k}</span>
+                             </div>
+                             <div style={{padding:'8px 10px',flex:1}}>
+                               <span style={{color:'#e5e7eb',fontSize:11}}>{s.v}</span>
+                             </div>
                            </div>
                          ))}
-                         {m.proveedor && <div style={{background:CARD2,borderRadius:6,border:`1px solid ${ORG}44`}} className="flex gap-3 px-3 py-2 mt-3">
-                           <span style={{color:ORG,minWidth:70}} className="text-[10px] font-black">Proveedor:</span>
-                           <span className="text-gray-300 text-xs">{m.proveedor}</span>
+                         {m.proveedor&&<div style={{background:'#2A2A2A',borderRadius:6,display:'flex',overflow:'hidden',border:`1px solid ${ORG}55`}}>
+                           <div style={{padding:'8px 10px',minWidth:130,flexShrink:0}}><span style={{color:ORG,fontWeight:700,fontSize:11}}>Proveedor</span></div>
+                           <div style={{padding:'8px 10px',flex:1}}><span style={{color:'#e5e7eb',fontSize:11}}>{m.proveedor}</span></div>
                          </div>}
-                         <div style={{background:ORG+'22',borderRadius:6,border:`1px solid ${ORG}`}} className="flex justify-between items-center px-3 py-3 mt-3">
-                           <span style={{color:ORG}} className="text-xs font-black">Valor USD</span>
-                           <span className="text-white font-black text-lg cursor-pointer hover:text-orange-400"
-                             onClick={()=>{const v=window.prompt(`Costo ${m.nombre}:`,m.costo);if(v){const maq=[...(DATA.maquinaria||[])];maq[resenaMaqSel]={...maq[resenaMaqSel],costo:parseNum(v)};saveField('maquinaria',maq);}}}>
-                             {fmtUSD(m.costo)} <span className="text-[10px] opacity-50">✏️</span>
-                           </span>
+                         {/* Editar costo */}
+                         <div style={{background:ORG+'22',borderRadius:6,border:`1px solid ${ORG}`,display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',marginTop:4,cursor:'pointer'}}
+                           onClick={()=>{const v=window.prompt(`Nuevo costo USD para ${m.nombre} (solo números):`,m.costo);if(v!==null&&v!==''){const n=Number(String(v).replace(/[^0-9.]/g,''));if(n>0){const maq=[...(DATA.maquinaria||[])];maq[resenaMaqSel]={...maq[resenaMaqSel],costo:n};saveField('maquinaria',maq);} else alert('Ingresa un número válido ej: 43400');}}}>
+                           <span style={{color:ORG,fontWeight:700,fontSize:11}}>✏️ Costo USD</span>
+                           <span style={{color:'#fff',fontWeight:900,fontSize:15}}>{fmtUSD(m.costo)}</span>
                          </div>
                        </div>
                      </div>
-                     {/* Nav botones */}
-                     <div className="flex justify-between px-5 pb-4">
-                       <button onClick={()=>setResenaMaqSel(Math.max(0,resenaMaqSel-1))} disabled={resenaMaqSel===0}
-                         style={{background:CARD2,borderRadius:8}} className="px-4 py-2 text-xs font-black text-gray-400 hover:text-white disabled:opacity-30">← Anterior</button>
-                       <span className="text-gray-500 text-xs self-center">{resenaMaqSel+1} / {DATA.maquinaria?.length}</span>
-                       <button onClick={()=>setResenaMaqSel(Math.min((DATA.maquinaria?.length||1)-1,resenaMaqSel+1))} disabled={resenaMaqSel===(DATA.maquinaria?.length||1)-1}
-                         style={{background:CARD2,borderRadius:8}} className="px-4 py-2 text-xs font-black text-gray-400 hover:text-white disabled:opacity-30">Siguiente →</button>
-                     </div>
-                   </div>;
-                 })()}
-               </div>}
-
-               {/* ══ VEHÍCULOS ══ */}
-               {resenaTab==='vehiculos' && (()=>{
-                 const vehs=DATA.vehiculos||[];
-                 const [selV,setSelV]=React.useState(0);
-                 const v=vehs[selV];
-                 if(!v) return <div className="text-gray-400 text-center py-10">No hay vehículos registrados</div>;
-                 const imgKey=`veh_${v.id}`;
-                 return <div className="flex gap-4" style={{minHeight:480}}>
-                   {/* Lista izquierda */}
-                   <div style={{width:220,minWidth:200,background:CARD2,borderRadius:12,border:'1px solid #3A3A5E',overflowY:'auto',flexShrink:0}}>
-                     <div style={{background:ORG,borderRadius:'12px 12px 0 0'}} className="px-4 py-3">
-                       <div className="text-black font-black text-xs uppercase tracking-wider">🚚 Flota ({vehs.length})</div>
-                     </div>
-                     {vehs.map((vv,idx)=>(
-                       <button key={vv.id} onClick={()=>setSelV(idx)}
-                         style={selV===idx?{background:ORG+'33',borderLeft:`3px solid ${ORG}`}:{borderLeft:'3px solid transparent'}}
-                         className="w-full text-left px-3 py-3 hover:bg-white/5 transition-all border-b border-gray-800/50">
-                         <div style={{color:selV===idx?ORG:'#aaa'}} className="text-[10px] font-black">PLACA: {vv.placa}</div>
-                         <div className="text-white text-xs font-bold leading-tight mt-0.5">{vv.nombre}</div>
-                         <div className="text-gray-500 text-[9px] mt-0.5">{vv.marca} · {fmtUSD(vv.costo)}</div>
-                       </button>
-                     ))}
                    </div>
-                   {/* Ficha técnica derecha */}
-                   <div style={{flex:1,background:CARD,borderRadius:12,border:'1px solid #3A3A5E',overflowY:'auto'}}>
-                     <div style={{background:'linear-gradient(135deg,#1A1A2E,#0A1628)'}} className="px-6 py-4 flex justify-between items-start">
-                       <div>
-                         <div style={{color:ORG}} className="text-[10px] font-black uppercase tracking-widest">Unidad {selV+1} / {vehs.length} · Placa {v.placa}</div>
-                         <div className="text-white font-black text-xl mt-1">{v.nombre}</div>
-                         <div className="text-gray-400 text-sm">{v.marca} · {v.modelo}</div>
-                       </div>
-                       <div style={{background:ORG,borderRadius:8}} className="px-4 py-2 text-black font-black text-sm">{fmtUSD(v.costo)}</div>
+                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 20px 14px',borderTop:'1px solid #ccc'}}>
+                     <button onClick={()=>setResenaMaqSel(Math.max(0,resenaMaqSel-1))} disabled={resenaMaqSel===0}
+                       style={{background:resenaMaqSel===0?'#ddd':ORG,color:resenaMaqSel===0?'#aaa':'#fff',border:'none',padding:'8px 20px',borderRadius:8,fontWeight:700,fontSize:12,cursor:resenaMaqSel===0?'not-allowed':'pointer'}}>← Anterior</button>
+                     <div style={{display:'flex',gap:5}}>
+                       {(DATA.maquinaria||[]).map((mm,idx)=>(
+                         <button key={mm.id} onClick={()=>setResenaMaqSel(idx)}
+                           style={{width:28,height:28,borderRadius:4,border:'none',fontWeight:700,fontSize:10,cursor:'pointer',background:resenaMaqSel===idx?ORG:'#ccc',color:resenaMaqSel===idx?'#fff':'#666'}}>{mm.id}</button>
+                       ))}
                      </div>
-                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-5">
-                       {/* Foto */}
-                       <div style={{background:'#1A1A2E',borderRadius:10,minHeight:260}} className="relative overflow-hidden flex items-center justify-center cursor-pointer group"
-                         onClick={()=>document.getElementById(`img-veh-${v.id}`).click()}>
-                         {resenaImages[imgKey]
-                           ? <>
-                               <img src={resenaImages[imgKey]} alt={v.nombre} className="w-full h-full object-contain absolute inset-0 p-2"/>
-                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all flex items-center justify-center">
-                                 <span className="opacity-0 group-hover:opacity-100 text-white text-xs font-black bg-black/70 px-3 py-1.5 rounded-full">Cambiar foto</span>
-                               </div>
-                             </>
-                           : <div className="text-center text-gray-600 p-4">
-                               <div className="text-5xl mb-3">🚚</div>
-                               <div className="text-xs text-gray-500 font-bold">Clic para cargar foto</div>
-                               <div className="text-[9px] text-gray-600 mt-1">{v.nombre}</div>
-                             </div>}
-                         <input id={`img-veh-${v.id}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
-                         {resenaSaving && <div className="absolute top-2 right-2 text-[9px] text-orange-400 bg-black/70 px-2 py-1 rounded animate-pulse">Guardando…</div>}
-                       </div>
-                       {/* Especificaciones */}
-                       <div className="space-y-1.5">
-                         <div style={{color:ORG}} className="text-[10px] font-black uppercase tracking-widest mb-3">Certificado de Registro</div>
-                         {(v.specs||[]).map((s,i)=>(
-                           <div key={i} style={{background:CARD2,borderRadius:6}} className="flex gap-2 px-3 py-2">
-                             <span style={{color:ORG,minWidth:115,flexShrink:0}} className="text-[10px] font-black">{s.k}:</span>
-                             <span className="text-gray-300 text-xs">{s.v}</span>
-                           </div>
-                         ))}
-                         <div style={{background:ORG+'22',borderRadius:6,border:`1px solid ${ORG}`}} className="flex justify-between items-center px-3 py-3 mt-3">
-                           <span style={{color:ORG}} className="text-xs font-black">Valor USD</span>
-                           <span className="text-white font-black text-lg">{fmtUSD(v.costo)}</span>
-                         </div>
-                       </div>
-                     </div>
-                     <div className="flex justify-between px-5 pb-4">
-                       <button onClick={()=>setSelV(Math.max(0,selV-1))} disabled={selV===0} style={{background:CARD2,borderRadius:8}} className="px-4 py-2 text-xs font-black text-gray-400 hover:text-white disabled:opacity-30">← Anterior</button>
-                       <span className="text-gray-500 text-xs self-center">{selV+1} / {vehs.length}</span>
-                       <button onClick={()=>setSelV(Math.min(vehs.length-1,selV+1))} disabled={selV===vehs.length-1} style={{background:CARD2,borderRadius:8}} className="px-4 py-2 text-xs font-black text-gray-400 hover:text-white disabled:opacity-30">Siguiente →</button>
-                     </div>
+                     <button onClick={()=>setResenaMaqSel(Math.min((DATA.maquinaria?.length||1)-1,resenaMaqSel+1))} disabled={resenaMaqSel===(DATA.maquinaria?.length||1)-1}
+                       style={{background:resenaMaqSel===(DATA.maquinaria?.length||1)-1?'#ddd':ORG,color:resenaMaqSel===(DATA.maquinaria?.length||1)-1?'#aaa':'#fff',border:'none',padding:'8px 20px',borderRadius:8,fontWeight:700,fontSize:12,cursor:resenaMaqSel===(DATA.maquinaria?.length||1)-1?'not-allowed':'pointer'}}>Siguiente →</button>
                    </div>
                  </div>;
                })()}
-
+               {resenaTab==='vehiculos' && (()=>{
+                 const vehs=DATA.vehiculos||[];
+                 const selV=resenaVehSel; const setSelV=setResenaVehSel;
+                 const v=vehs[selV]; if(!v) return null;
+                 const imgKey=`veh_${v.id}`;
+                 const LG='#EBEBEB';
+                 return <div style={{background:LG,borderRadius:14,overflow:'hidden',boxShadow:'0 4px 24px rgba(0,0,0,0.18)'}}>
+                   <div style={{background:ORG,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 24px'}}>
+                     <div style={{fontSize:22,fontWeight:900,color:'#fff',letterSpacing:1,textTransform:'uppercase'}}>{v.nombre.toUpperCase()}</div>
+                     <div style={{background:'#1C1C1C',color:'#fff',padding:'6px 14px',borderRadius:6,fontSize:11,fontWeight:700}}>FLOTA — UNIDAD {String(selV+1).padStart(2,'0')} DE {vehs.length}</div>
+                   </div>
+                   <div style={{padding:'18px 20px'}}>
+                     <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}>
+                       <div style={{background:ORG,padding:'10px 20px',borderRadius:8}}><span style={{color:'#fff',fontWeight:900,fontSize:13}}>PLACA: {v.placa}</span></div>
+                       <div style={{background:'#1C1C1C',padding:'10px 20px',borderRadius:8}}><span style={{color:ORG,fontWeight:900,fontSize:16}}>{fmtUSD(v.costo)}</span></div>
+                       <div style={{background:'#1C1C1C',padding:'10px 20px',borderRadius:8}}><span style={{color:'#fff',fontWeight:700,fontSize:12}}>{v.marca} · {v.modelo}</span></div>
+                     </div>
+                     <div style={{display:'grid',gridTemplateColumns:'55% 43%',gap:16,alignItems:'start'}}>
+                       <div style={{background:'#fff',borderRadius:12,border:'2px solid #ccc',overflow:'hidden',minHeight:360,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',position:'relative'}} className="group"
+                         onClick={()=>document.getElementById(`img-veh-${v.id}`).click()}>
+                         {resenaImages[imgKey]
+                           ? <><img src={resenaImages[imgKey]} alt={v.nombre} style={{width:'100%',objectFit:'contain',padding:12,maxHeight:380}}/>
+                               <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}} className="bg-black/0 group-hover:bg-black/30 transition-all">
+                                 <span style={{background:'rgba(0,0,0,0.7)',color:'#fff',padding:'6px 16px',borderRadius:20,fontSize:11,fontWeight:700}} className="opacity-0 group-hover:opacity-100 transition-opacity">Cambiar foto</span>
+                               </div></>
+                           : <div style={{textAlign:'center',color:'#aaa',padding:48}}>
+                               <div style={{fontSize:64,marginBottom:12}}>🚚</div>
+                               <div style={{fontWeight:700,fontSize:13}}>Clic para cargar foto del vehículo</div>
+                             </div>}
+                         <input id={`img-veh-${v.id}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
+                         {resenaSaving&&<div style={{position:'absolute',top:8,right:8,background:'rgba(0,0,0,0.7)',color:ORG,fontSize:10,padding:'3px 8px',borderRadius:4}} className="animate-pulse">Guardando…</div>}
+                       </div>
+                       <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                         {(v.specs||[]).map((s,i)=>(
+                           <div key={i} style={{background:'#2A2A2A',borderRadius:6,display:'flex',overflow:'hidden'}}>
+                             <div style={{padding:'8px 10px',minWidth:130,maxWidth:145,flexShrink:0}}><span style={{color:ORG,fontWeight:700,fontSize:11}}>{s.k}</span></div>
+                             <div style={{padding:'8px 10px',flex:1}}><span style={{color:'#e5e7eb',fontSize:11}}>{s.v}</span></div>
+                           </div>
+                         ))}
+                       </div>
+                     </div>
+                   </div>
+                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 20px 14px',borderTop:'1px solid #ccc'}}>
+                     <button onClick={()=>setSelV(Math.max(0,selV-1))} disabled={selV===0}
+                       style={{background:selV===0?'#ddd':ORG,color:selV===0?'#aaa':'#fff',border:'none',padding:'8px 20px',borderRadius:8,fontWeight:700,fontSize:12,cursor:selV===0?'not-allowed':'pointer'}}>← Anterior</button>
+                     <div style={{display:'flex',gap:8}}>
+                       {vehs.map((vv,idx)=>(
+                         <button key={vv.id} onClick={()=>setSelV(idx)}
+                           style={{padding:'6px 14px',borderRadius:6,border:'none',fontWeight:700,fontSize:11,cursor:'pointer',background:selV===idx?ORG:'#ccc',color:selV===idx?'#fff':'#555'}}>{vv.placa}</button>
+                       ))}
+                     </div>
+                     <button onClick={()=>setSelV(Math.min(vehs.length-1,selV+1))} disabled={selV===vehs.length-1}
+                       style={{background:selV===vehs.length-1?'#ddd':ORG,color:selV===vehs.length-1?'#aaa':'#fff',border:'none',padding:'8px 20px',borderRadius:8,fontWeight:700,fontSize:12,cursor:selV===vehs.length-1?'not-allowed':'pointer'}}>Siguiente →</button>
+                   </div>
+                 </div>;
+               })()}
                {/* ══ PRODUCTOS ══ */}
                {resenaTab==='productos' && (()=>{
                  const defaultProds=[
@@ -25788,12 +25753,8 @@ ${resumenHtml}
                    clientMap[key].nes++;
                    (ne.items||[]).forEach(it=>{
                      const d=(it.desc||'').toUpperCase();
-                     if(d.includes('BOLSA')||d.includes('BOSA')) clientMap[key].cats.add('Bolsas');
-                     if(d.includes('TERMO')||d.includes('ENCOG')) clientMap[key].cats.add('Termoencogible');
-                     if(d.includes('FARDO')) clientMap[key].cats.add('Fardos');
-                     if(d.includes('FILM')) clientMap[key].cats.add('Film');
-                     if(d.includes('MANGA')||d.includes('CAMISETA')) clientMap[key].cats.add('Manga');
-                     if(d.includes('PANAL')||d.includes('KIRI')||d.includes('BIO')) clientMap[key].cats.add('Pañal');
+                     if(d.includes('BOLSA')||d.includes('BOSA')||d.includes('CAMISETA')) clientMap[key].cats.add('Bolsas');
+                     if(d.includes('TERMO')||d.includes('ENCOG')||d.includes('KIRI')||d.includes('PANAL')||d.includes('BIO')) clientMap[key].cats.add('Termoencogible');
                    });
                  });
                  const topCli=Object.values(clientMap).sort((a,b)=>b.total-a.total).slice(0,15);
@@ -25836,9 +25797,9 @@ ${resumenHtml}
                              <div style={{width:`${pct}%`,height:'100%',background:idx<3?ORG:'#93c5fd',borderRadius:4,transition:'width .6s ease'}}/>
                            </div>
                            {/* Amount */}
-                           <div style={{minWidth:90,textAlign:'right',flexShrink:0}}>
+                           <div style={{minWidth:110,textAlign:'right',flexShrink:0}}>
                              <div style={{fontSize:12,fontWeight:900,color:ORG}}>{fmtUSD(cl.total)}</div>
-                             <div style={{fontSize:9,color:'#9ca3af'}}>{cl.nes} NEs</div>
+                             <div style={{fontSize:9,color:'#9ca3af'}}>{((cl.total/topCli.reduce((s,cc)=>s+cc.total,0))*100).toFixed(1)}% · {cl.nes} NEs</div>
                            </div>
                          </div>
                        </div>;
@@ -25882,6 +25843,20 @@ ${resumenHtml}
 
                {/* ══ PROYECCIÓN ══ */}
                {resenaTab==='proyeccion' && <div className="space-y-5">
+                 {(()=>{// Migrar formato anual viejo → mensual si aplica
+                   if(DATA.proyeccion?.length&&!DATA.proyeccion[0].mes){
+                     const defaultMensual=[
+                       {mes:'Jul 2026',kg:40000,ingresos:160000,costoMin:6000,costoMax:8000,nota:'Inicio 24h/5d'},
+                       {mes:'Ago 2026',kg:40000,ingresos:160000,costoMin:6000,costoMax:8000,nota:''},
+                       {mes:'Sep 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:'Capacidad plena'},
+                       {mes:'Oct 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:''},
+                       {mes:'Nov 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:''},
+                       {mes:'Dic 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:''},
+                       {mes:'Ene 2027',kg:1700,ingresos:6800,costoMin:255,costoMax:340,nota:'Prom. diario'},
+                     ];
+                     saveField('proyeccion',defaultMensual);
+                   }
+                 })()}
                  {/* KPIs capacidad */}
                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                    {[
