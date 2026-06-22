@@ -13286,7 +13286,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <p className="text-[8px] font-black text-orange-600 uppercase tracking-widest mb-2">📋 Documento de referencia</p>
                               <p className="font-black text-sm text-gray-800">{docSel.clientName}</p>
                               <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[9px] text-gray-500 mt-2">
-                                {selInv&&<><div><span className="font-black">N° Fiscal:</span> {selInv.nroFiscal||'—'}</div><div><span className="font-black">Control:</span> {selInv.nroControl||'—'}</div></>}
+                                {selInv&&<><div><span className="font-black">N° Fiscal:</span> {selInv.nroFiscal||'—'}</div><div><span className="font-black">Control:</span> {selInv.nroControl||'—'}</div>
+                           </>}
                                 <div><span className="font-black">Fecha:</span> {docSel.fecha}</div>
                                 <div><span className="font-black">Tasa:</span> <span className="font-black text-blue-600">{formatNum(tasaNC)} Bs/$</span></div>
                                 <div><span className="font-black">Monto original:</span> <span className="font-black text-orange-600">${formatNum(parseNum(docSel.total||0))}</span></div>
@@ -17244,7 +17245,8 @@ ${resumenHtml}
               <div className="flex gap-2"><span className="font-black uppercase">Jalador:</span><div className="flex-1 border-b border-gray-400"></div></div>
               <div className="col-span-3 flex gap-2 items-center">
                 <span className="font-black uppercase">Zonas:</span>
-                {[1,2,3,4,5,6].map(z=><><span className="ml-2 font-bold">{z}</span><div className="border-b border-gray-400 w-10"></div></>)}
+                {[1,2,3,4,5,6].map(z=><><span className="ml-2 font-bold">{z}</span><div className="border-b border-gray-400 w-10"></div>
+                           </>)}
               </div>
               <div className="col-span-3 flex gap-2 items-center">
                 <span className="font-black uppercase">Cabezal:</span>
@@ -17265,7 +17267,8 @@ ${resumenHtml}
               <div className="col-span-2"></div>
               <div className="col-span-3 flex gap-2 items-center">
                 <span className="font-black uppercase">Colores:</span>
-                {[1,2,3,4,5,6].map(c=><><span className="ml-2 font-bold">{c}</span><div className="border-b border-gray-400 w-12"></div></>)}
+                {[1,2,3,4,5,6].map(c=><><span className="ml-2 font-bold">{c}</span><div className="border-b border-gray-400 w-12"></div>
+                           </>)}
               </div>
             </div>
           </div>
@@ -25265,9 +25268,24 @@ ${resumenHtml}
            {activeTab === 'resena' && (()=>{
              const ORG='#E8541A'; const DARK='#1C1C2E'; const CARD='#2A2A3E'; const CARD2='#232336';
              // Datos por defecto (se sobre-escriben con Firestore)
-             const DATA = resenaData || {
+             // Auto-fix: si Firestore tiene maquinaria con máquina fantasma o >10, usar default
+             const _rawData = resenaData || {};
+             const _defMaq = [
+               {id:1,nombre:'Extrusora de Película',modelo:'VM/HL-50EZ',costo:43400,proveedor:'Asian Machinery U.S.A. Inc.',specs:[{k:'Tipo',v:'Extrusora de Film Soplado'},{k:'Materiales',v:'HDPE · LDPE · LLDPE · EVA'},{k:'Capacidad',v:'Hasta 60 kg/h'},{k:'Ancho Película',v:'80 mm'},{k:'Espesor',v:'0,015 – 0,20 mm'},{k:'Tornillo',v:'φ45 – φ90 mm VFD'},{k:'Control Temperatura',v:'PID + SCR · Resistencias cerámicas'},{k:'Accionamiento',v:'Motores AC con variadores de frecuencia'},{k:'Bobinado',v:'Automático'},{k:'Proveedor',v:'Asian Machinery U.S.A. Inc.'}]},
+               {id:2,nombre:'Extrusora de Película #2',modelo:'VM/HL-40EZ',costo:27860,proveedor:'Asian Machinery U.S.A. Inc.',specs:[{k:'Tipo',v:'Extrusora de Film Soplado (HDPE/LDPE)'},{k:'Materiales',v:'HDPE · LDPE · LLDPE'},{k:'Capacidad',v:'Hasta 35 kg/h'},{k:'Ancho Película',v:'400 – 1.000 mm'},{k:'Espesor',v:'0,009 – 0,15 mm'},{k:'Control',v:'Panel digital multifunción'},{k:'Torre',v:'Compacta con bobinado integrado'},{k:'Motor',v:'AC con inversor de frecuencia'},{k:'Proveedor',v:'Asian Machinery U.S.A. Inc.'}]},
+               {id:3,nombre:'Impresora Flexográfica 6 Colores',modelo:'VM-61000',costo:95200,proveedor:'',specs:[{k:'Ancho Máx. Pliego',v:'1.000 mm'},{k:'Ancho Máx. Impresión',v:'960 mm'},{k:'Largo de Impresión',v:'191 – 914 mm'},{k:'Diám. Máx. Rollo',v:'450 mm'},{k:'Velocidad',v:'5 – 50 m/min'},{k:'Potencia Total',v:'18 KW'},{k:'Peso Total',v:'5.000 kg'},{k:'Dimensiones',v:'5.100 × 2.060 × 2.950 mm'},{k:'Rodillos Anilox',v:'300 líneas · Goma Neoprán'},{k:'Incluye',v:'36 rodillos (250–600mm) + caja herramientas'}]},
+               {id:4,nombre:'Selladora Fondo Cuatro Pista',modelo:'VMAB-500AX2',costo:32760,proveedor:'',specs:[{k:'Tipo',v:'Selladora Fondo Doble Pista Sello Curvo'},{k:'Pistas',v:'2 líneas independientes'},{k:'Capacidad',v:'120 – 250 ciclos/min por pista'},{k:'Longitud Bolsa',v:'100 – 1.200 mm'},{k:'Ancho Bolsa',v:'50 – 800 mm por pista'},{k:'Control',v:'Servomotores Yaskawa/Panasonic + HMI táctil'},{k:'Materiales',v:'HDPE · LDPE · PP'},{k:'Alimentación',v:'Fotocelda para marca de impresión'},{k:'Sensores',v:'Parada automática por fin de bobina/atasco'}]},
+               {id:5,nombre:'Selladora Fondo + Pre-Camiseta',modelo:'VMDF-1100 X2',costo:33620,proveedor:'',specs:[{k:'Tipo',v:'Selladora Fondo + Pre-Camiseta 100 cm'},{k:'Ancho de Bolsa',v:'100 – 400 mm'},{k:'Largo de Bolsa',v:'100 – 700 mm (Arco: 60 mm)'},{k:'Espesor Película',v:'0,01 – 0,1 mm'},{k:'Velocidad',v:'50 – 120 pcs/min'},{k:'Precisión de Corte',v:'± 0,2 – 0,5 mm'},{k:'Potencia Total',v:'5 KW'},{k:'Peso Total',v:'850 kg'},{k:'Dimensiones',v:'3.000 × 1.130 × 1.350 mm'},{k:'Voltaje',v:'220 V o 440 V · 3 fases · 60 Hz'}]},
+               {id:6,nombre:'Cortadora y Rebobinadora de Film',modelo:'REBOBINADO',costo:8700,proveedor:'',specs:[{k:'Tipo',v:'Cortadora/Rebobinadora Semiautomática Film'},{k:'Ancho Rollo Madre',v:'Hasta 500 mm'},{k:'Ancho Rollo Terminado',v:'50 – 500 mm'},{k:'Diám. Rollo Madre',v:'Hasta 400 mm'},{k:'Diám. Rollo Terminado',v:'150 – 300 mm'},{k:'Velocidad Lineal',v:'200 – 600 m/min'},{k:'Material Compatible',v:'PE · PVC'},{k:'Grosor de Película',v:'8 – 30 micras'},{k:'Longitud Rebobinado',v:'30 – 1.500 m (programable)'},{k:'Potencia Motor',v:'2,2 – 4,0 KW con inversor de frecuencia'}]},
+               {id:7,nombre:'Empaletadora Automática de Paletas',modelo:'Smart Wasp NEW X0ps',costo:4800,proveedor:'',specs:[{k:'Tipo',v:'Empaletadora Automática Stretch Wrapping'},{k:'Plataforma',v:'Ø 1.650 mm · Carga máx. 2.000 kg'},{k:'Paleta Máxima',v:'1,2 × 1,2 m'},{k:'Altura Máx. Envoltura',v:'2.200 mm'},{k:'Vel. Envoltura',v:'30 cargas / hora'},{k:'Vel. Plataforma',v:'3 – 12 RPM'},{k:'Pre-estiramiento',v:'300% (1 m → 3 m)'},{k:'Ancho Film',v:'500 mm'},{k:'Potencia',v:'1,5 KW · 220 V / 50 Hz'},{k:'Peso Máquina',v:'550 kg'}]},
+               {id:8,nombre:'Generador Eléctrico Industrial',modelo:'VP Power CS200D6',costo:40150,proveedor:'VP Power Solution',specs:[{k:'Marca',v:'VP Power Solution · Stamford / Cummins'},{k:'Potencia Prime',v:'160 kW / 200 kVA'},{k:'Fases',v:'3 (Trifásico)'},{k:'Voltaje',v:'208 / 120 V'},{k:'Corriente',v:'555 A (208V) · 962 A (120V)'},{k:'Frecuencia',v:'60 Hz'},{k:'Factor de Potencia',v:'0,8'},{k:'Vel. Nominal',v:'1.800 RPM'},{k:'Vel. Máx.',v:'1.980 RPM'},{k:'Peso / Año',v:'1.980 kg · Fabricación 2024'}]},
+               {id:9,nombre:'Tanque de Almacenamiento Gasoil',modelo:'Tanque Gasoil 5.000 L',costo:6000,proveedor:'',specs:[{k:'Tipo',v:'Tanque Almacenamiento Combustible (Gasoil)'},{k:'Capacidad',v:'5.000 litros'},{k:'Material',v:'Acero al carbono alta resistencia'},{k:'Dimensiones',v:'3.150 × 2.080 × 2.170 mm'},{k:'Peso Vacío',v:'~1.834 kg'},{k:'Acabado',v:'Esmalte industrial / poliuretano anticorrosivo'},{k:'Accesorios',v:'Boca inspección · venteo emergencia · izaje'},{k:'Señalización',v:'Rombo NFPA · indicativos Inflamable'}]},
+               {id:10,nombre:'Montacargas Industrial',modelo:'Toyota GLP/Diésel',costo:8000,proveedor:'Toyota',specs:[{k:'Marca',v:'Toyota'},{k:'Tipo',v:'Montacargas Combustión Interna'},{k:'Capacidad de Carga',v:'2.000 – 4.000 kg'},{k:'Altura de Elevación',v:'3,0 m estándar (hasta 4,5 m torre triple)'},{k:'Motor',v:'Diésel / Gasolina / GLP Dual'},{k:'Transmisión',v:'Hidráulica automática / Powershift'},{k:'Seguridad',v:'Sistema Estabilidad Activa (SAS) Toyota'}]},
+             ];
+             const _maqOk=(_rawData.maquinaria||[]).length===10&&!(_rawData.maquinaria||[]).some(m=>(m.nombre||'').includes('VMAB-500A')&&!(m.modelo||'').includes('X2'));
+             const DATA = {...(_rawData), maquinaria:_maqOk?_rawData.maquinaria:_defMaq} || {
                empresa:{razonSocial:'SERVICIOS JIRET G&B, COMPAÑÍA ANÓNIMA',actividad:'Fabricación de Empaques Plásticos · Bolsas · Termos Encogibles · Fardos',constitucion:'12 de noviembre de 2018 · Nro. 46, Tomo 153-A 485',expediente:'485-45189',registro:'Mercantil Tercero de la Circunscripción Judicial del Estado Zulia',domicilio:'Av. Circunvalación 2, CC El Dividivi, PB Local G-9, Maracaibo',accionistas:'Juan Carlos Bohórquez U. — 50% · Luis Guillermo Bohórquez U. — 50%',presidente:'Juan Carlos Bohórquez Urdaneta · V-10.919.878',vicepresidente:'Luis Guillermo Bohórquez Urdaneta · V-13.297.424',capitalSocial:7500000,acciones:100,valorAccion:75000,fechaRegistro:'17 de junio de 2026 · Tomo 95-A · Nro. 9'},
-               planta:{ubicacion:'Calle 148, vía Palito Blanco, Parroquia Luis Hurtado Higuera, Maracaibo',terreno:4655.21,areaConstruida:1680,cubierta:1806,columnas:'24 columnas tubo doble 3½" a 6 m',portones:'2 metálicos 6×4 m + 2 puertas 2,10×1 m',servicios:'Aguas blancas/negras · Tanque · 3 pozos sépticos',valorInmueble:1300000},
+               planta:{ubicacion:'Calle 148, vía Palito Blanco, Parroquia Luis Hurtado Higuera, Maracaibo',terreno:4655.21,areaConstruida:1680,cubierta:1806,columnas:'24 columnas tubo doble 3½" a 6 m',portones:'2 metálicos 6×4 m + 2 puertas 2,10×1 m',servicios:'Aguas blancas/negras · Tanque · 3 pozos sépticos',valorInmueble:380000},
                maquinaria:[
                  {id:1,nombre:'Extrusora de Película',modelo:'VM/HL-50EZ',costo:43400,proveedor:'Asian Machinery U.S.A. Inc.',specs:[
                    {k:'Tipo',v:'Extrusora de Film Soplado'},{k:'Materiales',v:'HDPE · LDPE · LLDPE · EVA'},{k:'Capacidad',v:'Hasta 60 kg/h'},{k:'Ancho Película',v:'80 mm'},{k:'Espesor',v:'0,015 – 0,20 mm'},{k:'Tornillo',v:'φ45 – φ90 mm VFD'},{k:'Control Temperatura',v:'PID + SCR · Resistencias cerámicas'},{k:'Accionamiento',v:'Motores AC con variadores de frecuencia'},{k:'Bobinado',v:'Automático'},{k:'Proveedor',v:'Asian Machinery U.S.A. Inc.'}]},
@@ -25377,7 +25395,7 @@ ${resumenHtml}
 
                {/* Section tabs */}
                <div style={{background:'#fff',borderBottom:'1px solid #e5e7eb'}} className="flex gap-1 px-6 overflow-x-auto">
-                 {[['portada','🏠 Portada'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['vehiculos','🚚 Vehículos'],['productos','📦 Productos'],['clientes','🤝 Clientes'],['activos','💰 Activos'],['proyeccion','📈 Proyección']].map(([t,l])=>(
+                 {[['portada','🏠 Portada'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['productos','📦 Productos'],['clientes','🤝 Clientes'],['activos','💰 Activos'],['proyeccion','📈 Proyección']].map(([t,l])=>(
                    <button key={t} onClick={()=>setResenaTab(t)} style={resenaTab===t?{borderBottom:`2px solid ${ORG}`,color:ORG}:{borderBottom:'2px solid transparent',color:'#888'}}
                      className="px-4 py-3 text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition-all">{l}</button>
                  ))}
@@ -25471,7 +25489,7 @@ ${resumenHtml}
                {resenaTab==='empresa' && <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                  {/* Left: logo + capital */}
                  <div className="space-y-4">
-                   <div style={{background:'#F5EDD8',borderRadius:12,padding:16,textAlign:'center',cursor:'pointer',border:`2px dashed ${resenaImages['logo']?'transparent':ORG}`}}
+                   <div style={{background:'#fff',borderRadius:12,padding:16,textAlign:'center',cursor:'pointer',border:`2px dashed ${resenaImages['logo']?'#e5e7eb':ORG}`}}
                      onClick={()=>document.getElementById('img-logo').click()}>
                      {resenaImages['logo']
                        ? <img src={resenaImages['logo']} alt="Logo" style={{maxHeight:140,maxWidth:'100%',objectFit:'contain',display:'block',margin:'0 auto'}}/>
@@ -25561,23 +25579,52 @@ ${resumenHtml}
 
                {/* ══ MAQUINARIA ══ */}
                {resenaTab==='maquinaria' && (()=>{
-                 const m=(DATA.maquinaria||[])[resenaMaqSel];
+                 const totalItems=(DATA.maquinaria||[]).length+(DATA.vehiculos||[]).length;
+                 const isVeh=resenaMaqSel>=(DATA.maquinaria||[]).length;
+                 const m=isVeh?(DATA.vehiculos||[])[resenaMaqSel-(DATA.maquinaria||[]).length]:(DATA.maquinaria||[])[resenaMaqSel];
                  if(!m) return null;
-                 const imgKey=`maq_${m.id}`;
+                 const imgKey=isVeh?('veh_'+m.id):('maq_'+m.id);
+                 const inputId=isVeh?('img-veh-'+m.id):('img-maq-'+m.id);
                  return <div style={{display:'flex',gap:0,background:'#fff',borderRadius:14,overflow:'hidden',boxShadow:'0 2px 20px rgba(0,0,0,0.10)',border:'1px solid #e5e7eb'}}>
-                   {/* ── IZQUIERDA: detalle (75%) ── */}
+                   {/* ── IZQUIERDA: lista de máquinas ── */}
+                   <div style={{width:210,flexShrink:0,background:'#f9fafb',borderRight:'1px solid #e5e7eb',display:'flex',flexDirection:'column',overflowY:'auto'}}>
+                     <div style={{background:ORG,padding:'12px 10px',textAlign:'center'}}>
+                       <div style={{color:'#000',fontWeight:900,fontSize:10,textTransform:'uppercase',letterSpacing:1}}>⚙️ {(DATA.maquinaria||[]).length} Equipos · 🚚 {(DATA.vehiculos||[]).length} Vehículos</div>
+                     </div>
+                     {(DATA.maquinaria||[]).map((mm,idx)=>(
+                       <button key={mm.id} onClick={()=>setResenaMaqSel(idx)}
+                         style={{textAlign:'left',padding:'10px 10px',borderBottom:'1px solid #e5e7eb',cursor:'pointer',background:resenaMaqSel===idx?ORG+'18':'transparent',borderLeft:resenaMaqSel===idx?`3px solid ${ORG}`:'3px solid transparent',transition:'all .15s'}}>
+                         <div style={{color:resenaMaqSel===idx?ORG:'#9ca3af',fontSize:9,fontWeight:700}}>N° {String(mm.id).padStart(2,'0')}</div>
+                         <div style={{color:resenaMaqSel===idx?'#111':'#374151',fontSize:10.5,fontWeight:700,lineHeight:1.3,marginTop:2}}>{mm.nombre}</div>
+                         <div style={{color:ORG,fontSize:9.5,fontWeight:700,marginTop:2}}>{fmtUSD(mm.costo)}</div>
+                       </button>
+                     ))}
+                     <div style={{background:'#1f2937',padding:'6px 10px'}}>
+                       <div style={{color:'#9ca3af',fontWeight:700,fontSize:9,textTransform:'uppercase',letterSpacing:1}}>🚚 Flota Vehicular</div>
+                     </div>
+                     {(DATA.vehiculos||[]).map((vv,vidx)=>{
+                       const vSelIdx=(DATA.maquinaria||[]).length+vidx;
+                       return <button key={vv.id} onClick={()=>setResenaMaqSel(vSelIdx)}
+                         style={{textAlign:'left',padding:'10px 10px',borderBottom:'1px solid #e5e7eb',cursor:'pointer',background:resenaMaqSel===vSelIdx?ORG+'18':'transparent',borderLeft:resenaMaqSel===vSelIdx?`3px solid ${ORG}`:'3px solid transparent'}}>
+                         <div style={{color:resenaMaqSel===vSelIdx?ORG:'#9ca3af',fontSize:9,fontWeight:700}}>PLACA: {vv.placa}</div>
+                         <div style={{color:resenaMaqSel===vSelIdx?'#111':'#374151',fontSize:10.5,fontWeight:700,lineHeight:1.3,marginTop:2}}>{vv.nombre}</div>
+                         <div style={{color:ORG,fontSize:9.5,fontWeight:700,marginTop:2}}>{fmtUSD(vv.costo)}</div>
+                       </button>;
+                     })}
+                   </div>
+                   {/* ── DERECHA: detalle ── */}
                    <div style={{flex:1,minWidth:0}}>
                      {/* Header naranja */}
                      <div style={{background:ORG,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 20px'}}>
                        <div style={{fontSize:19,fontWeight:900,color:'#fff',letterSpacing:0.5,textTransform:'uppercase'}}>{m.nombre.toUpperCase()}</div>
                        <div style={{background:'#1C1C1C',color:'#fff',padding:'5px 12px',borderRadius:5,fontSize:10,fontWeight:700,whiteSpace:'nowrap'}}>
-                         03 · MAQUINARIA — EQUIPO {String(m.id).padStart(2,'0')} DE {(DATA.maquinaria||[]).length}
+                         {isVeh?('🚚 VEHÍCULO · PLACA '+(m.placa||'')):('⚙️ MAQUINARIA — EQUIPO '+String(m.id).padStart(2,'0')+' DE '+(DATA.maquinaria||[]).length)}
                        </div>
                      </div>
                      {/* Badges modelo/costo */}
                      <div style={{display:'flex',gap:10,padding:'14px 16px 10px',background:'#f3f4f6'}}>
                        <div style={{background:ORG,padding:'8px 18px',borderRadius:7}}>
-                         <span style={{color:'#fff',fontWeight:900,fontSize:12}}>MODELO: {m.modelo}</span>
+                         <span style={{color:'#fff',fontWeight:900,fontSize:12}}>{isVeh?('PLACA: '+(m.placa||'')):('MODELO: '+(m.modelo||''))}</span>
                        </div>
                        <div style={{background:'#1C1C1C',padding:'8px 18px',borderRadius:7}}>
                          <span style={{color:ORG,fontWeight:900,fontSize:14}}>{fmtUSD(m.costo)}</span>
@@ -25590,17 +25637,18 @@ ${resumenHtml}
                      <div style={{display:'grid',gridTemplateColumns:'52% 46%',gap:14,padding:'14px 16px 16px'}}>
                        {/* Foto */}
                        <div style={{background:'#f9fafb',borderRadius:10,border:'2px solid #e5e7eb',overflow:'hidden',minHeight:340,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',position:'relative'}}
-                         className="group" onClick={()=>document.getElementById(`img-maq-${m.id}`).click()}>
+                         className="group" onClick={()=>document.getElementById(inputId).click()}>
                          {resenaImages[imgKey]
                            ? <><img src={resenaImages[imgKey]} alt={m.nombre} style={{width:'100%',objectFit:'contain',padding:12,maxHeight:360}}/>
                                <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}} className="bg-black/0 group-hover:bg-black/20 transition-all">
                                  <span style={{background:'rgba(0,0,0,0.65)',color:'#fff',padding:'5px 14px',borderRadius:16,fontSize:10,fontWeight:700}} className="opacity-0 group-hover:opacity-100 transition-opacity">Cambiar foto</span>
-                               </div></>
+                               </div>
+                             </>
                            : <div style={{textAlign:'center',color:'#bbb',padding:40}}>
                                <div style={{fontSize:56,marginBottom:10}}>📷</div>
                                <div style={{fontWeight:700,fontSize:12,color:'#9ca3af'}}>Clic para cargar foto</div>
                              </div>}
-                         <input id={`img-maq-${m.id}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
+                         <input id={inputId} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
                          {resenaSaving&&<div style={{position:'absolute',top:8,right:8,background:'rgba(0,0,0,0.7)',color:ORG,fontSize:9,padding:'2px 7px',borderRadius:4}} className="animate-pulse">Guardando…</div>}
                        </div>
                        {/* Specs como filas */}
@@ -25623,86 +25671,19 @@ ${resumenHtml}
                          )}
                          {/* Edit costo */}
                          <div style={{background:ORG+'18',border:`1px solid ${ORG}55`,borderRadius:5,display:'flex',justifyContent:'space-between',alignItems:'center',padding:'9px 12px',marginTop:4,cursor:'pointer'}}
-                           onClick={()=>{const v=window.prompt(`Nuevo costo USD (solo números) para ${m.nombre}:`,m.costo);if(v!==null&&v!==''){const n=Number(String(v).replace(/[^0-9.]/g,''));if(n>0){const maq=[...(DATA.maquinaria||[])];maq[resenaMaqSel]={...maq[resenaMaqSel],costo:n};saveField('maquinaria',maq);}else alert('Número inválido')}}}>
+                           onClick={()=>{const v=window.prompt(`Nuevo costo USD (solo números) para ${m.nombre}:`,m.costo);if(v!==null&&v!==''){const n=parseFloat(String(v).trim())||0;if(n>0){const maq=[...(DATA.maquinaria||[])];maq[resenaMaqSel]={...maq[resenaMaqSel],costo:n};saveField('maquinaria',maq);}else alert('Número inválido')}}}>
                            <span style={{color:ORG,fontWeight:700,fontSize:10}}>✏️ Editar Costo</span>
                            <span style={{color:'#1f2937',fontWeight:900,fontSize:14}}>{fmtUSD(m.costo)}</span>
                          </div>
                        </div>
                      </div>
                    </div>
-                   {/* ── DERECHA: lista de máquinas (25%) ── */}
-                   <div style={{width:200,flexShrink:0,background:'#f9fafb',borderLeft:'1px solid #e5e7eb',display:'flex',flexDirection:'column',overflowY:'auto'}}>
-                     <div style={{background:ORG,padding:'12px 10px',textAlign:'center'}}>
-                       <div style={{color:'#000',fontWeight:900,fontSize:10,textTransform:'uppercase',letterSpacing:1}}>⚙️ {(DATA.maquinaria||[]).length} Equipos</div>
-                     </div>
-                     {(DATA.maquinaria||[]).map((mm,idx)=>(
-                       <button key={mm.id} onClick={()=>setResenaMaqSel(idx)}
-                         style={{textAlign:'left',padding:'10px 10px',borderBottom:'1px solid #e5e7eb',cursor:'pointer',background:resenaMaqSel===idx?ORG+'18':'transparent',borderLeft:resenaMaqSel===idx?`3px solid ${ORG}`:'3px solid transparent',transition:'all .15s'}}>
-                         <div style={{color:resenaMaqSel===idx?ORG:'#9ca3af',fontSize:9,fontWeight:700}}>N° {String(mm.id).padStart(2,'0')}</div>
-                         <div style={{color:resenaMaqSel===idx?'#111':'#374151',fontSize:10.5,fontWeight:700,lineHeight:1.3,marginTop:2}}>{mm.nombre}</div>
-                         <div style={{color:ORG,fontSize:9.5,fontWeight:700,marginTop:2}}>{fmtUSD(mm.costo)}</div>
-                       </button>
-                     ))}
+                   {/* fin detalle */}
                    </div>
-                 </div>;
                })()}
 
-               {/* ══ VEHÍCULOS ══ */}
-               {resenaTab==='vehiculos' && (()=>{
-                 const vehs=DATA.vehiculos||[];
-                 const v=vehs[resenaVehSel]; if(!v) return null;
-                 const imgKey=`veh_${v.id}`;
-                 return <div style={{display:'flex',gap:0,background:'#fff',borderRadius:14,overflow:'hidden',boxShadow:'0 2px 20px rgba(0,0,0,0.10)',border:'1px solid #e5e7eb'}}>
-                   {/* IZQUIERDA: detalle */}
-                   <div style={{flex:1,minWidth:0}}>
-                     <div style={{background:ORG,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 20px'}}>
-                       <div style={{fontSize:19,fontWeight:900,color:'#fff',letterSpacing:0.5,textTransform:'uppercase'}}>{v.nombre.toUpperCase()}</div>
-                       <div style={{background:'#1C1C1C',color:'#fff',padding:'5px 12px',borderRadius:5,fontSize:10,fontWeight:700}}>FLOTA · UNIDAD {String(resenaVehSel+1).padStart(2,'0')} DE {vehs.length}</div>
-                     </div>
-                     <div style={{display:'flex',gap:10,padding:'14px 16px 10px',background:'#f3f4f6'}}>
-                       <div style={{background:ORG,padding:'8px 18px',borderRadius:7}}><span style={{color:'#fff',fontWeight:900,fontSize:12}}>PLACA: {v.placa}</span></div>
-                       <div style={{background:'#1C1C1C',padding:'8px 18px',borderRadius:7}}><span style={{color:ORG,fontWeight:900,fontSize:14}}>{fmtUSD(v.costo)}</span></div>
-                       <div style={{background:'#f9fafb',border:'1px solid #e5e7eb',padding:'8px 14px',borderRadius:7}}><span style={{color:'#374151',fontWeight:700,fontSize:11}}>{v.marca} · {v.modelo}</span></div>
-                     </div>
-                     <div style={{display:'grid',gridTemplateColumns:'52% 46%',gap:14,padding:'14px 16px 16px'}}>
-                       <div style={{background:'#f9fafb',borderRadius:10,border:'2px solid #e5e7eb',overflow:'hidden',minHeight:320,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',position:'relative'}}
-                         className="group" onClick={()=>document.getElementById(`img-veh-${v.id}`).click()}>
-                         {resenaImages[imgKey]
-                           ? <><img src={resenaImages[imgKey]} alt={v.nombre} style={{width:'100%',objectFit:'contain',padding:12,maxHeight:340}}/>
-                               <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}} className="bg-black/0 group-hover:bg-black/20 transition-all">
-                                 <span style={{background:'rgba(0,0,0,0.65)',color:'#fff',padding:'5px 14px',borderRadius:16,fontSize:10,fontWeight:700}} className="opacity-0 group-hover:opacity-100 transition-opacity">Cambiar foto</span>
-                               </div></>
-                           : <div style={{textAlign:'center',color:'#bbb',padding:40}}><div style={{fontSize:56,marginBottom:10}}>🚚</div><div style={{fontWeight:700,fontSize:12,color:'#9ca3af'}}>Clic para cargar foto</div></div>}
-                         <input id={`img-veh-${v.id}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
-                       </div>
-                       <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                         {(v.specs||[]).map((s,i)=>(
-                           <div key={i} style={{background:i%2===0?'#1f2937':'#111827',borderRadius:5,display:'flex',overflow:'hidden'}}>
-                             <div style={{padding:'7px 10px',minWidth:125,maxWidth:140,flexShrink:0}}><span style={{color:ORG,fontWeight:700,fontSize:10.5}}>{s.k}</span></div>
-                             <div style={{padding:'7px 10px',flex:1,borderLeft:'1px solid #374151'}}><span style={{color:'#e5e7eb',fontSize:10.5}}>{s.v}</span></div>
-                           </div>
-                         ))}
-                       </div>
-                     </div>
-                   </div>
-                   {/* DERECHA: lista vehículos */}
-                   <div style={{width:180,flexShrink:0,background:'#f9fafb',borderLeft:'1px solid #e5e7eb',display:'flex',flexDirection:'column'}}>
-                     <div style={{background:ORG,padding:'12px 10px',textAlign:'center'}}>
-                       <div style={{color:'#000',fontWeight:900,fontSize:10,textTransform:'uppercase',letterSpacing:1}}>🚚 Flota ({vehs.length})</div>
-                     </div>
-                     {vehs.map((vv,idx)=>(
-                       <button key={vv.id} onClick={()=>setResenaVehSel(idx)}
-                         style={{textAlign:'left',padding:'12px 10px',borderBottom:'1px solid #e5e7eb',cursor:'pointer',background:resenaVehSel===idx?ORG+'18':'transparent',borderLeft:resenaVehSel===idx?`3px solid ${ORG}`:'3px solid transparent'}}>
-                         <div style={{color:resenaVehSel===idx?ORG:'#9ca3af',fontSize:9,fontWeight:700}}>PLACA: {vv.placa}</div>
-                         <div style={{color:resenaVehSel===idx?'#111':'#374151',fontSize:11,fontWeight:700,lineHeight:1.3,marginTop:2}}>{vv.nombre}</div>
-                         <div style={{color:ORG,fontSize:10,fontWeight:700,marginTop:2}}>{fmtUSD(vv.costo)}</div>
-                       </button>
-                     ))}
-                   </div>
-                 </div>;
-               })()}
 
-               {/* ══ PRODUCTOS ══ */}
+                              {/* ══ PRODUCTOS ══ */}
                {resenaTab==='productos' && (()=>{
                  const defaultProds=[
                    {id:'p1',nombre:'Bolsas Plásticas'},
@@ -25858,15 +25839,16 @@ ${resumenHtml}
                {resenaTab==='proyeccion' && (()=>{
                  // Usar formato mensual - si Firestore tiene formato viejo (anual), usar defaults
                  const defProy=[
-                   {mes:'Jul 2026',kg:40000,ingresos:160000,costoMin:6000,costoMax:8000,nota:'Inicio 24h/5d'},
-                   {mes:'Ago 2026',kg:40000,ingresos:160000,costoMin:6000,costoMax:8000,nota:''},
-                   {mes:'Sep 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:'Capacidad plena'},
-                   {mes:'Oct 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:''},
-                   {mes:'Nov 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:''},
-                   {mes:'Dic 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:''},
-                   {mes:'Ene 2027',kg:1700,ingresos:6800,costoMin:255,costoMax:340,nota:'Prom. diario'},
+                   {mes:'Jul 2026',kg:20000,ingresos:80000,costoMin:3000,costoMax:4000,nota:'Jul+Ago = 40.000 kg total'},
+                   {mes:'Ago 2026',kg:20000,ingresos:80000,costoMin:3000,costoMax:4000,nota:''},
+                   {mes:'Sep 2026',kg:20000,ingresos:80000,costoMin:3000,costoMax:4000,nota:'Sep–Dic = 80.000 kg total'},
+                   {mes:'Oct 2026',kg:20000,ingresos:80000,costoMin:3000,costoMax:4000,nota:''},
+                   {mes:'Nov 2026',kg:20000,ingresos:80000,costoMin:3000,costoMax:4000,nota:''},
+                   {mes:'Dic 2026',kg:20000,ingresos:80000,costoMin:3000,costoMax:4000,nota:''},
+                   {mes:'Ene 2027',kg:170000,ingresos:680000,costoMin:25500,costoMax:34000,nota:'Meta enero 2027'},
                  ];
-                 const proyData=(DATA.proyeccion||[]).some(p=>p.mes)?DATA.proyeccion:defProy;
+                 // Usar defProy si los datos de Firestore son el formato viejo (kg >= 30000 en julio)
+                 const proyData=((DATA.proyeccion||[]).length===7 && (DATA.proyeccion[0]?.kg||0)<=25000)?DATA.proyeccion:defProy;
                  return <div className="space-y-5">
                  {/* KPIs capacidad */}
                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -25932,17 +25914,17 @@ ${resumenHtml}
                      </tbody>
                      <tfoot>
                        <tr style={{background:'#1f2937',borderTop:`2px solid ${ORG}`}}>
-                         <td style={{padding:'12px 16px',color:ORG,fontWeight:900,fontSize:12}}>TOTAL (6 meses)</td>
+                         <td style={{padding:'12px 16px',color:ORG,fontWeight:900,fontSize:12}}>TOTAL Jul–Dic 2026</td>
                          <td style={{padding:'12px 12px',textAlign:'right',color:'#fff',fontWeight:900,fontSize:12}}>
-                           {proyData.filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+p.kg,0).toLocaleString('es-VE')} kg
+                           {proyData.filter(p=>!p.mes.includes('anual')).reduce((s,p)=>s+p.kg,0).toLocaleString('es-VE')} kg
                          </td>
                          <td></td>
                          <td style={{padding:'12px 12px',textAlign:'right',color:'#4ade80',fontWeight:900,fontSize:13}}>
-                           ${proyData.filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+p.ingresos,0).toLocaleString('es-VE')}
+                           ${proyData.filter(p=>!p.mes.includes('anual')).reduce((s,p)=>s+p.ingresos,0).toLocaleString('es-VE')}
                          </td>
                          <td colSpan={2}></td>
                          <td style={{padding:'12px 12px',textAlign:'right',color:ORG,fontWeight:900,fontSize:12}}>
-                           ${proyData.filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+(p.ingresos-p.costoMax),0).toLocaleString('es-VE')} – ${proyData.filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+(p.ingresos-p.costoMin),0).toLocaleString('es-VE')}
+                           ${proyData.filter(p=>!p.mes.includes('anual')).reduce((s,p)=>s+(p.ingresos-p.costoMax),0).toLocaleString('es-VE')} – ${proyData.filter(p=>!p.mes.includes('anual')).reduce((s,p)=>s+(p.ingresos-p.costoMin),0).toLocaleString('es-VE')}
                          </td>
                          <td></td>
                        </tr>
