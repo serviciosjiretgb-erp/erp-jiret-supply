@@ -25283,7 +25283,11 @@ ${resumenHtml}
                {id:10,nombre:'Montacargas Industrial',modelo:'Toyota GLP/Diésel',costo:8000,proveedor:'Toyota',specs:[{k:'Marca',v:'Toyota'},{k:'Tipo',v:'Montacargas Combustión Interna'},{k:'Capacidad de Carga',v:'2.000 – 4.000 kg'},{k:'Altura de Elevación',v:'3,0 m estándar (hasta 4,5 m torre triple)'},{k:'Motor',v:'Diésel / Gasolina / GLP Dual'},{k:'Transmisión',v:'Hidráulica automática / Powershift'},{k:'Seguridad',v:'Sistema Estabilidad Activa (SAS) Toyota'}]},
              ];
              const _maqOk=(_rawData.maquinaria||[]).length===10&&!(_rawData.maquinaria||[]).some(m=>(m.nombre||'').includes('VMAB-500A')&&!(m.modelo||'').includes('X2'));
-             const DATA = {...(_rawData), maquinaria:_maqOk?_rawData.maquinaria:_defMaq} || {
+             const _defVeh=[
+               {id:'v1',nombre:'Camioneta JAC T6',marca:'JAC',modelo:'HFC1037KF2G / 4X4DOBLECABINA',costo:23879.54,placa:'A53AW4B',specs:[{k:'Placa',v:'A53AW4B'},{k:'Propietario',v:'SERVICIOS JIRET G&B CA · J412309374'},{k:'Clase / Tipo',v:'Camioneta / Pick-Up D/Cabina'},{k:'Año Fab. / Modelo',v:'2022 / 2023'},{k:'Color',v:'Blanco'},{k:'Cap. de Carga',v:'820 kg'},{k:'Tara',v:'1.840 kg'},{k:'Nro. Puestos',v:'5'},{k:'Uso / Servicio',v:'Carga / Privado'},{k:'Combustible',v:'GAS 95'}]},
+               {id:'v2',nombre:'Camioneta Foton Cava',marca:'FOTON',modelo:'BJ1036V5JV5-A1',costo:23056.51,placa:'A23AU1R',specs:[{k:'Placa',v:'A23AU1R'},{k:'Propietario',v:'SERVICIOS JIRET G&B CA · J412309374'},{k:'Clase / Tipo',v:'Camioneta / Cava'},{k:'Año Fab. / Modelo',v:'2025 / 2025'},{k:'Color',v:'Blanco'},{k:'Cap. de Carga',v:'1.340 kg'},{k:'Tara',v:'2.500 kg'},{k:'Nro. Puestos',v:'2'},{k:'Uso / Servicio',v:'Carga / Privado'},{k:'Combustible',v:'GAS 91'}]},
+             ];
+             const DATA = {...(_rawData), maquinaria:_maqOk?(_rawData.maquinaria||_defMaq):_defMaq, vehiculos:(_rawData.vehiculos||[]).length>=2?_rawData.vehiculos:_defVeh} || {
                empresa:{razonSocial:'SERVICIOS JIRET G&B, COMPAÑÍA ANÓNIMA',actividad:'Fabricación de Empaques Plásticos · Bolsas · Termos Encogibles · Fardos',constitucion:'12 de noviembre de 2018 · Nro. 46, Tomo 153-A 485',expediente:'485-45189',registro:'Mercantil Tercero de la Circunscripción Judicial del Estado Zulia',domicilio:'Av. Circunvalación 2, CC El Dividivi, PB Local G-9, Maracaibo',accionistas:'Juan Carlos Bohórquez U. — 50% · Luis Guillermo Bohórquez U. — 50%',presidente:'Juan Carlos Bohórquez Urdaneta · V-10.919.878',vicepresidente:'Luis Guillermo Bohórquez Urdaneta · V-13.297.424',capitalSocial:7500000,acciones:100,valorAccion:75000,fechaRegistro:'17 de junio de 2026 · Tomo 95-A · Nro. 9'},
                planta:{ubicacion:'Calle 148, vía Palito Blanco, Parroquia Luis Hurtado Higuera, Maracaibo',terreno:4655.21,areaConstruida:1680,cubierta:1806,columnas:'24 columnas tubo doble 3½" a 6 m',portones:'2 metálicos 6×4 m + 2 puertas 2,10×1 m',servicios:'Aguas blancas/negras · Tanque · 3 pozos sépticos',valorInmueble:380000},
                maquinaria:[
@@ -25579,19 +25583,27 @@ ${resumenHtml}
 
                {/* ══ MAQUINARIA ══ */}
                {resenaTab==='maquinaria' && (()=>{
-                 const totalItems=(DATA.maquinaria||[]).length+(DATA.vehiculos||[]).length;
                  const isVeh=resenaMaqSel>=(DATA.maquinaria||[]).length;
                  const m=isVeh?(DATA.vehiculos||[])[resenaMaqSel-(DATA.maquinaria||[]).length]:(DATA.maquinaria||[])[resenaMaqSel];
-                 if(!m) return null;
+                 if(!m) return <div style={{padding:40,textAlign:'center',color:'#999'}}>Selecciona un equipo</div>;
                  const imgKey=isVeh?('veh_'+m.id):('maq_'+m.id);
                  const inputId=isVeh?('img-veh-'+m.id):('img-maq-'+m.id);
                  return <div style={{display:'flex',gap:0,background:'#fff',borderRadius:14,overflow:'hidden',boxShadow:'0 2px 20px rgba(0,0,0,0.10)',border:'1px solid #e5e7eb'}}>
-                   {/* ── IZQUIERDA: lista de máquinas ── */}
+                   {/* ── IZQUIERDA: subtabs + lista ── */}
                    <div style={{width:210,flexShrink:0,background:'#f9fafb',borderRight:'1px solid #e5e7eb',display:'flex',flexDirection:'column',overflowY:'auto'}}>
-                     <div style={{background:ORG,padding:'12px 10px',textAlign:'center'}}>
-                       <div style={{color:'#000',fontWeight:900,fontSize:10,textTransform:'uppercase',letterSpacing:1}}>⚙️ {(DATA.maquinaria||[]).length} Equipos · 🚚 {(DATA.vehiculos||[]).length} Vehículos</div>
+                     {/* Subtabs ⚙️ / 🚚 */}
+                     <div style={{display:'flex',borderBottom:'2px solid #e5e7eb',flexShrink:0}}>
+                       <button onClick={()=>setResenaMaqSel(0)}
+                         style={{flex:1,padding:'9px 4px',border:'none',fontWeight:700,fontSize:10,cursor:'pointer',background:!isVeh?ORG:'#f9fafb',color:!isVeh?'#fff':'#6b7280'}}>
+                         ⚙️ Maquinaria
+                       </button>
+                       <button onClick={()=>setResenaMaqSel((DATA.maquinaria||[]).length)}
+                         style={{flex:1,padding:'9px 4px',border:'none',fontWeight:700,fontSize:10,cursor:'pointer',background:isVeh?ORG:'#f9fafb',color:isVeh?'#fff':'#6b7280',borderLeft:'1px solid #e5e7eb'}}>
+                         🚚 Flota
+                       </button>
                      </div>
-                     {(DATA.maquinaria||[]).map((mm,idx)=>(
+                     {/* Lista Maquinaria */}
+                     {!isVeh && (DATA.maquinaria||[]).map((mm,idx)=>(
                        <button key={mm.id} onClick={()=>setResenaMaqSel(idx)}
                          style={{textAlign:'left',padding:'10px 10px',borderBottom:'1px solid #e5e7eb',cursor:'pointer',background:resenaMaqSel===idx?ORG+'18':'transparent',borderLeft:resenaMaqSel===idx?`3px solid ${ORG}`:'3px solid transparent',transition:'all .15s'}}>
                          <div style={{color:resenaMaqSel===idx?ORG:'#9ca3af',fontSize:9,fontWeight:700}}>N° {String(mm.id).padStart(2,'0')}</div>
@@ -25599,13 +25611,11 @@ ${resumenHtml}
                          <div style={{color:ORG,fontSize:9.5,fontWeight:700,marginTop:2}}>{fmtUSD(mm.costo)}</div>
                        </button>
                      ))}
-                     <div style={{background:'#1f2937',padding:'6px 10px'}}>
-                       <div style={{color:'#9ca3af',fontWeight:700,fontSize:9,textTransform:'uppercase',letterSpacing:1}}>🚚 Flota Vehicular</div>
-                     </div>
-                     {(DATA.vehiculos||[]).map((vv,vidx)=>{
+                     {/* Lista Flota */}
+                     {isVeh && (DATA.vehiculos||[]).map((vv,vidx)=>{
                        const vSelIdx=(DATA.maquinaria||[]).length+vidx;
                        return <button key={vv.id} onClick={()=>setResenaMaqSel(vSelIdx)}
-                         style={{textAlign:'left',padding:'10px 10px',borderBottom:'1px solid #e5e7eb',cursor:'pointer',background:resenaMaqSel===vSelIdx?ORG+'18':'transparent',borderLeft:resenaMaqSel===vSelIdx?`3px solid ${ORG}`:'3px solid transparent'}}>
+                         style={{textAlign:'left',padding:'12px 10px',borderBottom:'1px solid #e5e7eb',cursor:'pointer',background:resenaMaqSel===vSelIdx?ORG+'18':'transparent',borderLeft:resenaMaqSel===vSelIdx?`3px solid ${ORG}`:'3px solid transparent'}}>
                          <div style={{color:resenaMaqSel===vSelIdx?ORG:'#9ca3af',fontSize:9,fontWeight:700}}>PLACA: {vv.placa}</div>
                          <div style={{color:resenaMaqSel===vSelIdx?'#111':'#374151',fontSize:10.5,fontWeight:700,lineHeight:1.3,marginTop:2}}>{vv.nombre}</div>
                          <div style={{color:ORG,fontSize:9.5,fontWeight:700,marginTop:2}}>{fmtUSD(vv.costo)}</div>
@@ -25639,7 +25649,7 @@ ${resumenHtml}
                        <div style={{background:'#f9fafb',borderRadius:10,border:'2px solid #e5e7eb',overflow:'hidden',minHeight:340,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',position:'relative'}}
                          className="group" onClick={()=>document.getElementById(inputId).click()}>
                          {resenaImages[imgKey]
-                           ? <><img src={resenaImages[imgKey]} alt={m.nombre} style={{width:'100%',objectFit:'contain',padding:12,maxHeight:360}}/>
+                           ? <><img src={resenaImages[imgKey]} alt={m.nombre} style={{width:'100%',height:'100%',objectFit:'cover',position:'absolute',inset:0}}/>
                                <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}} className="bg-black/0 group-hover:bg-black/20 transition-all">
                                  <span style={{background:'rgba(0,0,0,0.65)',color:'#fff',padding:'5px 14px',borderRadius:16,fontSize:10,fontWeight:700}} className="opacity-0 group-hover:opacity-100 transition-opacity">Cambiar foto</span>
                                </div>
@@ -25821,7 +25831,7 @@ ${resumenHtml}
                      </div>
                    ))}
                    {/* Vehículos rows */}
-                   {(DATA.vehiculos||[]).map(v=>(
+                   {(DATA.vehiculos||_defVeh||[]).map(v=>(
                      <div key={v.id} style={{borderBottom:'1px solid #3A3A5E'}} className="flex justify-between items-center px-6 py-3 hover:bg-white/5">
                        <span className="text-sm text-gray-300">🚚 {v.nombre} · Placa {v.placa}</span>
                        <span className="font-bold text-gray-200">{fmtUSD(v.costo)}</span>
@@ -25936,7 +25946,6 @@ ${resumenHtml}
              </div>
            </div>;
          })()}
-           })()}
            {/* ── BANCO & TESORERÍA ── */}
            {activeTab === 'banco' && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
              ventasMode={!!(hasPerm('ventas') && !hasPerm('banco') && appUser?.role !== 'Master')}/>}
