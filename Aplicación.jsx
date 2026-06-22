@@ -25268,29 +25268,49 @@ ${resumenHtml}
                empresa:{razonSocial:'SERVICIOS JIRET G&B, COMPAÑÍA ANÓNIMA',actividad:'Fabricación de Empaques Plásticos · Bolsas · Termos Encogibles · Fardos',constitucion:'12 de noviembre de 2018 · Nro. 46, Tomo 153-A 485',expediente:'485-45189',registro:'Mercantil Tercero de la Circunscripción Judicial del Estado Zulia',domicilio:'Av. Circunvalación 2, CC El Dividivi, PB Local G-9, Maracaibo',accionistas:'Juan Carlos Bohórquez U. — 50% · Luis Guillermo Bohórquez U. — 50%',presidente:'Juan Carlos Bohórquez Urdaneta · V-10.919.878',vicepresidente:'Luis Guillermo Bohórquez Urdaneta · V-13.297.424',capitalSocial:7500000,acciones:100,valorAccion:75000,fechaRegistro:'17 de junio de 2026 · Tomo 95-A · Nro. 9'},
                planta:{ubicacion:'Calle 148, vía Palito Blanco, Parroquia Luis Hurtado Higuera, Maracaibo',terreno:4655.21,areaConstruida:1680,cubierta:1806,columnas:'24 columnas tubo doble 3½" a 6 m',portones:'2 metálicos 6×4 m + 2 puertas 2,10×1 m',servicios:'Aguas blancas/negras · Tanque · 3 pozos sépticos',valorInmueble:1300000},
                maquinaria:[
-                 {id:1,nombre:'Extrusora Film Soplado #1',modelo:'Film Blown Machine',costo:13802.46,specs:'HDPE·LDPE·LLDPE·EVA · Hasta 100 kg/h · φ45–φ90 mm',proveedor:'Asian Machinery U.S.A. Inc.'},
-                 {id:2,nombre:'Extrusora Film Soplado #2',modelo:'Film Blown Machine',costo:13802.46,specs:'HDPE·LDPE·LLDPE · Hasta 100 kg/h · 400–1000 mm',proveedor:'Asian Machinery U.S.A. Inc.'},
-                 {id:3,nombre:'Impresora Flexográfica 6 Colores',modelo:'VM-61000',costo:20699.75,specs:'1000 mm ancho · 5–50 m/min · 18 KW · 36 rodillos',proveedor:''},
-                 {id:4,nombre:'Selladora Fondo Doble Pista',modelo:'Sello Curvo 2 Pistas',costo:12975.81,specs:'2 pistas · 120–250 ciclos/min · Servomotores Yaskawa',proveedor:''},
-                 {id:5,nombre:'Selladora Fondo + Pre-Camiseta',modelo:'VMAB-500A',costo:10319.21,specs:'100–400 mm · 50–120 pcs/min · 5 KW',proveedor:''},
-                 {id:6,nombre:'Selladora VMAB-500A',modelo:'VMAB-500A',costo:10319.21,specs:'100–400 mm · 50–120 pcs/min · 5 KW',proveedor:''},
-                 {id:7,nombre:'Cortadora/Rebobinadora Film',modelo:'Stretch Film Slitter',costo:5500.00,specs:'500 mm · 200–600 m/min · PE/PVC · 8–30 micras',proveedor:''},
-                 {id:8,nombre:'Empaletadora Automática',modelo:'Smart Wasp NEW X0ps',costo:3871.18,specs:'Ø1650 mm · 2000 kg · 300% pre-estiramiento · 1.5 KW',proveedor:''},
-                 {id:9,nombre:'Generador Eléctrico Industrial',modelo:'VP Power CS200D6',costo:40150.00,specs:'160 kW/200 kVA · 3 fases · 60 Hz · Stamford/Cummins',proveedor:'VP Power Solution'},
-                 {id:10,nombre:'Tanque Almacenamiento Gasoil',modelo:'Tanque Gasoil 5000L',costo:1500.00,specs:'5000 L · Acero al carbono · 3150×2080×2170 mm',proveedor:''},
-                 {id:11,nombre:'Montacargas Industrial',modelo:'Toyota GLP/Diésel',costo:20000.00,specs:'2000–4000 kg · 3.0 m elevación · Transmisión hidráulica',proveedor:'Toyota'},
+                 {id:1,nombre:'Extrusora Film Soplado #1',modelo:'VM/HL-50EZ',costo:43400,proveedor:'Asian Machinery U.S.A. Inc.',specs:[
+                   {k:'Tipo',v:'Extrusora de Film Soplado'},{k:'Materiales',v:'HDPE · LDPE · LLDPE · EVA'},{k:'Capacidad',v:'Hasta 60 kg/h'},{k:'Ancho Película',v:'80 mm'},{k:'Espesor',v:'0,015 – 0,20 mm'},{k:'Tornillo',v:'φ45 – φ90 mm VFD'},{k:'Control Temp.',v:'PID + SCR · Resistencias cerámicas'},{k:'Accionamiento',v:'Motores AC con variadores de frecuencia'},{k:'Bobinado',v:'Automático'},{k:'Proveedor',v:'Asian Machinery U.S.A. Inc.'}]},
+                 {id:2,nombre:'Extrusora Film Soplado #2',modelo:'VM/HL-40EZ',costo:27860,proveedor:'Asian Machinery U.S.A. Inc.',specs:[
+                   {k:'Tipo',v:'Extrusora de Film Soplado (HDPE/LDPE)'},{k:'Materiales',v:'HDPE · LDPE · LLDPE'},{k:'Capacidad',v:'Hasta 35 kg/h'},{k:'Ancho Película',v:'400 – 1.000 mm'},{k:'Espesor',v:'0,009 – 0,15 mm'},{k:'Control',v:'Panel digital multifunción'},{k:'Torre',v:'Compacta con bobinado integrado'},{k:'Motor',v:'AC con inversor de frecuencia'},{k:'Proveedor',v:'Asian Machinery U.S.A. Inc.'}]},
+                 {id:3,nombre:'Impresora Flexográfica 6 Colores',modelo:'VM-61000',costo:95200,proveedor:'',specs:[
+                   {k:'Ancho Máx. Pliego',v:'1.000 mm'},{k:'Ancho Máx. Impresión',v:'960 mm'},{k:'Largo de Impresión',v:'191 – 914 mm'},{k:'Diám. Máx. Rollo',v:'450 mm'},{k:'Velocidad',v:'5 – 50 m/min'},{k:'Potencia Total',v:'18 KW'},{k:'Peso Total',v:'5.000 kg'},{k:'Dimensiones',v:'5.100 × 2.060 × 2.950 mm'},{k:'Rodillos Anilox',v:'300 líneas · Goma Neoprán'},{k:'Incluye',v:'36 rodillos (250–600mm) + caja herramientas'}]},
+                 {id:4,nombre:'Selladora Fondo Cuatro Pista',modelo:'VMAB-500AX2',costo:32760,proveedor:'',specs:[
+                   {k:'Tipo',v:'Selladora Fondo Doble Pista Sello Curvo'},{k:'Pistas',v:'2 líneas independientes'},{k:'Capacidad',v:'120 – 250 ciclos/min por pista'},{k:'Longitud Bolsa',v:'100 – 1.200 mm'},{k:'Ancho Bolsa',v:'50 – 800 mm por pista'},{k:'Control',v:'Servomotores Yaskawa/Panasonic + HMI táctil'},{k:'Materiales',v:'HDPE · LDPE · PP'},{k:'Alimentación',v:'Fotocelda para marca de impresión'},{k:'Sensores',v:'Parada automática por fin de bobina/atasco'}]},
+                 {id:5,nombre:'Selladora VMAB-500A',modelo:'VMAB-500A',costo:10319.21,proveedor:'',specs:[
+                   {k:'Tipo',v:'Selladora Automática Bolsa Camiseta'},{k:'Ancho Bolsa',v:'100 – 400 mm'},{k:'Largo Bolsa',v:'100 – 500 mm'},{k:'Velocidad',v:'50 – 120 pcs/min'},{k:'Potencia',v:'5 KW'},{k:'Materiales',v:'HDPE · LDPE · PP'}]},
+                 {id:6,nombre:'Selladora Fondo + Pre-Camiseta',modelo:'VMDF-1100 X2',costo:33620,proveedor:'',specs:[
+                   {k:'Tipo',v:'Selladora Fondo + Pre-Camiseta 100 cm'},{k:'Ancho de Bolsa',v:'100 – 400 mm'},{k:'Largo de Bolsa',v:'100 – 700 mm (Arco: 60 mm)'},{k:'Espesor Película',v:'0,01 – 0,1 mm'},{k:'Velocidad',v:'50 – 120 pcs/min'},{k:'Precisión de Corte',v:'± 0,2 – 0,5 mm'},{k:'Potencia Total',v:'5 KW'},{k:'Peso Total',v:'850 kg'},{k:'Dimensiones',v:'3.000 × 1.130 × 1.350 mm'},{k:'Voltaje',v:'220 V o 440 V · 3 fases · 60 Hz'}]},
+                 {id:7,nombre:'Cortadora y Rebobinadora de Film',modelo:'REBOBINADO',costo:8700,proveedor:'',specs:[
+                   {k:'Tipo',v:'Cortadora/Rebobinadora Semiautomática Film'},{k:'Ancho Rollo Madre',v:'Hasta 500 mm'},{k:'Ancho Rollo Terminado',v:'50 – 500 mm'},{k:'Diám. Rollo Madre',v:'Hasta 400 mm'},{k:'Diám. Rollo Terminado',v:'150 – 300 mm'},{k:'Velocidad Lineal',v:'200 – 600 m/min'},{k:'Material',v:'PE · PVC'},{k:'Grosor Película',v:'8 – 30 micras'},{k:'Longitud Rebobinado',v:'30 – 1.500 m (programable)'},{k:'Potencia Motor',v:'2,2 – 4,0 KW con inversor de frecuencia'}]},
+                 {id:8,nombre:'Empaletadora Automática de Paletas',modelo:'Smart Wasp NEW X0ps',costo:4800,proveedor:'',specs:[
+                   {k:'Tipo',v:'Empaletadora Automática Stretch Wrapping'},{k:'Plataforma',v:'Ø 1.650 mm · Carga máx. 2.000 kg'},{k:'Paleta Máxima',v:'1,2 × 1,2 m'},{k:'Altura Máx. Envoltura',v:'2.200 mm'},{k:'Vel. Envoltura',v:'30 cargas / hora'},{k:'Vel. Plataforma',v:'3 – 12 RPM'},{k:'Pre-estiramiento',v:'300% (1 m → 3 m)'},{k:'Ancho Film',v:'500 mm'},{k:'Potencia',v:'1,5 KW · 220 V / 50 Hz'},{k:'Peso Máquina',v:'550 kg'}]},
+                 {id:9,nombre:'Generador Eléctrico Industrial',modelo:'VP Power CS200D6',costo:40150,proveedor:'VP Power Solution',specs:[
+                   {k:'Marca',v:'VP Power Solution · Stamford / Cummins'},{k:'Potencia Prime',v:'160 kW / 200 kVA'},{k:'Fases',v:'3 (Trifásico)'},{k:'Voltaje',v:'208 / 120 V'},{k:'Corriente',v:'555 A (208V) · 962 A (120V)'},{k:'Frecuencia',v:'60 Hz'},{k:'Factor de Potencia',v:'0,8'},{k:'Vel. Nominal',v:'1.800 RPM'},{k:'Vel. Máx.',v:'1.980 RPM'},{k:'Peso / Año',v:'1.980 kg · Fabricación 2024'}]},
+                 {id:10,nombre:'Tanque Almacenamiento Gasoil',modelo:'Tanque Gasoil 5.000 L',costo:6000,proveedor:'',specs:[
+                   {k:'Tipo',v:'Tanque Almacenamiento Combustible (Gasoil)'},{k:'Capacidad',v:'5.000 litros'},{k:'Material',v:'Acero al carbono alta resistencia'},{k:'Dimensiones',v:'3.150 × 2.080 × 2.170 mm'},{k:'Peso Vacío',v:'~1.834 kg'},{k:'Acabado',v:'Esmalte industrial / poliuretano anticorrosivo'},{k:'Accesorios',v:'Boca inspección · venteo emergencia · izaje'},{k:'Señalización',v:'Rombo NFPA · indicativos Inflamable'}]},
+                 {id:11,nombre:'Montacargas Industrial',modelo:'Toyota GLP/Diésel',costo:8000,proveedor:'Toyota',specs:[
+                   {k:'Marca',v:'Toyota'},{k:'Tipo',v:'Montacargas Combustión Interna'},{k:'Capacidad de Carga',v:'2.000 – 4.000 kg'},{k:'Altura de Elevación',v:'3,0 m estándar (hasta 4,5 m torre triple)'},{k:'Motor',v:'Diésel / Gasolina / GLP Dual'},{k:'Transmisión',v:'Hidráulica automática / Powershift'},{k:'Seguridad',v:'Sistema Estabilidad Activa (SAS) Toyota'}]},
                ],
                proyeccion:[
-                 {anio:2025,ingresos:12000,costos:10200},
-                 {anio:2026,ingresos:13320,costos:11230},
-                 {anio:2027,ingresos:14800,costos:12360},
-                 {anio:2028,ingresos:16440,costos:13590},
-                 {anio:2029,ingresos:18250,costos:14940},
+                 {mes:'Jul 2026',kg:40000,ingresos:40000*4,costoMin:40000*0.15,costoMax:40000*0.20,nota:'Inicio 24h/5d'},
+                 {mes:'Ago 2026',kg:40000,ingresos:40000*4,costoMin:40000*0.15,costoMax:40000*0.20,nota:''},
+                 {mes:'Sep 2026',kg:80000,ingresos:80000*4,costoMin:80000*0.15,costoMax:80000*0.20,nota:'Capacidad plena'},
+                 {mes:'Oct 2026',kg:80000,ingresos:80000*4,costoMin:80000*0.15,costoMax:80000*0.20,nota:''},
+                 {mes:'Nov 2026',kg:80000,ingresos:80000*4,costoMin:80000*0.15,costoMax:80000*0.20,nota:''},
+                 {mes:'Dic 2026',kg:80000,ingresos:80000*4,costoMin:80000*0.15,costoMax:80000*0.20,nota:''},
+                 {mes:'Ene 2027',kg:1700,ingresos:1700*4,costoMin:1700*0.15,costoMax:1700*0.20,nota:'Prom. diario'},
+               ],
+               vehiculos:[
+                 {id:'v1',nombre:'Camioneta JAC T6',marca:'JAC',modelo:'HFC1037KF2G / 4X4DOBLECABINA',costo:23879.54,placa:'A53AW4B',specs:[
+                   {k:'Placa',v:'A53AW4B'},{k:'Serial NIV',v:'8XR5PBSC6PU000038'},{k:'Serial Motor',v:'N3010143'},{k:'Clase',v:'CAMIONETA'},{k:'Tipo',v:'PICK-UP DOBLE CABINA'},{k:'Año Fabricación',v:'2022'},{k:'Año Modelo',v:'2023'},{k:'Color',v:'BLANCO'},{k:'Uso',v:'CARGA · PRIVADO'},{k:'Nro. Puestos',v:'5 · Nro. Ejes: 2'},{k:'Tara',v:'1.840 kg'},{k:'Cap. Carga',v:'820 kg'},{k:'Combustible',v:'GAS 95'},{k:'Certificado',v:'31 de Mayo de 2024'}]},
+                 {id:'v2',nombre:'Camioneta FOTON CAVA',marca:'FOTON',modelo:'BJ1036V5JV5-A1',costo:23056.51,placa:'A23AU1R',specs:[
+                   {k:'Placa',v:'A23AU1R'},{k:'Serial NIV',v:'LVAV2JVB8SE319238'},{k:'Serial Carrozado',v:'LVAV2JVB8SE319238'},{k:'Serial Motor',v:'253000099ZV'},{k:'Clase',v:'CAMIONETA'},{k:'Tipo',v:'CAVA'},{k:'Año Fabricación',v:'2025'},{k:'Año Modelo',v:'2025'},{k:'Color',v:'BLANCO'},{k:'Uso',v:'CARGA · PRIVADO'},{k:'Nro. Puestos',v:'2 · Nro. Ejes: 2'},{k:'Tara',v:'2.500 kg'},{k:'Cap. Carga',v:'1.340 kg'},{k:'Combustible',v:'GAS 91'},{k:'Certificado',v:'23 de Octubre de 2025'}]},
                ],
                imagenes:{}
              };
-             const totalMaq=DATA.maquinaria.reduce((s,m)=>s+parseNum(m.costo||0),0);
-             const totalActivos=totalMaq+parseNum(DATA.planta?.valorInmueble||0);
+             const totalMaq=(DATA.maquinaria||[]).reduce((s,m)=>s+parseNum(m.costo||0),0);
+             const totalVeh=(DATA.vehiculos||[]).reduce((s,v)=>s+parseNum(v.costo||0),0);
+             const totalActivos=totalMaq+totalVeh+parseNum(DATA.planta?.valorInmueble||0);
              const fmtUSD=n=>`$${parseNum(n).toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).replace(/,/g,'X').replace(/\./g,',').replace(/X/g,'.')}`;
              // Guardar campo en Firestore
              const saveField=async(path,val)=>{
@@ -25361,7 +25381,7 @@ ${resumenHtml}
 
                {/* Section tabs */}
                <div style={{background:'#13131F',borderBottom:'1px solid #2A2A3E'}} className="flex gap-1 px-6 overflow-x-auto">
-                 {[['portada','🏠 Portada'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['productos','📦 Productos'],['clientes','🤝 Clientes'],['activos','💰 Activos'],['proyeccion','📈 Proyección']].map(([t,l])=>(
+                 {[['portada','🏠 Portada'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['vehiculos','🚚 Vehículos'],['productos','📦 Productos'],['clientes','🤝 Clientes'],['activos','💰 Activos'],['proyeccion','📈 Proyección']].map(([t,l])=>(
                    <button key={t} onClick={()=>setResenaTab(t)} style={resenaTab===t?{borderBottom:`2px solid ${ORG}`,color:ORG}:{borderBottom:'2px solid transparent',color:'#888'}}
                      className="px-4 py-3 text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition-all">{l}</button>
                  ))}
@@ -25594,12 +25614,13 @@ ${resumenHtml}
                          {resenaSaving && <div className="absolute top-2 right-2 text-[9px] text-orange-400 bg-black/70 px-2 py-1 rounded animate-pulse">Guardando…</div>}
                        </div>
                        {/* Especificaciones técnicas */}
-                       <div className="space-y-2">
+                       <div className="space-y-1.5">
                          <div style={{color:ORG}} className="text-[10px] font-black uppercase tracking-widest mb-3">Especificaciones Técnicas</div>
-                         {m.specs?.split('·').map((s,i)=>(
-                           <div key={i} style={{background:CARD2,borderRadius:6}} className="flex gap-3 px-3 py-2">
-                             <span style={{color:ORG}} className="text-xs">▸</span>
-                             <span className="text-gray-300 text-xs">{s.trim()}</span>
+                         {(Array.isArray(m.specs)?m.specs:(m.specs||'').split('·').map(s=>({k:'',v:s.trim()}))).map((s,i)=>(
+                           <div key={i} style={{background:CARD2,borderRadius:6}} className="flex gap-2 px-3 py-2">
+                             {s.k&&<span style={{color:ORG,minWidth:115,flexShrink:0}} className="text-[10px] font-black">{s.k}:</span>}
+                             {!s.k&&<span style={{color:ORG}} className="text-xs mr-1">▸</span>}
+                             <span className="text-gray-300 text-xs">{s.v||s}</span>
                            </div>
                          ))}
                          {m.proveedor && <div style={{background:CARD2,borderRadius:6,border:`1px solid ${ORG}44`}} className="flex gap-3 px-3 py-2 mt-3">
@@ -25626,6 +25647,82 @@ ${resumenHtml}
                    </div>;
                  })()}
                </div>}
+
+               {/* ══ VEHÍCULOS ══ */}
+               {resenaTab==='vehiculos' && (()=>{
+                 const vehs=DATA.vehiculos||[];
+                 const [selV,setSelV]=React.useState(0);
+                 const v=vehs[selV];
+                 if(!v) return <div className="text-gray-400 text-center py-10">No hay vehículos registrados</div>;
+                 const imgKey=`veh_${v.id}`;
+                 return <div className="flex gap-4" style={{minHeight:480}}>
+                   {/* Lista izquierda */}
+                   <div style={{width:220,minWidth:200,background:CARD2,borderRadius:12,border:'1px solid #3A3A5E',overflowY:'auto',flexShrink:0}}>
+                     <div style={{background:ORG,borderRadius:'12px 12px 0 0'}} className="px-4 py-3">
+                       <div className="text-black font-black text-xs uppercase tracking-wider">🚚 Flota ({vehs.length})</div>
+                     </div>
+                     {vehs.map((vv,idx)=>(
+                       <button key={vv.id} onClick={()=>setSelV(idx)}
+                         style={selV===idx?{background:ORG+'33',borderLeft:`3px solid ${ORG}`}:{borderLeft:'3px solid transparent'}}
+                         className="w-full text-left px-3 py-3 hover:bg-white/5 transition-all border-b border-gray-800/50">
+                         <div style={{color:selV===idx?ORG:'#aaa'}} className="text-[10px] font-black">PLACA: {vv.placa}</div>
+                         <div className="text-white text-xs font-bold leading-tight mt-0.5">{vv.nombre}</div>
+                         <div className="text-gray-500 text-[9px] mt-0.5">{vv.marca} · {fmtUSD(vv.costo)}</div>
+                       </button>
+                     ))}
+                   </div>
+                   {/* Ficha técnica derecha */}
+                   <div style={{flex:1,background:CARD,borderRadius:12,border:'1px solid #3A3A5E',overflowY:'auto'}}>
+                     <div style={{background:'linear-gradient(135deg,#1A1A2E,#0A1628)'}} className="px-6 py-4 flex justify-between items-start">
+                       <div>
+                         <div style={{color:ORG}} className="text-[10px] font-black uppercase tracking-widest">Unidad {selV+1} / {vehs.length} · Placa {v.placa}</div>
+                         <div className="text-white font-black text-xl mt-1">{v.nombre}</div>
+                         <div className="text-gray-400 text-sm">{v.marca} · {v.modelo}</div>
+                       </div>
+                       <div style={{background:ORG,borderRadius:8}} className="px-4 py-2 text-black font-black text-sm">{fmtUSD(v.costo)}</div>
+                     </div>
+                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-5">
+                       {/* Foto */}
+                       <div style={{background:'#1A1A2E',borderRadius:10,minHeight:260}} className="relative overflow-hidden flex items-center justify-center cursor-pointer group"
+                         onClick={()=>document.getElementById(`img-veh-${v.id}`).click()}>
+                         {resenaImages[imgKey]
+                           ? <>
+                               <img src={resenaImages[imgKey]} alt={v.nombre} className="w-full h-full object-contain absolute inset-0 p-2"/>
+                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all flex items-center justify-center">
+                                 <span className="opacity-0 group-hover:opacity-100 text-white text-xs font-black bg-black/70 px-3 py-1.5 rounded-full">Cambiar foto</span>
+                               </div>
+                             </>
+                           : <div className="text-center text-gray-600 p-4">
+                               <div className="text-5xl mb-3">🚚</div>
+                               <div className="text-xs text-gray-500 font-bold">Clic para cargar foto</div>
+                               <div className="text-[9px] text-gray-600 mt-1">{v.nombre}</div>
+                             </div>}
+                         <input id={`img-veh-${v.id}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
+                         {resenaSaving && <div className="absolute top-2 right-2 text-[9px] text-orange-400 bg-black/70 px-2 py-1 rounded animate-pulse">Guardando…</div>}
+                       </div>
+                       {/* Especificaciones */}
+                       <div className="space-y-1.5">
+                         <div style={{color:ORG}} className="text-[10px] font-black uppercase tracking-widest mb-3">Certificado de Registro</div>
+                         {(v.specs||[]).map((s,i)=>(
+                           <div key={i} style={{background:CARD2,borderRadius:6}} className="flex gap-2 px-3 py-2">
+                             <span style={{color:ORG,minWidth:115,flexShrink:0}} className="text-[10px] font-black">{s.k}:</span>
+                             <span className="text-gray-300 text-xs">{s.v}</span>
+                           </div>
+                         ))}
+                         <div style={{background:ORG+'22',borderRadius:6,border:`1px solid ${ORG}`}} className="flex justify-between items-center px-3 py-3 mt-3">
+                           <span style={{color:ORG}} className="text-xs font-black">Valor USD</span>
+                           <span className="text-white font-black text-lg">{fmtUSD(v.costo)}</span>
+                         </div>
+                       </div>
+                     </div>
+                     <div className="flex justify-between px-5 pb-4">
+                       <button onClick={()=>setSelV(Math.max(0,selV-1))} disabled={selV===0} style={{background:CARD2,borderRadius:8}} className="px-4 py-2 text-xs font-black text-gray-400 hover:text-white disabled:opacity-30">← Anterior</button>
+                       <span className="text-gray-500 text-xs self-center">{selV+1} / {vehs.length}</span>
+                       <button onClick={()=>setSelV(Math.min(vehs.length-1,selV+1))} disabled={selV===vehs.length-1} style={{background:CARD2,borderRadius:8}} className="px-4 py-2 text-xs font-black text-gray-400 hover:text-white disabled:opacity-30">Siguiente →</button>
+                     </div>
+                   </div>
+                 </div>;
+               })()}
 
                {/* ══ PRODUCTOS ══ */}
                {resenaTab==='productos' && (()=>{
@@ -25679,10 +25776,13 @@ ${resumenHtml}
 
                {/* ══ CLIENTES ══ */}
                {resenaTab==='clientes' && (()=>{
-                 // Agregar desde notasEntrega: top clientes por volumen, con categorías de producto
                  const clientMap={};
                  (notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&ne.total>0).forEach(ne=>{
                    const key=ne.clientRif||ne.clientName||'';if(!key)return;
+                   const name=(ne.clientName||key).toUpperCase();
+                   // Filtrar: personas naturales (V-) y distribuidores polietileno
+                   if((ne.clientRif||'').toUpperCase().startsWith('V-')) return;
+                   if(name.includes('POLIETILENO')||name.includes('DISTRIBUI')||name.includes('POLIETI')) return;
                    if(!clientMap[key]) clientMap[key]={name:ne.clientName||key,rif:ne.clientRif||'',total:0,nes:0,cats:new Set()};
                    clientMap[key].total+=parseNum(ne.total||0);
                    clientMap[key].nes++;
@@ -25691,56 +25791,54 @@ ${resumenHtml}
                      if(d.includes('BOLSA')||d.includes('BOSA')) clientMap[key].cats.add('Bolsas');
                      if(d.includes('TERMO')||d.includes('ENCOG')) clientMap[key].cats.add('Termoencogible');
                      if(d.includes('FARDO')) clientMap[key].cats.add('Fardos');
-                     if(d.includes('FILM')) clientMap[key].cats.add('Film Estirable');
-                     if(d.includes('MANGA')||d.includes('CAMISETA')) clientMap[key].cats.add('Manga/Camiseta');
-                     if(d.includes('PANAL')||d.includes('PAÑÑAL')) clientMap[key].cats.add('Bolsas Pañal');
-                     if(d.includes('KIRI')||d.includes('BIO')||d.includes('DIAP')) clientMap[key].cats.add('Termoencogible');
+                     if(d.includes('FILM')) clientMap[key].cats.add('Film');
+                     if(d.includes('MANGA')||d.includes('CAMISETA')) clientMap[key].cats.add('Manga');
+                     if(d.includes('PANAL')||d.includes('KIRI')||d.includes('BIO')) clientMap[key].cats.add('Pañal');
                    });
                  });
-                 const topCli=Object.values(clientMap).sort((a,b)=>b.total-a.total).slice(0,16);
-                 const catColor={'Bolsas':'#3b82f6','Termoencogible':'#f97316','Fardos':'#22c55e','Film Estirable':'#a855f7','Manga/Camiseta':'#ec4899','Bolsas Pañal':'#f59e0b'};
+                 const topCli=Object.values(clientMap).sort((a,b)=>b.total-a.total).slice(0,15);
+                 const maxV=topCli[0]?.total||1;
+                 const catColor={'Bolsas':'#3b82f6','Termoencogible':'#f97316','Fardos':'#22c55e','Film':'#a855f7','Manga':'#ec4899','Pañal':'#f59e0b'};
                  return <div>
-                   <div className="flex justify-between items-center mb-4">
-                     <div style={{color:ORG}} className="text-xs font-black uppercase">Top {topCli.length} clientes por volumen · datos de Notas de Entrega</div>
+                   <div className="flex items-center justify-between mb-4">
+                     <div style={{color:ORG}} className="text-xs font-black uppercase tracking-wider">Top {topCli.length} Clientes Corporativos · Volumen de ventas</div>
+                     <div className="text-gray-500 text-[9px]">Excluye personas naturales · Solo J-</div>
                    </div>
-                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                   <div className="space-y-2">
                      {topCli.map((cl,idx)=>{
-                       const imgKey=`cli_${cl.rif.replace(/[^a-zA-Z0-9]/g,'_')}`;
-                       return <div key={cl.rif||idx} style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E',overflow:'hidden'}}>
-                         <div style={{background:'linear-gradient(135deg,#1A1A2E,#0A1628)'}} className="flex items-center gap-3 px-4 py-3">
-                           {/* Ranking */}
-                           <div style={{background:idx<3?ORG:'#333',minWidth:28,height:28,borderRadius:'50%'}} className="flex items-center justify-center">
-                             <span className={`text-xs font-black ${idx<3?'text-black':'text-gray-400'}`}>{idx+1}</span>
+                       const pct=Math.max(4,(cl.total/maxV)*100);
+                       const imgKey=`cli_${(cl.rif||'').replace(/[^a-zA-Z0-9]/g,'_')}`;
+                       return <div key={cl.rif||idx} style={{background:'#fff',borderRadius:10,boxShadow:'0 1px 6px rgba(0,0,0,0.06)',overflow:'hidden'}}>
+                         <div className="flex items-center gap-3 px-4 py-2.5">
+                           {/* Rank */}
+                           <div style={{background:idx<3?ORG:'#e5e7eb',minWidth:24,height:24,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                             <span style={{fontSize:10,fontWeight:900,color:idx<3?'#000':'#6b7280'}}>{idx+1}</span>
                            </div>
-                           {/* Logo/foto cliente */}
-                           <div style={{width:44,height:44,background:'#2A2A3E',borderRadius:8,overflow:'hidden',flexShrink:0}} className="relative flex items-center justify-center cursor-pointer"
+                           {/* Logo */}
+                           <div style={{width:36,height:36,background:'#f3f4f6',borderRadius:6,overflow:'hidden',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}
                              onClick={()=>document.getElementById(`img-cli-${idx}`).click()}>
                              {resenaImages[imgKey]
-                               ? <img src={resenaImages[imgKey]} alt={cl.name} className="w-full h-full object-contain p-1"/>
-                               : <span className="text-lg">{cl.name.charAt(0)}</span>}
+                               ? <img src={resenaImages[imgKey]} alt={cl.name} style={{width:'100%',height:'100%',objectFit:'contain',padding:3}}/>
+                               : <span style={{fontSize:14,fontWeight:900,color:'#9ca3af'}}>{cl.name.charAt(0)}</span>}
                              <input id={`img-cli-${idx}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
                            </div>
-                           <div className="flex-1 min-w-0">
-                             <div className="text-white font-black text-xs leading-tight truncate">{cl.name}</div>
-                             <div className="text-gray-500 text-[9px]">{cl.rif}</div>
+                           {/* Name + Cats */}
+                           <div style={{flex:'0 0 220px',minWidth:0}}>
+                             <div style={{fontSize:11,fontWeight:700,color:'#111',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={cl.name}>{cl.name}</div>
+                             <div className="flex gap-1 mt-0.5 flex-wrap">
+                               {[...cl.cats].map(cat=>(
+                                 <span key={cat} style={{background:(catColor[cat]||'#6b7280')+'22',color:catColor[cat]||'#6b7280',fontSize:8,fontWeight:700,padding:'1px 5px',borderRadius:3}}>{cat}</span>
+                               ))}
+                             </div>
                            </div>
-                         </div>
-                         <div className="px-4 py-3">
-                           <div className="flex justify-between items-center mb-2">
-                             <span className="text-gray-500 text-[9px] uppercase font-black">Volumen total</span>
-                             <span style={{color:ORG}} className="font-black text-sm">{fmtUSD(cl.total)}</span>
+                           {/* Bar */}
+                           <div style={{flex:1,position:'relative',height:20,background:'#f3f4f6',borderRadius:4,overflow:'hidden'}}>
+                             <div style={{width:`${pct}%`,height:'100%',background:idx<3?ORG:'#93c5fd',borderRadius:4,transition:'width .6s ease'}}/>
                            </div>
-                           <div className="flex justify-between items-center mb-3">
-                             <span className="text-gray-500 text-[9px]">NEs procesadas</span>
-                             <span className="text-gray-300 text-xs font-bold">{cl.nes}</span>
-                           </div>
-                           {/* Categorías de producto */}
-                           <div className="flex flex-wrap gap-1">
-                             {[...cl.cats].map(cat=>(
-                               <span key={cat} style={{background:(catColor[cat]||'#555')+'33',color:catColor[cat]||'#aaa',border:`1px solid ${(catColor[cat]||'#555')}55`,borderRadius:4}}
-                                 className="text-[9px] font-black px-2 py-0.5">{cat}</span>
-                             ))}
-                             {cl.cats.size===0 && <span className="text-gray-600 text-[9px]">Sin categoría</span>}
+                           {/* Amount */}
+                           <div style={{minWidth:90,textAlign:'right',flexShrink:0}}>
+                             <div style={{fontSize:12,fontWeight:900,color:ORG}}>{fmtUSD(cl.total)}</div>
+                             <div style={{fontSize:9,color:'#9ca3af'}}>{cl.nes} NEs</div>
                            </div>
                          </div>
                        </div>;
@@ -25767,6 +25865,13 @@ ${resumenHtml}
                        <span className="font-bold text-gray-200">{fmtUSD(m.costo)}</span>
                      </div>
                    ))}
+                   {/* Vehículos rows */}
+                   {(DATA.vehiculos||[]).map(v=>(
+                     <div key={v.id} style={{borderBottom:'1px solid #3A3A5E'}} className="flex justify-between items-center px-6 py-3 hover:bg-white/5">
+                       <span className="text-sm text-gray-300">🚚 {v.nombre} · Placa {v.placa}</span>
+                       <span className="font-bold text-gray-200">{fmtUSD(v.costo)}</span>
+                     </div>
+                   ))}
                    {/* Total */}
                    <div style={{background:'#13131F',borderTop:`2px solid ${ORG}`}} className="flex justify-between items-center px-6 py-5">
                      <span style={{color:ORG}} className="font-black text-sm uppercase tracking-wider">TOTAL GENERAL DE ACTIVOS</span>
@@ -25776,56 +25881,88 @@ ${resumenHtml}
                </div>}
 
                {/* ══ PROYECCIÓN ══ */}
-               {resenaTab==='proyeccion' && <div>
-                 <div style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E'}} className="overflow-hidden mb-6">
-                   <div style={{background:ORG}} className="px-6 py-4">
-                     <div className="text-black font-black text-base">PROYECCIÓN FINANCIERA 2025–2029</div>
+               {resenaTab==='proyeccion' && <div className="space-y-5">
+                 {/* KPIs capacidad */}
+                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                   {[
+                     {icon:'🏭',label:'Cap. Instalada',val:'60.000 kg/mes',sub:'Capacidad total planta'},
+                     {icon:'⚙️',label:'Producción Actual',val:'40.000 kg/mes',sub:'24h · 5 días/semana'},
+                     {icon:'💵',label:'Precio Promedio',val:'$4,00 / kg',sub:'Ingreso por kilo'},
+                     {icon:'📊',label:'Costo Operativo',val:'$0,15 – $0,20 / kg',sub:'Por kilo vendido'},
+                   ].map((kpi,i)=>(
+                     <div key={i} style={{background:'#fff',borderRadius:10,boxShadow:'0 2px 10px rgba(0,0,0,0.07)',borderTop:`3px solid ${ORG}`,padding:'14px 16px'}}>
+                       <div style={{fontSize:22}}>{kpi.icon}</div>
+                       <div style={{color:ORG,fontSize:15,fontWeight:900,marginTop:6}}>{kpi.val}</div>
+                       <div style={{color:'#374151',fontSize:11,fontWeight:700,marginTop:2}}>{kpi.label}</div>
+                       <div style={{color:'#9ca3af',fontSize:10,marginTop:1}}>{kpi.sub}</div>
+                     </div>
+                   ))}
+                 </div>
+
+                 {/* Tabla proyección mensual */}
+                 <div style={{background:'#fff',borderRadius:12,boxShadow:'0 2px 16px rgba(0,0,0,0.07)',overflow:'hidden'}}>
+                   <div style={{background:ORG,padding:'14px 20px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                     <div style={{color:'#000',fontWeight:900,fontSize:14}}>PROYECCIÓN DE PRODUCCIÓN E INGRESOS — 2026 / 2027</div>
+                     <div style={{color:'#000',fontSize:11,opacity:.7}}>Precio base: $4,00/kg · Costo op.: $0,15–$0,20/kg</div>
                    </div>
-                   <table className="w-full">
+                   <div style={{overflowX:'auto'}}>
+                   <table style={{width:'100%',borderCollapse:'collapse'}}>
                      <thead>
-                       <tr style={{background:'#13131F'}}>
-                         <th className="px-6 py-3 text-left text-xs text-gray-400 font-black uppercase">Concepto</th>
-                         {(DATA.proyeccion||[]).map(p=><th key={p.anio} className="px-4 py-3 text-right text-xs font-black" style={{color:ORG}}>{p.anio}</th>)}
+                       <tr style={{background:'#1f2937'}}>
+                         <th style={{padding:'10px 16px',textAlign:'left',color:'#d1d5db',fontSize:10,fontWeight:700,textTransform:'uppercase'}}>Período</th>
+                         <th style={{padding:'10px 12px',textAlign:'right',color:'#d1d5db',fontSize:10,fontWeight:700}}>Kg Producidos</th>
+                         <th style={{padding:'10px 12px',textAlign:'right',color:'#d1d5db',fontSize:10,fontWeight:700}}>% Cap. Utilizada</th>
+                         <th style={{padding:'10px 12px',textAlign:'right',color:'#4ade80',fontSize:10,fontWeight:700}}>Ingresos Est.</th>
+                         <th style={{padding:'10px 12px',textAlign:'right',color:'#f87171',fontSize:10,fontWeight:700}}>Costo Op. Mín.</th>
+                         <th style={{padding:'10px 12px',textAlign:'right',color:'#f87171',fontSize:10,fontWeight:700}}>Costo Op. Máx.</th>
+                         <th style={{padding:'10px 12px',textAlign:'right',color:ORG,fontSize:10,fontWeight:700}}>Margen Est.</th>
+                         <th style={{padding:'10px 12px',textAlign:'left',color:'#9ca3af',fontSize:10,fontWeight:700}}>Nota</th>
                        </tr>
                      </thead>
                      <tbody>
-                       {[['ingresos','Ingresos (k$)','#4ade80'],['costos','Costos (k$)','#f87171']].map(([field,label,color])=>(
-                         <tr key={field} style={{borderBottom:'1px solid #3A3A5E'}}>
-                           <td className="px-6 py-3 text-sm text-gray-300 font-bold">{label}</td>
-                           {(DATA.proyeccion||[]).map((p,idx)=>(
-                             <td key={p.anio} className="px-4 py-3 text-right">
-                               <span style={{color}} className="font-black text-sm cursor-pointer hover:underline"
-                                 onClick={()=>{ const v=window.prompt(`${label} ${p.anio}:`,p[field]);if(v)saveProj(idx,field,v);}}>
-                                 ${parseNum(p[field]).toLocaleString('es-VE')}k
-                               </span>
-                             </td>
-                           ))}
-                         </tr>
-                       ))}
-                       <tr style={{borderBottom:'1px solid #3A3A5E',background:'#1A1A2E'}}>
-                         <td className="px-6 py-3 text-sm font-black text-white">Ganancia Operativa (k$)</td>
-                         {(DATA.proyeccion||[]).map(p=>{const g=p.ingresos-p.costos;return<td key={p.anio} className="px-4 py-3 text-right font-black text-white">${g.toLocaleString('es-VE')}k</td>;})}
-                       </tr>
-                       <tr style={{background:'#13131F'}}>
-                         <td className="px-6 py-3 text-sm font-black" style={{color:ORG}}>Margen Operativo</td>
-                         {(DATA.proyeccion||[]).map(p=>{const m=p.ingresos>0?((p.ingresos-p.costos)/p.ingresos*100).toFixed(1):0;return<td key={p.anio} className="px-4 py-3 text-right font-black" style={{color:ORG}}>{m}%</td>;})}
-                       </tr>
+                       {(DATA.proyeccion||[]).map((p,idx)=>{
+                         const pct=Math.round(p.kg/60000*100);
+                         const margenMin=p.ingresos-p.costoMax;
+                         const margenMax=p.ingresos-p.costoMin;
+                         const bg=idx%2===0?'#f9fafb':'#fff';
+                         return <tr key={p.mes} style={{background:bg,borderBottom:'1px solid #e5e7eb'}}>
+                           <td style={{padding:'10px 16px',fontWeight:700,color:'#111',fontSize:12}}>{p.mes}</td>
+                           <td style={{padding:'10px 12px',textAlign:'right',fontWeight:700,color:'#374151',fontSize:12}}>{p.kg.toLocaleString('es-VE')}</td>
+                           <td style={{padding:'10px 12px',textAlign:'right',fontSize:12}}>
+                             <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:6}}>
+                               <div style={{width:50,height:6,background:'#e5e7eb',borderRadius:3,overflow:'hidden'}}>
+                                 <div style={{width:`${pct}%`,height:'100%',background:pct>=100?'#22c55e':pct>=50?ORG:'#93c5fd',borderRadius:3}}/>
+                               </div>
+                               <span style={{color:pct>=50?ORG:'#6b7280',fontWeight:700}}>{pct}%</span>
+                             </div>
+                           </td>
+                           <td style={{padding:'10px 12px',textAlign:'right',fontWeight:900,color:'#16a34a',fontSize:12}}>${p.ingresos.toLocaleString('es-VE')}</td>
+                           <td style={{padding:'10px 12px',textAlign:'right',color:'#dc2626',fontSize:11}}>${p.costoMin.toLocaleString('es-VE')}</td>
+                           <td style={{padding:'10px 12px',textAlign:'right',color:'#dc2626',fontSize:11}}>${p.costoMax.toLocaleString('es-VE')}</td>
+                           <td style={{padding:'10px 12px',textAlign:'right',fontWeight:900,fontSize:12,color:ORG}}>${margenMin.toLocaleString('es-VE')} – ${margenMax.toLocaleString('es-VE')}</td>
+                           <td style={{padding:'10px 12px',color:'#9ca3af',fontSize:10}}>{p.nota}</td>
+                         </tr>;
+                       })}
                      </tbody>
+                     <tfoot>
+                       <tr style={{background:'#1f2937',borderTop:`2px solid ${ORG}`}}>
+                         <td style={{padding:'12px 16px',color:ORG,fontWeight:900,fontSize:12}}>TOTAL (6 meses)</td>
+                         <td style={{padding:'12px 12px',textAlign:'right',color:'#fff',fontWeight:900,fontSize:12}}>
+                           {(DATA.proyeccion||[]).filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+p.kg,0).toLocaleString('es-VE')} kg
+                         </td>
+                         <td></td>
+                         <td style={{padding:'12px 12px',textAlign:'right',color:'#4ade80',fontWeight:900,fontSize:13}}>
+                           ${(DATA.proyeccion||[]).filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+p.ingresos,0).toLocaleString('es-VE')}
+                         </td>
+                         <td colSpan={2}></td>
+                         <td style={{padding:'12px 12px',textAlign:'right',color:ORG,fontWeight:900,fontSize:12}}>
+                           ${(DATA.proyeccion||[]).filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+(p.ingresos-p.costoMax),0).toLocaleString('es-VE')} – ${(DATA.proyeccion||[]).filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+(p.ingresos-p.costoMin),0).toLocaleString('es-VE')}
+                         </td>
+                         <td></td>
+                       </tr>
+                     </tfoot>
                    </table>
-                 </div>
-                 {/* CAGR stat */}
-                 <div className="grid grid-cols-3 gap-4">
-                   {[
-                     {label:'CAGR Ingresos (2025–2029)',val:'11,0%',icon:'📈'},
-                     {label:'Margen Target 2029',val:'18,1%',icon:'🎯'},
-                     {label:'Ingresos Proyectados 2029',val:`$${((DATA.proyeccion||[]).slice(-1)[0]?.ingresos||0).toLocaleString('es-VE')}k`,icon:'💵'},
-                   ].map((s,i)=>(
-                     <div key={i} style={{background:CARD,borderRadius:12,border:`1px solid ${ORG}33`}} className="p-5 text-center">
-                       <div className="text-3xl mb-2">{s.icon}</div>
-                       <div style={{color:ORG}} className="text-2xl font-black">{s.val}</div>
-                       <div className="text-gray-400 text-xs mt-1">{s.label}</div>
-                     </div>
-                   ))}
+                   </div>
                  </div>
                </div>}
 
