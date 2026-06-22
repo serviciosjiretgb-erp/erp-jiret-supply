@@ -383,6 +383,11 @@ function App() {
   const [loginError, setLoginError] = useState('');
 
   const [activeTab, setActiveTab] = useState('home'); 
+  // ── Reseña Institucional ─────────────────────────────────────────────────
+  const [resenaTab, setResenaTab] = useState('portada');
+  const [resenaData, setResenaData] = useState(null);
+  const [resenaEdit, setResenaEdit] = useState(null); // {section, field} being edited
+  const [resenaSaving, setResenaSaving] = useState(false);
   const [selectedPortal, setSelectedPortal] = useState(null); // 'produccion' | 'administracion' | 'finanzas'
   const [portalDenied, setPortalDenied] = useState(''); // aviso "no posee permiso" en pantalla de portales
   const [ventasView, setVentasView] = useState('facturacion');
@@ -4403,6 +4408,10 @@ function App() {
       },
       (hasPerm('auditoria')||appUser?.role==='Master') && { tab:'auditoria', icon:<ShieldCheck size={20}/>, title:'Auditoría de Sistema', color:'#dc2626',
         stats: ()=>{ const tot=(invoices||[]).length+(invMovements||[]).length; return {s1:`${tot} eventos registrados`, s2:'Registro de actividad'};},
+        chart:null
+      },
+      { tab:'resena', icon:<BookOpen size={20}/>, title:'Reseña Institucional', color:'#E8541A',
+        stats: ()=>({ s1:'Presentación corporativa', s2:'Empresa · Planta · Maquinaria · Proyección'}),
         chart:null
       },
       { tab:'banco', icon:<Building2 size={20}/>, title:'Bancos & Tesorería', color:'#7c3aed',
@@ -25241,6 +25250,340 @@ ${resumenHtml}
            {activeTab === 'simulador' && renderSimuladorModule()}
            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
            {activeTab === 'configuracion' && renderConfiguracionModule()}
+           {/* ── RESEÑA INSTITUCIONAL ── */}
+           {activeTab === 'resena' && (()=>{
+             const ORG='#E8541A'; const DARK='#1C1C2E'; const CARD='#2A2A3E'; const CARD2='#232336';
+             // Datos por defecto (se sobre-escriben con Firestore)
+             const DATA = resenaData || {
+               empresa:{razonSocial:'SERVICIOS JIRET G&B, COMPAÑÍA ANÓNIMA',actividad:'Fabricación de Empaques Plásticos · Bolsas · Termos Encogibles · Fardos',constitucion:'12 de noviembre de 2018 · Nro. 46, Tomo 153-A 485',expediente:'485-45189',registro:'Mercantil Tercero de la Circunscripción Judicial del Estado Zulia',domicilio:'Av. Circunvalación 2, CC El Dividivi, PB Local G-9, Maracaibo',accionistas:'Juan Carlos Bohórquez U. — 50% · Luis Guillermo Bohórquez U. — 50%',presidente:'Juan Carlos Bohórquez Urdaneta · V-10.919.878',vicepresidente:'Luis Guillermo Bohórquez Urdaneta · V-13.297.424',capitalSocial:7500000,acciones:100,valorAccion:75000,fechaRegistro:'17 de junio de 2026 · Tomo 95-A · Nro. 9'},
+               planta:{ubicacion:'Calle 148, vía Palito Blanco, Parroquia Luis Hurtado Higuera, Maracaibo',terreno:4655.21,areaConstruida:1680,cubierta:1806,columnas:'24 columnas tubo doble 3½" a 6 m',portones:'2 metálicos 6×4 m + 2 puertas 2,10×1 m',servicios:'Aguas blancas/negras · Tanque · 3 pozos sépticos',valorInmueble:1300000},
+               maquinaria:[
+                 {id:1,nombre:'Extrusora Film Soplado #1',modelo:'Film Blown Machine',costo:13802.46,specs:'HDPE·LDPE·LLDPE·EVA · Hasta 100 kg/h · φ45–φ90 mm',proveedor:'Asian Machinery U.S.A. Inc.'},
+                 {id:2,nombre:'Extrusora Film Soplado #2',modelo:'Film Blown Machine',costo:13802.46,specs:'HDPE·LDPE·LLDPE · Hasta 100 kg/h · 400–1000 mm',proveedor:'Asian Machinery U.S.A. Inc.'},
+                 {id:3,nombre:'Impresora Flexográfica 6 Colores',modelo:'VM-61000',costo:20699.75,specs:'1000 mm ancho · 5–50 m/min · 18 KW · 36 rodillos',proveedor:''},
+                 {id:4,nombre:'Selladora Fondo Doble Pista',modelo:'Sello Curvo 2 Pistas',costo:12975.81,specs:'2 pistas · 120–250 ciclos/min · Servomotores Yaskawa',proveedor:''},
+                 {id:5,nombre:'Selladora Fondo + Pre-Camiseta',modelo:'VMAB-500A',costo:10319.21,specs:'100–400 mm · 50–120 pcs/min · 5 KW',proveedor:''},
+                 {id:6,nombre:'Selladora VMAB-500A',modelo:'VMAB-500A',costo:10319.21,specs:'100–400 mm · 50–120 pcs/min · 5 KW',proveedor:''},
+                 {id:7,nombre:'Cortadora/Rebobinadora Film',modelo:'Stretch Film Slitter',costo:5500.00,specs:'500 mm · 200–600 m/min · PE/PVC · 8–30 micras',proveedor:''},
+                 {id:8,nombre:'Empaletadora Automática',modelo:'Smart Wasp NEW X0ps',costo:3871.18,specs:'Ø1650 mm · 2000 kg · 300% pre-estiramiento · 1.5 KW',proveedor:''},
+                 {id:9,nombre:'Generador Eléctrico Industrial',modelo:'VP Power CS200D6',costo:40150.00,specs:'160 kW/200 kVA · 3 fases · 60 Hz · Stamford/Cummins',proveedor:'VP Power Solution'},
+                 {id:10,nombre:'Tanque Almacenamiento Gasoil',modelo:'Tanque Gasoil 5000L',costo:1500.00,specs:'5000 L · Acero al carbono · 3150×2080×2170 mm',proveedor:''},
+                 {id:11,nombre:'Montacargas Industrial',modelo:'Toyota GLP/Diésel',costo:20000.00,specs:'2000–4000 kg · 3.0 m elevación · Transmisión hidráulica',proveedor:'Toyota'},
+               ],
+               proyeccion:[
+                 {anio:2025,ingresos:12000,costos:10200},
+                 {anio:2026,ingresos:13320,costos:11230},
+                 {anio:2027,ingresos:14800,costos:12360},
+                 {anio:2028,ingresos:16440,costos:13590},
+                 {anio:2029,ingresos:18250,costos:14940},
+               ],
+               imagenes:{}
+             };
+             const totalMaq=DATA.maquinaria.reduce((s,m)=>s+parseNum(m.costo||0),0);
+             const totalActivos=totalMaq+parseNum(DATA.planta?.valorInmueble||0);
+             const fmtUSD=n=>`$${parseNum(n).toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).replace(/,/g,'X').replace(/\./g,',').replace(/X/g,'.')}`;
+             // Guardar campo en Firestore
+             const saveField=async(path,val)=>{
+               setResenaSaving(true);
+               try{
+                 const ref=getDocRef('resenaConfig','main');
+                 const upd={};upd[path]=val;
+                 await setDoc(ref,{...DATA,...upd},{merge:true});
+                 setResenaData(prev=>{ const n={...prev||DATA};const parts=path.split('.');let obj=n;for(let i=0;i<parts.length-1;i++){obj=obj[parts[i]]=obj[parts[i]]||{};}obj[parts[parts.length-1]]=val;return n;});
+               }catch(e){console.error(e);}
+               setResenaSaving(false);setResenaEdit(null);
+             };
+             const saveMaq=(idx,field,val)=>{
+               const maq=[...(DATA.maquinaria||[])];maq[idx]={...maq[idx],[field]:field==='costo'?parseNum(val):val};
+               saveField('maquinaria',maq);
+             };
+             const saveProj=(idx,field,val)=>{
+               const proj=[...(DATA.proyeccion||[])];proj[idx]={...proj[idx],[field]:parseNum(val)};
+               saveField('proyeccion',proj);
+             };
+             // Upload image → base64
+             const handleImgUpload=(key,e)=>{
+               const f=e.target.files[0];if(!f)return;
+               const r=new FileReader();r.onload=ev=>saveField(`imagenes.${key}`,ev.target.result);r.readAsDataURL(f);
+             };
+             // Editable field component inline
+             const EF=({path,val,label,isNum,className=''})=>{
+               const editing=resenaEdit===path;
+               const [tmp,setTmp]=React.useState(String(val||''));
+               return editing?(
+                 <div className="flex gap-1 items-center">
+                   <input autoFocus value={tmp} onChange={e=>setTmp(e.target.value)} onBlur={()=>saveField(path,isNum?parseNum(tmp):tmp)} onKeyDown={e=>{if(e.key==='Enter')saveField(path,isNum?parseNum(tmp):tmp);if(e.key==='Escape')setResenaEdit(null);}}
+                     className={`bg-black/40 border border-orange-400 rounded px-2 py-0.5 text-white outline-none text-sm ${className}`}/>
+                 </div>
+               ):(
+                 <span onClick={()=>{setResenaEdit(path);}} className={`cursor-pointer hover:text-orange-400 transition-colors group ${className}`}>
+                   {val}{' '}<span className="opacity-0 group-hover:opacity-50 text-xs">✏️</span>
+                 </span>
+               );
+             };
+
+             return <div style={{background:DARK}} className="min-h-screen text-white">
+               {/* Top bar */}
+               <div style={{background:'#13131F',borderBottom:'1px solid #2A2A3E'}} className="flex items-center justify-between px-6 py-3 sticky top-0 z-40">
+                 <div className="flex items-center gap-3">
+                   <button onClick={()=>setActiveTab('home')} className="text-gray-400 hover:text-white flex items-center gap-1 text-xs"><ChevronLeft size={14}/>Inicio</button>
+                   <span style={{color:ORG}} className="font-black text-sm tracking-widest uppercase">RESEÑA INSTITUCIONAL</span>
+                 </div>
+                 <div className="flex items-center gap-2">
+                   {resenaSaving && <span className="text-xs text-orange-400 animate-pulse">Guardando...</span>}
+                   <span className="text-[9px] text-gray-500">Clic en cualquier dato para editar</span>
+                 </div>
+               </div>
+
+               {/* Section tabs */}
+               <div style={{background:'#13131F',borderBottom:'1px solid #2A2A3E'}} className="flex gap-1 px-6 overflow-x-auto">
+                 {[['portada','🏠 Portada'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['activos','💰 Activos'],['proyeccion','📈 Proyección']].map(([t,l])=>(
+                   <button key={t} onClick={()=>setResenaTab(t)} style={resenaTab===t?{borderBottom:`2px solid ${ORG}`,color:ORG}:{borderBottom:'2px solid transparent',color:'#888'}}
+                     className="px-4 py-3 text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition-all">{l}</button>
+                 ))}
+               </div>
+
+               <div className="p-6 max-w-7xl mx-auto">
+
+               {/* ══ PORTADA ══ */}
+               {resenaTab==='portada' && <div>
+                 {/* Hero grid */}
+                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                   {/* Left brand panel */}
+                   <div style={{background:ORG,borderRadius:16}} className="p-8 flex flex-col justify-between min-h-64">
+                     <div>
+                       <div className="text-4xl font-black tracking-tight text-white leading-none">Supply</div>
+                       <div className="text-6xl font-black text-black leading-none">g<span style={{color:ORG}} className="bg-black rounded-full inline-flex w-12 h-12 items-center justify-center text-2xl mx-1">&</span>b</div>
+                       <div className="text-white text-sm font-bold mt-2 italic">Líderes en material de <span className="font-black not-italic">empaque</span></div>
+                     </div>
+                     <div>
+                       <div style={{borderTop:'2px solid rgba(0,0,0,0.3)'}} className="pt-3 mt-4">
+                         <div className="text-black font-black text-sm">SERVICIOS JIRET G&B, C.A.</div>
+                         <div className="text-black/80 text-xs mt-1">Fabricación de Empaques Plásticos</div>
+                         <div className="text-black/80 text-xs">Bolsas · Termos Encogibles · Fardos</div>
+                       </div>
+                     </div>
+                   </div>
+                   {/* Right: plant image upload */}
+                   <div style={{background:CARD,borderRadius:16,border:'1px solid #3A3A5E'}} className="relative overflow-hidden min-h-64 flex items-center justify-center cursor-pointer"
+                     onClick={()=>document.getElementById('img-planta').click()}>
+                     {DATA.imagenes?.planta
+                       ? <img src={DATA.imagenes.planta} alt="Planta" className="w-full h-full object-cover absolute inset-0"/>
+                       : <div className="text-center text-gray-500">
+                           <div className="text-4xl mb-2">🏭</div>
+                           <div className="text-xs">Clic para cargar foto de la planta</div>
+                         </div>}
+                     <input id="img-planta" type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload('planta',e)}/>
+                     {DATA.imagenes?.planta && <div className="absolute bottom-2 right-2 bg-black/60 text-white text-[9px] px-2 py-1 rounded cursor-pointer">Cambiar foto</div>}
+                   </div>
+                 </div>
+                 {/* Stats cards */}
+                 <div className="grid grid-cols-3 gap-4">
+                   {[
+                     {label:'Activos Totales USD',val:fmtUSD(totalActivos),icon:'💼',path:''},
+                     {label:'Terreno Propio',val:`${parseNum(DATA.planta?.terreno||0).toLocaleString('es-VE')} m²`,icon:'🏗️',path:'planta.terreno'},
+                     {label:'Líneas Industriales',val:`${DATA.maquinaria?.length||0} Equipos`,icon:'⚙️',path:''},
+                   ].map((s,i)=>(
+                     <div key={i} style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E'}} className="p-5">
+                       <div className="text-2xl mb-2">{s.icon}</div>
+                       <div style={{color:ORG}} className="text-xl font-black">{s.val}</div>
+                       <div className="text-gray-400 text-xs mt-1">{s.label}</div>
+                     </div>
+                   ))}
+                 </div>
+               </div>}
+
+               {/* ══ EMPRESA ══ */}
+               {resenaTab==='empresa' && <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                 {/* Left: logo + capital */}
+                 <div className="space-y-4">
+                   <div style={{background:'#F5EDD8',borderRadius:12}} className="p-6 text-center cursor-pointer" onClick={()=>document.getElementById('img-logo').click()}>
+                     {DATA.imagenes?.logo
+                       ? <img src={DATA.imagenes.logo} alt="Logo" className="mx-auto max-h-40 object-contain"/>
+                       : <div>
+                           <div className="text-5xl font-black text-black leading-none">Supply</div>
+                           <div style={{color:ORG}} className="text-3xl font-black">G&B</div>
+                           <div className="text-gray-500 text-xs mt-2">Clic para cargar logo</div>
+                         </div>}
+                     <input id="img-logo" type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload('logo',e)}/>
+                   </div>
+                   <div style={{background:'#F5EDD8',borderRadius:12,border:`3px solid ${ORG}`}} className="p-5 text-center text-black">
+                     <div style={{color:'#555',borderBottom:`2px solid ${ORG}`}} className="text-[10px] font-black uppercase tracking-widest pb-2 mb-3">CAPITAL SOCIAL</div>
+                     <div className="text-2xl font-black">Bs. <EF path="empresa.capitalSocial" val={parseNum(DATA.empresa?.capitalSocial||0).toLocaleString('es-VE')} isNum className="text-2xl font-black text-black w-40"/></div>
+                     <div className="text-xs text-gray-600 mt-2"><EF path="empresa.acciones" val={DATA.empresa?.acciones} isNum/> acciones · Bs. <EF path="empresa.valorAccion" val={DATA.empresa?.valorAccion} isNum/> c/u</div>
+                     <div style={{color:ORG}} className="text-[10px] italic mt-2"><EF path="empresa.fechaRegistro" val={DATA.empresa?.fechaRegistro}/></div>
+                   </div>
+                 </div>
+                 {/* Right: data fields */}
+                 <div className="lg:col-span-2 space-y-2">
+                   {[
+                     ['Razón Social','empresa.razonSocial',DATA.empresa?.razonSocial],
+                     ['Actividad','empresa.actividad',DATA.empresa?.actividad],
+                     ['Constitución','empresa.constitucion',DATA.empresa?.constitucion],
+                     ['Expediente','empresa.expediente',DATA.empresa?.expediente],
+                     ['Registro','empresa.registro',DATA.empresa?.registro],
+                     ['Domicilio','empresa.domicilio',DATA.empresa?.domicilio],
+                     ['Accionistas','empresa.accionistas',DATA.empresa?.accionistas],
+                     ['Presidente','empresa.presidente',DATA.empresa?.presidente],
+                     ['Vicepresidente','empresa.vicepresidente',DATA.empresa?.vicepresidente],
+                   ].map(([lbl,path,val])=>(
+                     <div key={path} style={{background:CARD,borderRadius:8}} className="flex gap-4 px-4 py-3">
+                       <span style={{color:ORG,minWidth:110}} className="text-xs font-black">{lbl}:</span>
+                       <span className="text-sm text-gray-200 flex-1">
+                         <EF path={path} val={val} className="w-full"/>
+                       </span>
+                     </div>
+                   ))}
+                 </div>
+               </div>}
+
+               {/* ══ PLANTA ══ */}
+               {resenaTab==='planta' && <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                 <div className="space-y-2">
+                   {[
+                     ['Ubicación','planta.ubicacion',DATA.planta?.ubicacion],
+                     ['Terreno','planta.terreno',`${DATA.planta?.terreno} m²`],
+                     ['Área Construida','planta.areaConstruida',`${DATA.planta?.areaConstruida} m²`],
+                     ['Cubierta','planta.cubierta',`${DATA.planta?.cubierta} m²`],
+                     ['Estructura','planta.columnas',DATA.planta?.columnas],
+                     ['Portones','planta.portones',DATA.planta?.portones],
+                     ['Servicios','planta.servicios',DATA.planta?.servicios],
+                   ].map(([lbl,path,val])=>(
+                     <div key={path} style={{background:CARD,borderRadius:8}} className="flex gap-4 px-4 py-3">
+                       <span style={{color:ORG,minWidth:120}} className="text-xs font-black">{lbl}:</span>
+                       <span className="text-sm text-gray-200 flex-1"><EF path={path} val={val}/></span>
+                     </div>
+                   ))}
+                   <div style={{background:CARD2,border:`2px solid ${ORG}`,borderRadius:8}} className="flex gap-4 px-4 py-4 mt-2">
+                     <span style={{color:ORG,minWidth:120}} className="text-xs font-black">Valor Inmueble:</span>
+                     <span className="text-lg font-black text-white flex-1"><EF path="planta.valorInmueble" val={fmtUSD(DATA.planta?.valorInmueble)} isNum className="text-lg font-black"/></span>
+                   </div>
+                 </div>
+                 <div style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E'}} className="relative overflow-hidden min-h-80 flex items-center justify-center cursor-pointer"
+                   onClick={()=>document.getElementById('img-galpon').click()}>
+                   {DATA.imagenes?.galpon
+                     ? <img src={DATA.imagenes.galpon} alt="Galpón" className="w-full h-full object-cover absolute inset-0"/>
+                     : <div className="text-center text-gray-500"><div className="text-5xl mb-2">🏭</div><div className="text-xs">Clic para cargar foto del galpón</div></div>}
+                   <input id="img-galpon" type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload('galpon',e)}/>
+                 </div>
+               </div>}
+
+               {/* ══ MAQUINARIA ══ */}
+               {resenaTab==='maquinaria' && <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                 {(DATA.maquinaria||[]).map((m,idx)=>(
+                   <div key={m.id} style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E'}} className="p-4">
+                     <div className="flex justify-between items-start mb-3">
+                       <div style={{background:ORG,color:'#000',borderRadius:6}} className="text-[10px] font-black px-2 py-1">{String(m.id).padStart(2,'0')}/{DATA.maquinaria.length}</div>
+                       <span style={{color:ORG}} className="text-lg font-black"><EF path={`maquinaria.costo`} val={fmtUSD(m.costo)} isNum className="text-sm" onSave={(v)=>saveMaq(idx,'costo',v)}/></span>
+                     </div>
+                     {/* Machine image */}
+                     <div style={{background:'#1A1A2E',borderRadius:8,minHeight:120}} className="flex items-center justify-center mb-3 overflow-hidden relative cursor-pointer"
+                       onClick={()=>document.getElementById(`img-maq-${m.id}`).click()}>
+                       {DATA.imagenes?.[`maq_${m.id}`]
+                         ? <img src={DATA.imagenes[`maq_${m.id}`]} alt={m.nombre} className="w-full h-full object-cover absolute inset-0"/>
+                         : <div className="text-center text-gray-600"><div className="text-3xl">⚙️</div><div className="text-[9px] mt-1">Foto equipo</div></div>}
+                       <input id={`img-maq-${m.id}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(`maq_${m.id}`,e)}/>
+                     </div>
+                     <div className="font-black text-sm text-white leading-tight mb-1 cursor-pointer hover:text-orange-400"
+                       onClick={()=>{ const n=window.prompt('Nombre del equipo:',m.nombre);if(n)saveMaq(idx,'nombre',n);}}>
+                       {m.nombre}
+                     </div>
+                     <div className="text-gray-400 text-[10px] mb-2">{m.modelo}</div>
+                     <div className="text-gray-500 text-[10px] leading-relaxed">{m.specs}</div>
+                     <div style={{borderTop:'1px solid #3A3A5E'}} className="mt-3 pt-2 flex justify-between">
+                       <span className="text-gray-500 text-[9px]">Costo:</span>
+                       <span style={{color:ORG}} className="text-[10px] font-black cursor-pointer hover:underline"
+                         onClick={()=>{ const v=window.prompt(`Costo ${m.nombre}:`,m.costo);if(v)saveMaq(idx,'costo',v);}}>
+                         {fmtUSD(m.costo)}
+                       </span>
+                     </div>
+                   </div>
+                 ))}
+               </div>}
+
+               {/* ══ ACTIVOS ══ */}
+               {resenaTab==='activos' && <div className="max-w-3xl mx-auto">
+                 <div style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E'}} className="overflow-hidden">
+                   <div style={{background:ORG}} className="px-6 py-4">
+                     <div className="text-black font-black text-base tracking-wide">VALORIZACIÓN TOTAL DE ACTIVOS</div>
+                   </div>
+                   {/* Inmueble row */}
+                   <div style={{borderBottom:'1px solid #3A3A5E'}} className="flex justify-between items-center px-6 py-3 hover:bg-white/5">
+                     <span className="text-sm text-gray-300">Galpón Industrial (inmueble)</span>
+                     <span className="font-black text-white" style={{color:ORG}}>{fmtUSD(DATA.planta?.valorInmueble||0)}</span>
+                   </div>
+                   {/* Maquinaria rows */}
+                   {(DATA.maquinaria||[]).map(m=>(
+                     <div key={m.id} style={{borderBottom:'1px solid #3A3A5E'}} className="flex justify-between items-center px-6 py-3 hover:bg-white/5">
+                       <span className="text-sm text-gray-300">{m.nombre}</span>
+                       <span className="font-bold text-gray-200">{fmtUSD(m.costo)}</span>
+                     </div>
+                   ))}
+                   {/* Total */}
+                   <div style={{background:'#13131F',borderTop:`2px solid ${ORG}`}} className="flex justify-between items-center px-6 py-5">
+                     <span style={{color:ORG}} className="font-black text-sm uppercase tracking-wider">TOTAL GENERAL DE ACTIVOS</span>
+                     <span className="font-black text-2xl text-white">{fmtUSD(totalActivos)}</span>
+                   </div>
+                 </div>
+               </div>}
+
+               {/* ══ PROYECCIÓN ══ */}
+               {resenaTab==='proyeccion' && <div>
+                 <div style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E'}} className="overflow-hidden mb-6">
+                   <div style={{background:ORG}} className="px-6 py-4">
+                     <div className="text-black font-black text-base">PROYECCIÓN FINANCIERA 2025–2029</div>
+                   </div>
+                   <table className="w-full">
+                     <thead>
+                       <tr style={{background:'#13131F'}}>
+                         <th className="px-6 py-3 text-left text-xs text-gray-400 font-black uppercase">Concepto</th>
+                         {(DATA.proyeccion||[]).map(p=><th key={p.anio} className="px-4 py-3 text-right text-xs font-black" style={{color:ORG}}>{p.anio}</th>)}
+                       </tr>
+                     </thead>
+                     <tbody>
+                       {[['ingresos','Ingresos (k$)','#4ade80'],['costos','Costos (k$)','#f87171']].map(([field,label,color])=>(
+                         <tr key={field} style={{borderBottom:'1px solid #3A3A5E'}}>
+                           <td className="px-6 py-3 text-sm text-gray-300 font-bold">{label}</td>
+                           {(DATA.proyeccion||[]).map((p,idx)=>(
+                             <td key={p.anio} className="px-4 py-3 text-right">
+                               <span style={{color}} className="font-black text-sm cursor-pointer hover:underline"
+                                 onClick={()=>{ const v=window.prompt(`${label} ${p.anio}:`,p[field]);if(v)saveProj(idx,field,v);}}>
+                                 ${parseNum(p[field]).toLocaleString('es-VE')}k
+                               </span>
+                             </td>
+                           ))}
+                         </tr>
+                       ))}
+                       <tr style={{borderBottom:'1px solid #3A3A5E',background:'#1A1A2E'}}>
+                         <td className="px-6 py-3 text-sm font-black text-white">Ganancia Operativa (k$)</td>
+                         {(DATA.proyeccion||[]).map(p=>{const g=p.ingresos-p.costos;return<td key={p.anio} className="px-4 py-3 text-right font-black text-white">${g.toLocaleString('es-VE')}k</td>;})}
+                       </tr>
+                       <tr style={{background:'#13131F'}}>
+                         <td className="px-6 py-3 text-sm font-black" style={{color:ORG}}>Margen Operativo</td>
+                         {(DATA.proyeccion||[]).map(p=>{const m=p.ingresos>0?((p.ingresos-p.costos)/p.ingresos*100).toFixed(1):0;return<td key={p.anio} className="px-4 py-3 text-right font-black" style={{color:ORG}}>{m}%</td>;})}
+                       </tr>
+                     </tbody>
+                   </table>
+                 </div>
+                 {/* CAGR stat */}
+                 <div className="grid grid-cols-3 gap-4">
+                   {[
+                     {label:'CAGR Ingresos (2025–2029)',val:'11,0%',icon:'📈'},
+                     {label:'Margen Target 2029',val:'18,1%',icon:'🎯'},
+                     {label:'Ingresos Proyectados 2029',val:`$${((DATA.proyeccion||[]).slice(-1)[0]?.ingresos||0).toLocaleString('es-VE')}k`,icon:'💵'},
+                   ].map((s,i)=>(
+                     <div key={i} style={{background:CARD,borderRadius:12,border:`1px solid ${ORG}33`}} className="p-5 text-center">
+                       <div className="text-3xl mb-2">{s.icon}</div>
+                       <div style={{color:ORG}} className="text-2xl font-black">{s.val}</div>
+                       <div className="text-gray-400 text-xs mt-1">{s.label}</div>
+                     </div>
+                   ))}
+                 </div>
+               </div>}
+
+               </div>
+             </div>;
+           })()}
            {/* ── BANCO & TESORERÍA ── */}
            {activeTab === 'banco' && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
              ventasMode={!!(hasPerm('ventas') && !hasPerm('banco') && appUser?.role !== 'Master')}/>}
