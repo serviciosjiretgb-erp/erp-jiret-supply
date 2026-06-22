@@ -386,8 +386,10 @@ function App() {
   // ── Reseña Institucional ─────────────────────────────────────────────────
   const [resenaTab, setResenaTab] = useState('portada');
   const [resenaData, setResenaData] = useState(null);
-  const [resenaEdit, setResenaEdit] = useState(null); // {section, field} being edited
+  const [resenaEdit, setResenaEdit] = useState(null);
   const [resenaSaving, setResenaSaving] = useState(false);
+  const [resenaImages, setResenaImages] = useState({}); // key→base64, guardado en colección aparte
+  const [resenaMaqSel, setResenaMaqSel] = useState(0); // índice máquina seleccionada
   const [selectedPortal, setSelectedPortal] = useState(null); // 'produccion' | 'administracion' | 'finanzas'
   const [portalDenied, setPortalDenied] = useState(''); // aviso "no posee permiso" en pantalla de portales
   const [ventasView, setVentasView] = useState('facturacion');
@@ -1501,10 +1503,14 @@ function App() {
     const unsubTomas = onSnapshot(getColRef('tomasFisicas'), (s) => setTomasFisicas(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     
     const unsubNE = onSnapshot(getColRef('notasEntrega'), (s) => setNotasEntrega(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    // ── Reseña Institucional ──────────────────────────────────────────────────
+    const unsubResena = onSnapshot(getDocRef('resenaConfig','main'), (d) => { if(d.exists()) setResenaData(d.data()); });
+    const unsubResenaImg = onSnapshot(getColRef('resenaImagenes'), (s) => { const imgs={}; s.docs.forEach(d=>{imgs[d.id]=d.data().data;}); setResenaImages(imgs); });
     
     return () => { 
       unsubAlimentario(); unsubDepositos(); unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
       unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST(); unsubConsign(); unsubNE(); unsubCobrosCxc(); unsubCuentasBanco();
+      unsubResena(); unsubResenaImg();
       if (typeof unsubNotifs === 'function') unsubNotifs();
       if (typeof unsubTomas === 'function') unsubTomas();
     };
@@ -25305,10 +25311,24 @@ ${resumenHtml}
                const proj=[...(DATA.proyeccion||[])];proj[idx]={...proj[idx],[field]:parseNum(val)};
                saveField('proyeccion',proj);
              };
-             // Upload image → base64
-             const handleImgUpload=(key,e)=>{
+             // ── Image upload: comprime y guarda en colección separada (evita límite 1MB Firestore) ──
+             const compressImg=(file,maxW=900)=>new Promise(res=>{
+               const img=new Image();const url=URL.createObjectURL(file);
+               img.onload=()=>{
+                 const r=Math.min(1,maxW/img.width);
+                 const c=document.createElement('canvas');c.width=img.width*r;c.height=img.height*r;
+                 c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+                 URL.revokeObjectURL(url);res(c.toDataURL('image/jpeg',0.72));
+               };img.src=url;
+             });
+             const handleImgUpload=async(key,e)=>{
                const f=e.target.files[0];if(!f)return;
-               const r=new FileReader();r.onload=ev=>saveField(`imagenes.${key}`,ev.target.result);r.readAsDataURL(f);
+               setResenaSaving(true);
+               try{
+                 const b64=await compressImg(f);
+                 await setDoc(getDocRef('resenaImagenes',key),{data:b64,key,ts:Date.now()});
+               }catch(err){console.error('Img upload error:',err);alert('Error al guardar imagen: '+err.message);}
+               setResenaSaving(false);
              };
              // Editable field component inline
              const EF=({path,val,label,isNum,className=''})=>{
@@ -25341,7 +25361,7 @@ ${resumenHtml}
 
                {/* Section tabs */}
                <div style={{background:'#13131F',borderBottom:'1px solid #2A2A3E'}} className="flex gap-1 px-6 overflow-x-auto">
-                 {[['portada','🏠 Portada'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['activos','💰 Activos'],['proyeccion','📈 Proyección']].map(([t,l])=>(
+                 {[['portada','🏠 Portada'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['productos','📦 Productos'],['clientes','🤝 Clientes'],['activos','💰 Activos'],['proyeccion','📈 Proyección']].map(([t,l])=>(
                    <button key={t} onClick={()=>setResenaTab(t)} style={resenaTab===t?{borderBottom:`2px solid ${ORG}`,color:ORG}:{borderBottom:'2px solid transparent',color:'#888'}}
                      className="px-4 py-3 text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition-all">{l}</button>
                  ))}
@@ -25351,47 +25371,81 @@ ${resumenHtml}
 
                {/* ══ PORTADA ══ */}
                {resenaTab==='portada' && <div>
-                 {/* Hero grid */}
-                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                   {/* Left brand panel */}
-                   <div style={{background:ORG,borderRadius:16}} className="p-8 flex flex-col justify-between min-h-64">
-                     <div>
-                       <div className="text-4xl font-black tracking-tight text-white leading-none">Supply</div>
-                       <div className="text-6xl font-black text-black leading-none">g<span style={{color:ORG}} className="bg-black rounded-full inline-flex w-12 h-12 items-center justify-center text-2xl mx-1">&</span>b</div>
-                       <div className="text-white text-sm font-bold mt-2 italic">Líderes en material de <span className="font-black not-italic">empaque</span></div>
-                     </div>
-                     <div>
-                       <div style={{borderTop:'2px solid rgba(0,0,0,0.3)'}} className="pt-3 mt-4">
-                         <div className="text-black font-black text-sm">SERVICIOS JIRET G&B, C.A.</div>
-                         <div className="text-black/80 text-xs mt-1">Fabricación de Empaques Plásticos</div>
-                         <div className="text-black/80 text-xs">Bolsas · Termos Encogibles · Fardos</div>
+                 {/* Fondo panel de avispas — honeycomb SVG */}
+                 <div style={{
+                   background:'#FFFFFF',
+                   borderRadius:16,
+                   overflow:'hidden',
+                   position:'relative',
+                   marginBottom:20,
+                   boxShadow:'0 4px 32px rgba(0,0,0,0.10)'
+                 }}>
+                   {/* Patrón hexagonal de fondo */}
+                   <svg style={{position:'absolute',inset:0,width:'100%',height:'100%',opacity:0.07}} xmlns="http://www.w3.org/2000/svg">
+                     <defs>
+                       <pattern id="honeycomb" x="0" y="0" width="56" height="100" patternUnits="userSpaceOnUse">
+                         <polygon points="28,2 54,16 54,44 28,58 2,44 2,16" fill="none" stroke="#E8541A" strokeWidth="1.5"/>
+                         <polygon points="28,52 54,66 54,94 28,108 2,94 2,66" fill="none" stroke="#E8541A" strokeWidth="1.5"/>
+                         <polygon points="56,27 82,41 82,69 56,83 30,69 30,41" fill="none" stroke="#E8541A" strokeWidth="1.5"/>
+                       </pattern>
+                     </defs>
+                     <rect width="100%" height="100%" fill="url(#honeycomb)"/>
+                   </svg>
+
+                   {/* Contenido hero: brand compacto + imagen grande */}
+                   <div className="relative flex flex-col lg:flex-row" style={{minHeight:340}}>
+                     {/* Brand panel — compacto, izquierda */}
+                     <div style={{
+                       background:'linear-gradient(135deg,#E8541A 60%,#C94010)',
+                       width:220, minWidth:200, flexShrink:0,
+                       display:'flex', flexDirection:'column', justifyContent:'space-between',
+                       padding:'28px 20px'
+                     }}>
+                       <div>
+                         <div className="text-white font-black text-2xl leading-none">Supply</div>
+                         <div style={{fontSize:48,fontWeight:900,lineHeight:1,color:'#000',marginTop:4}}>
+                           g<span style={{background:'#000',color:'#E8541A',borderRadius:'50%',display:'inline-flex',width:36,height:36,alignItems:'center',justifyContent:'center',fontSize:18,margin:'0 3px'}}>&</span>b
+                         </div>
+                         <div className="text-white/90 text-xs font-bold mt-2 italic">Líderes en material de <b className="not-italic">empaque</b></div>
+                       </div>
+                       <div style={{borderTop:'1.5px solid rgba(0,0,0,0.25)',paddingTop:12,marginTop:16}}>
+                         <div className="text-black font-black text-xs leading-tight">SERVICIOS JIRET G&B, C.A.</div>
+                         <div className="text-black/75 text-[10px] mt-1">Fabricación de Empaques Plásticos</div>
+                         <div className="text-black/75 text-[10px]">Bolsas · Termos · Fardos</div>
                        </div>
                      </div>
-                   </div>
-                   {/* Right: plant image upload */}
-                   <div style={{background:CARD,borderRadius:16,border:'1px solid #3A3A5E'}} className="relative overflow-hidden min-h-64 flex items-center justify-center cursor-pointer"
-                     onClick={()=>document.getElementById('img-planta').click()}>
-                     {DATA.imagenes?.planta
-                       ? <img src={DATA.imagenes.planta} alt="Planta" className="w-full h-full object-cover absolute inset-0"/>
-                       : <div className="text-center text-gray-500">
-                           <div className="text-4xl mb-2">🏭</div>
-                           <div className="text-xs">Clic para cargar foto de la planta</div>
-                         </div>}
-                     <input id="img-planta" type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload('planta',e)}/>
-                     {DATA.imagenes?.planta && <div className="absolute bottom-2 right-2 bg-black/60 text-white text-[9px] px-2 py-1 rounded cursor-pointer">Cambiar foto</div>}
+
+                     {/* Imagen planta — protagonista */}
+                     <div style={{flex:1,position:'relative',minHeight:320,cursor:'pointer',overflow:'hidden'}}
+                       onClick={()=>document.getElementById('img-planta').click()}>
+                       {resenaImages['planta']
+                         ? <img src={resenaImages['planta']} alt="Planta" style={{width:'100%',height:'100%',objectFit:'cover',position:'absolute',inset:0}}/>
+                         : <div style={{width:'100%',height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'#f3f4f6',position:'absolute',inset:0}}>
+                             <div style={{fontSize:56}}>🏭</div>
+                             <div style={{color:'#9ca3af',fontSize:13,fontWeight:700,marginTop:8}}>Clic para cargar foto de la planta</div>
+                           </div>}
+                       <input id="img-planta" type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload('planta',e)}/>
+                       {resenaImages['planta'] && (
+                         <div style={{position:'absolute',bottom:10,right:10,background:'rgba(0,0,0,0.55)',color:'#fff',fontSize:10,fontWeight:700,padding:'4px 10px',borderRadius:6,backdropFilter:'blur(4px)'}}>
+                           Cambiar foto
+                         </div>
+                       )}
+                       {resenaSaving && <div style={{position:'absolute',top:10,right:10,background:'rgba(0,0,0,0.7)',color:'#f97316',fontSize:10,padding:'4px 10px',borderRadius:6}} className="animate-pulse">Guardando…</div>}
+                     </div>
                    </div>
                  </div>
-                 {/* Stats cards */}
+
+                 {/* Stats cards — fondo blanco con acento */}
                  <div className="grid grid-cols-3 gap-4">
                    {[
-                     {label:'Activos Totales USD',val:fmtUSD(totalActivos),icon:'💼',path:''},
-                     {label:'Terreno Propio',val:`${parseNum(DATA.planta?.terreno||0).toLocaleString('es-VE')} m²`,icon:'🏗️',path:'planta.terreno'},
-                     {label:'Líneas Industriales',val:`${DATA.maquinaria?.length||0} Equipos`,icon:'⚙️',path:''},
+                     {label:'Activos Totales USD',val:fmtUSD(totalActivos),icon:'💼',accent:'#E8541A'},
+                     {label:'Terreno Propio',val:`${parseNum(DATA.planta?.terreno||0).toLocaleString('es-VE')} m²`,icon:'📐',accent:'#1d4ed8'},
+                     {label:'Líneas Industriales',val:`${DATA.maquinaria?.length||0} Equipos`,icon:'⚙️',accent:'#15803d'},
                    ].map((s,i)=>(
-                     <div key={i} style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E'}} className="p-5">
-                       <div className="text-2xl mb-2">{s.icon}</div>
-                       <div style={{color:ORG}} className="text-xl font-black">{s.val}</div>
-                       <div className="text-gray-400 text-xs mt-1">{s.label}</div>
+                     <div key={i} style={{background:'#fff',borderRadius:12,boxShadow:'0 2px 16px rgba(0,0,0,0.08)',borderLeft:`4px solid ${s.accent}`,padding:'18px 20px'}}>
+                       <div style={{fontSize:22,marginBottom:8}}>{s.icon}</div>
+                       <div style={{color:s.accent,fontSize:20,fontWeight:900}}>{s.val}</div>
+                       <div style={{color:'#6b7280',fontSize:11,marginTop:4}}>{s.label}</div>
                      </div>
                    ))}
                  </div>
@@ -25402,7 +25456,7 @@ ${resumenHtml}
                  {/* Left: logo + capital */}
                  <div className="space-y-4">
                    <div style={{background:'#F5EDD8',borderRadius:12}} className="p-6 text-center cursor-pointer" onClick={()=>document.getElementById('img-logo').click()}>
-                     {DATA.imagenes?.logo
+                     {resenaImages['logo']
                        ? <img src={DATA.imagenes.logo} alt="Logo" className="mx-auto max-h-40 object-contain"/>
                        : <div>
                            <div className="text-5xl font-black text-black leading-none">Supply</div>
@@ -25463,47 +25517,237 @@ ${resumenHtml}
                      <span className="text-lg font-black text-white flex-1"><EF path="planta.valorInmueble" val={fmtUSD(DATA.planta?.valorInmueble)} isNum className="text-lg font-black"/></span>
                    </div>
                  </div>
-                 <div style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E'}} className="relative overflow-hidden min-h-80 flex items-center justify-center cursor-pointer"
-                   onClick={()=>document.getElementById('img-galpon').click()}>
-                   {DATA.imagenes?.galpon
-                     ? <img src={DATA.imagenes.galpon} alt="Galpón" className="w-full h-full object-cover absolute inset-0"/>
-                     : <div className="text-center text-gray-500"><div className="text-5xl mb-2">🏭</div><div className="text-xs">Clic para cargar foto del galpón</div></div>}
-                   <input id="img-galpon" type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload('galpon',e)}/>
+                 {/* 2 image slots */}
+                 <div className="space-y-4">
+                   {[['galpon','📸 Foto 1 — Fachada / Vista general'],['galpon2','📸 Foto 2 — Interior / Planta productiva']].map(([key,label])=>(
+                     <div key={key} style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E',minHeight:200}} className="relative overflow-hidden flex items-center justify-center cursor-pointer group"
+                       onClick={()=>document.getElementById(`img-${key}`).click()}>
+                       {resenaImages[key]
+                         ? <>
+                             <img src={resenaImages[key]} alt={label} className="w-full h-full object-cover absolute inset-0"/>
+                             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center">
+                               <span className="opacity-0 group-hover:opacity-100 text-white text-xs font-black bg-black/60 px-3 py-1.5 rounded-full transition-all">Cambiar foto</span>
+                             </div>
+                           </>
+                         : <div className="text-center text-gray-500 p-6">
+                             <div className="text-4xl mb-2">🏭</div>
+                             <div className="text-xs font-bold text-gray-400">{label}</div>
+                             <div className="text-[10px] text-gray-600 mt-1">Clic para cargar</div>
+                           </div>}
+                       <input id={`img-${key}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(key,e)}/>
+                       {resenaSaving && <div className="absolute top-2 right-2 text-[9px] text-orange-400 bg-black/70 px-2 py-1 rounded animate-pulse">Guardando…</div>}
+                     </div>
+                   ))}
                  </div>
                </div>}
 
                {/* ══ MAQUINARIA ══ */}
-               {resenaTab==='maquinaria' && <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                 {(DATA.maquinaria||[]).map((m,idx)=>(
-                   <div key={m.id} style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E'}} className="p-4">
-                     <div className="flex justify-between items-start mb-3">
-                       <div style={{background:ORG,color:'#000',borderRadius:6}} className="text-[10px] font-black px-2 py-1">{String(m.id).padStart(2,'0')}/{DATA.maquinaria.length}</div>
-                       <span style={{color:ORG}} className="text-lg font-black"><EF path={`maquinaria.costo`} val={fmtUSD(m.costo)} isNum className="text-sm" onSave={(v)=>saveMaq(idx,'costo',v)}/></span>
-                     </div>
-                     {/* Machine image */}
-                     <div style={{background:'#1A1A2E',borderRadius:8,minHeight:120}} className="flex items-center justify-center mb-3 overflow-hidden relative cursor-pointer"
-                       onClick={()=>document.getElementById(`img-maq-${m.id}`).click()}>
-                       {DATA.imagenes?.[`maq_${m.id}`]
-                         ? <img src={DATA.imagenes[`maq_${m.id}`]} alt={m.nombre} className="w-full h-full object-cover absolute inset-0"/>
-                         : <div className="text-center text-gray-600"><div className="text-3xl">⚙️</div><div className="text-[9px] mt-1">Foto equipo</div></div>}
-                       <input id={`img-maq-${m.id}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(`maq_${m.id}`,e)}/>
-                     </div>
-                     <div className="font-black text-sm text-white leading-tight mb-1 cursor-pointer hover:text-orange-400"
-                       onClick={()=>{ const n=window.prompt('Nombre del equipo:',m.nombre);if(n)saveMaq(idx,'nombre',n);}}>
-                       {m.nombre}
-                     </div>
-                     <div className="text-gray-400 text-[10px] mb-2">{m.modelo}</div>
-                     <div className="text-gray-500 text-[10px] leading-relaxed">{m.specs}</div>
-                     <div style={{borderTop:'1px solid #3A3A5E'}} className="mt-3 pt-2 flex justify-between">
-                       <span className="text-gray-500 text-[9px]">Costo:</span>
-                       <span style={{color:ORG}} className="text-[10px] font-black cursor-pointer hover:underline"
-                         onClick={()=>{ const v=window.prompt(`Costo ${m.nombre}:`,m.costo);if(v)saveMaq(idx,'costo',v);}}>
-                         {fmtUSD(m.costo)}
-                       </span>
-                     </div>
+               {resenaTab==='maquinaria' && <div className="flex gap-4" style={{height:'70vh',minHeight:520}}>
+                 {/* Lista izquierda */}
+                 <div style={{width:240,minWidth:200,background:CARD2,borderRadius:12,border:'1px solid #3A3A5E',overflowY:'auto'}} className="flex-shrink-0">
+                   <div style={{background:ORG,borderRadius:'12px 12px 0 0'}} className="px-4 py-3">
+                     <div className="text-black font-black text-xs uppercase tracking-wider">⚙️ Equipos ({DATA.maquinaria?.length})</div>
                    </div>
-                 ))}
+                   {(DATA.maquinaria||[]).map((m,idx)=>(
+                     <button key={m.id} onClick={()=>setResenaMaqSel(idx)}
+                       style={resenaMaqSel===idx?{background:ORG+'33',borderLeft:`3px solid ${ORG}`}:{borderLeft:'3px solid transparent'}}
+                       className="w-full text-left px-3 py-3 hover:bg-white/5 transition-all border-b border-gray-800/50">
+                       <div style={{color:resenaMaqSel===idx?ORG:'#aaa'}} className="text-[10px] font-black">{String(m.id).padStart(2,'0')}</div>
+                       <div className="text-white text-xs font-bold leading-tight mt-0.5 line-clamp-2">{m.nombre}</div>
+                       <div className="text-gray-500 text-[9px] mt-0.5">{fmtUSD(m.costo)}</div>
+                     </button>
+                   ))}
+                 </div>
+                 {/* Ficha técnica derecha */}
+                 {(()=>{
+                   const m=(DATA.maquinaria||[])[resenaMaqSel];
+                   if(!m) return null;
+                   const imgKey=`maq_${m.id}`;
+                   return <div style={{flex:1,background:CARD,borderRadius:12,border:'1px solid #3A3A5E',overflowY:'auto'}}>
+                     {/* Header */}
+                     <div style={{background:'linear-gradient(135deg,#1A1A2E,#2A1A0E)'}} className="px-6 py-4 flex justify-between items-start">
+                       <div>
+                         <div style={{color:ORG}} className="text-[10px] font-black uppercase tracking-widest">Equipo {String(m.id).padStart(2,'0')} / {DATA.maquinaria.length}</div>
+                         <div className="text-white font-black text-xl mt-1">{m.nombre}</div>
+                         <div className="text-gray-400 text-sm">{m.modelo}</div>
+                       </div>
+                       <div style={{background:ORG,borderRadius:8}} className="px-4 py-2 text-black font-black text-sm">{fmtUSD(m.costo)}</div>
+                     </div>
+                     {/* Content */}
+                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-5">
+                       {/* Foto del equipo */}
+                       <div style={{background:'#1A1A2E',borderRadius:10,minHeight:240}} className="relative overflow-hidden flex items-center justify-center cursor-pointer group"
+                         onClick={()=>document.getElementById(`img-maq-${m.id}`).click()}>
+                         {resenaImages[imgKey]
+                           ? <>
+                               <img src={resenaImages[imgKey]} alt={m.nombre} className="w-full h-full object-contain absolute inset-0 p-2"/>
+                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all flex items-center justify-center">
+                                 <span className="opacity-0 group-hover:opacity-100 text-white text-xs font-black bg-black/70 px-3 py-1.5 rounded-full">Cambiar foto</span>
+                               </div>
+                             </>
+                           : <div className="text-center text-gray-600">
+                               <div className="text-5xl mb-3">⚙️</div>
+                               <div className="text-xs text-gray-500 font-bold">Clic para cargar foto</div>
+                               <div className="text-[10px] text-gray-600 mt-1">{m.nombre}</div>
+                             </div>}
+                         <input id={`img-maq-${m.id}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
+                         {resenaSaving && <div className="absolute top-2 right-2 text-[9px] text-orange-400 bg-black/70 px-2 py-1 rounded animate-pulse">Guardando…</div>}
+                       </div>
+                       {/* Especificaciones técnicas */}
+                       <div className="space-y-2">
+                         <div style={{color:ORG}} className="text-[10px] font-black uppercase tracking-widest mb-3">Especificaciones Técnicas</div>
+                         {m.specs?.split('·').map((s,i)=>(
+                           <div key={i} style={{background:CARD2,borderRadius:6}} className="flex gap-3 px-3 py-2">
+                             <span style={{color:ORG}} className="text-xs">▸</span>
+                             <span className="text-gray-300 text-xs">{s.trim()}</span>
+                           </div>
+                         ))}
+                         {m.proveedor && <div style={{background:CARD2,borderRadius:6,border:`1px solid ${ORG}44`}} className="flex gap-3 px-3 py-2 mt-3">
+                           <span style={{color:ORG,minWidth:70}} className="text-[10px] font-black">Proveedor:</span>
+                           <span className="text-gray-300 text-xs">{m.proveedor}</span>
+                         </div>}
+                         <div style={{background:ORG+'22',borderRadius:6,border:`1px solid ${ORG}`}} className="flex justify-between items-center px-3 py-3 mt-3">
+                           <span style={{color:ORG}} className="text-xs font-black">Valor USD</span>
+                           <span className="text-white font-black text-lg cursor-pointer hover:text-orange-400"
+                             onClick={()=>{const v=window.prompt(`Costo ${m.nombre}:`,m.costo);if(v){const maq=[...(DATA.maquinaria||[])];maq[resenaMaqSel]={...maq[resenaMaqSel],costo:parseNum(v)};saveField('maquinaria',maq);}}}>
+                             {fmtUSD(m.costo)} <span className="text-[10px] opacity-50">✏️</span>
+                           </span>
+                         </div>
+                       </div>
+                     </div>
+                     {/* Nav botones */}
+                     <div className="flex justify-between px-5 pb-4">
+                       <button onClick={()=>setResenaMaqSel(Math.max(0,resenaMaqSel-1))} disabled={resenaMaqSel===0}
+                         style={{background:CARD2,borderRadius:8}} className="px-4 py-2 text-xs font-black text-gray-400 hover:text-white disabled:opacity-30">← Anterior</button>
+                       <span className="text-gray-500 text-xs self-center">{resenaMaqSel+1} / {DATA.maquinaria?.length}</span>
+                       <button onClick={()=>setResenaMaqSel(Math.min((DATA.maquinaria?.length||1)-1,resenaMaqSel+1))} disabled={resenaMaqSel===(DATA.maquinaria?.length||1)-1}
+                         style={{background:CARD2,borderRadius:8}} className="px-4 py-2 text-xs font-black text-gray-400 hover:text-white disabled:opacity-30">Siguiente →</button>
+                     </div>
+                   </div>;
+                 })()}
                </div>}
+
+               {/* ══ PRODUCTOS ══ */}
+               {resenaTab==='productos' && (()=>{
+                 const defaultProds=[
+                   {id:'p1',nombre:'Bolsas Plásticas'},
+                   {id:'p2',nombre:'Termos Encogibles'},
+                   {id:'p3',nombre:'Fardos'},
+                   {id:'p4',nombre:'Film Estirable'},
+                   {id:'p5',nombre:'Manga Plástica'},
+                   {id:'p6',nombre:'Bolsas Camiseta'},
+                 ];
+                 const prods=DATA.productos||defaultProds;
+                 return <div>
+                   <div className="flex justify-between items-center mb-4">
+                     <div className="text-gray-400 text-xs">Clic en el nombre para editar · Clic en la imagen para cargar foto</div>
+                     <button onClick={()=>{const n=window.prompt('Nombre del nuevo producto:');if(n){const newId=`p${Date.now()}`;const updated=[...prods,{id:newId,nombre:n}];saveField('productos',updated);}}}
+                       style={{background:ORG,borderRadius:8}} className="px-3 py-2 text-black font-black text-xs">+ Agregar producto</button>
+                   </div>
+                   <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+                     {prods.map((p,idx)=>{
+                       const imgKey=`prod_${p.id}`;
+                       return <div key={p.id} style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E',overflow:'hidden'}}>
+                         {/* Foto */}
+                         <div style={{background:'#1A1A2E',height:180}} className="relative flex items-center justify-center cursor-pointer group"
+                           onClick={()=>document.getElementById(`img-prod-${p.id}`).click()}>
+                           {resenaImages[imgKey]
+                             ? <>
+                                 <img src={resenaImages[imgKey]} alt={p.nombre} className="w-full h-full object-cover absolute inset-0"/>
+                                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all flex items-center justify-center">
+                                   <span className="opacity-0 group-hover:opacity-100 text-white text-xs font-black bg-black/70 px-3 py-1.5 rounded-full">Cambiar foto</span>
+                                 </div>
+                               </>
+                             : <div className="text-center text-gray-600">
+                                 <div className="text-4xl mb-2">📦</div>
+                                 <div className="text-[10px]">Cargar foto</div>
+                               </div>}
+                           <input id={`img-prod-${p.id}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
+                         </div>
+                         {/* Nombre editable */}
+                         <div className="p-3 flex items-center gap-2">
+                           <input value={p.nombre} onChange={e=>{const upd=[...prods];upd[idx]={...p,nombre:e.target.value};saveField('productos',upd);}}
+                             style={{background:'transparent',border:'none',color:'#fff',flex:1}} className="font-black text-sm outline-none focus:text-orange-400"/>
+                           <button onClick={()=>{if(window.confirm(`¿Eliminar "${p.nombre}"?`)){const upd=prods.filter((_,i)=>i!==idx);saveField('productos',upd);}}}
+                             className="text-gray-600 hover:text-red-400 text-xs">✕</button>
+                         </div>
+                       </div>;
+                     })}
+                   </div>
+                 </div>;
+               })()}
+
+               {/* ══ CLIENTES ══ */}
+               {resenaTab==='clientes' && (()=>{
+                 // Agregar desde notasEntrega: top clientes por volumen, con categorías de producto
+                 const clientMap={};
+                 (notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&ne.total>0).forEach(ne=>{
+                   const key=ne.clientRif||ne.clientName||'';if(!key)return;
+                   if(!clientMap[key]) clientMap[key]={name:ne.clientName||key,rif:ne.clientRif||'',total:0,nes:0,cats:new Set()};
+                   clientMap[key].total+=parseNum(ne.total||0);
+                   clientMap[key].nes++;
+                   (ne.items||[]).forEach(it=>{
+                     const d=(it.desc||'').toUpperCase();
+                     if(d.includes('BOLSA')||d.includes('BOSA')) clientMap[key].cats.add('Bolsas');
+                     if(d.includes('TERMO')||d.includes('ENCOG')) clientMap[key].cats.add('Termoencogible');
+                     if(d.includes('FARDO')) clientMap[key].cats.add('Fardos');
+                     if(d.includes('FILM')) clientMap[key].cats.add('Film Estirable');
+                     if(d.includes('MANGA')||d.includes('CAMISETA')) clientMap[key].cats.add('Manga/Camiseta');
+                     if(d.includes('PANAL')||d.includes('PAÑÑAL')) clientMap[key].cats.add('Bolsas Pañal');
+                     if(d.includes('KIRI')||d.includes('BIO')||d.includes('DIAP')) clientMap[key].cats.add('Termoencogible');
+                   });
+                 });
+                 const topCli=Object.values(clientMap).sort((a,b)=>b.total-a.total).slice(0,16);
+                 const catColor={'Bolsas':'#3b82f6','Termoencogible':'#f97316','Fardos':'#22c55e','Film Estirable':'#a855f7','Manga/Camiseta':'#ec4899','Bolsas Pañal':'#f59e0b'};
+                 return <div>
+                   <div className="flex justify-between items-center mb-4">
+                     <div style={{color:ORG}} className="text-xs font-black uppercase">Top {topCli.length} clientes por volumen · datos de Notas de Entrega</div>
+                   </div>
+                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                     {topCli.map((cl,idx)=>{
+                       const imgKey=`cli_${cl.rif.replace(/[^a-zA-Z0-9]/g,'_')}`;
+                       return <div key={cl.rif||idx} style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E',overflow:'hidden'}}>
+                         <div style={{background:'linear-gradient(135deg,#1A1A2E,#0A1628)'}} className="flex items-center gap-3 px-4 py-3">
+                           {/* Ranking */}
+                           <div style={{background:idx<3?ORG:'#333',minWidth:28,height:28,borderRadius:'50%'}} className="flex items-center justify-center">
+                             <span className={`text-xs font-black ${idx<3?'text-black':'text-gray-400'}`}>{idx+1}</span>
+                           </div>
+                           {/* Logo/foto cliente */}
+                           <div style={{width:44,height:44,background:'#2A2A3E',borderRadius:8,overflow:'hidden',flexShrink:0}} className="relative flex items-center justify-center cursor-pointer"
+                             onClick={()=>document.getElementById(`img-cli-${idx}`).click()}>
+                             {resenaImages[imgKey]
+                               ? <img src={resenaImages[imgKey]} alt={cl.name} className="w-full h-full object-contain p-1"/>
+                               : <span className="text-lg">{cl.name.charAt(0)}</span>}
+                             <input id={`img-cli-${idx}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
+                           </div>
+                           <div className="flex-1 min-w-0">
+                             <div className="text-white font-black text-xs leading-tight truncate">{cl.name}</div>
+                             <div className="text-gray-500 text-[9px]">{cl.rif}</div>
+                           </div>
+                         </div>
+                         <div className="px-4 py-3">
+                           <div className="flex justify-between items-center mb-2">
+                             <span className="text-gray-500 text-[9px] uppercase font-black">Volumen total</span>
+                             <span style={{color:ORG}} className="font-black text-sm">{fmtUSD(cl.total)}</span>
+                           </div>
+                           <div className="flex justify-between items-center mb-3">
+                             <span className="text-gray-500 text-[9px]">NEs procesadas</span>
+                             <span className="text-gray-300 text-xs font-bold">{cl.nes}</span>
+                           </div>
+                           {/* Categorías de producto */}
+                           <div className="flex flex-wrap gap-1">
+                             {[...cl.cats].map(cat=>(
+                               <span key={cat} style={{background:(catColor[cat]||'#555')+'33',color:catColor[cat]||'#aaa',border:`1px solid ${(catColor[cat]||'#555')}55`,borderRadius:4}}
+                                 className="text-[9px] font-black px-2 py-0.5">{cat}</span>
+                             ))}
+                             {cl.cats.size===0 && <span className="text-gray-600 text-[9px]">Sin categoría</span>}
+                           </div>
+                         </div>
+                       </div>;
+                     })}
+                   </div>
+                 </div>;
+               })()}
 
                {/* ══ ACTIVOS ══ */}
                {resenaTab==='activos' && <div className="max-w-3xl mx-auto">
