@@ -25361,11 +25361,12 @@ ${resumenHtml}
                );
              };
 
-             return <div style={{background:DARK}} className="min-h-screen text-white">
+             const CANAL_STYLE={background:'#FFFFFF',backgroundImage:'repeating-linear-gradient(0deg,transparent,transparent 39px,rgba(232,84,26,0.05) 39px,rgba(232,84,26,0.05) 40px),repeating-linear-gradient(90deg,transparent,transparent 79px,rgba(0,0,0,0.02) 79px,rgba(0,0,0,0.02) 80px)'};
+             return <div style={{...CANAL_STYLE,minHeight:'100%',color:'#1f2937',position:'relative'}}>
                {/* Top bar */}
-               <div style={{background:'#13131F',borderBottom:'1px solid #2A2A3E'}} className="flex items-center justify-between px-6 py-3 sticky top-0 z-40">
+               <div style={{background:'#fff',borderBottom:'1px solid #e5e7eb',boxShadow:'0 1px 6px rgba(0,0,0,0.08)'}} className="flex items-center justify-between px-6 py-3 sticky top-0 z-40">
                  <div className="flex items-center gap-3">
-                   <button onClick={()=>setActiveTab('home')} className="text-gray-400 hover:text-white flex items-center gap-1 text-xs"><ChevronLeft size={14}/>Inicio</button>
+                   <button onClick={()=>setActiveTab('home')} className="text-gray-500 hover:text-gray-800 flex items-center gap-1 text-xs"><ChevronLeft size={14}/>Inicio</button>
                    <span style={{color:ORG}} className="font-black text-sm tracking-widest uppercase">RESEÑA INSTITUCIONAL</span>
                  </div>
                  <div className="flex items-center gap-2">
@@ -25375,7 +25376,7 @@ ${resumenHtml}
                </div>
 
                {/* Section tabs */}
-               <div style={{background:'#13131F',borderBottom:'1px solid #2A2A3E'}} className="flex gap-1 px-6 overflow-x-auto">
+               <div style={{background:'#fff',borderBottom:'1px solid #e5e7eb'}} className="flex gap-1 px-6 overflow-x-auto">
                  {[['portada','🏠 Portada'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['vehiculos','🚚 Vehículos'],['productos','📦 Productos'],['clientes','🤝 Clientes'],['activos','💰 Activos'],['proyeccion','📈 Proyección']].map(([t,l])=>(
                    <button key={t} onClick={()=>setResenaTab(t)} style={resenaTab===t?{borderBottom:`2px solid ${ORG}`,color:ORG}:{borderBottom:'2px solid transparent',color:'#888'}}
                      className="px-4 py-3 text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition-all">{l}</button>
@@ -25563,132 +25564,144 @@ ${resumenHtml}
                  const m=(DATA.maquinaria||[])[resenaMaqSel];
                  if(!m) return null;
                  const imgKey=`maq_${m.id}`;
-                 const LG='#EBEBEB';
-                 return <div style={{background:LG,borderRadius:14,overflow:'hidden',boxShadow:'0 4px 24px rgba(0,0,0,0.18)'}}>
-                   <div style={{background:ORG,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 24px'}}>
-                     <div style={{fontSize:22,fontWeight:900,color:'#fff',letterSpacing:1,textTransform:'uppercase'}}>{m.nombre.toUpperCase()}</div>
-                     <div style={{background:'#1C1C1C',color:'#fff',padding:'6px 14px',borderRadius:6,fontSize:11,fontWeight:700,whiteSpace:'nowrap'}}>
-                       03 · MAQUINARIA — EQUIPO {String(m.id).padStart(2,'0')} DE {DATA.maquinaria.length}
-                     </div>
-                   </div>
-                   <div style={{padding:'18px 20px'}}>
-                     <div style={{display:'flex',gap:12,marginBottom:16}}>
-                       <div style={{background:ORG,padding:'10px 20px',borderRadius:8}}>
-                         <span style={{color:'#fff',fontWeight:900,fontSize:13}}>MODELO: {m.modelo}</span>
-                       </div>
-                       <div style={{background:'#1C1C1C',padding:'10px 20px',borderRadius:8}}>
-                         <span style={{color:ORG,fontWeight:900,fontSize:16}}>{fmtUSD(m.costo)}</span>
+                 return <div style={{display:'flex',gap:0,background:'#fff',borderRadius:14,overflow:'hidden',boxShadow:'0 2px 20px rgba(0,0,0,0.10)',border:'1px solid #e5e7eb'}}>
+                   {/* ── IZQUIERDA: detalle (75%) ── */}
+                   <div style={{flex:1,minWidth:0}}>
+                     {/* Header naranja */}
+                     <div style={{background:ORG,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 20px'}}>
+                       <div style={{fontSize:19,fontWeight:900,color:'#fff',letterSpacing:0.5,textTransform:'uppercase'}}>{m.nombre.toUpperCase()}</div>
+                       <div style={{background:'#1C1C1C',color:'#fff',padding:'5px 12px',borderRadius:5,fontSize:10,fontWeight:700,whiteSpace:'nowrap'}}>
+                         03 · MAQUINARIA — EQUIPO {String(m.id).padStart(2,'0')} DE {(DATA.maquinaria||[]).length}
                        </div>
                      </div>
-                     <div style={{display:'grid',gridTemplateColumns:'55% 43%',gap:16,alignItems:'start'}}>
-                       <div style={{background:'#fff',borderRadius:12,border:'2px solid #ccc',overflow:'hidden',minHeight:380,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',position:'relative'}} className="group"
-                         onClick={()=>document.getElementById(`img-maq-${m.id}`).click()}>
+                     {/* Badges modelo/costo */}
+                     <div style={{display:'flex',gap:10,padding:'14px 16px 10px',background:'#f3f4f6'}}>
+                       <div style={{background:ORG,padding:'8px 18px',borderRadius:7}}>
+                         <span style={{color:'#fff',fontWeight:900,fontSize:12}}>MODELO: {m.modelo}</span>
+                       </div>
+                       <div style={{background:'#1C1C1C',padding:'8px 18px',borderRadius:7}}>
+                         <span style={{color:ORG,fontWeight:900,fontSize:14}}>{fmtUSD(m.costo)}</span>
+                       </div>
+                       <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6}}>
+                         <span style={{fontSize:10,color:'#9ca3af'}}>✏️ Clic para editar costo</span>
+                       </div>
+                     </div>
+                     {/* Foto grande + specs */}
+                     <div style={{display:'grid',gridTemplateColumns:'52% 46%',gap:14,padding:'14px 16px 16px'}}>
+                       {/* Foto */}
+                       <div style={{background:'#f9fafb',borderRadius:10,border:'2px solid #e5e7eb',overflow:'hidden',minHeight:340,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',position:'relative'}}
+                         className="group" onClick={()=>document.getElementById(`img-maq-${m.id}`).click()}>
                          {resenaImages[imgKey]
-                           ? <><img src={resenaImages[imgKey]} alt={m.nombre} style={{width:'100%',objectFit:'contain',padding:16,maxHeight:400}}/>
-                               <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}} className="bg-black/0 group-hover:bg-black/30 transition-all">
-                                 <span style={{background:'rgba(0,0,0,0.7)',color:'#fff',padding:'6px 16px',borderRadius:20,fontSize:11,fontWeight:700}} className="opacity-0 group-hover:opacity-100 transition-opacity">Cambiar foto</span>
+                           ? <><img src={resenaImages[imgKey]} alt={m.nombre} style={{width:'100%',objectFit:'contain',padding:12,maxHeight:360}}/>
+                               <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}} className="bg-black/0 group-hover:bg-black/20 transition-all">
+                                 <span style={{background:'rgba(0,0,0,0.65)',color:'#fff',padding:'5px 14px',borderRadius:16,fontSize:10,fontWeight:700}} className="opacity-0 group-hover:opacity-100 transition-opacity">Cambiar foto</span>
                                </div></>
-                           : <div style={{textAlign:'center',color:'#aaa',padding:48}}>
-                               <div style={{fontSize:64,marginBottom:12}}>📷</div>
-                               <div style={{fontWeight:700,fontSize:13}}>Clic para cargar foto</div>
+                           : <div style={{textAlign:'center',color:'#bbb',padding:40}}>
+                               <div style={{fontSize:56,marginBottom:10}}>📷</div>
+                               <div style={{fontWeight:700,fontSize:12,color:'#9ca3af'}}>Clic para cargar foto</div>
                              </div>}
                          <input id={`img-maq-${m.id}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
-                         {resenaSaving&&<div style={{position:'absolute',top:8,right:8,background:'rgba(0,0,0,0.7)',color:ORG,fontSize:10,padding:'3px 8px',borderRadius:4}} className="animate-pulse">Guardando…</div>}
+                         {resenaSaving&&<div style={{position:'absolute',top:8,right:8,background:'rgba(0,0,0,0.7)',color:ORG,fontSize:9,padding:'2px 7px',borderRadius:4}} className="animate-pulse">Guardando…</div>}
                        </div>
-                       <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                       {/* Specs como filas */}
+                       <div style={{display:'flex',flexDirection:'column',gap:4}}>
                          {(Array.isArray(m.specs)?m.specs:[]).map((s,i)=>(
-                           <div key={i} style={{background:'#2A2A2A',borderRadius:6,display:'flex',overflow:'hidden'}}>
-                             <div style={{padding:'8px 10px',minWidth:130,maxWidth:145,flexShrink:0}}>
-                               <span style={{color:ORG,fontWeight:700,fontSize:11}}>{s.k}</span>
+                           <div key={i} style={{background: i%2===0?'#1f2937':'#111827',borderRadius:5,display:'flex',overflow:'hidden'}}>
+                             <div style={{padding:'7px 10px',minWidth:125,maxWidth:140,flexShrink:0}}>
+                               <span style={{color:ORG,fontWeight:700,fontSize:10.5}}>{s.k}</span>
                              </div>
-                             <div style={{padding:'8px 10px',flex:1}}>
-                               <span style={{color:'#e5e7eb',fontSize:11}}>{s.v}</span>
+                             <div style={{padding:'7px 10px',flex:1,borderLeft:'1px solid #374151'}}>
+                               <span style={{color:'#e5e7eb',fontSize:10.5}}>{s.v}</span>
                              </div>
                            </div>
                          ))}
-                         {m.proveedor&&<div style={{background:'#2A2A2A',borderRadius:6,display:'flex',overflow:'hidden',border:`1px solid ${ORG}55`}}>
-                           <div style={{padding:'8px 10px',minWidth:130,flexShrink:0}}><span style={{color:ORG,fontWeight:700,fontSize:11}}>Proveedor</span></div>
-                           <div style={{padding:'8px 10px',flex:1}}><span style={{color:'#e5e7eb',fontSize:11}}>{m.proveedor}</span></div>
-                         </div>}
-                         {/* Editar costo */}
-                         <div style={{background:ORG+'22',borderRadius:6,border:`1px solid ${ORG}`,display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',marginTop:4,cursor:'pointer'}}
-                           onClick={()=>{const v=window.prompt(`Nuevo costo USD para ${m.nombre} (solo números):`,m.costo);if(v!==null&&v!==''){const n=Number(String(v).replace(/[^0-9.]/g,''));if(n>0){const maq=[...(DATA.maquinaria||[])];maq[resenaMaqSel]={...maq[resenaMaqSel],costo:n};saveField('maquinaria',maq);} else alert('Ingresa un número válido ej: 43400');}}}>
-                           <span style={{color:ORG,fontWeight:700,fontSize:11}}>✏️ Costo USD</span>
-                           <span style={{color:'#fff',fontWeight:900,fontSize:15}}>{fmtUSD(m.costo)}</span>
+                         {m.proveedor&&(
+                           <div style={{background:'#1f2937',borderRadius:5,display:'flex',overflow:'hidden',border:`1px solid ${ORG}66`,marginTop:2}}>
+                             <div style={{padding:'7px 10px',minWidth:125,flexShrink:0}}><span style={{color:ORG,fontWeight:700,fontSize:10.5}}>Proveedor</span></div>
+                             <div style={{padding:'7px 10px',flex:1,borderLeft:'1px solid #374151'}}><span style={{color:'#e5e7eb',fontSize:10.5}}>{m.proveedor}</span></div>
+                           </div>
+                         )}
+                         {/* Edit costo */}
+                         <div style={{background:ORG+'18',border:`1px solid ${ORG}55`,borderRadius:5,display:'flex',justifyContent:'space-between',alignItems:'center',padding:'9px 12px',marginTop:4,cursor:'pointer'}}
+                           onClick={()=>{const v=window.prompt(`Nuevo costo USD (solo números) para ${m.nombre}:`,m.costo);if(v!==null&&v!==''){const n=Number(String(v).replace(/[^0-9.]/g,''));if(n>0){const maq=[...(DATA.maquinaria||[])];maq[resenaMaqSel]={...maq[resenaMaqSel],costo:n};saveField('maquinaria',maq);}else alert('Número inválido')}}}>
+                           <span style={{color:ORG,fontWeight:700,fontSize:10}}>✏️ Editar Costo</span>
+                           <span style={{color:'#1f2937',fontWeight:900,fontSize:14}}>{fmtUSD(m.costo)}</span>
                          </div>
                        </div>
                      </div>
                    </div>
-                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 20px 14px',borderTop:'1px solid #ccc'}}>
-                     <button onClick={()=>setResenaMaqSel(Math.max(0,resenaMaqSel-1))} disabled={resenaMaqSel===0}
-                       style={{background:resenaMaqSel===0?'#ddd':ORG,color:resenaMaqSel===0?'#aaa':'#fff',border:'none',padding:'8px 20px',borderRadius:8,fontWeight:700,fontSize:12,cursor:resenaMaqSel===0?'not-allowed':'pointer'}}>← Anterior</button>
-                     <div style={{display:'flex',gap:5}}>
-                       {(DATA.maquinaria||[]).map((mm,idx)=>(
-                         <button key={mm.id} onClick={()=>setResenaMaqSel(idx)}
-                           style={{width:28,height:28,borderRadius:4,border:'none',fontWeight:700,fontSize:10,cursor:'pointer',background:resenaMaqSel===idx?ORG:'#ccc',color:resenaMaqSel===idx?'#fff':'#666'}}>{mm.id}</button>
-                       ))}
+                   {/* ── DERECHA: lista de máquinas (25%) ── */}
+                   <div style={{width:200,flexShrink:0,background:'#f9fafb',borderLeft:'1px solid #e5e7eb',display:'flex',flexDirection:'column',overflowY:'auto'}}>
+                     <div style={{background:ORG,padding:'12px 10px',textAlign:'center'}}>
+                       <div style={{color:'#000',fontWeight:900,fontSize:10,textTransform:'uppercase',letterSpacing:1}}>⚙️ {(DATA.maquinaria||[]).length} Equipos</div>
                      </div>
-                     <button onClick={()=>setResenaMaqSel(Math.min((DATA.maquinaria?.length||1)-1,resenaMaqSel+1))} disabled={resenaMaqSel===(DATA.maquinaria?.length||1)-1}
-                       style={{background:resenaMaqSel===(DATA.maquinaria?.length||1)-1?'#ddd':ORG,color:resenaMaqSel===(DATA.maquinaria?.length||1)-1?'#aaa':'#fff',border:'none',padding:'8px 20px',borderRadius:8,fontWeight:700,fontSize:12,cursor:resenaMaqSel===(DATA.maquinaria?.length||1)-1?'not-allowed':'pointer'}}>Siguiente →</button>
+                     {(DATA.maquinaria||[]).map((mm,idx)=>(
+                       <button key={mm.id} onClick={()=>setResenaMaqSel(idx)}
+                         style={{textAlign:'left',padding:'10px 10px',borderBottom:'1px solid #e5e7eb',cursor:'pointer',background:resenaMaqSel===idx?ORG+'18':'transparent',borderLeft:resenaMaqSel===idx?`3px solid ${ORG}`:'3px solid transparent',transition:'all .15s'}}>
+                         <div style={{color:resenaMaqSel===idx?ORG:'#9ca3af',fontSize:9,fontWeight:700}}>N° {String(mm.id).padStart(2,'0')}</div>
+                         <div style={{color:resenaMaqSel===idx?'#111':'#374151',fontSize:10.5,fontWeight:700,lineHeight:1.3,marginTop:2}}>{mm.nombre}</div>
+                         <div style={{color:ORG,fontSize:9.5,fontWeight:700,marginTop:2}}>{fmtUSD(mm.costo)}</div>
+                       </button>
+                     ))}
                    </div>
                  </div>;
                })()}
+
+               {/* ══ VEHÍCULOS ══ */}
                {resenaTab==='vehiculos' && (()=>{
                  const vehs=DATA.vehiculos||[];
-                 const selV=resenaVehSel; const setSelV=setResenaVehSel;
-                 const v=vehs[selV]; if(!v) return null;
+                 const v=vehs[resenaVehSel]; if(!v) return null;
                  const imgKey=`veh_${v.id}`;
-                 const LG='#EBEBEB';
-                 return <div style={{background:LG,borderRadius:14,overflow:'hidden',boxShadow:'0 4px 24px rgba(0,0,0,0.18)'}}>
-                   <div style={{background:ORG,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 24px'}}>
-                     <div style={{fontSize:22,fontWeight:900,color:'#fff',letterSpacing:1,textTransform:'uppercase'}}>{v.nombre.toUpperCase()}</div>
-                     <div style={{background:'#1C1C1C',color:'#fff',padding:'6px 14px',borderRadius:6,fontSize:11,fontWeight:700}}>FLOTA — UNIDAD {String(selV+1).padStart(2,'0')} DE {vehs.length}</div>
-                   </div>
-                   <div style={{padding:'18px 20px'}}>
-                     <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}>
-                       <div style={{background:ORG,padding:'10px 20px',borderRadius:8}}><span style={{color:'#fff',fontWeight:900,fontSize:13}}>PLACA: {v.placa}</span></div>
-                       <div style={{background:'#1C1C1C',padding:'10px 20px',borderRadius:8}}><span style={{color:ORG,fontWeight:900,fontSize:16}}>{fmtUSD(v.costo)}</span></div>
-                       <div style={{background:'#1C1C1C',padding:'10px 20px',borderRadius:8}}><span style={{color:'#fff',fontWeight:700,fontSize:12}}>{v.marca} · {v.modelo}</span></div>
+                 return <div style={{display:'flex',gap:0,background:'#fff',borderRadius:14,overflow:'hidden',boxShadow:'0 2px 20px rgba(0,0,0,0.10)',border:'1px solid #e5e7eb'}}>
+                   {/* IZQUIERDA: detalle */}
+                   <div style={{flex:1,minWidth:0}}>
+                     <div style={{background:ORG,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 20px'}}>
+                       <div style={{fontSize:19,fontWeight:900,color:'#fff',letterSpacing:0.5,textTransform:'uppercase'}}>{v.nombre.toUpperCase()}</div>
+                       <div style={{background:'#1C1C1C',color:'#fff',padding:'5px 12px',borderRadius:5,fontSize:10,fontWeight:700}}>FLOTA · UNIDAD {String(resenaVehSel+1).padStart(2,'0')} DE {vehs.length}</div>
                      </div>
-                     <div style={{display:'grid',gridTemplateColumns:'55% 43%',gap:16,alignItems:'start'}}>
-                       <div style={{background:'#fff',borderRadius:12,border:'2px solid #ccc',overflow:'hidden',minHeight:360,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',position:'relative'}} className="group"
-                         onClick={()=>document.getElementById(`img-veh-${v.id}`).click()}>
+                     <div style={{display:'flex',gap:10,padding:'14px 16px 10px',background:'#f3f4f6'}}>
+                       <div style={{background:ORG,padding:'8px 18px',borderRadius:7}}><span style={{color:'#fff',fontWeight:900,fontSize:12}}>PLACA: {v.placa}</span></div>
+                       <div style={{background:'#1C1C1C',padding:'8px 18px',borderRadius:7}}><span style={{color:ORG,fontWeight:900,fontSize:14}}>{fmtUSD(v.costo)}</span></div>
+                       <div style={{background:'#f9fafb',border:'1px solid #e5e7eb',padding:'8px 14px',borderRadius:7}}><span style={{color:'#374151',fontWeight:700,fontSize:11}}>{v.marca} · {v.modelo}</span></div>
+                     </div>
+                     <div style={{display:'grid',gridTemplateColumns:'52% 46%',gap:14,padding:'14px 16px 16px'}}>
+                       <div style={{background:'#f9fafb',borderRadius:10,border:'2px solid #e5e7eb',overflow:'hidden',minHeight:320,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',position:'relative'}}
+                         className="group" onClick={()=>document.getElementById(`img-veh-${v.id}`).click()}>
                          {resenaImages[imgKey]
-                           ? <><img src={resenaImages[imgKey]} alt={v.nombre} style={{width:'100%',objectFit:'contain',padding:12,maxHeight:380}}/>
-                               <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}} className="bg-black/0 group-hover:bg-black/30 transition-all">
-                                 <span style={{background:'rgba(0,0,0,0.7)',color:'#fff',padding:'6px 16px',borderRadius:20,fontSize:11,fontWeight:700}} className="opacity-0 group-hover:opacity-100 transition-opacity">Cambiar foto</span>
+                           ? <><img src={resenaImages[imgKey]} alt={v.nombre} style={{width:'100%',objectFit:'contain',padding:12,maxHeight:340}}/>
+                               <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}} className="bg-black/0 group-hover:bg-black/20 transition-all">
+                                 <span style={{background:'rgba(0,0,0,0.65)',color:'#fff',padding:'5px 14px',borderRadius:16,fontSize:10,fontWeight:700}} className="opacity-0 group-hover:opacity-100 transition-opacity">Cambiar foto</span>
                                </div></>
-                           : <div style={{textAlign:'center',color:'#aaa',padding:48}}>
-                               <div style={{fontSize:64,marginBottom:12}}>🚚</div>
-                               <div style={{fontWeight:700,fontSize:13}}>Clic para cargar foto del vehículo</div>
-                             </div>}
+                           : <div style={{textAlign:'center',color:'#bbb',padding:40}}><div style={{fontSize:56,marginBottom:10}}>🚚</div><div style={{fontWeight:700,fontSize:12,color:'#9ca3af'}}>Clic para cargar foto</div></div>}
                          <input id={`img-veh-${v.id}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
-                         {resenaSaving&&<div style={{position:'absolute',top:8,right:8,background:'rgba(0,0,0,0.7)',color:ORG,fontSize:10,padding:'3px 8px',borderRadius:4}} className="animate-pulse">Guardando…</div>}
                        </div>
-                       <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                       <div style={{display:'flex',flexDirection:'column',gap:4}}>
                          {(v.specs||[]).map((s,i)=>(
-                           <div key={i} style={{background:'#2A2A2A',borderRadius:6,display:'flex',overflow:'hidden'}}>
-                             <div style={{padding:'8px 10px',minWidth:130,maxWidth:145,flexShrink:0}}><span style={{color:ORG,fontWeight:700,fontSize:11}}>{s.k}</span></div>
-                             <div style={{padding:'8px 10px',flex:1}}><span style={{color:'#e5e7eb',fontSize:11}}>{s.v}</span></div>
+                           <div key={i} style={{background:i%2===0?'#1f2937':'#111827',borderRadius:5,display:'flex',overflow:'hidden'}}>
+                             <div style={{padding:'7px 10px',minWidth:125,maxWidth:140,flexShrink:0}}><span style={{color:ORG,fontWeight:700,fontSize:10.5}}>{s.k}</span></div>
+                             <div style={{padding:'7px 10px',flex:1,borderLeft:'1px solid #374151'}}><span style={{color:'#e5e7eb',fontSize:10.5}}>{s.v}</span></div>
                            </div>
                          ))}
                        </div>
                      </div>
                    </div>
-                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 20px 14px',borderTop:'1px solid #ccc'}}>
-                     <button onClick={()=>setSelV(Math.max(0,selV-1))} disabled={selV===0}
-                       style={{background:selV===0?'#ddd':ORG,color:selV===0?'#aaa':'#fff',border:'none',padding:'8px 20px',borderRadius:8,fontWeight:700,fontSize:12,cursor:selV===0?'not-allowed':'pointer'}}>← Anterior</button>
-                     <div style={{display:'flex',gap:8}}>
-                       {vehs.map((vv,idx)=>(
-                         <button key={vv.id} onClick={()=>setSelV(idx)}
-                           style={{padding:'6px 14px',borderRadius:6,border:'none',fontWeight:700,fontSize:11,cursor:'pointer',background:selV===idx?ORG:'#ccc',color:selV===idx?'#fff':'#555'}}>{vv.placa}</button>
-                       ))}
+                   {/* DERECHA: lista vehículos */}
+                   <div style={{width:180,flexShrink:0,background:'#f9fafb',borderLeft:'1px solid #e5e7eb',display:'flex',flexDirection:'column'}}>
+                     <div style={{background:ORG,padding:'12px 10px',textAlign:'center'}}>
+                       <div style={{color:'#000',fontWeight:900,fontSize:10,textTransform:'uppercase',letterSpacing:1}}>🚚 Flota ({vehs.length})</div>
                      </div>
-                     <button onClick={()=>setSelV(Math.min(vehs.length-1,selV+1))} disabled={selV===vehs.length-1}
-                       style={{background:selV===vehs.length-1?'#ddd':ORG,color:selV===vehs.length-1?'#aaa':'#fff',border:'none',padding:'8px 20px',borderRadius:8,fontWeight:700,fontSize:12,cursor:selV===vehs.length-1?'not-allowed':'pointer'}}>Siguiente →</button>
+                     {vehs.map((vv,idx)=>(
+                       <button key={vv.id} onClick={()=>setResenaVehSel(idx)}
+                         style={{textAlign:'left',padding:'12px 10px',borderBottom:'1px solid #e5e7eb',cursor:'pointer',background:resenaVehSel===idx?ORG+'18':'transparent',borderLeft:resenaVehSel===idx?`3px solid ${ORG}`:'3px solid transparent'}}>
+                         <div style={{color:resenaVehSel===idx?ORG:'#9ca3af',fontSize:9,fontWeight:700}}>PLACA: {vv.placa}</div>
+                         <div style={{color:resenaVehSel===idx?'#111':'#374151',fontSize:11,fontWeight:700,lineHeight:1.3,marginTop:2}}>{vv.nombre}</div>
+                         <div style={{color:ORG,fontSize:10,fontWeight:700,marginTop:2}}>{fmtUSD(vv.costo)}</div>
+                       </button>
+                     ))}
                    </div>
                  </div>;
                })()}
+
                {/* ══ PRODUCTOS ══ */}
                {resenaTab==='productos' && (()=>{
                  const defaultProds=[
@@ -25842,21 +25855,19 @@ ${resumenHtml}
                </div>}
 
                {/* ══ PROYECCIÓN ══ */}
-               {resenaTab==='proyeccion' && <div className="space-y-5">
-                 {(()=>{// Migrar formato anual viejo → mensual si aplica
-                   if(DATA.proyeccion?.length&&!DATA.proyeccion[0].mes){
-                     const defaultMensual=[
-                       {mes:'Jul 2026',kg:40000,ingresos:160000,costoMin:6000,costoMax:8000,nota:'Inicio 24h/5d'},
-                       {mes:'Ago 2026',kg:40000,ingresos:160000,costoMin:6000,costoMax:8000,nota:''},
-                       {mes:'Sep 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:'Capacidad plena'},
-                       {mes:'Oct 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:''},
-                       {mes:'Nov 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:''},
-                       {mes:'Dic 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:''},
-                       {mes:'Ene 2027',kg:1700,ingresos:6800,costoMin:255,costoMax:340,nota:'Prom. diario'},
-                     ];
-                     saveField('proyeccion',defaultMensual);
-                   }
-                 })()}
+               {resenaTab==='proyeccion' && (()=>{
+                 // Usar formato mensual - si Firestore tiene formato viejo (anual), usar defaults
+                 const defProy=[
+                   {mes:'Jul 2026',kg:40000,ingresos:160000,costoMin:6000,costoMax:8000,nota:'Inicio 24h/5d'},
+                   {mes:'Ago 2026',kg:40000,ingresos:160000,costoMin:6000,costoMax:8000,nota:''},
+                   {mes:'Sep 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:'Capacidad plena'},
+                   {mes:'Oct 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:''},
+                   {mes:'Nov 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:''},
+                   {mes:'Dic 2026',kg:80000,ingresos:320000,costoMin:12000,costoMax:16000,nota:''},
+                   {mes:'Ene 2027',kg:1700,ingresos:6800,costoMin:255,costoMax:340,nota:'Prom. diario'},
+                 ];
+                 const proyData=(DATA.proyeccion||[]).some(p=>p.mes)?DATA.proyeccion:defProy;
+                 return <div className="space-y-5">
                  {/* KPIs capacidad */}
                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                    {[
@@ -25895,7 +25906,7 @@ ${resumenHtml}
                        </tr>
                      </thead>
                      <tbody>
-                       {(DATA.proyeccion||[]).map((p,idx)=>{
+                       {proyData.map((p,idx)=>{
                          const pct=Math.round(p.kg/60000*100);
                          const margenMin=p.ingresos-p.costoMax;
                          const margenMax=p.ingresos-p.costoMin;
@@ -25923,15 +25934,15 @@ ${resumenHtml}
                        <tr style={{background:'#1f2937',borderTop:`2px solid ${ORG}`}}>
                          <td style={{padding:'12px 16px',color:ORG,fontWeight:900,fontSize:12}}>TOTAL (6 meses)</td>
                          <td style={{padding:'12px 12px',textAlign:'right',color:'#fff',fontWeight:900,fontSize:12}}>
-                           {(DATA.proyeccion||[]).filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+p.kg,0).toLocaleString('es-VE')} kg
+                           {proyData.filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+p.kg,0).toLocaleString('es-VE')} kg
                          </td>
                          <td></td>
                          <td style={{padding:'12px 12px',textAlign:'right',color:'#4ade80',fontWeight:900,fontSize:13}}>
-                           ${(DATA.proyeccion||[]).filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+p.ingresos,0).toLocaleString('es-VE')}
+                           ${proyData.filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+p.ingresos,0).toLocaleString('es-VE')}
                          </td>
                          <td colSpan={2}></td>
                          <td style={{padding:'12px 12px',textAlign:'right',color:ORG,fontWeight:900,fontSize:12}}>
-                           ${(DATA.proyeccion||[]).filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+(p.ingresos-p.costoMax),0).toLocaleString('es-VE')} – ${(DATA.proyeccion||[]).filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+(p.ingresos-p.costoMin),0).toLocaleString('es-VE')}
+                           ${proyData.filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+(p.ingresos-p.costoMax),0).toLocaleString('es-VE')} – ${proyData.filter(p=>!p.mes.includes('2027')).reduce((s,p)=>s+(p.ingresos-p.costoMin),0).toLocaleString('es-VE')}
                          </td>
                          <td></td>
                        </tr>
@@ -25939,10 +25950,10 @@ ${resumenHtml}
                    </table>
                    </div>
                  </div>
-               </div>}
-
-               </div>
-             </div>;
+               </div>;})()} 
+             </div>
+           </div>;
+         })()}
            })()}
            {/* ── BANCO & TESORERÍA ── */}
            {activeTab === 'banco' && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
