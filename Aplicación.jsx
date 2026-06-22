@@ -4240,6 +4240,7 @@ function App() {
     administracion:      ['ventas','banco'],
     finanzas:            [],
     contabilidad:        [],
+    resena_portal:       ['resena'],
     configuracion_portal:['configuracion','auditoria'],
   };
   const navInPortal = (tab) => {
@@ -4429,6 +4430,7 @@ function App() {
       administracion:      ['ventas','banco'],
       finanzas:            [],
       contabilidad:        [],
+      resena_portal:       ['resena'],
       configuracion_portal:['configuracion','auditoria'],
     };
     const portalTabList = selectedPortal ? PORTAL_TABS[selectedPortal] : null;
@@ -24700,6 +24702,8 @@ ${resumenHtml}
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="7" y="49" width="44" height="3.5" rx="1.7" fill="#15803d"/><rect x="10" y="38" width="7.5" height="11" rx="1.5" fill="#4ade80"/><rect x="20" y="31" width="7.5" height="18" rx="1.5" fill="#22c55e"/><rect x="30" y="23" width="7.5" height="26" rx="1.5" fill="#16a34a"/><rect x="40" y="15" width="7.5" height="34" rx="1.5" fill="#15803d"/><path d="M11 39 L24 31 L34 24 L49 12" stroke="#bbf7d0" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M49 12 l-7 0.5 M49 12 l-0.6 7" stroke="#bbf7d0" strokeWidth="2.6" strokeLinecap="round"/><circle cx="52" cy="43" r="9" fill="#22c55e" stroke="#bbf7d0" strokeWidth="1.6"/><text x="52" y="47.5" textAnchor="middle" fontSize="11" fontWeight="900" fill="#ffffff" fontFamily="Arial">$</text><circle cx="15" cy="20" r="6.5" fill="#16a34a" stroke="#bbf7d0" strokeWidth="1.3"/><text x="15" y="23.5" textAnchor="middle" fontSize="8" fontWeight="900" fill="#ffffff" fontFamily="Arial">%</text></svg> },
       { id:'contabilidad', title:'CONTABILIDAD', desc:'Balance general, mayor analítico y activo fijo', color:'#06b6d4',
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="10" y="8" width="44" height="48" rx="4" fill="#0e7490" opacity="0.15" stroke="#0e7490" strokeWidth="1.5"/><rect x="10" y="8" width="44" height="10" rx="4" fill="#06b6d4" opacity="0.9"/><rect x="16" y="24" width="14" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="30" width="20" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="36" width="12" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="42" width="18" height="2.5" rx="1.2" fill="#0e7490"/><rect x="36" y="24" width="12" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="38" y="30" width="10" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="40" y="36" width="8" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="36" y="42" width="12" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="10" y="48" width="44" height="2.5" rx="1.2" fill="#0e7490"/><text x="32" y="17" textAnchor="middle" fontSize="7" fontWeight="900" fill="white" fontFamily="Arial">LIBRO MAYOR</text></svg> },
+      { id:'resena_portal', title:'RESEÑA', desc:'Presentación institucional, activos y proyección financiera', color:'#E8541A',
+        icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="10" y="6" width="44" height="52" rx="4" fill="#E8541A" opacity="0.15" stroke="#E8541A" strokeWidth="1.5"/><rect x="10" y="6" width="44" height="11" rx="4" fill="#E8541A" opacity="0.9"/><text x="32" y="16" textAnchor="middle" fontSize="6.5" fontWeight="900" fill="white" fontFamily="Arial">RESEÑA INST.</text><rect x="17" y="23" width="18" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="29" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="33" width="26" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="39" width="22" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="43" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="47" width="24" height="2" rx="1" fill="#c2410c" opacity="0.5"/><circle cx="47" cy="50" r="8" fill="#E8541A"/><text x="47" y="54" textAnchor="middle" fontSize="10" fontWeight="900" fill="white" fontFamily="Arial">i</text></svg> },
       { id:'configuracion_portal', title:'CONFIGURACIÓN', desc:'Usuarios, ajustes del sistema y auditoría', color:'#64748b',
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><path d="M32 18 a14 14 0 1 1 0 28 a14 14 0 0 1 0-28z" fill="#64748b" opacity="0.15" stroke="#64748b" strokeWidth="1.5"/><circle cx="32" cy="32" r="6" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(60 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(120 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(180 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(240 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(300 32 32)"/><circle cx="32" cy="32" r="4" fill="#f8fafc"/></svg> },
     ];
@@ -24765,7 +24769,7 @@ ${resumenHtml}
               {PORTALES.map(p => {
                 const allowed = hasPortal(p.id);
                 return (
-                <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); setActiveTab('home'); } else { setPortalDenied(p.title); } }}
+                <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); if(p.id==='resena_portal') setActiveTab('resena'); else setActiveTab('home'); } else { setPortalDenied(p.title); } }}
                   style={{textAlign:'left', position:'relative', background:allowed?'#ffffff':'rgba(255,255,255,0.55)',
                     border:'none', borderLeft:`5px solid ${allowed?p.color:'#9ca3af'}`, borderRadius:16, padding:'28px 24px',
                     cursor:'pointer', color:allowed?'#111':'#6b7280', opacity:allowed?1:0.7, transition:'transform 0.2s, box-shadow 0.2s', boxShadow:'0 4px 24px rgba(0,0,0,0.22)'}}
