@@ -400,6 +400,7 @@ function App() {
   const [portalDenied, setPortalDenied] = useState(''); // aviso "no posee permiso" en pantalla de portales
   const [ventasView, setVentasView] = useState('facturacion');
   const [pvFilter, setPvFilter] = useState('general');
+  const [pvAlmacenFilter, setPvAlmacenFilter] = useState('TODOS');
   const [pvFiltCliente, setPvFiltCliente] = useState('');
   const [pvFiltDoc, setPvFiltDoc] = useState('');
   const [cotizaciones, setCotizaciones] = useState([]);
@@ -9630,7 +9631,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 totalCosto: cantidad*costoUnd,
                 precioVenta,
                 totalVenta,
-                opId: ne.opId||ne.opRelacionada||'—'
+                opId: ne.opId||ne.opRelacionada||'—',
+                almacen: it.almacen||ne.deposito||ne.almacen||'ALMACEN ZI'
               });
             });
           });
@@ -9652,9 +9654,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(pvFilter===`Q4_${y}`) return m>=10&&m<=12;
             return f.startsWith(pvFilter); // mes exacto YYYY-MM
           };
+          const pvAlmacenes = ['TODOS', ...Array.from(new Set(sorted.map(s=>s.almacen).filter(Boolean))).sort()];
           const pvFiltered = sorted.filter(s =>
             (!pvFiltCliente||pvFiltCliente==='TODOS'||s.cliente.toUpperCase().includes(pvFiltCliente.toUpperCase())) &&
             (!pvFiltProducto||pvFiltProducto==='TODOS'||s.producto.toUpperCase().includes(pvFiltProducto.toUpperCase())) &&
+            (pvAlmacenFilter==='TODOS'||s.almacen===pvAlmacenFilter) &&
             pvMatchPeriod(s.fecha)
           );
           return (
@@ -9690,6 +9694,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 </div>
                 <div className="flex gap-3 items-center flex-wrap">
                   <div>
+                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">🏭 Almacén</label>
+                    <select value={pvAlmacenFilter} onChange={e=>setPvAlmacenFilter(e.target.value)}
+                      className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black outline-none focus:border-green-400 bg-white w-44">
+                      {pvAlmacenes.map(a=><option key={a} value={a}>{a}</option>)}
+                    </select>
+                  </div>
+                  <div>
                     <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">🔍 Cliente</label>
                     <input value={pvFiltCliente==='TODOS'?'':pvFiltCliente} onChange={e=>pvSetCliente(e.target.value||'TODOS')} placeholder="Buscar cliente..."
                       className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black outline-none focus:border-green-400 bg-white w-44" />
@@ -9699,8 +9710,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <input value={pvFiltProducto==='TODOS'?'':pvFiltProducto} onChange={e=>pvSetProducto(e.target.value||'TODOS')} placeholder="Buscar producto..."
                       className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black outline-none focus:border-green-400 bg-white w-44" />
                   </div>
-                  {(pvFiltCliente !== 'TODOS' || pvFiltProducto !== 'TODOS') && (
-                    <button onClick={()=>{pvSetCliente('TODOS');pvSetProducto('TODOS');}} className="text-[9px] font-black text-red-500 uppercase hover:underline mt-4">✕ Limpiar</button>
+                  {(pvFiltCliente !== 'TODOS' || pvFiltProducto !== 'TODOS' || pvAlmacenFilter !== 'TODOS') && (
+                    <button onClick={()=>{pvSetCliente('TODOS');pvSetProducto('TODOS');setPvAlmacenFilter('TODOS');}} className="text-[9px] font-black text-red-500 uppercase hover:underline mt-4">✕ Limpiar</button>
                   )}
                   <button onClick={()=>{
                     const periodo = pvFilter&&pvFilter!=='general'?pvFilter:'General';
@@ -25756,18 +25767,25 @@ ${resumenHtml}
                      </div>
                      <div style={{padding:'24px 28px'}}>
                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                         {valores.map((v,i)=>(
-                           <div key={i} style={{background:'linear-gradient(135deg,#fff7ed,#fff)',border:'2px solid #fed7aa',borderRadius:12,padding:'16px 20px',display:'flex',alignItems:'center',gap:12}}>
-                             <div style={{fontSize:28,flexShrink:0}}>{v.split(' ')[0]}</div>
-                             <div style={{color:'#111',fontWeight:900,fontSize:13,lineHeight:1.3}}
-                               contentEditable suppressContentEditableWarning
-                               onBlur={e=>{const upd=[...valores];upd[i]=e.target.innerText.trim();saveField('valores',upd);}}
-                               title="Clic para editar">
-                               {v.substring(v.indexOf(' ')+1)}
+                         {valores.map((v,i)=>{
+                           // Extract emoji: match 1-2 emoji chars at start
+                           const emojiMatch=v.match(/^(\p{Emoji_Presentation}|\p{Extended_Pictographic})(\u200d(\p{Emoji_Presentation}|\p{Extended_Pictographic}))*\s*/u);
+                           const emoji=emojiMatch?emojiMatch[0].trim():'⭐';
+                           const texto=emojiMatch?v.slice(emojiMatch[0].length).trim():v;
+                           return <div key={i} style={{background:'linear-gradient(135deg,#fff7ed,#fff)',border:'2px solid #fed7aa',borderRadius:12,padding:'16px 20px',display:'flex',alignItems:'center',gap:12,position:'relative'}}>
+                             <div style={{fontSize:28,flexShrink:0,lineHeight:1}}>{emoji}</div>
+                             <div style={{flex:1}}>
+                               <div style={{color:'#111',fontWeight:900,fontSize:14,lineHeight:1.3}}>{texto}</div>
                              </div>
-                           </div>
-                         ))}
-                         <button onClick={()=>{const n=window.prompt('Nuevo valor (ej: 🌟 Excelencia):');if(n){saveField('valores',[...valores,n]);}}}
+                             <button onClick={()=>{
+                               const nuevo=window.prompt('Editar valor:',v);
+                               if(nuevo!==null&&nuevo.trim()){const upd=[...valores];upd[i]=nuevo.trim();saveField('valores',upd);}
+                             }} style={{position:'absolute',top:6,right:6,background:'none',border:'none',cursor:'pointer',color:'#fed7aa',fontSize:12,lineHeight:1,padding:2}} title="Editar">✏️</button>
+                             <button onClick={()=>{if(window.confirm(`¿Eliminar "${texto}"?`)){saveField('valores',valores.filter((_,j)=>j!==i));}}}
+                               style={{position:'absolute',bottom:6,right:6,background:'none',border:'none',cursor:'pointer',color:'#fca5a5',fontSize:10,lineHeight:1,padding:2}} title="Eliminar">✕</button>
+                           </div>;
+                         })}
+                         <button onClick={()=>{const n=window.prompt('Nuevo valor\nFormato: 🌟 Excelencia');if(n&&n.trim()){saveField('valores',[...valores,n.trim()]);}}}
                            style={{border:'2px dashed #E8541A',borderRadius:12,padding:'16px 20px',background:'transparent',cursor:'pointer',color:'#E8541A',fontWeight:700,fontSize:13}}>
                            + Agregar valor
                          </button>
@@ -26105,41 +26123,42 @@ ${resumenHtml}
                    setVideoUploadPct(1);
                    try{
                      const ext=(f.name.split('.').pop()||'mp4').toLowerCase();
-                     const sRef=storageRef(storage,`videos/instalaciones_supply_${Date.now()}.${ext}`);
-                     await new Promise((resolve,reject)=>{
-                       const task=uploadBytesResumable(sRef,f,{contentType:f.type||'video/mp4'});
-                       // Timeout: si en 8s no avanza nada, falla con mensaje claro
-                       let lastBytes=0; let staleSecs=0;
-                       const watchdog=setInterval(()=>{
-                         const cur=task.snapshot.bytesTransferred;
-                         if(cur===lastBytes){ staleSecs+=2; if(staleSecs>=8){ clearInterval(watchdog); task.cancel(); reject(new Error('STALLED')); } }
-                         else{ staleSecs=0; lastBytes=cur; }
-                       },2000);
-                       task.on('state_changed',
-                         (snap)=>{ setVideoUploadPct(Math.round(snap.bytesTransferred/snap.totalBytes*100)||1); },
-                         (err)=>{ clearInterval(watchdog); reject(err); },
-                         ()=>{ clearInterval(watchdog); resolve(task.snapshot.ref); }
-                       );
-                     }).then(async(ref)=>{
-                       const dlUrl=await getDownloadURL(ref);
-                       setVideoUploadPct(100);
-                       await saveField('videoUrl',dlUrl);
-                       setTimeout(()=>setVideoUploadPct(null),1500);
-                     });
+                     const path=`videos/instalaciones_supply_${Date.now()}.${ext}`;
+                     const sRef=storageRef(storage,path);
+                     // Intento 1: uploadBytesResumable con progreso real
+                     let dlUrl=null;
+                     try{
+                       dlUrl=await new Promise((resolve,reject)=>{
+                         const task=uploadBytesResumable(sRef,f,{contentType:f.type||'video/mp4'});
+                         let lastBytes=-1; let staleSecs=0;
+                         const watchdog=setInterval(()=>{
+                           const cur=task.snapshot.bytesTransferred;
+                           if(cur===lastBytes&&cur===0){ staleSecs+=3; if(staleSecs>=15){ clearInterval(watchdog); task.cancel(); reject(new Error('STALLED')); } }
+                           else{ staleSecs=0; lastBytes=cur; }
+                         },3000);
+                         task.on('state_changed',
+                           (snap)=>{ if(snap.totalBytes>0)setVideoUploadPct(Math.max(1,Math.round(snap.bytesTransferred/snap.totalBytes*100))); },
+                           (err)=>{ clearInterval(watchdog); reject(err); },
+                           async()=>{ clearInterval(watchdog); resolve(await getDownloadURL(task.snapshot.ref)); }
+                         );
+                       });
+                     }catch(e1){
+                       // Intento 2: uploadBytes simple (sin progreso)
+                       setVideoUploadPct(10);
+                       const snap2=await uploadBytes(sRef,f,{contentType:f.type||'video/mp4'});
+                       dlUrl=await getDownloadURL(snap2.ref);
+                     }
+                     setVideoUploadPct(100);
+                     await saveField('videoUrl',dlUrl);
+                     setTimeout(()=>setVideoUploadPct(null),1500);
                    }catch(err){
                      setVideoUploadPct(null);
                      const code=err.code||err.message||'';
-                     if(code==='STALLED'||code.includes('canceled')){
-                       const usarLink=window.confirm(
-                         'La subida directa no funcionó (posiblemente por las reglas de Firebase Storage o el tamaño del archivo).\n\n' +
-                         '¿Deseas pegar un enlace de YouTube o Google Drive en su lugar?\n\n' +
-                         'Alternativa recomendada: sube el video a Google Drive, comparte el enlace y pégalo aquí.'
-                       );
-                       if(usarLink){ setResenaVideoTmp(''); setResenaVideoEdit(true); }
-                     } else if(code.includes('unauthorized')||code.includes('permission')){
-                       alert('Sin permiso para subir archivos.\n\nEn Firebase Console → Storage → Reglas, agrega:\nallow write: if request.auth != null;');
+                     if(code.includes('unauthorized')||code.includes('permission')){
+                       alert('Sin permiso para subir archivos a Firebase Storage.\n\nSolución: Ve a Firebase Console → Storage → Reglas y cambia a:\nallow read, write: if true;\n\nO usa Google Drive: sube el video allí, comparte el enlace y pégalo con el botón 🔗.');
                      } else {
-                       alert('Error: '+err.message+'\n\nAlternativa: pega un enlace de Google Drive o YouTube.');
+                       const usarLink=window.confirm('No se pudo subir el archivo ('+err.message+').\n\n¿Deseas pegar un enlace de Google Drive o YouTube?');
+                       if(usarLink){ setResenaVideoTmp(''); setResenaVideoEdit(true); }
                      }
                    }
                  };
@@ -26226,35 +26245,153 @@ ${resumenHtml}
                })()}
 
                {/* ══ ACTIVOS ══ */}
-               {resenaTab==='activos' && <div style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E'}} className="overflow-hidden">
-                   <div style={{background:ORG}} className="px-6 py-4">
-                     <div className="text-black font-black text-base tracking-wide">VALORIZACIÓN TOTAL DE ACTIVOS</div>
-                   </div>
-                   {/* Inmueble row */}
-                   <div style={{borderBottom:'1px solid #3A3A5E'}} className="flex justify-between items-center px-6 py-3 hover:bg-white/5">
-                     <span className="text-sm text-gray-300">Galpón Industrial (inmueble)</span>
-                     <span className="font-black text-white" style={{color:ORG}}>{fmtUSD(DATA.planta?.valorInmueble||0)}</span>
-                   </div>
-                   {/* Maquinaria rows */}
-                   {(DATA.maquinaria||[]).map(m=>(
-                     <div key={m.id} style={{borderBottom:'1px solid #3A3A5E'}} className="flex justify-between items-center px-6 py-3 hover:bg-white/5">
-                       <span className="text-sm text-gray-300">{m.nombre}</span>
-                       <span className="font-bold text-gray-200">{fmtUSD(m.costo)}</span>
+               {resenaTab==='activos' && (()=>{
+                 const maquinaria=DATA.maquinaria||[];
+                 const vehiculos=DATA.vehiculos||_defVeh||[];
+                 const inmueble=DATA.planta?.valorInmueble||380000;
+                 const totMaq=maquinaria.reduce((s,m)=>s+parseNum(m.costo),0);
+                 const totVeh=vehiculos.reduce((s,v)=>s+parseNum(v.costo),0);
+                 const pctInm=totalActivos>0?Math.round(inmueble/totalActivos*100):0;
+                 const pctMaq=totalActivos>0?Math.round(totMaq/totalActivos*100):0;
+                 const pctVeh=totalActivos>0?Math.round(totVeh/totalActivos*100):0;
+                 return <div className="space-y-6">
+                   {/* Hero KPI */}
+                   <div style={{background:'linear-gradient(135deg,#1C1C2E 0%,#2A1810 100%)',borderRadius:16,padding:'32px 36px',border:'1px solid #3A3A5E',position:'relative',overflow:'hidden'}}>
+                     <div style={{position:'absolute',top:-40,right:-40,width:220,height:220,background:'rgba(232,84,26,0.12)',borderRadius:'50%',filter:'blur(50px)'}}/>
+                     <div style={{position:'relative',display:'flex',alignItems:'flex-end',justifyContent:'space-between',flexWrap:'wrap',gap:20}}>
+                       <div>
+                         <div style={{color:'rgba(255,255,255,0.5)',fontSize:10,fontWeight:700,letterSpacing:4,textTransform:'uppercase',marginBottom:8}}>VALORIZACIÓN TOTAL — SERVICIOS JIRET G&B, C.A.</div>
+                         <div style={{color:'#E8541A',fontSize:48,fontWeight:900,lineHeight:1,letterSpacing:-1}}>{fmtUSD(totalActivos)}</div>
+                         <div style={{color:'rgba(255,255,255,0.5)',fontSize:12,marginTop:6}}>Inventario de activos fijos · Jun 2026</div>
+                       </div>
+                       <div style={{display:'flex',gap:24}}>
+                         {[{label:'Inmueble',val:fmtUSD(inmueble),pct:pctInm,c:'#6366f1'},{label:'Maquinaria',val:fmtUSD(totMaq),pct:pctMaq,c:'#E8541A'},{label:'Flota',val:fmtUSD(totVeh),pct:pctVeh,c:'#22c55e'}].map(k=>(
+                           <div key={k.label} style={{textAlign:'center'}}>
+                             <div style={{width:56,height:56,borderRadius:'50%',background:`conic-gradient(${k.c} ${k.pct*3.6}deg,rgba(255,255,255,0.08) 0deg)`,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 8px'}}>
+                               <div style={{width:42,height:42,borderRadius:'50%',background:'#1C1C2E',display:'flex',alignItems:'center',justifyContent:'center',color:k.c,fontWeight:900,fontSize:11}}>{k.pct}%</div>
+                             </div>
+                             <div style={{color:'#fff',fontWeight:700,fontSize:11}}>{k.label}</div>
+                             <div style={{color:'rgba(255,255,255,0.45)',fontSize:10}}>{k.val}</div>
+                           </div>
+                         ))}
+                       </div>
                      </div>
-                   ))}
-                   {/* Vehículos rows */}
-                   {(DATA.vehiculos||_defVeh||[]).map(v=>(
-                     <div key={v.id} style={{borderBottom:'1px solid #3A3A5E'}} className="flex justify-between items-center px-6 py-3 hover:bg-white/5">
-                       <span className="text-sm text-gray-300">🚚 {v.nombre} · Placa {v.placa}</span>
-                       <span className="font-bold text-gray-200">{fmtUSD(v.costo)}</span>
-                     </div>
-                   ))}
-                   {/* Total */}
-                   <div style={{background:'#13131F',borderTop:`2px solid ${ORG}`}} className="flex justify-between items-center px-6 py-5">
-                     <span style={{color:ORG}} className="font-black text-sm uppercase tracking-wider">TOTAL GENERAL DE ACTIVOS</span>
-                     <span className="font-black text-2xl text-white">{fmtUSD(totalActivos)}</span>
                    </div>
-                 </div>}
+
+                   {/* Inmueble */}
+                   <div style={{background:'#fff',borderRadius:16,boxShadow:'0 2px 20px rgba(0,0,0,0.06)',overflow:'hidden'}}>
+                     <div style={{padding:'14px 24px',background:'linear-gradient(90deg,#6366f1,#818cf8)',display:'flex',alignItems:'center',gap:12}}>
+                       <span style={{fontSize:20}}>🏢</span>
+                       <span style={{color:'#fff',fontWeight:900,fontSize:13,letterSpacing:2,textTransform:'uppercase'}}>Inmueble</span>
+                       <span style={{marginLeft:'auto',color:'rgba(255,255,255,0.8)',fontSize:12,fontWeight:700}}>{pctInm}% del total</span>
+                     </div>
+                     <div style={{padding:'20px 24px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                       <div>
+                         <div style={{fontWeight:900,color:'#111',fontSize:15}}>Galpón Industrial</div>
+                         <div style={{color:'#6b7280',fontSize:12,marginTop:2}}>Inmueble · Barrio Alfredo Quero, Calle 148 · Maracaibo</div>
+                       </div>
+                       <div style={{textAlign:'right'}}>
+                         <div style={{fontWeight:900,color:'#6366f1',fontSize:22}}>{fmtUSD(inmueble)}</div>
+                         <div style={{color:'#9ca3af',fontSize:10,marginTop:2}}>Valoración actual</div>
+                       </div>
+                     </div>
+                     <div style={{height:4,background:`linear-gradient(90deg,#6366f1 ${pctInm}%,#e5e7eb ${pctInm}%)`}}/>
+                   </div>
+
+                   {/* Maquinaria */}
+                   <div style={{background:'#fff',borderRadius:16,boxShadow:'0 2px 20px rgba(0,0,0,0.06)',overflow:'hidden'}}>
+                     <div style={{padding:'14px 24px',background:'linear-gradient(90deg,#E8541A,#f97316)',display:'flex',alignItems:'center',gap:12}}>
+                       <span style={{fontSize:20}}>⚙️</span>
+                       <span style={{color:'#000',fontWeight:900,fontSize:13,letterSpacing:2,textTransform:'uppercase'}}>Maquinaria Industrial</span>
+                       <span style={{marginLeft:'auto',color:'rgba(0,0,0,0.6)',fontSize:12,fontWeight:700}}>{maquinaria.length} equipos · {pctMaq}% del total</span>
+                     </div>
+                     <div style={{overflowX:'auto'}}>
+                       <table style={{width:'100%',borderCollapse:'collapse'}}>
+                         <thead>
+                           <tr style={{background:'#fafafa',borderBottom:'2px solid #f3f4f6'}}>
+                             <th style={{padding:'10px 24px',textAlign:'left',color:'#6b7280',fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>#</th>
+                             <th style={{padding:'10px 16px',textAlign:'left',color:'#6b7280',fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>Equipo</th>
+                             <th style={{padding:'10px 24px',textAlign:'right',color:'#6b7280',fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>Valor USD</th>
+                             <th style={{padding:'10px 24px',textAlign:'right',color:'#6b7280',fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>% Total</th>
+                           </tr>
+                         </thead>
+                         <tbody>
+                           {maquinaria.map((m,idx)=>{
+                             const pct=totalActivos>0?((parseNum(m.costo)/totalActivos)*100).toFixed(1):0;
+                             return <tr key={m.id} style={{borderBottom:'1px solid #f3f4f6',background:idx%2===0?'#fff':'#fafafa'}}>
+                               <td style={{padding:'12px 24px',color:'#9ca3af',fontSize:12,fontWeight:700}}>{String(idx+1).padStart(2,'0')}</td>
+                               <td style={{padding:'12px 16px'}}>
+                                 <div style={{fontWeight:700,color:'#111',fontSize:13}}>{m.nombre}</div>
+                                 {m.modelo&&<div style={{color:'#9ca3af',fontSize:10,marginTop:1}}>{m.modelo}</div>}
+                               </td>
+                               <td style={{padding:'12px 24px',textAlign:'right',fontWeight:900,color:'#E8541A',fontSize:14}}>{fmtUSD(m.costo)}</td>
+                               <td style={{padding:'12px 24px',textAlign:'right'}}>
+                                 <span style={{background:'#fff7ed',color:'#c2410c',fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:20}}>{pct}%</span>
+                               </td>
+                             </tr>;
+                           })}
+                         </tbody>
+                         <tfoot>
+                           <tr style={{background:'#fff7ed',borderTop:'2px solid #fed7aa'}}>
+                             <td colSpan={2} style={{padding:'12px 24px',fontWeight:900,color:'#c2410c',fontSize:12,textTransform:'uppercase',letterSpacing:1}}>Subtotal Maquinaria</td>
+                             <td style={{padding:'12px 24px',textAlign:'right',fontWeight:900,color:'#E8541A',fontSize:16}}>{fmtUSD(totMaq)}</td>
+                             <td style={{padding:'12px 24px',textAlign:'right'}}><span style={{background:'#E8541A',color:'#fff',fontSize:10,fontWeight:700,padding:'3px 10px',borderRadius:20}}>{pctMaq}%</span></td>
+                           </tr>
+                         </tfoot>
+                       </table>
+                     </div>
+                   </div>
+
+                   {/* Flota */}
+                   <div style={{background:'#fff',borderRadius:16,boxShadow:'0 2px 20px rgba(0,0,0,0.06)',overflow:'hidden'}}>
+                     <div style={{padding:'14px 24px',background:'linear-gradient(90deg,#14532d,#16a34a)',display:'flex',alignItems:'center',gap:12}}>
+                       <span style={{fontSize:20}}>🚚</span>
+                       <span style={{color:'#fff',fontWeight:900,fontSize:13,letterSpacing:2,textTransform:'uppercase'}}>Flota Vehicular</span>
+                       <span style={{marginLeft:'auto',color:'rgba(255,255,255,0.7)',fontSize:12,fontWeight:700}}>{vehiculos.length} vehículos · {pctVeh}% del total</span>
+                     </div>
+                     <div style={{display:'grid',gridTemplateColumns:`repeat(${vehiculos.length},1fr)`,gap:0}}>
+                       {vehiculos.map((v,idx)=>(
+                         <div key={v.id} style={{padding:'20px 24px',borderRight:idx<vehiculos.length-1?'1px solid #f3f4f6':'none'}}>
+                           <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+                             <div style={{width:36,height:36,borderRadius:8,background:'#f0fdf4',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18}}>🚚</div>
+                             <div>
+                               <div style={{fontWeight:900,color:'#111',fontSize:13}}>{v.nombre}</div>
+                               <div style={{color:'#6b7280',fontSize:10}}>Placa: <b>{v.placa}</b></div>
+                             </div>
+                           </div>
+                           {[['Año',v.ano||v.anio||'—'],['Combustible',v.combustible||'—']].map(([k,val])=>(
+                             <div key={k} style={{display:'flex',justifyContent:'space-between',borderBottom:'1px solid #f3f4f6',padding:'6px 0',fontSize:11}}>
+                               <span style={{color:'#9ca3af'}}>{k}</span>
+                               <span style={{fontWeight:700,color:'#374151'}}>{val}</span>
+                             </div>
+                           ))}
+                           <div style={{marginTop:12,textAlign:'right'}}>
+                             <div style={{fontWeight:900,color:'#16a34a',fontSize:20}}>{fmtUSD(v.costo)}</div>
+                             <div style={{color:'#9ca3af',fontSize:10}}>Valoración actual</div>
+                           </div>
+                         </div>
+                       ))}
+                     </div>
+                     <div style={{height:4,background:`linear-gradient(90deg,#16a34a ${pctVeh}%,#e5e7eb ${pctVeh}%)`}}/>
+                   </div>
+
+                   {/* Resumen final */}
+                   <div style={{background:'linear-gradient(135deg,#0f172a,#1e293b)',borderRadius:16,padding:'24px 32px',display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:20,border:'1px solid #334155'}}>
+                     {[
+                       {label:'Inmueble',val:fmtUSD(inmueble),icon:'🏢',c:'#818cf8'},
+                       {label:'Maquinaria',val:fmtUSD(totMaq),icon:'⚙️',c:'#E8541A'},
+                       {label:'Flota',val:fmtUSD(totVeh),icon:'🚚',c:'#22c55e'},
+                       {label:'TOTAL ACTIVOS',val:fmtUSD(totalActivos),icon:'💰',c:'#fbbf24',big:true},
+                     ].map(k=>(
+                       <div key={k.label} style={{textAlign:'center',padding:'4px 0',borderLeft:k.big?'2px solid #fbbf24':'none',paddingLeft:k.big?20:0}}>
+                         <div style={{fontSize:24,marginBottom:6}}>{k.icon}</div>
+                         <div style={{color:k.c,fontWeight:900,fontSize:k.big?24:18,lineHeight:1}}>{k.val}</div>
+                         <div style={{color:'rgba(255,255,255,0.45)',fontSize:10,marginTop:4,textTransform:'uppercase',letterSpacing:1}}>{k.label}</div>
+                       </div>
+                     ))}
+                   </div>
+                 </div>;
+               })()}
 
                {/* ══ PROYECCIÓN ══ */}
                {resenaTab==='proyeccion' && (()=>{
@@ -26388,19 +26525,6 @@ ${resumenHtml}
                {resenaTab==='catalogo' && (()=>{
                  const ORG2='#E8541A'; const DARK2='#1a1a1a';
                  // Imágenes del catálogo — cargables por el usuario
-                 const catImgSlots=[
-                   {key:'prod_p4',   label:'Film Estirable'},
-                   {key:'prod_cintas',label:'Cintas de Embalar'},
-                   {key:'prod_bubble',label:'Bubble Wrap'},
-                   {key:'prod_cintaper',label:'Cinta Personalizada'},
-                   {key:'prod_fragil',label:'Frágil & Stop'},
-                   {key:'prod_fleje', label:'Bobinas de Fleje'},
-                   {key:'prod_heno',  label:'Film Heno Blanco'},
-                   {key:'prod_carton',label:'Separadores Cartón'},
-                   {key:'prod_p1',   label:'Bolsas Plásticas'},
-                   {key:'prod_p2',   label:'Termos Encogibles'},
-                   {key:'prod_p3',   label:'Fardos'},
-                 ];
                  const handleCatImg=async(key,file)=>{
                    if(!file||!file.type.startsWith('image/'))return;
                    setResenaSaving(true);
@@ -26410,44 +26534,26 @@ ${resumenHtml}
                    }catch(err){alert('Error: '+err.message);}
                    setResenaSaving(false);
                  };
-                 const handlePaste=async(key,ev)=>{
-                   const item=[...ev.clipboardData.items].find(i=>i.type.startsWith('image/'));
-                   if(item) await handleCatImg(key,item.getAsFile());
-                 };
-                 const catPanel=<div style={{background:'#1a1a2e',borderRadius:12,padding:'16px 20px',marginBottom:20,border:'1px solid #3A3A5E'}}>
-                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-                     <div style={{color:'#E8541A',fontWeight:900,fontSize:13}}>📸 Imágenes del Catálogo</div>
-                     <div style={{color:'#6b7280',fontSize:10}}>Clic en cada casilla · Pega con Ctrl+V · Arrastra imagen</div>
-                   </div>
-                   <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))',gap:10}}>
-                     {catImgSlots.map(({key,label})=>(
-                       <div key={key}
-                         tabIndex={0}
-                         onPaste={ev=>handlePaste(key,ev)}
-                         onDrop={ev=>{ev.preventDefault();const f=ev.dataTransfer.files[0];if(f)handleCatImg(key,f);}}
-                         onDragOver={ev=>ev.preventDefault()}
-                         onClick={()=>document.getElementById(`cat-img-${key}`).click()}
-                         style={{cursor:'pointer',borderRadius:8,overflow:'hidden',border:`2px dashed ${resenaImages[key]?'#E8541A':'#374151'}`,background:'#111',position:'relative',height:90,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',outline:'none'}}
-                         title={`Clic, Ctrl+V o arrastra imagen para "${label}"`}
-                       >
-                         {resenaImages[key]
-                           ? <><img src={resenaImages[key]} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
-                               <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.55)',display:'flex',alignItems:'center',justifyContent:'center',opacity:0}} className="group-hover:opacity-100">
-                                 <span style={{color:'#fff',fontSize:9,fontWeight:700,background:'#E8541A',padding:'2px 8px',borderRadius:10}}>Cambiar</span>
-                               </div>
-                               <div style={{position:'absolute',bottom:0,left:0,right:0,background:'rgba(0,0,0,0.7)',color:'#fff',fontSize:8,fontWeight:700,padding:'3px 6px',textAlign:'center'}}>{label}</div>
-                             </>
-                           : <><div style={{fontSize:20,marginBottom:4}}>📷</div>
-                               <div style={{color:'#6b7280',fontSize:8,fontWeight:600,textAlign:'center',padding:'0 4px'}}>{label}</div></>
-                         }
-                         <input id={`cat-img-${key}`} type="file" accept="image/*" className="hidden"
-                           onChange={ev=>{if(ev.target.files[0])handleCatImg(key,ev.target.files[0]);ev.target.value='';}}/>
+                 // ImgSlot: area interactiva dentro de cada tarjeta del catálogo
+                 const ImgSlot=({imgKey,fallback,style={}})=><div
+                   tabIndex={0}
+                   style={{position:'relative',cursor:'pointer',overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center',...style}}
+                   onClick={()=>document.getElementById('cat-img-'+imgKey).click()}
+                   onPaste={ev=>{const it=[...ev.clipboardData.items].find(i=>i.type.startsWith('image/'));if(it)handleCatImg(imgKey,it.getAsFile());}}
+                   onDrop={ev=>{ev.preventDefault();const f=ev.dataTransfer.files[0];if(f)handleCatImg(imgKey,f);}}
+                   onDragOver={ev=>ev.preventDefault()}
+                   title="Clic · Ctrl+V · Arrastrar"
+                 >
+                   {resenaImages[imgKey]
+                     ? <img src={resenaImages[imgKey]} style={{width:'100%',height:'100%',objectFit:'cover',position:'absolute',inset:0}}/>
+                     : <div style={{textAlign:'center',color:'rgba(255,255,255,0.4)',fontSize:11,zIndex:1}}>
+                         <div style={{fontSize:24}}>{fallback||'📷'}</div>
+                         <div style={{fontSize:8,marginTop:2}}>clic / pegar</div>
                        </div>
-                     ))}
-                   </div>
-                   {resenaSaving && <div style={{color:'#E8541A',fontSize:10,marginTop:8,textAlign:'center'}} className="animate-pulse">Guardando imagen…</div>}
+                   }
+                   <input id={'cat-img-'+imgKey} type="file" accept="image/*" style={{display:'none'}}
+                     onChange={ev=>{if(ev.target.files[0])handleCatImg(imgKey,ev.target.files[0]);ev.target.value='';}}/>
                  </div>;
-                 const pages=[
                    {bg:`linear-gradient(160deg,${DARK2} 0%,#3d1000 100%)`,content:<div style={{height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',position:'relative',overflow:'hidden'}}>
                      <div style={{position:'absolute',inset:0,background:`radial-gradient(ellipse at 40% 50%,${ORG2}44 0%,transparent 70%)`}}/>
                      <div style={{position:'relative',textAlign:'center'}}>
@@ -26509,11 +26615,7 @@ ${resumenHtml}
                              <div style={{color:'#fff',fontWeight:900,fontSize:20,marginBottom:8}}>{p.title}</div>
                              {p.specs.map(s=><div key={s} style={{color:'#aaa',fontSize:13}}>{s}</div>)}
                            </div>
-                           <div style={{width:80,height:80,borderRadius:'50%',overflow:'hidden',background:ORG2,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
-                             {resenaImages[p.imgKey]
-                               ? <img src={resenaImages[p.imgKey]} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
-                               : <span style={{fontSize:32}}>🎞️</span>}
-                           </div>
+                           <ImgSlot imgKey={p.imgKey} fallback="🎞️" style={{width:80,height:80,borderRadius:'50%',background:ORG2,flexShrink:0}}/>
                          </div>
                        ))}
                      </div>
@@ -26549,11 +26651,7 @@ ${resumenHtml}
                              <div style={{color:DARK2,fontWeight:900,fontSize:18,marginTop:8}}>{p.title} <span style={{color:ORG2}}>{p.sub}</span></div>
                              <div style={{color:'#666',fontSize:13,marginTop:4}}>{p.spec}</div>
                            </div>
-                           <div style={{width:56,height:56,borderRadius:'50%',overflow:'hidden',background:'#e5e7eb',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
-                             {resenaImages['prod_cintas']
-                               ? <img src={resenaImages['prod_cintas']} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
-                               : <span style={{fontSize:28}}>🎀</span>}
-                           </div>
+                           <ImgSlot imgKey="prod_cintas" fallback="🎀" style={{width:56,height:56,borderRadius:'50%',background:'#e5e7eb',flexShrink:0}}/>
                          </div>
                        ))}
                      </div>
@@ -26590,12 +26688,7 @@ ${resumenHtml}
                          {imgKey:'prod_carton',icon:'📐',name:'Separadores Cartón',spec:'Medidas a requerimiento',tag:'Personalizado'},
                        ].map(p=>(
                          <div key={p.name} style={{background:'#2a2a2a',borderRadius:12,overflow:'hidden',borderTop:`3px solid ${ORG2}`}}>
-                           <div style={{height:90,background:'#1a1a1a',display:'flex',alignItems:'center',justifyContent:'center',position:'relative'}}>
-                             {resenaImages[p.imgKey]
-                               ? <img src={resenaImages[p.imgKey]} alt={p.name} style={{width:'100%',height:'100%',objectFit:'cover',position:'absolute',inset:0}}/>
-                               : <span style={{fontSize:28}}>{p.icon}</span>
-                             }
-                           </div>
+                           <ImgSlot imgKey={p.imgKey} fallback={p.icon} style={{height:90,background:'#1a1a1a',width:'100%'}}/>
                            <div style={{padding:'12px 14px'}}>
                              <span style={{background:ORG2+'33',color:ORG2,fontSize:8,fontWeight:700,padding:'2px 8px',borderRadius:10}}>{p.tag}</span>
                              <div style={{color:'#fff',fontWeight:900,fontSize:13,marginTop:6,lineHeight:1.3}}>{p.name}</div>
@@ -26660,7 +26753,6 @@ ${resumenHtml}
                  ];
                  const cur2=pages[brochurePg];
                  return <div>
-                   {catPanel}
                    <div style={{position:'relative',background:DARK2,borderRadius:12,overflow:'hidden',display:'flex',flexDirection:'column',minHeight:600}}>
                    <div style={{background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 20px',flexShrink:0}}>
                      <div style={{display:'flex',alignItems:'center',gap:12}}>
