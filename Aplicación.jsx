@@ -844,6 +844,8 @@ function App() {
   const [comCobranza, setComCobranza] = useState([]);
   const [cobFiltro, setCobFiltro] = useState('pendiente'); // tabla manual de cobranza (estado de edición)
   const [comBonos, setComBonos] = useState(null); // bonos editables del vendedor/mes
+  const [comReportes, setComReportes] = useState([]); // historial de reportes guardados
+  const [comVistaHistorial, setComVistaHistorial] = useState(false); // ver historial vs calcular
   // ── Dashboard de ventas ──
   const [dashMes, setDashMes] = useState(new Date().getMonth()+1);
   const [dashAnio, setDashAnio] = useState(new Date().getFullYear());
@@ -1507,11 +1509,12 @@ function App() {
     // ── Reseña Institucional ──────────────────────────────────────────────────
     const unsubResena = onSnapshot(getDocRef('resenaConfig','main'), (d) => { if(d.exists()) setResenaData(d.data()); });
     const unsubResenaImg = onSnapshot(getColRef('resenaImagenes'), (s) => { const imgs={}; s.docs.forEach(d=>{imgs[d.id]=d.data().data;}); setResenaImages(imgs); });
+    const unsubComRep = onSnapshot(getColRef('comisionesReportes'), (s) => { setComReportes(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.ts||0)-(a.ts||0))); });
     
     return () => { 
       unsubAlimentario(); unsubDepositos(); unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
       unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST(); unsubConsign(); unsubNE(); unsubCobrosCxc(); unsubCuentasBanco();
-      unsubResena(); unsubResenaImg();
+      unsubResena(); unsubResenaImg(); unsubComRep();
       if (typeof unsubNotifs === 'function') unsubNotifs();
       if (typeof unsubTomas === 'function') unsubTomas();
     };
@@ -10968,7 +10971,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               salarioBase: info.salarioBase??300,
               bonoVehiculo: info.bonoVehiculo??200,
               activo: info.activo!==false,
-              observaciones: info.observaciones||''
+              observaciones: info.observaciones||'',
+              tipoComision: info.tipoComision||'COMPLETO',
+              porcentajeComision: info.porcentajeComision??3,
             });
           };
 
@@ -11174,6 +11179,34 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </div>
 
                       <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest border-b pb-2 mt-4">Compensación Base</h4>
+
+                      {/* Tipo de comisión */}
+                      <div className="bg-indigo-50 border-2 border-indigo-200 rounded-xl p-3 mb-2">
+                        <label className="text-[9px] font-black text-indigo-700 uppercase block mb-2">Tipo de Comisión</label>
+                        <div className="flex gap-2">
+                          {[['COMPLETO','📊 Completo','Escala + bonos + vehículo + salario garantizado'],['PORCENTUAL','💹 Porcentual','Solo % sobre ventas, sin bonos ni asignaciones']].map(([val,lbl,desc])=>(
+                            <button key={val} onClick={()=>setFichaData({...fichaData,tipoComision:val})}
+                              className={`flex-1 p-2 rounded-lg border-2 text-left transition-all ${fichaData.tipoComision===val?'border-indigo-500 bg-indigo-100':'border-gray-200 bg-white hover:border-indigo-300'}`}>
+                              <div className="text-xs font-black">{lbl}</div>
+                              <div className="text-[8px] text-gray-500 mt-0.5">{desc}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Porcentual: solo % */}
+                      {fichaData.tipoComision==='PORCENTUAL' && (
+                        <div className="bg-green-50 border border-green-200 rounded-xl p-3">
+                          <label className="text-[9px] font-black text-green-700 uppercase block mb-1">Porcentaje de Comisión (%)</label>
+                          <div className="flex items-center gap-2">
+                            <input type="number" step="0.5" min="0" max="20" value={fichaData.porcentajeComision??3}
+                              onChange={e=>setFichaData({...fichaData,porcentajeComision:parseNum(e.target.value)})}
+                              className="w-28 border-2 border-green-300 rounded-xl px-3 py-2 text-sm font-black outline-none focus:border-green-500 text-right"/>
+                            <span className="text-sm font-black text-green-700">%</span>
+                            <span className="text-[9px] text-gray-500">sobre ventas brutas del mes</span>
+                          </div>
+                        </div>
+                      )}
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Salario Garantizado ($)</label>
@@ -11426,6 +11459,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // ── Salario Garantizado: solo primeros 3 meses desde ingreso ──
           const vendInfo=(settings?.vendedoresInfo||{})[(comVendedor||'').toUpperCase()]||{};
+          const tipoComisionVend = vendInfo.tipoComision || 'COMPLETO';
+          const pctSimple = parseNum(vendInfo.porcentajeComision ?? 3);
           const fechaIngreso=vendInfo.fechaIngreso||'';
           const mesesDesdeIngreso = fechaIngreso ? mesesEntre(fechaIngreso, ym+'-01') : 999;
           const salarioAplica = fechaIngreso && mesesDesdeIngreso < 3;
@@ -11449,13 +11484,41 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           };
 
           const comisionTotalVenta = comisionMeta + montoMix;
-          const compensacionTotal = bonos.bonoVehiculo + bonos.salarioGarantizado + bonos.captacion + bonos.recuperacion + comisionTotalVenta + totalCobranza;
+          // Comisión porcentual simple (si aplica)
+          const comisionPorcentual = tipoComisionVend==='PORCENTUAL' ? (totalVentasVend*(pctSimple/100)) : 0;
+          const compensacionTotal = tipoComisionVend==='PORCENTUAL'
+            ? comisionPorcentual
+            : (bonos.bonoVehiculo + bonos.salarioGarantizado + bonos.captacion + bonos.recuperacion + comisionTotalVenta + totalCobranza);
           const pctSobreVentas = totalVentasVend>0 ? (compensacionTotal/totalVentasVend)*100 : 0;
 
           const guardarBonos = async () => {
             const nuevos = {...(settings?.comisionesBonos||{}), [bonosKey]: bonos};
             await setDoc(getDocRef('settings','general'), {comisionesBonos:nuevos}, {merge:true});
             setDialog({title:'✅ Guardado', text:'Bonos guardados para '+(comVendedor||'GENERAL')+' — '+mesLabel+' '+comAnio, type:'alert'});
+          };
+
+          const guardarReporte = async () => {
+            if(!comVendedor) return setDialog({title:'Selecciona vendedor',text:'Elige un vendedor para guardar el reporte.',type:'alert'});
+            const reportId = comVendedor.toUpperCase().split(' ').join('_')+'_'+ym;
+            const reporte = {
+              id: reportId,
+              vendedor: comVendedor.toUpperCase(),
+              mes: comMes, anio: comAnio, ym,
+              mesLabel: mesLabel+' '+comAnio,
+              tipoComision: tipoComisionVend,
+              totalVentas: totalVentasVend,
+              compensacionTotal,
+              ...(tipoComisionVend==='PORCENTUAL'
+                ? {porcentaje:pctSimple, comisionPorcentual}
+                : {comisionMeta, montoMix, totalCobranza, bonos:{...bonos}}),
+              nNEs: nesMesCom.length,
+              ts: Date.now(),
+              user: appUser?.name||'Sistema',
+            };
+            try {
+              await setDoc(getDocRef('comisionesReportes', reportId), reporte);
+              setDialog({title:'✅ Reporte guardado',text:`Comisión de ${comVendedor} — ${mesLabel} ${comAnio} guardada en historial.`,type:'alert'});
+            } catch(e) { setDialog({title:'Error',text:e.message,type:'alert'}); }
           };
 
           const exportComisionesExcel = () => {
@@ -11479,7 +11542,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             <h3>3. Comisión por Cobranza</h3><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Monto</th><th>Cond.</th><th>Vencim.</th><th>Fecha Pago</th><th>Días Retr.</th><th>Rango</th><th>%</th><th>A Pagar</th></tr></thead><tbody>${cobrRows||'<tr><td colspan="10" style="padding:8px;text-align:center;color:#999;">Sin registros</td></tr>'}</tbody><tfoot><tr style="background:#111;color:#fff;"><td colspan="9" style="padding:6px 9px;font-weight:900;">TOTAL COBRANZA</td><td style="padding:6px 9px;text-align:right;font-weight:900;">$${formatNum(totalCobranza)}</td></tr></tfoot></table>
             <table><tr style="background:#16a34a;color:#fff;"><td style="padding:10px;font-weight:900;font-size:13px;">TOTAL A PAGAR</td><td style="padding:10px;text-align:right;font-weight:900;font-size:16px;">$${formatNum(compensacionTotal)}</td></tr></table>
             </body></html>`;
-            const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Comisiones_${(comVendedor||'GENERAL').replace(/\s+/g,'_')}_${ym}.xls`;a.click();
+            const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Comisiones_${(comVendedor||'GENERAL').split(' ').join('_')}_${ym}.xls`;a.click();
           };
           const imprimirComisiones = () => handleExportPDF('Reporte_Comisiones',false);
 
@@ -11491,6 +11554,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               <div className="px-8 py-6 border-b bg-gradient-to-r from-green-50 to-emerald-50 flex justify-between items-center flex-wrap gap-3">
                 <h2 className="text-xl font-black text-green-900 uppercase flex items-center gap-3"><DollarSign className="text-green-600" size={24}/> Comisiones de Vendedores</h2>
                 <div className="flex gap-3 items-end flex-wrap">
+                  <button onClick={()=>setComVistaHistorial(!comVistaHistorial)}
+                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1 mb-0.5 ${comVistaHistorial?'bg-indigo-600 text-white':'bg-indigo-50 text-indigo-700 border border-indigo-200'}`}>
+                    <FileText size={13}/> {comVistaHistorial?'← Calcular':'📋 Historial'}
+                  </button>
+                  {!comVistaHistorial && <button onClick={guardarReporte} className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1 mb-0.5"><Save size={13}/> Guardar Reporte</button>}
                   <button onClick={exportComisionesExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1 mb-0.5"><Download size={13}/> Excel</button>
                   <button onClick={imprimirComisiones} className="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1 mb-0.5"><Printer size={13}/> Imprimir</button>
                   <div>
@@ -11522,6 +11590,21 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               </div>
 
               <div className="p-4 sm:p-6 space-y-6 w-full">
+              <div className="p-4 sm:p-6 space-y-6 w-full">
+
+                {/* Tipo comisión badge */}
+
+                {/* Tipo comisión badge */}
+                {tipoComisionVend==='PORCENTUAL' && comVendedor && (
+                  <div className="mx-6 mt-4 bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center gap-3">
+                    <span className="text-lg">💹</span>
+                    <div>
+                      <div className="text-xs font-black text-green-700">Comisión Porcentual Simple</div>
+                      <div className="text-[10px] text-green-600">{pctSimple}% sobre ${formatNum(totalVentasVend)} en ventas = <b className="text-green-800">${formatNum(comisionPorcentual)}</b></div>
+                    </div>
+                  </div>
+                )}
+
                 {/* RESUMEN SUPERIOR */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {/* Conceptos / Bonos */}
@@ -11658,9 +11741,43 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 </div>
               </div>
             </div>
+          </div>
           );
         })()}
-
+        {/* ── HISTORIAL DE COMISIONES ── */}
+        {ventasView === 'comisiones' && comVistaHistorial && (
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden mt-4 animate-in fade-in">
+            <div className="px-8 py-5 border-b bg-indigo-50 flex justify-between items-center">
+              <h3 className="font-black text-indigo-900 uppercase text-sm flex items-center gap-2"><FileText size={18}/> Historial de Reportes</h3>
+              <select value={comVendedor} onChange={e=>setComVendedor(e.target.value)} className="border-2 border-indigo-200 rounded-xl px-3 py-1.5 text-xs font-black outline-none bg-white">
+                <option value="">Todos los vendedores</option>
+                {((settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[]).map(v=><option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
+            <div className="p-6 space-y-2">
+              {(comReportes.filter(r=>!comVendedor||r.vendedor===comVendedor.toUpperCase())).length===0
+                ? <div className="text-center py-12 text-gray-400"><div className="text-4xl mb-2">📭</div><div className="text-sm font-bold">No hay reportes guardados</div><div className="text-xs mt-1">Calcula comisiones y presiona Guardar Reporte</div></div>
+                : comReportes.filter(r=>!comVendedor||r.vendedor===comVendedor.toUpperCase()).map(r=>(
+                  <div key={r.id} className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex items-center justify-between hover:shadow-sm transition-all">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center text-xl">💰</div>
+                      <div>
+                        <div className="font-black text-sm">{r.vendedor}</div>
+                        <div className="text-xs text-gray-500">{r.mesLabel}</div>
+                        <div className="text-[9px] text-gray-400 mt-0.5">{r.tipoComision==='PORCENTUAL'?('Porcentual '+r.porcentaje+'%'):'Completo'} · {r.nNEs} NEs · Guardado por {r.user}</div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-lg font-black text-green-700">${formatNum(r.compensacionTotal)}</div>
+                      <div className="text-xs text-gray-400">Ventas: ${formatNum(r.totalVentas)}</div>
+                      <button onClick={()=>{if(window.confirm('Eliminar este reporte?')) deleteDoc(getDocRef('comisionesReportes',r.id));}} className="text-[8px] text-red-400 hover:text-red-600 mt-1 block">Eliminar</button>
+                    </div>
+                  </div>
+                ))
+              }
+            </div>
+          </div>
+        )}
         {/* ── NOTAS DE ENTREGA ── */}
         {ventasView === 'notas_entrega' && (() => {
           const PAGE_SIZE = 25;
