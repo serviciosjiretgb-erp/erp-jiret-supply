@@ -25588,7 +25588,7 @@ ${resumenHtml}
 
                {/* Section tabs */}
                <div style={{background:'#fff',borderBottom:'1px solid #e5e7eb'}} className="flex gap-1 px-6 overflow-x-auto">
-                 {[['portada','🏠 Portada'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['productos','📦 Productos'],['clientes','🤝 Clientes'],['activos','💰 Activos'],['proyeccion','📈 Proyección'],['plano','📐 Plano'],['video','🎬 Video'],['catalogo','📋 Catálogo']].map(([t,l])=>(
+                 {[['portada','🏠 Portada'],['identidad','🌙 Identidad'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['productos','📦 Productos'],['clientes','🤝 Clientes'],['activos','💰 Activos'],['proyeccion','📈 Proyección'],['plano','📐 Plano'],['video','🎬 Video'],['catalogo','📋 Catálogo']].map(([t,l])=>(
                    <button key={t} onClick={()=>setResenaTab(t)} style={resenaTab===t?{borderBottom:`2px solid ${ORG}`,color:ORG}:{borderBottom:'2px solid transparent',color:'#888'}}
                      className="px-4 py-3 text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition-all">{l}</button>
                  ))}
@@ -25692,6 +25692,91 @@ ${resumenHtml}
                </div>}
 
                {/* ══ EMPRESA ══ */}
+               {/* ══ IDENTIDAD — MISIÓN · VISIÓN · VALORES ══ */}
+               {resenaTab==='identidad' && (()=>{
+                 const defMision='Proveer soluciones de empaque de alto rendimiento que optimicen la cadena de suministro de nuestros clientes, combinando tecnología de vanguardia con respuesta oportuna y servicio de excelencia.';
+                 const defVision='Ser el aliado estratégico líder en el eje centro-occidental, reconocidos por transformar el empaque en una ventaja competitiva de alto rendimiento para nuestros clientes.';
+                 const defValores=['🤝 Honestidad','👥 Trabajo en Equipo','❤️ Pasión por el Servicio','⭐ Compromiso & Dedicación','🚀 Inmediatez & Eficiencia'];
+                 const mision=DATA.mision||defMision;
+                 const vision=DATA.vision||defVision;
+                 const valores=DATA.valores||defValores;
+                 return <div className="space-y-6">
+                   {/* Header nocturno */}
+                   <div style={{background:'linear-gradient(135deg,#0f0c29,#302b63,#24243e)',borderRadius:16,padding:'32px 36px',position:'relative',overflow:'hidden'}}>
+                     <div style={{position:'absolute',top:-30,right:-30,width:200,height:200,background:'rgba(232,84,26,0.15)',borderRadius:'50%',filter:'blur(60px)'}}/>
+                     <div style={{position:'absolute',bottom:-20,left:-20,width:150,height:150,background:'rgba(99,102,241,0.15)',borderRadius:'50%',filter:'blur(40px)'}}/>
+                     <div style={{position:'relative'}}>
+                       <div style={{color:'rgba(255,255,255,0.5)',fontSize:10,fontWeight:700,letterSpacing:4,textTransform:'uppercase',marginBottom:8}}>SERVICIOS JIRET G&B, C.A.</div>
+                       <div style={{color:'#fff',fontSize:32,fontWeight:900,lineHeight:1.1}}>Nuestra <span style={{color:'#E8541A'}}>Identidad</span></div>
+                       <div style={{color:'rgba(255,255,255,0.5)',fontSize:13,marginTop:8}}>Misión · Visión · Valores que nos definen</div>
+                     </div>
+                   </div>
+
+                   {/* Misión */}
+                   <div style={{background:'#fff',borderRadius:16,boxShadow:'0 4px 24px rgba(0,0,0,0.06)',overflow:'hidden'}}>
+                     <div style={{background:'linear-gradient(90deg,#E8541A,#f97316)',padding:'14px 24px',display:'flex',alignItems:'center',gap:12}}>
+                       <span style={{fontSize:24}}>🎯</span>
+                       <div style={{color:'#000',fontWeight:900,fontSize:16,letterSpacing:2}}>MISIÓN</div>
+                     </div>
+                     <div style={{padding:'24px 28px'}}>
+                       <p style={{color:'#374151',fontSize:15,lineHeight:1.8,margin:0}}
+                         contentEditable suppressContentEditableWarning
+                         onBlur={e=>saveField('mision',e.target.innerText.trim())}
+                         title="Clic para editar">
+                         {mision}
+                       </p>
+                       <div style={{color:'#d1d5db',fontSize:10,marginTop:8}}>✏️ Clic en el texto para editar</div>
+                     </div>
+                   </div>
+
+                   {/* Visión */}
+                   <div style={{background:'#fff',borderRadius:16,boxShadow:'0 4px 24px rgba(0,0,0,0.06)',overflow:'hidden'}}>
+                     <div style={{background:'linear-gradient(90deg,#6366f1,#8b5cf6)',padding:'14px 24px',display:'flex',alignItems:'center',gap:12}}>
+                       <span style={{fontSize:24}}>🔭</span>
+                       <div style={{color:'#fff',fontWeight:900,fontSize:16,letterSpacing:2}}>VISIÓN</div>
+                     </div>
+                     <div style={{padding:'24px 28px'}}>
+                       <p style={{color:'#374151',fontSize:15,lineHeight:1.8,margin:0}}
+                         contentEditable suppressContentEditableWarning
+                         onBlur={e=>saveField('vision',e.target.innerText.trim())}
+                         title="Clic para editar">
+                         {vision}
+                       </p>
+                       <div style={{color:'#d1d5db',fontSize:10,marginTop:8}}>✏️ Clic en el texto para editar</div>
+                     </div>
+                   </div>
+
+                   {/* Valores */}
+                   <div style={{background:'#fff',borderRadius:16,boxShadow:'0 4px 24px rgba(0,0,0,0.06)',overflow:'hidden'}}>
+                     <div style={{background:'linear-gradient(90deg,#0f172a,#1e293b)',padding:'14px 24px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                       <div style={{display:'flex',alignItems:'center',gap:12}}>
+                         <span style={{fontSize:24}}>⭐</span>
+                         <div style={{color:'#fff',fontWeight:900,fontSize:16,letterSpacing:2}}>VALORES</div>
+                       </div>
+                     </div>
+                     <div style={{padding:'24px 28px'}}>
+                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                         {valores.map((v,i)=>(
+                           <div key={i} style={{background:'linear-gradient(135deg,#fff7ed,#fff)',border:'2px solid #fed7aa',borderRadius:12,padding:'16px 20px',display:'flex',alignItems:'center',gap:12}}>
+                             <div style={{fontSize:28,flexShrink:0}}>{v.split(' ')[0]}</div>
+                             <div style={{color:'#111',fontWeight:900,fontSize:13,lineHeight:1.3}}
+                               contentEditable suppressContentEditableWarning
+                               onBlur={e=>{const upd=[...valores];upd[i]=e.target.innerText.trim();saveField('valores',upd);}}
+                               title="Clic para editar">
+                               {v.substring(v.indexOf(' ')+1)}
+                             </div>
+                           </div>
+                         ))}
+                         <button onClick={()=>{const n=window.prompt('Nuevo valor (ej: 🌟 Excelencia):');if(n){saveField('valores',[...valores,n]);}}}
+                           style={{border:'2px dashed #E8541A',borderRadius:12,padding:'16px 20px',background:'transparent',cursor:'pointer',color:'#E8541A',fontWeight:700,fontSize:13}}>
+                           + Agregar valor
+                         </button>
+                       </div>
+                     </div>
+                   </div>
+                 </div>;
+               })()}
+
                {resenaTab==='empresa' && <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                  {/* Left: logo + capital */}
                  <div className="space-y-4">
@@ -26000,11 +26085,6 @@ ${resumenHtml}
                      <input id="img-plano" type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload('plano',e)}/>
                      {!resenaSaving && resenaImages['plano'] && <button style={{position:'absolute',top:12,right:12,background:'rgba(0,0,0,0.65)',color:'#fff',border:'none',borderRadius:8,padding:'6px 14px',cursor:'pointer',fontSize:11,fontWeight:700}} onClick={e=>{e.stopPropagation();document.getElementById('img-plano').click();}}>✏️ Cambiar plano</button>}
                    </div>
-                   <div style={{padding:'10px 16px',borderTop:'1px solid #374151',display:'flex',gap:16,flexWrap:'wrap'}}>
-                     {['Materia Prima','Prod. Terminado','Selladoras','Impresoras','Oficinas','Zona de Carga','Planta Eléctrica','Estacionamiento'].map(z=>(
-                       <span key={z} style={{background:'#374151',color:'#d1d5db',fontSize:10,fontWeight:600,padding:'3px 10px',borderRadius:20}}>· {z}</span>
-                     ))}
-                   </div>
                  </div>
                </div>}
 
@@ -26023,35 +26103,44 @@ ${resumenHtml}
                    const f=e.target.files[0]; if(!f) return;
                    e.target.value='';
                    setVideoUploadPct(1);
-                   // Animación de progreso durante la subida (uploadBytes no da progreso real)
-                   let fakeP=1;
-                   const timer=setInterval(()=>{
-                     fakeP=Math.min(fakeP+(Math.random()*3+1),90);
-                     setVideoUploadPct(Math.round(fakeP));
-                   },400);
                    try{
                      const ext=(f.name.split('.').pop()||'mp4').toLowerCase();
                      const sRef=storageRef(storage,`videos/instalaciones_supply_${Date.now()}.${ext}`);
-                     const snap=await uploadBytes(sRef,f,{contentType:f.type||'video/mp4'});
-                     const dlUrl=await getDownloadURL(snap.ref);
-                     clearInterval(timer);
-                     setVideoUploadPct(100);
-                     await saveField('videoUrl',dlUrl);
-                     setTimeout(()=>setVideoUploadPct(null),1200);
+                     await new Promise((resolve,reject)=>{
+                       const task=uploadBytesResumable(sRef,f,{contentType:f.type||'video/mp4'});
+                       // Timeout: si en 8s no avanza nada, falla con mensaje claro
+                       let lastBytes=0; let staleSecs=0;
+                       const watchdog=setInterval(()=>{
+                         const cur=task.snapshot.bytesTransferred;
+                         if(cur===lastBytes){ staleSecs+=2; if(staleSecs>=8){ clearInterval(watchdog); task.cancel(); reject(new Error('STALLED')); } }
+                         else{ staleSecs=0; lastBytes=cur; }
+                       },2000);
+                       task.on('state_changed',
+                         (snap)=>{ setVideoUploadPct(Math.round(snap.bytesTransferred/snap.totalBytes*100)||1); },
+                         (err)=>{ clearInterval(watchdog); reject(err); },
+                         ()=>{ clearInterval(watchdog); resolve(task.snapshot.ref); }
+                       );
+                     }).then(async(ref)=>{
+                       const dlUrl=await getDownloadURL(ref);
+                       setVideoUploadPct(100);
+                       await saveField('videoUrl',dlUrl);
+                       setTimeout(()=>setVideoUploadPct(null),1500);
+                     });
                    }catch(err){
-                     clearInterval(timer);
                      setVideoUploadPct(null);
-                     const code=err.code||'';
-                     let msg='Error al subir el video.\n\n';
-                     if(code.includes('unauthorized')||code.includes('permission'))
-                       msg+='Sin permisos en Firebase Storage. Verifica las reglas de Storage en la consola de Firebase (deben permitir write a usuarios autenticados).';
-                     else if(code.includes('canceled'))
-                       msg+='Subida cancelada.';
-                     else if(code.includes('quota'))
-                       msg+='Cuota de Storage agotada.';
-                     else
-                       msg+=err.message;
-                     alert(msg);
+                     const code=err.code||err.message||'';
+                     if(code==='STALLED'||code.includes('canceled')){
+                       const usarLink=window.confirm(
+                         'La subida directa no funcionó (posiblemente por las reglas de Firebase Storage o el tamaño del archivo).\n\n' +
+                         '¿Deseas pegar un enlace de YouTube o Google Drive en su lugar?\n\n' +
+                         'Alternativa recomendada: sube el video a Google Drive, comparte el enlace y pégalo aquí.'
+                       );
+                       if(usarLink){ setResenaVideoTmp(''); setResenaVideoEdit(true); }
+                     } else if(code.includes('unauthorized')||code.includes('permission')){
+                       alert('Sin permiso para subir archivos.\n\nEn Firebase Console → Storage → Reglas, agrega:\nallow write: if request.auth != null;');
+                     } else {
+                       alert('Error: '+err.message+'\n\nAlternativa: pega un enlace de Google Drive o YouTube.');
+                     }
                    }
                  };
                  const uploading = videoUploadPct !== null;
@@ -26059,7 +26148,14 @@ ${resumenHtml}
                    <div style={{background:'#111',borderRadius:12,overflow:'hidden'}}>
                      <div style={{background:'#E8541A',padding:'12px 18px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
                        <div style={{color:'#fff',fontWeight:900,fontSize:14}}>🎬 VIDEO — INSTALACIONES SUPPLY G&B</div>
-                       <div style={{color:'rgba(255,255,255,0.7)',fontSize:10}}>Recorrido por las instalaciones · Jun 2026</div>
+                       <div style={{display:'flex',alignItems:'center',gap:10}}>
+                         <div style={{color:'rgba(255,255,255,0.7)',fontSize:10}}>Recorrido por las instalaciones · Jun 2026</div>
+                         {videoUrl && !uploading && <button
+                           onClick={()=>{const el=document.getElementById('resena-video-player');if(el&&el.requestFullscreen)el.requestFullscreen();else if(el&&el.webkitRequestFullscreen)el.webkitRequestFullscreen();else{const w=window.open('','_blank');w.document.write('<html><body style="margin:0;background:#000"><video src="'+videoUrl+'" controls autoplay style="width:100%;height:100vh;object-fit:contain"></video></body></html>');}}}
+                           style={{background:'rgba(255,255,255,0.2)',border:'none',color:'#fff',padding:'5px 12px',borderRadius:6,cursor:'pointer',fontSize:11,fontWeight:700}}>
+                           ⛶ Pantalla completa
+                         </button>}
+                       </div>
                      </div>
 
                      {/* Área de reproducción / upload */}
@@ -26291,6 +26387,66 @@ ${resumenHtml}
                {/* ══ CATÁLOGO / BROCHURE ══ */}
                {resenaTab==='catalogo' && (()=>{
                  const ORG2='#E8541A'; const DARK2='#1a1a1a';
+                 // Imágenes del catálogo — cargables por el usuario
+                 const catImgSlots=[
+                   {key:'prod_p4',   label:'Film Estirable'},
+                   {key:'prod_cintas',label:'Cintas de Embalar'},
+                   {key:'prod_bubble',label:'Bubble Wrap'},
+                   {key:'prod_cintaper',label:'Cinta Personalizada'},
+                   {key:'prod_fragil',label:'Frágil & Stop'},
+                   {key:'prod_fleje', label:'Bobinas de Fleje'},
+                   {key:'prod_heno',  label:'Film Heno Blanco'},
+                   {key:'prod_carton',label:'Separadores Cartón'},
+                   {key:'prod_p1',   label:'Bolsas Plásticas'},
+                   {key:'prod_p2',   label:'Termos Encogibles'},
+                   {key:'prod_p3',   label:'Fardos'},
+                 ];
+                 const handleCatImg=async(key,file)=>{
+                   if(!file||!file.type.startsWith('image/'))return;
+                   setResenaSaving(true);
+                   try{
+                     const b64=await compressImg(file,800);
+                     await setDoc(getDocRef('resenaImagenes',key),{data:b64,key,ts:Date.now()});
+                   }catch(err){alert('Error: '+err.message);}
+                   setResenaSaving(false);
+                 };
+                 const handlePaste=async(key,ev)=>{
+                   const item=[...ev.clipboardData.items].find(i=>i.type.startsWith('image/'));
+                   if(item) await handleCatImg(key,item.getAsFile());
+                 };
+                 const catPanel=<div style={{background:'#1a1a2e',borderRadius:12,padding:'16px 20px',marginBottom:20,border:'1px solid #3A3A5E'}}>
+                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                     <div style={{color:'#E8541A',fontWeight:900,fontSize:13}}>📸 Imágenes del Catálogo</div>
+                     <div style={{color:'#6b7280',fontSize:10}}>Clic en cada casilla · Pega con Ctrl+V · Arrastra imagen</div>
+                   </div>
+                   <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))',gap:10}}>
+                     {catImgSlots.map(({key,label})=>(
+                       <div key={key}
+                         tabIndex={0}
+                         onPaste={ev=>handlePaste(key,ev)}
+                         onDrop={ev=>{ev.preventDefault();const f=ev.dataTransfer.files[0];if(f)handleCatImg(key,f);}}
+                         onDragOver={ev=>ev.preventDefault()}
+                         onClick={()=>document.getElementById(`cat-img-${key}`).click()}
+                         style={{cursor:'pointer',borderRadius:8,overflow:'hidden',border:`2px dashed ${resenaImages[key]?'#E8541A':'#374151'}`,background:'#111',position:'relative',height:90,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',outline:'none'}}
+                         title={`Clic, Ctrl+V o arrastra imagen para "${label}"`}
+                       >
+                         {resenaImages[key]
+                           ? <><img src={resenaImages[key]} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
+                               <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.55)',display:'flex',alignItems:'center',justifyContent:'center',opacity:0}} className="group-hover:opacity-100">
+                                 <span style={{color:'#fff',fontSize:9,fontWeight:700,background:'#E8541A',padding:'2px 8px',borderRadius:10}}>Cambiar</span>
+                               </div>
+                               <div style={{position:'absolute',bottom:0,left:0,right:0,background:'rgba(0,0,0,0.7)',color:'#fff',fontSize:8,fontWeight:700,padding:'3px 6px',textAlign:'center'}}>{label}</div>
+                             </>
+                           : <><div style={{fontSize:20,marginBottom:4}}>📷</div>
+                               <div style={{color:'#6b7280',fontSize:8,fontWeight:600,textAlign:'center',padding:'0 4px'}}>{label}</div></>
+                         }
+                         <input id={`cat-img-${key}`} type="file" accept="image/*" className="hidden"
+                           onChange={ev=>{if(ev.target.files[0])handleCatImg(key,ev.target.files[0]);ev.target.value='';}}/>
+                       </div>
+                     ))}
+                   </div>
+                   {resenaSaving && <div style={{color:'#E8541A',fontSize:10,marginTop:8,textAlign:'center'}} className="animate-pulse">Guardando imagen…</div>}
+                 </div>;
                  const pages=[
                    {bg:`linear-gradient(160deg,${DARK2} 0%,#3d1000 100%)`,content:<div style={{height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',position:'relative',overflow:'hidden'}}>
                      <div style={{position:'absolute',inset:0,background:`radial-gradient(ellipse at 40% 50%,${ORG2}44 0%,transparent 70%)`}}/>
@@ -26503,7 +26659,9 @@ ${resumenHtml}
                    </div>},
                  ];
                  const cur2=pages[brochurePg];
-                 return <div style={{position:'relative',background:DARK2,borderRadius:12,overflow:'hidden',display:'flex',flexDirection:'column',minHeight:600}}>
+                 return <div>
+                   {catPanel}
+                   <div style={{position:'relative',background:DARK2,borderRadius:12,overflow:'hidden',display:'flex',flexDirection:'column',minHeight:600}}>
                    <div style={{background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 20px',flexShrink:0}}>
                      <div style={{display:'flex',alignItems:'center',gap:12}}>
                        <span style={{color:'#fff',fontWeight:900,fontSize:14}}>Supply G&B</span>
@@ -26526,6 +26684,7 @@ ${resumenHtml}
                    <div style={{background:'rgba(0,0,0,0.6)',padding:'8px 20px',display:'flex',justifyContent:'center',alignItems:'center',gap:8,flexShrink:0}}>
                      <span style={{color:ORG2,fontSize:11,fontWeight:700}}>{['Portada','Misión & Visión','Valores','Stretch Film','Stretch Film +','Cintas de Embalar','Kraft & Especializados','+Productos','Cobertura','Nuestros Clientes','Contacto'][brochurePg]||''}</span>
                    </div>
+                 </div>
                  </div>;
                })()}
 
