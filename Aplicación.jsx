@@ -1350,6 +1350,23 @@ function App() {
     window.addEventListener('beforeunload', cleanup);
     return () => { clearInterval(interval); window.removeEventListener('beforeunload', cleanup); };
   }, [appUser]);
+
+  // Auto-configurar tipos de comisión para vendedores conocidos (solo una vez si no están guardados)
+  useEffect(()=>{
+    if(!settings?.vendedoresInfo) return;
+    const defs={
+      'NELSON SANCHEZ':{tipoComision:'COMPLETO'},
+      'LIANNY VARGAS':{tipoComision:'COMPLETO'},
+      'MARCOS RODRIGUEZ':{tipoComision:'PORCENTUAL',porcentajeComision:2},
+      'LEANDRO MARTINEZ':{tipoComision:'PORCENTUAL',porcentajeComision:3},
+      'JULIO OJEDA':{tipoComision:'PORCENTUAL',porcentajeComision:2},
+    };
+    const info=settings.vendedoresInfo; let upd={...info}; let changed=false;
+    for(const [n,d] of Object.entries(defs)){
+      if(info[n]&&!info[n].tipoComision){upd[n]={...info[n],...d};changed=true;}
+    }
+    if(changed) setDoc(getDocRef('settings','general'),{vendedoresInfo:upd},{merge:true});
+  },[settings?.vendedoresInfo]);
   const handleLogin = async (e) => {
     e.preventDefault();
     const user = loginData.username.toLowerCase().trim();
@@ -11296,7 +11313,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         })()}
 
         {ventasView === 'comisiones' && (() => {
-          const vendedores = (settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : [];
+          const vendedores = ((settings?.vendedores && settings.vendedores.length>0) ? settings.vendedores : []).filter(v=>v.toUpperCase()!=='OFICINA' && v.toUpperCase()!=='OFFICE');
           const ym = `${comAnio}-${String(comMes).padStart(2,'0')}`;
           const mesLabel = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][comMes-1];
 
@@ -11323,6 +11340,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const facturasEnNECom = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
           const nesMesCom = (notasEntrega||[]).filter(ne =>
             (ne.fecha||'').startsWith(ym) &&
+            (ne.vendedor||'').toUpperCase()!=='OFICINA' &&
             (!comVendedor || (ne.vendedor||'').toUpperCase()===comVendedor.toUpperCase())
           );
           const factsDirCom = (invoices||[]).filter(inv => {
@@ -11605,7 +11623,38 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   </div>
                 )}
 
-                {/* RESUMEN SUPERIOR */}
+                {/* Porcentual simple summary */}
+                {tipoComisionVend==='PORCENTUAL' && comVendedor && (
+                  <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-2xl p-6">
+                    <div className="flex items-center gap-3 mb-4">
+                      <span className="text-2xl">💹</span>
+                      <div>
+                        <div className="font-black text-green-800 text-sm uppercase">Comisión Porcentual Simple</div>
+                        <div className="text-xs text-green-600">No aplica escala de meta ni cobranza</div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="bg-white rounded-xl p-4 text-center border border-green-100">
+                        <div className="text-[9px] font-black text-gray-500 uppercase mb-1">Ventas brutas (sin IVA)</div>
+                        <div className="text-xl font-black text-gray-800">${formatNum(totalVentasVend)}</div>
+                        <div className="text-[9px] text-gray-400">{nesMesCom.length} NEs en {mesLabel}</div>
+                      </div>
+                      <div className="bg-white rounded-xl p-4 text-center border border-green-100">
+                        <div className="text-[9px] font-black text-gray-500 uppercase mb-1">Porcentaje</div>
+                        <div className="text-xl font-black text-indigo-700">{pctSimple}%</div>
+                        <div className="text-[9px] text-gray-400">sobre ventas brutas</div>
+                      </div>
+                      <div className="bg-white rounded-xl p-4 text-center border border-green-100">
+                        <div className="text-[9px] font-black text-gray-500 uppercase mb-1">Comisión a Pagar</div>
+                        <div className="text-2xl font-black text-green-700">${formatNum(compensacionTotal)}</div>
+                        <div className="text-[9px] text-gray-400">{formatNum(pctSobreVentas)}% sobre ventas</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* RESUMEN SUPERIOR + COBRANZA + TOTAL — solo para COMPLETO */}
+                {tipoComisionVend!=='PORCENTUAL' && <div className="">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {/* Conceptos / Bonos */}
                   <div className="border-2 border-gray-100 rounded-2xl overflow-hidden">
@@ -11739,6 +11788,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   </div>
                   <div className="text-3xl font-black">${formatNum(compensacionTotal)}</div>
                 </div>
+                </div>}
               </div>
             </div>
           </div>
