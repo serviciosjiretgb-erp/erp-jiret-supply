@@ -1544,6 +1544,25 @@ function App() {
     };
   }, [fbUser]);
 
+  // ── CARGAR VIDEO LOCAL DESDE INDEXEDDB (si fue guardado sin Firebase Storage) ──
+  useEffect(()=>{
+    if(!resenaData?.videoUrl||resenaData.videoUrl!=='indexeddb://resenaVideo') return;
+    const req=indexedDB.open('erp_resena_video',1);
+    req.onsuccess=e=>{
+      try{
+        const tx=e.target.result.transaction('videos','readonly');
+        const get=tx.objectStore('videos').get('resenaVideo');
+        get.onsuccess=ev=>{
+          if(ev.target.result){
+            const url=URL.createObjectURL(ev.target.result);
+            const vid=document.getElementById('resena-video-player');
+            if(vid) vid.src=url;
+          }
+        };
+      }catch(e2){}
+    };
+  },[resenaData?.videoUrl,resenaTab]);
+
   // ── MIGRAR FACTURAS DE MAYO 2026 → NOTAS DE ENTREGA (PROCESADA) ─────────────
   useEffect(() => {
     if(!invoices || !appUser || invoices.length===0) return;
@@ -26118,26 +26137,6 @@ ${resumenHtml}
                    if(url.includes('drive.google.com/file/d/')) return url.replace('/view','/preview');
                    return url;
                  };
-                 // Carga el video desde IndexedDB al montar (si fue guardado localmente)
-                 React.useEffect(()=>{
-                   if(DATA.videoUrl==='indexeddb://resenaVideo'){
-                     const req=indexedDB.open('erp_resena_video',1);
-                     req.onsuccess=e=>{
-                       try{
-                         const tx=e.target.result.transaction('videos','readonly');
-                         const store=tx.objectStore('videos');
-                         const get=store.get('resenaVideo');
-                         get.onsuccess=ev=>{
-                           if(ev.target.result){
-                             const url=URL.createObjectURL(ev.target.result);
-                             const vid=document.getElementById('resena-video-player');
-                             if(vid){vid.src=url;}
-                           }
-                         };
-                       }catch(e2){}
-                     };
-                   }
-                 },[DATA.videoUrl]);
 
                  const handleVideoFile=async(e)=>{
                    const f=e.target.files[0]; if(!f) return;
@@ -26673,17 +26672,17 @@ ${resumenHtml}
                    </div>},
                    {bg:ORG2,content:<div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',padding:'28px 32px',gap:24}}>
                      {[
-                       {tag:'AUTOMÁTICO 16KG',title:'STRETCH FILM NEGRO',detail:'20 MICRAS'},
-                       {tag:'MANUAL 0.5KG',title:'MINI STRETCH FILM',detail:'12CM × 250MTS × 20 MICRAS'},
-                       {tag:'MANUAL 2.7KG',title:'STRETCH FILM DE COLORES',detail:'45CM × 330MTS × 20 MICRAS'},
+                       {tag:'AUTOMÁTICO 16KG',title:'STRETCH FILM NEGRO',detail:'20 MICRAS',imgKey:'prod_sf_negro'},
+                       {tag:'MANUAL 0.5KG',title:'MINI STRETCH FILM',detail:'12CM × 250MTS × 20 MICRAS',imgKey:'prod_sf_mini'},
+                       {tag:'MANUAL 2.7KG',title:'STRETCH FILM DE COLORES',detail:'45CM × 330MTS × 20 MICRAS',imgKey:'prod_sf_colores'},
                      ].map((p)=>(
-                       <div key={p.tag} style={{background:'rgba(0,0,0,0.25)',borderRadius:12,padding:'20px 28px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                         <div>
+                       <div key={p.tag} style={{background:'rgba(0,0,0,0.25)',borderRadius:12,padding:'16px 20px',display:'flex',justifyContent:'space-between',alignItems:'center',gap:16}}>
+                         <div style={{flex:1}}>
                            <div style={{color:'rgba(255,255,255,0.7)',fontSize:10,fontWeight:900,letterSpacing:3,marginBottom:4}}>{p.tag}</div>
-                           <div style={{color:'#fff',fontWeight:900,fontSize:22}}>{p.title}</div>
-                           <div style={{color:'rgba(255,255,255,0.8)',fontSize:14,marginTop:4}}>{p.detail}</div>
+                           <div style={{color:'#fff',fontWeight:900,fontSize:20}}>{p.title}</div>
+                           <div style={{color:'rgba(255,255,255,0.8)',fontSize:13,marginTop:4}}>{p.detail}</div>
                          </div>
-                         <div style={{fontSize:40}}>📦</div>
+                         <ImgSlot imgKey={p.imgKey} fallback="📦" style={{width:72,height:72,borderRadius:10,flexShrink:0}}/>
                        </div>
                      ))}
                    </div>},
@@ -26692,35 +26691,39 @@ ${resumenHtml}
                      <div style={{height:3,background:ORG2,width:120,marginBottom:32}}/>
                      <div style={{display:'flex',flexDirection:'column',gap:16}}>
                        {[
-                         {title:'Cinta de Embalar',sub:'DE COLORES (7 colores)',spec:'2" × 100 MTS × 50 MICRAS',badge:'MANUAL'},
-                         {title:'Cinta de Embalar',sub:'MARRÓN / TRANSPARENTE',spec:'2" × 100 MTS × 50 MICRAS',badge:'MANUAL'},
-                         {title:'Cinta de Embalar',sub:'INDUSTRIAL',spec:'2" × 1000 MTS / 2.0 MIL',badge:'AUTOMÁTICA'},
+                         {title:'Cinta de Embalar',sub:'DE COLORES (7 colores)',spec:'2" × 100 MTS × 50 MICRAS',badge:'MANUAL',imgKey:'prod_cinta_colores'},
+                         {title:'Cinta de Embalar',sub:'MARRÓN / TRANSPARENTE',spec:'2" × 100 MTS × 50 MICRAS',badge:'MANUAL',imgKey:'prod_cinta_marron'},
+                         {title:'Cinta de Embalar',sub:'INDUSTRIAL',spec:'2" × 1000 MTS / 2.0 MIL',badge:'AUTOMÁTICA',imgKey:'prod_cinta_ind'},
                        ].map((p)=>(
-                         <div key={p.sub} style={{background:'#fff',borderRadius:12,padding:'20px 28px',boxShadow:'0 4px 20px rgba(0,0,0,0.08)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                           <div>
+                         <div key={p.sub} style={{background:'#fff',borderRadius:12,padding:'16px 20px',boxShadow:'0 4px 20px rgba(0,0,0,0.08)',display:'flex',alignItems:'center',justifyContent:'space-between',gap:16}}>
+                           <div style={{flex:1}}>
                              <span style={{background:ORG2,color:'#fff',fontSize:9,fontWeight:900,padding:'3px 10px',borderRadius:20,letterSpacing:2}}>{p.badge}</span>
-                             <div style={{color:DARK2,fontWeight:900,fontSize:18,marginTop:8}}>{p.title} <span style={{color:ORG2}}>{p.sub}</span></div>
+                             <div style={{color:DARK2,fontWeight:900,fontSize:17,marginTop:8}}>{p.title} <span style={{color:ORG2}}>{p.sub}</span></div>
                              <div style={{color:'#666',fontSize:13,marginTop:4}}>{p.spec}</div>
                            </div>
-                           <ImgSlot imgKey="prod_cintas" fallback="🎀" style={{width:56,height:56,borderRadius:'50%',background:'#e5e7eb',flexShrink:0}}/>
+                           <ImgSlot imgKey={p.imgKey} fallback="🎀" style={{width:64,height:64,borderRadius:10,flexShrink:0}}/>
                          </div>
                        ))}
                      </div>
                    </div>},
                    {bg:ORG2,content:<div style={{height:'100%',display:'grid',gridTemplateColumns:'1fr 1fr',gap:20,padding:'28px 32px'}}>
                      <div>
-                       <div style={{color:'#000',fontWeight:900,fontSize:36,marginBottom:20}}>PAPEL KRAFT MARRÓN</div>
-                       {['60CM × 50Gm','60CM × 66Gm','60CM × 82Gm'].map(s=><div key={s} style={{background:'rgba(0,0,0,0.15)',borderRadius:8,padding:'12px 20px',color:'#fff',fontWeight:700,fontSize:16,marginBottom:8}}>{s}</div>)}
-                       <div style={{background:'#000',borderRadius:8,padding:'10px 20px',color:ORG2,fontWeight:900,fontSize:14,marginTop:12,display:'inline-block'}}>📦 ROLLO DE 10 KG</div>
+                       <div style={{color:'#000',fontWeight:900,fontSize:32,marginBottom:16}}>PAPEL KRAFT MARRÓN</div>
+                       <ImgSlot imgKey="prod_kraft" fallback="📦" style={{width:'100%',height:110,borderRadius:10,marginBottom:12}}/>
+                       {['60CM × 50Gm','60CM × 66Gm','60CM × 82Gm'].map(s=><div key={s} style={{background:'rgba(0,0,0,0.15)',borderRadius:8,padding:'10px 16px',color:'#fff',fontWeight:700,fontSize:14,marginBottom:6}}>{s}</div>)}
+                       <div style={{background:'#000',borderRadius:8,padding:'8px 16px',color:ORG2,fontWeight:900,fontSize:13,marginTop:10,display:'inline-block'}}>📦 ROLLO DE 10 KG</div>
                      </div>
                      <div>
-                       <div style={{color:'#000',fontWeight:900,fontSize:36,marginBottom:20}}>PRODUCTOS ESPECIALIZADOS</div>
+                       <div style={{color:'#000',fontWeight:900,fontSize:32,marginBottom:16}}>ESPECIALIZADOS</div>
                        {[
-                         {name:'TERMOENCOGIBLE & FARDOS',detail:'Medidas a requerimiento del cliente'},
-                         {name:'BOLSONES DE POLIETILENO',detail:'Baja densidad · Medidas a requerimiento'},
-                       ].map(p=><div key={p.name} style={{background:'rgba(0,0,0,0.15)',borderRadius:8,padding:'16px 20px',marginBottom:12}}>
-                         <div style={{color:'#fff',fontWeight:900,fontSize:15}}>{p.name}</div>
-                         <div style={{color:'rgba(255,255,255,0.8)',fontSize:12,marginTop:4}}>{p.detail}</div>
+                         {name:'TERMOENCOGIBLE & FARDOS',detail:'Medidas a requerimiento del cliente',imgKey:'prod_termo'},
+                         {name:'BOLSONES DE POLIETILENO',detail:'Baja densidad · Medidas a requerimiento',imgKey:'prod_bolson'},
+                       ].map(p=><div key={p.name} style={{background:'rgba(0,0,0,0.15)',borderRadius:8,padding:'12px 16px',marginBottom:10,display:'flex',gap:12,alignItems:'center'}}>
+                         <ImgSlot imgKey={p.imgKey} fallback="🎁" style={{width:56,height:56,borderRadius:8,flexShrink:0}}/>
+                         <div>
+                           <div style={{color:'#fff',fontWeight:900,fontSize:13}}>{p.name}</div>
+                           <div style={{color:'rgba(255,255,255,0.7)',fontSize:11,marginTop:3}}>{p.detail}</div>
+                         </div>
                        </div>)}
                      </div>
                    </div>},
@@ -26769,15 +26772,34 @@ ${resumenHtml}
                      </div>
                      <div style={{textAlign:'center',color:'rgba(255,255,255,0.5)',fontSize:12,fontStyle:'italic'}}>¡Y vamos por más!</div>
                    </div>},
-                   {bg:'#fafafa',content:<div style={{height:'100%',padding:'24px 28px',display:'flex',flexDirection:'column'}}>
-                     <div style={{textAlign:'center',marginBottom:24}}>
-                       <span style={{color:DARK2,fontWeight:900,fontSize:42}}>NUESTROS </span>
-                       <span style={{color:ORG2,fontWeight:900,fontSize:42}}>CLIENTES</span>
+                   {bg:'#fafafa',content:<div style={{height:'100%',padding:'20px 24px',display:'flex',flexDirection:'column'}}>
+                     <div style={{textAlign:'center',marginBottom:16}}>
+                       <span style={{color:DARK2,fontWeight:900,fontSize:38}}>NUESTROS </span>
+                       <span style={{color:ORG2,fontWeight:900,fontSize:38}}>CLIENTES</span>
                      </div>
-                     <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,flex:1}}>
-                       {['PAVECA','Grupo San Simón','Flor de Arauca','COPOSA','Capri','Produvisa','Purolomo','Santa Teresa','La Pastoreña','Mary','Los Andes','Alifortia','Alimentos Kiri','Kiri Recao','Grupo Mimesa'].map((c,i)=>(
-                         <div key={i} style={{background:'#fff',borderRadius:10,padding:'16px',boxShadow:'0 2px 12px rgba(0,0,0,0.06)',display:'flex',alignItems:'center',justifyContent:'center',border:'1px solid #eee'}}>
-                           <span style={{color:DARK2,fontWeight:900,fontSize:12,textAlign:'center',lineHeight:1.3}}>{c}</span>
+                     <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:10,flex:1}}>
+                       {[
+                         {name:'PAVECA',key:'cli_paveca'},
+                         {name:'Grupo San Simón',key:'cli_sansim'},
+                         {name:'Flor de Arauca',key:'cli_arauca'},
+                         {name:'COPOSA',key:'cli_coposa'},
+                         {name:'Capri',key:'cli_capri'},
+                         {name:'Produvisa',key:'cli_produvisa'},
+                         {name:'Purolomo',key:'cli_purolomo'},
+                         {name:'Santa Teresa',key:'cli_stersa'},
+                         {name:'La Pastoreña',key:'cli_pastor'},
+                         {name:'Mary',key:'cli_mary'},
+                         {name:'Los Andes',key:'cli_andes'},
+                         {name:'Alifortia',key:'cli_alifortia'},
+                         {name:'Alimentos Kiri',key:'cli_kiri'},
+                         {name:'Kiri Recao',key:'cli_kirirecao'},
+                         {name:'Grupo Mimesa',key:'cli_mimesa'},
+                       ].map((c,i)=>(
+                         <div key={i} style={{background:'#fff',borderRadius:10,boxShadow:'0 2px 12px rgba(0,0,0,0.06)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',border:'1px solid #eee',overflow:'hidden',position:'relative'}}>
+                           <ImgSlot imgKey={c.key} fallback="🏢" style={{width:'100%',height:54}}/>
+                           <div style={{padding:'6px 4px',textAlign:'center'}}>
+                             <span style={{color:DARK2,fontWeight:900,fontSize:9,lineHeight:1.2,display:'block'}}>{c.name}</span>
+                           </div>
                          </div>
                        ))}
                      </div>
