@@ -25127,6 +25127,7 @@ ${resumenHtml}
                     {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && navInPortal('kpi') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
                     {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && navInPortal('costos') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
                     {(hasPerm('auditoria')||appUser?.role==='Master') && navInPortal('auditoria') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='auditoria'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShieldCheck size={14}/> Auditoría</button>}
+                    <button onClick={()=>{clearAllReports();setActiveTab('brochure');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='brochure'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}>📋 Brochure</button>
                  </div>
               </div>
               <div className="flex items-center gap-2 sm:gap-3">
@@ -25609,10 +25610,23 @@ ${resumenHtml}
                        padding:'28px 20px'
                      }}>
                        <div>
-                         <div className="text-white font-black text-2xl leading-none">Supply</div>
-                         <div style={{fontSize:48,fontWeight:900,lineHeight:1,color:'#000',marginTop:4}}>
-                           g<span style={{background:'#000',color:'#E8541A',borderRadius:'50%',display:'inline-flex',width:36,height:36,alignItems:'center',justifyContent:'center',fontSize:18,margin:'0 3px'}}>&</span>b
-                         </div>
+                         {/* Logo: imagen cargada O texto por defecto */}
+                         {resenaImages['logo']
+                           ? <div style={{cursor:'pointer',position:'relative'}} className="group" onClick={()=>document.getElementById('img-logo-portada').click()}>
+                               <img src={resenaImages['logo']} alt="Logo" style={{maxHeight:110,maxWidth:180,objectFit:'contain',display:'block'}}/>
+                               <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0)',display:'flex',alignItems:'center',justifyContent:'center'}} className="group-hover:bg-black/30 transition-all">
+                                 <span style={{background:'rgba(0,0,0,0.65)',color:'#fff',padding:'4px 10px',borderRadius:12,fontSize:9,fontWeight:700}} className="opacity-0 group-hover:opacity-100 transition-opacity">Cambiar logo</span>
+                               </div>
+                             </div>
+                           : <div style={{cursor:'pointer',border:'2px dashed rgba(255,255,255,0.5)',borderRadius:8,padding:'12px 8px',textAlign:'center',marginBottom:8}} className="group hover:border-white/80 transition-all" onClick={()=>document.getElementById('img-logo-portada').click()}>
+                               <div className="text-white font-black text-2xl leading-none">Supply</div>
+                               <div style={{fontSize:48,fontWeight:900,lineHeight:1,color:'#000',marginTop:4}}>
+                                 g<span style={{background:'#000',color:'#E8541A',borderRadius:'50%',display:'inline-flex',width:36,height:36,alignItems:'center',justifyContent:'center',fontSize:18,margin:'0 3px'}}>&</span>b
+                               </div>
+                               <div style={{color:'rgba(255,255,255,0.7)',fontSize:8,marginTop:6,fontWeight:600}}>📷 Clic para cargar logo</div>
+                             </div>
+                         }
+                         <input id="img-logo-portada" type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload('logo',e)}/>
                          <div className="text-white/90 text-xs font-bold mt-2 italic">Líderes en material de <b className="not-italic">empaque</b></div>
                        </div>
                        <div style={{borderTop:'1.5px solid rgba(0,0,0,0.25)',paddingTop:12,marginTop:16}}>
@@ -26016,106 +26030,354 @@ ${resumenHtml}
 
                {/* ══ PROYECCIÓN ══ */}
                {resenaTab==='proyeccion' && (()=>{
-                 // Usar formato mensual - si Firestore tiene formato viejo (anual), usar defaults
+                 const CAP_TON=50;
+                 const PRECIO_KG=4;
                  const defProy=[
-                   {mes:'Jul 2026',kg:20000,ingresos:80000,costoMin:3000,costoMax:4000,nota:'Jul+Ago = 40.000 kg total'},
-                   {mes:'Ago 2026',kg:20000,ingresos:80000,costoMin:3000,costoMax:4000,nota:''},
-                   {mes:'Sep 2026',kg:20000,ingresos:80000,costoMin:3000,costoMax:4000,nota:'Sep–Dic = 80.000 kg total'},
-                   {mes:'Oct 2026',kg:20000,ingresos:80000,costoMin:3000,costoMax:4000,nota:''},
-                   {mes:'Nov 2026',kg:20000,ingresos:80000,costoMin:3000,costoMax:4000,nota:''},
-                   {mes:'Dic 2026',kg:20000,ingresos:80000,costoMin:3000,costoMax:4000,nota:''},
-                   {mes:'Ene 2027',kg:170000,ingresos:680000,costoMin:25500,costoMax:34000,nota:'Meta enero 2027'},
+                   {mes:'Abr 2026',kgMin:6700,kgMax:6700,nota:'Inicio'},
+                   {mes:'May 2026',kgMin:29000,kgMax:29000,nota:''},
+                   {mes:'Jun 2026',kgMin:40000,kgMax:45000,nota:''},
+                   {mes:'Jul 2026',kgMin:40000,kgMax:45000,nota:''},
+                   {mes:'Ago 2026',kgMin:60000,kgMax:65000,nota:''},
+                   {mes:'Sep 2026',kgMin:70000,kgMax:75000,nota:''},
+                   {mes:'Oct 2026',kgMin:80000,kgMax:85000,nota:''},
+                   {mes:'Nov 2026',kgMin:100000,kgMax:110000,nota:''},
+                   {mes:'Dic 2026',kgMin:100000,kgMax:120000,nota:'Meta dic'},
                  ];
-                 // Usar defProy si los datos de Firestore son el formato viejo (kg >= 30000 en julio)
-                 const proyData=((DATA.proyeccion||[]).length===7 && (DATA.proyeccion[0]?.kg||0)<=25000)?DATA.proyeccion:defProy;
-                 return <div className="space-y-5">
-                 {/* KPIs capacidad */}
-                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                   {[
-                     {icon:'🏭',label:'Cap. Instalada',val:'60.000 kg/mes',sub:'Capacidad total planta'},
-                     {icon:'⚙️',label:'Producción Actual',val:'40.000 kg/mes',sub:'24h · 5 días/semana'},
-                     {icon:'💵',label:'Precio Promedio',val:'$4,00 / kg',sub:'Ingreso por kilo'},
-                     {icon:'📊',label:'Costo Operativo',val:'$0,15 – $0,20 / kg',sub:'Por kilo vendido'},
-                   ].map((kpi,i)=>(
-                     <div key={i} style={{background:'#fff',borderRadius:10,boxShadow:'0 2px 10px rgba(0,0,0,0.07)',borderTop:`3px solid ${ORG}`,padding:'14px 16px'}}>
-                       <div style={{fontSize:22}}>{kpi.icon}</div>
-                       <div style={{color:ORG,fontSize:15,fontWeight:900,marginTop:6}}>{kpi.val}</div>
-                       <div style={{color:'#374151',fontSize:11,fontWeight:700,marginTop:2}}>{kpi.label}</div>
-                       <div style={{color:'#9ca3af',fontSize:10,marginTop:1}}>{kpi.sub}</div>
-                     </div>
-                   ))}
-                 </div>
+                 const proyData=((DATA.proyeccion||[]).length>0 && DATA.proyeccion[0].kgMin!=null)?DATA.proyeccion:defProy;
+                 const tonFmt=(kg)=>{ const t=kg/1000; return t===Math.round(t)?t.toFixed(0):t.toFixed(1); };
+                 const rangoTon=(p)=>p.kgMin===p.kgMax?tonFmt(p.kgMin)+' ton':tonFmt(p.kgMin)+' – '+tonFmt(p.kgMax)+' ton';
+                 const ingMin=(p)=>(p.kgMin*PRECIO_KG);
+                 const ingMax=(p)=>(p.kgMax*PRECIO_KG);
+                 const pctCap=(p)=>Math.round(p.kgMax/1000/CAP_TON*100);
 
-                 {/* Tabla proyección mensual */}
-                 <div style={{background:'#fff',borderRadius:12,boxShadow:'0 2px 16px rgba(0,0,0,0.07)',overflow:'hidden'}}>
-                   <div style={{background:ORG,padding:'14px 20px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                     <div style={{color:'#000',fontWeight:900,fontSize:14}}>PROYECCIÓN DE PRODUCCIÓN E INGRESOS — 2026 / 2027</div>
-                     <div style={{color:'#000',fontSize:11,opacity:.7}}>Precio base: $4,00/kg · Costo op.: $0,15–$0,20/kg</div>
+                 return <div className="space-y-5">
+                   {/* KPIs */}
+                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                     {[
+                       {icon:'🏭',label:'Cap. Instalada',val:'50 ton/mes',sub:'Capacidad total planta'},
+                       {icon:'💵',label:'Precio Promedio',val:'$4,00 / kg',sub:'Ingreso por kilo'},
+                       {icon:'📊',label:'Costo Operativo',val:'$0,15 – $0,20 / kg',sub:'Por kilo vendido'},
+                       {icon:'📈',label:'Meta Dic 2026',val:'100 – 120 ton',sub:'$400k – $480k ingresos'},
+                     ].map((kpi,i)=>(
+                       <div key={i} style={{background:'#fff',borderRadius:10,boxShadow:'0 2px 10px rgba(0,0,0,0.07)',borderTop:`3px solid ${ORG}`,padding:'14px 16px'}}>
+                         <div style={{fontSize:22}}>{kpi.icon}</div>
+                         <div style={{color:ORG,fontSize:15,fontWeight:900,marginTop:6}}>{kpi.val}</div>
+                         <div style={{color:'#374151',fontSize:11,fontWeight:700,marginTop:2}}>{kpi.label}</div>
+                         <div style={{color:'#9ca3af',fontSize:10,marginTop:1}}>{kpi.sub}</div>
+                       </div>
+                     ))}
                    </div>
-                   <div style={{overflowX:'auto'}}>
-                   <table style={{width:'100%',borderCollapse:'collapse'}}>
-                     <thead>
-                       <tr style={{background:'#1f2937'}}>
-                         <th style={{padding:'10px 16px',textAlign:'left',color:'#d1d5db',fontSize:10,fontWeight:700,textTransform:'uppercase'}}>Período</th>
-                         <th style={{padding:'10px 12px',textAlign:'right',color:'#d1d5db',fontSize:10,fontWeight:700}}>Kg Producidos</th>
-                         <th style={{padding:'10px 12px',textAlign:'right',color:'#d1d5db',fontSize:10,fontWeight:700}}>% Cap. Utilizada</th>
-                         <th style={{padding:'10px 12px',textAlign:'right',color:'#4ade80',fontSize:10,fontWeight:700}}>Ingresos Est.</th>
-                         <th style={{padding:'10px 12px',textAlign:'right',color:'#f87171',fontSize:10,fontWeight:700}}>Costo Op. Mín.</th>
-                         <th style={{padding:'10px 12px',textAlign:'right',color:'#f87171',fontSize:10,fontWeight:700}}>Costo Op. Máx.</th>
-                         <th style={{padding:'10px 12px',textAlign:'right',color:ORG,fontSize:10,fontWeight:700}}>Margen Est.</th>
-                         <th style={{padding:'10px 12px',textAlign:'left',color:'#9ca3af',fontSize:10,fontWeight:700}}>Nota</th>
-                       </tr>
-                     </thead>
-                     <tbody>
-                       {proyData.map((p,idx)=>{
-                         const pct=Math.round(p.kg/60000*100);
-                         const margenMin=p.ingresos-p.costoMax;
-                         const margenMax=p.ingresos-p.costoMin;
-                         const bg=idx%2===0?'#f9fafb':'#fff';
-                         return <tr key={p.mes} style={{background:bg,borderBottom:'1px solid #e5e7eb'}}>
-                           <td style={{padding:'10px 16px',fontWeight:700,color:'#111',fontSize:12}}>{p.mes}</td>
-                           <td style={{padding:'10px 12px',textAlign:'right',fontWeight:700,color:'#374151',fontSize:12}}>{p.kg.toLocaleString('es-VE')}</td>
-                           <td style={{padding:'10px 12px',textAlign:'right',fontSize:12}}>
-                             <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:6}}>
-                               <div style={{width:50,height:6,background:'#e5e7eb',borderRadius:3,overflow:'hidden'}}>
-                                 <div style={{width:`${pct}%`,height:'100%',background:pct>=100?'#22c55e':pct>=50?ORG:'#93c5fd',borderRadius:3}}/>
+
+                   {/* Tabla */}
+                   <div style={{background:'#fff',borderRadius:12,boxShadow:'0 2px 16px rgba(0,0,0,0.07)',overflow:'hidden'}}>
+                     <div style={{background:ORG,padding:'14px 20px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                       <div style={{color:'#000',fontWeight:900,fontSize:14}}>PROYECCIÓN DE PRODUCCIÓN E INGRESOS — 2026</div>
+                       <div style={{color:'#000',fontSize:11,opacity:.7}}>Cap. Instalada: {CAP_TON} ton/mes · Precio: ${PRECIO_KG}/kg · Costo op.: $0,15–$0,20/kg</div>
+                     </div>
+                     <div style={{overflowX:'auto'}}>
+                     <table style={{width:'100%',borderCollapse:'collapse'}}>
+                       <thead>
+                         <tr style={{background:'#1f2937'}}>
+                           <th style={{padding:'10px 16px',textAlign:'left',color:'#d1d5db',fontSize:10,fontWeight:700,textTransform:'uppercase'}}>Período</th>
+                           <th style={{padding:'10px 12px',textAlign:'right',color:'#d1d5db',fontSize:10,fontWeight:700}}>Producción (ton)</th>
+                           <th style={{padding:'10px 12px',textAlign:'right',color:'#d1d5db',fontSize:10,fontWeight:700}}>% Cap. Utilizada</th>
+                           <th style={{padding:'10px 12px',textAlign:'right',color:'#4ade80',fontSize:10,fontWeight:700}}>Ingresos Est.</th>
+                           <th style={{padding:'10px 12px',textAlign:'right',color:'#f87171',fontSize:10,fontWeight:700}}>Costo Op. Mín.</th>
+                           <th style={{padding:'10px 12px',textAlign:'right',color:'#f87171',fontSize:10,fontWeight:700}}>Costo Op. Máx.</th>
+                           <th style={{padding:'10px 12px',textAlign:'left',color:'#9ca3af',fontSize:10,fontWeight:700}}>Nota</th>
+                         </tr>
+                       </thead>
+                       <tbody>
+                         {proyData.map((p,idx)=>{
+                           const pct=pctCap(p);
+                           const bg=idx%2===0?'#f9fafb':'#fff';
+                           const ingR=p.kgMin===p.kgMax?('$'+formatNum(ingMin(p))):('$'+formatNum(ingMin(p))+' – $'+formatNum(ingMax(p)));
+                           const costR='$'+formatNum(Math.round(p.kgMin*0.15))+' – $'+formatNum(Math.round(p.kgMax*0.20));
+                           return <tr key={p.mes} style={{background:bg,borderBottom:'1px solid #e5e7eb'}}>
+                             <td style={{padding:'10px 16px',fontWeight:700,color:'#111',fontSize:12}}>{p.mes}</td>
+                             <td style={{padding:'10px 12px',textAlign:'right',fontWeight:900,color:'#374151',fontSize:13}}>{rangoTon(p)}</td>
+                             <td style={{padding:'10px 12px',textAlign:'right',fontSize:12}}>
+                               <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:6}}>
+                                 <div style={{width:50,height:6,background:'#e5e7eb',borderRadius:3,overflow:'hidden'}}>
+                                   <div style={{width:`${Math.min(100,pct)}%`,height:'100%',background:pct>=100?'#22c55e':pct>=60?ORG:'#93c5fd',borderRadius:3}}/>
+                                 </div>
+                                 <span style={{color:pct>=60?ORG:'#6b7280',fontWeight:700}}>{pct}%</span>
                                </div>
-                               <span style={{color:pct>=50?ORG:'#6b7280',fontWeight:700}}>{pct}%</span>
-                             </div>
+                             </td>
+                             <td style={{padding:'10px 12px',textAlign:'right',fontWeight:900,color:'#16a34a',fontSize:11}}>{ingR}</td>
+                             <td style={{padding:'10px 12px',textAlign:'right',color:'#dc2626',fontSize:11}}>${formatNum(Math.round(p.kgMin*0.15))}</td>
+                             <td style={{padding:'10px 12px',textAlign:'right',color:'#dc2626',fontSize:11}}>${formatNum(Math.round(p.kgMax*0.20))}</td>
+                             <td style={{padding:'10px 12px',color:'#9ca3af',fontSize:10}}>{p.nota}</td>
+                           </tr>;
+                         })}
+                       </tbody>
+                       <tfoot>
+                         <tr style={{background:'#1f2937',borderTop:`2px solid ${ORG}`}}>
+                           <td style={{padding:'12px 16px',color:ORG,fontWeight:900,fontSize:12}}>TOTAL Abr–Dic 2026</td>
+                           <td style={{padding:'12px 12px',textAlign:'right',color:'#fff',fontWeight:900,fontSize:12}}>
+                             {tonFmt(proyData.reduce((s,p)=>s+p.kgMin,0))} – {tonFmt(proyData.reduce((s,p)=>s+p.kgMax,0))} ton
                            </td>
-                           <td style={{padding:'10px 12px',textAlign:'right',fontWeight:900,color:'#16a34a',fontSize:12}}>${p.ingresos.toLocaleString('es-VE')}</td>
-                           <td style={{padding:'10px 12px',textAlign:'right',color:'#dc2626',fontSize:11}}>${p.costoMin.toLocaleString('es-VE')}</td>
-                           <td style={{padding:'10px 12px',textAlign:'right',color:'#dc2626',fontSize:11}}>${p.costoMax.toLocaleString('es-VE')}</td>
-                           <td style={{padding:'10px 12px',textAlign:'right',fontWeight:900,fontSize:12,color:ORG}}>${margenMin.toLocaleString('es-VE')} – ${margenMax.toLocaleString('es-VE')}</td>
-                           <td style={{padding:'10px 12px',color:'#9ca3af',fontSize:10}}>{p.nota}</td>
-                         </tr>;
-                       })}
-                     </tbody>
-                     <tfoot>
-                       <tr style={{background:'#1f2937',borderTop:`2px solid ${ORG}`}}>
-                         <td style={{padding:'12px 16px',color:ORG,fontWeight:900,fontSize:12}}>TOTAL Jul–Dic 2026</td>
-                         <td style={{padding:'12px 12px',textAlign:'right',color:'#fff',fontWeight:900,fontSize:12}}>
-                           {proyData.filter(p=>!p.mes.includes('anual')).reduce((s,p)=>s+p.kg,0).toLocaleString('es-VE')} kg
-                         </td>
-                         <td></td>
-                         <td style={{padding:'12px 12px',textAlign:'right',color:'#4ade80',fontWeight:900,fontSize:13}}>
-                           ${proyData.filter(p=>!p.mes.includes('anual')).reduce((s,p)=>s+p.ingresos,0).toLocaleString('es-VE')}
-                         </td>
-                         <td colSpan={2}></td>
-                         <td style={{padding:'12px 12px',textAlign:'right',color:ORG,fontWeight:900,fontSize:12}}>
-                           ${proyData.filter(p=>!p.mes.includes('anual')).reduce((s,p)=>s+(p.ingresos-p.costoMax),0).toLocaleString('es-VE')} – ${proyData.filter(p=>!p.mes.includes('anual')).reduce((s,p)=>s+(p.ingresos-p.costoMin),0).toLocaleString('es-VE')}
-                         </td>
-                         <td></td>
-                       </tr>
-                     </tfoot>
-                   </table>
+                           <td></td>
+                           <td style={{padding:'12px 12px',textAlign:'right',color:'#4ade80',fontWeight:900,fontSize:12}}>
+                             ${formatNum(proyData.reduce((s,p)=>s+ingMin(p),0))} – ${formatNum(proyData.reduce((s,p)=>s+ingMax(p),0))}
+                           </td>
+                           <td style={{padding:'12px 12px',textAlign:'right',color:'#f87171',fontSize:11}}>${formatNum(Math.round(proyData.reduce((s,p)=>s+p.kgMin*0.15,0)))}</td>
+                           <td style={{padding:'12px 12px',textAlign:'right',color:'#f87171',fontSize:11}}>${formatNum(Math.round(proyData.reduce((s,p)=>s+p.kgMax*0.20,0)))}</td>
+                           <td></td>
+                         </tr>
+                       </tfoot>
+                     </table>
+                     </div>
                    </div>
-                 </div>
-               </div>;})()} 
+                 </div>;})()}
              </div>
            </div>;
          })()}
-           {/* ── BANCO & TESORERÍA ── */}
+           {/* ── BROCHURE DIGITAL ── */}
+          {activeTab === 'brochure' && (()=>{
+            const ORG='#E8541A'; const DARK='#1a1a1a';
+            const pages=[
+              // 0. PORTADA
+              {bg:`linear-gradient(160deg,${DARK} 0%,#3d1000 100%)`,content:<div style={{height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',position:'relative',overflow:'hidden'}}>
+                <div style={{position:'absolute',inset:0,background:`radial-gradient(ellipse at 40% 50%,${ORG}44 0%,transparent 70%)`}}/>
+                <div style={{position:'relative',textAlign:'center'}}>
+                  <div style={{color:'#fff',fontSize:48,fontWeight:900,lineHeight:1}}>Supply</div>
+                  <div style={{fontSize:120,fontWeight:900,lineHeight:0.9,color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+                    g<span style={{background:ORG,color:'#fff',borderRadius:'50%',width:72,height:72,display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:36}}>{'&'}</span>b
+                  </div>
+                  <div style={{color:'#fff',opacity:.8,fontSize:18,marginTop:12,letterSpacing:2}}>Líderes en material de <b>empaque</b></div>
+                  <div style={{marginTop:48,fontSize:80,fontWeight:900,color:'transparent',WebkitTextStroke:`3px ${ORG}`,letterSpacing:8}}>BROCHURE</div>
+                  <div style={{color:ORG,fontSize:12,marginTop:20}}>ventas@supplygyb.com · @supply.gb</div>
+                </div>
+              </div>},
+              // 1. MISIÓN & VISIÓN
+              {bg:'#f5f5f0',content:<div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',gap:40,padding:'28px 32px'}}>
+                <div style={{display:'flex',alignItems:'center',gap:40}}>
+                  <div style={{flex:'0 0 200px'}}>
+                    <div style={{fontFamily:'serif',fontSize:52,fontWeight:900,color:DARK,lineHeight:1}}>NUESTRA,</div>
+                    <div style={{fontFamily:'serif',fontSize:52,fontWeight:900,color:ORG,lineHeight:1}}>MISIÓN</div>
+                  </div>
+                  <div style={{borderLeft:`3px solid ${ORG}`,paddingLeft:32,flex:1}}>
+                    <p style={{fontSize:16,color:DARK,lineHeight:1.8}}>Proveer soluciones de empaque de alto rendimiento que optimicen la cadena de suministro del corporativo, combinando tecnología de vanguardia con una respuesta a tiempo.</p>
+                  </div>
+                </div>
+                <div style={{height:2,background:`linear-gradient(90deg,transparent,${ORG},transparent)`}}/>
+                <div style={{display:'flex',alignItems:'center',gap:40}}>
+                  <div style={{borderRight:`3px solid ${ORG}`,paddingRight:32,flex:1,textAlign:'right'}}>
+                    <p style={{fontSize:16,color:DARK,lineHeight:1.8}}>Ser el aliado estratégico líder en el eje centro-occidental, reconocidos por transformar el empaque en una ventaja competitiva de alto rendimiento para nuestros clientes.</p>
+                  </div>
+                  <div style={{flex:'0 0 200px',textAlign:'right'}}>
+                    <div style={{fontFamily:'serif',fontSize:52,fontWeight:900,color:DARK,lineHeight:1}}>NUESTRA</div>
+                    <div style={{fontFamily:'serif',fontSize:52,fontWeight:900,color:ORG,lineHeight:1}}>VISIÓN</div>
+                  </div>
+                </div>
+                <div style={{textAlign:'center',color:'#999',fontSize:11}}>🎵 @supply.gb</div>
+              </div>},
+              // 2. VALORES
+              {bg:`linear-gradient(160deg,${ORG} 0%,#b83a00 100%)`,content:<div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',padding:'28px 32px',position:'relative',overflow:'hidden'}}>
+                <div style={{position:'absolute',right:-40,top:'50%',transform:'translateY(-50%)',fontSize:280,fontWeight:900,color:'rgba(255,255,255,0.08)',letterSpacing:-10,lineHeight:1}}>VALORES</div>
+                <div style={{position:'relative'}}>
+                  <div style={{fontSize:64,fontWeight:900,color:'#fff',marginBottom:40}}>VALORES</div>
+                  {[['🤝','HONESTIDAD'],['👥','TRABAJO EN EQUIPO'],['❤️','PASIÓN POR EL SERVICIO'],['⭐','COMPROMISO & DEDICACIÓN'],['🚀','INMEDIATEZ & EFICIENCIA']].map(([icon,v])=>(
+                    <div key={v} style={{display:'flex',alignItems:'center',gap:20,marginBottom:20,background:'rgba(0,0,0,0.15)',borderRadius:12,padding:'14px 24px'}}>
+                      <span style={{fontSize:28}}>{icon}</span>
+                      <span style={{color:'#fff',fontWeight:900,fontSize:20,letterSpacing:4}}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>},
+              // 3. PRODUCTOS - STRETCH FILM
+              {bg:DARK,content:<div style={{height:'100%',display:'grid',gridTemplateRows:'auto 1fr',padding:'28px 32px',gap:24}}>
+                <div style={{display:'flex',alignItems:'center',gap:20}}>
+                  <div style={{fontSize:60,fontWeight:900,color:ORG}}>PRODUCTOS</div>
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:16}}>
+                  {[
+                    {tag:'MANUAL',title:'STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',specs:['45CM × 20 MICRAS → 2KG · 4KG','45CM × 18 MICRAS → 2KG · 4KG']},
+                    {tag:'AUTOMÁTICO',title:'STRETCH FILM TRANSPARENTE',bg:'#222',specs:['50CM × 16KG → 16 · 18 · 20 · 22 MICRAS']},
+                    {tag:'PRE-STRETCH',title:'PRE STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',specs:['45CM × 550MTS × 8 MICRAS B/R → 2.7KG']},
+                  ].map((p)=>(
+                    <div key={p.tag} style={{background:p.bg,borderRadius:12,padding:'20px 28px',borderLeft:`4px solid ${ORG}`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                      <div>
+                        <div style={{color:ORG,fontSize:10,fontWeight:900,letterSpacing:3,marginBottom:4}}>{p.tag}</div>
+                        <div style={{color:'#fff',fontWeight:900,fontSize:20,marginBottom:8}}>{p.title}</div>
+                        {p.specs.map(s=><div key={s} style={{color:'#aaa',fontSize:13}}>{s}</div>)}
+                      </div>
+                      <div style={{width:80,height:80,background:ORG,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:32}}>🎞️</div>
+                    </div>
+                  ))}
+                </div>
+              </div>},
+              // 4. STRETCH FILM NEGRO + COLORES
+              {bg:ORG,content:<div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',padding:'28px 32px',gap:24}}>
+                {[
+                  {tag:'AUTOMÁTICO 16KG',title:'STRETCH FILM NEGRO',detail:'20 MICRAS'},
+                  {tag:'MANUAL 0.5KG',title:'MINI STRETCH FILM',detail:'12CM × 250MTS × 20 MICRAS'},
+                  {tag:'MANUAL 2.7KG',title:'STRETCH FILM DE COLORES',detail:'45CM × 330MTS × 20 MICRAS'},
+                ].map((p)=>(
+                  <div key={p.tag} style={{background:'rgba(0,0,0,0.25)',borderRadius:12,padding:'20px 28px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <div>
+                      <div style={{color:'rgba(255,255,255,0.7)',fontSize:10,fontWeight:900,letterSpacing:3,marginBottom:4}}>{p.tag}</div>
+                      <div style={{color:'#fff',fontWeight:900,fontSize:22}}>{p.title}</div>
+                      <div style={{color:'rgba(255,255,255,0.8)',fontSize:14,marginTop:4}}>{p.detail}</div>
+                    </div>
+                    <div style={{fontSize:40}}>📦</div>
+                  </div>
+                ))}
+              </div>},
+              // 5. CINTAS DE EMBALAR
+              {bg:'#f0f0f0',content:<div style={{height:'100%',padding:'28px 32px'}}>
+                <div style={{fontSize:48,fontWeight:900,color:DARK,marginBottom:8}}>CINTAS DE EMBALAR</div>
+                <div style={{height:3,background:ORG,width:120,marginBottom:32}}/>
+                <div style={{display:'flex',flexDirection:'column',gap:16}}>
+                  {[
+                    {title:'Cinta de Embalar',sub:'DE COLORES (7 colores)',spec:'2" × 100 MTS × 50 MICRAS',badge:'MANUAL'},
+                    {title:'Cinta de Embalar',sub:'MARRÓN / TRANSPARENTE',spec:'2" × 100 MTS × 50 MICRAS',badge:'MANUAL'},
+                    {title:'Cinta de Embalar',sub:'INDUSTRIAL',spec:'2" × 1000 MTS / 2.0 MIL',badge:'AUTOMÁTICA'},
+                  ].map((p)=>(
+                    <div key={p.sub} style={{background:'#fff',borderRadius:12,padding:'20px 28px',boxShadow:'0 4px 20px rgba(0,0,0,0.08)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                      <div>
+                        <span style={{background:ORG,color:'#fff',fontSize:9,fontWeight:900,padding:'3px 10px',borderRadius:20,letterSpacing:2}}>{p.badge}</span>
+                        <div style={{color:DARK,fontWeight:900,fontSize:18,marginTop:8}}>{p.title} <span style={{color:ORG}}>{p.sub}</span></div>
+                        <div style={{color:'#666',fontSize:13,marginTop:4}}>{p.spec}</div>
+                      </div>
+                      <div style={{fontSize:40}}>🎀</div>
+                    </div>
+                  ))}
+                </div>
+              </div>},
+              // 6. PAPEL KRAFT + ESPECIALIZADOS
+              {bg:ORG,content:<div style={{height:'100%',display:'grid',gridTemplateColumns:'1fr 1fr',gap:20,padding:'28px 32px'}}>
+                <div>
+                  <div style={{color:'#000',fontWeight:900,fontSize:36,marginBottom:20}}>PAPEL KRAFT MARRÓN</div>
+                  {['60CM × 50Gm','60CM × 66Gm','60CM × 82Gm'].map(s=><div key={s} style={{background:'rgba(0,0,0,0.15)',borderRadius:8,padding:'12px 20px',color:'#fff',fontWeight:700,fontSize:16,marginBottom:8}}>{s}</div>)}
+                  <div style={{background:'#000',borderRadius:8,padding:'10px 20px',color:ORG,fontWeight:900,fontSize:14,marginTop:12,display:'inline-block'}}>📦 ROLLO DE 10 KG</div>
+                </div>
+                <div>
+                  <div style={{color:'#000',fontWeight:900,fontSize:36,marginBottom:20}}>PRODUCTOS ESPECIALIZADOS</div>
+                  {[
+                    {name:'TERMOENCOGIBLE & FARDOS',detail:'Medidas a requerimiento del cliente'},
+                    {name:'BOLSONES DE POLIETILENO',detail:'Baja densidad · Medidas a requerimiento'},
+                  ].map(p=><div key={p.name} style={{background:'rgba(0,0,0,0.15)',borderRadius:8,padding:'16px 20px',marginBottom:12}}>
+                    <div style={{color:'#fff',fontWeight:900,fontSize:15}}>{p.name}</div>
+                    <div style={{color:'rgba(255,255,255,0.8)',fontSize:12,marginTop:4}}>{p.detail}</div>
+                  </div>)}
+                </div>
+              </div>},
+              // 7. +PRODUCTOS
+              {bg:DARK,content:<div style={{height:'100%',padding:'28px 32px'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:32}}>
+                  <span style={{color:ORG,fontSize:64,fontWeight:900}}>+</span>
+                  <span style={{color:'#fff',fontSize:48,fontWeight:900}}>PRODUCTOS</span>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:16}}>
+                  {[
+                    {icon:'💬',name:'Bubble Wrap',spec:'30CM × 10MTS',tag:'Manual'},
+                    {icon:'🎁',name:'Cinta Personalizada',spec:'Colores y medidas a requerimiento',tag:'Manual'},
+                    {icon:'⚠️',name:'Cintas Frágil & Stop',spec:'2" × 100 MTS',tag:'Manual'},
+                    {icon:'🔗',name:'Bobinas de Fleje',spec:'1768M · 1/2" × 0.025" (Core 16"×6")',tag:'Manual'},
+                    {icon:'🌿',name:'Stretch Film Heno Blanco',spec:'75CM × 1600MTS × 25 MICRAS · 29KG',tag:'Embalaje'},
+                    {icon:'📐',name:'Separadores de Cartón',spec:'Medidas a requerimiento',tag:'Personalizado'},
+                  ].map(p=>(
+                    <div key={p.name} style={{background:'#2a2a2a',borderRadius:12,padding:'20px',borderTop:`3px solid ${ORG}`}}>
+                      <div style={{fontSize:32,marginBottom:8}}>{p.icon}</div>
+                      <span style={{background:ORG+'33',color:ORG,fontSize:8,fontWeight:700,padding:'2px 8px',borderRadius:10}}>{p.tag}</span>
+                      <div style={{color:'#fff',fontWeight:900,fontSize:14,marginTop:8,lineHeight:1.3}}>{p.name}</div>
+                      <div style={{color:'#888',fontSize:11,marginTop:4}}>{p.spec}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>},
+              // 8. COBERTURA
+              {bg:`linear-gradient(160deg,#222 0%,#3d1000 100%)`,content:<div style={{height:'100%',padding:'28px 32px',display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
+                <div>
+                  <div style={{color:ORG,fontSize:12,fontWeight:700,letterSpacing:4,marginBottom:8}}>SUCURSALES FÍSICAS</div>
+                  <div style={{color:'#fff',fontWeight:900,fontSize:48,marginBottom:32}}>+COBERTURA</div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12}}>
+                    {[
+                      {state:'ZULIA',cities:['Maracaibo','Rosario','San José','Machiques'],color:ORG},
+                      {state:'LARA',cities:['Barquisimeto','Carora','La Pastora','Acarigua'],color:'#ff6b35'},
+                      {state:'ARAGUA',cities:['Caracas','Catia la Mar','Guacara','Los Guayos'],color:'#ff8c55'},
+                      {state:'PORTUGUESA',cities:['Araure'],color:'#ffa875'},
+                    ].map(r=>(
+                      <div key={r.state} style={{background:'rgba(255,255,255,0.08)',borderRadius:12,padding:'16px',borderTop:`3px solid ${r.color}`}}>
+                        <div style={{color:r.color,fontWeight:900,fontSize:14,marginBottom:8}}>📍 {r.state}</div>
+                        {r.cities.map(c=><div key={c} style={{color:'#ccc',fontSize:11,marginBottom:3}}>· {c}</div>)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={{textAlign:'center',color:'rgba(255,255,255,0.5)',fontSize:12,fontStyle:'italic'}}>¡Y vamos por más! Llegaremos a más locaciones...</div>
+              </div>},
+              // 9. CLIENTES
+              {bg:'#fafafa',content:<div style={{height:'100%',padding:'24px 28px',display:'flex',flexDirection:'column'}}>
+                <div style={{textAlign:'center',marginBottom:24}}>
+                  <span style={{color:DARK,fontWeight:900,fontSize:42}}>NUESTROS </span>
+                  <span style={{color:ORG,fontWeight:900,fontSize:42}}>CLIENTES</span>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,flex:1}}>
+                  {['PAVECA','Grupo San Simón','Flor de Arauca','COPOSA','Capri','Produvisa','Purolomo','Santa Teresa','La Pastoreña','Mary','Los Andes','Alifortia','Alimentos Kiri','Kiri Recao','Grupo Mimesa','Grupo Mimesa'].slice(0,15).map((c,i)=>(
+                    <div key={i} style={{background:'#fff',borderRadius:10,padding:'16px',boxShadow:'0 2px 12px rgba(0,0,0,0.06)',display:'flex',alignItems:'center',justifyContent:'center',border:'1px solid #eee'}}>
+                      <span style={{color:DARK,fontWeight:900,fontSize:12,textAlign:'center',lineHeight:1.3}}>{c}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>},
+              // 10. CONTACTO
+              {bg:DARK,content:<div style={{height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:32,padding:'32px 36px'}}>
+                <div style={{textAlign:'center'}}>
+                  <div style={{color:'#fff',fontSize:42,fontWeight:900}}>VENTAS AL</div>
+                  <div style={{color:ORG,fontSize:72,fontWeight:900,lineHeight:1}}>MAYOR</div>
+                  <div style={{color:'#fff',fontSize:36,fontWeight:700}}>O <span style={{color:ORG}}>DETAL</span></div>
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:16,alignItems:'center'}}>
+                  <div style={{background:ORG,borderRadius:50,padding:'16px 32px',display:'flex',alignItems:'center',gap:12}}>
+                    <span style={{fontSize:24}}>📱</span>
+                    <span style={{color:'#fff',fontWeight:900,fontSize:22}}>(+58) 414-693.03.42</span>
+                  </div>
+                  <div style={{background:'#2a2a2a',borderRadius:12,padding:'14px 28px',textAlign:'center'}}>
+                    <div style={{color:ORG,fontWeight:700,fontSize:11,letterSpacing:2}}>VISITA NUESTRA SEDE</div>
+                    <div style={{color:'#fff',fontSize:14,marginTop:4}}>C.C. Dividivi, PB, Local G-9, Av. C2</div>
+                    <div style={{color:'#888',fontSize:12}}>Sector El Trébol, Maracaibo - Estado Zulia</div>
+                  </div>
+                  <div style={{color:'#888',fontSize:14}}>ventas@supplygyb.com · @supply.gb</div>
+                </div>
+              </div>},
+            ];
+            const [pg, setPg] = React.useState(0);
+            const cur = pages[pg];
+            return <div style={{position:'fixed',inset:0,zIndex:9000,background:DARK,display:'flex',flexDirection:'column'}}>
+              {/* Top bar */}
+              <div style={{background:'rgba(0,0,0,0.5)',backdropFilter:'blur(8px)',display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 20px',flexShrink:0}}>
+                <div style={{display:'flex',alignItems:'center',gap:12}}>
+                  <span style={{color:'#fff',fontWeight:900,fontSize:16}}>Supply G&B</span>
+                  <span style={{color:ORG,fontSize:11}}>Brochure 2026</span>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  {pages.map((_,i)=><button key={i} onClick={()=>setPg(i)} style={{width:28,height:6,borderRadius:3,border:'none',cursor:'pointer',background:pg===i?ORG:'rgba(255,255,255,0.3)',transition:'all .2s'}}/>)}
+                </div>
+                <button onClick={()=>setActiveTab('home')} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'#fff',padding:'8px 16px',borderRadius:8,cursor:'pointer',fontWeight:700,fontSize:12}}>✕ Cerrar</button>
+              </div>
+              {/* Page content */}
+              <div style={{flex:1,position:'relative',overflow:'hidden'}}>
+                <div style={{position:'absolute',inset:0,background:cur.bg,transition:'background .4s ease'}}>
+                  {cur.content}
+                </div>
+                {/* Nav arrows */}
+                <button onClick={()=>setPg(Math.max(0,pg-1))} disabled={pg===0}
+                  style={{position:'absolute',left:16,top:'50%',transform:'translateY(-50%)',background:'rgba(0,0,0,0.5)',border:'none',color:'#fff',width:44,height:44,borderRadius:'50%',cursor:'pointer',fontSize:20,display:'flex',alignItems:'center',justifyContent:'center',opacity:pg===0?0.2:0.8}}>←</button>
+                <button onClick={()=>setPg(Math.min(pages.length-1,pg+1))} disabled={pg===pages.length-1}
+                  style={{position:'absolute',right:16,top:'50%',transform:'translateY(-50%)',background:'rgba(0,0,0,0.5)',border:'none',color:'#fff',width:44,height:44,borderRadius:'50%',cursor:'pointer',fontSize:20,display:'flex',alignItems:'center',justifyContent:'center',opacity:pg===pages.length-1?0.2:0.8}}>→</button>
+              </div>
+              {/* Bottom */}
+              <div style={{background:'rgba(0,0,0,0.6)',padding:'8px 20px',display:'flex',justifyContent:'center',alignItems:'center',gap:8,flexShrink:0}}>
+                <span style={{color:'rgba(255,255,255,0.5)',fontSize:11}}>{pg+1} / {pages.length}</span>
+                <span style={{color:ORG,fontSize:11,fontWeight:700,marginLeft:8}}>{['Portada','Misión & Visión','Valores','Stretch Film','Stretch Film +','Cintas de Embalar','Kraft & Especializados','+Productos','Cobertura','Nuestros Clientes','Contacto'][pg]||''}</span>
+              </div>
+            </div>;
+          })()}
+
+          {/* ── BANCO & TESORERÍA ── */}
            {activeTab === 'banco' && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
              ventasMode={!!(hasPerm('ventas') && !hasPerm('banco') && appUser?.role !== 'Master')}/>}
            {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && renderReportesFinancierosModule()}
