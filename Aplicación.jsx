@@ -26111,54 +26111,84 @@ ${resumenHtml}
                  const videoUrl=DATA.videoUrl||'';
                  const isYT=videoUrl.includes('youtube')||videoUrl.includes('youtu.be');
                  const isDrive=videoUrl.includes('drive.google');
+                 const isIDB=videoUrl==='indexeddb://resenaVideo';
                  const getEmbedUrl=(url)=>{
                    if(url.includes('youtu.be/')) return 'https://www.youtube.com/embed/'+url.split('youtu.be/')[1].split('?')[0];
                    if(url.includes('youtube.com/watch')) return 'https://www.youtube.com/embed/'+url.split('v=')[1]?.split('&')[0];
                    if(url.includes('drive.google.com/file/d/')) return url.replace('/view','/preview');
                    return url;
                  };
+                 // Carga el video desde IndexedDB al montar (si fue guardado localmente)
+                 React.useEffect(()=>{
+                   if(DATA.videoUrl==='indexeddb://resenaVideo'){
+                     const req=indexedDB.open('erp_resena_video',1);
+                     req.onsuccess=e=>{
+                       try{
+                         const tx=e.target.result.transaction('videos','readonly');
+                         const store=tx.objectStore('videos');
+                         const get=store.get('resenaVideo');
+                         get.onsuccess=ev=>{
+                           if(ev.target.result){
+                             const url=URL.createObjectURL(ev.target.result);
+                             const vid=document.getElementById('resena-video-player');
+                             if(vid){vid.src=url;}
+                           }
+                         };
+                       }catch(e2){}
+                     };
+                   }
+                 },[DATA.videoUrl]);
+
                  const handleVideoFile=async(e)=>{
                    const f=e.target.files[0]; if(!f) return;
                    e.target.value='';
                    setVideoUploadPct(1);
+                   // Intento 1: Firebase Storage
                    try{
                      const ext=(f.name.split('.').pop()||'mp4').toLowerCase();
-                     const path=`videos/instalaciones_supply_${Date.now()}.${ext}`;
-                     const sRef=storageRef(storage,path);
-                     // Intento 1: uploadBytesResumable con progreso real
-                     let dlUrl=null;
-                     try{
-                       dlUrl=await new Promise((resolve,reject)=>{
-                         const task=uploadBytesResumable(sRef,f,{contentType:f.type||'video/mp4'});
-                         let lastBytes=-1; let staleSecs=0;
-                         const watchdog=setInterval(()=>{
-                           const cur=task.snapshot.bytesTransferred;
-                           if(cur===lastBytes&&cur===0){ staleSecs+=3; if(staleSecs>=15){ clearInterval(watchdog); task.cancel(); reject(new Error('STALLED')); } }
-                           else{ staleSecs=0; lastBytes=cur; }
-                         },3000);
-                         task.on('state_changed',
-                           (snap)=>{ if(snap.totalBytes>0)setVideoUploadPct(Math.max(1,Math.round(snap.bytesTransferred/snap.totalBytes*100))); },
-                           (err)=>{ clearInterval(watchdog); reject(err); },
-                           async()=>{ clearInterval(watchdog); resolve(await getDownloadURL(task.snapshot.ref)); }
-                         );
-                       });
-                     }catch(e1){
-                       // Intento 2: uploadBytes simple (sin progreso)
-                       setVideoUploadPct(10);
-                       const snap2=await uploadBytes(sRef,f,{contentType:f.type||'video/mp4'});
-                       dlUrl=await getDownloadURL(snap2.ref);
-                     }
+                     const sRef=storageRef(storage,`videos/instalaciones_supply_${Date.now()}.${ext}`);
+                     const dlUrl=await new Promise((resolve,reject)=>{
+                       const task=uploadBytesResumable(sRef,f,{contentType:f.type||'video/mp4'});
+                       let lastBytes=-1; let stale=0;
+                       const wd=setInterval(()=>{
+                         const cur=task.snapshot.bytesTransferred;
+                         if(cur===lastBytes&&cur===0){stale+=3;if(stale>=12){clearInterval(wd);task.cancel();reject(new Error('NOPERM'));}}
+                         else{stale=0;lastBytes=cur;}
+                       },3000);
+                       task.on('state_changed',
+                         snap=>{if(snap.totalBytes>0)setVideoUploadPct(Math.max(2,Math.round(snap.bytesTransferred/snap.totalBytes*100)));},
+                         err=>{clearInterval(wd);reject(err);},
+                         async()=>{clearInterval(wd);resolve(await getDownloadURL(task.snapshot.ref));}
+                       );
+                     });
                      setVideoUploadPct(100);
                      await saveField('videoUrl',dlUrl);
                      setTimeout(()=>setVideoUploadPct(null),1500);
                    }catch(err){
-                     setVideoUploadPct(null);
-                     const code=err.code||err.message||'';
-                     if(code.includes('unauthorized')||code.includes('permission')){
-                       alert('Sin permiso para subir archivos a Firebase Storage.\n\nSolución: Ve a Firebase Console → Storage → Reglas y cambia a:\nallow read, write: if true;\n\nO usa Google Drive: sube el video allí, comparte el enlace y pégalo con el botón 🔗.');
-                     } else {
-                       const usarLink=window.confirm('No se pudo subir el archivo ('+err.message+').\n\n¿Deseas pegar un enlace de Google Drive o YouTube?');
-                       if(usarLink){ setResenaVideoTmp(''); setResenaVideoEdit(true); }
+                     // Intento 2: IndexedDB local (funciona siempre, sin Storage)
+                     setVideoUploadPct(50);
+                     try{
+                       await new Promise((res,rej)=>{
+                         const req=indexedDB.open('erp_resena_video',1);
+                         req.onupgradeneeded=e=>e.target.result.createObjectStore('videos');
+                         req.onsuccess=e=>{
+                           const tx=e.target.result.transaction('videos','readwrite');
+                           tx.objectStore('videos').put(f,'resenaVideo');
+                           tx.oncomplete=res; tx.onerror=rej;
+                         };
+                         req.onerror=rej;
+                       });
+                       setVideoUploadPct(80);
+                       // Guardar marker en Firestore y cargar en el player
+                       await saveField('videoUrl','indexeddb://resenaVideo');
+                       setVideoUploadPct(100);
+                       const objUrl=URL.createObjectURL(f);
+                       const vid=document.getElementById('resena-video-player');
+                       if(vid){vid.src=objUrl;}
+                       setTimeout(()=>setVideoUploadPct(null),1500);
+                     }catch(e2){
+                       setVideoUploadPct(null);
+                       alert('No se pudo guardar el video.\n\nAlternativa: sube el video a Google Drive, activa "Cualquiera con el enlace puede ver" y pega el enlace con el botón 🔗 Pegar enlace.');
                      }
                    }
                  };
@@ -26194,9 +26224,9 @@ ${resumenHtml}
                              <div style={{color:'#6b7280',fontSize:11,marginTop:12}}>No cierres esta pestaña mientras se sube</div>
                            </div>
                          : videoUrl && (isYT||isDrive)
-                           ? <iframe src={getEmbedUrl(videoUrl)} style={{width:'100%',height:480,border:'none'}} allow="autoplay; fullscreen" allowFullScreen/>
-                           : videoUrl
-                             ? <video src={videoUrl} controls style={{width:'100%',maxHeight:480,background:'#000'}}/>
+                           ? <iframe id="resena-video-player" src={getEmbedUrl(videoUrl)} style={{width:'100%',height:480,border:'none'}} allow="autoplay; fullscreen" allowFullScreen/>
+                           : (videoUrl&&!isIDB)||(isIDB)
+                             ? <video id="resena-video-player" src={isIDB?undefined:videoUrl} controls style={{width:'100%',maxHeight:480,background:'#000'}}/>
                              : <div style={{textAlign:'center',color:'#6b7280',padding:60,cursor:'pointer'}} onClick={()=>document.getElementById('video-file-input').click()}>
                                  <div style={{fontSize:80,marginBottom:16}}>🎬</div>
                                  <div style={{fontWeight:700,fontSize:18,color:'#9ca3af',marginBottom:8}}>Sin video cargado</div>
@@ -26223,7 +26253,7 @@ ${resumenHtml}
                                style={{background:'#374151',color:'#9ca3af',border:'none',borderRadius:8,padding:'9px 12px',cursor:'pointer',fontSize:12}}>✕</button></>
                            : <>
                                <span style={{color:videoUrl?'#4ade80':'#6b7280',fontSize:12,flex:1}}>
-                                 {videoUrl ? '✅ Video guardado correctamente' : 'Sin video configurado'}
+                                 {isIDB ? '✅ Video guardado localmente (este dispositivo)' : videoUrl ? '✅ Video guardado correctamente' : 'Sin video configurado'}
                                </span>
                                <button onClick={()=>document.getElementById('video-file-input').click()}
                                  style={{background:'#E8541A',color:'#fff',border:'none',borderRadius:8,padding:'9px 16px',cursor:'pointer',fontSize:12,fontWeight:700}}>
@@ -26534,26 +26564,46 @@ ${resumenHtml}
                    }catch(err){alert('Error: '+err.message);}
                    setResenaSaving(false);
                  };
-                 // ImgSlot: area interactiva dentro de cada tarjeta del catálogo
-                 const ImgSlot=({imgKey,fallback,style={}})=><div
-                   tabIndex={0}
-                   style={{position:'relative',cursor:'pointer',overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center',...style}}
-                   onClick={()=>document.getElementById('cat-img-'+imgKey).click()}
-                   onPaste={ev=>{const it=[...ev.clipboardData.items].find(i=>i.type.startsWith('image/'));if(it)handleCatImg(imgKey,it.getAsFile());}}
-                   onDrop={ev=>{ev.preventDefault();const f=ev.dataTransfer.files[0];if(f)handleCatImg(imgKey,f);}}
-                   onDragOver={ev=>ev.preventDefault()}
-                   title="Clic · Ctrl+V · Arrastrar"
-                 >
-                   {resenaImages[imgKey]
-                     ? <img src={resenaImages[imgKey]} style={{width:'100%',height:'100%',objectFit:'cover',position:'absolute',inset:0}}/>
-                     : <div style={{textAlign:'center',color:'rgba(255,255,255,0.4)',fontSize:11,zIndex:1}}>
-                         <div style={{fontSize:24}}>{fallback||'📷'}</div>
-                         <div style={{fontSize:8,marginTop:2}}>clic / pegar</div>
-                       </div>
-                   }
-                   <input id={'cat-img-'+imgKey} type="file" accept="image/*" style={{display:'none'}}
-                     onChange={ev=>{if(ev.target.files[0])handleCatImg(imgKey,ev.target.files[0]);ev.target.value='';}}/>
-                 </div>;
+                 // ImgSlot: cada instancia necesita IDs únicos — se generan por imgKey
+                 // El problema de "imagen en todos" venía del id compartido 'cat-img-'+imgKey
+                 // cuando ImgSlot se usa múltiples veces con el mismo key (ej: prod_p4 en 3 filas de stretch film)
+                 // Solución: botones visibles de Archivo y Pegar, sin depender de getElementById
+                 const ImgSlot=({imgKey,fallback,style={}})=>{
+                   const fileId='brochure-file-'+imgKey;
+                   const pasteImg=async()=>{
+                     try{
+                       const items=await navigator.clipboard.read();
+                       for(const ci of items){
+                         const t=ci.types.find(x=>x.startsWith('image/'));
+                         if(t){await handleCatImg(imgKey,await ci.getType(t));return;}
+                       }
+                       alert('No hay imagen en el portapapeles.\nCopia una imagen primero (clic derecho → Copiar imagen) y luego haz clic en Pegar.');
+                     }catch(e){
+                       document.getElementById(fileId)?.click();
+                     }
+                   };
+                   return <div style={{position:'relative',overflow:'hidden',...style}}>
+                     {resenaImages[imgKey]
+                       ? <img src={resenaImages[imgKey]} style={{width:'100%',height:'100%',objectFit:'cover',position:'absolute',inset:0}}/>
+                       : <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.4)'}}>
+                           <div style={{textAlign:'center',color:'rgba(255,255,255,0.4)',fontSize:11,userSelect:'none'}}>
+                             <div style={{fontSize:26,lineHeight:1}}>{fallback||'📷'}</div>
+                             <div style={{fontSize:7,marginTop:4,letterSpacing:0.5}}>sin imagen</div>
+                           </div>
+                         </div>
+                     }
+                     <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',gap:4,background:'rgba(0,0,0,0)',transition:'background 0.15s'}}
+                       onMouseEnter={e=>{e.currentTarget.style.background='rgba(0,0,0,0.75)';[...e.currentTarget.querySelectorAll('button')].forEach(b=>b.style.opacity='1');}}
+                       onMouseLeave={e=>{e.currentTarget.style.background='rgba(0,0,0,0)';[...e.currentTarget.querySelectorAll('button')].forEach(b=>b.style.opacity='0');}}>
+                       <button onClick={()=>document.getElementById(fileId)?.click()}
+                         style={{background:'#E8541A',color:'#fff',border:'none',borderRadius:6,padding:'5px 10px',fontSize:9,fontWeight:700,cursor:'pointer',opacity:0,transition:'opacity 0.15s',zIndex:2}}>📁 Archivo</button>
+                       <button onClick={pasteImg}
+                         style={{background:'#1f2937',color:'#fff',border:'1px solid #4b5563',borderRadius:6,padding:'5px 10px',fontSize:9,fontWeight:700,cursor:'pointer',opacity:0,transition:'opacity 0.15s',zIndex:2}}>📋 Pegar</button>
+                     </div>
+                     <input id={fileId} type="file" accept="image/*" style={{display:'none'}}
+                       onChange={ev=>{if(ev.target.files[0])handleCatImg(imgKey,ev.target.files[0]);ev.target.value='';}}/>
+                   </div>;
+                 };
                  const pages=[
                    {bg:`linear-gradient(160deg,${DARK2} 0%,#3d1000 100%)`,content:<div style={{height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',position:'relative',overflow:'hidden'}}>
                      <div style={{position:'absolute',inset:0,background:`radial-gradient(ellipse at 40% 50%,${ORG2}44 0%,transparent 70%)`}}/>
@@ -26606,9 +26656,9 @@ ${resumenHtml}
                      </div>
                      <div style={{display:'flex',flexDirection:'column',gap:16}}>
                        {[
-                         {tag:'MANUAL',title:'STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',imgKey:'prod_p4',specs:['45CM × 20 MICRAS → 2KG · 4KG','45CM × 18 MICRAS → 2KG · 4KG']},
-                         {tag:'AUTOMÁTICO',title:'STRETCH FILM TRANSPARENTE',bg:'#222',imgKey:'prod_p4',specs:['50CM × 16KG → 16 · 18 · 20 · 22 MICRAS']},
-                         {tag:'PRE-STRETCH',title:'PRE STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',imgKey:'prod_p4',specs:['45CM × 550MTS × 8 MICRAS B/R → 2.7KG']},
+                         {tag:'MANUAL',title:'STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',imgKey:'prod_sf_manual',specs:['45CM × 20 MICRAS → 2KG · 4KG','45CM × 18 MICRAS → 2KG · 4KG']},
+                         {tag:'AUTOMÁTICO',title:'STRETCH FILM TRANSPARENTE',bg:'#222',imgKey:'prod_sf_auto',specs:['50CM × 16KG → 16 · 18 · 20 · 22 MICRAS']},
+                         {tag:'PRE-STRETCH',title:'PRE STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',imgKey:'prod_sf_pre',specs:['45CM × 550MTS × 8 MICRAS B/R → 2.7KG']},
                        ].map((p)=>(
                          <div key={p.tag} style={{background:p.bg,borderRadius:12,padding:'20px 28px',borderLeft:`4px solid ${ORG2}`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
                            <div>
