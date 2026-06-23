@@ -16036,7 +16036,6 @@ ${resumenHtml}
                   </table>
                 </div>
               </div>
->
                 <h3 className="text-sm font-black uppercase text-black mb-6 border-b border-gray-200 pb-2">Resumen por Categoría (Total acumulado)</h3>
                 <div className="space-y-3">
                   {Object.entries(costsByCategory).filter(([,amount])=>amount>0).map(([cat, amount]) => {
@@ -24881,6 +24880,8 @@ ${resumenHtml}
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="10" y="8" width="44" height="48" rx="4" fill="#0e7490" opacity="0.15" stroke="#0e7490" strokeWidth="1.5"/><rect x="10" y="8" width="44" height="10" rx="4" fill="#06b6d4" opacity="0.9"/><rect x="16" y="24" width="14" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="30" width="20" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="36" width="12" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="42" width="18" height="2.5" rx="1.2" fill="#0e7490"/><rect x="36" y="24" width="12" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="38" y="30" width="10" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="40" y="36" width="8" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="36" y="42" width="12" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="10" y="48" width="44" height="2.5" rx="1.2" fill="#0e7490"/><text x="32" y="17" textAnchor="middle" fontSize="7" fontWeight="900" fill="white" fontFamily="Arial">LIBRO MAYOR</text></svg> },
       { id:'resena_portal', title:'RESEÑA', desc:'Presentación institucional, activos y proyección financiera', color:'#E8541A',
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="10" y="6" width="44" height="52" rx="4" fill="#E8541A" opacity="0.15" stroke="#E8541A" strokeWidth="1.5"/><rect x="10" y="6" width="44" height="11" rx="4" fill="#E8541A" opacity="0.9"/><text x="32" y="16" textAnchor="middle" fontSize="6.5" fontWeight="900" fill="white" fontFamily="Arial">RESEÑA INST.</text><rect x="17" y="23" width="18" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="29" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="33" width="26" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="39" width="22" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="43" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="47" width="24" height="2" rx="1" fill="#c2410c" opacity="0.5"/><circle cx="47" cy="50" r="8" fill="#E8541A"/><text x="47" y="54" textAnchor="middle" fontSize="10" fontWeight="900" fill="white" fontFamily="Arial">i</text></svg> },
+      { id:'brochure_portal', title:'BROCHURE', desc:'Catálogo digital de productos Supply G&B 2026', color:'#E8541A',
+        icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="8" y="4" width="34" height="46" rx="3" fill="#E8541A" opacity="0.2" stroke="#E8541A" strokeWidth="1.5"/><rect x="8" y="4" width="34" height="12" rx="3" fill="#E8541A"/><text x="25" y="14" textAnchor="middle" fontSize="7" fontWeight="900" fill="white" fontFamily="Arial">Supply</text><rect x="14" y="22" width="22" height="2" rx="1" fill="#E8541A"/><rect x="14" y="27" width="18" height="1.5" rx="1" fill="#c2410c" opacity="0.6"/><rect x="14" y="31" width="20" height="1.5" rx="1" fill="#c2410c" opacity="0.6"/><rect x="14" y="37" width="22" height="2" rx="1" fill="#E8541A"/><rect x="14" y="42" width="16" height="1.5" rx="1" fill="#c2410c" opacity="0.6"/><rect x="22" y="18" width="28" height="38" rx="3" fill="#1a1a1a" stroke="#E8541A" strokeWidth="1.5"/><rect x="22" y="18" width="28" height="10" rx="3" fill="#1a1a1a"/><text x="36" y="27" textAnchor="middle" fontSize="5.5" fontWeight="900" fill="#E8541A" fontFamily="Arial">BROCHURE</text><rect x="27" y="32" width="18" height="1.5" rx="1" fill="#E8541A" opacity="0.7"/><rect x="27" y="36" width="14" height="1" rx="1" fill="#666"/><rect x="27" y="39" width="16" height="1" rx="1" fill="#666"/><rect x="27" y="44" width="18" height="1.5" rx="1" fill="#E8541A" opacity="0.7"/></svg> },
       { id:'configuracion_portal', title:'CONFIGURACIÓN', desc:'Usuarios, ajustes del sistema y auditoría', color:'#64748b',
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><path d="M32 18 a14 14 0 1 1 0 28 a14 14 0 0 1 0-28z" fill="#64748b" opacity="0.15" stroke="#64748b" strokeWidth="1.5"/><circle cx="32" cy="32" r="6" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(60 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(120 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(180 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(240 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(300 32 32)"/><circle cx="32" cy="32" r="4" fill="#f8fafc"/></svg> },
     ];
@@ -24946,7 +24947,7 @@ ${resumenHtml}
               {PORTALES.map(p => {
                 const allowed = hasPortal(p.id);
                 return (
-                <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); if(p.id==='resena_portal') setActiveTab('resena'); else setActiveTab('home'); } else { setPortalDenied(p.title); } }}
+                <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); if(p.id==='resena_portal') setActiveTab('resena'); else if(p.id==='brochure_portal') setActiveTab('brochure'); else setActiveTab('home'); } else { setPortalDenied(p.title); } }}
                   style={{textAlign:'left', position:'relative', background:allowed?'#ffffff':'rgba(255,255,255,0.55)',
                     border:'none', borderLeft:`5px solid ${allowed?p.color:'#9ca3af'}`, borderRadius:16, padding:'28px 24px',
                     cursor:'pointer', color:allowed?'#111':'#6b7280', opacity:allowed?1:0.7, transition:'transform 0.2s, box-shadow 0.2s', boxShadow:'0 4px 24px rgba(0,0,0,0.22)'}}
@@ -25569,7 +25570,7 @@ ${resumenHtml}
 
                {/* Section tabs */}
                <div style={{background:'#fff',borderBottom:'1px solid #e5e7eb'}} className="flex gap-1 px-6 overflow-x-auto">
-                 {[['portada','🏠 Portada'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['productos','📦 Productos'],['clientes','🤝 Clientes'],['activos','💰 Activos'],['proyeccion','📈 Proyección']].map(([t,l])=>(
+                 {[['portada','🏠 Portada'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['productos','📦 Productos'],['clientes','🤝 Clientes'],['activos','💰 Activos'],['proyeccion','📈 Proyección'],['plano','📐 Plano'],['video','🎬 Video']].map(([t,l])=>(
                    <button key={t} onClick={()=>setResenaTab(t)} style={resenaTab===t?{borderBottom:`2px solid ${ORG}`,color:ORG}:{borderBottom:'2px solid transparent',color:'#888'}}
                      className="px-4 py-3 text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition-all">{l}</button>
                  ))}
@@ -25640,7 +25641,7 @@ ${resumenHtml}
                      <div style={{flex:1,position:'relative',minHeight:320,cursor:'pointer',overflow:'hidden'}}
                        onClick={()=>document.getElementById('img-planta').click()}>
                        {resenaImages['planta']
-                         ? <img src={resenaImages['planta']} alt="Planta" style={{width:'100%',height:'100%',objectFit:'cover',position:'absolute',inset:0}}/>
+                         ? <img src={resenaImages['planta']} alt="Planta" style={{width:'100%',height:'100%',objectFit:'contain',position:'absolute',inset:0,padding:4}}/>
                          : <div style={{width:'100%',height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'#f3f4f6',position:'absolute',inset:0}}>
                              <div style={{fontSize:56}}>🏭</div>
                              <div style={{color:'#9ca3af',fontSize:13,fontWeight:700,marginTop:8}}>Clic para cargar foto de la planta</div>
@@ -25822,17 +25823,15 @@ ${resumenHtml}
                        <div style={{background:'#1C1C1C',padding:'8px 18px',borderRadius:7}}>
                          <span style={{color:ORG,fontWeight:900,fontSize:14}}>{fmtUSD(m.costo)}</span>
                        </div>
-                       <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6}}>
-                         <span style={{fontSize:10,color:'#9ca3af'}}>✏️ Clic para editar costo</span>
-                       </div>
+                       
                      </div>
                      {/* Foto grande + specs */}
-                     <div style={{display:'grid',gridTemplateColumns:'52% 46%',gap:14,padding:'14px 16px 16px'}}>
+                     <div style={{display:'grid',gridTemplateColumns:'62% 36%',gap:12,padding:'12px 14px 14px'}}>
                        {/* Foto */}
                        <div style={{background:'#f9fafb',borderRadius:10,border:'2px solid #e5e7eb',overflow:'hidden',minHeight:340,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',position:'relative'}}
                          className="group" onClick={()=>document.getElementById(inputId).click()}>
                          {resenaImages[imgKey]
-                           ? <><img src={resenaImages[imgKey]} alt={m.nombre} style={{width:'100%',height:'100%',objectFit:'cover',position:'absolute',inset:0}}/>
+                           ? <><img src={resenaImages[imgKey]} alt={m.nombre} style={{width:'100%',height:'100%',objectFit:'contain',position:'absolute',inset:0,padding:4}}/>
                                <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}} className="bg-black/0 group-hover:bg-black/20 transition-all">
                                  <span style={{background:'rgba(0,0,0,0.65)',color:'#fff',padding:'5px 14px',borderRadius:16,fontSize:10,fontWeight:700}} className="opacity-0 group-hover:opacity-100 transition-opacity">Cambiar foto</span>
                                </div>
@@ -25928,75 +25927,105 @@ ${resumenHtml}
 
                {/* ══ CLIENTES ══ */}
                {resenaTab==='clientes' && (()=>{
-                 const clientMap={};
-                 (notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&ne.total>0).forEach(ne=>{
-                   const key=ne.clientRif||ne.clientName||'';if(!key)return;
-                   const name=(ne.clientName||key).toUpperCase();
-                   // Filtrar: personas naturales (V-) y distribuidores polietileno
-                   if((ne.clientRif||'').toUpperCase().startsWith('V-')) return;
-                   if(name.includes('POLIETILENO')||name.includes('DISTRIBUI')||name.includes('POLIETI')) return;
-                   if(!clientMap[key]) clientMap[key]={name:ne.clientName||key,rif:ne.clientRif||'',total:0,nes:0,cats:new Set()};
-                   clientMap[key].total+=parseNum(ne.total||0);
-                   clientMap[key].nes++;
-                   (ne.items||[]).forEach(it=>{
-                     const d=(it.desc||'').toUpperCase();
-                     if(d.includes('BOLSA')||d.includes('BOSA')||d.includes('CAMISETA')) clientMap[key].cats.add('Bolsas');
-                     if(d.includes('TERMO')||d.includes('ENCOG')||d.includes('KIRI')||d.includes('PANAL')||d.includes('BIO')) clientMap[key].cats.add('Termoencogible');
-                   });
-                 });
-                 const topCli=Object.values(clientMap).sort((a,b)=>b.total-a.total).slice(0,15);
-                 const maxV=topCli[0]?.total||1;
-                 const catColor={'Bolsas':'#3b82f6','Termoencogible':'#f97316','Fardos':'#22c55e','Film':'#a855f7','Manga':'#ec4899','Pañal':'#f59e0b'};
+                 // Solo clientes corporativos (J-), sin polietileno
+                 const seen=new Set();
+                 const clientes=(notasEntrega||[])
+                   .filter(ne=>ne.status!=='ANULADA'&&ne.total>0&&(ne.clientRif||'').toUpperCase().startsWith('J-')&&!(ne.clientName||'').toUpperCase().includes('POLIETILENO'))
+                   .map(ne=>ne.clientName||ne.clientRif||'')
+                   .filter(n=>{ if(!n||seen.has(n)) return false; seen.add(n); return true; })
+                   .sort();
                  return <div>
-                   <div className="flex items-center justify-between mb-4">
-                     <div style={{color:ORG}} className="text-xs font-black uppercase tracking-wider">Top {topCli.length} Clientes Corporativos · Volumen de ventas</div>
-                     <div className="text-gray-500 text-[9px]">Excluye personas naturales · Solo J-</div>
+                   <div style={{color:'#6b7280',fontSize:11,fontWeight:600,marginBottom:16,textTransform:'uppercase',letterSpacing:2}}>
+                     Clientes Corporativos · {clientes.length} empresas
                    </div>
-                   <div className="space-y-2">
-                     {topCli.map((cl,idx)=>{
-                       const pct=Math.max(4,(cl.total/maxV)*100);
-                       const imgKey=`cli_${(cl.rif||'').replace(/[^a-zA-Z0-9]/g,'_')}`;
-                       return <div key={cl.rif||idx} style={{background:'#fff',borderRadius:10,boxShadow:'0 1px 6px rgba(0,0,0,0.06)',overflow:'hidden'}}>
-                         <div className="flex items-center gap-3 px-4 py-2.5">
-                           {/* Rank */}
-                           <div style={{background:idx<3?ORG:'#e5e7eb',minWidth:24,height:24,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-                             <span style={{fontSize:10,fontWeight:900,color:idx<3?'#000':'#6b7280'}}>{idx+1}</span>
-                           </div>
-                           {/* Logo */}
-                           <div style={{width:36,height:36,background:'#f3f4f6',borderRadius:6,overflow:'hidden',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}
-                             onClick={()=>document.getElementById(`img-cli-${idx}`).click()}>
-                             {resenaImages[imgKey]
-                               ? <img src={resenaImages[imgKey]} alt={cl.name} style={{width:'100%',height:'100%',objectFit:'contain',padding:3}}/>
-                               : <span style={{fontSize:14,fontWeight:900,color:'#9ca3af'}}>{cl.name.charAt(0)}</span>}
-                             <input id={`img-cli-${idx}`} type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload(imgKey,e)}/>
-                           </div>
-                           {/* Name + Cats */}
-                           <div style={{flex:'0 0 220px',minWidth:0}}>
-                             <div style={{fontSize:11,fontWeight:700,color:'#111',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={cl.name}>{cl.name}</div>
-                             <div className="flex gap-1 mt-0.5 flex-wrap">
-                               {[...cl.cats].map(cat=>(
-                                 <span key={cat} style={{background:(catColor[cat]||'#6b7280')+'22',color:catColor[cat]||'#6b7280',fontSize:8,fontWeight:700,padding:'1px 5px',borderRadius:3}}>{cat}</span>
-                               ))}
-                             </div>
-                           </div>
-                           {/* Bar */}
-                           <div style={{flex:1,position:'relative',height:20,background:'#f3f4f6',borderRadius:4,overflow:'hidden'}}>
-                             <div style={{width:`${pct}%`,height:'100%',background:idx<3?ORG:'#93c5fd',borderRadius:4,transition:'width .6s ease'}}/>
-                           </div>
-                           {/* Amount */}
-                           <div style={{minWidth:110,textAlign:'right',flexShrink:0}}>
-                             <div style={{fontSize:12,fontWeight:900,color:ORG}}>{fmtUSD(cl.total)}</div>
-                             <div style={{fontSize:9,color:'#9ca3af'}}>{((cl.total/topCli.reduce((s,cc)=>s+cc.total,0))*100).toFixed(1)}% · {cl.nes} NEs</div>
-                           </div>
-                         </div>
-                       </div>;
-                     })}
+                   <div style={{columns:3,columnGap:24}}>
+                     {clientes.map((name,i)=>(
+                       <div key={i} style={{breakInside:'avoid',display:'flex',alignItems:'center',gap:10,padding:'10px 14px',marginBottom:6,background:'#fff',borderRadius:8,border:'1px solid #e5e7eb',boxShadow:'0 1px 3px rgba(0,0,0,0.04)'}}>
+                         <div style={{width:8,height:8,borderRadius:'50%',background:'#E8541A',flexShrink:0}}/>
+                         <span style={{fontSize:12,fontWeight:600,color:'#1f2937'}}>{name}</span>
+                       </div>
+                     ))}
                    </div>
                  </div>;
                })()}
 
+               {/* ══ PLANO ══ */}
+               {resenaTab==='plano' && <div>
+                 <div style={{background:'#1f2937',borderRadius:12,overflow:'hidden',minHeight:600}}>
+                   <div style={{background:'#E8541A',padding:'12px 18px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                     <div style={{color:'#fff',fontWeight:900,fontSize:14}}>📐 PLANO DE DISTRIBUCIÓN — PLANTA BAJA · SUPPLY G&B C.A.</div>
+                     <div style={{color:'rgba(255,255,255,0.7)',fontSize:10}}>A1 · Emisión: 22 Jun 2026 · Barrio Alfredo Quero, Calle 148</div>
+                   </div>
+                   <div style={{position:'relative',background:'#111',display:'flex',alignItems:'center',justifyContent:'center',minHeight:560,cursor:'pointer'}}
+                     onClick={()=>document.getElementById('img-plano').click()}>
+                     {resenaImages['plano']
+                       ? <img src={resenaImages['plano']} alt="Plano Planta Baja" style={{width:'100%',height:'auto',display:'block',objectFit:'contain'}}/>
+                       : <div style={{textAlign:'center',color:'#6b7280',padding:60}}>
+                           <div style={{fontSize:80,marginBottom:16}}>📐</div>
+                           <div style={{fontWeight:700,fontSize:16,color:'#9ca3af'}}>Clic para cargar el plano</div>
+                           <div style={{fontSize:12,marginTop:6,color:'#6b7280'}}>Sube una imagen del plano arquitectónico (PNG, JPG o PDF convertido)</div>
+                         </div>
+                     }
+                     <input id="img-plano" type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload('plano',e)}/>
+                     {resenaSaving && <div style={{position:'absolute',top:12,right:12,background:'rgba(0,0,0,0.75)',color:'#E8541A',fontSize:11,padding:'4px 10px',borderRadius:6}} className="animate-pulse">Guardando…</div>}
+                     {resenaImages['plano'] && <button style={{position:'absolute',top:12,right:12,background:'rgba(0,0,0,0.65)',color:'#fff',border:'none',borderRadius:8,padding:'6px 14px',cursor:'pointer',fontSize:11,fontWeight:700}} onClick={e=>{e.stopPropagation();document.getElementById('img-plano').click();}}>✏️ Cambiar plano</button>}
+                   </div>
+                   <div style={{padding:'10px 16px',borderTop:'1px solid #374151',display:'flex',gap:16,flexWrap:'wrap'}}>
+                     {['Materia Prima','Prod. Terminado','Selladoras','Impresoras','Oficinas','Zona de Carga','Planta Eléctrica','Estacionamiento'].map(z=>(
+                       <span key={z} style={{background:'#374151',color:'#d1d5db',fontSize:10,fontWeight:600,padding:'3px 10px',borderRadius:20}}>· {z}</span>
+                     ))}
+                   </div>
+                 </div>
+               </div>}
+
+               {/* ══ VIDEO ══ */}
+               {resenaTab==='video' && <div>
+                 <div style={{background:'#111',borderRadius:12,overflow:'hidden'}}>
+                   <div style={{background:'#E8541A',padding:'12px 18px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                     <div style={{color:'#fff',fontWeight:900,fontSize:14}}>🎬 VIDEO — INSTALACIONES SUPPLY G&B</div>
+                     <div style={{color:'rgba(255,255,255,0.7)',fontSize:10}}>Recorrido por las instalaciones · Jun 2026</div>
+                   </div>
+                   {(()=>{
+                     const videoUrl=DATA.videoUrl||'';
+                     const [editUrl,setEditUrl]=React.useState(false);
+                     const [tmpUrl,setTmpUrl]=React.useState(videoUrl);
+                     const isYT=videoUrl.includes('youtube')||videoUrl.includes('youtu.be');
+                     const isDrive=videoUrl.includes('drive.google');
+                     const getEmbedUrl=(url)=>{
+                       if(url.includes('youtu.be/')) return 'https://www.youtube.com/embed/'+url.split('youtu.be/')[1].split('?')[0];
+                       if(url.includes('youtube.com/watch')) return 'https://www.youtube.com/embed/'+url.split('v=')[1]?.split('&')[0];
+                       if(url.includes('drive.google.com/file/d/')) return url.replace('/view','/preview');
+                       return url;
+                     };
+                     return <div>
+                       <div style={{background:'#000',minHeight:520,display:'flex',alignItems:'center',justifyContent:'center',position:'relative'}}>
+                         {videoUrl && (isYT||isDrive)
+                           ? <iframe src={getEmbedUrl(videoUrl)} style={{width:'100%',height:520,border:'none'}} allow="autoplay; fullscreen" allowFullScreen/>
+                           : videoUrl
+                             ? <video src={videoUrl} controls style={{width:'100%',maxHeight:520,background:'#000'}}/>
+                             : <div style={{textAlign:'center',color:'#6b7280',padding:60}}>
+                                 <div style={{fontSize:80,marginBottom:16}}>🎬</div>
+                                 <div style={{fontWeight:700,fontSize:16,color:'#9ca3af',marginBottom:8}}>Agrega un enlace de video</div>
+                                 <div style={{fontSize:12,color:'#6b7280'}}>YouTube, Google Drive o URL directa de video MP4</div>
+                               </div>
+                         }
+                       </div>
+                       <div style={{padding:'14px 18px',borderTop:'1px solid #1f2937',display:'flex',alignItems:'center',gap:10}}>
+                         {editUrl
+                           ? <><input value={tmpUrl} onChange={e=>setTmpUrl(e.target.value)} placeholder="https://youtube.com/watch?v=... o Google Drive link"
+                               style={{flex:1,background:'#1f2937',border:'1px solid #374151',borderRadius:8,padding:'8px 12px',color:'#fff',fontSize:12,outline:'none'}}/>
+                             <button onClick={()=>{saveField('videoUrl',tmpUrl);setEditUrl(false);}} style={{background:'#16a34a',color:'#fff',border:'none',borderRadius:8,padding:'8px 16px',cursor:'pointer',fontSize:11,fontWeight:700}}>Guardar</button>
+                             <button onClick={()=>setEditUrl(false)} style={{background:'#374151',color:'#9ca3af',border:'none',borderRadius:8,padding:'8px 12px',cursor:'pointer',fontSize:11}}>✕</button></>
+                           : <><span style={{color:'#6b7280',fontSize:11,flex:1}}>{videoUrl||'Sin video configurado'}</span>
+                             <button onClick={()=>{setTmpUrl(videoUrl);setEditUrl(true);}} style={{background:'#374151',color:'#d1d5db',border:'none',borderRadius:8,padding:'8px 14px',cursor:'pointer',fontSize:11,fontWeight:700}}>✏️ {videoUrl?'Cambiar enlace':'Agregar enlace'}</button></>
+                         }
+                       </div>
+                     </div>;
+                   })()}
+                 </div>
+               </div>}
+
                {/* ══ ACTIVOS ══ */}
-               {resenaTab==='activos' && <div className="max-w-3xl mx-auto">
                  <div style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E'}} className="overflow-hidden">
                    <div style={{background:ORG}} className="px-6 py-4">
                      <div className="text-black font-black text-base tracking-wide">VALORIZACIÓN TOTAL DE ACTIVOS</div>
@@ -26051,6 +26080,32 @@ ${resumenHtml}
                  const pctCap=(p)=>Math.round(p.kgMax/1000/CAP_TON*100);
 
                  return <div className="space-y-5">
+                   {/* Nota editable capacidad */}
+                   {(()=>{
+                     const [editNota,setEditNota]=React.useState(false);
+                     const notaCap=DATA.notaCapacidad||'En agosto 2026 se incorporan nuevas extrusoras y selladoras que aumentarán la capacidad instalada hasta 130 ton/mes.';
+                     return <div style={{background:'linear-gradient(135deg,#1f2937,#111827)',borderRadius:12,padding:'14px 18px',display:'flex',alignItems:'flex-start',gap:12,border:'1px solid #374151'}}>
+                       <span style={{fontSize:20,flexShrink:0}}>📌</span>
+                       <div style={{flex:1}}>
+                         <div style={{color:'#fbbf24',fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:2,marginBottom:4}}>NOTA — AMPLIACIÓN DE CAPACIDAD</div>
+                         {editNota
+                           ? <div style={{display:'flex',gap:8,alignItems:'flex-start'}}>
+                               <textarea defaultValue={notaCap} id="nota-cap-input" rows={2}
+                                 style={{flex:1,background:'#374151',border:'1px solid #4b5563',borderRadius:6,padding:'6px 10px',color:'#fff',fontSize:12,resize:'none',outline:'none'}}/>
+                               <div style={{display:'flex',gap:6,flexShrink:0}}>
+                                 <button onClick={()=>{const v=document.getElementById('nota-cap-input').value;saveField('notaCapacidad',v);setEditNota(false);}} style={{background:'#16a34a',color:'#fff',border:'none',borderRadius:6,padding:'6px 12px',cursor:'pointer',fontSize:11,fontWeight:700}}>Guardar</button>
+                                 <button onClick={()=>setEditNota(false)} style={{background:'#374151',color:'#9ca3af',border:'none',borderRadius:6,padding:'6px 10px',cursor:'pointer',fontSize:11}}>✕</button>
+                               </div>
+                             </div>
+                           : <div style={{display:'flex',alignItems:'center',gap:10}}>
+                               <span style={{color:'#d1d5db',fontSize:13,lineHeight:1.5,flex:1}}>{notaCap}</span>
+                               <button onClick={()=>setEditNota(true)} style={{background:'#374151',color:'#9ca3af',border:'none',borderRadius:6,padding:'5px 10px',cursor:'pointer',fontSize:10,flexShrink:0}}>✏️</button>
+                             </div>
+                         }
+                       </div>
+                     </div>;
+                   })()}
+
                    {/* KPIs */}
                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                      {[
@@ -26130,7 +26185,6 @@ ${resumenHtml}
                      </div>
                    </div>
                  </div>;})()}
-             </div>
            </div>;
          })()}
            {/* ── BROCHURE DIGITAL ── */}
