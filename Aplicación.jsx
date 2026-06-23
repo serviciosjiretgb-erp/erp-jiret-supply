@@ -391,6 +391,10 @@ function App() {
   const [resenaImages, setResenaImages] = useState({}); // key→base64, guardado en colección aparte
   const [resenaMaqSel, setResenaMaqSel] = useState(0); // índice máquina seleccionada
   const [resenaVehSel, setResenaVehSel] = useState(0); // índice vehículo seleccionado
+  const [resenaVideoEdit, setResenaVideoEdit] = useState(false); // editar URL video
+  const [resenaVideoTmp, setResenaVideoTmp] = useState(''); // URL temporal video
+  const [resenaEditNota, setResenaEditNota] = useState(false); // editar nota capacidad
+  const [brochurePg, setBrochurePg] = useState(0); // página activa del brochure
   const [selectedPortal, setSelectedPortal] = useState(null); // 'produccion' | 'administracion' | 'finanzas'
   const [portalDenied, setPortalDenied] = useState(''); // aviso "no posee permiso" en pantalla de portales
   const [ventasView, setVentasView] = useState('facturacion');
@@ -24947,7 +24951,7 @@ ${resumenHtml}
               {PORTALES.map(p => {
                 const allowed = hasPortal(p.id);
                 return (
-                <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); if(p.id==='resena_portal') setActiveTab('resena'); else if(p.id==='brochure_portal') setActiveTab('brochure'); else setActiveTab('home'); } else { setPortalDenied(p.title); } }}
+                <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); if(p.id==='resena_portal') setActiveTab('resena'); else if(p.id==='brochure_portal') { setActiveTab('resena'); setResenaTab('catalogo'); } else setActiveTab('home'); } else { setPortalDenied(p.title); } }}
                   style={{textAlign:'left', position:'relative', background:allowed?'#ffffff':'rgba(255,255,255,0.55)',
                     border:'none', borderLeft:`5px solid ${allowed?p.color:'#9ca3af'}`, borderRadius:16, padding:'28px 24px',
                     cursor:'pointer', color:allowed?'#111':'#6b7280', opacity:allowed?1:0.7, transition:'transform 0.2s, box-shadow 0.2s', boxShadow:'0 4px 24px rgba(0,0,0,0.22)'}}
@@ -25128,7 +25132,7 @@ ${resumenHtml}
                     {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && navInPortal('kpi') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
                     {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && navInPortal('costos') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
                     {(hasPerm('auditoria')||appUser?.role==='Master') && navInPortal('auditoria') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='auditoria'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShieldCheck size={14}/> Auditoría</button>}
-                    <button onClick={()=>{clearAllReports();setActiveTab('brochure');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='brochure'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}>📋 Brochure</button>
+                    <button onClick={()=>{clearAllReports();setActiveTab('resena');setResenaTab('catalogo');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='resena'&&resenaTab==='catalogo')?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}>📋 Brochure</button>
                  </div>
               </div>
               <div className="flex items-center gap-2 sm:gap-3">
@@ -25570,7 +25574,7 @@ ${resumenHtml}
 
                {/* Section tabs */}
                <div style={{background:'#fff',borderBottom:'1px solid #e5e7eb'}} className="flex gap-1 px-6 overflow-x-auto">
-                 {[['portada','🏠 Portada'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['productos','📦 Productos'],['clientes','🤝 Clientes'],['activos','💰 Activos'],['proyeccion','📈 Proyección'],['plano','📐 Plano'],['video','🎬 Video']].map(([t,l])=>(
+                 {[['portada','🏠 Portada'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['productos','📦 Productos'],['clientes','🤝 Clientes'],['activos','💰 Activos'],['proyeccion','📈 Proyección'],['plano','📐 Plano'],['video','🎬 Video'],['catalogo','📋 Catálogo']].map(([t,l])=>(
                    <button key={t} onClick={()=>setResenaTab(t)} style={resenaTab===t?{borderBottom:`2px solid ${ORG}`,color:ORG}:{borderBottom:'2px solid transparent',color:'#888'}}
                      className="px-4 py-3 text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition-all">{l}</button>
                  ))}
@@ -25979,54 +25983,50 @@ ${resumenHtml}
                </div>}
 
                {/* ══ VIDEO ══ */}
-               {resenaTab==='video' && <div>
-                 <div style={{background:'#111',borderRadius:12,overflow:'hidden'}}>
-                   <div style={{background:'#E8541A',padding:'12px 18px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                     <div style={{color:'#fff',fontWeight:900,fontSize:14}}>🎬 VIDEO — INSTALACIONES SUPPLY G&B</div>
-                     <div style={{color:'rgba(255,255,255,0.7)',fontSize:10}}>Recorrido por las instalaciones · Jun 2026</div>
+               {resenaTab==='video' && (()=>{
+                 const videoUrl=DATA.videoUrl||'';
+                 const isYT=videoUrl.includes('youtube')||videoUrl.includes('youtu.be');
+                 const isDrive=videoUrl.includes('drive.google');
+                 const getEmbedUrl=(url)=>{
+                   if(url.includes('youtu.be/')) return 'https://www.youtube.com/embed/'+url.split('youtu.be/')[1].split('?')[0];
+                   if(url.includes('youtube.com/watch')) return 'https://www.youtube.com/embed/'+url.split('v=')[1]?.split('&')[0];
+                   if(url.includes('drive.google.com/file/d/')) return url.replace('/view','/preview');
+                   return url;
+                 };
+                 return <div>
+                   <div style={{background:'#111',borderRadius:12,overflow:'hidden'}}>
+                     <div style={{background:'#E8541A',padding:'12px 18px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                       <div style={{color:'#fff',fontWeight:900,fontSize:14}}>🎬 VIDEO — INSTALACIONES SUPPLY G&B</div>
+                       <div style={{color:'rgba(255,255,255,0.7)',fontSize:10}}>Recorrido por las instalaciones · Jun 2026</div>
+                     </div>
+                     <div style={{background:'#000',minHeight:520,display:'flex',alignItems:'center',justifyContent:'center',position:'relative'}}>
+                       {videoUrl && (isYT||isDrive)
+                         ? <iframe src={getEmbedUrl(videoUrl)} style={{width:'100%',height:520,border:'none'}} allow="autoplay; fullscreen" allowFullScreen/>
+                         : videoUrl
+                           ? <video src={videoUrl} controls style={{width:'100%',maxHeight:520,background:'#000'}}/>
+                           : <div style={{textAlign:'center',color:'#6b7280',padding:60}}>
+                               <div style={{fontSize:80,marginBottom:16}}>🎬</div>
+                               <div style={{fontWeight:700,fontSize:16,color:'#9ca3af',marginBottom:8}}>Agrega un enlace de video</div>
+                               <div style={{fontSize:12,color:'#6b7280'}}>YouTube, Google Drive o URL directa de video MP4</div>
+                             </div>
+                       }
+                     </div>
+                     <div style={{padding:'14px 18px',borderTop:'1px solid #1f2937',display:'flex',alignItems:'center',gap:10}}>
+                       {resenaVideoEdit
+                         ? <><input value={resenaVideoTmp} onChange={e=>setResenaVideoTmp(e.target.value)} placeholder="https://youtube.com/watch?v=... o Google Drive link"
+                             style={{flex:1,background:'#1f2937',border:'1px solid #374151',borderRadius:8,padding:'8px 12px',color:'#fff',fontSize:12,outline:'none'}}/>
+                           <button onClick={()=>{saveField('videoUrl',resenaVideoTmp);setResenaVideoEdit(false);}} style={{background:'#16a34a',color:'#fff',border:'none',borderRadius:8,padding:'8px 16px',cursor:'pointer',fontSize:11,fontWeight:700}}>Guardar</button>
+                           <button onClick={()=>setResenaVideoEdit(false)} style={{background:'#374151',color:'#9ca3af',border:'none',borderRadius:8,padding:'8px 12px',cursor:'pointer',fontSize:11}}>✕</button></>
+                         : <><span style={{color:'#6b7280',fontSize:11,flex:1}}>{videoUrl||'Sin video configurado'}</span>
+                           <button onClick={()=>{setResenaVideoTmp(videoUrl);setResenaVideoEdit(true);}} style={{background:'#374151',color:'#d1d5db',border:'none',borderRadius:8,padding:'8px 14px',cursor:'pointer',fontSize:11,fontWeight:700}}>✏️ {videoUrl?'Cambiar enlace':'Agregar enlace'}</button></>
+                       }
+                     </div>
                    </div>
-                   {(()=>{
-                     const videoUrl=DATA.videoUrl||'';
-                     const [editUrl,setEditUrl]=React.useState(false);
-                     const [tmpUrl,setTmpUrl]=React.useState(videoUrl);
-                     const isYT=videoUrl.includes('youtube')||videoUrl.includes('youtu.be');
-                     const isDrive=videoUrl.includes('drive.google');
-                     const getEmbedUrl=(url)=>{
-                       if(url.includes('youtu.be/')) return 'https://www.youtube.com/embed/'+url.split('youtu.be/')[1].split('?')[0];
-                       if(url.includes('youtube.com/watch')) return 'https://www.youtube.com/embed/'+url.split('v=')[1]?.split('&')[0];
-                       if(url.includes('drive.google.com/file/d/')) return url.replace('/view','/preview');
-                       return url;
-                     };
-                     return <div>
-                       <div style={{background:'#000',minHeight:520,display:'flex',alignItems:'center',justifyContent:'center',position:'relative'}}>
-                         {videoUrl && (isYT||isDrive)
-                           ? <iframe src={getEmbedUrl(videoUrl)} style={{width:'100%',height:520,border:'none'}} allow="autoplay; fullscreen" allowFullScreen/>
-                           : videoUrl
-                             ? <video src={videoUrl} controls style={{width:'100%',maxHeight:520,background:'#000'}}/>
-                             : <div style={{textAlign:'center',color:'#6b7280',padding:60}}>
-                                 <div style={{fontSize:80,marginBottom:16}}>🎬</div>
-                                 <div style={{fontWeight:700,fontSize:16,color:'#9ca3af',marginBottom:8}}>Agrega un enlace de video</div>
-                                 <div style={{fontSize:12,color:'#6b7280'}}>YouTube, Google Drive o URL directa de video MP4</div>
-                               </div>
-                         }
-                       </div>
-                       <div style={{padding:'14px 18px',borderTop:'1px solid #1f2937',display:'flex',alignItems:'center',gap:10}}>
-                         {editUrl
-                           ? <><input value={tmpUrl} onChange={e=>setTmpUrl(e.target.value)} placeholder="https://youtube.com/watch?v=... o Google Drive link"
-                               style={{flex:1,background:'#1f2937',border:'1px solid #374151',borderRadius:8,padding:'8px 12px',color:'#fff',fontSize:12,outline:'none'}}/>
-                             <button onClick={()=>{saveField('videoUrl',tmpUrl);setEditUrl(false);}} style={{background:'#16a34a',color:'#fff',border:'none',borderRadius:8,padding:'8px 16px',cursor:'pointer',fontSize:11,fontWeight:700}}>Guardar</button>
-                             <button onClick={()=>setEditUrl(false)} style={{background:'#374151',color:'#9ca3af',border:'none',borderRadius:8,padding:'8px 12px',cursor:'pointer',fontSize:11}}>✕</button></>
-                           : <><span style={{color:'#6b7280',fontSize:11,flex:1}}>{videoUrl||'Sin video configurado'}</span>
-                             <button onClick={()=>{setTmpUrl(videoUrl);setEditUrl(true);}} style={{background:'#374151',color:'#d1d5db',border:'none',borderRadius:8,padding:'8px 14px',cursor:'pointer',fontSize:11,fontWeight:700}}>✏️ {videoUrl?'Cambiar enlace':'Agregar enlace'}</button></>
-                         }
-                       </div>
-                     </div>;
-                   })()}
-                 </div>
-               </div>}
+                 </div>;
+               })()}
 
                {/* ══ ACTIVOS ══ */}
-                 <div style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E'}} className="overflow-hidden">
+               {resenaTab==='activos' && <div style={{background:CARD,borderRadius:12,border:'1px solid #3A3A5E'}} className="overflow-hidden">
                    <div style={{background:ORG}} className="px-6 py-4">
                      <div className="text-black font-black text-base tracking-wide">VALORIZACIÓN TOTAL DE ACTIVOS</div>
                    </div>
@@ -26054,8 +26054,7 @@ ${resumenHtml}
                      <span style={{color:ORG}} className="font-black text-sm uppercase tracking-wider">TOTAL GENERAL DE ACTIVOS</span>
                      <span className="font-black text-2xl text-white">{fmtUSD(totalActivos)}</span>
                    </div>
-                 </div>
-               </div>}
+                 </div>}
 
                {/* ══ PROYECCIÓN ══ */}
                {resenaTab==='proyeccion' && (()=>{
@@ -26082,24 +26081,23 @@ ${resumenHtml}
                  return <div className="space-y-5">
                    {/* Nota editable capacidad */}
                    {(()=>{
-                     const [editNota,setEditNota]=React.useState(false);
                      const notaCap=DATA.notaCapacidad||'En agosto 2026 se incorporan nuevas extrusoras y selladoras que aumentarán la capacidad instalada hasta 130 ton/mes.';
                      return <div style={{background:'linear-gradient(135deg,#1f2937,#111827)',borderRadius:12,padding:'14px 18px',display:'flex',alignItems:'flex-start',gap:12,border:'1px solid #374151'}}>
                        <span style={{fontSize:20,flexShrink:0}}>📌</span>
                        <div style={{flex:1}}>
                          <div style={{color:'#fbbf24',fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:2,marginBottom:4}}>NOTA — AMPLIACIÓN DE CAPACIDAD</div>
-                         {editNota
+                         {resenaEditNota
                            ? <div style={{display:'flex',gap:8,alignItems:'flex-start'}}>
                                <textarea defaultValue={notaCap} id="nota-cap-input" rows={2}
                                  style={{flex:1,background:'#374151',border:'1px solid #4b5563',borderRadius:6,padding:'6px 10px',color:'#fff',fontSize:12,resize:'none',outline:'none'}}/>
                                <div style={{display:'flex',gap:6,flexShrink:0}}>
-                                 <button onClick={()=>{const v=document.getElementById('nota-cap-input').value;saveField('notaCapacidad',v);setEditNota(false);}} style={{background:'#16a34a',color:'#fff',border:'none',borderRadius:6,padding:'6px 12px',cursor:'pointer',fontSize:11,fontWeight:700}}>Guardar</button>
-                                 <button onClick={()=>setEditNota(false)} style={{background:'#374151',color:'#9ca3af',border:'none',borderRadius:6,padding:'6px 10px',cursor:'pointer',fontSize:11}}>✕</button>
+                                 <button onClick={()=>{const v=document.getElementById('nota-cap-input').value;saveField('notaCapacidad',v);setResenaEditNota(false);}} style={{background:'#16a34a',color:'#fff',border:'none',borderRadius:6,padding:'6px 12px',cursor:'pointer',fontSize:11,fontWeight:700}}>Guardar</button>
+                                 <button onClick={()=>setResenaEditNota(false)} style={{background:'#374151',color:'#9ca3af',border:'none',borderRadius:6,padding:'6px 10px',cursor:'pointer',fontSize:11}}>✕</button>
                                </div>
                              </div>
                            : <div style={{display:'flex',alignItems:'center',gap:10}}>
                                <span style={{color:'#d1d5db',fontSize:13,lineHeight:1.5,flex:1}}>{notaCap}</span>
-                               <button onClick={()=>setEditNota(true)} style={{background:'#374151',color:'#9ca3af',border:'none',borderRadius:6,padding:'5px 10px',cursor:'pointer',fontSize:10,flexShrink:0}}>✏️</button>
+                               <button onClick={()=>setResenaEditNota(true)} style={{background:'#374151',color:'#9ca3af',border:'none',borderRadius:6,padding:'5px 10px',cursor:'pointer',fontSize:10,flexShrink:0}}>✏️</button>
                              </div>
                          }
                        </div>
@@ -26185,251 +26183,232 @@ ${resumenHtml}
                      </div>
                    </div>
                  </div>;})()}
-           </div>;
-         })()}
-           {/* ── BROCHURE DIGITAL ── */}
-          {activeTab === 'brochure' && (()=>{
-            const ORG='#E8541A'; const DARK='#1a1a1a';
-            const pages=[
-              // 0. PORTADA
-              {bg:`linear-gradient(160deg,${DARK} 0%,#3d1000 100%)`,content:<div style={{height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',position:'relative',overflow:'hidden'}}>
-                <div style={{position:'absolute',inset:0,background:`radial-gradient(ellipse at 40% 50%,${ORG}44 0%,transparent 70%)`}}/>
-                <div style={{position:'relative',textAlign:'center'}}>
-                  <div style={{color:'#fff',fontSize:48,fontWeight:900,lineHeight:1}}>Supply</div>
-                  <div style={{fontSize:120,fontWeight:900,lineHeight:0.9,color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
-                    g<span style={{background:ORG,color:'#fff',borderRadius:'50%',width:72,height:72,display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:36}}>{'&'}</span>b
-                  </div>
-                  <div style={{color:'#fff',opacity:.8,fontSize:18,marginTop:12,letterSpacing:2}}>Líderes en material de <b>empaque</b></div>
-                  <div style={{marginTop:48,fontSize:80,fontWeight:900,color:'transparent',WebkitTextStroke:`3px ${ORG}`,letterSpacing:8}}>BROCHURE</div>
-                  <div style={{color:ORG,fontSize:12,marginTop:20}}>ventas@supplygyb.com · @supply.gb</div>
-                </div>
-              </div>},
-              // 1. MISIÓN & VISIÓN
-              {bg:'#f5f5f0',content:<div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',gap:40,padding:'28px 32px'}}>
-                <div style={{display:'flex',alignItems:'center',gap:40}}>
-                  <div style={{flex:'0 0 200px'}}>
-                    <div style={{fontFamily:'serif',fontSize:52,fontWeight:900,color:DARK,lineHeight:1}}>NUESTRA,</div>
-                    <div style={{fontFamily:'serif',fontSize:52,fontWeight:900,color:ORG,lineHeight:1}}>MISIÓN</div>
-                  </div>
-                  <div style={{borderLeft:`3px solid ${ORG}`,paddingLeft:32,flex:1}}>
-                    <p style={{fontSize:16,color:DARK,lineHeight:1.8}}>Proveer soluciones de empaque de alto rendimiento que optimicen la cadena de suministro del corporativo, combinando tecnología de vanguardia con una respuesta a tiempo.</p>
-                  </div>
-                </div>
-                <div style={{height:2,background:`linear-gradient(90deg,transparent,${ORG},transparent)`}}/>
-                <div style={{display:'flex',alignItems:'center',gap:40}}>
-                  <div style={{borderRight:`3px solid ${ORG}`,paddingRight:32,flex:1,textAlign:'right'}}>
-                    <p style={{fontSize:16,color:DARK,lineHeight:1.8}}>Ser el aliado estratégico líder en el eje centro-occidental, reconocidos por transformar el empaque en una ventaja competitiva de alto rendimiento para nuestros clientes.</p>
-                  </div>
-                  <div style={{flex:'0 0 200px',textAlign:'right'}}>
-                    <div style={{fontFamily:'serif',fontSize:52,fontWeight:900,color:DARK,lineHeight:1}}>NUESTRA</div>
-                    <div style={{fontFamily:'serif',fontSize:52,fontWeight:900,color:ORG,lineHeight:1}}>VISIÓN</div>
-                  </div>
-                </div>
-                <div style={{textAlign:'center',color:'#999',fontSize:11}}>🎵 @supply.gb</div>
-              </div>},
-              // 2. VALORES
-              {bg:`linear-gradient(160deg,${ORG} 0%,#b83a00 100%)`,content:<div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',padding:'28px 32px',position:'relative',overflow:'hidden'}}>
-                <div style={{position:'absolute',right:-40,top:'50%',transform:'translateY(-50%)',fontSize:280,fontWeight:900,color:'rgba(255,255,255,0.08)',letterSpacing:-10,lineHeight:1}}>VALORES</div>
-                <div style={{position:'relative'}}>
-                  <div style={{fontSize:64,fontWeight:900,color:'#fff',marginBottom:40}}>VALORES</div>
-                  {[['🤝','HONESTIDAD'],['👥','TRABAJO EN EQUIPO'],['❤️','PASIÓN POR EL SERVICIO'],['⭐','COMPROMISO & DEDICACIÓN'],['🚀','INMEDIATEZ & EFICIENCIA']].map(([icon,v])=>(
-                    <div key={v} style={{display:'flex',alignItems:'center',gap:20,marginBottom:20,background:'rgba(0,0,0,0.15)',borderRadius:12,padding:'14px 24px'}}>
-                      <span style={{fontSize:28}}>{icon}</span>
-                      <span style={{color:'#fff',fontWeight:900,fontSize:20,letterSpacing:4}}>{v}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>},
-              // 3. PRODUCTOS - STRETCH FILM
-              {bg:DARK,content:<div style={{height:'100%',display:'grid',gridTemplateRows:'auto 1fr',padding:'28px 32px',gap:24}}>
-                <div style={{display:'flex',alignItems:'center',gap:20}}>
-                  <div style={{fontSize:60,fontWeight:900,color:ORG}}>PRODUCTOS</div>
-                </div>
-                <div style={{display:'flex',flexDirection:'column',gap:16}}>
-                  {[
-                    {tag:'MANUAL',title:'STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',specs:['45CM × 20 MICRAS → 2KG · 4KG','45CM × 18 MICRAS → 2KG · 4KG']},
-                    {tag:'AUTOMÁTICO',title:'STRETCH FILM TRANSPARENTE',bg:'#222',specs:['50CM × 16KG → 16 · 18 · 20 · 22 MICRAS']},
-                    {tag:'PRE-STRETCH',title:'PRE STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',specs:['45CM × 550MTS × 8 MICRAS B/R → 2.7KG']},
-                  ].map((p)=>(
-                    <div key={p.tag} style={{background:p.bg,borderRadius:12,padding:'20px 28px',borderLeft:`4px solid ${ORG}`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                      <div>
-                        <div style={{color:ORG,fontSize:10,fontWeight:900,letterSpacing:3,marginBottom:4}}>{p.tag}</div>
-                        <div style={{color:'#fff',fontWeight:900,fontSize:20,marginBottom:8}}>{p.title}</div>
-                        {p.specs.map(s=><div key={s} style={{color:'#aaa',fontSize:13}}>{s}</div>)}
-                      </div>
-                      <div style={{width:80,height:80,background:ORG,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:32}}>🎞️</div>
-                    </div>
-                  ))}
-                </div>
-              </div>},
-              // 4. STRETCH FILM NEGRO + COLORES
-              {bg:ORG,content:<div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',padding:'28px 32px',gap:24}}>
-                {[
-                  {tag:'AUTOMÁTICO 16KG',title:'STRETCH FILM NEGRO',detail:'20 MICRAS'},
-                  {tag:'MANUAL 0.5KG',title:'MINI STRETCH FILM',detail:'12CM × 250MTS × 20 MICRAS'},
-                  {tag:'MANUAL 2.7KG',title:'STRETCH FILM DE COLORES',detail:'45CM × 330MTS × 20 MICRAS'},
-                ].map((p)=>(
-                  <div key={p.tag} style={{background:'rgba(0,0,0,0.25)',borderRadius:12,padding:'20px 28px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                    <div>
-                      <div style={{color:'rgba(255,255,255,0.7)',fontSize:10,fontWeight:900,letterSpacing:3,marginBottom:4}}>{p.tag}</div>
-                      <div style={{color:'#fff',fontWeight:900,fontSize:22}}>{p.title}</div>
-                      <div style={{color:'rgba(255,255,255,0.8)',fontSize:14,marginTop:4}}>{p.detail}</div>
-                    </div>
-                    <div style={{fontSize:40}}>📦</div>
-                  </div>
-                ))}
-              </div>},
-              // 5. CINTAS DE EMBALAR
-              {bg:'#f0f0f0',content:<div style={{height:'100%',padding:'28px 32px'}}>
-                <div style={{fontSize:48,fontWeight:900,color:DARK,marginBottom:8}}>CINTAS DE EMBALAR</div>
-                <div style={{height:3,background:ORG,width:120,marginBottom:32}}/>
-                <div style={{display:'flex',flexDirection:'column',gap:16}}>
-                  {[
-                    {title:'Cinta de Embalar',sub:'DE COLORES (7 colores)',spec:'2" × 100 MTS × 50 MICRAS',badge:'MANUAL'},
-                    {title:'Cinta de Embalar',sub:'MARRÓN / TRANSPARENTE',spec:'2" × 100 MTS × 50 MICRAS',badge:'MANUAL'},
-                    {title:'Cinta de Embalar',sub:'INDUSTRIAL',spec:'2" × 1000 MTS / 2.0 MIL',badge:'AUTOMÁTICA'},
-                  ].map((p)=>(
-                    <div key={p.sub} style={{background:'#fff',borderRadius:12,padding:'20px 28px',boxShadow:'0 4px 20px rgba(0,0,0,0.08)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                      <div>
-                        <span style={{background:ORG,color:'#fff',fontSize:9,fontWeight:900,padding:'3px 10px',borderRadius:20,letterSpacing:2}}>{p.badge}</span>
-                        <div style={{color:DARK,fontWeight:900,fontSize:18,marginTop:8}}>{p.title} <span style={{color:ORG}}>{p.sub}</span></div>
-                        <div style={{color:'#666',fontSize:13,marginTop:4}}>{p.spec}</div>
-                      </div>
-                      <div style={{fontSize:40}}>🎀</div>
-                    </div>
-                  ))}
-                </div>
-              </div>},
-              // 6. PAPEL KRAFT + ESPECIALIZADOS
-              {bg:ORG,content:<div style={{height:'100%',display:'grid',gridTemplateColumns:'1fr 1fr',gap:20,padding:'28px 32px'}}>
-                <div>
-                  <div style={{color:'#000',fontWeight:900,fontSize:36,marginBottom:20}}>PAPEL KRAFT MARRÓN</div>
-                  {['60CM × 50Gm','60CM × 66Gm','60CM × 82Gm'].map(s=><div key={s} style={{background:'rgba(0,0,0,0.15)',borderRadius:8,padding:'12px 20px',color:'#fff',fontWeight:700,fontSize:16,marginBottom:8}}>{s}</div>)}
-                  <div style={{background:'#000',borderRadius:8,padding:'10px 20px',color:ORG,fontWeight:900,fontSize:14,marginTop:12,display:'inline-block'}}>📦 ROLLO DE 10 KG</div>
-                </div>
-                <div>
-                  <div style={{color:'#000',fontWeight:900,fontSize:36,marginBottom:20}}>PRODUCTOS ESPECIALIZADOS</div>
-                  {[
-                    {name:'TERMOENCOGIBLE & FARDOS',detail:'Medidas a requerimiento del cliente'},
-                    {name:'BOLSONES DE POLIETILENO',detail:'Baja densidad · Medidas a requerimiento'},
-                  ].map(p=><div key={p.name} style={{background:'rgba(0,0,0,0.15)',borderRadius:8,padding:'16px 20px',marginBottom:12}}>
-                    <div style={{color:'#fff',fontWeight:900,fontSize:15}}>{p.name}</div>
-                    <div style={{color:'rgba(255,255,255,0.8)',fontSize:12,marginTop:4}}>{p.detail}</div>
-                  </div>)}
-                </div>
-              </div>},
-              // 7. +PRODUCTOS
-              {bg:DARK,content:<div style={{height:'100%',padding:'28px 32px'}}>
-                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:32}}>
-                  <span style={{color:ORG,fontSize:64,fontWeight:900}}>+</span>
-                  <span style={{color:'#fff',fontSize:48,fontWeight:900}}>PRODUCTOS</span>
-                </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:16}}>
-                  {[
-                    {icon:'💬',name:'Bubble Wrap',spec:'30CM × 10MTS',tag:'Manual'},
-                    {icon:'🎁',name:'Cinta Personalizada',spec:'Colores y medidas a requerimiento',tag:'Manual'},
-                    {icon:'⚠️',name:'Cintas Frágil & Stop',spec:'2" × 100 MTS',tag:'Manual'},
-                    {icon:'🔗',name:'Bobinas de Fleje',spec:'1768M · 1/2" × 0.025" (Core 16"×6")',tag:'Manual'},
-                    {icon:'🌿',name:'Stretch Film Heno Blanco',spec:'75CM × 1600MTS × 25 MICRAS · 29KG',tag:'Embalaje'},
-                    {icon:'📐',name:'Separadores de Cartón',spec:'Medidas a requerimiento',tag:'Personalizado'},
-                  ].map(p=>(
-                    <div key={p.name} style={{background:'#2a2a2a',borderRadius:12,padding:'20px',borderTop:`3px solid ${ORG}`}}>
-                      <div style={{fontSize:32,marginBottom:8}}>{p.icon}</div>
-                      <span style={{background:ORG+'33',color:ORG,fontSize:8,fontWeight:700,padding:'2px 8px',borderRadius:10}}>{p.tag}</span>
-                      <div style={{color:'#fff',fontWeight:900,fontSize:14,marginTop:8,lineHeight:1.3}}>{p.name}</div>
-                      <div style={{color:'#888',fontSize:11,marginTop:4}}>{p.spec}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>},
-              // 8. COBERTURA
-              {bg:`linear-gradient(160deg,#222 0%,#3d1000 100%)`,content:<div style={{height:'100%',padding:'28px 32px',display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
-                <div>
-                  <div style={{color:ORG,fontSize:12,fontWeight:700,letterSpacing:4,marginBottom:8}}>SUCURSALES FÍSICAS</div>
-                  <div style={{color:'#fff',fontWeight:900,fontSize:48,marginBottom:32}}>+COBERTURA</div>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12}}>
-                    {[
-                      {state:'ZULIA',cities:['Maracaibo','Rosario','San José','Machiques'],color:ORG},
-                      {state:'LARA',cities:['Barquisimeto','Carora','La Pastora','Acarigua'],color:'#ff6b35'},
-                      {state:'ARAGUA',cities:['Caracas','Catia la Mar','Guacara','Los Guayos'],color:'#ff8c55'},
-                      {state:'PORTUGUESA',cities:['Araure'],color:'#ffa875'},
-                    ].map(r=>(
-                      <div key={r.state} style={{background:'rgba(255,255,255,0.08)',borderRadius:12,padding:'16px',borderTop:`3px solid ${r.color}`}}>
-                        <div style={{color:r.color,fontWeight:900,fontSize:14,marginBottom:8}}>📍 {r.state}</div>
-                        {r.cities.map(c=><div key={c} style={{color:'#ccc',fontSize:11,marginBottom:3}}>· {c}</div>)}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div style={{textAlign:'center',color:'rgba(255,255,255,0.5)',fontSize:12,fontStyle:'italic'}}>¡Y vamos por más! Llegaremos a más locaciones...</div>
-              </div>},
-              // 9. CLIENTES
-              {bg:'#fafafa',content:<div style={{height:'100%',padding:'24px 28px',display:'flex',flexDirection:'column'}}>
-                <div style={{textAlign:'center',marginBottom:24}}>
-                  <span style={{color:DARK,fontWeight:900,fontSize:42}}>NUESTROS </span>
-                  <span style={{color:ORG,fontWeight:900,fontSize:42}}>CLIENTES</span>
-                </div>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,flex:1}}>
-                  {['PAVECA','Grupo San Simón','Flor de Arauca','COPOSA','Capri','Produvisa','Purolomo','Santa Teresa','La Pastoreña','Mary','Los Andes','Alifortia','Alimentos Kiri','Kiri Recao','Grupo Mimesa','Grupo Mimesa'].slice(0,15).map((c,i)=>(
-                    <div key={i} style={{background:'#fff',borderRadius:10,padding:'16px',boxShadow:'0 2px 12px rgba(0,0,0,0.06)',display:'flex',alignItems:'center',justifyContent:'center',border:'1px solid #eee'}}>
-                      <span style={{color:DARK,fontWeight:900,fontSize:12,textAlign:'center',lineHeight:1.3}}>{c}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>},
-              // 10. CONTACTO
-              {bg:DARK,content:<div style={{height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:32,padding:'32px 36px'}}>
-                <div style={{textAlign:'center'}}>
-                  <div style={{color:'#fff',fontSize:42,fontWeight:900}}>VENTAS AL</div>
-                  <div style={{color:ORG,fontSize:72,fontWeight:900,lineHeight:1}}>MAYOR</div>
-                  <div style={{color:'#fff',fontSize:36,fontWeight:700}}>O <span style={{color:ORG}}>DETAL</span></div>
-                </div>
-                <div style={{display:'flex',flexDirection:'column',gap:16,alignItems:'center'}}>
-                  <div style={{background:ORG,borderRadius:50,padding:'16px 32px',display:'flex',alignItems:'center',gap:12}}>
-                    <span style={{fontSize:24}}>📱</span>
-                    <span style={{color:'#fff',fontWeight:900,fontSize:22}}>(+58) 414-693.03.42</span>
-                  </div>
-                  <div style={{background:'#2a2a2a',borderRadius:12,padding:'14px 28px',textAlign:'center'}}>
-                    <div style={{color:ORG,fontWeight:700,fontSize:11,letterSpacing:2}}>VISITA NUESTRA SEDE</div>
-                    <div style={{color:'#fff',fontSize:14,marginTop:4}}>C.C. Dividivi, PB, Local G-9, Av. C2</div>
-                    <div style={{color:'#888',fontSize:12}}>Sector El Trébol, Maracaibo - Estado Zulia</div>
-                  </div>
-                  <div style={{color:'#888',fontSize:14}}>ventas@supplygyb.com · @supply.gb</div>
-                </div>
-              </div>},
-            ];
-            const [pg, setPg] = React.useState(0);
-            const cur = pages[pg];
-            return <div style={{position:'fixed',inset:0,zIndex:9000,background:DARK,display:'flex',flexDirection:'column'}}>
-              {/* Top bar */}
-              <div style={{background:'rgba(0,0,0,0.5)',backdropFilter:'blur(8px)',display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 20px',flexShrink:0}}>
-                <div style={{display:'flex',alignItems:'center',gap:12}}>
-                  <span style={{color:'#fff',fontWeight:900,fontSize:16}}>Supply G&B</span>
-                  <span style={{color:ORG,fontSize:11}}>Brochure 2026</span>
-                </div>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  {pages.map((_,i)=><button key={i} onClick={()=>setPg(i)} style={{width:28,height:6,borderRadius:3,border:'none',cursor:'pointer',background:pg===i?ORG:'rgba(255,255,255,0.3)',transition:'all .2s'}}/>)}
-                </div>
-                <button onClick={()=>setActiveTab('home')} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'#fff',padding:'8px 16px',borderRadius:8,cursor:'pointer',fontWeight:700,fontSize:12}}>✕ Cerrar</button>
-              </div>
-              {/* Page content */}
-              <div style={{flex:1,position:'relative',overflow:'hidden'}}>
-                <div style={{position:'absolute',inset:0,background:cur.bg,transition:'background .4s ease'}}>
-                  {cur.content}
-                </div>
-                {/* Nav arrows */}
-                <button onClick={()=>setPg(Math.max(0,pg-1))} disabled={pg===0}
-                  style={{position:'absolute',left:16,top:'50%',transform:'translateY(-50%)',background:'rgba(0,0,0,0.5)',border:'none',color:'#fff',width:44,height:44,borderRadius:'50%',cursor:'pointer',fontSize:20,display:'flex',alignItems:'center',justifyContent:'center',opacity:pg===0?0.2:0.8}}>←</button>
-                <button onClick={()=>setPg(Math.min(pages.length-1,pg+1))} disabled={pg===pages.length-1}
-                  style={{position:'absolute',right:16,top:'50%',transform:'translateY(-50%)',background:'rgba(0,0,0,0.5)',border:'none',color:'#fff',width:44,height:44,borderRadius:'50%',cursor:'pointer',fontSize:20,display:'flex',alignItems:'center',justifyContent:'center',opacity:pg===pages.length-1?0.2:0.8}}>→</button>
-              </div>
-              {/* Bottom */}
-              <div style={{background:'rgba(0,0,0,0.6)',padding:'8px 20px',display:'flex',justifyContent:'center',alignItems:'center',gap:8,flexShrink:0}}>
-                <span style={{color:'rgba(255,255,255,0.5)',fontSize:11}}>{pg+1} / {pages.length}</span>
-                <span style={{color:ORG,fontSize:11,fontWeight:700,marginLeft:8}}>{['Portada','Misión & Visión','Valores','Stretch Film','Stretch Film +','Cintas de Embalar','Kraft & Especializados','+Productos','Cobertura','Nuestros Clientes','Contacto'][pg]||''}</span>
-              </div>
-            </div>;
-          })()}
+
+               {/* ══ CATÁLOGO / BROCHURE ══ */}
+               {resenaTab==='catalogo' && (()=>{
+                 const ORG2='#E8541A'; const DARK2='#1a1a1a';
+                 const pages=[
+                   {bg:`linear-gradient(160deg,${DARK2} 0%,#3d1000 100%)`,content:<div style={{height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',position:'relative',overflow:'hidden'}}>
+                     <div style={{position:'absolute',inset:0,background:`radial-gradient(ellipse at 40% 50%,${ORG2}44 0%,transparent 70%)`}}/>
+                     <div style={{position:'relative',textAlign:'center'}}>
+                       <div style={{color:'#fff',fontSize:48,fontWeight:900,lineHeight:1}}>Supply</div>
+                       <div style={{fontSize:120,fontWeight:900,lineHeight:0.9,color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+                         g<span style={{background:ORG2,color:'#fff',borderRadius:'50%',width:72,height:72,display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:36}}>{'&'}</span>b
+                       </div>
+                       <div style={{color:'#fff',opacity:.8,fontSize:18,marginTop:12,letterSpacing:2}}>Líderes en material de <b>empaque</b></div>
+                       <div style={{marginTop:48,fontSize:80,fontWeight:900,color:'transparent',WebkitTextStroke:`3px ${ORG2}`,letterSpacing:8}}>BROCHURE</div>
+                       <div style={{color:ORG2,fontSize:12,marginTop:20}}>ventas@supplygyb.com · @supply.gb</div>
+                     </div>
+                   </div>},
+                   {bg:'#f5f5f0',content:<div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',gap:40,padding:'28px 32px'}}>
+                     <div style={{display:'flex',alignItems:'center',gap:40}}>
+                       <div style={{flex:'0 0 200px'}}>
+                         <div style={{fontFamily:'serif',fontSize:52,fontWeight:900,color:DARK2,lineHeight:1}}>NUESTRA,</div>
+                         <div style={{fontFamily:'serif',fontSize:52,fontWeight:900,color:ORG2,lineHeight:1}}>MISIÓN</div>
+                       </div>
+                       <div style={{borderLeft:`3px solid ${ORG2}`,paddingLeft:32,flex:1}}>
+                         <p style={{fontSize:16,color:DARK2,lineHeight:1.8}}>Proveer soluciones de empaque de alto rendimiento que optimicen la cadena de suministro del corporativo, combinando tecnología de vanguardia con una respuesta a tiempo.</p>
+                       </div>
+                     </div>
+                     <div style={{height:2,background:`linear-gradient(90deg,transparent,${ORG2},transparent)`}}/>
+                     <div style={{display:'flex',alignItems:'center',gap:40}}>
+                       <div style={{borderRight:`3px solid ${ORG2}`,paddingRight:32,flex:1,textAlign:'right'}}>
+                         <p style={{fontSize:16,color:DARK2,lineHeight:1.8}}>Ser el aliado estratégico líder en el eje centro-occidental, reconocidos por transformar el empaque en una ventaja competitiva de alto rendimiento para nuestros clientes.</p>
+                       </div>
+                       <div style={{flex:'0 0 200px',textAlign:'right'}}>
+                         <div style={{fontFamily:'serif',fontSize:52,fontWeight:900,color:DARK2,lineHeight:1}}>NUESTRA</div>
+                         <div style={{fontFamily:'serif',fontSize:52,fontWeight:900,color:ORG2,lineHeight:1}}>VISIÓN</div>
+                       </div>
+                     </div>
+                   </div>},
+                   {bg:`linear-gradient(160deg,${ORG2} 0%,#b83a00 100%)`,content:<div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',padding:'28px 32px',position:'relative',overflow:'hidden'}}>
+                     <div style={{position:'absolute',right:-40,top:'50%',transform:'translateY(-50%)',fontSize:280,fontWeight:900,color:'rgba(255,255,255,0.08)',letterSpacing:-10,lineHeight:1}}>VALORES</div>
+                     <div style={{position:'relative'}}>
+                       <div style={{fontSize:64,fontWeight:900,color:'#fff',marginBottom:40}}>VALORES</div>
+                       {[['🤝','HONESTIDAD'],['👥','TRABAJO EN EQUIPO'],['❤️','PASIÓN POR EL SERVICIO'],['⭐','COMPROMISO & DEDICACIÓN'],['🚀','INMEDIATEZ & EFICIENCIA']].map(([icon,v])=>(
+                         <div key={v} style={{display:'flex',alignItems:'center',gap:20,marginBottom:20,background:'rgba(0,0,0,0.15)',borderRadius:12,padding:'14px 24px'}}>
+                           <span style={{fontSize:28}}>{icon}</span>
+                           <span style={{color:'#fff',fontWeight:900,fontSize:20,letterSpacing:4}}>{v}</span>
+                         </div>
+                       ))}
+                     </div>
+                   </div>},
+                   {bg:DARK2,content:<div style={{height:'100%',display:'grid',gridTemplateRows:'auto 1fr',padding:'28px 32px',gap:24}}>
+                     <div style={{display:'flex',alignItems:'center',gap:20}}>
+                       <div style={{fontSize:60,fontWeight:900,color:ORG2}}>PRODUCTOS</div>
+                     </div>
+                     <div style={{display:'flex',flexDirection:'column',gap:16}}>
+                       {[
+                         {tag:'MANUAL',title:'STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',specs:['45CM × 20 MICRAS → 2KG · 4KG','45CM × 18 MICRAS → 2KG · 4KG']},
+                         {tag:'AUTOMÁTICO',title:'STRETCH FILM TRANSPARENTE',bg:'#222',specs:['50CM × 16KG → 16 · 18 · 20 · 22 MICRAS']},
+                         {tag:'PRE-STRETCH',title:'PRE STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',specs:['45CM × 550MTS × 8 MICRAS B/R → 2.7KG']},
+                       ].map((p)=>(
+                         <div key={p.tag} style={{background:p.bg,borderRadius:12,padding:'20px 28px',borderLeft:`4px solid ${ORG2}`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                           <div>
+                             <div style={{color:ORG2,fontSize:10,fontWeight:900,letterSpacing:3,marginBottom:4}}>{p.tag}</div>
+                             <div style={{color:'#fff',fontWeight:900,fontSize:20,marginBottom:8}}>{p.title}</div>
+                             {p.specs.map(s=><div key={s} style={{color:'#aaa',fontSize:13}}>{s}</div>)}
+                           </div>
+                           <div style={{width:80,height:80,background:ORG2,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:32}}>🎞️</div>
+                         </div>
+                       ))}
+                     </div>
+                   </div>},
+                   {bg:ORG2,content:<div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',padding:'28px 32px',gap:24}}>
+                     {[
+                       {tag:'AUTOMÁTICO 16KG',title:'STRETCH FILM NEGRO',detail:'20 MICRAS'},
+                       {tag:'MANUAL 0.5KG',title:'MINI STRETCH FILM',detail:'12CM × 250MTS × 20 MICRAS'},
+                       {tag:'MANUAL 2.7KG',title:'STRETCH FILM DE COLORES',detail:'45CM × 330MTS × 20 MICRAS'},
+                     ].map((p)=>(
+                       <div key={p.tag} style={{background:'rgba(0,0,0,0.25)',borderRadius:12,padding:'20px 28px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                         <div>
+                           <div style={{color:'rgba(255,255,255,0.7)',fontSize:10,fontWeight:900,letterSpacing:3,marginBottom:4}}>{p.tag}</div>
+                           <div style={{color:'#fff',fontWeight:900,fontSize:22}}>{p.title}</div>
+                           <div style={{color:'rgba(255,255,255,0.8)',fontSize:14,marginTop:4}}>{p.detail}</div>
+                         </div>
+                         <div style={{fontSize:40}}>📦</div>
+                       </div>
+                     ))}
+                   </div>},
+                   {bg:'#f0f0f0',content:<div style={{height:'100%',padding:'28px 32px'}}>
+                     <div style={{fontSize:48,fontWeight:900,color:DARK2,marginBottom:8}}>CINTAS DE EMBALAR</div>
+                     <div style={{height:3,background:ORG2,width:120,marginBottom:32}}/>
+                     <div style={{display:'flex',flexDirection:'column',gap:16}}>
+                       {[
+                         {title:'Cinta de Embalar',sub:'DE COLORES (7 colores)',spec:'2" × 100 MTS × 50 MICRAS',badge:'MANUAL'},
+                         {title:'Cinta de Embalar',sub:'MARRÓN / TRANSPARENTE',spec:'2" × 100 MTS × 50 MICRAS',badge:'MANUAL'},
+                         {title:'Cinta de Embalar',sub:'INDUSTRIAL',spec:'2" × 1000 MTS / 2.0 MIL',badge:'AUTOMÁTICA'},
+                       ].map((p)=>(
+                         <div key={p.sub} style={{background:'#fff',borderRadius:12,padding:'20px 28px',boxShadow:'0 4px 20px rgba(0,0,0,0.08)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                           <div>
+                             <span style={{background:ORG2,color:'#fff',fontSize:9,fontWeight:900,padding:'3px 10px',borderRadius:20,letterSpacing:2}}>{p.badge}</span>
+                             <div style={{color:DARK2,fontWeight:900,fontSize:18,marginTop:8}}>{p.title} <span style={{color:ORG2}}>{p.sub}</span></div>
+                             <div style={{color:'#666',fontSize:13,marginTop:4}}>{p.spec}</div>
+                           </div>
+                           <div style={{fontSize:40}}>🎀</div>
+                         </div>
+                       ))}
+                     </div>
+                   </div>},
+                   {bg:ORG2,content:<div style={{height:'100%',display:'grid',gridTemplateColumns:'1fr 1fr',gap:20,padding:'28px 32px'}}>
+                     <div>
+                       <div style={{color:'#000',fontWeight:900,fontSize:36,marginBottom:20}}>PAPEL KRAFT MARRÓN</div>
+                       {['60CM × 50Gm','60CM × 66Gm','60CM × 82Gm'].map(s=><div key={s} style={{background:'rgba(0,0,0,0.15)',borderRadius:8,padding:'12px 20px',color:'#fff',fontWeight:700,fontSize:16,marginBottom:8}}>{s}</div>)}
+                       <div style={{background:'#000',borderRadius:8,padding:'10px 20px',color:ORG2,fontWeight:900,fontSize:14,marginTop:12,display:'inline-block'}}>📦 ROLLO DE 10 KG</div>
+                     </div>
+                     <div>
+                       <div style={{color:'#000',fontWeight:900,fontSize:36,marginBottom:20}}>PRODUCTOS ESPECIALIZADOS</div>
+                       {[
+                         {name:'TERMOENCOGIBLE & FARDOS',detail:'Medidas a requerimiento del cliente'},
+                         {name:'BOLSONES DE POLIETILENO',detail:'Baja densidad · Medidas a requerimiento'},
+                       ].map(p=><div key={p.name} style={{background:'rgba(0,0,0,0.15)',borderRadius:8,padding:'16px 20px',marginBottom:12}}>
+                         <div style={{color:'#fff',fontWeight:900,fontSize:15}}>{p.name}</div>
+                         <div style={{color:'rgba(255,255,255,0.8)',fontSize:12,marginTop:4}}>{p.detail}</div>
+                       </div>)}
+                     </div>
+                   </div>},
+                   {bg:DARK2,content:<div style={{height:'100%',padding:'28px 32px'}}>
+                     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:32}}>
+                       <span style={{color:ORG2,fontSize:64,fontWeight:900}}>+</span>
+                       <span style={{color:'#fff',fontSize:48,fontWeight:900}}>PRODUCTOS</span>
+                     </div>
+                     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:16}}>
+                       {[
+                         {icon:'💬',name:'Bubble Wrap',spec:'30CM × 10MTS',tag:'Manual'},
+                         {icon:'🎁',name:'Cinta Personalizada',spec:'Colores y medidas a requerimiento',tag:'Manual'},
+                         {icon:'⚠️',name:'Cintas Frágil & Stop',spec:'2" × 100 MTS',tag:'Manual'},
+                         {icon:'🔗',name:'Bobinas de Fleje',spec:'1768M · 1/2" × 0.025" (Core 16"×6")',tag:'Manual'},
+                         {icon:'🌿',name:'Stretch Film Heno Blanco',spec:'75CM × 1600MTS × 25 MICRAS · 29KG',tag:'Embalaje'},
+                         {icon:'📐',name:'Separadores de Cartón',spec:'Medidas a requerimiento',tag:'Personalizado'},
+                       ].map(p=>(
+                         <div key={p.name} style={{background:'#2a2a2a',borderRadius:12,padding:'20px',borderTop:`3px solid ${ORG2}`}}>
+                           <div style={{fontSize:32,marginBottom:8}}>{p.icon}</div>
+                           <span style={{background:ORG2+'33',color:ORG2,fontSize:8,fontWeight:700,padding:'2px 8px',borderRadius:10}}>{p.tag}</span>
+                           <div style={{color:'#fff',fontWeight:900,fontSize:14,marginTop:8,lineHeight:1.3}}>{p.name}</div>
+                           <div style={{color:'#888',fontSize:11,marginTop:4}}>{p.spec}</div>
+                         </div>
+                       ))}
+                     </div>
+                   </div>},
+                   {bg:`linear-gradient(160deg,#222 0%,#3d1000 100%)`,content:<div style={{height:'100%',padding:'28px 32px',display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
+                     <div>
+                       <div style={{color:ORG2,fontSize:12,fontWeight:700,letterSpacing:4,marginBottom:8}}>SUCURSALES FÍSICAS</div>
+                       <div style={{color:'#fff',fontWeight:900,fontSize:48,marginBottom:32}}>+COBERTURA</div>
+                       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
+                         {[
+                           {state:'ZULIA',cities:['Maracaibo','Rosario','San José','Machiques'],color:ORG2},
+                           {state:'LARA',cities:['Barquisimeto','Carora','La Pastora','Acarigua'],color:'#ff6b35'},
+                           {state:'ARAGUA',cities:['Caracas','Catia la Mar','Guacara','Los Guayos'],color:'#ff8c55'},
+                           {state:'PORTUGUESA',cities:['Araure'],color:'#ffa875'},
+                         ].map(r=>(
+                           <div key={r.state} style={{background:'rgba(255,255,255,0.08)',borderRadius:12,padding:'16px',borderTop:`3px solid ${r.color}`}}>
+                             <div style={{color:r.color,fontWeight:900,fontSize:14,marginBottom:8}}>📍 {r.state}</div>
+                             {r.cities.map(c=><div key={c} style={{color:'#ccc',fontSize:11,marginBottom:3}}>· {c}</div>)}
+                           </div>
+                         ))}
+                       </div>
+                     </div>
+                     <div style={{textAlign:'center',color:'rgba(255,255,255,0.5)',fontSize:12,fontStyle:'italic'}}>¡Y vamos por más!</div>
+                   </div>},
+                   {bg:'#fafafa',content:<div style={{height:'100%',padding:'24px 28px',display:'flex',flexDirection:'column'}}>
+                     <div style={{textAlign:'center',marginBottom:24}}>
+                       <span style={{color:DARK2,fontWeight:900,fontSize:42}}>NUESTROS </span>
+                       <span style={{color:ORG2,fontWeight:900,fontSize:42}}>CLIENTES</span>
+                     </div>
+                     <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,flex:1}}>
+                       {['PAVECA','Grupo San Simón','Flor de Arauca','COPOSA','Capri','Produvisa','Purolomo','Santa Teresa','La Pastoreña','Mary','Los Andes','Alifortia','Alimentos Kiri','Kiri Recao','Grupo Mimesa'].map((c,i)=>(
+                         <div key={i} style={{background:'#fff',borderRadius:10,padding:'16px',boxShadow:'0 2px 12px rgba(0,0,0,0.06)',display:'flex',alignItems:'center',justifyContent:'center',border:'1px solid #eee'}}>
+                           <span style={{color:DARK2,fontWeight:900,fontSize:12,textAlign:'center',lineHeight:1.3}}>{c}</span>
+                         </div>
+                       ))}
+                     </div>
+                   </div>},
+                   {bg:DARK2,content:<div style={{height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:32,padding:'32px 36px'}}>
+                     <div style={{textAlign:'center'}}>
+                       <div style={{color:'#fff',fontSize:42,fontWeight:900}}>VENTAS AL</div>
+                       <div style={{color:ORG2,fontSize:72,fontWeight:900,lineHeight:1}}>MAYOR</div>
+                       <div style={{color:'#fff',fontSize:36,fontWeight:700}}>O <span style={{color:ORG2}}>DETAL</span></div>
+                     </div>
+                     <div style={{display:'flex',flexDirection:'column',gap:16,alignItems:'center'}}>
+                       <div style={{background:ORG2,borderRadius:50,padding:'16px 32px',display:'flex',alignItems:'center',gap:12}}>
+                         <span style={{fontSize:24}}>📱</span>
+                         <span style={{color:'#fff',fontWeight:900,fontSize:22}}>(+58) 414-693.03.42</span>
+                       </div>
+                       <div style={{background:'#2a2a2a',borderRadius:12,padding:'14px 28px',textAlign:'center'}}>
+                         <div style={{color:ORG2,fontWeight:700,fontSize:11,letterSpacing:2}}>VISITA NUESTRA SEDE</div>
+                         <div style={{color:'#fff',fontSize:14,marginTop:4}}>C.C. Dividivi, PB, Local G-9, Av. C2</div>
+                         <div style={{color:'#888',fontSize:12}}>Sector El Trébol, Maracaibo - Estado Zulia</div>
+                       </div>
+                       <div style={{color:'#888',fontSize:14}}>ventas@supplygyb.com · @supply.gb</div>
+                     </div>
+                   </div>},
+                 ];
+                 const cur2=pages[brochurePg];
+                 return <div style={{position:'relative',background:DARK2,borderRadius:12,overflow:'hidden',display:'flex',flexDirection:'column',minHeight:600}}>
+                   <div style={{background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 20px',flexShrink:0}}>
+                     <div style={{display:'flex',alignItems:'center',gap:12}}>
+                       <span style={{color:'#fff',fontWeight:900,fontSize:14}}>Supply G&B</span>
+                       <span style={{color:ORG2,fontSize:11}}>Catálogo 2026</span>
+                     </div>
+                     <div style={{display:'flex',alignItems:'center',gap:6}}>
+                       {pages.map((_,i)=><button key={i} onClick={()=>setBrochurePg(i)} style={{width:22,height:5,borderRadius:3,border:'none',cursor:'pointer',background:brochurePg===i?ORG2:'rgba(255,255,255,0.25)',transition:'all .2s'}}/>)}
+                     </div>
+                     <span style={{color:'rgba(255,255,255,0.5)',fontSize:11}}>{brochurePg+1} / {pages.length}</span>
+                   </div>
+                   <div style={{flex:1,position:'relative',overflow:'hidden',minHeight:520}}>
+                     <div style={{position:'absolute',inset:0,background:cur2.bg,transition:'background .4s ease'}}>
+                       {cur2.content}
+                     </div>
+                     <button onClick={()=>setBrochurePg(Math.max(0,brochurePg-1))} disabled={brochurePg===0}
+                       style={{position:'absolute',left:12,top:'50%',transform:'translateY(-50%)',background:'rgba(0,0,0,0.5)',border:'none',color:'#fff',width:40,height:40,borderRadius:'50%',cursor:'pointer',fontSize:18,display:'flex',alignItems:'center',justifyContent:'center',opacity:brochurePg===0?0.2:0.8}}>←</button>
+                     <button onClick={()=>setBrochurePg(Math.min(pages.length-1,brochurePg+1))} disabled={brochurePg===pages.length-1}
+                       style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',background:'rgba(0,0,0,0.5)',border:'none',color:'#fff',width:40,height:40,borderRadius:'50%',cursor:'pointer',fontSize:18,display:'flex',alignItems:'center',justifyContent:'center',opacity:brochurePg===pages.length-1?0.2:0.8}}>→</button>
+                   </div>
+                   <div style={{background:'rgba(0,0,0,0.6)',padding:'8px 20px',display:'flex',justifyContent:'center',alignItems:'center',gap:8,flexShrink:0}}>
+                     <span style={{color:ORG2,fontSize:11,fontWeight:700}}>{['Portada','Misión & Visión','Valores','Stretch Film','Stretch Film +','Cintas de Embalar','Kraft & Especializados','+Productos','Cobertura','Nuestros Clientes','Contacto'][brochurePg]||''}</span>
+                   </div>
+                 </div>;
+               })()}
 
           {/* ── BANCO & TESORERÍA ── */}
            {activeTab === 'banco' && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
