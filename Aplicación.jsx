@@ -25583,7 +25583,6 @@ ${resumenHtml}
                  </div>
                  <div className="flex items-center gap-2">
                    {resenaSaving && <span className="text-xs text-orange-400 animate-pulse">Guardando...</span>}
-                   <span className="text-[9px] text-gray-500">Clic en cualquier dato para editar</span>
                  </div>
                </div>
 
@@ -26020,22 +26019,40 @@ ${resumenHtml}
                    if(url.includes('drive.google.com/file/d/')) return url.replace('/view','/preview');
                    return url;
                  };
-                 const handleVideoFile=(e)=>{
+                 const handleVideoFile=async(e)=>{
                    const f=e.target.files[0]; if(!f) return;
                    e.target.value='';
-                   setVideoUploadPct(0);
-                   const ext=f.name.split('.').pop()||'mp4';
-                   const sRef=storageRef(storage,`videos/instalaciones_supply_${Date.now()}.${ext}`);
-                   const task=uploadBytesResumable(sRef,f,{contentType:f.type||'video/mp4'});
-                   task.on('state_changed',
-                     (snap)=>{ setVideoUploadPct(Math.round(snap.bytesTransferred/snap.totalBytes*100)); },
-                     (err)=>{ alert('Error al subir el video: '+err.message); setVideoUploadPct(null); },
-                     async()=>{
-                       const dlUrl=await getDownloadURL(task.snapshot.ref);
-                       await saveField('videoUrl',dlUrl);
-                       setVideoUploadPct(null);
-                     }
-                   );
+                   setVideoUploadPct(1);
+                   // Animación de progreso durante la subida (uploadBytes no da progreso real)
+                   let fakeP=1;
+                   const timer=setInterval(()=>{
+                     fakeP=Math.min(fakeP+(Math.random()*3+1),90);
+                     setVideoUploadPct(Math.round(fakeP));
+                   },400);
+                   try{
+                     const ext=(f.name.split('.').pop()||'mp4').toLowerCase();
+                     const sRef=storageRef(storage,`videos/instalaciones_supply_${Date.now()}.${ext}`);
+                     const snap=await uploadBytes(sRef,f,{contentType:f.type||'video/mp4'});
+                     const dlUrl=await getDownloadURL(snap.ref);
+                     clearInterval(timer);
+                     setVideoUploadPct(100);
+                     await saveField('videoUrl',dlUrl);
+                     setTimeout(()=>setVideoUploadPct(null),1200);
+                   }catch(err){
+                     clearInterval(timer);
+                     setVideoUploadPct(null);
+                     const code=err.code||'';
+                     let msg='Error al subir el video.\n\n';
+                     if(code.includes('unauthorized')||code.includes('permission'))
+                       msg+='Sin permisos en Firebase Storage. Verifica las reglas de Storage en la consola de Firebase (deben permitir write a usuarios autenticados).';
+                     else if(code.includes('canceled'))
+                       msg+='Subida cancelada.';
+                     else if(code.includes('quota'))
+                       msg+='Cuota de Storage agotada.';
+                     else
+                       msg+=err.message;
+                     alert(msg);
+                   }
                  };
                  const uploading = videoUploadPct !== null;
                  return <div>
@@ -26049,9 +26066,13 @@ ${resumenHtml}
                      <div style={{background:'#000',minHeight:480,display:'flex',alignItems:'center',justifyContent:'center',position:'relative'}}>
                        {uploading
                          ? <div style={{textAlign:'center',padding:40,width:'100%',maxWidth:420}}>
-                             <div style={{fontSize:48,marginBottom:20}}>📤</div>
-                             <div style={{color:'#fff',fontWeight:900,fontSize:18,marginBottom:6}}>Subiendo video…</div>
-                             <div style={{color:'#9ca3af',fontSize:13,marginBottom:24}}>{videoUploadPct}% completado</div>
+                             <div style={{fontSize:48,marginBottom:20}}>{videoUploadPct===100?'✅':'📤'}</div>
+                             <div style={{color:'#fff',fontWeight:900,fontSize:18,marginBottom:6}}>
+                               {videoUploadPct===100?'¡Video guardado!':'Subiendo video…'}
+                             </div>
+                             <div style={{color:'#9ca3af',fontSize:13,marginBottom:24}}>
+                               {videoUploadPct===100?'El video está listo':'Procesando… '+videoUploadPct+'%'}
+                             </div>
                              <div style={{background:'#1f2937',borderRadius:999,height:10,overflow:'hidden'}}>
                                <div style={{width:`${videoUploadPct}%`,height:'100%',background:'linear-gradient(90deg,#E8541A,#f97316)',borderRadius:999,transition:'width 0.3s ease'}}/>
                              </div>
