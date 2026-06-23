@@ -21,7 +21,7 @@ import {
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "firebase/auth";
 import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, getDocs, query, orderBy, arrayUnion } from "firebase/firestore";
-import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 import BancoApp from './BancoApp';
 
@@ -395,6 +395,7 @@ function App() {
   const [resenaVideoTmp, setResenaVideoTmp] = useState(''); // URL temporal video
   const [resenaEditNota, setResenaEditNota] = useState(false); // editar nota capacidad
   const [brochurePg, setBrochurePg] = useState(0); // página activa del brochure
+  const [videoUploadPct, setVideoUploadPct] = useState(null); // null=idle, 0-100=uploading
   const [selectedPortal, setSelectedPortal] = useState(null); // 'produccion' | 'administracion' | 'finanzas'
   const [portalDenied, setPortalDenied] = useState(''); // aviso "no posee permiso" en pantalla de portales
   const [ventasView, setVentasView] = useState('facturacion');
@@ -24896,8 +24897,6 @@ ${resumenHtml}
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="10" y="8" width="44" height="48" rx="4" fill="#0e7490" opacity="0.15" stroke="#0e7490" strokeWidth="1.5"/><rect x="10" y="8" width="44" height="10" rx="4" fill="#06b6d4" opacity="0.9"/><rect x="16" y="24" width="14" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="30" width="20" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="36" width="12" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="42" width="18" height="2.5" rx="1.2" fill="#0e7490"/><rect x="36" y="24" width="12" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="38" y="30" width="10" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="40" y="36" width="8" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="36" y="42" width="12" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="10" y="48" width="44" height="2.5" rx="1.2" fill="#0e7490"/><text x="32" y="17" textAnchor="middle" fontSize="7" fontWeight="900" fill="white" fontFamily="Arial">LIBRO MAYOR</text></svg> },
       { id:'resena_portal', title:'RESEÑA', desc:'Presentación institucional, activos y proyección financiera', color:'#E8541A',
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="10" y="6" width="44" height="52" rx="4" fill="#E8541A" opacity="0.15" stroke="#E8541A" strokeWidth="1.5"/><rect x="10" y="6" width="44" height="11" rx="4" fill="#E8541A" opacity="0.9"/><text x="32" y="16" textAnchor="middle" fontSize="6.5" fontWeight="900" fill="white" fontFamily="Arial">RESEÑA INST.</text><rect x="17" y="23" width="18" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="29" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="33" width="26" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="39" width="22" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="43" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="47" width="24" height="2" rx="1" fill="#c2410c" opacity="0.5"/><circle cx="47" cy="50" r="8" fill="#E8541A"/><text x="47" y="54" textAnchor="middle" fontSize="10" fontWeight="900" fill="white" fontFamily="Arial">i</text></svg> },
-      { id:'brochure_portal', title:'BROCHURE', desc:'Catálogo digital de productos Supply G&B 2026', color:'#E8541A',
-        icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="8" y="4" width="34" height="46" rx="3" fill="#E8541A" opacity="0.2" stroke="#E8541A" strokeWidth="1.5"/><rect x="8" y="4" width="34" height="12" rx="3" fill="#E8541A"/><text x="25" y="14" textAnchor="middle" fontSize="7" fontWeight="900" fill="white" fontFamily="Arial">Supply</text><rect x="14" y="22" width="22" height="2" rx="1" fill="#E8541A"/><rect x="14" y="27" width="18" height="1.5" rx="1" fill="#c2410c" opacity="0.6"/><rect x="14" y="31" width="20" height="1.5" rx="1" fill="#c2410c" opacity="0.6"/><rect x="14" y="37" width="22" height="2" rx="1" fill="#E8541A"/><rect x="14" y="42" width="16" height="1.5" rx="1" fill="#c2410c" opacity="0.6"/><rect x="22" y="18" width="28" height="38" rx="3" fill="#1a1a1a" stroke="#E8541A" strokeWidth="1.5"/><rect x="22" y="18" width="28" height="10" rx="3" fill="#1a1a1a"/><text x="36" y="27" textAnchor="middle" fontSize="5.5" fontWeight="900" fill="#E8541A" fontFamily="Arial">BROCHURE</text><rect x="27" y="32" width="18" height="1.5" rx="1" fill="#E8541A" opacity="0.7"/><rect x="27" y="36" width="14" height="1" rx="1" fill="#666"/><rect x="27" y="39" width="16" height="1" rx="1" fill="#666"/><rect x="27" y="44" width="18" height="1.5" rx="1" fill="#E8541A" opacity="0.7"/></svg> },
       { id:'configuracion_portal', title:'CONFIGURACIÓN', desc:'Usuarios, ajustes del sistema y auditoría', color:'#64748b',
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><path d="M32 18 a14 14 0 1 1 0 28 a14 14 0 0 1 0-28z" fill="#64748b" opacity="0.15" stroke="#64748b" strokeWidth="1.5"/><circle cx="32" cy="32" r="6" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(60 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(120 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(180 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(240 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(300 32 32)"/><circle cx="32" cy="32" r="4" fill="#f8fafc"/></svg> },
     ];
@@ -25536,20 +25535,24 @@ ${resumenHtml}
                saveField('proyeccion',proj);
              };
              // ── Image upload: comprime y guarda en colección separada (evita límite 1MB Firestore) ──
-             const compressImg=(file,maxW=900)=>new Promise(res=>{
+             const compressImg=(file,maxW=1200)=>new Promise((res,rej)=>{
                const img=new Image();const url=URL.createObjectURL(file);
                img.onload=()=>{
                  const r=Math.min(1,maxW/img.width);
-                 const c=document.createElement('canvas');c.width=img.width*r;c.height=img.height*r;
+                 const c=document.createElement('canvas');c.width=Math.round(img.width*r);c.height=Math.round(img.height*r);
                  c.getContext('2d').drawImage(img,0,0,c.width,c.height);
-                 URL.revokeObjectURL(url);res(c.toDataURL('image/jpeg',0.72));
-               };img.src=url;
+                 URL.revokeObjectURL(url);res(c.toDataURL('image/jpeg',0.80));
+               };
+               img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error('No se pudo leer la imagen'));};
+               img.src=url;
              });
              const handleImgUpload=async(key,e)=>{
                const f=e.target.files[0];if(!f)return;
+               e.target.value='';// reset input so same file can be re-selected
                setResenaSaving(true);
                try{
-                 const b64=await compressImg(f);
+                 const maxW=key==='plano'?2400:1200;
+                 const b64=await compressImg(f,maxW);
                  await setDoc(getDocRef('resenaImagenes',key),{data:b64,key,ts:Date.now()});
                }catch(err){console.error('Img upload error:',err);alert('Error al guardar imagen: '+err.message);}
                setResenaSaving(false);
@@ -25657,7 +25660,7 @@ ${resumenHtml}
                      <div style={{flex:1,position:'relative',minHeight:320,cursor:'pointer',overflow:'hidden'}}
                        onClick={()=>document.getElementById('img-planta').click()}>
                        {resenaImages['planta']
-                         ? <img src={resenaImages['planta']} alt="Planta" style={{width:'100%',height:'100%',objectFit:'contain',position:'absolute',inset:0,padding:4}}/>
+                         ? <img src={resenaImages['planta']} alt="Planta" style={{width:'100%',height:'100%',objectFit:'cover',position:'absolute',inset:0}}/>
                          : <div style={{width:'100%',height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'#f3f4f6',position:'absolute',inset:0}}>
                              <div style={{fontSize:56}}>🏭</div>
                              <div style={{color:'#9ca3af',fontSize:13,fontWeight:700,marginTop:8}}>Clic para cargar foto de la planta</div>
@@ -25900,6 +25903,13 @@ ${resumenHtml}
                    {id:'p4',nombre:'Film Estirable'},
                    {id:'p5',nombre:'Manga Plástica'},
                    {id:'p6',nombre:'Bolsas Camiseta'},
+                   {id:'p_cintas',nombre:'Cintas de Embalar'},
+                   {id:'bubble',nombre:'Bubble Wrap'},
+                   {id:'cintaper',nombre:'Cinta Personalizada'},
+                   {id:'fragil',nombre:'Cintas Frágil & Stop'},
+                   {id:'fleje',nombre:'Bobinas de Fleje'},
+                   {id:'heno',nombre:'Stretch Film Heno Blanco'},
+                   {id:'carton',nombre:'Separadores de Cartón'},
                  ];
                  const prods=DATA.productos||defaultProds;
                  return <div>
@@ -25972,19 +25982,24 @@ ${resumenHtml}
                      <div style={{color:'#fff',fontWeight:900,fontSize:14}}>📐 PLANO DE DISTRIBUCIÓN — PLANTA BAJA · SUPPLY G&B C.A.</div>
                      <div style={{color:'rgba(255,255,255,0.7)',fontSize:10}}>A1 · Emisión: 22 Jun 2026 · Barrio Alfredo Quero, Calle 148</div>
                    </div>
-                   <div style={{position:'relative',background:'#111',display:'flex',alignItems:'center',justifyContent:'center',minHeight:560,cursor:'pointer'}}
-                     onClick={()=>document.getElementById('img-plano').click()}>
-                     {resenaImages['plano']
-                       ? <img src={resenaImages['plano']} alt="Plano Planta Baja" style={{width:'100%',height:'auto',display:'block',objectFit:'contain'}}/>
-                       : <div style={{textAlign:'center',color:'#6b7280',padding:60}}>
-                           <div style={{fontSize:80,marginBottom:16}}>📐</div>
-                           <div style={{fontWeight:700,fontSize:16,color:'#9ca3af'}}>Clic para cargar el plano</div>
-                           <div style={{fontSize:12,marginTop:6,color:'#6b7280'}}>Sube una imagen del plano arquitectónico (PNG, JPG o PDF convertido)</div>
+                   <div style={{position:'relative',background:'#111',display:'flex',alignItems:'center',justifyContent:'center',minHeight:560,cursor:resenaSaving?'wait':'pointer'}}
+                     onClick={()=>!resenaSaving&&document.getElementById('img-plano').click()}>
+                     {resenaSaving
+                       ? <div style={{textAlign:'center',color:'#E8541A',padding:60}}>
+                           <div style={{fontSize:60,marginBottom:16}} className="animate-spin">⚙️</div>
+                           <div style={{fontWeight:700,fontSize:16,color:'#E8541A'}}>Procesando imagen…</div>
+                           <div style={{fontSize:12,marginTop:6,color:'#6b7280'}}>Comprimiendo y guardando en la nube</div>
                          </div>
+                       : resenaImages['plano']
+                         ? <img src={resenaImages['plano']} alt="Plano Planta Baja" style={{width:'100%',height:'auto',display:'block',objectFit:'contain'}}/>
+                         : <div style={{textAlign:'center',color:'#6b7280',padding:60}}>
+                             <div style={{fontSize:80,marginBottom:16}}>📐</div>
+                             <div style={{fontWeight:700,fontSize:16,color:'#9ca3af'}}>Clic para cargar el plano</div>
+                             <div style={{fontSize:12,marginTop:6,color:'#6b7280'}}>Sube una imagen del plano arquitectónico (PNG, JPG o PDF convertido)</div>
+                           </div>
                      }
                      <input id="img-plano" type="file" accept="image/*" className="hidden" onChange={e=>handleImgUpload('plano',e)}/>
-                     {resenaSaving && <div style={{position:'absolute',top:12,right:12,background:'rgba(0,0,0,0.75)',color:'#E8541A',fontSize:11,padding:'4px 10px',borderRadius:6}} className="animate-pulse">Guardando…</div>}
-                     {resenaImages['plano'] && <button style={{position:'absolute',top:12,right:12,background:'rgba(0,0,0,0.65)',color:'#fff',border:'none',borderRadius:8,padding:'6px 14px',cursor:'pointer',fontSize:11,fontWeight:700}} onClick={e=>{e.stopPropagation();document.getElementById('img-plano').click();}}>✏️ Cambiar plano</button>}
+                     {!resenaSaving && resenaImages['plano'] && <button style={{position:'absolute',top:12,right:12,background:'rgba(0,0,0,0.65)',color:'#fff',border:'none',borderRadius:8,padding:'6px 14px',cursor:'pointer',fontSize:11,fontWeight:700}} onClick={e=>{e.stopPropagation();document.getElementById('img-plano').click();}}>✏️ Cambiar plano</button>}
                    </div>
                    <div style={{padding:'10px 16px',borderTop:'1px solid #374151',display:'flex',gap:16,flexWrap:'wrap'}}>
                      {['Materia Prima','Prod. Terminado','Selladoras','Impresoras','Oficinas','Zona de Carga','Planta Eléctrica','Estacionamiento'].map(z=>(
@@ -26005,32 +26020,88 @@ ${resumenHtml}
                    if(url.includes('drive.google.com/file/d/')) return url.replace('/view','/preview');
                    return url;
                  };
+                 const handleVideoFile=(e)=>{
+                   const f=e.target.files[0]; if(!f) return;
+                   e.target.value='';
+                   setVideoUploadPct(0);
+                   const ext=f.name.split('.').pop()||'mp4';
+                   const sRef=storageRef(storage,`videos/instalaciones_supply_${Date.now()}.${ext}`);
+                   const task=uploadBytesResumable(sRef,f,{contentType:f.type||'video/mp4'});
+                   task.on('state_changed',
+                     (snap)=>{ setVideoUploadPct(Math.round(snap.bytesTransferred/snap.totalBytes*100)); },
+                     (err)=>{ alert('Error al subir el video: '+err.message); setVideoUploadPct(null); },
+                     async()=>{
+                       const dlUrl=await getDownloadURL(task.snapshot.ref);
+                       await saveField('videoUrl',dlUrl);
+                       setVideoUploadPct(null);
+                     }
+                   );
+                 };
+                 const uploading = videoUploadPct !== null;
                  return <div>
                    <div style={{background:'#111',borderRadius:12,overflow:'hidden'}}>
                      <div style={{background:'#E8541A',padding:'12px 18px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
                        <div style={{color:'#fff',fontWeight:900,fontSize:14}}>🎬 VIDEO — INSTALACIONES SUPPLY G&B</div>
                        <div style={{color:'rgba(255,255,255,0.7)',fontSize:10}}>Recorrido por las instalaciones · Jun 2026</div>
                      </div>
-                     <div style={{background:'#000',minHeight:520,display:'flex',alignItems:'center',justifyContent:'center',position:'relative'}}>
-                       {videoUrl && (isYT||isDrive)
-                         ? <iframe src={getEmbedUrl(videoUrl)} style={{width:'100%',height:520,border:'none'}} allow="autoplay; fullscreen" allowFullScreen/>
-                         : videoUrl
-                           ? <video src={videoUrl} controls style={{width:'100%',maxHeight:520,background:'#000'}}/>
-                           : <div style={{textAlign:'center',color:'#6b7280',padding:60}}>
-                               <div style={{fontSize:80,marginBottom:16}}>🎬</div>
-                               <div style={{fontWeight:700,fontSize:16,color:'#9ca3af',marginBottom:8}}>Agrega un enlace de video</div>
-                               <div style={{fontSize:12,color:'#6b7280'}}>YouTube, Google Drive o URL directa de video MP4</div>
+
+                     {/* Área de reproducción / upload */}
+                     <div style={{background:'#000',minHeight:480,display:'flex',alignItems:'center',justifyContent:'center',position:'relative'}}>
+                       {uploading
+                         ? <div style={{textAlign:'center',padding:40,width:'100%',maxWidth:420}}>
+                             <div style={{fontSize:48,marginBottom:20}}>📤</div>
+                             <div style={{color:'#fff',fontWeight:900,fontSize:18,marginBottom:6}}>Subiendo video…</div>
+                             <div style={{color:'#9ca3af',fontSize:13,marginBottom:24}}>{videoUploadPct}% completado</div>
+                             <div style={{background:'#1f2937',borderRadius:999,height:10,overflow:'hidden'}}>
+                               <div style={{width:`${videoUploadPct}%`,height:'100%',background:'linear-gradient(90deg,#E8541A,#f97316)',borderRadius:999,transition:'width 0.3s ease'}}/>
                              </div>
+                             <div style={{color:'#6b7280',fontSize:11,marginTop:12}}>No cierres esta pestaña mientras se sube</div>
+                           </div>
+                         : videoUrl && (isYT||isDrive)
+                           ? <iframe src={getEmbedUrl(videoUrl)} style={{width:'100%',height:480,border:'none'}} allow="autoplay; fullscreen" allowFullScreen/>
+                           : videoUrl
+                             ? <video src={videoUrl} controls style={{width:'100%',maxHeight:480,background:'#000'}}/>
+                             : <div style={{textAlign:'center',color:'#6b7280',padding:60,cursor:'pointer'}} onClick={()=>document.getElementById('video-file-input').click()}>
+                                 <div style={{fontSize:80,marginBottom:16}}>🎬</div>
+                                 <div style={{fontWeight:700,fontSize:18,color:'#9ca3af',marginBottom:8}}>Sin video cargado</div>
+                                 <div style={{fontSize:13,color:'#6b7280',marginBottom:24}}>Adjunta un archivo MP4 o pega un enlace de YouTube / Google Drive</div>
+                                 <div style={{display:'inline-flex',alignItems:'center',gap:8,background:'#E8541A',color:'#fff',padding:'12px 28px',borderRadius:10,fontSize:13,fontWeight:700}}>
+                                   <span>📁</span> Seleccionar archivo de video
+                                 </div>
+                               </div>
                        }
+                       <input id="video-file-input" type="file" accept="video/mp4,video/mov,video/avi,video/mkv,video/*" className="hidden" onChange={handleVideoFile}/>
                      </div>
-                     <div style={{padding:'14px 18px',borderTop:'1px solid #1f2937',display:'flex',alignItems:'center',gap:10}}>
-                       {resenaVideoEdit
-                         ? <><input value={resenaVideoTmp} onChange={e=>setResenaVideoTmp(e.target.value)} placeholder="https://youtube.com/watch?v=... o Google Drive link"
-                             style={{flex:1,background:'#1f2937',border:'1px solid #374151',borderRadius:8,padding:'8px 12px',color:'#fff',fontSize:12,outline:'none'}}/>
-                           <button onClick={()=>{saveField('videoUrl',resenaVideoTmp);setResenaVideoEdit(false);}} style={{background:'#16a34a',color:'#fff',border:'none',borderRadius:8,padding:'8px 16px',cursor:'pointer',fontSize:11,fontWeight:700}}>Guardar</button>
-                           <button onClick={()=>setResenaVideoEdit(false)} style={{background:'#374151',color:'#9ca3af',border:'none',borderRadius:8,padding:'8px 12px',cursor:'pointer',fontSize:11}}>✕</button></>
-                         : <><span style={{color:'#6b7280',fontSize:11,flex:1}}>{videoUrl||'Sin video configurado'}</span>
-                           <button onClick={()=>{setResenaVideoTmp(videoUrl);setResenaVideoEdit(true);}} style={{background:'#374151',color:'#d1d5db',border:'none',borderRadius:8,padding:'8px 14px',cursor:'pointer',fontSize:11,fontWeight:700}}>✏️ {videoUrl?'Cambiar enlace':'Agregar enlace'}</button></>
+
+                     {/* Barra de acciones */}
+                     <div style={{padding:'14px 18px',borderTop:'1px solid #1f2937',display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                       {uploading
+                         ? <span style={{color:'#E8541A',fontSize:12,fontWeight:700,flex:1}}>⏳ Subiendo… {videoUploadPct}% — no cierres la página</span>
+                         : resenaVideoEdit
+                           ? <><input value={resenaVideoTmp} onChange={e=>setResenaVideoTmp(e.target.value)}
+                               placeholder="https://youtube.com/watch?v=... o enlace de Google Drive"
+                               style={{flex:1,minWidth:200,background:'#1f2937',border:'1px solid #374151',borderRadius:8,padding:'9px 12px',color:'#fff',fontSize:12,outline:'none'}}/>
+                             <button onClick={()=>{saveField('videoUrl',resenaVideoTmp);setResenaVideoEdit(false);}}
+                               style={{background:'#16a34a',color:'#fff',border:'none',borderRadius:8,padding:'9px 18px',cursor:'pointer',fontSize:12,fontWeight:700}}>✓ Guardar</button>
+                             <button onClick={()=>setResenaVideoEdit(false)}
+                               style={{background:'#374151',color:'#9ca3af',border:'none',borderRadius:8,padding:'9px 12px',cursor:'pointer',fontSize:12}}>✕</button></>
+                           : <>
+                               <span style={{color:videoUrl?'#4ade80':'#6b7280',fontSize:12,flex:1}}>
+                                 {videoUrl ? '✅ Video guardado correctamente' : 'Sin video configurado'}
+                               </span>
+                               <button onClick={()=>document.getElementById('video-file-input').click()}
+                                 style={{background:'#E8541A',color:'#fff',border:'none',borderRadius:8,padding:'9px 16px',cursor:'pointer',fontSize:12,fontWeight:700}}>
+                                 📁 {videoUrl?'Cambiar archivo':'Subir archivo'}
+                               </button>
+                               <button onClick={()=>{setResenaVideoTmp(videoUrl.startsWith('http')?videoUrl:'');setResenaVideoEdit(true);}}
+                                 style={{background:'#374151',color:'#d1d5db',border:'none',borderRadius:8,padding:'9px 14px',cursor:'pointer',fontSize:12,fontWeight:700}}>
+                                 🔗 Pegar enlace
+                               </button>
+                               {videoUrl && <button onClick={()=>{if(window.confirm('¿Quitar el video?'))saveField('videoUrl','');}}
+                                 style={{background:'#7f1d1d',color:'#fca5a5',border:'none',borderRadius:8,padding:'9px 12px',cursor:'pointer',fontSize:12,fontWeight:700}}>
+                                 ✕ Quitar
+                               </button>}
+                             </>
                        }
                      </div>
                    </div>
@@ -26251,9 +26322,9 @@ ${resumenHtml}
                      </div>
                      <div style={{display:'flex',flexDirection:'column',gap:16}}>
                        {[
-                         {tag:'MANUAL',title:'STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',specs:['45CM × 20 MICRAS → 2KG · 4KG','45CM × 18 MICRAS → 2KG · 4KG']},
-                         {tag:'AUTOMÁTICO',title:'STRETCH FILM TRANSPARENTE',bg:'#222',specs:['50CM × 16KG → 16 · 18 · 20 · 22 MICRAS']},
-                         {tag:'PRE-STRETCH',title:'PRE STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',specs:['45CM × 550MTS × 8 MICRAS B/R → 2.7KG']},
+                         {tag:'MANUAL',title:'STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',imgKey:'prod_p4',specs:['45CM × 20 MICRAS → 2KG · 4KG','45CM × 18 MICRAS → 2KG · 4KG']},
+                         {tag:'AUTOMÁTICO',title:'STRETCH FILM TRANSPARENTE',bg:'#222',imgKey:'prod_p4',specs:['50CM × 16KG → 16 · 18 · 20 · 22 MICRAS']},
+                         {tag:'PRE-STRETCH',title:'PRE STRETCH FILM TRANSPARENTE',bg:'#2a2a2a',imgKey:'prod_p4',specs:['45CM × 550MTS × 8 MICRAS B/R → 2.7KG']},
                        ].map((p)=>(
                          <div key={p.tag} style={{background:p.bg,borderRadius:12,padding:'20px 28px',borderLeft:`4px solid ${ORG2}`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
                            <div>
@@ -26261,7 +26332,11 @@ ${resumenHtml}
                              <div style={{color:'#fff',fontWeight:900,fontSize:20,marginBottom:8}}>{p.title}</div>
                              {p.specs.map(s=><div key={s} style={{color:'#aaa',fontSize:13}}>{s}</div>)}
                            </div>
-                           <div style={{width:80,height:80,background:ORG2,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:32}}>🎞️</div>
+                           <div style={{width:80,height:80,borderRadius:'50%',overflow:'hidden',background:ORG2,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                             {resenaImages[p.imgKey]
+                               ? <img src={resenaImages[p.imgKey]} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+                               : <span style={{fontSize:32}}>🎞️</span>}
+                           </div>
                          </div>
                        ))}
                      </div>
@@ -26297,7 +26372,11 @@ ${resumenHtml}
                              <div style={{color:DARK2,fontWeight:900,fontSize:18,marginTop:8}}>{p.title} <span style={{color:ORG2}}>{p.sub}</span></div>
                              <div style={{color:'#666',fontSize:13,marginTop:4}}>{p.spec}</div>
                            </div>
-                           <div style={{fontSize:40}}>🎀</div>
+                           <div style={{width:56,height:56,borderRadius:'50%',overflow:'hidden',background:'#e5e7eb',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                             {resenaImages['prod_cintas']
+                               ? <img src={resenaImages['prod_cintas']} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+                               : <span style={{fontSize:28}}>🎀</span>}
+                           </div>
                          </div>
                        ))}
                      </div>
@@ -26326,18 +26405,25 @@ ${resumenHtml}
                      </div>
                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:16}}>
                        {[
-                         {icon:'💬',name:'Bubble Wrap',spec:'30CM × 10MTS',tag:'Manual'},
-                         {icon:'🎁',name:'Cinta Personalizada',spec:'Colores y medidas a requerimiento',tag:'Manual'},
-                         {icon:'⚠️',name:'Cintas Frágil & Stop',spec:'2" × 100 MTS',tag:'Manual'},
-                         {icon:'🔗',name:'Bobinas de Fleje',spec:'1768M · 1/2" × 0.025" (Core 16"×6")',tag:'Manual'},
-                         {icon:'🌿',name:'Stretch Film Heno Blanco',spec:'75CM × 1600MTS × 25 MICRAS · 29KG',tag:'Embalaje'},
-                         {icon:'📐',name:'Separadores de Cartón',spec:'Medidas a requerimiento',tag:'Personalizado'},
+                         {imgKey:'prod_bubble',icon:'💬',name:'Bubble Wrap',spec:'30CM × 10MTS',tag:'Manual'},
+                         {imgKey:'prod_cintaper',icon:'🎁',name:'Cinta Personalizada',spec:'Colores y medidas a requerimiento',tag:'Manual'},
+                         {imgKey:'prod_fragil',icon:'⚠️',name:'Cintas Frágil & Stop',spec:'2" × 100 MTS',tag:'Manual'},
+                         {imgKey:'prod_fleje',icon:'🔗',name:'Bobinas de Fleje',spec:'1768M · 1/2" × 0.025"',tag:'Manual'},
+                         {imgKey:'prod_heno',icon:'🌿',name:'Stretch Film Heno',spec:'75CM × 1600MTS · 29KG',tag:'Embalaje'},
+                         {imgKey:'prod_carton',icon:'📐',name:'Separadores Cartón',spec:'Medidas a requerimiento',tag:'Personalizado'},
                        ].map(p=>(
-                         <div key={p.name} style={{background:'#2a2a2a',borderRadius:12,padding:'20px',borderTop:`3px solid ${ORG2}`}}>
-                           <div style={{fontSize:32,marginBottom:8}}>{p.icon}</div>
-                           <span style={{background:ORG2+'33',color:ORG2,fontSize:8,fontWeight:700,padding:'2px 8px',borderRadius:10}}>{p.tag}</span>
-                           <div style={{color:'#fff',fontWeight:900,fontSize:14,marginTop:8,lineHeight:1.3}}>{p.name}</div>
-                           <div style={{color:'#888',fontSize:11,marginTop:4}}>{p.spec}</div>
+                         <div key={p.name} style={{background:'#2a2a2a',borderRadius:12,overflow:'hidden',borderTop:`3px solid ${ORG2}`}}>
+                           <div style={{height:90,background:'#1a1a1a',display:'flex',alignItems:'center',justifyContent:'center',position:'relative'}}>
+                             {resenaImages[p.imgKey]
+                               ? <img src={resenaImages[p.imgKey]} alt={p.name} style={{width:'100%',height:'100%',objectFit:'cover',position:'absolute',inset:0}}/>
+                               : <span style={{fontSize:28}}>{p.icon}</span>
+                             }
+                           </div>
+                           <div style={{padding:'12px 14px'}}>
+                             <span style={{background:ORG2+'33',color:ORG2,fontSize:8,fontWeight:700,padding:'2px 8px',borderRadius:10}}>{p.tag}</span>
+                             <div style={{color:'#fff',fontWeight:900,fontSize:13,marginTop:6,lineHeight:1.3}}>{p.name}</div>
+                             <div style={{color:'#888',fontSize:10,marginTop:3}}>{p.spec}</div>
+                           </div>
                          </div>
                        ))}
                      </div>
