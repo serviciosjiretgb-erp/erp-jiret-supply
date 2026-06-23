@@ -26567,7 +26567,7 @@ ${resumenHtml}
                  // El problema de "imagen en todos" venía del id compartido 'cat-img-'+imgKey
                  // cuando ImgSlot se usa múltiples veces con el mismo key (ej: prod_p4 en 3 filas de stretch film)
                  // Solución: botones visibles de Archivo y Pegar, sin depender de getElementById
-                 const ImgSlot=({imgKey,fallback,style={}})=>{
+                 const ImgSlot=({imgKey,fallback,style={},bg='transparent'})=>{
                    const fileId='brochure-file-'+imgKey;
                    const pasteImg=async()=>{
                      try{
@@ -26581,9 +26581,9 @@ ${resumenHtml}
                        document.getElementById(fileId)?.click();
                      }
                    };
-                   return <div style={{position:'relative',overflow:'hidden',...style}}>
+                   return <div style={{position:'relative',overflow:'hidden',background:bg,...style}}>
                      {resenaImages[imgKey]
-                       ? <img src={resenaImages[imgKey]} style={{width:'100%',height:'100%',objectFit:'cover',position:'absolute',inset:0}}/>
+                       ? <img src={resenaImages[imgKey]} style={{width:'100%',height:'100%',objectFit:'contain',position:'absolute',inset:0,background:'transparent',padding:'4px'}}/>
                        : <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.4)'}}>
                            <div style={{textAlign:'center',color:'rgba(255,255,255,0.4)',fontSize:11,userSelect:'none'}}>
                              <div style={{fontSize:26,lineHeight:1}}>{fallback||'📷'}</div>
@@ -26665,7 +26665,7 @@ ${resumenHtml}
                              <div style={{color:'#fff',fontWeight:900,fontSize:20,marginBottom:8}}>{p.title}</div>
                              {p.specs.map(s=><div key={s} style={{color:'#aaa',fontSize:13}}>{s}</div>)}
                            </div>
-                           <ImgSlot imgKey={p.imgKey} fallback="🎞️" style={{width:80,height:80,borderRadius:'50%',background:ORG2,flexShrink:0}}/>
+                           <ImgSlot imgKey={p.imgKey} fallback="🎞️" bg="#1a1a1a" style={{width:80,height:80,borderRadius:'50%',background:ORG2,flexShrink:0}}/>
                          </div>
                        ))}
                      </div>
@@ -26682,7 +26682,7 @@ ${resumenHtml}
                            <div style={{color:'#fff',fontWeight:900,fontSize:20}}>{p.title}</div>
                            <div style={{color:'rgba(255,255,255,0.8)',fontSize:13,marginTop:4}}>{p.detail}</div>
                          </div>
-                         <ImgSlot imgKey={p.imgKey} fallback="📦" style={{width:72,height:72,borderRadius:10,flexShrink:0}}/>
+                         <ImgSlot imgKey={p.imgKey} fallback="📦" bg="#1a1a1a" style={{width:72,height:72,borderRadius:10,flexShrink:0}}/>
                        </div>
                      ))}
                    </div>},
@@ -26701,7 +26701,7 @@ ${resumenHtml}
                              <div style={{color:DARK2,fontWeight:900,fontSize:17,marginTop:8}}>{p.title} <span style={{color:ORG2}}>{p.sub}</span></div>
                              <div style={{color:'#666',fontSize:13,marginTop:4}}>{p.spec}</div>
                            </div>
-                           <ImgSlot imgKey={p.imgKey} fallback="🎀" style={{width:64,height:64,borderRadius:10,flexShrink:0}}/>
+                           <ImgSlot imgKey={p.imgKey} fallback="🎀" bg="#f5f5f5" style={{width:64,height:64,borderRadius:10,flexShrink:0}}/>
                          </div>
                        ))}
                      </div>
@@ -26709,7 +26709,7 @@ ${resumenHtml}
                    {bg:ORG2,content:<div style={{height:'100%',display:'grid',gridTemplateColumns:'1fr 1fr',gap:20,padding:'28px 32px'}}>
                      <div>
                        <div style={{color:'#000',fontWeight:900,fontSize:32,marginBottom:16}}>PAPEL KRAFT MARRÓN</div>
-                       <ImgSlot imgKey="prod_kraft" fallback="📦" style={{width:'100%',height:110,borderRadius:10,marginBottom:12}}/>
+                       <ImgSlot imgKey="prod_kraft" fallback="📦" bg="#1a1a1a" style={{width:'100%',height:110,borderRadius:10,marginBottom:12}}/>
                        {['60CM × 50Gm','60CM × 66Gm','60CM × 82Gm'].map(s=><div key={s} style={{background:'rgba(0,0,0,0.15)',borderRadius:8,padding:'10px 16px',color:'#fff',fontWeight:700,fontSize:14,marginBottom:6}}>{s}</div>)}
                        <div style={{background:'#000',borderRadius:8,padding:'8px 16px',color:ORG2,fontWeight:900,fontSize:13,marginTop:10,display:'inline-block'}}>📦 ROLLO DE 10 KG</div>
                      </div>
@@ -26719,7 +26719,7 @@ ${resumenHtml}
                          {name:'TERMOENCOGIBLE & FARDOS',detail:'Medidas a requerimiento del cliente',imgKey:'prod_termo'},
                          {name:'BOLSONES DE POLIETILENO',detail:'Baja densidad · Medidas a requerimiento',imgKey:'prod_bolson'},
                        ].map(p=><div key={p.name} style={{background:'rgba(0,0,0,0.15)',borderRadius:8,padding:'12px 16px',marginBottom:10,display:'flex',gap:12,alignItems:'center'}}>
-                         <ImgSlot imgKey={p.imgKey} fallback="🎁" style={{width:56,height:56,borderRadius:8,flexShrink:0}}/>
+                         <ImgSlot imgKey={p.imgKey} fallback="🎁" bg="#1a1a1a" style={{width:56,height:56,borderRadius:8,flexShrink:0}}/>
                          <div>
                            <div style={{color:'#fff',fontWeight:900,fontSize:13}}>{p.name}</div>
                            <div style={{color:'rgba(255,255,255,0.7)',fontSize:11,marginTop:3}}>{p.detail}</div>
@@ -26796,8 +26796,8 @@ ${resumenHtml}
                          {name:'Grupo Mimesa',key:'cli_mimesa'},
                        ].map((c,i)=>(
                          <div key={i} style={{background:'#fff',borderRadius:10,boxShadow:'0 2px 12px rgba(0,0,0,0.06)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',border:'1px solid #eee',overflow:'hidden',position:'relative'}}>
-                           <ImgSlot imgKey={c.key} fallback="🏢" style={{width:'100%',height:54}}/>
-                           <div style={{padding:'6px 4px',textAlign:'center'}}>
+                           <ImgSlot imgKey={c.key} fallback="🏢" bg="#ffffff" style={{width:'100%',height:64}}/>
+                           <div style={{padding:'5px 4px',textAlign:'center',background:'#f9fafb',width:'100%',borderTop:'1px solid #f3f4f6'}}>
                              <span style={{color:DARK2,fontWeight:900,fontSize:9,lineHeight:1.2,display:'block'}}>{c.name}</span>
                            </div>
                          </div>
