@@ -416,6 +416,7 @@ function App() {
   const [newCotizForm, setNewCotizForm] = useState({...initialCotizForm, fecha: getTodayDate()});
   const [cotizItems, setCotizItems] = useState([]);
   const [cotizFiltVendedor, setCotizFiltVendedor] = useState(''); // filtro por vendedor
+  const [cotizFiltStatus, setCotizFiltStatus] = useState(''); // filtro por estado
   const [cotizOutcomeModal, setCotizOutcomeModal] = useState(null); // {id,documento,status,motivo} — resultado de la cotización
   const [cotizSelectedProduct, setCotizSelectedProduct] = useState('');
   const [cotizAddDesc, setCotizAddDesc] = useState('');
@@ -9845,7 +9846,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             (!cotizSearchTerm ||
               (c.documento||'').toUpperCase().includes(cotizSearchTerm.toUpperCase()) ||
               (c.clientName||'').toUpperCase().includes(cotizSearchTerm.toUpperCase())) &&
-            (!cotizFiltVendedor || (c.vendedor||'').toUpperCase()===cotizFiltVendedor.toUpperCase())
+            (!cotizFiltVendedor || (c.vendedor||'').toUpperCase()===cotizFiltVendedor.toUpperCase()) &&
+            (!cotizFiltStatus || (cotizFiltStatus==='VIGENTE' ? (!c.status||c.status==='VIGENTE') : (c.status||''===cotizFiltStatus) || c.status===cotizFiltStatus))
           ).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
           // Estadística de resultado
           const cotizStats = {
@@ -10182,11 +10184,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               <div className="p-8">
                 {/* Estadística de resultado */}
                 <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
-                  <div className="bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3"><div className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Total</div><div className="text-2xl font-black text-gray-800">{cotizStats.total}</div></div>
-                  <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3"><div className="text-[8px] font-black text-blue-400 uppercase tracking-widest">Vigentes</div><div className="text-2xl font-black text-blue-700">{cotizStats.vigentes}</div></div>
-                  <div className="bg-indigo-50 border border-indigo-200 rounded-2xl px-4 py-3"><div className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Aprobadas</div><div className="text-2xl font-black text-indigo-700">{cotizStats.aprobadas}</div></div>
-                  <div className="bg-green-50 border border-green-200 rounded-2xl px-4 py-3"><div className="text-[8px] font-black text-green-500 uppercase tracking-widest">Facturadas</div><div className="text-2xl font-black text-green-700">{cotizStats.facturadas}</div></div>
-                  <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3"><div className="text-[8px] font-black text-red-400 uppercase tracking-widest">No concretadas</div><div className="text-2xl font-black text-red-600">{cotizStats.noConcretadas}</div></div>
+                  <div onClick={()=>{setCotizFiltStatus('');setCotizPagina(0);}} className={`cursor-pointer rounded-2xl px-4 py-3 transition-all ${!cotizFiltStatus?'bg-gray-800 text-white shadow-lg':'bg-gray-50 border border-gray-200 hover:border-gray-400'}`}><div className="text-[8px] font-black uppercase tracking-widest opacity-70">Total</div><div className="text-2xl font-black">{cotizStats.total}</div></div>
+                  <div onClick={()=>{setCotizFiltStatus(cotizFiltStatus==='VIGENTE'?'':'VIGENTE');setCotizPagina(0);}} className={`cursor-pointer rounded-2xl px-4 py-3 transition-all ${cotizFiltStatus==='VIGENTE'?'bg-amber-500 text-white shadow-lg':'bg-amber-50 border border-amber-200 hover:border-amber-400'}`}><div className="text-[8px] font-black uppercase tracking-widest opacity-70">Vigentes</div><div className="text-2xl font-black">{cotizStats.vigentes}</div></div>
+                  <div onClick={()=>{setCotizFiltStatus(cotizFiltStatus==='APROBADA'?'':'APROBADA');setCotizPagina(0);}} className={`cursor-pointer rounded-2xl px-4 py-3 transition-all ${cotizFiltStatus==='APROBADA'?'bg-indigo-600 text-white shadow-lg':'bg-indigo-50 border border-indigo-200 hover:border-indigo-400'}`}><div className="text-[8px] font-black uppercase tracking-widest opacity-70">Aprobadas</div><div className="text-2xl font-black">{cotizStats.aprobadas}</div></div>
+                  <div onClick={()=>{setCotizFiltStatus(cotizFiltStatus==='FACTURADA'?'':'FACTURADA');setCotizPagina(0);}} className={`cursor-pointer rounded-2xl px-4 py-3 transition-all ${cotizFiltStatus==='FACTURADA'?'bg-green-600 text-white shadow-lg':'bg-green-50 border border-green-200 hover:border-green-400'}`}><div className="text-[8px] font-black uppercase tracking-widest opacity-70">Facturadas</div><div className="text-2xl font-black">{cotizStats.facturadas}</div></div>
+                  <div onClick={()=>{setCotizFiltStatus(cotizFiltStatus==='NO CONCRETADA'?'':'NO CONCRETADA');setCotizPagina(0);}} className={`cursor-pointer rounded-2xl px-4 py-3 transition-all ${cotizFiltStatus==='NO CONCRETADA'?'bg-red-500 text-white shadow-lg':'bg-red-50 border border-red-200 hover:border-red-400'}`}><div className="text-[8px] font-black uppercase tracking-widest opacity-70">No concretadas</div><div className="text-2xl font-black">{cotizStats.noConcretadas}</div></div>
                   <div className="bg-orange-50 border border-orange-200 rounded-2xl px-4 py-3"><div className="text-[8px] font-black text-orange-400 uppercase tracking-widest">Conversión</div><div className="text-2xl font-black text-orange-600">{cotizStats.conversion}%</div></div>
                 </div>
                 <div className="flex flex-wrap gap-3 mb-6 items-center">
@@ -10201,7 +10203,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       {vendedoresList.map(v=><option key={v} value={String(v).toUpperCase()}>{String(v).toUpperCase()}</option>)}
                     </select>
                   </div>
-                  {(cotizSearchTerm||cotizFiltVendedor) && <button onClick={()=>{setCotizSearchTerm('');setCotizFiltVendedor('');setCotizPagina(0);}} className="px-4 py-4 bg-gray-100 hover:bg-gray-200 rounded-2xl text-[10px] font-black text-gray-500 uppercase">Limpiar</button>}
+                  {(cotizSearchTerm||cotizFiltVendedor||cotizFiltStatus) && <button onClick={()=>{setCotizSearchTerm('');setCotizFiltVendedor('');setCotizFiltStatus('');setCotizPagina(0);}} className="px-4 py-4 bg-gray-100 hover:bg-gray-200 rounded-2xl text-[10px] font-black text-gray-500 uppercase">Limpiar</button>}
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
@@ -10236,7 +10238,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             {cot.status==='FACTURADA' && cot.neGenerada
                               ? <span className="px-2 py-1 bg-green-100 text-green-700 rounded-lg text-[8px] font-black uppercase flex items-center gap-1" title={`Convertida en ${cot.neGenerada}`}><PackageCheck size={12}/> {cot.neGenerada}</span>
                               : <button onClick={()=>convertirCotizANE(cot)} title="Generar Nota de Entrega desde esta cotización" className="p-2.5 bg-orange-50 text-orange-600 rounded-xl hover:bg-orange-600 hover:text-white transition-all"><PackageCheck size={16}/></button>}
-                            <button onClick={()=>setCotizOutcomeModal({id:cot.id,documento:cot.documento,status:cot.status||'VIGENTE',motivo:cot.motivoNoConcretada||''})} title="Marcar resultado (vigente / aprobada / facturada / no concretada)" className="p-2.5 bg-green-50 text-green-600 rounded-xl hover:bg-green-600 hover:text-white transition-all"><CheckSquare size={16}/></button>
+                            <button onClick={()=>setCotizOutcomeModal({id:cot.id,documento:cot.documento,status:cot.status||'VIGENTE',motivo:cot.motivoNoConcretada||''})}
+                              title="Cambiar estado"
+                              className={`px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase transition-all border-2 flex items-center gap-1 ${
+                                (cot.status||'VIGENTE')==='FACTURADA'?'bg-green-100 text-green-700 border-green-300 hover:bg-green-200':
+                                (cot.status||'VIGENTE')==='APROBADA'?'bg-indigo-100 text-indigo-700 border-indigo-300 hover:bg-indigo-200':
+                                (cot.status||'VIGENTE')==='NO CONCRETADA'?'bg-red-100 text-red-600 border-red-300 hover:bg-red-200':
+                                'bg-amber-100 text-amber-700 border-amber-300 hover:bg-amber-200'
+                              }`}>
+                              <CheckSquare size={10}/>{cot.status||'VIGENTE'}
+                            </button>
                             <button onClick={()=>{setEditingCotizId(cot.id);setNewCotizForm({...cot});setCotizItems(cot.items||[]);setShowNewCotizPanel(true);window.scrollTo({top:0,behavior:'smooth'});}} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button>
                             <button onClick={()=>{
                               const w=window.open('','_blank');
@@ -10265,7 +10276,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:10px">
                                   <div><b>CONDICIÓN DE PAGO:</b> ${(cot.condicionPago||'CONTADO')}${cot.condicionPago==='CREDITO'&&cot.diasCredito?` (${cot.diasCredito} DÍAS)`:''}</div>
                                   <div><b>FORMA DE PAGO:</b> ${cot.formaPago||'BS A TASA BCV'}</div>
-                                  <div><b>ANTICIPO:</b> ${parseNum(cot.porcentajeAnticipo||0)>0?`${cot.porcentajeAnticipo}% ($${formatNum(parseNum(cot.total||0)*(parseNum(cot.porcentajeAnticipo||0)/100))})`:'NO APLICA'}</div>
+                                  <div><b>ANTICIPO:</b> ${(()=>{const pct=parseNum(cot.porcentajeAnticipo);return pct>0?`${pct}% ($${formatNum(parseNum(cot.total||0)*(pct/100))})`: 'NO APLICA';})()}</div>
                                   <div><b>TIEMPO DE ENTREGA:</b> ${cot.tiempoEntrega||'Por confirmar'}</div>
                                   <div><b>VALIDEZ DE OFERTA:</b> ${cot.validez||15} DÍAS</div>
                                 </div>
@@ -10474,7 +10485,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                 condicionId: newCond.id,
                                 tiempoEntrega: teStr||f.tiempoEntrega,
                                 condicionPago: condForm.tipoPago==='credito' ? 'CREDITO' : 'CONTADO',
-                                diasCredito: condForm.tipoPago==='credito' ? (condForm.diasCredito||'') : ''
+                                diasCredito: condForm.tipoPago==='credito' ? (condForm.diasCredito||'') : '',
+                                porcentajeAnticipo: condForm.tieneAnticipo ? (condForm.pctAnticipo||'') : ''
                               }));
                               setNewCondForm({nombre:'',detalle:'',tipoPago:'',diasCredito:'',tieneAnticipo:false,pctAnticipo:'',tiempoEntrega:'',entregaCustom:'',formasPago:[]});
                               setShowCondManager(false);
@@ -26409,6 +26421,10 @@ ${resumenHtml}
                    </div>
                  </div>;
                })()}
+
+               </div>{/* /p-6 content */}
+             </div>;
+           })()}
 
           {/* ── BANCO & TESORERÍA ── */}
            {activeTab === 'banco' && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
