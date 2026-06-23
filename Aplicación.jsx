@@ -26554,6 +26554,7 @@ ${resumenHtml}
                    <input id={'cat-img-'+imgKey} type="file" accept="image/*" style={{display:'none'}}
                      onChange={ev=>{if(ev.target.files[0])handleCatImg(imgKey,ev.target.files[0]);ev.target.value='';}}/>
                  </div>;
+                 const pages=[
                    {bg:`linear-gradient(160deg,${DARK2} 0%,#3d1000 100%)`,content:<div style={{height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',position:'relative',overflow:'hidden'}}>
                      <div style={{position:'absolute',inset:0,background:`radial-gradient(ellipse at 40% 50%,${ORG2}44 0%,transparent 70%)`}}/>
                      <div style={{position:'relative',textAlign:'center'}}>
