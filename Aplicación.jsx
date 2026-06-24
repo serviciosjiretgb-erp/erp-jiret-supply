@@ -14772,284 +14772,235 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             const bancosUSD=(cuentasBanco||[]).filter(c=>c.moneda==='USD'||c.moneda==='USDT');
 
             return(
-            <div className="fixed inset-0 z-[300] flex flex-col" style={{background:'rgba(15,23,42,0.6)',backdropFilter:'blur(4px)'}}>
-              <div className="flex-1 flex items-stretch justify-center p-6">
-                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-7xl flex flex-col overflow-hidden border border-gray-100">
+            <div className="fixed inset-0 z-[300]" style={{background:'rgba(0,0,0,0.55)',backdropFilter:'blur(3px)',display:'flex',alignItems:'stretch',justifyContent:'center',padding:'20px'}}>
+              <div style={{background:'#fff',borderRadius:20,boxShadow:'0 25px 80px rgba(0,0,0,0.25)',width:'100%',maxWidth:1300,display:'flex',flexDirection:'column',overflow:'hidden',border:'1px solid #e5e7eb'}}>
 
-                  {/* Header */}
-                  <div className="flex items-center justify-between px-8 py-5 border-b border-gray-100 flex-shrink-0">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-2xl flex items-center justify-center" style={{background:'linear-gradient(135deg,#16a34a,#15803d)'}}>
-                        <DollarSign size={18} className="text-white"/>
-                      </div>
-                      <div>
-                        <div className="font-black text-gray-900 text-lg">Registrar Cobro</div>
-                        <div className="text-gray-400 text-[11px]">Cuentas por Cobrar — SERVICIOS JIRET G&amp;B</div>
-                      </div>
+                {/* ── HEADER naranja ── */}
+                <div style={{background:'linear-gradient(135deg,#E8541A,#c2410c)',padding:'14px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+                  <div style={{display:'flex',alignItems:'center',gap:12}}>
+                    <div style={{width:36,height:36,background:'rgba(255,255,255,0.2)',borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                      <DollarSign size={18} style={{color:'#fff'}}/>
                     </div>
-                    <button onClick={()=>setCxcPagoModal(null)} className="w-9 h-9 rounded-xl flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all"><X size={18}/></button>
+                    <div>
+                      <div style={{color:'#fff',fontWeight:900,fontSize:16,letterSpacing:0.5}}>Registrar Cobro</div>
+                      <div style={{color:'rgba(255,255,255,0.7)',fontSize:10}}>Cuentas por Cobrar — SERVICIOS JIRET G&amp;B</div>
+                    </div>
                   </div>
+                  <button onClick={()=>setCxcPagoModal(null)} style={{width:32,height:32,borderRadius:8,border:'none',background:'rgba(255,255,255,0.15)',color:'#fff',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,fontWeight:900}} title="Cerrar">×</button>
+                </div>
 
-                  {/* Body — 3 columnas */}
-                  <div className="flex flex-1 overflow-hidden">
+                {/* ── BODY 3 columnas ── */}
+                <div style={{display:'flex',flex:1,overflow:'hidden',minHeight:0}}>
 
-                    {/* COL 1 — Cliente y NEs */}
-                    <div className="w-[360px] border-r border-gray-100 flex flex-col flex-shrink-0 bg-gray-50/50">
-                      <div className="px-6 py-4 border-b border-gray-100 flex-shrink-0">
-                        <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-3">1. Cliente</div>
-                        {/* Buscador */}
-                        <div className="relative mb-2">
-                          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-                          <input type="text" value={pm.clientSearch||''} onChange={e=>setCxcPagoModal(m=>({...m,clientSearch:e.target.value,clientRif:'',clientName:'',nesSelec:{},distribucion:{}}))}
-                            placeholder="Buscar cliente..." className="w-full pl-9 pr-3 py-2.5 bg-white border border-gray-200 rounded-xl text-xs text-gray-700 placeholder-gray-400 outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100"/>
-                        </div>
-                        {/* Lista clientes */}
-                        {!pm.clientRif && clientesFiltrados.length>0 && (
-                          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden max-h-44 overflow-y-auto shadow-sm">
-                            {clientesFiltrados.map(cl=>(
-                              <button key={cl.clientRif} onClick={()=>setCxcPagoModal(m=>({...m,clientRif:cl.clientRif,clientName:cl.clientName,clientSearch:cl.clientName,nesSelec:{},distribucion:{}}))}
-                                className="w-full flex justify-between items-center px-3 py-2.5 hover:bg-green-50 text-left border-b border-gray-50 last:border-0 transition-all">
-                                <span className="text-xs text-gray-800 font-bold truncate">{cl.clientName}</span>
-                                <span className="text-[10px] text-green-600 font-black ml-2 flex-shrink-0">${formatNum(cl.total)}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {/* Cliente seleccionado */}
-                        {clienteSel && (
-                          <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-xl px-3 py-2.5">
-                            <div>
-                              <div className="text-gray-900 font-black text-xs">{clienteSel.clientName}</div>
-                              <div className="text-[10px] text-green-600 font-bold">Cartera: ${formatNum(saldoTotalCliente)}</div>
-                            </div>
-                            <button onClick={()=>setCxcPagoModal(m=>({...m,clientRif:'',clientName:'',clientSearch:'',nesSelec:{},distribucion:{}}))} className="text-gray-400 hover:text-red-400 text-lg leading-none font-bold">×</button>
-                          </div>
-                        )}
+                  {/* COL 1 — Cliente + NEs */}
+                  <div style={{width:300,borderRight:'2px solid #f3f4f6',display:'flex',flexDirection:'column',flexShrink:0,background:'#fafafa'}}>
+                    <div style={{padding:'16px 18px',borderBottom:'1px solid #f3f4f6',flexShrink:0}}>
+                      <div style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:2,marginBottom:10}}>1 · Cliente</div>
+                      <div style={{position:'relative',marginBottom:8}}>
+                        <Search size={12} style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:'#9ca3af'}}/>
+                        <input type="text" value={pm.clientSearch||''} onChange={e=>setCxcPagoModal(m=>({...m,clientSearch:e.target.value,clientRif:'',clientName:'',nesSelec:{},distribucion:{}}))}
+                          placeholder="Buscar cliente..." style={{width:'100%',paddingLeft:30,paddingRight:10,paddingTop:9,paddingBottom:9,border:'2px solid #e5e7eb',borderRadius:10,fontSize:11,outline:'none',background:'#fff',boxSizing:'border-box'}}
+                          onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
                       </div>
-
-                      {/* Lista NEs */}
+                      {!pm.clientRif && clientesFiltrados.length>0 && (
+                        <div style={{background:'#fff',border:'2px solid #e5e7eb',borderRadius:10,overflow:'hidden',maxHeight:160,overflowY:'auto'}}>
+                          {clientesFiltrados.map(cl=>(
+                            <button key={cl.clientRif} onClick={()=>setCxcPagoModal(m=>({...m,clientRif:cl.clientRif,clientName:cl.clientName,clientSearch:cl.clientName,nesSelec:{},distribucion:{}}))}
+                              style={{width:'100%',display:'flex',justifyContent:'space-between',alignItems:'center',padding:'9px 12px',border:'none',borderBottom:'1px solid #f9fafb',background:'transparent',cursor:'pointer',textAlign:'left'}}
+                              onMouseEnter={e=>e.currentTarget.style.background='#fff7ed'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                              <span style={{fontSize:11,fontWeight:700,color:'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{cl.clientName}</span>
+                              <span style={{fontSize:10,fontWeight:900,color:'#E8541A',marginLeft:8,flexShrink:0}}>${formatNum(cl.total)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       {clienteSel && (
-                        <div className="flex-1 overflow-y-auto">
-                          <div className="px-6 py-3 border-b border-gray-100 flex justify-between items-center bg-white flex-shrink-0">
-                            <div className="text-[9px] font-black text-gray-400 uppercase">2. Facturas Pendientes</div>
-                            <div className="flex gap-2">
-                              <button onClick={()=>{const all={};nesPendientes.forEach(ne=>{all[ne.id]=true;});setCxcPagoModal(m=>({...m,nesSelec:all}));}} className="text-[9px] text-green-600 font-black hover:underline">✓ Todas</button>
-                              <button onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{}}))} className="text-[9px] text-gray-400 font-black hover:underline">✕</button>
-                            </div>
+                        <div style={{background:'#fff7ed',border:'2px solid #fed7aa',borderRadius:10,padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                          <div>
+                            <div style={{fontWeight:900,fontSize:11,color:'#111'}}>{clienteSel.clientName}</div>
+                            <div style={{fontSize:10,color:'#E8541A',fontWeight:700}}>Cartera: ${formatNum(saldoTotalCliente)}</div>
                           </div>
-                          <div className="text-[9px] text-gray-400 px-6 py-2 italic bg-amber-50/50 border-b border-amber-100">Sin selección = distribuye automático de más antigua a más reciente</div>
-                          {nesPendientes.map((ne,i)=>{
-                            const saldo=getSaldoNEAtFecha(ne,null);
-                            const sel=!!pm.nesSelec?.[ne.id];
-                            const aplicado=distMap[ne.id]||0;
-                            return(
-                            <div key={ne.id} onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:!sel}}))}
-                              className={`px-5 py-3 cursor-pointer border-b border-gray-100 transition-all ${sel?'bg-green-50':'hover:bg-gray-50'}`}>
-                              <div className="flex items-center gap-3">
-                                <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center flex-shrink-0 transition-all ${sel?'bg-green-500 border-green-500':'border-gray-300'}`}>
-                                  {sel&&<span className="text-white text-[9px] font-black leading-none">✓</span>}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex justify-between items-center">
-                                    <span className="text-gray-900 font-black text-xs">{ne.id}</span>
-                                    <span className="text-red-500 font-black text-xs">${formatNum(saldo)}</span>
-                                  </div>
-                                  <div className="flex justify-between items-center mt-0.5">
-                                    <span className="text-gray-400 text-[10px]">{ne.fecha} · {ne.vendedor||'OFICINA'}</span>
-                                    {montoUSD>0&&aplicado>0&&<span className="text-green-600 text-[9px] font-black">→ ${formatNum(Math.max(0,saldo-aplicado))}</span>}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>);
-                          })}
+                          <button onClick={()=>setCxcPagoModal(m=>({...m,clientRif:'',clientName:'',clientSearch:'',nesSelec:{},distribucion:{}}))} style={{border:'none',background:'none',color:'#9ca3af',cursor:'pointer',fontSize:16,fontWeight:900,lineHeight:1}}>×</button>
                         </div>
                       )}
                     </div>
-
-                    {/* COL 2 — Monto, moneda, concepto */}
-                    <div className="flex-1 overflow-y-auto bg-white">
-                      <div className="p-7 space-y-6">
-                        {/* Moneda */}
-                        <div>
-                          <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-3">3. Moneda del Pago</div>
-                          <div className="grid grid-cols-2 gap-3">
-                            {[{k:'USD',label:'💵 Dólares (USD)',desc:'Ingresa el monto en dólares'},{k:'Bs',label:'🇻🇪 Bolívares (Bs)',desc:'Ingresa el monto en bolívares'}].map(cur=>(
-                              <button key={cur.k} onClick={()=>setCxcPagoModal(m=>({...m,moneda:cur.k,monto:''}))}
-                                className={`py-4 px-5 rounded-2xl font-bold text-sm border-2 transition-all text-left ${pm.moneda===cur.k?'border-green-500 bg-green-50 text-green-800 shadow-sm':'border-gray-200 text-gray-500 hover:border-gray-300 bg-white'}`}>
-                                <div className="font-black text-base">{cur.label}</div>
-                                <div className={`text-[10px] mt-1 ${pm.moneda===cur.k?'text-green-600':'text-gray-400'}`}>{cur.desc}</div>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Monto + tasa */}
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Monto {pm.moneda}</label>
-                            <div className="relative">
-                              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-black">{pm.moneda==='USD'?'$':'Bs'}</span>
-                              <input type="number" step="0.01" min="0" value={pm.monto}
-                                onChange={e=>setCxcPagoModal(m=>({...m,monto:e.target.value}))}
-                                className="w-full pl-9 border-2 border-orange-300 rounded-2xl py-3.5 text-base font-black text-gray-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100" placeholder="0.00"/>
-                            </div>
-                            {parseNum(pm.monto)>0&&(
-                              <div className="mt-2 text-xs font-bold">
-                                {pm.moneda==='USD'?<span className="text-blue-600">≈ Bs. {formatNum(montoBs)}</span>:<span className="text-green-600">≈ USD ${formatNum(montoUSD)}</span>}
-                              </div>
-                            )}
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Tasa Bs/$</label>
-                            <input type="number" step="0.01" min="1" value={pm.tasa}
-                              onChange={e=>setCxcPagoModal(m=>({...m,tasa:e.target.value}))}
-                              className="w-full border-2 border-gray-200 rounded-2xl py-3.5 px-4 text-base font-black text-gray-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100" placeholder="Ej: 50.00"/>
-                          </div>
-                        </div>
-
-                        {/* Saldo restante */}
-                        {clienteSel&&montoUSD>0&&(
-                          <div className={`rounded-2xl p-4 border-2 ${saldoRestanteCliente<0?'bg-red-50 border-red-200':saldoRestanteCliente<0.01?'bg-green-50 border-green-200':'bg-amber-50 border-amber-200'}`}>
-                            <div className="text-[9px] font-black text-gray-500 uppercase mb-3">Impacto en cartera del cliente</div>
-                            <div className="space-y-1.5">
-                              <div className="flex justify-between text-xs"><span className="text-gray-500">Cartera total</span><span className="font-black text-gray-700">${formatNum(saldoTotalCliente)}</span></div>
-                              <div className="flex justify-between text-xs"><span className="text-gray-500">Pago recibido</span><span className="font-black text-green-600">- ${formatNum(montoUSD)}</span></div>
-                              <div className="border-t border-gray-200 pt-1.5 flex justify-between items-center">
-                                <span className="text-xs font-black text-gray-700">Saldo restante</span>
-                                <span className={`font-black text-lg ${saldoRestanteCliente<0?'text-red-500':saldoRestanteCliente<0.01?'text-green-600':'text-amber-600'}`}>
-                                  ${formatNum(Math.max(0,saldoRestanteCliente))}
-                                  {saldoRestanteCliente<0&&<span className="text-[10px] ml-1">(excede saldo)</span>}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Concepto */}
-                        <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Concepto / Detalle</label>
-                          <input type="text" value={pm.concepto} onChange={e=>setCxcPagoModal(m=>({...m,concepto:e.target.value}))}
-                            placeholder="Abono, Anticipo, Pago total, Cruce..."
-                            className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-sm text-gray-700 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 placeholder-gray-300"/>
-                        </div>
-
-                        {/* Fecha + Método */}
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Fecha</label>
-                            <input type="date" value={pm.fecha} onChange={e=>setCxcPagoModal(m=>({...m,fecha:e.target.value}))}
-                              className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-sm text-gray-700 outline-none focus:border-orange-400"/>
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Método de Pago</label>
-                            <select value={pm.metodo} onChange={e=>setCxcPagoModal(m=>({...m,metodo:e.target.value}))}
-                              className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-sm text-gray-700 outline-none focus:border-orange-400 bg-white">
-                              <option>Transferencia</option><option>Efectivo USD</option><option>Efectivo Bs.</option>
-                              <option>Zelle</option><option>Cheque</option><option>Pago Móvil</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        {/* Referencia */}
-                        <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">N° Referencia / Comprobante</label>
-                          <input type="text" value={pm.referencia} onChange={e=>setCxcPagoModal(m=>({...m,referencia:e.target.value.toUpperCase()}))}
-                            className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-sm font-black text-gray-700 outline-none focus:border-orange-400 uppercase" placeholder="REF-0000000"/>
+                    {/* NEs */}
+                    {clienteSel && <div style={{flex:1,overflowY:'auto'}}>
+                      <div style={{padding:'8px 18px',borderBottom:'1px solid #f3f4f6',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#fff',position:'sticky',top:0,zIndex:1}}>
+                        <span style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:1}}>2 · Facturas</span>
+                        <div style={{display:'flex',gap:8}}>
+                          <button onClick={()=>{const all={};nesPendientes.forEach(ne=>{all[ne.id]=true;});setCxcPagoModal(m=>({...m,nesSelec:all}));}} style={{fontSize:9,color:'#16a34a',fontWeight:900,border:'none',background:'none',cursor:'pointer'}}>✓ Todas</button>
+                          <button onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{}}))} style={{fontSize:9,color:'#9ca3af',fontWeight:900,border:'none',background:'none',cursor:'pointer'}}>✕</button>
                         </div>
                       </div>
-                    </div>
-
-                    {/* COL 3 — Banco + Resumen + Confirmar */}
-                    <div className="w-[300px] flex flex-col flex-shrink-0 bg-gray-50/50 border-l border-gray-100">
-                      <div className="flex-1 overflow-y-auto p-6 space-y-5">
-                        <div>
-                          <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-3">4. Cuenta Bancaria Destino</div>
-                          {bancosBS.length>0&&(
-                            <div className="mb-4">
-                              <div className="text-[9px] text-blue-600 font-black uppercase mb-2 flex items-center gap-1.5">
-                                <span className="w-4 h-4 bg-blue-100 rounded flex items-center justify-center text-[8px]">🏦</span> Bancos Nacionales (Bs)
-                              </div>
-                              <div className="space-y-1.5">
-                                {bancosBS.map(ct=>(
-                                  <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}))}
-                                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 transition-all text-left ${pm.cuentaId===ct.id?'bg-blue-50 border-blue-400 shadow-sm':'bg-white border-gray-200 hover:border-blue-200'}`}>
-                                    <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${pm.cuentaId===ct.id?'bg-blue-500':'bg-gray-300'}`}/>
-                                    <div className="flex-1 min-w-0">
-                                      <div className={`text-xs font-black truncate ${pm.cuentaId===ct.id?'text-blue-700':'text-gray-700'}`}>{ct.banco}</div>
-                                      <div className="text-gray-400 text-[9px]">{ct.numeroCuenta}</div>
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
+                      <div style={{padding:'6px 14px',background:'#fffbeb',borderBottom:'1px solid #fef3c7',fontSize:9,color:'#92400e',fontStyle:'italic'}}>Sin selección = distribuye automáticamente</div>
+                      {nesPendientes.map((ne,i)=>{
+                        const saldo=getSaldoNEAtFecha(ne,null);
+                        const sel=!!pm.nesSelec?.[ne.id];
+                        const aplicado=distMap[ne.id]||0;
+                        return(
+                        <div key={ne.id} onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:!sel}}))}
+                          style={{padding:'10px 14px',borderBottom:'1px solid #f3f4f6',cursor:'pointer',background:sel?'#fff7ed':i%2===0?'#fff':'#fafafa',display:'flex',gap:10,alignItems:'center'}}
+                          onMouseEnter={e=>e.currentTarget.style.background='#fff7ed'} onMouseLeave={e=>e.currentTarget.style.background=sel?'#fff7ed':i%2===0?'#fff':'#fafafa'}>
+                          <div style={{width:18,height:18,borderRadius:5,border:`2px solid ${sel?'#E8541A':'#d1d5db'}`,background:sel?'#E8541A':'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'all .15s'}}>
+                            {sel&&<span style={{color:'#fff',fontSize:9,fontWeight:900,lineHeight:1}}>✓</span>}
+                          </div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{display:'flex',justifyContent:'space-between'}}>
+                              <span style={{fontWeight:900,fontSize:11,color:'#E8541A'}}>{ne.id}</span>
+                              <span style={{fontWeight:900,fontSize:11,color:'#dc2626'}}>${formatNum(saldo)}</span>
                             </div>
-                          )}
-                          {bancosUSD.length>0&&(
-                            <div>
-                              <div className="text-[9px] text-green-600 font-black uppercase mb-2 flex items-center gap-1.5">
-                                <span className="w-4 h-4 bg-green-100 rounded flex items-center justify-center text-[8px]">💵</span> Internacionales / USD
-                              </div>
-                              <div className="space-y-1.5">
-                                {bancosUSD.map(ct=>(
-                                  <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}))}
-                                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 transition-all text-left ${pm.cuentaId===ct.id?'bg-green-50 border-green-400 shadow-sm':'bg-white border-gray-200 hover:border-green-200'}`}>
-                                    <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${pm.cuentaId===ct.id?'bg-green-500':'bg-gray-300'}`}/>
-                                    <div className="flex-1 min-w-0">
-                                      <div className={`text-xs font-black truncate ${pm.cuentaId===ct.id?'text-green-700':'text-gray-700'}`}>{ct.banco}</div>
-                                      <div className="text-gray-400 text-[9px]">{ct.numeroCuenta}</div>
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {(cuentasBanco||[]).length===0&&<p className="text-amber-500 text-[10px] font-bold bg-amber-50 rounded-xl p-3 border border-amber-200">★ Agrega cuentas en el módulo Banco</p>}
-                        </div>
-
-                        {/* Resumen */}
-                        {clienteSel&&parseNum(pm.monto)>0&&pm.cuentaId&&(
-                          <div className="bg-white rounded-2xl border-2 border-gray-100 overflow-hidden shadow-sm">
-                            <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
-                              <div className="text-[9px] font-black text-gray-500 uppercase tracking-wider">Resumen</div>
-                            </div>
-                            <div className="p-4 space-y-2">
-                              {[
-                                ['Cliente', pm.clientName],
-                                ['NEs', nesSelecIds.length>0?`${nesSelecIds.length} seleccionada(s)`:`Auto (${nesParaDistribuir.length} docs)`],
-                                ['USD', `$${formatNum(montoUSD)}`],
-                                ['Bs', `Bs. ${formatNum(montoBs)}`],
-                                ['Banco', (cuentasBanco||[]).find(c=>c.id===pm.cuentaId)?.banco||'—'],
-                                ['Método', pm.metodo],
-                              ].map(([k,v])=>(
-                                <div key={k} className="flex justify-between items-center text-xs">
-                                  <span className="text-gray-400">{k}</span>
-                                  <span className="font-black text-gray-700 text-right ml-3 truncate max-w-[140px]">{v}</span>
-                                </div>
-                              ))}
-                              <div className="border-t border-gray-100 pt-2 flex justify-between items-center text-xs">
-                                <span className="text-gray-400">Saldo restante</span>
-                                <span className={`font-black text-sm ${saldoRestanteCliente<0.01?'text-green-600':'text-amber-600'}`}>${formatNum(Math.max(0,saldoRestanteCliente))}</span>
-                              </div>
+                            <div style={{display:'flex',justifyContent:'space-between',marginTop:2}}>
+                              <span style={{fontSize:9,color:'#9ca3af'}}>{ne.fecha}</span>
+                              {montoUSD>0&&aplicado>0&&<span style={{fontSize:9,fontWeight:900,color:'#16a34a'}}>→ ${formatNum(Math.max(0,saldo-aplicado))}</span>}
                             </div>
                           </div>
-                        )}
-                      </div>
-
-                      {/* Botones */}
-                      <div className="p-5 border-t border-gray-100 flex-shrink-0 space-y-2">
-                        <button onClick={guardarPagoMasivo}
-                          disabled={!pm.clientRif||!parseNum(pm.monto)||!pm.cuentaId||!pm.referencia}
-                          className="w-full py-4 rounded-2xl font-black text-sm uppercase text-white transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed shadow-lg"
-                          style={{background:'linear-gradient(135deg,#16a34a,#15803d)'}}>
-                          <CheckCircle size={16}/> Confirmar y Registrar
-                        </button>
-                        <button onClick={()=>setCxcPagoModal(null)}
-                          className="w-full py-2.5 rounded-2xl font-black text-xs uppercase border-2 border-gray-200 text-gray-400 hover:bg-gray-50 transition-all">
-                          Cancelar
-                        </button>
-                      </div>
-                    </div>
-
+                        </div>);
+                      })}
+                    </div>}
                   </div>
+
+                  {/* COL 2 — Monto / Datos */}
+                  <div style={{flex:1,overflowY:'auto',background:'#fff',padding:'20px 28px',display:'flex',flexDirection:'column',gap:20}}>
+                    <div>
+                      <div style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:2,marginBottom:12}}>3 · Moneda del Pago</div>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                        {[{k:'USD',emoji:'💵',label:'Dólares (USD)',sub:'Monto en dólares'},{k:'Bs',emoji:'🇻🇪',label:'Bolívares (Bs)',sub:'Monto en bolívares'}].map(cur=>(
+                          <button key={cur.k} onClick={()=>setCxcPagoModal(m=>({...m,moneda:cur.k,monto:''}))}
+                            style={{padding:'14px 18px',borderRadius:14,border:`2px solid ${pm.moneda===cur.k?'#E8541A':'#e5e7eb'}`,background:pm.moneda===cur.k?'#fff7ed':'#fafafa',cursor:'pointer',textAlign:'left',transition:'all .15s'}}>
+                            <div style={{fontWeight:900,fontSize:13,color:pm.moneda===cur.k?'#E8541A':'#374151'}}>{cur.emoji} {cur.label}</div>
+                            <div style={{fontSize:10,color:pm.moneda===cur.k?'#c2410c':'#9ca3af',marginTop:3}}>{cur.sub}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+                      <div>
+                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:8}}>Monto {pm.moneda}</label>
+                        <div style={{position:'relative'}}>
+                          <span style={{position:'absolute',left:14,top:'50%',transform:'translateY(-50%)',color:'#9ca3af',fontWeight:900,fontSize:14}}>{pm.moneda==='USD'?'$':'Bs'}</span>
+                          <input type="number" step="0.01" min="0" value={pm.monto} onChange={e=>setCxcPagoModal(m=>({...m,monto:e.target.value}))}
+                            style={{width:'100%',paddingLeft:32,paddingRight:12,paddingTop:12,paddingBottom:12,border:'2px solid #E8541A',borderRadius:12,fontSize:18,fontWeight:900,outline:'none',boxSizing:'border-box',color:'#111'}} placeholder="0.00"/>
+                        </div>
+                        {parseNum(pm.monto)>0&&<div style={{marginTop:6,fontSize:11,fontWeight:700,color:'#6b7280'}}>{pm.moneda==='USD'?`≈ Bs. ${formatNum(montoBs)}`:`≈ USD $${formatNum(montoUSD)}`}</div>}
+                      </div>
+                      <div>
+                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:8}}>Tasa Bs/$</label>
+                        <input type="number" step="0.01" min="1" value={pm.tasa} onChange={e=>setCxcPagoModal(m=>({...m,tasa:e.target.value}))}
+                          style={{width:'100%',padding:'12px 14px',border:'2px solid #e5e7eb',borderRadius:12,fontSize:16,fontWeight:900,outline:'none',boxSizing:'border-box',color:'#111'}} placeholder="Ej: 50.00"
+                          onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                      </div>
+                    </div>
+
+                    {clienteSel&&montoUSD>0&&(
+                      <div style={{background:saldoRestanteCliente<0?'#fef2f2':saldoRestanteCliente<0.01?'#f0fdf4':'#fff7ed',border:`2px solid ${saldoRestanteCliente<0?'#fecaca':saldoRestanteCliente<0.01?'#bbf7d0':'#fed7aa'}`,borderRadius:14,padding:'14px 18px'}}>
+                        <div style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>Impacto en cartera</div>
+                        {[['Cartera total',`$${formatNum(saldoTotalCliente)}`,'#374151'],['Pago recibido',`- $${formatNum(montoUSD)}`,'#16a34a']].map(([k,v,c])=>(
+                          <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:4}}>
+                            <span style={{color:'#9ca3af'}}>{k}</span><span style={{fontWeight:700,color:c}}>{v}</span>
+                          </div>
+                        ))}
+                        <div style={{borderTop:'1px solid rgba(0,0,0,0.08)',paddingTop:8,marginTop:4,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                          <span style={{fontSize:11,fontWeight:900,color:'#111'}}>Saldo restante</span>
+                          <span style={{fontSize:20,fontWeight:900,color:saldoRestanteCliente<0?'#dc2626':saldoRestanteCliente<0.01?'#16a34a':'#E8541A'}}>${formatNum(Math.max(0,saldoRestanteCliente))}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:8}}>Concepto / Detalle</label>
+                      <input type="text" value={pm.concepto} onChange={e=>setCxcPagoModal(m=>({...m,concepto:e.target.value}))}
+                        placeholder="Abono, Anticipo, Pago total, Cruce..."
+                        style={{width:'100%',padding:'11px 14px',border:'2px solid #e5e7eb',borderRadius:12,fontSize:12,outline:'none',boxSizing:'border-box',color:'#111'}}
+                        onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                    </div>
+
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+                      <div>
+                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:8}}>Fecha</label>
+                        <input type="date" value={pm.fecha} onChange={e=>setCxcPagoModal(m=>({...m,fecha:e.target.value}))}
+                          style={{width:'100%',padding:'11px 14px',border:'2px solid #e5e7eb',borderRadius:12,fontSize:12,outline:'none',boxSizing:'border-box',color:'#111'}}
+                          onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                      </div>
+                      <div>
+                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:8}}>Método de Pago</label>
+                        <select value={pm.metodo} onChange={e=>setCxcPagoModal(m=>({...m,metodo:e.target.value}))}
+                          style={{width:'100%',padding:'11px 14px',border:'2px solid #e5e7eb',borderRadius:12,fontSize:12,outline:'none',boxSizing:'border-box',color:'#111',background:'#fff'}}>
+                          {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:8}}>N° Referencia / Comprobante</label>
+                      <input type="text" value={pm.referencia} onChange={e=>setCxcPagoModal(m=>({...m,referencia:e.target.value.toUpperCase()}))}
+                        style={{width:'100%',padding:'11px 14px',border:'2px solid #e5e7eb',borderRadius:12,fontSize:12,fontWeight:900,outline:'none',boxSizing:'border-box',color:'#111',textTransform:'uppercase'}} placeholder="REF-0000000"
+                        onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                    </div>
+                  </div>
+
+                  {/* COL 3 — Banco + Confirmar */}
+                  <div style={{width:270,borderLeft:'2px solid #f3f4f6',display:'flex',flexDirection:'column',flexShrink:0,background:'#fafafa'}}>
+                    <div style={{flex:1,overflowY:'auto',padding:'16px 14px'}}>
+                      <div style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:2,marginBottom:12}}>4 · Cuenta Bancaria</div>
+                      {bancosBS.length>0&&<div style={{marginBottom:16}}>
+                        <div style={{fontSize:9,fontWeight:900,color:'#1d4ed8',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>🏦 Nacionales (Bs)</div>
+                        <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                          {bancosBS.map(ct=>(
+                            <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}))}
+                              style={{padding:'9px 12px',borderRadius:10,border:`2px solid ${pm.cuentaId===ct.id?'#E8541A':'#e5e7eb'}`,background:pm.cuentaId===ct.id?'#fff7ed':'#fff',cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:8,transition:'all .15s'}}>
+                              <div style={{width:8,height:8,borderRadius:'50%',background:pm.cuentaId===ct.id?'#E8541A':'#d1d5db',flexShrink:0,transition:'background .15s'}}/>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{fontSize:11,fontWeight:900,color:pm.cuentaId===ct.id?'#E8541A':'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ct.banco}</div>
+                                <div style={{fontSize:9,color:'#9ca3af'}}>{ct.numeroCuenta}</div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>}
+                      {bancosUSD.length>0&&<div>
+                        <div style={{fontSize:9,fontWeight:900,color:'#16a34a',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>💵 Internacionales / USD</div>
+                        <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                          {bancosUSD.map(ct=>(
+                            <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}))}
+                              style={{padding:'9px 12px',borderRadius:10,border:`2px solid ${pm.cuentaId===ct.id?'#E8541A':'#e5e7eb'}`,background:pm.cuentaId===ct.id?'#fff7ed':'#fff',cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:8,transition:'all .15s'}}>
+                              <div style={{width:8,height:8,borderRadius:'50%',background:pm.cuentaId===ct.id?'#E8541A':'#d1d5db',flexShrink:0}}/>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{fontSize:11,fontWeight:900,color:pm.cuentaId===ct.id?'#E8541A':'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ct.banco}</div>
+                                <div style={{fontSize:9,color:'#9ca3af'}}>{ct.numeroCuenta}</div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>}
+                    </div>
+
+                    {/* Resumen + botones */}
+                    <div style={{borderTop:'2px solid #f3f4f6',padding:'14px',flexShrink:0}}>
+                      {clienteSel&&parseNum(pm.monto)>0&&pm.cuentaId&&(
+                        <div style={{background:'#fff',border:'2px solid #f3f4f6',borderRadius:12,padding:'12px 14px',marginBottom:12}}>
+                          <div style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',marginBottom:8}}>Resumen</div>
+                          {[['Cliente',pm.clientName],['NEs',nesSelecIds.length>0?`${nesSelecIds.length} selec.`:`Auto (${nesParaDistribuir.length})`],['USD',`$${formatNum(montoUSD)}`],['Bs',`Bs. ${formatNum(montoBs)}`],['Banco',(cuentasBanco||[]).find(c=>c.id===pm.cuentaId)?.banco||'—']].map(([k,v])=>(
+                            <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:4}}>
+                              <span style={{color:'#9ca3af'}}>{k}</span>
+                              <span style={{fontWeight:900,color:'#111',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textAlign:'right'}}>{v}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <button onClick={guardarPagoMasivo}
+                        disabled={!pm.clientRif||!parseNum(pm.monto)||!pm.cuentaId||!pm.referencia}
+                        style={{width:'100%',padding:'13px',borderRadius:12,border:'none',background:(!pm.clientRif||!parseNum(pm.monto)||!pm.cuentaId||!pm.referencia)?'#e5e7eb':'linear-gradient(135deg,#E8541A,#c2410c)',color:(!pm.clientRif||!parseNum(pm.monto)||!pm.cuentaId||!pm.referencia)?'#9ca3af':'#fff',fontWeight:900,fontSize:12,textTransform:'uppercase',cursor:(!pm.clientRif||!parseNum(pm.monto)||!pm.cuentaId||!pm.referencia)?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:8,letterSpacing:1}}>
+                        <CheckCircle size={15}/> Confirmar y Registrar
+                      </button>
+                      <button onClick={()=>setCxcPagoModal(null)}
+                        style={{width:'100%',padding:'10px',borderRadius:12,border:'2px solid #e5e7eb',background:'transparent',color:'#9ca3af',fontWeight:900,fontSize:11,textTransform:'uppercase',cursor:'pointer',letterSpacing:1}}>
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+
                 </div>
               </div>
             </div>);
