@@ -4534,6 +4534,114 @@ function App() {
       ? moduleCards.filter(c => portalTabList.includes(c.tab))
       : moduleCards;
 
+    const portalTabList = selectedPortal ? PORTAL_TABS[selectedPortal] : null;
+    const visibleCards  = portalTabList
+      ? moduleCards.filter(c => portalTabList.includes(c.tab))
+      : moduleCards;
+
+    // ── PORTAL VENDEDORES: vista admin directa ────────────────────────────────
+    if (selectedPortal === 'vendedores_portal') {
+      const vendedoresList=(settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[];
+      const OR='#E8541A';
+      return(
+        <div className="p-6 space-y-6 animate-in fade-in">
+          <div className="flex justify-between items-center">
+            <div>
+              <div className="font-black text-xl text-gray-900">Portal de Vendedores</div>
+              <div className="text-sm text-gray-400 mt-1">Supervisión de cotizaciones, clientes y actas por vendedor</div>
+            </div>
+            <button onClick={()=>{setVentasView('cotizaciones');setActiveTab('ventas');}}
+              className="flex items-center gap-2 px-4 py-2.5 text-white rounded-xl text-xs font-black uppercase shadow-sm" style={{background:OR}}>
+              <FileText size={13}/> Ver todas las cotizaciones
+            </button>
+          </div>
+          {/* KPI global */}
+          <div className="grid grid-cols-4 gap-4">
+            {[
+              {l:'Cotizaciones totales',v:(cotizaciones||[]).length,c:OR},
+              {l:'Vigentes',v:(cotizaciones||[]).filter(c=>c.status==='VIGENTE').length,c:'#f59e0b'},
+              {l:'Aprobadas / Facturadas',v:(cotizaciones||[]).filter(c=>c.status==='APROBADA'||c.status==='FACTURADA').length,c:'#16a34a'},
+              {l:'Actas de reclamo',v:(actasReclamo||[]).length,c:'#6366f1'},
+            ].map((k,i)=>(
+              <div key={i} className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
+                <div className="text-[9px] text-gray-400 uppercase font-black tracking-wider mb-2">{k.l}</div>
+                <div className="text-3xl font-black" style={{color:k.c}}>{k.v}</div>
+              </div>
+            ))}
+          </div>
+          {/* Por vendedor */}
+          <div className="space-y-4">
+            {vendedoresList.length===0
+              ? <div className="bg-white border border-gray-100 rounded-2xl p-8 text-center text-gray-400 text-sm">Configura los vendedores en Configuración → Vendedores</div>
+              : vendedoresList.map(vend=>{
+                  const vCotiz=(cotizaciones||[]).filter(c=>(c.vendedor||'').toUpperCase()===vend.toUpperCase());
+                  const vActas=(actasReclamo||[]).filter(a=>(a.vendedor||'').toUpperCase()===vend.toUpperCase());
+                  const aprobadas=vCotiz.filter(c=>c.status==='APROBADA'||c.status==='FACTURADA').length;
+                  const conv=vCotiz.length>0?Math.round((aprobadas/vCotiz.length)*100):0;
+                  const totalCot=vCotiz.reduce((s,c)=>s+parseNum(c.total||0),0);
+                  return(
+                  <div key={vend} className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+                    <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-black text-sm flex-shrink-0" style={{background:OR}}>
+                          {vend.split(' ').map(w=>w[0]).join('').substring(0,2)}
+                        </div>
+                        <div>
+                          <div className="font-black text-sm text-gray-900">{vend}</div>
+                          <div className="text-[10px] text-gray-400">{vCotiz.length} cotizaciones · {vActas.length} actas de reclamo</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-8 text-right">
+                        <div><div className="text-[9px] text-gray-400 uppercase font-black tracking-wider">Total cotizado</div><div className="font-black text-base" style={{color:OR}}>${formatNum(totalCot)}</div></div>
+                        <div><div className="text-[9px] text-gray-400 uppercase font-black tracking-wider">Conversión</div><div className="font-black text-base text-gray-700">{conv}%</div></div>
+                        <div><div className="text-[9px] text-gray-400 uppercase font-black tracking-wider">Actas</div><div className="font-black text-base text-indigo-600">{vActas.length}</div></div>
+                      </div>
+                    </div>
+                    {vCotiz.length>0
+                      ? <table className="w-full text-[11px]">
+                          <thead><tr className="bg-gray-50 border-b border-gray-100">
+                            <th className="py-2 px-4 text-left text-gray-400 font-black uppercase text-[9px] tracking-wider">Cotización</th>
+                            <th className="py-2 px-4 text-left text-gray-400 font-black uppercase text-[9px] tracking-wider">Cliente</th>
+                            <th className="py-2 px-4 text-left text-gray-400 font-black uppercase text-[9px] tracking-wider">Fecha</th>
+                            <th className="py-2 px-4 text-left text-gray-400 font-black uppercase text-[9px] tracking-wider">Estado</th>
+                            <th className="py-2 px-4 text-right text-gray-400 font-black uppercase text-[9px] tracking-wider">Monto</th>
+                          </tr></thead>
+                          <tbody>
+                            {vCotiz.slice(0,5).map((c,i)=>(
+                              <tr key={c.id} className={`border-b border-gray-50 hover:bg-orange-50 transition-colors cursor-pointer ${i%2===0?'bg-white':'bg-gray-50/30'}`}
+                                onClick={()=>{setVentasView('cotizaciones');setActiveTab('ventas');}}>
+                                <td className="py-2.5 px-4 font-black" style={{color:OR}}>{c.id}</td>
+                                <td className="py-2.5 px-4 text-gray-700 font-bold">{c.clientName||c.client||'—'}</td>
+                                <td className="py-2.5 px-4 text-gray-400">{c.fecha||'—'}</td>
+                                <td className="py-2.5 px-4">
+                                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${c.status==='VIGENTE'?'bg-amber-100 text-amber-800':c.status==='APROBADA'?'bg-green-100 text-green-800':c.status==='FACTURADA'?'bg-blue-100 text-blue-800':'bg-gray-100 text-gray-600'}`}>{c.status||'VIGENTE'}</span>
+                                </td>
+                                <td className="py-2.5 px-4 text-right font-black text-gray-800">${formatNum(parseNum(c.total||0))}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      : <div className="py-6 text-center text-gray-400 text-xs font-bold">Sin cotizaciones registradas</div>
+                    }
+                    {vActas.length>0&&(
+                      <div className="px-4 py-3 border-t border-gray-100 bg-indigo-50/50">
+                        <div className="text-[9px] font-black text-indigo-700 uppercase tracking-wider mb-2">Actas de Reclamo</div>
+                        <div className="flex flex-wrap gap-2">
+                          {vActas.slice(0,5).map(a=>(
+                            <span key={a.id} className="px-2 py-1 bg-white border border-indigo-100 rounded-lg text-[10px] font-black text-indigo-600">{a.id} · {a.cliente||'—'}</span>
+                          ))}
+                          {vActas.length>5&&<span className="px-2 py-1 text-[10px] text-gray-400">+{vActas.length-5} más</span>}
+                        </div>
+                      </div>
+                    )}
+                  </div>);
+                })
+            }
+          </div>
+        </div>
+      );
+    }
+
     // ── PLACEHOLDER: portales sin tarjetas visibles ───────────────────────────
     if (selectedPortal && visibleCards.length === 0) {
       const labelMap = {produccion:'PRODUCCIÓN',administracion:'ADMINISTRACIÓN',finanzas:'FINANZAS',contabilidad:'CONTABILIDAD',resena_portal:'RESEÑA',vendedores_portal:'VENDEDORES',configuracion_portal:'CONFIGURACIÓN'};
