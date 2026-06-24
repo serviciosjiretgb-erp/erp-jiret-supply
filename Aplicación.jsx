@@ -14597,25 +14597,26 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           // ── GUARDAR COBRO MASIVO (multi-NE) ────────────────────────────
           const guardarPagoMasivo=async()=>{
             const m=cxcPagoModal;
-            const nesSelecIds=Object.keys(m.nesSelec||{}).filter(id=>m.nesSelec[id]);
-            if(!nesSelecIds.length){setDialog({title:'Sin NEs',text:'Selecciona al menos una NE.',type:'alert'});return;}
+            if(!m.clientRif){setDialog({title:'Sin cliente',text:'Selecciona un cliente.',type:'alert'});return;}
             if(!parseNum(m.monto)){setDialog({title:'Sin monto',text:'Ingresa el monto cobrado.',type:'alert'});return;}
             if(!m.cuentaId){setDialog({title:'Sin cuenta',text:'Selecciona la cuenta bancaria destino.',type:'alert'});return;}
             if(!(m.referencia||'').trim()){setDialog({title:'Sin referencia',text:'Ingresa el número de referencia.',type:'alert'});return;}
             try{
-              const montoUSD = m.moneda==='USD' ? parseNum(m.monto) : parseNum(m.monto)/parseNum(m.tasa||1);
+              const montoUSD = m.moneda==='USD' ? parseNum(m.monto) : parseNum(m.monto)/Math.max(parseNum(m.tasa),1);
               const montoBs  = m.moneda==='Bs'  ? parseNum(m.monto) : parseNum(m.monto)*parseNum(m.tasa||1);
               const tasa     = parseNum(m.tasa||tasaBCV);
               const cta=(cuentasBanco||[]).find(c=>c.id===m.cuentaId);
               const batch=writeBatch(db);
-              // Distribuir monto entre NEs seleccionadas (de mayor antigüedad a menor, o manual)
+              const nesSelecIds=Object.keys(m.nesSelec||{}).filter(id=>m.nesSelec[id]);
+              // NEs ordenadas por fecha (más antigua primero) — si no hay selección, tomar todas pendientes del cliente
+              const allNesCliente=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAtFecha(ne,null)>0.01&&(ne.clientRif===m.clientRif||ne.clientName===m.clientName)).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+              const nesADistribuir=nesSelecIds.length>0?allNesCliente.filter(ne=>nesSelecIds.includes(ne.id)):allNesCliente;
               let restante=montoUSD;
-              const nesOrdenadas=nesSelecIds.map(id=>(notasEntrega||[]).find(n=>n.id===id)).filter(Boolean).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
               const cobrosGenerados=[];
-              for(const ne of nesOrdenadas){
+              for(const ne of nesADistribuir){
                 if(restante<=0.001) break;
                 const saldoNE=getSaldoNEAtFecha(ne,null);
-                const montoNE=parseNum(m.distribucion?.[ne.id])||Math.min(restante,saldoNE);
+                const montoNE=Math.min(restante,saldoNE);
                 if(montoNE<=0.001) continue;
                 restante-=montoNE;
                 const nuevoSaldo=Math.max(0,saldoNE-montoNE);
@@ -14623,7 +14624,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 const cobId=`COB-${Date.now().toString(36).toUpperCase()}-${ne.id.slice(-4)}`;
                 batch.set(getDocRef('cobros_cxc',cobId),{
                   id:cobId, neId:ne.id, neDocumento:ne.id, clientName:ne.clientName||m.clientName,
-                  monto:montoNE, montoUSD, montoBs:montoNE*tasa, tasa,
+                  monto:montoNE, montoUSD:montoNE, montoBs:montoNE*tasa, tasa,
                   moneda:m.moneda, metodo:m.metodo, referencia:m.referencia,
                   concepto:m.concepto||'Cobro CxC', fecha:m.fecha,
                   cuentaBancariaId:m.cuentaId, cuentaBancoNombre:cta?.banco||'',
@@ -14635,16 +14636,16 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 });
                 cobrosGenerados.push({cobId,ne,montoNE,nuevoStatus});
               }
-              // Movimiento bancario único con detalle de NEs cobradas
+              // Movimiento bancario único con detalle de NEs
               const mvId=`MV-${Date.now().toString(36).toUpperCase()}`;
-              const nesDesc=cobrosGenerados.map(c=>`${c.ne.id} $${formatNum(c.montoNE)}`).join(' | ');
+              const nesDesc=cobrosGenerados.map(c=>`${c.ne.id} $${formatNum(c.montoNE)}`).join(' | ')||'Sin NE específica';
               batch.set(getDocRef('banco_movimientos',mvId),{
                 id:mvId, fecha:m.fecha, tipo:'Ingreso', origenIngreso:'Cobro CxC',
-                concepto:`${m.concepto||'Cobro CxC'} — ${m.clientName} — ${nesDesc}`,
+                concepto:`${m.concepto||'Cobro CxC'} — ${m.clientName}${nesDesc?` — ${nesDesc}`:''}`,
                 referencia:m.referencia, clientName:m.clientName, clientRif:m.clientRif,
                 cuentaId:m.cuentaId, cuentaNombre:cta?.banco||'',
                 montoUSD, montoBs, tasa, moneda:m.moneda,
-                metodo:m.metodo, nesIds:nesSelecIds,
+                metodo:m.metodo, nesIds:cobrosGenerados.map(c=>c.ne.id),
                 terceroNombre:m.clientName, estatus:'No Conciliado', timestamp:Date.now()
               });
               if(cta) batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+montoUSD});
@@ -14686,10 +14687,10 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             }});
           };
 
-          // ── MODAL COBRO MASIVO ─────────────────────────────────────────
+          // ── MODAL COBRO MASIVO — pantalla completa horizontal ────────
           if(cxcPagoModal){
             const pm=cxcPagoModal;
-            // Clientes con saldo pendiente — usar todas las NEs abiertas sin filtro de búsqueda
+            // Construir lista de clientes con saldo independiente de filtros
             const allNesAbiertas=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAtFecha(ne,null)>0.01);
             const porClienteModal={};
             allNesAbiertas.forEach(ne=>{
@@ -14698,175 +14699,311 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               porClienteModal[k].total+=getSaldoNEAtFecha(ne,null);
               porClienteModal[k].nes.push(ne);
             });
-            const clientesConSaldo=Object.values(porClienteModal).filter(cl=>cl.total>0.01).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
+            const clientesConSaldo=Object.values(porClienteModal)
+              .filter(cl=>cl.total>0.01)
+              .sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
+            const busq=(pm.clientSearch||'').toLowerCase();
+            const clientesFiltrados=busq?clientesConSaldo.filter(cl=>(cl.clientName||'').toLowerCase().includes(busq)||(cl.clientRif||'').toLowerCase().includes(busq)):clientesConSaldo;
             const clienteSel=clientesConSaldo.find(cl=>cl.clientRif===pm.clientRif);
             const nesPendientes=(clienteSel?.nes||[]).filter(ne=>getSaldoNEAtFecha(ne,null)>0.01).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
             const nesSelecIds=Object.keys(pm.nesSelec||{}).filter(id=>pm.nesSelec[id]);
-            const totalSelec=nesSelecIds.reduce((s,id)=>{const ne=nesPendientes.find(n=>n.id===id);return s+(ne?getSaldoNEAtFecha(ne,null):0);},0);
-            const montoUSD=pm.moneda==='USD'?parseNum(pm.monto):parseNum(pm.monto)/parseNum(pm.tasa||1);
+            const saldoTotalCliente=clienteSel?.total||0;
+            const montoUSD=pm.moneda==='USD'?parseNum(pm.monto):parseNum(pm.monto)/Math.max(parseNum(pm.tasa),1);
             const montoBs=pm.moneda==='Bs'?parseNum(pm.monto):parseNum(pm.monto)*parseNum(pm.tasa||1);
-            return(
-            <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.7)'}}>
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[92vh]">
-                {/* Header */}
-                <div className="px-6 py-4 flex justify-between items-center flex-shrink-0" style={{background:'#0f172a'}}>
-                  <h3 className="text-white font-black text-sm uppercase flex items-center gap-2"><DollarSign size={16} className="text-green-400"/>💳 Registrar Cobro</h3>
-                  <button onClick={()=>setCxcPagoModal(null)} className="text-gray-400 hover:text-white"><X size={18}/></button>
-                </div>
-                <div className="overflow-y-auto flex-1 p-6 space-y-5">
 
-                  {/* 1. Selección de cliente */}
+            // Distribución automática del monto entre NEs (más antigua primero)
+            const nesParaDistribuir = nesSelecIds.length>0
+              ? nesPendientes.filter(ne=>nesSelecIds.includes(ne.id))
+              : nesPendientes;
+            let distRestante=montoUSD;
+            const distMap={};
+            nesParaDistribuir.forEach(ne=>{
+              if(distRestante<=0.001){distMap[ne.id]=0;return;}
+              const s=getSaldoNEAtFecha(ne,null);
+              const aplicar=Math.min(distRestante,s);
+              distMap[ne.id]=aplicar;
+              distRestante-=aplicar;
+            });
+            const saldoRestanteCliente=saldoTotalCliente-montoUSD;
+
+            // Bancos por moneda
+            const bancosBS=(cuentasBanco||[]).filter(c=>c.moneda!=='USD'&&c.moneda!=='USDT');
+            const bancosUSD=(cuentasBanco||[]).filter(c=>c.moneda==='USD'||c.moneda==='USDT');
+
+            return(
+            <div className="fixed inset-0 z-[300] flex flex-col" style={{background:'#0f172a'}}>
+              {/* Top bar */}
+              <div className="flex items-center justify-between px-8 py-4 border-b border-white/10 flex-shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center"><DollarSign size={16} className="text-green-400"/></div>
                   <div>
-                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">1. Seleccionar Cliente</label>
-                    <select value={pm.clientRif} onChange={e=>{const cl=clientesConSaldo.find(c=>c.clientRif===e.target.value);setCxcPagoModal(m=>({...m,clientRif:e.target.value,clientName:cl?.clientName||'',nesSelec:{},distribucion:{}}));}}
-                      className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-green-400">
-                      <option value="">— Seleccione cliente —</option>
-                      {clientesConSaldo.map(cl=><option key={cl.clientRif} value={cl.clientRif}>{cl.clientName} · Saldo: ${formatNum(cl.total)}</option>)}
-                    </select>
+                    <div className="text-white font-black text-base uppercase tracking-wider">💳 Registrar Cobro</div>
+                    <div className="text-gray-400 text-[10px]">Cuentas por Cobrar — SERVICIOS JIRET G&amp;B</div>
+                  </div>
+                </div>
+                <button onClick={()=>setCxcPagoModal(null)} className="text-gray-400 hover:text-white transition-all p-2 rounded-lg hover:bg-white/10"><X size={20}/></button>
+              </div>
+
+              {/* Body — 3 columnas */}
+              <div className="flex flex-1 overflow-hidden">
+
+                {/* COL 1 — Cliente y NEs */}
+                <div className="w-[420px] border-r border-white/10 flex flex-col flex-shrink-0">
+                  <div className="px-6 py-4 border-b border-white/10 flex-shrink-0">
+                    <div className="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-3">1. Cliente</div>
+                    {/* Buscador */}
+                    <div className="relative mb-2">
+                      <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+                      <input type="text" value={pm.clientSearch||''} onChange={e=>setCxcPagoModal(m=>({...m,clientSearch:e.target.value,clientRif:'',clientName:'',nesSelec:{},distribucion:{}}))}
+                        placeholder="Buscar cliente..." className="w-full pl-9 pr-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-green-500/50"/>
+                    </div>
+                    {/* Lista de clientes filtrados */}
+                    {(!pm.clientRif) && clientesFiltrados.length>0 && (
+                      <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden max-h-40 overflow-y-auto">
+                        {clientesFiltrados.map(cl=>(
+                          <button key={cl.clientRif} onClick={()=>setCxcPagoModal(m=>({...m,clientRif:cl.clientRif,clientName:cl.clientName,clientSearch:cl.clientName,nesSelec:{},distribucion:{}}))}
+                            className="w-full flex justify-between items-center px-3 py-2 hover:bg-white/10 text-left border-b border-white/5 last:border-0 transition-all">
+                            <span className="text-xs text-white font-bold truncate">{cl.clientName}</span>
+                            <span className="text-[10px] text-green-400 font-black ml-2 flex-shrink-0">${formatNum(cl.total)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {/* Cliente seleccionado */}
+                    {clienteSel && (
+                      <div className="flex items-center justify-between bg-green-500/10 border border-green-500/30 rounded-xl px-3 py-2">
+                        <div>
+                          <div className="text-white font-black text-xs">{clienteSel.clientName}</div>
+                          <div className="text-[10px] text-green-400">Cartera total: ${formatNum(saldoTotalCliente)}</div>
+                        </div>
+                        <button onClick={()=>setCxcPagoModal(m=>({...m,clientRif:'',clientName:'',clientSearch:'',nesSelec:{},distribucion:{}}))} className="text-gray-400 hover:text-white text-lg leading-none">×</button>
+                      </div>
+                    )}
                   </div>
 
-                  {/* 2. NEs pendientes del cliente */}
-                  {clienteSel && nesPendientes.length>0 && (
-                    <div>
-                      <div className="flex justify-between items-center mb-2">
-                        <label className="text-[9px] font-black text-gray-500 uppercase">2. Facturas / NEs Pendientes</label>
-                        <button onClick={()=>{const all={};nesPendientes.forEach(ne=>{all[ne.id]=true;});setCxcPagoModal(m=>({...m,nesSelec:all}));}} className="text-[9px] text-green-600 font-black hover:underline">✓ Marcar todas</button>
+                  {/* Lista de NEs */}
+                  {clienteSel && (
+                    <div className="flex-1 overflow-y-auto">
+                      <div className="px-6 py-3 border-b border-white/5 flex justify-between items-center flex-shrink-0">
+                        <div className="text-[9px] font-black text-gray-400 uppercase">2. Facturas Pendientes</div>
+                        <div className="flex gap-2">
+                          <button onClick={()=>{const all={};nesPendientes.forEach(ne=>{all[ne.id]=true;});setCxcPagoModal(m=>({...m,nesSelec:all}));}} className="text-[9px] text-green-400 font-black hover:underline">✓ Todas</button>
+                          <button onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{}}))} className="text-[9px] text-gray-500 font-black hover:underline">✕ Ninguna</button>
+                        </div>
                       </div>
-                      <div className="border border-gray-200 rounded-xl overflow-hidden">
-                        {nesPendientes.map((ne,i)=>{
-                          const saldo=getSaldoNEAtFecha(ne,null);
-                          const sel=!!pm.nesSelec?.[ne.id];
-                          return(
-                          <div key={ne.id} onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:!sel}}))}
-                            className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-all ${i>0?'border-t border-gray-100':''} ${sel?'bg-green-50':'hover:bg-gray-50'}`}>
-                            <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border-2 ${sel?'bg-green-500 border-green-500':'border-gray-300'}`}>
-                              {sel&&<span className="text-white text-[10px]">✓</span>}
+                      <div className="text-[9px] text-gray-500 px-6 py-2 italic">Sin selección = distribuye automáticamente</div>
+                      {nesPendientes.map((ne,i)=>{
+                        const saldo=getSaldoNEAtFecha(ne,null);
+                        const sel=!!pm.nesSelec?.[ne.id];
+                        const aplicado=distMap[ne.id]||0;
+                        const saldoTras=saldo-aplicado;
+                        return(
+                        <div key={ne.id} onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:!sel}}))}
+                          className={`px-6 py-3 cursor-pointer border-b border-white/5 transition-all ${sel?'bg-green-500/10':'hover:bg-white/5'}`}>
+                          <div className="flex items-center gap-3">
+                            <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${sel?'bg-green-500 border-green-500':'border-gray-600'}`}>
+                              {sel&&<span className="text-white text-[9px] font-black">✓</span>}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="font-black text-xs text-gray-900">{ne.id}</div>
-                              <div className="text-[10px] text-gray-500">{ne.fecha} · {ne.vendedor||'—'}</div>
-                            </div>
-                            <div className="text-right flex-shrink-0">
-                              <div className="font-bold text-xs text-gray-500">Total: ${formatNum(ne.total||0)}</div>
-                              <div className="font-black text-sm text-red-600">Saldo: ${formatNum(saldo)}</div>
-                            </div>
-                            {sel&&(
-                              <div onClick={e=>e.stopPropagation()} className="flex-shrink-0">
-                                <input type="number" step="0.01" min="0" max={saldo}
-                                  value={pm.distribucion?.[ne.id]??''} placeholder={formatNum(saldo)}
-                                  onChange={e=>setCxcPagoModal(m=>({...m,distribucion:{...m.distribucion,[ne.id]:e.target.value}}))}
-                                  className="w-24 border-2 border-green-300 rounded-lg px-2 py-1 text-[10px] font-black text-right outline-none focus:border-green-500"
-                                  title="Monto a aplicar (dejar vacío = saldo total)"/>
+                              <div className="flex justify-between items-center">
+                                <span className="text-white font-black text-xs">{ne.id}</span>
+                                <span className="text-red-400 font-black text-xs">${formatNum(saldo)}</span>
                               </div>
-                            )}
-                          </div>);
-                        })}
-                      </div>
-                      {nesSelecIds.length>0&&<p className="text-[10px] text-green-700 font-black mt-1">{nesSelecIds.length} NE(s) seleccionada(s) · Total saldo: ${formatNum(totalSelec)}</p>}
+                              <div className="flex justify-between items-center mt-0.5">
+                                <span className="text-gray-500 text-[10px]">{ne.fecha} · {ne.vendedor||'OFICINA'}</span>
+                                {montoUSD>0&&aplicado>0&&<span className="text-green-400 text-[9px] font-black">-${formatNum(aplicado)} → ${formatNum(Math.max(0,saldoTras))}</span>}
+                              </div>
+                            </div>
+                          </div>
+                        </div>);
+                      })}
                     </div>
                   )}
+                </div>
 
-                  {/* 3. Moneda + Monto + Tasa */}
-                  {nesSelecIds.length>0&&(
-                  <div>
-                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">3. Monto Recibido</label>
-                    <div className="grid grid-cols-2 gap-3 mb-3">
-                      {['USD','Bs'].map(cur=>(
-                        <button key={cur} onClick={()=>setCxcPagoModal(m=>({...m,moneda:cur,monto:''}))}
-                          className={`py-3 rounded-xl font-black text-sm border-2 transition-all ${pm.moneda===cur?'border-green-500 bg-green-50 text-green-700':'border-gray-200 text-gray-500 hover:border-gray-400'}`}>
-                          {cur==='USD'?'💵 Dólares (USD)':'🇻🇪 Bolívares (Bs)'}
-                        </button>
-                      ))}
+                {/* COL 2 — Monto, moneda, concepto */}
+                <div className="flex-1 flex flex-col border-r border-white/10 overflow-y-auto">
+                  <div className="p-6 space-y-5">
+                    {/* Moneda */}
+                    <div>
+                      <div className="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-3">3. Moneda del Pago</div>
+                      <div className="grid grid-cols-2 gap-3">
+                        {[{k:'USD',label:'💵 Dólares (USD)',desc:'Monto en dólares'},{k:'Bs',label:'🇻🇪 Bolívares (Bs)',desc:'Monto en bolívares'}].map(cur=>(
+                          <button key={cur.k} onClick={()=>setCxcPagoModal(m=>({...m,moneda:cur.k,monto:''}))}
+                            className={`py-4 rounded-xl font-black text-sm border-2 transition-all text-left px-4 ${pm.moneda===cur.k?'border-green-500 bg-green-500/10 text-green-400':'border-white/10 text-gray-500 hover:border-white/30 hover:text-white'}`}>
+                            <div className="text-base">{cur.label}</div>
+                            <div className={`text-[10px] mt-1 ${pm.moneda===cur.k?'text-green-400/70':'text-gray-600'}`}>{cur.desc}</div>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+
+                    {/* Monto + tasa */}
+                    <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Monto {pm.moneda}</label>
+                        <label className="text-[9px] font-black text-orange-400 uppercase block mb-2">Monto {pm.moneda}</label>
                         <div className="relative">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-xs">{pm.moneda==='USD'?'$':'Bs'}</span>
+                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-black text-sm">{pm.moneda==='USD'?'$':'Bs'}</span>
                           <input type="number" step="0.01" min="0" value={pm.monto}
                             onChange={e=>setCxcPagoModal(m=>({...m,monto:e.target.value}))}
-                            className="w-full pl-8 border-2 border-orange-300 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="0.00"/>
+                            className="w-full pl-10 bg-white/5 border-2 border-orange-500/40 rounded-xl py-3 text-sm font-black text-white outline-none focus:border-orange-500" placeholder="0.00"/>
                         </div>
                         {parseNum(pm.monto)>0&&(
-                          <div className="text-[10px] font-bold mt-1">
-                            {pm.moneda==='USD'?<span className="text-blue-600">≈ Bs. {formatNum(montoBs)}</span>:<span className="text-green-600">≈ USD ${formatNum(montoUSD)}</span>}
+                          <div className="mt-2 text-xs font-bold">
+                            {pm.moneda==='USD'?<span className="text-blue-400">≈ Bs. {formatNum(montoBs)}</span>:<span className="text-green-400">≈ USD ${formatNum(montoUSD)}</span>}
                           </div>
                         )}
                       </div>
                       <div>
-                        <label className="text-[9px] font-black text-blue-600 uppercase block mb-1">Tasa Bs/$</label>
+                        <label className="text-[9px] font-black text-blue-400 uppercase block mb-2">Tasa Bs/$</label>
                         <input type="number" step="0.01" min="1" value={pm.tasa}
                           onChange={e=>setCxcPagoModal(m=>({...m,tasa:e.target.value}))}
-                          className="w-full border-2 border-blue-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-blue-400" placeholder="Ej: 50.00"/>
+                          className="w-full bg-white/5 border-2 border-blue-500/40 rounded-xl py-3 px-4 text-sm font-black text-white outline-none focus:border-blue-500" placeholder="Ej: 50.00"/>
                       </div>
                     </div>
-                  </div>)}
 
-                  {/* 4. Concepto / Detalle */}
-                  {nesSelecIds.length>0&&(
-                  <div>
-                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">4. Concepto / Detalle</label>
-                    <input type="text" value={pm.concepto} onChange={e=>setCxcPagoModal(m=>({...m,concepto:e.target.value}))}
-                      placeholder="Ej: Abono, Anticipo, Pago total, Cruce..."
-                      className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-orange-400"/>
-                  </div>)}
+                    {/* Saldo restante */}
+                    {clienteSel&&montoUSD>0&&(
+                      <div className={`rounded-xl p-4 border ${saldoRestanteCliente<0?'bg-red-500/10 border-red-500/30':'saldoRestanteCliente<0.01?bg-green-500/10 border-green-500/30:bg-white/5 border-white/10'}`}>
+                        <div className="flex justify-between items-center mb-2">
+                          <span className="text-[10px] text-gray-400 font-black uppercase">Saldo del cliente después del pago</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-400 text-xs">Cartera total</span>
+                          <span className="text-white font-bold text-sm">${formatNum(saldoTotalCliente)}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-400 text-xs">Pago recibido</span>
+                          <span className="text-green-400 font-bold text-sm">-${formatNum(montoUSD)}</span>
+                        </div>
+                        <div className="border-t border-white/10 mt-2 pt-2 flex justify-between items-center">
+                          <span className="text-white font-black text-xs uppercase">Saldo restante</span>
+                          <span className={`font-black text-lg ${saldoRestanteCliente<0?'text-red-400':saldoRestanteCliente<0.01?'text-green-400':'text-orange-400'}`}>
+                            ${formatNum(Math.max(0,saldoRestanteCliente))}
+                            {saldoRestanteCliente<0&&<span className="text-xs ml-1">(excede saldo)</span>}
+                          </span>
+                        </div>
+                      </div>
+                    )}
 
-                  {/* 5. Banco + Método + Referencia + Fecha */}
-                  {nesSelecIds.length>0&&(
-                  <div className="space-y-3">
-                    <label className="text-[9px] font-black text-gray-500 uppercase block">5. Datos del Pago</label>
-                    <div className="grid grid-cols-2 gap-3">
+                    {/* Concepto */}
+                    <div>
+                      <label className="text-[9px] font-black text-gray-400 uppercase block mb-2">Concepto / Detalle</label>
+                      <input type="text" value={pm.concepto} onChange={e=>setCxcPagoModal(m=>({...m,concepto:e.target.value}))}
+                        placeholder="Abono, Anticipo, Pago total, Cruce..."
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-orange-500/50 placeholder-gray-600"/>
+                    </div>
+
+                    {/* Fecha + Método */}
+                    <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Fecha</label>
+                        <label className="text-[9px] font-black text-gray-400 uppercase block mb-2">Fecha</label>
                         <input type="date" value={pm.fecha} onChange={e=>setCxcPagoModal(m=>({...m,fecha:e.target.value}))}
-                          className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400"/>
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-orange-500/50"/>
                       </div>
                       <div>
-                        <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Método de Pago</label>
+                        <label className="text-[9px] font-black text-gray-400 uppercase block mb-2">Método de Pago</label>
                         <select value={pm.metodo} onChange={e=>setCxcPagoModal(m=>({...m,metodo:e.target.value}))}
-                          className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
-                          <option>Transferencia</option><option>Efectivo USD</option><option>Efectivo Bs.</option>
-                          <option>Zelle</option><option>Cheque</option><option>Pago Móvil</option>
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-orange-500/50">
+                          <option className="bg-gray-900">Transferencia</option>
+                          <option className="bg-gray-900">Efectivo USD</option>
+                          <option className="bg-gray-900">Efectivo Bs.</option>
+                          <option className="bg-gray-900">Zelle</option>
+                          <option className="bg-gray-900">Cheque</option>
+                          <option className="bg-gray-900">Pago Móvil</option>
                         </select>
                       </div>
                     </div>
+
+                    {/* Referencia */}
                     <div>
-                      <label className="text-[9px] font-black text-blue-600 uppercase block mb-1">Cuenta Bancaria Destino</label>
-                      <select value={pm.cuentaId} onChange={e=>{const ct=(cuentasBanco||[]).find(c=>c.id===e.target.value);setCxcPagoModal(m=>({...m,cuentaId:e.target.value,cuentaNombre:ct?`${ct.banco} · ${ct.numeroCuenta}`:''}));}}
-                        className="w-full border-2 border-blue-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-400">
-                        <option value="">— Seleccione cuenta —</option>
-                        {(cuentasBanco||[]).map(ct=><option key={ct.id} value={ct.id}>{ct.banco} · {ct.numeroCuenta} · {ct.moneda}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Referencia / Comprobante</label>
+                      <label className="text-[9px] font-black text-gray-400 uppercase block mb-2">N° Referencia / Comprobante</label>
                       <input type="text" value={pm.referencia} onChange={e=>setCxcPagoModal(m=>({...m,referencia:e.target.value.toUpperCase()}))}
-                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-orange-400 uppercase" placeholder="REF-0000000"/>
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-black text-white outline-none focus:border-orange-500/50 uppercase" placeholder="REF-0000000"/>
                     </div>
-                  </div>)}
-
-                  {/* Resumen */}
-                  {nesSelecIds.length>0&&parseNum(pm.monto)>0&&(
-                    <div className="rounded-xl p-4 space-y-1" style={{background:'#f0fdf4',border:'1px solid #bbf7d0'}}>
-                      <div className="font-black text-green-700 text-xs uppercase mb-2">Resumen del Cobro</div>
-                      <div className="flex justify-between text-xs"><span className="text-gray-600">Cliente</span><span className="font-black">{pm.clientName}</span></div>
-                      <div className="flex justify-between text-xs"><span className="text-gray-600">NEs</span><span className="font-black">{nesSelecIds.length} factura(s)</span></div>
-                      <div className="flex justify-between text-xs"><span className="text-gray-600">Monto USD</span><span className="font-black text-green-700">${formatNum(montoUSD)}</span></div>
-                      <div className="flex justify-between text-xs"><span className="text-gray-600">Monto Bs</span><span className="font-black text-blue-700">Bs. {formatNum(montoBs)}</span></div>
-                      <div className="flex justify-between text-xs"><span className="text-gray-600">Banco destino</span><span className="font-black">{(cuentasBanco||[]).find(c=>c.id===pm.cuentaId)?.banco||'—'}</span></div>
-                    </div>
-                  )}
+                  </div>
                 </div>
 
-                {/* Footer */}
-                <div className="px-6 py-4 border-t flex-shrink-0 flex gap-3">
-                  <button onClick={()=>setCxcPagoModal(null)} className="flex-1 py-3 rounded-xl font-black text-xs uppercase border-2 border-gray-200 text-gray-500 hover:bg-gray-50">Cancelar</button>
-                  <button onClick={guardarPagoMasivo} disabled={!nesSelecIds.length||!parseNum(pm.monto)||!pm.cuentaId||!pm.referencia}
-                    className="flex-1 py-3 rounded-xl font-black text-xs uppercase text-white transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                    style={{background:'linear-gradient(135deg,#16a34a,#15803d)'}}>
-                    <CheckCircle size={15}/> Confirmar y Registrar
-                  </button>
+                {/* COL 3 — Banco + Resumen + Confirmar */}
+                <div className="w-[320px] flex flex-col flex-shrink-0">
+                  <div className="flex-1 overflow-y-auto p-6 space-y-5">
+
+                    {/* Bancos nacionales */}
+                    <div>
+                      <div className="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-3">4. Cuenta Bancaria Destino</div>
+                      {bancosBS.length>0&&(
+                        <div className="mb-3">
+                          <div className="text-[9px] text-blue-400 font-black uppercase mb-2 flex items-center gap-1">🏦 Bancos Nacionales (Bs)</div>
+                          <div className="space-y-1">
+                            {bancosBS.map(ct=>(
+                              <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}))}
+                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left ${pm.cuentaId===ct.id?'bg-blue-500/20 border-blue-500/50':'bg-white/5 border-white/10 hover:border-white/20'}`}>
+                                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${pm.cuentaId===ct.id?'bg-blue-400':'bg-gray-600'}`}/>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-white text-xs font-bold truncate">{ct.banco}</div>
+                                  <div className="text-gray-500 text-[9px]">{ct.numeroCuenta} · {ct.moneda}</div>
+                                </div>
+                                <div className="text-[9px] text-gray-400 flex-shrink-0">${formatNum(ct.saldo||0)}</div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {bancosUSD.length>0&&(
+                        <div>
+                          <div className="text-[9px] text-green-400 font-black uppercase mb-2 flex items-center gap-1">💵 Bancos Internacionales / USD</div>
+                          <div className="space-y-1">
+                            {bancosUSD.map(ct=>(
+                              <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}))}
+                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left ${pm.cuentaId===ct.id?'bg-green-500/20 border-green-500/50':'bg-white/5 border-white/10 hover:border-white/20'}`}>
+                                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${pm.cuentaId===ct.id?'bg-green-400':'bg-gray-600'}`}/>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-white text-xs font-bold truncate">{ct.banco}</div>
+                                  <div className="text-gray-500 text-[9px]">{ct.numeroCuenta} · {ct.moneda}</div>
+                                </div>
+                                <div className="text-[9px] text-gray-400 flex-shrink-0">${formatNum(ct.saldo||0)}</div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {(cuentasBanco||[]).length===0&&<p className="text-amber-400 text-[10px] font-bold">★ Agregue cuentas en el módulo Banco</p>}
+                    </div>
+
+                    {/* Resumen */}
+                    {clienteSel&&parseNum(pm.monto)>0&&pm.cuentaId&&(
+                      <div className="bg-white/5 rounded-2xl border border-white/10 overflow-hidden">
+                        <div className="px-4 py-3 border-b border-white/10">
+                          <div className="text-[9px] font-black text-white uppercase tracking-wider">Resumen del Cobro</div>
+                        </div>
+                        <div className="p-4 space-y-2">
+                          <div className="flex justify-between text-xs"><span className="text-gray-400">Cliente</span><span className="text-white font-bold truncate ml-4 text-right">{pm.clientName}</span></div>
+                          <div className="flex justify-between text-xs"><span className="text-gray-400">NEs</span><span className="text-white font-bold">{nesSelecIds.length>0?`${nesSelecIds.length} selec.`:`Auto (${nesParaDistribuir.length})`}</span></div>
+                          <div className="flex justify-between text-xs"><span className="text-gray-400">USD</span><span className="text-green-400 font-black">${formatNum(montoUSD)}</span></div>
+                          <div className="flex justify-between text-xs"><span className="text-gray-400">Bs</span><span className="text-blue-400 font-black">Bs. {formatNum(montoBs)}</span></div>
+                          <div className="flex justify-between text-xs"><span className="text-gray-400">Banco</span><span className="text-white font-bold text-right ml-4 truncate">{(cuentasBanco||[]).find(c=>c.id===pm.cuentaId)?.banco||'—'}</span></div>
+                          <div className="flex justify-between text-xs"><span className="text-gray-400">Método</span><span className="text-white font-bold">{pm.metodo}</span></div>
+                          <div className="border-t border-white/10 pt-2 flex justify-between text-xs"><span className="text-gray-400">Saldo restante</span><span className={`font-black ${saldoRestanteCliente<0.01?'text-green-400':'text-orange-400'}`}>${formatNum(Math.max(0,saldoRestanteCliente))}</span></div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Botón confirmar */}
+                  <div className="p-6 border-t border-white/10 flex-shrink-0 space-y-3">
+                    <button onClick={guardarPagoMasivo}
+                      disabled={!pm.clientRif||!parseNum(pm.monto)||!pm.cuentaId||!pm.referencia}
+                      className="w-full py-4 rounded-2xl font-black text-sm uppercase text-white transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
+                      style={{background:'linear-gradient(135deg,#16a34a,#15803d)'}}>
+                      <CheckCircle size={16}/> Confirmar y Registrar
+                    </button>
+                    <button onClick={()=>setCxcPagoModal(null)}
+                      className="w-full py-3 rounded-2xl font-black text-xs uppercase border border-white/10 text-gray-400 hover:bg-white/5 transition-all">
+                      Cancelar
+                    </button>
+                  </div>
                 </div>
+
               </div>
             </div>);
           }
