@@ -25877,8 +25877,7 @@ ${resumenHtml}
                       <div style={{fontSize:10,color:'#9ca3af'}}>{pvActaId?`Correlativo: ${pvActaId} · Editando`:'Nueva acta — sin guardar'}</div>
                     </div>
                   </div>
-                  <div style={{display:'flex',gap:8'}}>
-                    <button onClick={()=>setPvShowActaHist(v=>!v)}
+                  <div style={{display:'flex',gap:8}}>                    <button onClick={()=>setPvShowActaHist(v=>!v)}
                       style={{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',border:'1px solid #e5e7eb',background:'transparent',borderRadius:8,fontSize:11,color:'#6b7280',cursor:'pointer'}}>
                       <History size={13}/> Historial ({misActas.length})
                     </button>
