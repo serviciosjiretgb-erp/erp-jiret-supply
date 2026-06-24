@@ -25696,8 +25696,9 @@ ${resumenHtml}
   const isVendorPortal = appUser?.role === 'Vendedor';
   if (appUser && isVendorPortal) {
     const vendNombre = (appUser?.vendedorNombre || appUser?.name || '').trim();
-    // Buscar cotizaciones con comparación flexible (trim + uppercase)
-    const matchVend = (v) => (v||'').trim().toUpperCase() === vendNombre.toUpperCase();
+    // Buscar cotizaciones con comparación flexible — prueba vendedorNombre y también appUser.name
+    const posiblesNombres = [vendNombre, appUser?.vendedorNombre, appUser?.name].filter(Boolean).map(n=>n.trim().toUpperCase());
+    const matchVend = (v) => posiblesNombres.some(n=>(v||'').trim().toUpperCase()===n);
     const misCotiz = (cotizaciones||[]).filter(c=>matchVend(c.vendedor)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
     const misActas = (actasReclamo||[]).filter(a=>matchVend(a.vendedor));
     const mesActual = getTodayDate().substring(0,7);
@@ -25879,6 +25880,22 @@ ${resumenHtml}
 
     return (
       <div className="min-h-screen flex flex-col" style={{background:'#f4f4f0',fontFamily:'Arial,sans-serif'}}>
+        {/* Mobile bottom nav for vendor portal */}
+        <div className="fixed bottom-0 left-0 right-0 z-[999] md:hidden bg-black border-t border-white/10 print:hidden" style={{paddingBottom:'env(safe-area-inset-bottom)'}}>
+          <div className="flex items-center justify-around px-1 py-2">
+            {[
+              {id:'cotizaciones',icon:<FileText size={20}/>,label:'Cotizaciones'},
+              {id:'clientes',icon:<Users size={20}/>,label:'Clientes'},
+              {id:'rendimiento',icon:<BarChart3 size={20}/>,label:'Rendimiento'},
+              {id:'actas',icon:<ClipboardList size={20}/>,label:'Actas'},
+            ].map(item=>(
+              <button key={item.id} onClick={()=>{setPvView(item.id);if(item.id==='actas'&&!pvActaForm)setPvActaForm(initActaForm());}}
+                className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl transition-all ${pvView===item.id?'text-orange-500':'text-gray-500'}`}>
+                {item.icon}<span className="text-[8px] font-black uppercase">{item.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
         {/* TOP BAR */}
         <div style={{background:'#111',borderBottom:`2px solid ${OR}`,padding:'10px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
@@ -25935,20 +25952,48 @@ ${resumenHtml}
           </div>
 
           {/* MAIN CONTENT */}
-          <div style={{flex:1,overflowY:'auto',padding:24}}>
+          <div style={{flex:1,overflowY:'auto',padding:24,paddingBottom:80}}>
 
             {/* ── COTIZACIONES ── */}
             {pvView==='cotizaciones'&&(()=>{
-              // Reusar el módulo de cotizaciones completo del ERP, filtrado por vendedor
-              // KPIs
+              // Si el panel de nueva cotización está abierto, redirigir al módulo real
+              // pero manteniendo el contexto del portal vendedor
+              if(showNewCotizPanel) {
+                // Renderizar el módulo de cotizaciones real del ERP dentro del portal
+                setVentasView('cotizaciones');
+                // El portal vendedor mostrará el form via ventasView
+                return (
+                  <div>
+                    <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,padding:'12px 0',borderBottom:'1px solid #f0f0f0'}}>
+                      <button onClick={()=>{setShowNewCotizPanel(false);setEditingCotizId(null);}}
+                        style={{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',border:'1px solid #e5e7eb',background:'transparent',borderRadius:8,fontSize:12,cursor:'pointer',color:'#374151'}}>
+                        ← Volver a mis cotizaciones
+                      </button>
+                      <span style={{fontSize:13,fontWeight:700,color:'#111'}}>{editingCotizId?`Editando ${editingCotizId}`:'Nueva Cotización'}</span>
+                    </div>
+                    {/* Aquí se renderizan el formulario de cotización reutilizando el módulo existente */}
+                    <div style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,padding:20}}>
+                      <div style={{textAlign:'center',padding:'40px 0',color:'#9ca3af'}}>
+                        <FileText size={32} style={{margin:'0 auto 8px',opacity:0.3}}/>
+                        <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>Abriendo formulario de cotización...</div>
+                        <div style={{fontSize:11,marginBottom:16}}>El sistema te llevará al módulo de cotizaciones</div>
+                        <button onClick={()=>{setActiveTab('ventas');setVentasView('cotizaciones');}}
+                          style={{padding:'10px 24px',background:OR,color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:700,cursor:'pointer'}}>
+                          Ir a Cotizaciones →
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <div>
                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
                     <div>
                       <div style={{fontSize:18,fontWeight:900,color:'#111'}}>Mis Cotizaciones</div>
-                      <div style={{fontSize:12,color:'#9ca3af',marginTop:2}}>Solo ves las cotizaciones asignadas a ti</div>
+                      <div style={{fontSize:12,color:'#9ca3af',marginTop:2}}>Cotizaciones de {vendNombre||'todos los vendedores'}</div>
                     </div>
-                    <button onClick={()=>{setVentasView('cotizaciones');setActiveTab('ventas');setShowNewCotizPanel(true);setEditingCotizId(null);}}
+                    <button onClick={()=>{setShowNewCotizPanel(true);setEditingCotizId(null);setNewCotizForm({...initialCotizForm,fecha:getTodayDate(),vendedor:vendNombre});setCotizItems([]);}}
                       style={{display:'flex',alignItems:'center',gap:6,padding:'9px 18px',background:OR,color:'#fff',border:'none',borderRadius:10,fontSize:12,fontWeight:700,cursor:'pointer'}}>
                       <Plus size={14}/> Nueva Cotización
                     </button>
@@ -26003,7 +26048,7 @@ ${resumenHtml}
                                 </td>
                                 <td style={{padding:'10px 14px',fontWeight:900,color:'#111',textAlign:'right'}}>${formatNum(parseNum(c.total||0))}</td>
                                 <td style={{padding:'10px 8px',textAlign:'center'}}>
-                                  <button onClick={()=>{setVentasView('cotizaciones');setActiveTab('ventas');setEditingCotizId(c.id);setNewCotizForm({...c,fecha:c.fecha||getTodayDate()});setCotizItems(c.items||[]);setShowNewCotizPanel(true);}}
+                                  <button onClick={()=>{setEditingCotizId(c.id);setNewCotizForm({...c,fecha:c.fecha||getTodayDate()});setCotizItems(c.items||[]);setShowNewCotizPanel(true);}}
                                     style={{padding:'5px 10px',borderRadius:6,border:'1px solid #e5e7eb',background:'transparent',fontSize:10,color:'#6b7280',cursor:'pointer'}}>
                                     ✏ Editar
                                   </button>
@@ -27900,6 +27945,7 @@ ${resumenHtml}
                {resenaTab==='proyeccion' && (()=>{
                  const CAP_TON=50;
                  const PRECIO_KG=4;
+                 const COSTO_KG=2.70; // MP + Costo Operativo por kg
                  const defProy=[
                    {mes:'Abr 2026',kgMin:6700,kgMax:6700,nota:'Inicio'},
                    {mes:'May 2026',kgMin:29000,kgMax:29000,nota:''},
@@ -27948,9 +27994,9 @@ ${resumenHtml}
                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                      {[
                        {icon:'🏭',label:'Cap. Instalada',val:'50 ton/mes',sub:'Capacidad total planta'},
-                       {icon:'💵',label:'Precio Promedio',val:'$4,00 / kg',sub:'Ingreso por kilo'},
-                       {icon:'📊',label:'Costo Operativo',val:'$0,15 – $0,20 / kg',sub:'Por kilo vendido'},
-                       {icon:'📈',label:'Meta Dic 2026',val:'100 – 120 ton',sub:'$400k – $480k ingresos'},
+                       {icon:'💵',label:'Precio Promedio',val:'$4,00 / kg',sub:'Ingreso por kilo vendido'},
+                       {icon:'📊',label:'Costo Total / kg',val:'$2,70 / kg',sub:'MP + Costo Operativo'},
+                       {icon:'📈',label:'Margen Neto / kg',val:'$1,30 / kg',sub:`${Math.round((1.30/4)*100)}% sobre precio de venta`},
                      ].map((kpi,i)=>(
                        <div key={i} style={{background:'#fff',borderRadius:10,boxShadow:'0 2px 10px rgba(0,0,0,0.07)',borderTop:`3px solid ${ORG}`,padding:'14px 16px'}}>
                          <div style={{fontSize:22}}>{kpi.icon}</div>
@@ -27965,18 +28011,18 @@ ${resumenHtml}
                    <div style={{background:'#fff',borderRadius:12,boxShadow:'0 2px 16px rgba(0,0,0,0.07)',overflow:'hidden'}}>
                      <div style={{background:ORG,padding:'14px 20px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                        <div style={{color:'#000',fontWeight:900,fontSize:14}}>PROYECCIÓN DE PRODUCCIÓN E INGRESOS — 2026</div>
-                       <div style={{color:'#000',fontSize:11,opacity:.7}}>Cap. Instalada: {CAP_TON} ton/mes · Precio: ${PRECIO_KG}/kg · Costo op.: $0,15–$0,20/kg</div>
+                       <div style={{color:'#000',fontSize:11,opacity:.7}}>Cap. Instalada: {CAP_TON} ton/mes · Precio: ${PRECIO_KG}/kg · Costo total (MP+Op): ${COSTO_KG}/kg · Margen: ${(PRECIO_KG-COSTO_KG).toFixed(2)}/kg</div>
                      </div>
                      <div style={{overflowX:'auto'}}>
                      <table style={{width:'100%',borderCollapse:'collapse'}}>
                        <thead>
                          <tr style={{background:'#1f2937'}}>
                            <th style={{padding:'10px 16px',textAlign:'left',color:'#d1d5db',fontSize:10,fontWeight:700,textTransform:'uppercase'}}>Período</th>
-                           <th style={{padding:'10px 12px',textAlign:'right',color:'#d1d5db',fontSize:10,fontWeight:700}}>Producción (ton)</th>
+                           <th style={{padding:'10px 12px',textAlign:'right',color:'#d1d5db',fontSize:10,fontWeight:700,textTransform:'uppercase'}}>Producción (ton)</th>
                            <th style={{padding:'10px 12px',textAlign:'right',color:'#d1d5db',fontSize:10,fontWeight:700}}>% Cap. Utilizada</th>
                            <th style={{padding:'10px 12px',textAlign:'right',color:'#4ade80',fontSize:10,fontWeight:700}}>Ingresos Est.</th>
-                           <th style={{padding:'10px 12px',textAlign:'right',color:'#f87171',fontSize:10,fontWeight:700}}>Costo Op. Mín.</th>
-                           <th style={{padding:'10px 12px',textAlign:'right',color:'#f87171',fontSize:10,fontWeight:700}}>Costo Op. Máx.</th>
+                           <th style={{padding:'10px 12px',textAlign:'right',color:'#f87171',fontSize:10,fontWeight:700}}>Costo Total (MP+Op)</th>
+                           <th style={{padding:'10px 12px',textAlign:'right',color:'#fbbf24',fontSize:10,fontWeight:700}}>Margen Neto Est.</th>
                            <th style={{padding:'10px 12px',textAlign:'left',color:'#9ca3af',fontSize:10,fontWeight:700}}>Nota</th>
                          </tr>
                        </thead>
@@ -27984,8 +28030,14 @@ ${resumenHtml}
                          {proyData.map((p,idx)=>{
                            const pct=pctCap(p);
                            const bg=idx%2===0?'#f9fafb':'#fff';
+                           const kgMed=(p.kgMin+p.kgMax)/2;
                            const ingR=p.kgMin===p.kgMax?('$'+formatNum(ingMin(p))):('$'+formatNum(ingMin(p))+' – $'+formatNum(ingMax(p)));
-                           const costR='$'+formatNum(Math.round(p.kgMin*0.15))+' – $'+formatNum(Math.round(p.kgMax*0.20));
+                           const costoMin=Math.round(p.kgMin*COSTO_KG);
+                           const costoMax=Math.round(p.kgMax*COSTO_KG);
+                           const costoR=p.kgMin===p.kgMax?('$'+formatNum(costoMin)):('$'+formatNum(costoMin)+' – $'+formatNum(costoMax));
+                           const margenMin=Math.round(ingMin(p)-costoMax);
+                           const margenMax=Math.round(ingMax(p)-costoMin);
+                           const margenR=p.kgMin===p.kgMax?('$'+formatNum(margenMin)):('$'+formatNum(margenMin)+' – $'+formatNum(margenMax));
                            return <tr key={p.mes} style={{background:bg,borderBottom:'1px solid #e5e7eb'}}>
                              <td style={{padding:'10px 16px',fontWeight:700,color:'#111',fontSize:12}}>{p.mes}</td>
                              <td style={{padding:'10px 12px',textAlign:'right',fontWeight:900,color:'#374151',fontSize:13}}>{rangoTon(p)}</td>
@@ -27998,8 +28050,8 @@ ${resumenHtml}
                                </div>
                              </td>
                              <td style={{padding:'10px 12px',textAlign:'right',fontWeight:900,color:'#16a34a',fontSize:11}}>{ingR}</td>
-                             <td style={{padding:'10px 12px',textAlign:'right',color:'#dc2626',fontSize:11}}>${formatNum(Math.round(p.kgMin*0.15))}</td>
-                             <td style={{padding:'10px 12px',textAlign:'right',color:'#dc2626',fontSize:11}}>${formatNum(Math.round(p.kgMax*0.20))}</td>
+                             <td style={{padding:'10px 12px',textAlign:'right',color:'#dc2626',fontSize:11}}>{costoR}</td>
+                             <td style={{padding:'10px 12px',textAlign:'right',color:'#d97706',fontWeight:700,fontSize:11}}>{margenR}</td>
                              <td style={{padding:'10px 12px',color:'#9ca3af',fontSize:10}}>{p.nota}</td>
                            </tr>;
                          })}
@@ -28014,8 +28066,12 @@ ${resumenHtml}
                            <td style={{padding:'12px 12px',textAlign:'right',color:'#4ade80',fontWeight:900,fontSize:12}}>
                              ${formatNum(proyData.reduce((s,p)=>s+ingMin(p),0))} – ${formatNum(proyData.reduce((s,p)=>s+ingMax(p),0))}
                            </td>
-                           <td style={{padding:'12px 12px',textAlign:'right',color:'#f87171',fontSize:11}}>${formatNum(Math.round(proyData.reduce((s,p)=>s+p.kgMin*0.15,0)))}</td>
-                           <td style={{padding:'12px 12px',textAlign:'right',color:'#f87171',fontSize:11}}>${formatNum(Math.round(proyData.reduce((s,p)=>s+p.kgMax*0.20,0)))}</td>
+                           <td style={{padding:'12px 12px',textAlign:'right',color:'#f87171',fontWeight:900,fontSize:11}}>
+                             ${formatNum(Math.round(proyData.reduce((s,p)=>s+p.kgMin*COSTO_KG,0)))} – ${formatNum(Math.round(proyData.reduce((s,p)=>s+p.kgMax*COSTO_KG,0)))}
+                           </td>
+                           <td style={{padding:'12px 12px',textAlign:'right',color:'#fbbf24',fontWeight:900,fontSize:11}}>
+                             ${formatNum(Math.round(proyData.reduce((s,p)=>s+ingMin(p)-p.kgMax*COSTO_KG,0)))} – ${formatNum(Math.round(proyData.reduce((s,p)=>s+ingMax(p)-p.kgMin*COSTO_KG,0)))}
+                           </td>
                            <td></td>
                          </tr>
                        </tfoot>
