@@ -4534,11 +4534,6 @@ function App() {
       ? moduleCards.filter(c => portalTabList.includes(c.tab))
       : moduleCards;
 
-    const portalTabList = selectedPortal ? PORTAL_TABS[selectedPortal] : null;
-    const visibleCards  = portalTabList
-      ? moduleCards.filter(c => portalTabList.includes(c.tab))
-      : moduleCards;
-
     // ── PORTAL VENDEDORES: vista admin directa ────────────────────────────────
     if (selectedPortal === 'vendedores_portal') {
       const vendedoresList=(settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[];
