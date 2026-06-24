@@ -14361,6 +14361,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           });
           const clientesList=Object.values(porCliente).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
 
+          // Métricas filtradas por cliente seleccionado (si hay filtro activo)
+          const clienteActivoData=cxcSelectedClient?porCliente[cxcSelectedClient]:null;
+          const nesMetrica=clienteActivoData?clienteActivoData.nes:nesAbiertas;
+          const totalCarteraFilt=nesMetrica.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
+          const totalBrutoFilt=clienteActivoData
+            ?(nesTotal.filter(ne=>ne.clientRif===cxcSelectedClient||ne.clientName===clienteActivoData.clientName).reduce((s,ne)=>s+parseNum(ne.total||0),0))
+            :totalBrutoNEs;
+          const cobradoMesFilt=clienteActivoData
+            ?(cobrosCxc||[]).filter(c=>(c.fecha||'').startsWith(mesActual)&&(c.clientName===clienteActivoData.clientName)).reduce((s,c)=>s+parseNum(c.monto||0),0)
+            :cobradoMes;
+
           // ── GUARDAR COBRO ──────────────────────────────────────────────
           const guardarCobro=async()=>{
             const m=cxcCobroModal;
@@ -15109,14 +15120,17 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
 
               {/* Métricas */}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                {cxcSelectedClient&&clienteActivoData&&(
+                  <div className="col-span-full flex items-center gap-2 px-1 py-0.5">
+                    <span className="text-[9px] font-black text-orange-600 uppercase tracking-widest">Mostrando:</span>
+                    <span className="text-sm font-black text-gray-900">{clienteActivoData.clientName}</span>
+                    <button onClick={()=>setCxcSelectedClient('')} className="text-[9px] text-gray-400 hover:text-red-500 font-black ml-1">✕ Ver todos</button>
+                  </div>
+                )}
                 {[
-                  {l:'Cartera total',v:`$${formatNum(totalCartera)}`,s:`Bs. ${formatNum(totalCartera*tasaBCV)}`,c:'text-gray-800',bg:'bg-gray-50',br:'border-gray-200'},
-                  {l:`Total facturado · ${nesTotal.length} NEs`,v:`$${formatNum(totalBrutoNEs)}`,s:`NC/ND: -$${formatNum(totalNCNEs)} · Ret: -$${formatNum(totalRetNEs)}`,c:'text-gray-500',bg:'bg-gray-50',br:'border-gray-100'},
-                  {l:'Corriente',v:`$${formatNum(corriente)}`,s:`Bs. ${formatNum(corriente*tasaBCV)}`,c:'text-green-700',bg:'bg-green-50',br:'border-green-200'},
-                  {l:'1–30 días',v:`$${formatNum(v1_30)}`,s:`Bs. ${formatNum(v1_30*tasaBCV)}`,c:'text-amber-700',bg:'bg-amber-50',br:'border-amber-200'},
-                  {l:'31–60 días',v:`$${formatNum(v31_60)}`,s:`Bs. ${formatNum(v31_60*tasaBCV)}`,c:'text-orange-700',bg:'bg-orange-50',br:'border-orange-200'},
-                  {l:'+60 días',v:`$${formatNum(vMas60)}`,s:`Bs. ${formatNum(vMas60*tasaBCV)}`,c:'text-red-700',bg:'bg-red-50',br:'border-red-200'},
-                  {l:'Cobrado este mes',v:`$${formatNum(cobradoMes)}`,s:`Bs. ${formatNum(cobradoMes*tasaBCV)}`,c:'text-blue-700',bg:'bg-blue-50',br:'border-blue-200'},
+                  {l:'Cartera total',v:`$${formatNum(totalCarteraFilt)}`,s:`Bs. ${formatNum(totalCarteraFilt*tasaBCV)}`,c:'text-gray-800',bg:'bg-gray-50',br:'border-gray-200'},
+                  {l:`Total facturado · ${clienteActivoData?clienteActivoData.nes.length:nesTotal.length} NEs`,v:`$${formatNum(totalBrutoFilt)}`,s:`NC/ND: -$${formatNum(totalNCNEs)} · Ret: -$${formatNum(totalRetNEs)}`,c:'text-gray-500',bg:'bg-gray-50',br:'border-gray-100'},
+                  {l:'Cobrado este mes',v:`$${formatNum(cobradoMesFilt)}`,s:`Bs. ${formatNum(cobradoMesFilt*tasaBCV)}`,c:'text-blue-700',bg:'bg-blue-50',br:'border-blue-200'},
                 ].map((m,i)=>(
                   <div key={i} className={`rounded-2xl px-4 py-3 border-2 ${m.bg} ${m.br}`}>
                     <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">{m.l}</p>
@@ -15125,24 +15139,6 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   </div>
                 ))}
               </div>
-
-              {/* Aging bars */}
-              {totalCartera>0&&(
-                <div className="bg-white border-2 border-gray-100 rounded-2xl p-5">
-                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3">Distribución por antigüedad</p>
-                  {[{l:'Corriente',v:corriente,c:'#22c55e'},{l:'1–30d',v:v1_30,c:'#f59e0b'},{l:'31–60d',v:v31_60,c:'#f97316'},{l:'+60d',v:vMas60,c:'#dc2626'}].map((b,i)=>(
-                    <div key={i} className="flex items-center gap-3 mb-2">
-                      <span className="text-[9px] font-bold text-gray-500 w-16 flex-shrink-0">{b.l}</span>
-                      <div className="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden">
-                        <div style={{width:`${totalCartera>0?(b.v/totalCartera*100):0}%`,background:b.c,minWidth:b.v>0?'2px':'0'}} className="h-full rounded-full flex items-center pl-2">
-                          {b.v>0&&<span className="text-white text-[8px] font-black whitespace-nowrap">${formatNum(b.v)} · Bs.{formatNum(b.v*tasaBCV)}</span>}
-                        </div>
-                      </div>
-                      <span className="text-[9px] font-black text-gray-500 w-10 text-right">{totalCartera>0?Math.round(b.v/totalCartera*100):0}%</span>
-                    </div>
-                  ))}
-                </div>
-              )}
 
               {/* Tabla clientes */}
               <div className="bg-white border-2 border-gray-100 rounded-2xl overflow-hidden">
@@ -15158,10 +15154,6 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       <thead className="bg-gray-50 border-b-2 border-gray-100">
                         <tr className="font-black text-gray-400 uppercase">
                           <th className="py-3 px-4 text-left">Cliente</th>
-                          <th className="py-3 px-4 text-right text-green-600">Corriente</th>
-                          <th className="py-3 px-4 text-right text-amber-600">1–30d</th>
-                          <th className="py-3 px-4 text-right text-orange-600">31–60d</th>
-                          <th className="py-3 px-4 text-right text-red-600">+60d</th>
                           <th className="py-3 px-4 text-right">Total USD</th>
                           <th className="py-3 px-4 text-right text-gray-400">Total Bs.</th>
                           <th className="py-3 px-4 text-center">Estado</th>
@@ -15177,10 +15169,6 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             <React.Fragment key={cl.clientRif}>
                               <tr className={`border-b-2 border-gray-200 hover:bg-gray-50 cursor-pointer ${sel?'bg-blue-50 border-blue-200':''}`} onClick={()=>setCxcSelectedClient(cxcSelectedClient===cl.clientRif?'':cl.clientRif)}>
                                 <td className="py-3 px-4"><p className="font-black text-gray-900 text-[11px]">{cl.clientName}</p><p className="text-gray-400 text-[9px] font-mono">{cl.clientRif}</p></td>
-                                <td className="py-3 px-4 text-right"><span className="font-black text-green-700 bg-green-50 px-2 py-0.5 rounded-lg">{cl.corriente>0?`$${formatNum(cl.corriente)}`:'—'}</span></td>
-                                <td className="py-3 px-4 text-right"><span className={`font-black px-2 py-0.5 rounded-lg ${cl.v1_30>0?'text-amber-700 bg-amber-50':'text-gray-300'}`}>{cl.v1_30>0?`$${formatNum(cl.v1_30)}`:'—'}</span></td>
-                                <td className="py-3 px-4 text-right"><span className={`font-black px-2 py-0.5 rounded-lg ${cl.v31_60>0?'text-orange-700 bg-orange-50':'text-gray-300'}`}>{cl.v31_60>0?`$${formatNum(cl.v31_60)}`:'—'}</span></td>
-                                <td className="py-3 px-4 text-right"><span className={`font-black px-2 py-0.5 rounded-lg ${cl.vMas60>0?'text-red-700 bg-red-50':'text-gray-300'}`}>{cl.vMas60>0?`$${formatNum(cl.vMas60)}`:'—'}</span></td>
                                 <td className="py-3 px-4 text-right font-black text-gray-900 text-[11px]">${formatNum(cl.total)}</td>
                                 <td className="py-3 px-4 text-right text-gray-400 text-[9px]">{formatNum(cl.total*tasaBCV)}</td>
                                 <td className="py-3 px-4 text-center"><span className={`px-3 py-1 rounded-full text-[9px] font-black border ${
@@ -15194,7 +15182,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                 </td>
                               </tr>
                               {sel&&(
-                                <tr><td colSpan={9} className="p-0">
+                                <tr><td colSpan={5} className="p-0">
                                   <div className="bg-blue-50 border-t border-blue-200 p-4">
                                     <table className="w-full text-[9px]">
                                       <thead>
@@ -15210,7 +15198,6 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                           <th className="py-2 px-2 text-right text-amber-400 text-[8px] uppercase whitespace-nowrap" style={{minWidth:'70px'}}>Ret.IVA</th>
                                           <th className="py-2 px-2 text-right text-orange-400 text-[8px] uppercase whitespace-nowrap" style={{minWidth:'70px'}}>Saldo USD</th>
                                           <th className="py-2 px-2 text-center text-[8px] uppercase whitespace-nowrap" style={{minWidth:'55px'}}>Vend.</th>
-                                          <th className="py-2 px-2 text-center text-[8px] uppercase whitespace-nowrap" style={{minWidth:'60px'}}>Cobrar</th>
                                           <th className="py-2 px-2 text-left text-gray-400 text-[8px] uppercase whitespace-nowrap" style={{minWidth:'100px'}}>Observación</th>
                                         </tr>
                                       </thead>
