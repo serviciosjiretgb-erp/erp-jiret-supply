@@ -4569,8 +4569,9 @@ function App() {
             {vendedoresList.length===0
               ? <div className="bg-white border border-gray-100 rounded-2xl p-8 text-center text-gray-400 text-sm">Configura los vendedores en Configuración → Vendedores</div>
               : vendedoresList.map(vend=>{
-                  const vCotiz=(cotizaciones||[]).filter(c=>(c.vendedor||'').toUpperCase()===vend.toUpperCase());
-                  const vActas=(actasReclamo||[]).filter(a=>(a.vendedor||'').toUpperCase()===vend.toUpperCase());
+                  const mv=v=>(v||'').trim().toUpperCase()===vend.trim().toUpperCase();
+                  const vCotiz=(cotizaciones||[]).filter(c=>mv(c.vendedor));
+                  const vActas=(actasReclamo||[]).filter(a=>mv(a.vendedor));
                   const aprobadas=vCotiz.filter(c=>c.status==='APROBADA'||c.status==='FACTURADA').length;
                   const conv=vCotiz.length>0?Math.round((aprobadas/vCotiz.length)*100):0;
                   const totalCot=vCotiz.reduce((s,c)=>s+parseNum(c.total||0),0);
@@ -25691,11 +25692,14 @@ ${resumenHtml}
   // ============================================================================
   // PORTAL VENDEDOR — rol Vendedor → experiencia dedicada
   // ============================================================================
+  // Vendedor con rol Vendedor → portal personal directo (sin pantalla de selección de portales)
   const isVendorPortal = appUser?.role === 'Vendedor';
   if (appUser && isVendorPortal) {
-    const vendNombre = appUser?.vendedorNombre || appUser?.name || '';
-    const misCotiz = (cotizaciones||[]).filter(c=>(c.vendedor||'').toUpperCase()===(vendNombre).toUpperCase()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-    const misActas = (actasReclamo||[]).filter(a=>(a.vendedor||'').toUpperCase()===(vendNombre).toUpperCase());
+    const vendNombre = (appUser?.vendedorNombre || appUser?.name || '').trim();
+    // Buscar cotizaciones con comparación flexible (trim + uppercase)
+    const matchVend = (v) => (v||'').trim().toUpperCase() === vendNombre.toUpperCase();
+    const misCotiz = (cotizaciones||[]).filter(c=>matchVend(c.vendedor)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+    const misActas = (actasReclamo||[]).filter(a=>matchVend(a.vendedor));
     const mesActual = getTodayDate().substring(0,7);
     const cotizMes = misCotiz.filter(c=>(c.fecha||'').startsWith(mesActual));
     const aprobadas = misCotiz.filter(c=>c.status==='APROBADA'||c.status==='FACTURADA');
@@ -25739,7 +25743,96 @@ ${resumenHtml}
         setDialog({title:'✅ Acta guardada',text:`Acta ${id} guardada correctamente.`,type:'alert'});
       } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
     };
-    const imprimirActa = () => window.print();
+    const imprimirActa = () => {
+      const AF = pvActaForm;
+      if(!AF) return;
+      const OR = '#C85A00';
+      const INCONF = ['Producto defectuoso','Producto incompleto / faltante','Producto incorrecto','Daño en transporte','Producto vencido / caducado','Error de facturación','Fallo de sellado / empaque','Otros'];
+      const EVID = ['Fotografía del producto','Video demostrativo','Factura / comprobante','Producto en condiciones originales','Empaque original','Otros documentos'];
+      const chkRow = (arr, keys) => arr.map((lbl,i)=>`<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 6px 2px 0;font-size:7pt">${AF[keys[i]]?'☑':'☐'} ${lbl}</span>`).join('');
+      const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        @page{size:A4 portrait;margin:6mm}
+        body{font-family:Arial,Helvetica,sans-serif;font-size:7.5pt;color:#111;background:#fff}
+        .page{width:100%}
+        .hdr{background:${OR};color:#fff;padding:5px 10px;display:flex;justify-content:space-between;align-items:center;border-radius:2px 2px 0 0}
+        .hdr-l{font-size:9pt;font-weight:bold}.hdr-r{font-size:8pt;opacity:.9}
+        .corr{font-size:9pt;font-weight:bold;color:${OR};border:1.5px solid ${OR};padding:3px 12px;border-radius:20px;background:#fff}
+        .sec{background:${OR};color:#fff;font-weight:bold;font-size:7pt;padding:3px 8px;text-transform:uppercase;letter-spacing:.04em;margin-top:4px}
+        .grid{display:grid;border-left:1px solid #ccc;border-top:1px solid #ccc}
+        .g2{grid-template-columns:60px 1fr 60px 1fr}
+        .g3{grid-template-columns:90px 1fr 80px 1fr}
+        .g1{grid-template-columns:80px 1fr}
+        .lbl{background:#f5f0ea;font-weight:bold;font-size:6pt;color:${OR};padding:2px 4px;border-right:1px solid #ccc;border-bottom:1px solid #ccc;display:flex;align-items:center}
+        .val{border-right:1px solid #ccc;border-bottom:1px solid #ccc;padding:2px 4px;font-size:7pt}
+        .chk-box{border:1px solid #ccc;border-top:none;padding:4px 6px;display:flex;flex-wrap:wrap}
+        .desc-box{border:1px solid #ccc;border-top:none;padding:4px 6px;min-height:14mm;font-size:7pt}
+        .pol{border:1px solid #ccc;border-top:none;padding:4px 6px;font-size:6pt;line-height:1.5}
+        .pol b{color:${OR}}
+        .sig-grid{display:grid;grid-template-columns:1fr 1fr 1fr;border:1px solid #ccc;border-top:none}
+        .sig-col{padding:4px 6px;border-right:1px solid #ccc}
+        .sig-col:last-child{border-right:none}
+        .sig-title{background:${OR};color:#fff;font-weight:bold;font-size:6pt;text-align:center;padding:2px;margin:-4px -6px 4px;text-transform:uppercase}
+        .sig-field{display:flex;gap:4px;margin-bottom:3px;font-size:6pt}
+        .sig-field span{color:${OR};font-weight:bold;white-space:nowrap}
+        .sig-line{border-top:1px solid ${OR};margin-top:6px;padding-top:2px;font-size:5pt;color:#999;text-align:center}
+        .footer{background:#f5f0ea;border:1px solid #ccc;border-top:none;padding:3px 6px;font-size:5pt;color:#555;display:flex;justify-content:space-between}
+        .warn{background:#fff3cd;border:1px solid #ffc107;border-top:none;padding:3px 6px;font-size:6pt;color:#7b4f00;font-weight:bold}
+        @media print{.no-print{display:none}}
+      </style></head><body>
+      <div style="text-align:center;padding:8px;background:#fff;border-bottom:1px solid #ddd" class="no-print">
+        <button onclick="window.print()" style="background:${OR};color:#fff;padding:8px 28px;border:none;border-radius:6px;font-size:12px;font-weight:bold;cursor:pointer">🖨 IMPRIMIR / GUARDAR PDF</button>
+      </div>
+      <div class="page">
+        <div class="hdr">
+          <div class="hdr-l">SERVICIOS JIRET G&amp;B, C.A. &nbsp;·&nbsp; RIF: J-412309374 &nbsp;·&nbsp; ASEGURAMIENTO DE LA CALIDAD<br><span style="font-size:10pt;letter-spacing:.05em">ACTA DE RECLAMO / DEVOLUCIÓN</span></div>
+          <div class="corr">${pvActaId||'Sin guardar'}</div>
+        </div>
+        <div class="sec">Datos generales del reclamo</div>
+        <div class="grid g2">
+          <div class="lbl">CLIENTE:</div><div class="val">${AF.cliente||''}</div>
+          <div class="lbl">RIF / C.I.:</div><div class="val">${AF.rif||''}</div>
+          <div class="lbl">VENDEDOR:</div><div class="val">${AF.vendedor||''}</div>
+          <div class="lbl">TELÉFONO:</div><div class="val">${AF.telefono||''}</div>
+        </div>
+        <div class="grid g3">
+          <div class="lbl">PROD./SERVICIO:</div><div class="val">${AF.producto||''}</div>
+          <div class="lbl">CANT. ENTREGADA:</div><div class="val">${AF.cantidad||''}</div>
+          <div class="lbl">LOTE / CÓDIGO:</div><div class="val">${AF.lote||''}</div>
+          <div class="lbl">ORDEN COMPRA:</div><div class="val">${AF.orden||''}</div>
+        </div>
+        <div class="grid g1">
+          <div class="lbl">FECHA ENTREGA:</div><div class="val">${AF.fechaEntrega||''}</div>
+        </div>
+        <div class="sec">Tipo de inconformidad (marque con X)</div>
+        <div class="chk-box">${chkRow(INCONF,['c1','c2','c3','c4','c5','c6','c7','c8'])}</div>
+        <div class="sec">Evidencias requeridas (obligatorio)</div>
+        <div class="chk-box">${chkRow(EVID,['e1','e2','e3','e4','e5','e6'])}</div>
+        <div class="warn">⚠ Sin fotografía o video el reclamo NO será procesado.</div>
+        <div class="sec">Descripción detallada del defecto</div>
+        <div class="desc-box">${(AF.descripcion||'').replace(/\n/g,'<br>')}</div>
+        <div class="sec">Fotografías del producto</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;border:1px solid #ccc;border-top:none;padding:4px">
+          ${[1,2,3].map(n=>`<div style="border:1px dashed #ccc;min-height:28mm;display:flex;align-items:center;justify-content:center;font-size:6pt;color:#999;border-radius:4px;overflow:hidden">${pvActaFotos[n]?`<img src="${pvActaFotos[n]}" style="width:100%;height:100%;object-fit:cover;display:block">`:`Foto ${n} — Sin adjuntar`}</div>`).join('')}
+        </div>
+        <div class="sec">Políticas de reclamo y devolución</div>
+        <div class="pol">
+          <b>1. Plazo:</b> 7 días hábiles desde la recepción. &nbsp;<b>2. Evidencia:</b> Obligatorio fotografía y/o video. &nbsp;<b>3. Condición:</b> Producto sin daños adicionales. &nbsp;<b>4. Trazabilidad:</b> Indicar factura, lote o código. &nbsp;<b>5. Error cliente:</b> No se aceptan devoluciones por pedido equivocado. &nbsp;<b>6. Producto en uso:</b> No proceden salvo defecto de fabricación. &nbsp;<b>7. Respuesta:</b> 5 días hábiles. &nbsp;<b>8. Devolución:</b> En empaque original.
+        </div>
+        <div class="sec">Firmas y conformidad</div>
+        <div class="sig-grid">
+          <div class="sig-col"><div class="sig-title">Cliente</div><div class="sig-field"><span>Nombre:</span>${AF.nomCli||''}</div><div class="sig-field"><span>C.I.:</span>${AF.ciCli||''}</div><div class="sig-field"><span>Fecha:</span>${AF.fchCli||''}</div><div class="sig-line">Firma</div></div>
+          <div class="sig-col"><div class="sig-title">Vendedor</div><div class="sig-field"><span>Nombre:</span>${AF.nomVen||AF.vendedor||''}</div><div class="sig-field"><span>C.I.:</span>${AF.ciVen||''}</div><div class="sig-field"><span>Fecha:</span>${AF.fchVen||''}</div><div class="sig-line">Firma</div></div>
+          <div class="sig-col"><div class="sig-title">Jefe de Calidad</div><div class="sig-field"><span>Nombre:</span>${AF.nomJef||''}</div><div class="sig-field"><span>C.I.:</span>${AF.ciJef||''}</div><div class="sig-field"><span>Fecha:</span>${AF.fchJef||''}</div><div class="sig-line">Firma</div></div>
+        </div>
+        <div class="footer"><span>Original → Servicios Jiret G&amp;B &nbsp;|&nbsp; Copia 1 → Cliente &nbsp;|&nbsp; Copia 2 → Vendedor</span><span>AV CIRCUNVALACION NRO 02 · C.C EL DIVIDIVI · LOCAL G-9 · MARACAIBO, ZULIA</span></div>
+      </div>
+      </body></html>`;
+      const w = window.open('','_blank','width=900,height=700');
+      w.document.write(html);
+      w.document.close();
+    };
     const nuevaActa = () => { setPvActaId(null); setPvActaForm(initActaForm()); setPvActaFotos({1:null,2:null,3:null}); };
     const cargarActa = (a) => { setPvActaId(a.id); setPvActaForm({...initActaForm(),...a}); setPvActaFotos({1:null,2:null,3:null}); setPvShowActaHist(false); };
     const eliminarActa = (id) => setDialog({title:'Eliminar acta',text:`¿Eliminar ${id}?`,type:'confirm',onConfirm:async()=>{await deleteDoc(getDocRef('actasReclamo',id));if(pvActaId===id){setPvActaId(null);setPvActaForm(null);}}});
@@ -26804,8 +26897,9 @@ ${resumenHtml}
                {/* Por vendedor */}
                <div className="grid grid-cols-1 gap-4">
                  {vendedoresList.map(vend=>{
-                   const vCotiz=(cotizaciones||[]).filter(c=>(c.vendedor||'').toUpperCase()===vend.toUpperCase());
-                   const vActas=(actasReclamo||[]).filter(a=>(a.vendedor||'').toUpperCase()===vend.toUpperCase());
+                   const mv2=v=>(v||'').trim().toUpperCase()===vend.trim().toUpperCase();
+                   const vCotiz=(cotizaciones||[]).filter(c=>mv2(c.vendedor));
+                   const vActas=(actasReclamo||[]).filter(a=>mv2(a.vendedor));
                    const aprobadas=vCotiz.filter(c=>c.status==='APROBADA'||c.status==='FACTURADA').length;
                    const conv=vCotiz.length>0?Math.round((aprobadas/vCotiz.length)*100):0;
                    const totalCot=vCotiz.reduce((s,c)=>s+parseNum(c.total||0),0);
