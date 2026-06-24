@@ -326,7 +326,24 @@ const SYSTEM_MODULES = [
     label: '10. MÓDULO Auditoría de Sistema',
     icon: '🛡️',
     submodules: []
-  }
+  },
+  {
+    id: 'resena',
+    label: '11. MÓDULO Reseña Institucional',
+    icon: '🏢',
+    submodules: [
+      { id: 'resena_catalogo', label: 'Catálogo / Brochure Digital' },
+    ]
+  },
+  {
+    id: 'banco',
+    label: '12. MÓDULO Bancos & Tesorería',
+    icon: '🏦',
+    submodules: [
+      { id: 'banco_movimientos', label: 'Movimientos Bancarios' },
+      { id: 'banco_conciliacion', label: 'Conciliación Bancaria' },
+    ]
+  },
 ];
 
 // Portales del sistema (selección post-login). El permiso se controla por usuario en user.portales
@@ -335,6 +352,7 @@ const SYSTEM_PORTALS = [
   { id:'administracion', title:'ADMINISTRACIÓN', desc:'Ventas, facturación y clientes',                  color:'#3b82f6' },
   { id:'finanzas',       title:'FINANZAS',       desc:'Costos, reportes financieros y KPI gerencial',   color:'#22c55e' },
   { id:'contabilidad',   title:'CONTABILIDAD',   desc:'Balance general, mayor analítico y activo fijo', color:'#06b6d4' },
+  { id:'resena_portal',  title:'RESEÑA',          desc:'Reseña institucional, brochure y catálogo digital', color:'#E8541A' },
   { id:'configuracion_portal', title:'CONFIGURACIÓN', desc:'Usuarios, ajustes del sistema y auditoría', color:'#64748b' },
 ];
 
@@ -1391,7 +1409,7 @@ function App() {
       foundUser = {
         id: 'Administrador', username: 'Administrador', password: MASTER_PASS,
         name: 'Administrador General', role: 'Master',
-        permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true,ventas_dashboard:true,ventas_ne:true,ventas_cotizaciones:true,ventas_reporte:true,ventas_transacciones:true,ventas_libro:true,ventas_retenciones:true,ventas_nc_nd:true,ventas_comisiones:true,ventas_vendedores:true,inv_general:true,inv_osa:true,inv_almacenes:true,inv_movimientos:true }
+        permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true,ventas_dashboard:true,ventas_ne:true,ventas_cotizaciones:true,ventas_reporte:true,ventas_transacciones:true,ventas_libro:true,ventas_retenciones:true,ventas_nc_nd:true,ventas_comisiones:true,ventas_vendedores:true,inv_general:true,inv_osa:true,inv_almacenes:true,inv_movimientos:true,resena:true,resena_catalogo:true,banco:true,banco_movimientos:true,banco_conciliacion:true }
       };
       // Recreate in Firestore — sin await para no bloquear login
       setDoc(getDocRef('users','Administrador'), {...foundUser, timestamp: Date.now()}).catch(()=>{});
@@ -1484,7 +1502,7 @@ function App() {
         setDoc(getDocRef('users', 'Administrador'), {
           username: 'Administrador', password: 'Supply2026.Admin',
           name: 'Administrador General', role: 'Master',
-          permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true,ventas_dashboard:true,ventas_ne:true,ventas_cotizaciones:true,ventas_reporte:true,ventas_transacciones:true,ventas_libro:true,ventas_retenciones:true,ventas_nc_nd:true,ventas_comisiones:true,ventas_vendedores:true,inv_general:true,inv_osa:true,inv_almacenes:true,inv_movimientos:true },
+          permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true,ventas_dashboard:true,ventas_ne:true,ventas_cotizaciones:true,ventas_reporte:true,ventas_transacciones:true,ventas_libro:true,ventas_retenciones:true,ventas_nc_nd:true,ventas_comisiones:true,ventas_vendedores:true,inv_general:true,inv_osa:true,inv_almacenes:true,inv_movimientos:true,resena:true,resena_catalogo:true,banco:true,banco_movimientos:true,banco_conciliacion:true },
           _seeded: true, timestamp: Date.now()
         });
       }
@@ -4466,11 +4484,11 @@ function App() {
         stats: ()=>{ const tot=(invoices||[]).length+(invMovements||[]).length; return {s1:`${tot} eventos registrados`, s2:'Registro de actividad'};},
         chart:null
       },
-      { tab:'resena', icon:<BookOpen size={20}/>, title:'Reseña Institucional', color:'#E8541A',
+      hasPerm('resena') && { tab:'resena', icon:<BookOpen size={20}/>, title:'Reseña Institucional', color:'#E8541A',
         stats: ()=>({ s1:'Presentación corporativa', s2:'Empresa · Planta · Maquinaria · Proyección'}),
         chart:null
       },
-      { tab:'banco', icon:<Building2 size={20}/>, title:'Bancos & Tesorería', color:'#7c3aed',
+      hasPerm('banco') && { tab:'banco', icon:<Building2 size={20}/>, title:'Bancos & Tesorería', color:'#7c3aed',
         stats: ()=>({ s1:'Cuentas, movimientos y conciliación', s2:'Módulo de Banco'}),
         chart:null
       },
@@ -4495,8 +4513,8 @@ function App() {
 
     // ── PLACEHOLDER: portales sin tarjetas visibles ───────────────────────────
     if (selectedPortal && visibleCards.length === 0) {
-      const labelMap = {produccion:'PRODUCCIÓN',administracion:'ADMINISTRACIÓN',finanzas:'FINANZAS',contabilidad:'CONTABILIDAD',configuracion_portal:'CONFIGURACIÓN'};
-      const colorMap = {produccion:'#f97316',administracion:'#3b82f6',finanzas:'#22c55e',contabilidad:'#06b6d4',configuracion_portal:'#64748b'};
+      const labelMap = {produccion:'PRODUCCIÓN',administracion:'ADMINISTRACIÓN',finanzas:'FINANZAS',contabilidad:'CONTABILIDAD',resena_portal:'RESEÑA',configuracion_portal:'CONFIGURACIÓN'};
+      const colorMap = {produccion:'#f97316',administracion:'#3b82f6',finanzas:'#22c55e',contabilidad:'#06b6d4',resena_portal:'#E8541A',configuracion_portal:'#64748b'};
       const color = colorMap[selectedPortal]||'#6b7280';
       const isInDev = ['finanzas','contabilidad'].includes(selectedPortal);
       return (
@@ -23271,37 +23289,17 @@ ${resumenHtml}
 
     // ── NEs como fuente canónica de ingresos (igual que Transacciones de Ventas) ──
     const facturasEnNEkpi = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
-    // IDs de OPs de producción propia (requirements = bolsas/termoencogibles fabricadas)
-    const opsPropias = new Set((requirements||[]).map(r=>String(r.id)));
-    // Detectar NE de producción propia:
-    // 1. Tiene OP relacionada que es un requirement de producción
-    // 2. Tiene items con código FG-
-    // Si no se puede determinar, usar subcategoría/descripción como fallback
-    const EXCLUIR_KPI=/STRETCH|CINTA|KRAFT|PAPEL|BUBBLE|FLEJE|FARDO|BURBUJA|HENO|CARTON|SEPARADOR|DISPENS/i;
-    const INCLUIR_KPI=/BOLSA|TERMOENCOGIBLE|TERMOENC|TERMO|CAMISETA|PRECAM|FONDO|FG-/i;
+    // Dashboard de producción: SOLO NEs que tengan items de Bolsas o Termoencogibles
     const esProdPropia=(ne)=>{
-      // Criterio 1: OP de producción propia
-      if(ne.opRelacionada && opsPropias.has(String(ne.opRelacionada))) return true;
-      // Criterio 2: items con código FG-
       const items=ne.items||[];
-      if(items.some(it=>(it.invCode||'').startsWith('FG-')||it.isFG===true)) return true;
-      // Criterio 3: descripción de items — incluir solo si tiene productos propios Y no tiene de reventa
-      if(items.length>0){
-        const tienePropio=items.some(it=>INCLUIR_KPI.test(it.desc||''));
-        const tieneReventa=items.some(it=>EXCLUIR_KPI.test(it.desc||''));
-        if(tienePropio && !tieneReventa) return true;
-        if(tieneReventa) return false;
-      }
-      return false; // si no se puede determinar, excluir del KPI de producción
+      return items.some(it=>/BOLSA|TERMOENCOGIBLE|TERMOENC|TERMO/i.test(it.desc||''));
     };
     const safeNEsAll = (notasEntrega||[]).filter(Boolean).filter(esProdPropia);
     const safeDirectInvAll = safeInvoicesAll.filter(inv => {
       if(inv.neOrigen) return false;
       const invId = inv.id||inv.documento||'';
       const invDoc = (inv.documento||'').replace(/^FAC-/,'INVO-');
-      if(facturasEnNEkpi.has(invId) || facturasEnNEkpi.has(invDoc)) return false;
-      // Solo facturas directas de producción propia (maquilados de bolsas/termoencogibles)
-      return !EXCLUIR_KPI.test(inv.productoMaquilado||'');
+      return !facturasEnNEkpi.has(invId) && !facturasEnNEkpi.has(invDoc);
     });
     // "safeInvoices" ahora = NEs + facturas directas (vista unificada)
     const _buildRow = (fecha, montoBase) => ({ fecha: fecha||'', montoBase: parseNum(montoBase||0) });
@@ -23428,15 +23426,15 @@ ${resumenHtml}
     const topClientes = Object.values(cliMap).sort((a,b)=>b.total-a.total).slice(0,6);
     const maxCli = topClientes[0]?.total||1;
 
-    // ── Top productos vendidos (SOLO Bolsas y Termoencogibles — producción propia) ──
+    // ── Top productos vendidos (SOLO Bolsas y Termoencogibles por descripción de item) ──
     const prodMap={};
     (notasEntrega||[]).filter(esProdPropia).forEach(ne=>{
-      (ne.items||[]).forEach(it=>{
-        const k=(it.desc||it.descripcion||it.invCode||it.codigo||'').trim();
-        if(!k||EXCLUIR_KPI.test(k)) return;
+      (ne.items||[]).filter(it=>/BOLSA|TERMOENCOGIBLE|TERMOENC|TERMO/i.test(it.desc||'')).forEach(it=>{
+        const k=(it.desc||'').trim();
+        if(!k) return;
         if(!prodMap[k]) prodMap[k]={name:k,qty:0,ingresos:0};
-        const cant=parseNum(it.cantidad||it.qty||0);
-        const precio=parseNum(it.precioUnit||it.precio||0);
+        const cant=parseNum(it.cantidad||0);
+        const precio=parseNum(it.precioUnit||0);
         prodMap[k].qty+=cant;
         prodMap[k].ingresos+=precio>0?precio*cant:parseNum(ne.montoBase||0)/Math.max(1,(ne.items||[]).length);
       });
@@ -25417,7 +25415,8 @@ ${resumenHtml}
                     {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && navInPortal('kpi') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
                     {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && navInPortal('costos') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
                     {(hasPerm('auditoria')||appUser?.role==='Master') && navInPortal('auditoria') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='auditoria'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShieldCheck size={14}/> Auditoría</button>}
-                    <button onClick={()=>{clearAllReports();setActiveTab('resena');setResenaTab('catalogo');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='resena'&&resenaTab==='catalogo')?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}>📋 Brochure</button>
+                    {hasPerm('resena') && navInPortal('resena') && <button onClick={()=>{clearAllReports();setActiveTab('resena');setResenaTab('portada');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='resena'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BookOpen size={14}/> Reseña</button>}
+                    {hasPerm('banco') && navInPortal('banco') && <button onClick={()=>{clearAllReports();setActiveTab('banco');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='banco'?'bg-purple-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Building2 size={14}/> Banco</button>}
                  </div>
               </div>
               <div className="flex items-center gap-2 sm:gap-3">
@@ -25723,7 +25722,7 @@ ${resumenHtml}
            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
            {activeTab === 'configuracion' && renderConfiguracionModule()}
            {/* ── RESEÑA INSTITUCIONAL ── */}
-           {activeTab === 'resena' && (()=>{
+           {activeTab === 'resena' && hasPerm('resena') && (()=>{
              const ORG='#E8541A'; const DARK='#1C1C2E'; const CARD='#2A2A3E'; const CARD2='#232336';
              // Datos por defecto (se sobre-escriben con Firestore)
              // Auto-fix: si Firestore tiene maquinaria con máquina fantasma o >10, usar default
@@ -27102,7 +27101,7 @@ ${resumenHtml}
            })()}
 
           {/* ── BANCO & TESORERÍA ── */}
-           {activeTab === 'banco' && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
+           {activeTab === 'banco' && hasPerm('banco') && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
              ventasMode={!!(hasPerm('ventas') && !hasPerm('banco') && appUser?.role !== 'Master')}/>}
            {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && renderReportesFinancierosModule()}
            {activeTab === 'estado_resultado' && renderEstadoResultadoModule()}
