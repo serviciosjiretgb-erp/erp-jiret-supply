@@ -14894,7 +14894,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     </div>
 
                     {clienteSel&&montoUSD>0&&(
-                      <div style={{background:saldoRestanteCliente<0?'#fef2f2':saldoRestanteCliente<0.01?'#f0fdf4':'#fff7ed',border:`2px solid ${saldoRestanteCliente<0?'#fecaca':saldoRestanteCliente<0.01?'#bbf7d0':'#fed7aa'}`,borderRadius:14,padding:'14px 18px'}}>
+                      <div style={{background:saldoRestanteCliente<-0.01?'#f0fdf4':saldoRestanteCliente<0.01?'#f0fdf4':'#fff7ed',border:`2px solid ${saldoRestanteCliente<-0.01?'#bbf7d0':saldoRestanteCliente<0.01?'#bbf7d0':'#fed7aa'}`,borderRadius:14,padding:'14px 18px'}}>
                         <div style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>Impacto en cartera</div>
                         {[['Cartera total',`$${formatNum(saldoTotalCliente)}`,'#374151'],['Pago recibido',`- $${formatNum(montoUSD)}`,'#16a34a']].map(([k,v,c])=>(
                           <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:4}}>
@@ -14903,7 +14903,12 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                         ))}
                         <div style={{borderTop:'1px solid rgba(0,0,0,0.08)',paddingTop:8,marginTop:4,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                           <span style={{fontSize:11,fontWeight:900,color:'#111'}}>Saldo restante</span>
-                          <span style={{fontSize:20,fontWeight:900,color:saldoRestanteCliente<0?'#dc2626':saldoRestanteCliente<0.01?'#16a34a':'#E8541A'}}>${formatNum(Math.max(0,saldoRestanteCliente))}</span>
+                          <div style={{textAlign:'right'}}>
+                          <span style={{fontSize:20,fontWeight:900,color:saldoRestanteCliente<-0.01?'#16a34a':saldoRestanteCliente<0.01?'#16a34a':'#E8541A'}}>
+                            {saldoRestanteCliente<-0.01?`+$${formatNum(Math.abs(saldoRestanteCliente))}`:`$${formatNum(Math.max(0,saldoRestanteCliente))}`}
+                          </span>
+                          {saldoRestanteCliente<-0.01&&<div style={{fontSize:10,fontWeight:700,color:'#16a34a',marginTop:2}}>✅ Saldo a favor del cliente</div>}
+                        </div>
                         </div>
                       </div>
                     )}
