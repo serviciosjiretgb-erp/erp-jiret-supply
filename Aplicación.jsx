@@ -4538,102 +4538,174 @@ function App() {
     if (selectedPortal === 'vendedores_portal') {
       const vendedoresList=(settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[];
       const OR='#E8541A';
+      // pvAdminVend: vendedor seleccionado para ver su vista
+      // Usamos pvView como indicador: si hay un vendedor seleccionado lo guardamos en un state temporal
+      const vendSelAdmin = window._pvAdminVendSel||'';
+      const setVendSelAdmin = (v) => { window._pvAdminVendSel=v; setActiveTab('home'); }; // fuerza re-render
+
+      if(vendSelAdmin) {
+        // Vista del vendedor seleccionado — misma pantalla que ve el vendedor
+        const vNombre = vendSelAdmin;
+        const mv = v => (v||'').trim().toUpperCase()===vNombre.trim().toUpperCase();
+        const vCotiz = (cotizaciones||[]).filter(c=>mv(c.vendedor)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        const vActas = (actasReclamo||[]).filter(a=>mv(a.vendedor));
+        const vClientes = (clients||[]).filter(cl=>mv(cl.vendedor||cl.vendedorAsignado||''));
+        const mesActual = getTodayDate().substring(0,7);
+        const vCotizMes = vCotiz.filter(c=>(c.fecha||'').startsWith(mesActual));
+        const vAprobadas = vCotiz.filter(c=>c.status==='APROBADA'||c.status==='FACTURADA');
+        const vConversion = vCotiz.length>0?Math.round((vAprobadas.length/vCotiz.length)*100):0;
+        const vTotal = vCotiz.reduce((s,c)=>s+parseNum(c.total||0),0);
+        return(
+          <div className="animate-in fade-in" style={{fontFamily:'Arial,sans-serif'}}>
+            {/* Header */}
+            <div style={{background:'#111',borderBottom:`2px solid ${OR}`,padding:'10px 24px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <button onClick={()=>{window._pvAdminVendSel='';setActiveTab('home');}}
+                  style={{background:'rgba(255,255,255,0.1)',border:'none',color:'#fff',borderRadius:8,padding:'6px 12px',cursor:'pointer',fontSize:11,display:'flex',alignItems:'center',gap:4}}>
+                  <ChevronLeft size={13}/> Volver
+                </button>
+                <div style={{color:'#fff',fontWeight:900,fontSize:14}}>Supply G&B <span style={{color:OR}}>| Vista Vendedor</span></div>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <div style={{width:32,height:32,background:OR,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:900,fontSize:12}}>
+                  {vNombre.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase()}
+                </div>
+                <span style={{color:'#fff',fontWeight:700,fontSize:12}}>{vNombre}</span>
+              </div>
+            </div>
+            {/* Content */}
+            <div style={{display:'flex',background:'#f4f4f0',minHeight:'80vh'}}>
+              {/* Sidebar */}
+              <div style={{width:200,background:'#fff',borderRight:'1px solid #f0f0f0',padding:'16px 0'}}>
+                {[
+                  {id:'cotizaciones',icon:<FileText size={15}/>,label:'Mis Cotizaciones',badge:vCotiz.length},
+                  {id:'clientes',icon:<Users size={15}/>,label:'Mis Clientes',badge:vClientes.length},
+                  {id:'rendimiento',icon:<BarChart3 size={15}/>,label:'Mi Rendimiento'},
+                  {id:'actas',icon:<ClipboardList size={15}/>,label:'Actas de Reclamo',badge:vActas.length},
+                ].map(item=>(
+                  <div key={item.id} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 16px',color:'#374151',fontSize:12,cursor:'default'}}>
+                    <span style={{color:'#E8541A'}}>{item.icon}</span>
+                    <span style={{flex:1}}>{item.label}</span>
+                    {item.badge!=null&&item.badge>0&&<span style={{background:'#f3f4f6',color:'#6b7280',fontSize:10,fontWeight:700,padding:'1px 7px',borderRadius:20}}>{item.badge}</span>}
+                  </div>
+                ))}
+              </div>
+              {/* Main */}
+              <div style={{flex:1,padding:24}}>
+                {/* KPIs */}
+                <div style={{marginBottom:16,fontSize:16,fontWeight:900,color:'#111'}}>Resumen de {vNombre}</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+                  {[
+                    {l:'Este mes',v:vCotizMes.length,sub:'cotizaciones',c:OR},
+                    {l:'Conversión',v:vConversion+'%',sub:'aprobadas/total',c:'#111'},
+                    {l:'Total cotizado',v:'$'+formatNum(vTotal),sub:'histórico',c:OR},
+                    {l:'Actas reclamo',v:vActas.length,sub:'registradas',c:'#6366f1'},
+                  ].map((k,i)=>(
+                    <div key={i} style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,padding:'14px 16px',boxShadow:'0 1px 4px rgba(0,0,0,0.04)'}}>
+                      <div style={{fontSize:10,color:'#9ca3af',marginBottom:4}}>{k.l}</div>
+                      <div style={{fontSize:22,fontWeight:900,color:k.c}}>{k.v}</div>
+                      <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>{k.sub}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* Cotizaciones */}
+                <div style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,overflow:'hidden',marginBottom:16}}>
+                  <div style={{padding:'12px 18px',borderBottom:'1px solid #f0f0f0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span style={{fontSize:13,fontWeight:700,color:'#111'}}>Cotizaciones</span>
+                    <span style={{fontSize:10,color:'#9ca3af'}}>{vCotiz.length} total</span>
+                  </div>
+                  {vCotiz.length===0
+                    ? <div style={{textAlign:'center',padding:'32px 0',color:'#9ca3af',fontSize:12}}>Sin cotizaciones registradas</div>
+                    : <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+                        <thead><tr style={{background:'#fafafa'}}>
+                          {['N° Cotización','Cliente','Fecha','Estado','Monto'].map(h=>(
+                            <th key={h} style={{padding:'8px 14px',textAlign:'left',fontSize:10,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:0.6,borderBottom:'1px solid #f0f0f0'}}>{h}</th>
+                          ))}
+                        </tr></thead>
+                        <tbody>
+                          {vCotiz.map((c,i)=>(
+                            <tr key={c.id} style={{borderBottom:'1px solid #f9fafb',background:i%2===0?'#fff':'#fafafa'}}>
+                              <td style={{padding:'9px 14px',fontWeight:700,color:OR}}>{c.id}</td>
+                              <td style={{padding:'9px 14px',color:'#111',fontWeight:500}}>{c.clientName||c.client||'—'}</td>
+                              <td style={{padding:'9px 14px',color:'#6b7280'}}>{c.fecha||'—'}</td>
+                              <td style={{padding:'9px 14px'}}>
+                                <span style={{padding:'2px 9px',borderRadius:20,fontSize:9,fontWeight:700,background:c.status==='VIGENTE'?'#fff7ed':c.status==='APROBADA'?'#f0fdf4':c.status==='FACTURADA'?'#eff6ff':'#f9fafb',color:c.status==='VIGENTE'?'#c2410c':c.status==='APROBADA'?'#15803d':c.status==='FACTURADA'?'#1d4ed8':'#6b7280',border:`1px solid ${c.status==='VIGENTE'?'#fed7aa':c.status==='APROBADA'?'#bbf7d0':c.status==='FACTURADA'?'#bfdbfe':'#e5e7eb'}`}}>
+                                  {c.status||'VIGENTE'}
+                                </span>
+                              </td>
+                              <td style={{padding:'9px 14px',fontWeight:900,color:'#111',textAlign:'right'}}>${formatNum(parseNum(c.total||0))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                  }
+                </div>
+                {/* Actas */}
+                {vActas.length>0&&(
+                  <div style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,overflow:'hidden'}}>
+                    <div style={{padding:'12px 18px',borderBottom:'1px solid #f0f0f0'}}>
+                      <span style={{fontSize:13,fontWeight:700,color:'#111'}}>Actas de Reclamo ({vActas.length})</span>
+                    </div>
+                    {vActas.map(a=>(
+                      <div key={a.id} style={{padding:'10px 18px',borderBottom:'1px solid #f9fafb',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                        <div>
+                          <span style={{fontWeight:700,color:OR,fontSize:12}}>{a.id}</span>
+                          <span style={{color:'#6b7280',fontSize:11,marginLeft:12}}>{a.cliente||'—'}</span>
+                        </div>
+                        <span style={{color:'#9ca3af',fontSize:10}}>{a.fechaReclamo||'—'}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // Vista principal: lista de vendedores para seleccionar
       return(
         <div className="p-6 space-y-6 animate-in fade-in">
-          <div className="flex justify-between items-center">
-            <div>
-              <div className="font-black text-xl text-gray-900">Portal de Vendedores</div>
-              <div className="text-sm text-gray-400 mt-1">Supervisión de cotizaciones, clientes y actas por vendedor</div>
-            </div>
-            <button onClick={()=>{setVentasView('cotizaciones');setActiveTab('ventas');}}
-              className="flex items-center gap-2 px-4 py-2.5 text-white rounded-xl text-xs font-black uppercase shadow-sm" style={{background:OR}}>
-              <FileText size={13}/> Ver todas las cotizaciones
-            </button>
+          <div>
+            <div className="font-black text-xl text-gray-900">Portal de Vendedores</div>
+            <div className="text-sm text-gray-400 mt-1">Selecciona un vendedor para ver su portal completo</div>
           </div>
-          {/* KPI global */}
-          <div className="grid grid-cols-4 gap-4">
-            {[
-              {l:'Cotizaciones totales',v:(cotizaciones||[]).length,c:OR},
-              {l:'Vigentes',v:(cotizaciones||[]).filter(c=>c.status==='VIGENTE').length,c:'#f59e0b'},
-              {l:'Aprobadas / Facturadas',v:(cotizaciones||[]).filter(c=>c.status==='APROBADA'||c.status==='FACTURADA').length,c:'#16a34a'},
-              {l:'Actas de reclamo',v:(actasReclamo||[]).length,c:'#6366f1'},
-            ].map((k,i)=>(
-              <div key={i} className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
-                <div className="text-[9px] text-gray-400 uppercase font-black tracking-wider mb-2">{k.l}</div>
-                <div className="text-3xl font-black" style={{color:k.c}}>{k.v}</div>
-              </div>
-            ))}
-          </div>
-          {/* Por vendedor */}
-          <div className="space-y-4">
-            {vendedoresList.length===0
-              ? <div className="bg-white border border-gray-100 rounded-2xl p-8 text-center text-gray-400 text-sm">Configura los vendedores en Configuración → Vendedores</div>
-              : vendedoresList.map(vend=>{
-                  const mv=v=>(v||'').trim().toUpperCase()===vend.trim().toUpperCase();
-                  const vCotiz=(cotizaciones||[]).filter(c=>mv(c.vendedor));
-                  const vActas=(actasReclamo||[]).filter(a=>mv(a.vendedor));
-                  const aprobadas=vCotiz.filter(c=>c.status==='APROBADA'||c.status==='FACTURADA').length;
-                  const conv=vCotiz.length>0?Math.round((aprobadas/vCotiz.length)*100):0;
-                  const totalCot=vCotiz.reduce((s,c)=>s+parseNum(c.total||0),0);
+          {vendedoresList.length===0
+            ? <div className="bg-white border border-gray-100 rounded-2xl p-8 text-center text-gray-400">Configura los vendedores en Configuración → Vendedores</div>
+            : <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {vendedoresList.map(vend=>{
+                  const mv2=v=>(v||'').trim().toUpperCase()===vend.trim().toUpperCase();
+                  const nCotiz=(cotizaciones||[]).filter(c=>mv2(c.vendedor)).length;
+                  const nActas=(actasReclamo||[]).filter(a=>mv2(a.vendedor)).length;
+                  const total=(cotizaciones||[]).filter(c=>mv2(c.vendedor)).reduce((s,c)=>s+parseNum(c.total||0),0);
                   return(
-                  <div key={vend} className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
-                    <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-black text-sm flex-shrink-0" style={{background:OR}}>
-                          {vend.split(' ').map(w=>w[0]).join('').substring(0,2)}
-                        </div>
-                        <div>
-                          <div className="font-black text-sm text-gray-900">{vend}</div>
-                          <div className="text-[10px] text-gray-400">{vCotiz.length} cotizaciones · {vActas.length} actas de reclamo</div>
-                        </div>
+                  <button key={vend} onClick={()=>setVendSelAdmin(vend)}
+                    className="bg-white border border-gray-100 rounded-2xl p-5 text-left hover:border-orange-300 hover:shadow-md transition-all group">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-black text-base flex-shrink-0 group-hover:scale-105 transition-transform" style={{background:OR}}>
+                        {vend.split(' ').map(w=>w[0]).join('').substring(0,2)}
                       </div>
-                      <div className="flex items-center gap-8 text-right">
-                        <div><div className="text-[9px] text-gray-400 uppercase font-black tracking-wider">Total cotizado</div><div className="font-black text-base" style={{color:OR}}>${formatNum(totalCot)}</div></div>
-                        <div><div className="text-[9px] text-gray-400 uppercase font-black tracking-wider">Conversión</div><div className="font-black text-base text-gray-700">{conv}%</div></div>
-                        <div><div className="text-[9px] text-gray-400 uppercase font-black tracking-wider">Actas</div><div className="font-black text-base text-indigo-600">{vActas.length}</div></div>
+                      <div>
+                        <div className="font-black text-sm text-gray-900">{vend}</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">Ver portal →</div>
                       </div>
                     </div>
-                    {vCotiz.length>0
-                      ? <table className="w-full text-[11px]">
-                          <thead><tr className="bg-gray-50 border-b border-gray-100">
-                            <th className="py-2 px-4 text-left text-gray-400 font-black uppercase text-[9px] tracking-wider">Cotización</th>
-                            <th className="py-2 px-4 text-left text-gray-400 font-black uppercase text-[9px] tracking-wider">Cliente</th>
-                            <th className="py-2 px-4 text-left text-gray-400 font-black uppercase text-[9px] tracking-wider">Fecha</th>
-                            <th className="py-2 px-4 text-left text-gray-400 font-black uppercase text-[9px] tracking-wider">Estado</th>
-                            <th className="py-2 px-4 text-right text-gray-400 font-black uppercase text-[9px] tracking-wider">Monto</th>
-                          </tr></thead>
-                          <tbody>
-                            {vCotiz.slice(0,5).map((c,i)=>(
-                              <tr key={c.id} className={`border-b border-gray-50 hover:bg-orange-50 transition-colors cursor-pointer ${i%2===0?'bg-white':'bg-gray-50/30'}`}
-                                onClick={()=>{setVentasView('cotizaciones');setActiveTab('ventas');}}>
-                                <td className="py-2.5 px-4 font-black" style={{color:OR}}>{c.id}</td>
-                                <td className="py-2.5 px-4 text-gray-700 font-bold">{c.clientName||c.client||'—'}</td>
-                                <td className="py-2.5 px-4 text-gray-400">{c.fecha||'—'}</td>
-                                <td className="py-2.5 px-4">
-                                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${c.status==='VIGENTE'?'bg-amber-100 text-amber-800':c.status==='APROBADA'?'bg-green-100 text-green-800':c.status==='FACTURADA'?'bg-blue-100 text-blue-800':'bg-gray-100 text-gray-600'}`}>{c.status||'VIGENTE'}</span>
-                                </td>
-                                <td className="py-2.5 px-4 text-right font-black text-gray-800">${formatNum(parseNum(c.total||0))}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      : <div className="py-6 text-center text-gray-400 text-xs font-bold">Sin cotizaciones registradas</div>
-                    }
-                    {vActas.length>0&&(
-                      <div className="px-4 py-3 border-t border-gray-100 bg-indigo-50/50">
-                        <div className="text-[9px] font-black text-indigo-700 uppercase tracking-wider mb-2">Actas de Reclamo</div>
-                        <div className="flex flex-wrap gap-2">
-                          {vActas.slice(0,5).map(a=>(
-                            <span key={a.id} className="px-2 py-1 bg-white border border-indigo-100 rounded-lg text-[10px] font-black text-indigo-600">{a.id} · {a.cliente||'—'}</span>
-                          ))}
-                          {vActas.length>5&&<span className="px-2 py-1 text-[10px] text-gray-400">+{vActas.length-5} más</span>}
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        {l:'Cotizaciones',v:nCotiz},
+                        {l:'Total',v:'$'+formatNum(total)},
+                        {l:'Actas',v:nActas},
+                      ].map((k,i)=>(
+                        <div key={i} className="bg-gray-50 rounded-lg p-2 text-center">
+                          <div className="font-black text-sm" style={{color:OR}}>{k.v}</div>
+                          <div className="text-[9px] text-gray-400 uppercase font-black tracking-wide mt-0.5">{k.l}</div>
                         </div>
-                      </div>
-                    )}
-                  </div>);
-                })
-            }
-          </div>
+                      ))}
+                    </div>
+                  </button>);
+                })}
+              </div>
+          }
         </div>
       );
     }
@@ -25695,9 +25767,18 @@ ${resumenHtml}
   // Vendedor con rol Vendedor → portal personal directo (sin pantalla de selección de portales)
   const isVendorPortal = appUser?.role === 'Vendedor';
   if (appUser && isVendorPortal) {
-    const vendNombre = (appUser?.vendedorNombre || appUser?.name || '').trim();
-    // Buscar cotizaciones con comparación flexible — prueba vendedorNombre y también appUser.name
-    const posiblesNombres = [vendNombre, appUser?.vendedorNombre, appUser?.name].filter(Boolean).map(n=>n.trim().toUpperCase());
+    const vendNombre = (appUser?.vendedorNombre || '').trim() ||
+      // Si no hay vendedorNombre, buscar en la lista de vendedores configurados el que más se parezca al nombre del usuario
+      ((settings?.vendedores||[]).find(v=>
+        appUser?.name?.toUpperCase().includes(v.split(' ')[0].toUpperCase()) ||
+        v.toUpperCase().includes((appUser?.name||'').split(' ')[0].toUpperCase())
+      ) || appUser?.name || '').trim();
+    // Buscar cotizaciones — match flexible por nombre
+    const posiblesNombres = [...new Set([
+      vendNombre,
+      appUser?.vendedorNombre,
+      appUser?.name,
+    ].filter(Boolean).map(n=>n.trim().toUpperCase()))];
     const matchVend = (v) => posiblesNombres.some(n=>(v||'').trim().toUpperCase()===n);
     const misCotiz = (cotizaciones||[]).filter(c=>matchVend(c.vendedor)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
     const misActas = (actasReclamo||[]).filter(a=>matchVend(a.vendedor));
@@ -25959,29 +26040,20 @@ ${resumenHtml}
               // Si el panel de nueva cotización está abierto, redirigir al módulo real
               // pero manteniendo el contexto del portal vendedor
               if(showNewCotizPanel) {
-                // Renderizar el módulo de cotizaciones real del ERP dentro del portal
-                setVentasView('cotizaciones');
-                // El portal vendedor mostrará el form via ventasView
+                // Mostrar formulario de cotización DENTRO del portal usando el módulo ERP
+                // Activar el tab de ventas temporalmente para que el form se renderice
+                if(activeTab !== 'ventas') {
+                  setTimeout(()=>{ setVentasView('cotizaciones'); setActiveTab('ventas'); }, 0);
+                }
                 return (
                   <div>
-                    <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,padding:'12px 0',borderBottom:'1px solid #f0f0f0'}}>
-                      <button onClick={()=>{setShowNewCotizPanel(false);setEditingCotizId(null);}}
+                    <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0 16px',borderBottom:'1px solid #f0f0f0',marginBottom:16}}>
+                      <button onClick={()=>{setShowNewCotizPanel(false);setEditingCotizId(null);setActiveTab('home');setSelectedPortal('vendedores_portal');window._pvAdminVendSel=''}}
                         style={{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',border:'1px solid #e5e7eb',background:'transparent',borderRadius:8,fontSize:12,cursor:'pointer',color:'#374151'}}>
-                        ← Volver a mis cotizaciones
+                        ← Mis cotizaciones
                       </button>
                       <span style={{fontSize:13,fontWeight:700,color:'#111'}}>{editingCotizId?`Editando ${editingCotizId}`:'Nueva Cotización'}</span>
-                    </div>
-                    {/* Aquí se renderizan el formulario de cotización reutilizando el módulo existente */}
-                    <div style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,padding:20}}>
-                      <div style={{textAlign:'center',padding:'40px 0',color:'#9ca3af'}}>
-                        <FileText size={32} style={{margin:'0 auto 8px',opacity:0.3}}/>
-                        <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>Abriendo formulario de cotización...</div>
-                        <div style={{fontSize:11,marginBottom:16}}>El sistema te llevará al módulo de cotizaciones</div>
-                        <button onClick={()=>{setActiveTab('ventas');setVentasView('cotizaciones');}}
-                          style={{padding:'10px 24px',background:OR,color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:700,cursor:'pointer'}}>
-                          Ir a Cotizaciones →
-                        </button>
-                      </div>
+                      <div style={{marginLeft:'auto',fontSize:10,color:'#9ca3af'}}>Se abre el módulo de cotizaciones</div>
                     </div>
                   </div>
                 );
@@ -27136,10 +27208,10 @@ ${resumenHtml}
                </div>
 
                {/* Section tabs */}
-               <div style={{background:'#fff',borderBottom:'1px solid #e5e7eb'}} className="flex gap-1 px-6 overflow-x-auto">
+               <div style={{background:'#fff',borderBottom:'1px solid #e5e7eb',display:'flex',flexWrap:'wrap',gap:0,padding:'0 8px'}}>
                  {[['portada','🏠 Portada'],['identidad','🌙 Identidad'],['empresa','🏢 Empresa'],['planta','🏭 Planta'],['maquinaria','⚙️ Maquinaria'],['productos','📦 Productos'],['clientes','🤝 Clientes'],['activos','💰 Activos'],['proyeccion','📈 Proyección'],['plano','📐 Plano'],['video','🎬 Video'],['catalogo','📋 Catálogo']].map(([t,l])=>(
-                   <button key={t} onClick={()=>setResenaTab(t)} style={resenaTab===t?{borderBottom:`2px solid ${ORG}`,color:ORG}:{borderBottom:'2px solid transparent',color:'#888'}}
-                     className="px-4 py-3 text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition-all">{l}</button>
+                   <button key={t} onClick={()=>setResenaTab(t)} style={resenaTab===t?{borderBottom:`2px solid ${ORG}`,color:ORG,background:'#fff7ed'}:{borderBottom:'2px solid transparent',color:'#888'}}
+                     className="px-3 py-2.5 text-[10px] font-black uppercase tracking-wide whitespace-nowrap transition-all">{l}</button>
                  ))}
                </div>
 
