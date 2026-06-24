@@ -5867,7 +5867,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                                 <td className="py-2 px-4 text-center text-[9px]"><span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-black">{(i.category||'').substring(0,8)}</span></td>
                                 <td className="py-2 px-4 text-center text-[9px]">{getItemSubcategory(i) ? <span className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-black text-[8px]">{getItemSubcategory(i)}</span> : <span className="text-gray-300">—</span>}</td>
                                 <td className="py-2 px-4 text-center font-bold text-gray-500 text-[9px]">{i.unit||'—'}</td>
-                                <td className="py-2 px-4 text-right font-black text-blue-700">{formatNum(i.stock)}</td>
+                                <td className={`py-2 px-4 text-right font-black ${parseNum(i.stock||0)<0?'text-red-600':'text-blue-700'}`}>{parseNum(i.stock||0)<0?'⚠ ':'' }{formatNum(i.stock)}</td>
                                 <td className="py-2 px-4 text-right font-bold text-gray-500">${formatNum(i.cost||0)}</td>
                                 <td className="py-2 px-4 text-right font-black text-green-700">${formatNum((i.stock||0)*(i.cost||0))}</td>
                                 <td className="py-2 px-4 text-center">
@@ -5905,7 +5905,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                             <td className="py-2.5 px-4 font-bold text-[10px] uppercase">{i.desc}</td>
                             <td className="py-2.5 px-4 text-center text-[9px]"><span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-black">{i.category||'—'}</span></td>
                             <td className="py-2.5 px-4 text-center font-bold text-gray-500 text-[9px]">{i.unit||'—'}</td>
-                            <td className="py-2.5 px-4 text-right font-black text-blue-700">{formatNum(i.stock)}</td>
+                            <td className={`py-2.5 px-4 text-right font-black ${parseNum(i.stock||0)<0?'text-red-600':'text-blue-700'}`}>{parseNum(i.stock||0)<0?'⚠ ':'' }{formatNum(i.stock)}</td>
                             <td className="py-2.5 px-4 text-right font-bold text-gray-500">${formatNum(i.cost||0)}</td>
                             <td className="py-2.5 px-4 text-right font-black text-green-700">${formatNum((i.stock||0)*(i.cost||0))}</td>
                             <td className="py-2.5 px-4 text-center">
@@ -12135,7 +12135,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     const targetDoc=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===code && i.almacen===almNom);
                     if(!targetDoc) continue;
                     const stockActual=parseNum(targetDoc.stock||0);
-                    batch.update(getDocRef('inventory',targetDoc.id),{stock:Math.max(0,stockActual-delta),updatedAt:Date.now()});
+                    // Bolsas y Termoencogibles en ALMACEN ZI pueden quedar en negativo
+                    // (se cruza cuando cierra la OP y entra la producción)
+                    const esProdPropia = targetDoc.tipoProducto==='BOLSAS'||targetDoc.tipoProducto==='TERMOENCOGIBLE'||
+                      (targetDoc.subcategory||'').toUpperCase().includes('BOLSA')||(targetDoc.subcategory||'').toUpperCase().includes('TERMO')||
+                      targetDoc.isFG===true;
+                    const esAlmacenZI = almNom==='ALMACEN ZI'||almNom==='ALMACEN ZI ';
+                    const nuevoStock = esProdPropia && esAlmacenZI
+                      ? stockActual - delta          // permite negativo
+                      : Math.max(0, stockActual - delta); // resto: nunca negativo
+                    batch.update(getDocRef('inventory',targetDoc.id),{stock:nuevoStock,updatedAt:Date.now()});
                     const movId=`NE-${id}-${code}-${almNom.slice(-2)}-${Date.now()}-${Math.random().toString(36).slice(2,4)}`;
                     batch.set(getDocRef('inventoryMovements',movId),{
                       id:movId,date:form.fecha||getTodayDate(),timestamp:Date.now(),
@@ -12188,7 +12197,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const handleChangeStatusNE = async (ne, newStatus) => { await updateDoc(getDocRef('notasEntrega',ne.id),{status:newStatus,updatedAt:Date.now()}); };
           const handleConvertirFactura = (ne) => {
             setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad,precioUnit:it.precioUnit,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));
-            setNewInvoiceForm(f=>({...f,fecha:ne.fecha,clientRif:ne.clientRif,clientName:ne.clientName,clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',aplicaIva:ne.aplicaIva,opAsignada:ne.opRelacionada||'',ncAsignada:'',neOrigen:ne.id}));
+            // IMPORTANTE: la fecha de la factura es HOY (fecha de emisión de la factura),
+            // NO la fecha de la NE. La NE conserva su fecha original intacta.
+            setNewInvoiceForm(f=>({...f,fecha:getTodayDate(),clientRif:ne.clientRif,clientName:ne.clientName,clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',aplicaIva:ne.aplicaIva,opAsignada:ne.opRelacionada||'',ncAsignada:'',neOrigen:ne.id}));
             setVentasView('facturacion');
           };
           const neAnios=[...new Set((notasEntrega||[]).map(ne=>(ne.fecha||'').substring(0,4)).filter(Boolean))].sort().reverse();
@@ -12318,6 +12329,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         {form.items.map((it,idx)=>{
                           const code=(it.invCode||'').split('___')[0];
                           const almacenesConStock=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
+                          // Para Bolsas/Termoencogibles en ALMACEN ZI se permiten cantidades mayores al stock (negativo controlado)
+                          const invRef=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===code);
+                          const esProdPropiaNE=invRef?.isFG===true||(invRef?.tipoProducto==='BOLSAS'||invRef?.tipoProducto==='TERMOENCOGIBLE')||
+                            (invRef?.subcategory||'').toUpperCase().includes('BOLSA')||(invRef?.subcategory||'').toUpperCase().includes('TERMO');
                           const wqty=it.warehouseQtys||{};
                           const totalCant=Object.values(wqty).reduce((s,v)=>s+parseNum(v||0),0);
                           // Sincronizar cantidad total
@@ -12345,19 +12360,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               {almacenesConStock.length>0 ? almacenesConStock.map(a=>{
                                 const almNom=a.almacen||'ALMACEN ZI';
                                 const stockDisp=parseNum(a.stock||0);
+                                const esZI=almNom==='ALMACEN ZI'||almNom.trim()==='ALMACEN ZI';
+                                const permitirNeg=esProdPropiaNE&&esZI;
                                 return(
                                 <div key={a.id} className="flex items-center gap-1.5 bg-white rounded-lg px-2 py-1 border border-orange-200">
                                   <span className="text-[9px] font-black text-orange-600">{almNom.replace('ALMACEN ','')}</span>
-                                  <span className="text-[8px] text-gray-400">({formatNum(stockDisp)} disp.)</span>
-                                  <input type="number" min="0" max={stockDisp} step="0.01"
+                                  <span className={`text-[8px] ${stockDisp<0?'text-red-500 font-black':'text-gray-400'}`}>({formatNum(stockDisp)} disp.{stockDisp<0?' ⚠':''})</span>
+                                  <input type="number" min="0" max={permitirNeg?undefined:stockDisp} step="0.01"
                                     value={wqty[almNom]||0}
                                     onChange={e=>{
-                                      const v=Math.min(parseFloat(e.target.value)||0,stockDisp);
+                                      const raw=parseFloat(e.target.value)||0;
+                                      const v=permitirNeg?raw:Math.min(raw,stockDisp);
                                       const ni=[...form.items];
                                       ni[idx]={...ni[idx],warehouseQtys:{...wqty,[almNom]:v},cantidad:Object.entries({...wqty,[almNom]:v}).reduce((s,[,q])=>s+parseNum(q),0)};
                                       setForm(f=>({...f,items:ni}));
                                     }}
-                                    className="w-20 border border-orange-300 rounded px-1.5 py-0.5 text-[10px] font-black text-right outline-none focus:border-orange-500"/>
+                                    className={`w-20 border rounded px-1.5 py-0.5 text-[10px] font-black text-right outline-none ${permitirNeg?'border-purple-300 focus:border-purple-500':'border-orange-300 focus:border-orange-500'}`}/>
                                   <span className="text-[8px] text-gray-400">{it.unit||'und'}</span>
                                 </div>);
                               }) : (
@@ -23253,12 +23271,37 @@ ${resumenHtml}
 
     // ── NEs como fuente canónica de ingresos (igual que Transacciones de Ventas) ──
     const facturasEnNEkpi = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
-    const safeNEsAll = (notasEntrega||[]).filter(Boolean);
+    // IDs de OPs de producción propia (requirements = bolsas/termoencogibles fabricadas)
+    const opsPropias = new Set((requirements||[]).map(r=>String(r.id)));
+    // Detectar NE de producción propia:
+    // 1. Tiene OP relacionada que es un requirement de producción
+    // 2. Tiene items con código FG-
+    // Si no se puede determinar, usar subcategoría/descripción como fallback
+    const EXCLUIR_KPI=/STRETCH|CINTA|KRAFT|PAPEL|BUBBLE|FLEJE|FARDO|BURBUJA|HENO|CARTON|SEPARADOR|DISPENS/i;
+    const INCLUIR_KPI=/BOLSA|TERMOENCOGIBLE|TERMOENC|TERMO|CAMISETA|PRECAM|FONDO|FG-/i;
+    const esProdPropia=(ne)=>{
+      // Criterio 1: OP de producción propia
+      if(ne.opRelacionada && opsPropias.has(String(ne.opRelacionada))) return true;
+      // Criterio 2: items con código FG-
+      const items=ne.items||[];
+      if(items.some(it=>(it.invCode||'').startsWith('FG-')||it.isFG===true)) return true;
+      // Criterio 3: descripción de items — incluir solo si tiene productos propios Y no tiene de reventa
+      if(items.length>0){
+        const tienePropio=items.some(it=>INCLUIR_KPI.test(it.desc||''));
+        const tieneReventa=items.some(it=>EXCLUIR_KPI.test(it.desc||''));
+        if(tienePropio && !tieneReventa) return true;
+        if(tieneReventa) return false;
+      }
+      return false; // si no se puede determinar, excluir del KPI de producción
+    };
+    const safeNEsAll = (notasEntrega||[]).filter(Boolean).filter(esProdPropia);
     const safeDirectInvAll = safeInvoicesAll.filter(inv => {
       if(inv.neOrigen) return false;
       const invId = inv.id||inv.documento||'';
       const invDoc = (inv.documento||'').replace(/^FAC-/,'INVO-');
-      return !facturasEnNEkpi.has(invId) && !facturasEnNEkpi.has(invDoc);
+      if(facturasEnNEkpi.has(invId) || facturasEnNEkpi.has(invDoc)) return false;
+      // Solo facturas directas de producción propia (maquilados de bolsas/termoencogibles)
+      return !EXCLUIR_KPI.test(inv.productoMaquilado||'');
     });
     // "safeInvoices" ahora = NEs + facturas directas (vista unificada)
     const _buildRow = (fecha, montoBase) => ({ fecha: fecha||'', montoBase: parseNum(montoBase||0) });
@@ -23385,12 +23428,12 @@ ${resumenHtml}
     const topClientes = Object.values(cliMap).sort((a,b)=>b.total-a.total).slice(0,6);
     const maxCli = topClientes[0]?.total||1;
 
-    // ── Top productos vendidos (SOLO desde Notas de Entrega, sin filtro de período) ──
+    // ── Top productos vendidos (SOLO Bolsas y Termoencogibles — producción propia) ──
     const prodMap={};
-    (notasEntrega||[]).forEach(ne=>{
+    (notasEntrega||[]).filter(esProdPropia).forEach(ne=>{
       (ne.items||[]).forEach(it=>{
         const k=(it.desc||it.descripcion||it.invCode||it.codigo||'').trim();
-        if(!k) return;
+        if(!k||EXCLUIR_KPI.test(k)) return;
         if(!prodMap[k]) prodMap[k]={name:k,qty:0,ingresos:0};
         const cant=parseNum(it.cantidad||it.qty||0);
         const precio=parseNum(it.precioUnit||it.precio||0);
@@ -23425,10 +23468,12 @@ ${resumenHtml}
     const stockCats = Object.values(stockCatMap).sort((a,b)=>b.val-a.val);
     const maxStock = stockCats[0]?.val||1;
 
-    // ── Stock PT por subcategoría ──
+    // ── Stock PT por subcategoría — SOLO producción propia (Bolsas y Termoencogibles) ──
+    const PT_PROD_PROPIAS=['Bolsas Plásticas','Termoencogibles'];
     const ptSubMap={};
     safeInventory.filter(i=>i.category==='Productos Terminados'&&i.activo!==false).forEach(i=>{
       const sub = getItemSubcategory(i)||'Otros Terminados';
+      if(!PT_PROD_PROPIAS.includes(sub)) return; // excluir Stretch Film, Cintas, Kraft, etc.
       if(!ptSubMap[sub]) ptSubMap[sub]={name:sub,stock:0};
       ptSubMap[sub].stock+=parseNum(i.stock||0);
     });
