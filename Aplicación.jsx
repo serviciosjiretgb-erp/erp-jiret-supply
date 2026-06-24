@@ -14772,279 +14772,285 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             const bancosUSD=(cuentasBanco||[]).filter(c=>c.moneda==='USD'||c.moneda==='USDT');
 
             return(
-            <div className="fixed inset-0 z-[300] flex flex-col" style={{background:'#0f172a'}}>
-              {/* Top bar */}
-              <div className="flex items-center justify-between px-8 py-4 border-b border-white/10 flex-shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center"><DollarSign size={16} className="text-green-400"/></div>
-                  <div>
-                    <div className="text-white font-black text-base uppercase tracking-wider">💳 Registrar Cobro</div>
-                    <div className="text-gray-400 text-[10px]">Cuentas por Cobrar — SERVICIOS JIRET G&amp;B</div>
-                  </div>
-                </div>
-                <button onClick={()=>setCxcPagoModal(null)} className="text-gray-400 hover:text-white transition-all p-2 rounded-lg hover:bg-white/10"><X size={20}/></button>
-              </div>
+            <div className="fixed inset-0 z-[300] flex flex-col" style={{background:'rgba(15,23,42,0.6)',backdropFilter:'blur(4px)'}}>
+              <div className="flex-1 flex items-stretch justify-center p-6">
+                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-7xl flex flex-col overflow-hidden border border-gray-100">
 
-              {/* Body — 3 columnas */}
-              <div className="flex flex-1 overflow-hidden">
-
-                {/* COL 1 — Cliente y NEs */}
-                <div className="w-[420px] border-r border-white/10 flex flex-col flex-shrink-0">
-                  <div className="px-6 py-4 border-b border-white/10 flex-shrink-0">
-                    <div className="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-3">1. Cliente</div>
-                    {/* Buscador */}
-                    <div className="relative mb-2">
-                      <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-                      <input type="text" value={pm.clientSearch||''} onChange={e=>setCxcPagoModal(m=>({...m,clientSearch:e.target.value,clientRif:'',clientName:'',nesSelec:{},distribucion:{}}))}
-                        placeholder="Buscar cliente..." className="w-full pl-9 pr-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-green-500/50"/>
-                    </div>
-                    {/* Lista de clientes filtrados */}
-                    {(!pm.clientRif) && clientesFiltrados.length>0 && (
-                      <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden max-h-40 overflow-y-auto">
-                        {clientesFiltrados.map(cl=>(
-                          <button key={cl.clientRif} onClick={()=>setCxcPagoModal(m=>({...m,clientRif:cl.clientRif,clientName:cl.clientName,clientSearch:cl.clientName,nesSelec:{},distribucion:{}}))}
-                            className="w-full flex justify-between items-center px-3 py-2 hover:bg-white/10 text-left border-b border-white/5 last:border-0 transition-all">
-                            <span className="text-xs text-white font-bold truncate">{cl.clientName}</span>
-                            <span className="text-[10px] text-green-400 font-black ml-2 flex-shrink-0">${formatNum(cl.total)}</span>
-                          </button>
-                        ))}
+                  {/* Header */}
+                  <div className="flex items-center justify-between px-8 py-5 border-b border-gray-100 flex-shrink-0">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl flex items-center justify-center" style={{background:'linear-gradient(135deg,#16a34a,#15803d)'}}>
+                        <DollarSign size={18} className="text-white"/>
                       </div>
-                    )}
-                    {/* Cliente seleccionado */}
-                    {clienteSel && (
-                      <div className="flex items-center justify-between bg-green-500/10 border border-green-500/30 rounded-xl px-3 py-2">
-                        <div>
-                          <div className="text-white font-black text-xs">{clienteSel.clientName}</div>
-                          <div className="text-[10px] text-green-400">Cartera total: ${formatNum(saldoTotalCliente)}</div>
-                        </div>
-                        <button onClick={()=>setCxcPagoModal(m=>({...m,clientRif:'',clientName:'',clientSearch:'',nesSelec:{},distribucion:{}}))} className="text-gray-400 hover:text-white text-lg leading-none">×</button>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Lista de NEs */}
-                  {clienteSel && (
-                    <div className="flex-1 overflow-y-auto">
-                      <div className="px-6 py-3 border-b border-white/5 flex justify-between items-center flex-shrink-0">
-                        <div className="text-[9px] font-black text-gray-400 uppercase">2. Facturas Pendientes</div>
-                        <div className="flex gap-2">
-                          <button onClick={()=>{const all={};nesPendientes.forEach(ne=>{all[ne.id]=true;});setCxcPagoModal(m=>({...m,nesSelec:all}));}} className="text-[9px] text-green-400 font-black hover:underline">✓ Todas</button>
-                          <button onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{}}))} className="text-[9px] text-gray-500 font-black hover:underline">✕ Ninguna</button>
-                        </div>
-                      </div>
-                      <div className="text-[9px] text-gray-500 px-6 py-2 italic">Sin selección = distribuye automáticamente</div>
-                      {nesPendientes.map((ne,i)=>{
-                        const saldo=getSaldoNEAtFecha(ne,null);
-                        const sel=!!pm.nesSelec?.[ne.id];
-                        const aplicado=distMap[ne.id]||0;
-                        const saldoTras=saldo-aplicado;
-                        return(
-                        <div key={ne.id} onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:!sel}}))}
-                          className={`px-6 py-3 cursor-pointer border-b border-white/5 transition-all ${sel?'bg-green-500/10':'hover:bg-white/5'}`}>
-                          <div className="flex items-center gap-3">
-                            <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${sel?'bg-green-500 border-green-500':'border-gray-600'}`}>
-                              {sel&&<span className="text-white text-[9px] font-black">✓</span>}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex justify-between items-center">
-                                <span className="text-white font-black text-xs">{ne.id}</span>
-                                <span className="text-red-400 font-black text-xs">${formatNum(saldo)}</span>
-                              </div>
-                              <div className="flex justify-between items-center mt-0.5">
-                                <span className="text-gray-500 text-[10px]">{ne.fecha} · {ne.vendedor||'OFICINA'}</span>
-                                {montoUSD>0&&aplicado>0&&<span className="text-green-400 text-[9px] font-black">-${formatNum(aplicado)} → ${formatNum(Math.max(0,saldoTras))}</span>}
-                              </div>
-                            </div>
-                          </div>
-                        </div>);
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {/* COL 2 — Monto, moneda, concepto */}
-                <div className="flex-1 flex flex-col border-r border-white/10 overflow-y-auto">
-                  <div className="p-6 space-y-5">
-                    {/* Moneda */}
-                    <div>
-                      <div className="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-3">3. Moneda del Pago</div>
-                      <div className="grid grid-cols-2 gap-3">
-                        {[{k:'USD',label:'💵 Dólares (USD)',desc:'Monto en dólares'},{k:'Bs',label:'🇻🇪 Bolívares (Bs)',desc:'Monto en bolívares'}].map(cur=>(
-                          <button key={cur.k} onClick={()=>setCxcPagoModal(m=>({...m,moneda:cur.k,monto:''}))}
-                            className={`py-4 rounded-xl font-black text-sm border-2 transition-all text-left px-4 ${pm.moneda===cur.k?'border-green-500 bg-green-500/10 text-green-400':'border-white/10 text-gray-500 hover:border-white/30 hover:text-white'}`}>
-                            <div className="text-base">{cur.label}</div>
-                            <div className={`text-[10px] mt-1 ${pm.moneda===cur.k?'text-green-400/70':'text-gray-600'}`}>{cur.desc}</div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Monto + tasa */}
-                    <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="text-[9px] font-black text-orange-400 uppercase block mb-2">Monto {pm.moneda}</label>
-                        <div className="relative">
-                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-black text-sm">{pm.moneda==='USD'?'$':'Bs'}</span>
-                          <input type="number" step="0.01" min="0" value={pm.monto}
-                            onChange={e=>setCxcPagoModal(m=>({...m,monto:e.target.value}))}
-                            className="w-full pl-10 bg-white/5 border-2 border-orange-500/40 rounded-xl py-3 text-sm font-black text-white outline-none focus:border-orange-500" placeholder="0.00"/>
+                        <div className="font-black text-gray-900 text-lg">Registrar Cobro</div>
+                        <div className="text-gray-400 text-[11px]">Cuentas por Cobrar — SERVICIOS JIRET G&amp;B</div>
+                      </div>
+                    </div>
+                    <button onClick={()=>setCxcPagoModal(null)} className="w-9 h-9 rounded-xl flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all"><X size={18}/></button>
+                  </div>
+
+                  {/* Body — 3 columnas */}
+                  <div className="flex flex-1 overflow-hidden">
+
+                    {/* COL 1 — Cliente y NEs */}
+                    <div className="w-[360px] border-r border-gray-100 flex flex-col flex-shrink-0 bg-gray-50/50">
+                      <div className="px-6 py-4 border-b border-gray-100 flex-shrink-0">
+                        <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-3">1. Cliente</div>
+                        {/* Buscador */}
+                        <div className="relative mb-2">
+                          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+                          <input type="text" value={pm.clientSearch||''} onChange={e=>setCxcPagoModal(m=>({...m,clientSearch:e.target.value,clientRif:'',clientName:'',nesSelec:{},distribucion:{}}))}
+                            placeholder="Buscar cliente..." className="w-full pl-9 pr-3 py-2.5 bg-white border border-gray-200 rounded-xl text-xs text-gray-700 placeholder-gray-400 outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100"/>
                         </div>
-                        {parseNum(pm.monto)>0&&(
-                          <div className="mt-2 text-xs font-bold">
-                            {pm.moneda==='USD'?<span className="text-blue-400">≈ Bs. {formatNum(montoBs)}</span>:<span className="text-green-400">≈ USD ${formatNum(montoUSD)}</span>}
+                        {/* Lista clientes */}
+                        {!pm.clientRif && clientesFiltrados.length>0 && (
+                          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden max-h-44 overflow-y-auto shadow-sm">
+                            {clientesFiltrados.map(cl=>(
+                              <button key={cl.clientRif} onClick={()=>setCxcPagoModal(m=>({...m,clientRif:cl.clientRif,clientName:cl.clientName,clientSearch:cl.clientName,nesSelec:{},distribucion:{}}))}
+                                className="w-full flex justify-between items-center px-3 py-2.5 hover:bg-green-50 text-left border-b border-gray-50 last:border-0 transition-all">
+                                <span className="text-xs text-gray-800 font-bold truncate">{cl.clientName}</span>
+                                <span className="text-[10px] text-green-600 font-black ml-2 flex-shrink-0">${formatNum(cl.total)}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {/* Cliente seleccionado */}
+                        {clienteSel && (
+                          <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-xl px-3 py-2.5">
+                            <div>
+                              <div className="text-gray-900 font-black text-xs">{clienteSel.clientName}</div>
+                              <div className="text-[10px] text-green-600 font-bold">Cartera: ${formatNum(saldoTotalCliente)}</div>
+                            </div>
+                            <button onClick={()=>setCxcPagoModal(m=>({...m,clientRif:'',clientName:'',clientSearch:'',nesSelec:{},distribucion:{}}))} className="text-gray-400 hover:text-red-400 text-lg leading-none font-bold">×</button>
                           </div>
                         )}
                       </div>
-                      <div>
-                        <label className="text-[9px] font-black text-blue-400 uppercase block mb-2">Tasa Bs/$</label>
-                        <input type="number" step="0.01" min="1" value={pm.tasa}
-                          onChange={e=>setCxcPagoModal(m=>({...m,tasa:e.target.value}))}
-                          className="w-full bg-white/5 border-2 border-blue-500/40 rounded-xl py-3 px-4 text-sm font-black text-white outline-none focus:border-blue-500" placeholder="Ej: 50.00"/>
-                      </div>
-                    </div>
 
-                    {/* Saldo restante */}
-                    {clienteSel&&montoUSD>0&&(
-                      <div className={`rounded-xl p-4 border ${saldoRestanteCliente<0?'bg-red-500/10 border-red-500/30':'saldoRestanteCliente<0.01?bg-green-500/10 border-green-500/30:bg-white/5 border-white/10'}`}>
-                        <div className="flex justify-between items-center mb-2">
-                          <span className="text-[10px] text-gray-400 font-black uppercase">Saldo del cliente después del pago</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-gray-400 text-xs">Cartera total</span>
-                          <span className="text-white font-bold text-sm">${formatNum(saldoTotalCliente)}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-gray-400 text-xs">Pago recibido</span>
-                          <span className="text-green-400 font-bold text-sm">-${formatNum(montoUSD)}</span>
-                        </div>
-                        <div className="border-t border-white/10 mt-2 pt-2 flex justify-between items-center">
-                          <span className="text-white font-black text-xs uppercase">Saldo restante</span>
-                          <span className={`font-black text-lg ${saldoRestanteCliente<0?'text-red-400':saldoRestanteCliente<0.01?'text-green-400':'text-orange-400'}`}>
-                            ${formatNum(Math.max(0,saldoRestanteCliente))}
-                            {saldoRestanteCliente<0&&<span className="text-xs ml-1">(excede saldo)</span>}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Concepto */}
-                    <div>
-                      <label className="text-[9px] font-black text-gray-400 uppercase block mb-2">Concepto / Detalle</label>
-                      <input type="text" value={pm.concepto} onChange={e=>setCxcPagoModal(m=>({...m,concepto:e.target.value}))}
-                        placeholder="Abono, Anticipo, Pago total, Cruce..."
-                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-orange-500/50 placeholder-gray-600"/>
-                    </div>
-
-                    {/* Fecha + Método */}
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-[9px] font-black text-gray-400 uppercase block mb-2">Fecha</label>
-                        <input type="date" value={pm.fecha} onChange={e=>setCxcPagoModal(m=>({...m,fecha:e.target.value}))}
-                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-orange-500/50"/>
-                      </div>
-                      <div>
-                        <label className="text-[9px] font-black text-gray-400 uppercase block mb-2">Método de Pago</label>
-                        <select value={pm.metodo} onChange={e=>setCxcPagoModal(m=>({...m,metodo:e.target.value}))}
-                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-orange-500/50">
-                          <option className="bg-gray-900">Transferencia</option>
-                          <option className="bg-gray-900">Efectivo USD</option>
-                          <option className="bg-gray-900">Efectivo Bs.</option>
-                          <option className="bg-gray-900">Zelle</option>
-                          <option className="bg-gray-900">Cheque</option>
-                          <option className="bg-gray-900">Pago Móvil</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    {/* Referencia */}
-                    <div>
-                      <label className="text-[9px] font-black text-gray-400 uppercase block mb-2">N° Referencia / Comprobante</label>
-                      <input type="text" value={pm.referencia} onChange={e=>setCxcPagoModal(m=>({...m,referencia:e.target.value.toUpperCase()}))}
-                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-black text-white outline-none focus:border-orange-500/50 uppercase" placeholder="REF-0000000"/>
-                    </div>
-                  </div>
-                </div>
-
-                {/* COL 3 — Banco + Resumen + Confirmar */}
-                <div className="w-[320px] flex flex-col flex-shrink-0">
-                  <div className="flex-1 overflow-y-auto p-6 space-y-5">
-
-                    {/* Bancos nacionales */}
-                    <div>
-                      <div className="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-3">4. Cuenta Bancaria Destino</div>
-                      {bancosBS.length>0&&(
-                        <div className="mb-3">
-                          <div className="text-[9px] text-blue-400 font-black uppercase mb-2 flex items-center gap-1">🏦 Bancos Nacionales (Bs)</div>
-                          <div className="space-y-1">
-                            {bancosBS.map(ct=>(
-                              <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}))}
-                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left ${pm.cuentaId===ct.id?'bg-blue-500/20 border-blue-500/50':'bg-white/5 border-white/10 hover:border-white/20'}`}>
-                                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${pm.cuentaId===ct.id?'bg-blue-400':'bg-gray-600'}`}/>
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-white text-xs font-bold truncate">{ct.banco}</div>
-                                  <div className="text-gray-500 text-[9px]">{ct.numeroCuenta} · {ct.moneda}</div>
-                                </div>
-
-                              </button>
-                            ))}
+                      {/* Lista NEs */}
+                      {clienteSel && (
+                        <div className="flex-1 overflow-y-auto">
+                          <div className="px-6 py-3 border-b border-gray-100 flex justify-between items-center bg-white flex-shrink-0">
+                            <div className="text-[9px] font-black text-gray-400 uppercase">2. Facturas Pendientes</div>
+                            <div className="flex gap-2">
+                              <button onClick={()=>{const all={};nesPendientes.forEach(ne=>{all[ne.id]=true;});setCxcPagoModal(m=>({...m,nesSelec:all}));}} className="text-[9px] text-green-600 font-black hover:underline">✓ Todas</button>
+                              <button onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{}}))} className="text-[9px] text-gray-400 font-black hover:underline">✕</button>
+                            </div>
                           </div>
+                          <div className="text-[9px] text-gray-400 px-6 py-2 italic bg-amber-50/50 border-b border-amber-100">Sin selección = distribuye automático de más antigua a más reciente</div>
+                          {nesPendientes.map((ne,i)=>{
+                            const saldo=getSaldoNEAtFecha(ne,null);
+                            const sel=!!pm.nesSelec?.[ne.id];
+                            const aplicado=distMap[ne.id]||0;
+                            return(
+                            <div key={ne.id} onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:!sel}}))}
+                              className={`px-5 py-3 cursor-pointer border-b border-gray-100 transition-all ${sel?'bg-green-50':'hover:bg-gray-50'}`}>
+                              <div className="flex items-center gap-3">
+                                <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center flex-shrink-0 transition-all ${sel?'bg-green-500 border-green-500':'border-gray-300'}`}>
+                                  {sel&&<span className="text-white text-[9px] font-black leading-none">✓</span>}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-gray-900 font-black text-xs">{ne.id}</span>
+                                    <span className="text-red-500 font-black text-xs">${formatNum(saldo)}</span>
+                                  </div>
+                                  <div className="flex justify-between items-center mt-0.5">
+                                    <span className="text-gray-400 text-[10px]">{ne.fecha} · {ne.vendedor||'OFICINA'}</span>
+                                    {montoUSD>0&&aplicado>0&&<span className="text-green-600 text-[9px] font-black">→ ${formatNum(Math.max(0,saldo-aplicado))}</span>}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>);
+                          })}
                         </div>
                       )}
-                      {bancosUSD.length>0&&(
+                    </div>
+
+                    {/* COL 2 — Monto, moneda, concepto */}
+                    <div className="flex-1 overflow-y-auto bg-white">
+                      <div className="p-7 space-y-6">
+                        {/* Moneda */}
                         <div>
-                          <div className="text-[9px] text-green-400 font-black uppercase mb-2 flex items-center gap-1">💵 Bancos Internacionales / USD</div>
-                          <div className="space-y-1">
-                            {bancosUSD.map(ct=>(
-                              <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}))}
-                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left ${pm.cuentaId===ct.id?'bg-green-500/20 border-green-500/50':'bg-white/5 border-white/10 hover:border-white/20'}`}>
-                                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${pm.cuentaId===ct.id?'bg-green-400':'bg-gray-600'}`}/>
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-white text-xs font-bold truncate">{ct.banco}</div>
-                                  <div className="text-gray-500 text-[9px]">{ct.numeroCuenta} · {ct.moneda}</div>
-                                </div>
-
+                          <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-3">3. Moneda del Pago</div>
+                          <div className="grid grid-cols-2 gap-3">
+                            {[{k:'USD',label:'💵 Dólares (USD)',desc:'Ingresa el monto en dólares'},{k:'Bs',label:'🇻🇪 Bolívares (Bs)',desc:'Ingresa el monto en bolívares'}].map(cur=>(
+                              <button key={cur.k} onClick={()=>setCxcPagoModal(m=>({...m,moneda:cur.k,monto:''}))}
+                                className={`py-4 px-5 rounded-2xl font-bold text-sm border-2 transition-all text-left ${pm.moneda===cur.k?'border-green-500 bg-green-50 text-green-800 shadow-sm':'border-gray-200 text-gray-500 hover:border-gray-300 bg-white'}`}>
+                                <div className="font-black text-base">{cur.label}</div>
+                                <div className={`text-[10px] mt-1 ${pm.moneda===cur.k?'text-green-600':'text-gray-400'}`}>{cur.desc}</div>
                               </button>
                             ))}
                           </div>
                         </div>
-                      )}
-                      {(cuentasBanco||[]).length===0&&<p className="text-amber-400 text-[10px] font-bold">★ Agregue cuentas en el módulo Banco</p>}
-                    </div>
 
-                    {/* Resumen */}
-                    {clienteSel&&parseNum(pm.monto)>0&&pm.cuentaId&&(
-                      <div className="bg-white/5 rounded-2xl border border-white/10 overflow-hidden">
-                        <div className="px-4 py-3 border-b border-white/10">
-                          <div className="text-[9px] font-black text-white uppercase tracking-wider">Resumen del Cobro</div>
+                        {/* Monto + tasa */}
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Monto {pm.moneda}</label>
+                            <div className="relative">
+                              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-black">{pm.moneda==='USD'?'$':'Bs'}</span>
+                              <input type="number" step="0.01" min="0" value={pm.monto}
+                                onChange={e=>setCxcPagoModal(m=>({...m,monto:e.target.value}))}
+                                className="w-full pl-9 border-2 border-orange-300 rounded-2xl py-3.5 text-base font-black text-gray-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100" placeholder="0.00"/>
+                            </div>
+                            {parseNum(pm.monto)>0&&(
+                              <div className="mt-2 text-xs font-bold">
+                                {pm.moneda==='USD'?<span className="text-blue-600">≈ Bs. {formatNum(montoBs)}</span>:<span className="text-green-600">≈ USD ${formatNum(montoUSD)}</span>}
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Tasa Bs/$</label>
+                            <input type="number" step="0.01" min="1" value={pm.tasa}
+                              onChange={e=>setCxcPagoModal(m=>({...m,tasa:e.target.value}))}
+                              className="w-full border-2 border-gray-200 rounded-2xl py-3.5 px-4 text-base font-black text-gray-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100" placeholder="Ej: 50.00"/>
+                          </div>
                         </div>
-                        <div className="p-4 space-y-2">
-                          <div className="flex justify-between text-xs"><span className="text-gray-400">Cliente</span><span className="text-white font-bold truncate ml-4 text-right">{pm.clientName}</span></div>
-                          <div className="flex justify-between text-xs"><span className="text-gray-400">NEs</span><span className="text-white font-bold">{nesSelecIds.length>0?`${nesSelecIds.length} selec.`:`Auto (${nesParaDistribuir.length})`}</span></div>
-                          <div className="flex justify-between text-xs"><span className="text-gray-400">USD</span><span className="text-green-400 font-black">${formatNum(montoUSD)}</span></div>
-                          <div className="flex justify-between text-xs"><span className="text-gray-400">Bs</span><span className="text-blue-400 font-black">Bs. {formatNum(montoBs)}</span></div>
-                          <div className="flex justify-between text-xs"><span className="text-gray-400">Banco</span><span className="text-white font-bold text-right ml-4 truncate">{(cuentasBanco||[]).find(c=>c.id===pm.cuentaId)?.banco||'—'}</span></div>
-                          <div className="flex justify-between text-xs"><span className="text-gray-400">Método</span><span className="text-white font-bold">{pm.metodo}</span></div>
-                          <div className="border-t border-white/10 pt-2 flex justify-between text-xs"><span className="text-gray-400">Saldo restante</span><span className={`font-black ${saldoRestanteCliente<0.01?'text-green-400':'text-orange-400'}`}>${formatNum(Math.max(0,saldoRestanteCliente))}</span></div>
+
+                        {/* Saldo restante */}
+                        {clienteSel&&montoUSD>0&&(
+                          <div className={`rounded-2xl p-4 border-2 ${saldoRestanteCliente<0?'bg-red-50 border-red-200':saldoRestanteCliente<0.01?'bg-green-50 border-green-200':'bg-amber-50 border-amber-200'}`}>
+                            <div className="text-[9px] font-black text-gray-500 uppercase mb-3">Impacto en cartera del cliente</div>
+                            <div className="space-y-1.5">
+                              <div className="flex justify-between text-xs"><span className="text-gray-500">Cartera total</span><span className="font-black text-gray-700">${formatNum(saldoTotalCliente)}</span></div>
+                              <div className="flex justify-between text-xs"><span className="text-gray-500">Pago recibido</span><span className="font-black text-green-600">- ${formatNum(montoUSD)}</span></div>
+                              <div className="border-t border-gray-200 pt-1.5 flex justify-between items-center">
+                                <span className="text-xs font-black text-gray-700">Saldo restante</span>
+                                <span className={`font-black text-lg ${saldoRestanteCliente<0?'text-red-500':saldoRestanteCliente<0.01?'text-green-600':'text-amber-600'}`}>
+                                  ${formatNum(Math.max(0,saldoRestanteCliente))}
+                                  {saldoRestanteCliente<0&&<span className="text-[10px] ml-1">(excede saldo)</span>}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Concepto */}
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Concepto / Detalle</label>
+                          <input type="text" value={pm.concepto} onChange={e=>setCxcPagoModal(m=>({...m,concepto:e.target.value}))}
+                            placeholder="Abono, Anticipo, Pago total, Cruce..."
+                            className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-sm text-gray-700 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 placeholder-gray-300"/>
+                        </div>
+
+                        {/* Fecha + Método */}
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Fecha</label>
+                            <input type="date" value={pm.fecha} onChange={e=>setCxcPagoModal(m=>({...m,fecha:e.target.value}))}
+                              className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-sm text-gray-700 outline-none focus:border-orange-400"/>
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Método de Pago</label>
+                            <select value={pm.metodo} onChange={e=>setCxcPagoModal(m=>({...m,metodo:e.target.value}))}
+                              className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-sm text-gray-700 outline-none focus:border-orange-400 bg-white">
+                              <option>Transferencia</option><option>Efectivo USD</option><option>Efectivo Bs.</option>
+                              <option>Zelle</option><option>Cheque</option><option>Pago Móvil</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Referencia */}
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">N° Referencia / Comprobante</label>
+                          <input type="text" value={pm.referencia} onChange={e=>setCxcPagoModal(m=>({...m,referencia:e.target.value.toUpperCase()}))}
+                            className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-sm font-black text-gray-700 outline-none focus:border-orange-400 uppercase" placeholder="REF-0000000"/>
                         </div>
                       </div>
-                    )}
-                  </div>
+                    </div>
 
-                  {/* Botón confirmar */}
-                  <div className="p-6 border-t border-white/10 flex-shrink-0 space-y-3">
-                    <button onClick={guardarPagoMasivo}
-                      disabled={!pm.clientRif||!parseNum(pm.monto)||!pm.cuentaId||!pm.referencia}
-                      className="w-full py-4 rounded-2xl font-black text-sm uppercase text-white transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
-                      style={{background:'linear-gradient(135deg,#16a34a,#15803d)'}}>
-                      <CheckCircle size={16}/> Confirmar y Registrar
-                    </button>
-                    <button onClick={()=>setCxcPagoModal(null)}
-                      className="w-full py-3 rounded-2xl font-black text-xs uppercase border border-white/10 text-gray-400 hover:bg-white/5 transition-all">
-                      Cancelar
-                    </button>
+                    {/* COL 3 — Banco + Resumen + Confirmar */}
+                    <div className="w-[300px] flex flex-col flex-shrink-0 bg-gray-50/50 border-l border-gray-100">
+                      <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                        <div>
+                          <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-3">4. Cuenta Bancaria Destino</div>
+                          {bancosBS.length>0&&(
+                            <div className="mb-4">
+                              <div className="text-[9px] text-blue-600 font-black uppercase mb-2 flex items-center gap-1.5">
+                                <span className="w-4 h-4 bg-blue-100 rounded flex items-center justify-center text-[8px]">🏦</span> Bancos Nacionales (Bs)
+                              </div>
+                              <div className="space-y-1.5">
+                                {bancosBS.map(ct=>(
+                                  <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}))}
+                                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 transition-all text-left ${pm.cuentaId===ct.id?'bg-blue-50 border-blue-400 shadow-sm':'bg-white border-gray-200 hover:border-blue-200'}`}>
+                                    <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${pm.cuentaId===ct.id?'bg-blue-500':'bg-gray-300'}`}/>
+                                    <div className="flex-1 min-w-0">
+                                      <div className={`text-xs font-black truncate ${pm.cuentaId===ct.id?'text-blue-700':'text-gray-700'}`}>{ct.banco}</div>
+                                      <div className="text-gray-400 text-[9px]">{ct.numeroCuenta}</div>
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {bancosUSD.length>0&&(
+                            <div>
+                              <div className="text-[9px] text-green-600 font-black uppercase mb-2 flex items-center gap-1.5">
+                                <span className="w-4 h-4 bg-green-100 rounded flex items-center justify-center text-[8px]">💵</span> Internacionales / USD
+                              </div>
+                              <div className="space-y-1.5">
+                                {bancosUSD.map(ct=>(
+                                  <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}))}
+                                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 transition-all text-left ${pm.cuentaId===ct.id?'bg-green-50 border-green-400 shadow-sm':'bg-white border-gray-200 hover:border-green-200'}`}>
+                                    <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${pm.cuentaId===ct.id?'bg-green-500':'bg-gray-300'}`}/>
+                                    <div className="flex-1 min-w-0">
+                                      <div className={`text-xs font-black truncate ${pm.cuentaId===ct.id?'text-green-700':'text-gray-700'}`}>{ct.banco}</div>
+                                      <div className="text-gray-400 text-[9px]">{ct.numeroCuenta}</div>
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {(cuentasBanco||[]).length===0&&<p className="text-amber-500 text-[10px] font-bold bg-amber-50 rounded-xl p-3 border border-amber-200">★ Agrega cuentas en el módulo Banco</p>}
+                        </div>
+
+                        {/* Resumen */}
+                        {clienteSel&&parseNum(pm.monto)>0&&pm.cuentaId&&(
+                          <div className="bg-white rounded-2xl border-2 border-gray-100 overflow-hidden shadow-sm">
+                            <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
+                              <div className="text-[9px] font-black text-gray-500 uppercase tracking-wider">Resumen</div>
+                            </div>
+                            <div className="p-4 space-y-2">
+                              {[
+                                ['Cliente', pm.clientName],
+                                ['NEs', nesSelecIds.length>0?`${nesSelecIds.length} seleccionada(s)`:`Auto (${nesParaDistribuir.length} docs)`],
+                                ['USD', `$${formatNum(montoUSD)}`],
+                                ['Bs', `Bs. ${formatNum(montoBs)}`],
+                                ['Banco', (cuentasBanco||[]).find(c=>c.id===pm.cuentaId)?.banco||'—'],
+                                ['Método', pm.metodo],
+                              ].map(([k,v])=>(
+                                <div key={k} className="flex justify-between items-center text-xs">
+                                  <span className="text-gray-400">{k}</span>
+                                  <span className="font-black text-gray-700 text-right ml-3 truncate max-w-[140px]">{v}</span>
+                                </div>
+                              ))}
+                              <div className="border-t border-gray-100 pt-2 flex justify-between items-center text-xs">
+                                <span className="text-gray-400">Saldo restante</span>
+                                <span className={`font-black text-sm ${saldoRestanteCliente<0.01?'text-green-600':'text-amber-600'}`}>${formatNum(Math.max(0,saldoRestanteCliente))}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Botones */}
+                      <div className="p-5 border-t border-gray-100 flex-shrink-0 space-y-2">
+                        <button onClick={guardarPagoMasivo}
+                          disabled={!pm.clientRif||!parseNum(pm.monto)||!pm.cuentaId||!pm.referencia}
+                          className="w-full py-4 rounded-2xl font-black text-sm uppercase text-white transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed shadow-lg"
+                          style={{background:'linear-gradient(135deg,#16a34a,#15803d)'}}>
+                          <CheckCircle size={16}/> Confirmar y Registrar
+                        </button>
+                        <button onClick={()=>setCxcPagoModal(null)}
+                          className="w-full py-2.5 rounded-2xl font-black text-xs uppercase border-2 border-gray-200 text-gray-400 hover:bg-gray-50 transition-all">
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+
                   </div>
                 </div>
-
               </div>
             </div>);
           }
