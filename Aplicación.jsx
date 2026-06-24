@@ -16,7 +16,7 @@ import {
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
   ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing, Upload,
   Menu, ChevronLeft, Smartphone, Wifi, WifiOff,
-  Activity, Timer, Award, PackageCheck, Calendar, ChevronDown, CheckSquare, RotateCcw, Settings, BookOpen, Building2} from 'lucide-react';
+  Activity, Timer, Award, PackageCheck, Calendar, ChevronDown, CheckSquare, RotateCcw, Settings, BookOpen, Building2, Paperclip, Camera} from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "firebase/auth";
@@ -704,7 +704,7 @@ function App() {
   const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
 
   // Formularios de Configuración
-  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', permissions: generateDefaultPermissions(), portales: { produccion:true, administracion:true, finanzas:true, contabilidad:true, configuracion_portal:true } };
+  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', vendedorNombre: '', permissions: generateDefaultPermissions(), portales: { produccion:true, administracion:true, finanzas:true, contabilidad:true, configuracion_portal:true } };
   const [newUserForm, setNewUserForm] = useState(initialUserForm);
   const [editingUserId, setEditingUserId] = useState(null);
   const [originalUsername, setOriginalUsername] = useState(null);
@@ -873,6 +873,13 @@ function App() {
   const [comReportes, setComReportes] = useState([]); // historial de reportes guardados
   const [comVistaHistorial, setComVistaHistorial] = useState(false); // ver historial vs calcular
   const [comHistMesFilt, setComHistMesFilt] = useState(''); // filtro mes en historial ej: '2026-06'
+  // PORTAL VENDEDOR
+  const [pvView, setPvView] = useState('cotizaciones');
+  const [pvActaId, setPvActaId] = useState(null);
+  const [pvActaForm, setPvActaForm] = useState(null);
+  const [actasReclamo, setActasReclamo] = useState([]);
+  const [pvActaFotos, setPvActaFotos] = useState({1:null,2:null,3:null});
+  const [pvShowActaHist, setPvShowActaHist] = useState(false);
   const [comHistVendFilt, setComHistVendFilt] = useState(''); // filtro vendedor en historial
   // ── Dashboard de ventas ──
   const [dashMes, setDashMes] = useState(new Date().getMonth()+1);
@@ -1529,6 +1536,7 @@ function App() {
     }
     const unsubCli = onSnapshot(getColRef('clientes'), (s) => setClients(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubCotiz = onSnapshot(getColRef('cotizaciones'), (s) => setCotizaciones(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubActas = onSnapshot(getColRef('actasReclamo'), (s) => setActasReclamo(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubCobrosCxc = onSnapshot(getColRef('cobros_cxc'), (s) => setCobrosCxc(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubCuentasBanco = onSnapshot(getColRef('banco_cuentas'), (s) => setCuentasBanco(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
@@ -24624,7 +24632,16 @@ ${resumenHtml}
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Usuario (ID de acceso)</label><input type="text" required value={newUserForm.username} onChange={e=>setNewUserForm({...newUserForm, username: e.target.value.toLowerCase().trim()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs lowercase outline-none focus:border-orange-500" placeholder="ej: juanperez" /></div>
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Contraseña</label><input type="text" required value={newUserForm.password} onChange={e=>setNewUserForm({...newUserForm, password: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500" /></div>
                  <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Nombre Completo</label><input type="text" required value={newUserForm.name} onChange={e=>setNewUserForm({...newUserForm, name: e.target.value.toUpperCase()})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
-                 <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Rol / Cargo</label><input type="text" value={newUserForm.role} onChange={e=>setNewUserForm({...newUserForm, role: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500" /></div>
+                 <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Rol / Cargo</label>
+                   <select value={newUserForm.role} onChange={e=>setNewUserForm({...newUserForm, role: e.target.value})} className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-xs uppercase outline-none focus:border-orange-500">
+                     <option value="Usuario">Usuario</option>
+                     <option value="Operador">Operador</option>
+                     <option value="Vendedor">Vendedor</option>
+                     <option value="Administrador">Administrador</option>
+                     <option value="Master">Master</option>
+                   </select>
+                 </div>
+                 {newUserForm.role==='Vendedor'&&<div><label className="text-[10px] font-bold text-orange-600 uppercase block mb-1">Nombre del vendedor (tal como aparece en NEs)</label><select value={newUserForm.vendedorNombre||''} onChange={e=>setNewUserForm({...newUserForm,vendedorNombre:e.target.value})} className="w-full border-2 border-orange-300 rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500"><option value="">— Seleccionar vendedor —</option>{((settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[]).map(v=><option key={v} value={v}>{v}</option>)}</select></div>}
               </div>
               <div className="mt-6 border-t border-gray-200 pt-4">
                 <h4 className="text-sm font-black uppercase text-gray-800 mb-2 flex items-center gap-2">
@@ -25553,6 +25570,525 @@ ${resumenHtml}
   // ============================================================================
   // PANTALLA DE SELECCIÓN DE PORTAL (post-login) — Master / Producción / Administración / Finanzas
   // ============================================================================
+
+  // ============================================================================
+  // PORTAL VENDEDOR — rol Vendedor → experiencia dedicada
+  // ============================================================================
+  const isVendorPortal = appUser?.role === 'Vendedor';
+  if (appUser && isVendorPortal) {
+    const vendNombre = appUser?.vendedorNombre || appUser?.name || '';
+    const misCotiz = (cotizaciones||[]).filter(c=>(c.vendedor||'').toUpperCase()===(vendNombre).toUpperCase()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+    const misActas = (actasReclamo||[]).filter(a=>(a.vendedor||'').toUpperCase()===(vendNombre).toUpperCase());
+    const mesActual = getTodayDate().substring(0,7);
+    const cotizMes = misCotiz.filter(c=>(c.fecha||'').startsWith(mesActual));
+    const aprobadas = misCotiz.filter(c=>c.status==='APROBADA'||c.status==='FACTURADA');
+    const totalCotizado = misCotiz.reduce((s,c)=>s+parseNum(c.total||0),0);
+    const conversion = misCotiz.length>0 ? Math.round((aprobadas.length/misCotiz.length)*100) : 0;
+
+    // clientes asignados a este vendedor
+    const misClientes = (clients||[]).filter(cl=>((cl.vendedorAsignado||cl.vendedor||'').toUpperCase()===(vendNombre).toUpperCase()));
+
+    // ── helpers acta ──
+    const initActaForm = () => ({
+      cliente:'', rif:'', vendedor:vendNombre, telefono:'',
+      producto:'', cantidad:'', lote:'', orden:'', fechaEntrega:'',
+      fechaReclamo:getTodayDate(),
+      c1:false,c2:false,c3:false,c4:false,c5:false,c6:false,c7:false,c8:false,
+      e1:false,e2:false,e3:false,e4:false,e5:false,e6:false,
+      descripcion:'',
+      nomCli:'',ciCli:'',fchCli:'',
+      nomVen:vendNombre,ciVen:'',fchVen:'',
+      nomJef:'',ciJef:'',fchJef:'',
+    });
+    const nextActaNum = () => {
+      const nums = (actasReclamo||[]).map(a=>parseInt(String(a.id||'').replace(/\D/g,'')||'0')).filter(Boolean);
+      return 'JGB-'+ String((nums.length>0?Math.max(...nums):0)+1).padStart(4,'0');
+    };
+    const guardarActa = async() => {
+      if(!pvActaForm?.cliente){setDialog({title:'Falta cliente',text:'Ingresa el nombre del cliente.',type:'alert'});return;}
+      try {
+        const id = pvActaId || nextActaNum();
+        await setDoc(getDocRef('actasReclamo',id),{
+          ...pvActaForm, id, vendedor:vendNombre,
+          fotos:{
+            f1:pvActaFotos[1]?'[foto]':null,
+            f2:pvActaFotos[2]?'[foto]':null,
+            f3:pvActaFotos[3]?'[foto]':null,
+          },
+          timestamp:pvActaId?(pvActaForm.timestamp||Date.now()):Date.now(),
+          user:appUser?.name
+        });
+        setPvActaId(id);
+        setDialog({title:'✅ Acta guardada',text:`Acta ${id} guardada correctamente.`,type:'alert'});
+      } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+    };
+    const imprimirActa = () => window.print();
+    const nuevaActa = () => { setPvActaId(null); setPvActaForm(initActaForm()); setPvActaFotos({1:null,2:null,3:null}); };
+    const cargarActa = (a) => { setPvActaId(a.id); setPvActaForm({...initActaForm(),...a}); setPvActaFotos({1:null,2:null,3:null}); setPvShowActaHist(false); };
+    const eliminarActa = (id) => setDialog({title:'Eliminar acta',text:`¿Eliminar ${id}?`,type:'confirm',onConfirm:async()=>{await deleteDoc(getDocRef('actasReclamo',id));if(pvActaId===id){setPvActaId(null);setPvActaForm(null);}}});
+
+    const INCONFORMIDADES=['Producto defectuoso','Producto incompleto / faltante','Producto incorrecto','Daño en transporte','Producto vencido / caducado','Error de facturación','Fallo de sellado / empaque','Otros'];
+    const EVIDENCIAS=['Fotografía del producto','Video demostrativo','Factura / comprobante','Producto en condiciones originales','Empaque original','Otros documentos'];
+    const POLITICAS=[
+      {n:'1',tit:'Plazo',txt:'El reclamo debe notificarse dentro de los 7 días hábiles siguientes a la recepción.'},
+      {n:'2',tit:'Evidencia',txt:'Obligatorio fotografía y/o video del defecto. Sin evidencia el reclamo no procede.'},
+      {n:'3',tit:'Condición',txt:'El producto debe estar en condiciones óptimas, sin daños adicionales ni alteraciones.'},
+      {n:'4',tit:'Trazabilidad',txt:'Indicar número de factura, lote o código del producto al momento del reclamo.'},
+      {n:'5',tit:'Respuesta',txt:'Servicios Jiret G&B emitirá respuesta en 5 días hábiles.'},
+      {n:'6',tit:'Error del cliente',txt:'No se aceptan devoluciones por pedido equivocado, cambio de opinión o especificaciones incorrectas.'},
+      {n:'7',tit:'Producto en uso',txt:'No proceden devoluciones de productos usados, instalados o consumidos, salvo defecto de fabricación comprobable.'},
+      {n:'8',tit:'Devolución física',txt:'Retorno en empaque original. Flete se acordará según el origen del defecto.'},
+    ];
+
+    const PILL_STATUS = {
+      'VIGENTE':'bg-amber-100 text-amber-800',
+      'APROBADA':'bg-green-100 text-green-800',
+      'FACTURADA':'bg-blue-100 text-blue-800',
+      'NO CONCRETADA':'bg-gray-100 text-gray-600',
+    };
+
+    const OR = '#E8541A';
+    const fld = (label, id, placeholder='', type='text', readOnly=false) => (
+      <div className="flex flex-col gap-1">
+        <label className="text-[9px] font-black uppercase tracking-wider" style={{color:'#9ca3af'}}>{label}</label>
+        <input type={type} value={pvActaForm?.[id]||''} readOnly={readOnly}
+          onChange={e=>setPvActaForm(f=>({...f,[id]:e.target.value}))}
+          placeholder={placeholder}
+          className={`border rounded-lg px-3 py-2 text-xs outline-none transition-all ${readOnly?'bg-orange-50 font-black':'bg-white focus:border-orange-400'}`}
+          style={{borderColor:readOnly?OR:'#e5e7eb',color:readOnly?OR:'#111'}}/>
+      </div>
+    );
+
+    const loadFoto = (n, e) => {
+      const file = e.target.files?.[0];
+      if(!file) return;
+      const r = new FileReader();
+      r.onload = ev => setPvActaFotos(f=>({...f,[n]:ev.target.result}));
+      r.readAsDataURL(file);
+    };
+
+    return (
+      <div className="min-h-screen flex flex-col" style={{background:'#f4f4f0',fontFamily:'Arial,sans-serif'}}>
+        {/* TOP BAR */}
+        <div style={{background:'#111',borderBottom:`2px solid ${OR}`,padding:'10px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{width:32,height:32,background:OR,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <Users size={16} style={{color:'#fff'}}/>
+            </div>
+            <div>
+              <div style={{color:'#fff',fontWeight:900,fontSize:14}}>Supply G&B <span style={{color:OR}}>| Portal Vendedor</span></div>
+              <div style={{color:'rgba(255,255,255,0.5)',fontSize:10}}>SERVICIOS JIRET G&B, C.A.</div>
+            </div>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:12}}>
+            <div style={{color:'rgba(255,255,255,0.7)',fontSize:11}}>Bienvenido, <b style={{color:'#fff'}}>{vendNombre}</b></div>
+            <div style={{width:32,height:32,background:OR,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:900,fontSize:12}}>
+              {vendNombre.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase()}
+            </div>
+            <button onClick={async()=>{try{await deleteDoc(getDocRef('activeSessions',appUser.username))}catch(e){}try{await signOut(auth)}catch(e){}setAppUser(null);}}
+              style={{padding:'6px 12px',borderRadius:8,border:'1px solid rgba(239,68,68,0.4)',background:'transparent',color:'#f87171',fontSize:11,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}>
+              <LogOut size={12}/> Salir
+            </button>
+          </div>
+        </div>
+
+        {/* BODY */}
+        <div style={{display:'flex',flex:1,minHeight:0}}>
+
+          {/* SIDEBAR */}
+          <div style={{width:220,background:'#fff',borderRight:'1px solid #f0f0f0',display:'flex',flexDirection:'column',flexShrink:0}}>
+            <div style={{padding:'16px 12px 8px',fontSize:9,fontWeight:900,color:'#9ca3af',textTransform:'uppercase',letterSpacing:2}}>Mi espacio</div>
+            {[
+              {id:'cotizaciones',icon:<FileText size={16}/>,label:'Mis Cotizaciones',badge:misCotiz.length},
+              {id:'clientes',icon:<Users size={16}/>,label:'Mis Clientes',badge:misClientes.length},
+              {id:'rendimiento',icon:<BarChart3 size={16}/>,label:'Mi Rendimiento'},
+              {id:'actas',icon:<ClipboardList size={16}/>,label:'Actas de Reclamo',badge:misActas.length},
+            ].map(item=>(
+              <button key={item.id} onClick={()=>{setPvView(item.id);if(item.id==='actas'&&!pvActaForm)setPvActaForm(initActaForm());}}
+                style={{display:'flex',alignItems:'center',gap:9,padding:'9px 16px',border:'none',background:pvView===item.id?'#fff7ed':'transparent',
+                  borderRight:pvView===item.id?`2px solid ${OR}`:'2px solid transparent',
+                  color:pvView===item.id?OR:'#6b7280',cursor:'pointer',textAlign:'left',fontSize:12,fontWeight:pvView===item.id?700:400,width:'100%',transition:'all .12s'}}>
+                <span style={{color:'inherit'}}>{item.icon}</span>
+                <span style={{flex:1}}>{item.label}</span>
+                {item.badge!=null&&item.badge>0&&<span style={{background:pvView===item.id?OR:'#f3f4f6',color:pvView===item.id?'#fff':'#6b7280',fontSize:10,fontWeight:700,padding:'1px 7px',borderRadius:20}}>{item.badge}</span>}
+              </button>
+            ))}
+            <div style={{padding:'16px 12px 8px',marginTop:8,fontSize:9,fontWeight:900,color:'#9ca3af',textTransform:'uppercase',letterSpacing:2,borderTop:'1px solid #f0f0f0'}}>Acceso restringido</div>
+            {['Facturación','Inventario','CxC','Banco','Configuración'].map(m=>(
+              <div key={m} style={{display:'flex',alignItems:'center',gap:9,padding:'8px 16px',color:'#d1d5db',fontSize:12,cursor:'not-allowed',opacity:0.5}}>
+                <Lock size={13} style={{color:'#d1d5db'}}/> {m}
+              </div>
+            ))}
+            <div style={{marginTop:'auto',padding:'12px 16px',borderTop:'1px solid #f0f0f0',fontSize:10,color:'#9ca3af',display:'flex',alignItems:'center',gap:6}}>
+              <Lock size={12}/> Solo cotizaciones y actas
+            </div>
+          </div>
+
+          {/* MAIN CONTENT */}
+          <div style={{flex:1,overflowY:'auto',padding:24}}>
+
+            {/* ── COTIZACIONES ── */}
+            {pvView==='cotizaciones'&&(()=>{
+              // Reusar el módulo de cotizaciones completo del ERP, filtrado por vendedor
+              // KPIs
+              return (
+                <div>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+                    <div>
+                      <div style={{fontSize:18,fontWeight:900,color:'#111'}}>Mis Cotizaciones</div>
+                      <div style={{fontSize:12,color:'#9ca3af',marginTop:2}}>Solo ves las cotizaciones asignadas a ti</div>
+                    </div>
+                    <button onClick={()=>{setVentasView('cotizaciones');setActiveTab('ventas');setShowNewCotizPanel(true);setEditingCotizId(null);}}
+                      style={{display:'flex',alignItems:'center',gap:6,padding:'9px 18px',background:OR,color:'#fff',border:'none',borderRadius:10,fontSize:12,fontWeight:700,cursor:'pointer'}}>
+                      <Plus size={14}/> Nueva Cotización
+                    </button>
+                  </div>
+
+                  {/* KPIs */}
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:20}}>
+                    {[
+                      {l:'Este mes',v:cotizMes.length,sub:'cotizaciones generadas',c:OR},
+                      {l:'Conversión',v:conversion+'%',sub:'aprobadas / emitidas',c:'#111'},
+                      {l:'Total cotizado',v:'$'+formatNum(totalCotizado),sub:'histórico',c:OR},
+                    ].map((k,i)=>(
+                      <div key={i} style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,padding:'14px 18px'}}>
+                        <div style={{fontSize:10,color:'#9ca3af',marginBottom:4}}>{k.l}</div>
+                        <div style={{fontSize:22,fontWeight:900,color:k.c}}>{k.v}</div>
+                        <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>{k.sub}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Tabla cotizaciones */}
+                  <div style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,overflow:'hidden'}}>
+                    <div style={{padding:'12px 18px',borderBottom:'1px solid #f0f0f0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span style={{fontSize:13,fontWeight:700,color:'#111'}}>Cotizaciones activas</span>
+                      <span style={{fontSize:10,color:'#9ca3af'}}>{misCotiz.length} total</span>
+                    </div>
+                    {misCotiz.length===0
+                      ? <div style={{textAlign:'center',padding:'40px 0',color:'#9ca3af'}}>
+                          <FileText size={32} style={{margin:'0 auto 8px',opacity:0.3}}/>
+                          <div style={{fontSize:12,fontWeight:700}}>Sin cotizaciones aún</div>
+                          <div style={{fontSize:11,marginTop:4}}>Crea tu primera cotización</div>
+                        </div>
+                      : <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                          <thead>
+                            <tr style={{background:'#fafafa'}}>
+                              {['N° Cotización','Cliente','Fecha','Válida hasta','Estado','Monto',''].map(h=>(
+                                <th key={h} style={{padding:'9px 14px',textAlign:'left',fontSize:10,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:0.6,borderBottom:'1px solid #f0f0f0'}}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {misCotiz.map((c,i)=>(
+                              <tr key={c.id} style={{borderBottom:'1px solid #f9fafb',background:i%2===0?'#fff':'#fafafa'}}>
+                                <td style={{padding:'10px 14px',fontWeight:700,color:OR,fontSize:12}}>{c.id}</td>
+                                <td style={{padding:'10px 14px',color:'#111',fontWeight:500}}>{c.clientName||c.client||'—'}</td>
+                                <td style={{padding:'10px 14px',color:'#6b7280'}}>{c.fecha||'—'}</td>
+                                <td style={{padding:'10px 14px',color:'#6b7280'}}>{c.validez||'—'}</td>
+                                <td style={{padding:'10px 14px'}}>
+                                  <span style={{padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:700,background:c.status==='VIGENTE'?'#fff7ed':c.status==='APROBADA'?'#f0fdf4':c.status==='FACTURADA'?'#eff6ff':'#f9fafb',color:c.status==='VIGENTE'?'#c2410c':c.status==='APROBADA'?'#15803d':c.status==='FACTURADA'?'#1d4ed8':'#6b7280',border:`1px solid ${c.status==='VIGENTE'?'#fed7aa':c.status==='APROBADA'?'#bbf7d0':c.status==='FACTURADA'?'#bfdbfe':'#e5e7eb'}`}}>
+                                    {c.status||'VIGENTE'}
+                                  </span>
+                                </td>
+                                <td style={{padding:'10px 14px',fontWeight:900,color:'#111',textAlign:'right'}}>${formatNum(parseNum(c.total||0))}</td>
+                                <td style={{padding:'10px 8px',textAlign:'center'}}>
+                                  <button onClick={()=>{setVentasView('cotizaciones');setActiveTab('ventas');setEditingCotizId(c.id);setNewCotizForm({...c,fecha:c.fecha||getTodayDate()});setCotizItems(c.items||[]);setShowNewCotizPanel(true);}}
+                                    style={{padding:'5px 10px',borderRadius:6,border:'1px solid #e5e7eb',background:'transparent',fontSize:10,color:'#6b7280',cursor:'pointer'}}>
+                                    ✏ Editar
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                    }
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── CLIENTES ── */}
+            {pvView==='clientes'&&(
+              <div>
+                <div style={{fontSize:18,fontWeight:900,color:'#111',marginBottom:4}}>Mis Clientes</div>
+                <div style={{fontSize:12,color:'#9ca3af',marginBottom:20}}>Clientes asignados a {vendNombre}</div>
+                {misClientes.length===0
+                  ? <div style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,padding:'40px 0',textAlign:'center',color:'#9ca3af'}}>
+                      <Users size={32} style={{margin:'0 auto 8px',opacity:0.3}}/>
+                      <div style={{fontSize:12,fontWeight:700}}>Sin clientes asignados</div>
+                      <div style={{fontSize:11,marginTop:4}}>El administrador debe asignarte clientes desde Configuración</div>
+                    </div>
+                  : <div style={{display:'grid',gap:10}}>
+                      {misClientes.map(cl=>(
+                        <div key={cl.id} style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,padding:'14px 18px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                          <div>
+                            <div style={{fontWeight:700,fontSize:13,color:'#111'}}>{cl.name||cl.clientName||'—'}</div>
+                            <div style={{fontSize:11,color:'#9ca3af',marginTop:2}}>{cl.rif||'—'} · {cl.phone||cl.telefono||'—'}</div>
+                          </div>
+                          <div style={{fontSize:11,color:OR,fontWeight:700}}>
+                            {misCotiz.filter(c=>c.clientRif===cl.rif||c.clientName===cl.name).length} cotiz.
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                }
+              </div>
+            )}
+
+            {/* ── RENDIMIENTO ── */}
+            {pvView==='rendimiento'&&(
+              <div>
+                <div style={{fontSize:18,fontWeight:900,color:'#111',marginBottom:4}}>Mi Rendimiento</div>
+                <div style={{fontSize:12,color:'#9ca3af',marginBottom:20}}>Estadísticas personales de {vendNombre}</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:12}}>
+                  {[
+                    {l:'Total cotizaciones',v:misCotiz.length,sub:'históricas'},
+                    {l:'Vigentes',v:misCotiz.filter(c=>c.status==='VIGENTE').length,sub:'en proceso'},
+                    {l:'Aprobadas',v:misCotiz.filter(c=>c.status==='APROBADA').length,sub:'ganadas'},
+                    {l:'Facturadas',v:misCotiz.filter(c=>c.status==='FACTURADA').length,sub:'convertidas a venta'},
+                    {l:'No concretadas',v:misCotiz.filter(c=>c.status==='NO CONCRETADA').length,sub:'perdidas'},
+                    {l:'Tasa de conversión',v:conversion+'%',sub:'aprobadas+facturadas / total'},
+                    {l:'Total cotizado',v:'$'+formatNum(totalCotizado),sub:'monto histórico'},
+                    {l:'Actas de reclamo',v:misActas.length,sub:'registradas'},
+                  ].map((k,i)=>(
+                    <div key={i} style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,padding:'16px 18px'}}>
+                      <div style={{fontSize:10,color:'#9ca3af',marginBottom:6,textTransform:'uppercase',letterSpacing:0.6}}>{k.l}</div>
+                      <div style={{fontSize:24,fontWeight:900,color:OR}}>{k.v}</div>
+                      <div style={{fontSize:10,color:'#9ca3af',marginTop:4}}>{k.sub}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── ACTAS DE RECLAMO ── */}
+            {pvView==='actas'&&pvActaForm&&(()=>{
+              const AF = pvActaForm;
+              const setF = (k,v) => setPvActaForm(f=>({...f,[k]:v}));
+              return (
+              <div>
+                {/* Toolbar acta */}
+                <div style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,padding:'12px 18px',marginBottom:16,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,flex:1}}>
+                    <ClipboardList size={16} style={{color:OR}}/>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:900,color:'#111'}}>Acta de Reclamo / Devolución</div>
+                      <div style={{fontSize:10,color:'#9ca3af'}}>{pvActaId?`Correlativo: ${pvActaId} · Editando`:'Nueva acta — sin guardar'}</div>
+                    </div>
+                  </div>
+                  <div style={{display:'flex',gap:8'}}>
+                    <button onClick={()=>setPvShowActaHist(v=>!v)}
+                      style={{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',border:'1px solid #e5e7eb',background:'transparent',borderRadius:8,fontSize:11,color:'#6b7280',cursor:'pointer'}}>
+                      <History size={13}/> Historial ({misActas.length})
+                    </button>
+                    <button onClick={nuevaActa}
+                      style={{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',border:'1px solid #e5e7eb',background:'transparent',borderRadius:8,fontSize:11,color:'#6b7280',cursor:'pointer'}}>
+                      <Plus size={13}/> Nueva
+                    </button>
+                    <button onClick={imprimirActa}
+                      style={{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',border:'none',background:'#1a3366',color:'#fff',borderRadius:8,fontSize:11,cursor:'pointer'}}>
+                      <Printer size={13}/> PDF / Imprimir
+                    </button>
+                    <button onClick={guardarActa}
+                      style={{display:'flex',alignItems:'center',gap:6,padding:'7px 18px',border:'none',background:OR,color:'#fff',borderRadius:8,fontSize:11,fontWeight:700,cursor:'pointer'}}>
+                      <Save size={13}/> Guardar
+                    </button>
+                  </div>
+                </div>
+
+                {/* Historial lateral */}
+                {pvShowActaHist&&(
+                  <div style={{background:'#fff',border:`2px solid ${OR}`,borderRadius:12,padding:'14px',marginBottom:16}}>
+                    <div style={{fontSize:12,fontWeight:700,color:OR,marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      Historial de actas<button onClick={()=>setPvShowActaHist(false)} style={{border:'none',background:'none',color:'#9ca3af',cursor:'pointer',fontSize:16}}>×</button>
+                    </div>
+                    {misActas.length===0
+                      ? <div style={{color:'#9ca3af',fontSize:11,textAlign:'center',padding:'12px 0'}}>No hay actas guardadas</div>
+                      : misActas.map(a=>(
+                        <div key={a.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 10px',border:'1px solid #f0f0f0',borderRadius:8,marginBottom:6,background:'#fafafa'}}>
+                          <div>
+                            <div style={{fontWeight:700,fontSize:12,color:OR}}>{a.id}</div>
+                            <div style={{fontSize:10,color:'#6b7280'}}>{a.cliente||'—'} · {a.fechaReclamo||'—'}</div>
+                          </div>
+                          <div style={{display:'flex',gap:6}}>
+                            <button onClick={()=>cargarActa(a)} style={{padding:'4px 10px',border:'1px solid #e5e7eb',background:'transparent',borderRadius:6,fontSize:10,cursor:'pointer',color:'#374151'}}>Ver</button>
+                            <button onClick={()=>eliminarActa(a.id)} style={{padding:'4px 8px',border:'1px solid #fecaca',background:'transparent',borderRadius:6,fontSize:10,cursor:'pointer',color:'#dc2626'}}><Trash2 size={11}/></button>
+                          </div>
+                        </div>
+                      ))
+                    }
+                  </div>
+                )}
+
+                {/* Formulario acta */}
+                <div style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,overflow:'hidden'}}>
+                  {/* Header naranja */}
+                  <div style={{background:OR,padding:'10px 18px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <div>
+                      <div style={{color:'#fff',fontWeight:900,fontSize:13}}>SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</div>
+                      <div style={{color:'rgba(255,255,255,0.85)',fontSize:10}}>ACTA DE RECLAMO / DEVOLUCIÓN — ASEGURAMIENTO DE LA CALIDAD</div>
+                    </div>
+                    <div style={{background:'rgba(255,255,255,0.2)',border:'1px solid rgba(255,255,255,0.4)',borderRadius:20,padding:'4px 14px',color:'#fff',fontSize:11,fontWeight:700}}>
+                      {pvActaId||'Sin guardar'}
+                    </div>
+                  </div>
+
+                  <div style={{padding:'20px'}}>
+                    {/* Datos generales */}
+                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Datos generales del reclamo</div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:20}}>
+                      {[
+                        ['cliente','Cliente','Nombre del cliente'],
+                        ['rif','RIF / C.I.','J-000000000'],
+                        ['vendedor','Vendedor','',false,true],
+                        ['telefono','Teléfono','0414-0000000'],
+                        ['producto','Producto / Servicio','Descripción'],
+                        ['cantidad','Cant. entregada','0'],
+                        ['lote','Lote / Código','—'],
+                        ['orden','Orden de compra','—'],
+                        ['fechaEntrega','Fecha de entrega','',false,false,'date'],
+                        ['fechaReclamo','Fecha del reclamo','',false,false,'date'],
+                      ].map(([id,label,ph,_,ro,type])=>(
+                        <div key={id} className="flex flex-col gap-1">
+                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:0.6}}>{label}</label>
+                          <input type={type||'text'} value={AF[id]||''} readOnly={ro}
+                            onChange={e=>!ro&&setF(id,e.target.value)}
+                            placeholder={ph}
+                            style={{border:`1px solid ${ro?OR:'#e5e7eb'}`,borderRadius:8,padding:'8px 12px',fontSize:12,outline:'none',background:ro?'#fff7ed':'#fff',color:ro?OR:'#111',fontWeight:ro?700:400}}/>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Tipo de inconformidad */}
+                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Tipo de inconformidad (marque con X)</div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:20}}>
+                      {INCONFORMIDADES.map((inc,i)=>(
+                        <label key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',border:`1px solid ${AF['c'+(i+1)]?OR:'#e5e7eb'}`,borderRadius:8,background:AF['c'+(i+1)]?'#fff7ed':'#fafafa',cursor:'pointer',fontSize:11,transition:'all .12s'}}>
+                          <input type="checkbox" checked={!!AF['c'+(i+1)]} onChange={e=>setF('c'+(i+1),e.target.checked)} style={{accentColor:OR,width:13,height:13}}/>
+                          {inc}
+                        </label>
+                      ))}
+                    </div>
+
+                    {/* Evidencias */}
+                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Evidencias requeridas (obligatorio)</div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:8}}>
+                      {EVIDENCIAS.map((ev,i)=>(
+                        <label key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',border:`1px solid ${AF['e'+(i+1)]?OR:'#e5e7eb'}`,borderRadius:8,background:AF['e'+(i+1)]?'#fff7ed':'#fafafa',cursor:'pointer',fontSize:11,transition:'all .12s'}}>
+                          <input type="checkbox" checked={!!AF['e'+(i+1)]} onChange={e=>setF('e'+(i+1),e.target.checked)} style={{accentColor:OR,width:13,height:13}}/>
+                          {ev}
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:8,padding:'8px 14px',fontSize:11,color:'#92400e',display:'flex',alignItems:'center',gap:8,marginBottom:20}}>
+                      ⚠ Sin fotografía o video el reclamo no será procesado.
+                    </div>
+
+                    {/* Descripción */}
+                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Descripción detallada del defecto</div>
+                    <textarea value={AF.descripcion||''} onChange={e=>setF('descripcion',e.target.value)}
+                      placeholder="Describa detalladamente el defecto observado en el producto o servicio..."
+                      style={{width:'100%',border:'1px solid #e5e7eb',borderRadius:8,padding:'10px 12px',fontSize:12,minHeight:80,resize:'vertical',outline:'none',marginBottom:20,fontFamily:'inherit'}}/>
+
+                    {/* Fotos */}
+                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Fotografías del producto (máx. 3)</div>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:20}}>
+                      {[1,2,3].map(n=>{
+                        const foto=pvActaFotos[n];
+                        const labels={1:'Evidencia principal',2:'Vista adicional',3:'Empaque / etiqueta'};
+                        return(
+                        <div key={n} style={{border:`1px solid ${foto?OR:'#e5e7eb'}`,borderRadius:10,overflow:'hidden'}}>
+                          <div style={{background:foto?'#052e16':'#1a0800',padding:'7px 12px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                            <span style={{fontSize:11,fontWeight:700,color:foto?'#4ade80':OR}}>
+                              {foto?'✓':''} Foto {n} — {labels[n]}
+                            </span>
+                            <span style={{fontSize:9,background:foto?'#14532d':'#2a1000',color:foto?'#86efac':'#f97316',padding:'2px 8px',borderRadius:20}}>{foto?'Adjunta':'Opcional'}</span>
+                          </div>
+                          <div style={{position:'relative',height:160,background:foto?'#000':'#fafafa',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:8,cursor:'pointer',overflow:'hidden'}}
+                            onClick={()=>document.getElementById(`pvfoto${n}`).click()}>
+                            {foto
+                              ? <>
+                                  <img src={foto} alt={`Foto ${n}`} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
+                                  <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0)',transition:'background .2s',display:'flex',alignItems:'center',justifyContent:'center',gap:12}}
+                                    onMouseEnter={e=>{e.currentTarget.style.background='rgba(0,0,0,0.5)'}}
+                                    onMouseLeave={e=>{e.currentTarget.style.background='rgba(0,0,0,0)'}}>
+                                    <button onClick={e=>{e.stopPropagation();setPvActaFotos(f=>({...f,[n]:null}));}}
+                                      style={{width:36,height:36,borderRadius:'50%',background:'#dc2626',border:'none',color:'#fff',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                                      <Trash2 size={15}/>
+                                    </button>
+                                  </div>
+                                </>
+                              : <>
+                                  <div style={{position:'absolute',inset:8,border:'1.5px dashed #d1d5db',borderRadius:8,pointerEvents:'none'}}/>
+                                  <Camera size={28} style={{color:'#d1d5db'}}/>
+                                  <div style={{fontSize:11,color:'#9ca3af',textAlign:'center',lineHeight:1.5}}>Clic para adjuntar<br/><span style={{fontSize:9}}>JPG · PNG · WEBP</span></div>
+                                </>
+                            }
+                          </div>
+                          <div style={{padding:'8px 10px',borderTop:'1px solid #f0f0f0'}}>
+                            <input id={`pvfoto${n}`} type="file" accept="image/*" style={{display:'none'}} onChange={e=>loadFoto(n,e)}/>
+                            <button onClick={()=>document.getElementById(`pvfoto${n}`).click()}
+                              style={{width:'100%',padding:'6px',border:'1px solid #e5e7eb',borderRadius:6,background:'transparent',fontSize:11,color:'#6b7280',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:5}}>
+                              <Paperclip size={12}/> {foto?'Reemplazar':'Adjuntar imagen'}
+                            </button>
+                          </div>
+                        </div>);
+                      })}
+                    </div>
+
+                    {/* Políticas */}
+                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Políticas de reclamo y devolución</div>
+                    <div style={{background:'#fafafa',border:'1px solid #f0f0f0',borderRadius:8,padding:'12px 16px',marginBottom:20,display:'flex',flexDirection:'column',gap:5}}>
+                      {POLITICAS.map(p=>(
+                        <div key={p.n} style={{fontSize:11,color:'#374151',lineHeight:1.5}}>
+                          <span style={{color:OR,fontWeight:700}}>{p.n}. {p.tit}:</span> {p.txt}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Firmas */}
+                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Firmas y conformidad</div>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:20}}>
+                      {[
+                        {title:'Cliente', fields:[['nomCli','Nombre'],['ciCli','C.I.'],['fchCli','Fecha']]},
+                        {title:'Vendedor', fields:[['nomVen','Nombre'],['ciVen','C.I.'],['fchVen','Fecha']], ro:true},
+                        {title:'Jefe de Calidad', fields:[['nomJef','Nombre'],['ciJef','C.I.'],['fchJef','Fecha']]},
+                      ].map(sig=>(
+                        <div key={sig.title} style={{border:'1px solid #e5e7eb',borderRadius:10,overflow:'hidden'}}>
+                          <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'6px 12px',textAlign:'center',textTransform:'uppercase',letterSpacing:0.6}}>{sig.title}</div>
+                          <div style={{padding:'10px 12px',background:'#fafafa',display:'flex',flexDirection:'column',gap:6}}>
+                            {sig.fields.map(([id,lbl])=>(
+                              <div key={id} style={{display:'flex',flexDirection:'column',gap:2}}>
+                                <label style={{fontSize:9,color:'#9ca3af',textTransform:'uppercase',letterSpacing:0.4}}>{lbl}</label>
+                                <input type="text" value={AF[id]||''} readOnly={sig.ro}
+                                  onChange={e=>!sig.ro&&setF(id,e.target.value)}
+                                  style={{border:'none',borderBottom:'1px solid #e5e7eb',borderRadius:0,padding:'3px 0',fontSize:11,background:'transparent',color:sig.ro?OR:'#111',fontWeight:sig.ro?700:400,outline:'none'}}/>
+                              </div>
+                            ))}
+                            <div style={{borderTop:'1px solid #e5e7eb',marginTop:6,paddingTop:4,fontSize:9,color:'#9ca3af',textAlign:'center'}}>Firma</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Footer */}
+                    <div style={{background:'#f9fafb',border:'1px solid #f0f0f0',borderRadius:8,padding:'8px 14px',display:'flex',justifyContent:'space-between',fontSize:10,color:'#9ca3af'}}>
+                      <span>Original → Servicios Jiret G&B &nbsp;|&nbsp; Copia 1 → Cliente &nbsp;|&nbsp; Copia 2 → Vendedor</span>
+                      <span>Maracaibo, Zulia · RIF: J-412309374</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              );
+            })()}
+
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (appUser && !selectedPortal) {
     const PORTALES = [
       { id:'produccion', title:'PRODUCCIÓN', desc:'Planta, fórmulas, inventario y simulador de OP', color:'#f97316',
