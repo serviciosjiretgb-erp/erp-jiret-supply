@@ -14689,10 +14689,18 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           // ── MODAL COBRO MASIVO ─────────────────────────────────────────
           if(cxcPagoModal){
             const pm=cxcPagoModal;
-            // Clientes con saldo pendiente
-            const clientesConSaldo=clientesList.filter(cl=>cl.saldoTotal>0.01);
+            // Clientes con saldo pendiente — usar todas las NEs abiertas sin filtro de búsqueda
+            const allNesAbiertas=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAtFecha(ne,null)>0.01);
+            const porClienteModal={};
+            allNesAbiertas.forEach(ne=>{
+              const k=ne.clientRif||ne.clientName||'SIN-RIF';
+              if(!porClienteModal[k]) porClienteModal[k]={clientName:ne.clientName||k,clientRif:k,total:0,nes:[]};
+              porClienteModal[k].total+=getSaldoNEAtFecha(ne,null);
+              porClienteModal[k].nes.push(ne);
+            });
+            const clientesConSaldo=Object.values(porClienteModal).filter(cl=>cl.total>0.01).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
             const clienteSel=clientesConSaldo.find(cl=>cl.clientRif===pm.clientRif);
-            const nesPendientes=(clienteSel?.nes||[]).filter(ne=>getSaldoNEAtFecha(ne,null)>0.01);
+            const nesPendientes=(clienteSel?.nes||[]).filter(ne=>getSaldoNEAtFecha(ne,null)>0.01).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
             const nesSelecIds=Object.keys(pm.nesSelec||{}).filter(id=>pm.nesSelec[id]);
             const totalSelec=nesSelecIds.reduce((s,id)=>{const ne=nesPendientes.find(n=>n.id===id);return s+(ne?getSaldoNEAtFecha(ne,null):0);},0);
             const montoUSD=pm.moneda==='USD'?parseNum(pm.monto):parseNum(pm.monto)/parseNum(pm.tasa||1);
@@ -14713,7 +14721,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     <select value={pm.clientRif} onChange={e=>{const cl=clientesConSaldo.find(c=>c.clientRif===e.target.value);setCxcPagoModal(m=>({...m,clientRif:e.target.value,clientName:cl?.clientName||'',nesSelec:{},distribucion:{}}));}}
                       className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-green-400">
                       <option value="">— Seleccione cliente —</option>
-                      {clientesConSaldo.map(cl=><option key={cl.clientRif} value={cl.clientRif}>{cl.clientName} · Saldo: ${formatNum(cl.saldoTotal)}</option>)}
+                      {clientesConSaldo.map(cl=><option key={cl.clientRif} value={cl.clientRif}>{cl.clientName} · Saldo: ${formatNum(cl.total)}</option>)}
                     </select>
                   </div>
 
@@ -15139,10 +15147,6 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                                   <span className={`font-black px-2 py-0.5 rounded-md text-[9px] ${saldo<=0?'text-green-700 bg-green-50':d<=0?'text-blue-700 bg-blue-50':d<=30?'text-amber-700 bg-amber-50':d<=60?'text-orange-700 bg-orange-50':'text-red-700 bg-red-50'}`}>${formatNum(saldo)}</span>
                                                 </td>
                                                 <td className="py-2 px-2 text-center text-gray-500 text-[9px] uppercase">{ne.vendedor||'—'}</td>
-                                                <td className="py-2 px-2 text-center">
-                                                  <button onClick={()=>{const _inv=(invoices||[]).find(i=>i.neOrigen===ne.id||i.id===ne.facturaId);const _t=parseNum(_inv?.tasa||_inv?.tasaBCV||0);setCxcCobroModal({neId:ne.id,neDoc:ne.documento||ne.id,clientName:ne.clientName||cl.clientName,saldo:getSaldoNE(ne),total:parseNum(ne.total||ne.totalUSD||0),cobrado:getCobradoNEAtFecha(ne,null),vendedor:ne.vendedor||'',fecha:getTodayDate(),monto:String(getSaldoNE(ne)),metodo:'Transferencia',referencia:'',cuentaId:'',cuentaNombre:'',tipo:'Total',tasaCobro:_t>0?String(_t):''})}}
-                                                    className="px-3 py-1 bg-green-600 text-white rounded-lg font-black hover:bg-green-700 transition-all text-[9px]">💰 Cobrar</button>
-                                                </td>
                                                 <td className="py-1 px-2" style={{minWidth:'120px'}}>
                                                   <input
                                                     type="text"
