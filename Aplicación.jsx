@@ -853,6 +853,8 @@ function App() {
   const [comBonos, setComBonos] = useState(null); // bonos editables del vendedor/mes
   const [comReportes, setComReportes] = useState([]); // historial de reportes guardados
   const [comVistaHistorial, setComVistaHistorial] = useState(false); // ver historial vs calcular
+  const [comHistMesFilt, setComHistMesFilt] = useState(''); // filtro mes en historial ej: '2026-06'
+  const [comHistVendFilt, setComHistVendFilt] = useState(''); // filtro vendedor en historial
   // ── Dashboard de ventas ──
   const [dashMes, setDashMes] = useState(new Date().getMonth()+1);
   const [dashAnio, setDashAnio] = useState(new Date().getFullYear());
@@ -11842,39 +11844,236 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           );
         })()}
         {/* ── HISTORIAL DE COMISIONES ── */}
-        {ventasView === 'comisiones' && comVistaHistorial && (
+        {ventasView === 'comisiones' && comVistaHistorial && (() => {
+          // Meses disponibles en los reportes
+          const mesesDisp = [...new Set(comReportes.map(r=>r.ym||''))].filter(Boolean).sort().reverse();
+          const filtered = comReportes.filter(r=>
+            (!comHistVendFilt || r.vendedor===comHistVendFilt.toUpperCase()) &&
+            (!comHistMesFilt || r.ym===comHistMesFilt)
+          );
+
+          // ── PDF individual por reporte ──
+          const genPdfIndividual = (r) => {
+            const esPct = r.tipoComision==='PORCENTUAL';
+            const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+              <style>
+                body{font-family:Arial,sans-serif;padding:32px;color:#111;font-size:12px}
+                .header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #E8541A;padding-bottom:16px;margin-bottom:24px}
+                .logo{font-size:28px;font-weight:900;color:#E8541A}
+                .sub{font-size:10px;color:#888;margin-top:2px}
+                h2{font-size:16px;font-weight:900;color:#1e293b;margin:0 0 6px}
+                .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:1px}
+                .pct{background:#dbeafe;color:#1d4ed8}
+                .comp{background:#fef3c7;color:#b45309}
+                table{width:100%;border-collapse:collapse;margin:16px 0}
+                th{background:#f8fafc;padding:8px 12px;text-align:left;font-size:10px;font-weight:900;text-transform:uppercase;color:#64748b;border-bottom:2px solid #e2e8f0}
+                td{padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:11px}
+                td.r{text-align:right;font-weight:700}
+                .total-row{background:#0f172a;color:#fff}
+                .total-row td{padding:12px;font-weight:900;font-size:13px}
+                .kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:16px 0}
+                .kpi-card{background:#f8fafc;border-radius:8px;padding:14px;border-left:3px solid #E8541A}
+                .kpi-val{font-size:20px;font-weight:900;color:#E8541A}
+                .kpi-lbl{font-size:9px;color:#94a3b8;margin-top:2px;text-transform:uppercase}
+                .footer{margin-top:32px;border-top:1px solid #e2e8f0;padding-top:12px;color:#94a3b8;font-size:9px;display:flex;justify-content:space-between}
+              </style></head><body>
+              <div class="header">
+                <div><div class="logo">Supply G&B</div><div class="sub">SERVICIOS JIRET G&amp;B, C.A. · RIF J-412309374</div></div>
+                <div style="text-align:right"><div style="font-size:10px;color:#888">Reporte de Comisión</div>
+                  <div style="font-size:22px;font-weight:900;color:#1e293b">${r.mesLabel}</div>
+                  <span class="badge ${esPct?'pct':'comp'}">${esPct?'Porcentual '+r.porcentaje+'%':'Esquema Completo'}</span>
+                </div>
+              </div>
+              <h2>${r.vendedor}</h2>
+              <p style="color:#64748b;font-size:11px;margin-bottom:20px">${r.nNEs} notas de entrega procesadas · Generado por ${r.user}</p>
+              ${esPct ? `
+                <div class="kpi">
+                  <div class="kpi-card"><div class="kpi-val">$${formatNum(r.totalVentas)}</div><div class="kpi-lbl">Ventas Brutas sin IVA</div></div>
+                  <div class="kpi-card"><div class="kpi-val">${r.porcentaje}%</div><div class="kpi-lbl">Porcentaje de Comisión</div></div>
+                  <div class="kpi-card" style="border-left-color:#16a34a"><div class="kpi-val" style="color:#16a34a">$${formatNum(r.compensacionTotal)}</div><div class="kpi-lbl">Comisión Total</div></div>
+                </div>
+                <table>
+                  <tr><th>Concepto</th><th style="text-align:right">Monto</th></tr>
+                  <tr><td>Ventas brutas sin IVA</td><td class="r">$${formatNum(r.totalVentas)}</td></tr>
+                  <tr><td>% Comisión aplicado</td><td class="r">${r.porcentaje}%</td></tr>
+                  <tr class="total-row"><td style="color:#fff">COMISIÓN A PAGAR</td><td style="text-align:right;color:#4ade80;font-size:18px">$${formatNum(r.compensacionTotal)}</td></tr>
+                </table>
+              ` : `
+                <div class="kpi">
+                  <div class="kpi-card"><div class="kpi-val">$${formatNum(r.totalVentas)}</div><div class="kpi-lbl">Ventas Brutas sin IVA</div></div>
+                  <div class="kpi-card"><div class="kpi-val">$${formatNum(r.totalCobranza||0)}</div><div class="kpi-lbl">Cobranza del Mes</div></div>
+                  <div class="kpi-card" style="border-left-color:#16a34a"><div class="kpi-val" style="color:#16a34a">$${formatNum(r.compensacionTotal)}</div><div class="kpi-lbl">Compensación Total</div></div>
+                </div>
+                <table>
+                  <tr><th>Concepto</th><th style="text-align:right">Monto</th></tr>
+                  <tr><td>Comisión por Meta de Venta</td><td class="r">$${formatNum(r.comisionMeta||0)}</td></tr>
+                  <tr><td>Comisión por Cobranza</td><td class="r">$${formatNum(r.totalCobranza||0)}</td></tr>
+                  <tr><td>Bono Mix de Categoría</td><td class="r">$${formatNum(r.montoMix||0)}</td></tr>
+                  <tr><td>Bono por Vehículo</td><td class="r">$${formatNum(r.bonos?.bonoVehiculo||0)}</td></tr>
+                  <tr><td>Salario Garantizado</td><td class="r">$${formatNum(r.bonos?.salarioGarantizado||0)}</td></tr>
+                  <tr><td>Captación de Cliente</td><td class="r">$${formatNum(r.bonos?.captacion||0)}</td></tr>
+                  <tr><td>Recuperación de Cliente</td><td class="r">$${formatNum(r.bonos?.recuperacion||0)}</td></tr>
+                  <tr class="total-row"><td style="color:#fff">COMPENSACIÓN TOTAL</td><td style="text-align:right;color:#4ade80;font-size:18px">$${formatNum(r.compensacionTotal)}</td></tr>
+                </table>
+              `}
+              <div class="footer"><span>ERP SUPPLY G&B · ${new Date().toLocaleDateString('es-VE')}</span><span>Documento generado automáticamente</span></div>
+            </body></html>`;
+            const w=window.open('','_blank');
+            w.document.write(html);
+            w.document.close();
+            setTimeout(()=>w.print(),500);
+          };
+
+          // ── Excel individual ──
+          const genExcelIndividual = (r) => {
+            const esPct = r.tipoComision==='PORCENTUAL';
+            const rows = esPct
+              ? [['Concepto','Monto'],['Ventas brutas sin IVA','$'+formatNum(r.totalVentas)],['% Comisión',r.porcentaje+'%'],['COMISIÓN TOTAL','$'+formatNum(r.compensacionTotal)]]
+              : [['Concepto','Monto'],['Comisión por Meta','$'+formatNum(r.comisionMeta||0)],['Comisión por Cobranza','$'+formatNum(r.totalCobranza||0)],['Bono Mix','$'+formatNum(r.montoMix||0)],['Bono Vehículo','$'+formatNum(r.bonos?.bonoVehiculo||0)],['Salario Garantizado','$'+formatNum(r.bonos?.salarioGarantizado||0)],['Captación','$'+formatNum(r.bonos?.captacion||0)],['Recuperación','$'+formatNum(r.bonos?.recuperacion||0)],['TOTAL','$'+formatNum(r.compensacionTotal)]];
+            const html=`<html><head><meta charset="utf-8"></head><body><table border="1">
+              <tr><td colspan="2" style="font-weight:900;font-size:14px">COMISIÓN ${r.vendedor} — ${r.mesLabel}</td></tr>
+              <tr><td>Tipo</td><td>${esPct?'Porcentual '+r.porcentaje+'%':'Esquema Completo'}</td></tr>
+              ${rows.map(([a,b])=>`<tr><td>${a}</td><td>${b}</td></tr>`).join('')}
+            </table></body></html>`;
+            const b=new Blob([html],{type:'application/vnd.ms-excel'});
+            const a=document.createElement('a');a.href=URL.createObjectURL(b);
+            a.download=`Comision_${r.vendedor}_${r.ym}.xls`;a.click();
+          };
+
+          // ── PDF Reporte General del mes ──
+          const genPdfGeneral = () => {
+            const reps = filtered;
+            if(!reps.length){alert('No hay reportes para exportar.');return;}
+            const rows = reps.map(r=>`
+              <tr>
+                <td>${r.vendedor}</td>
+                <td>${r.mesLabel}</td>
+                <td style="text-align:center"><span style="background:${r.tipoComision==='PORCENTUAL'?'#dbeafe':'#fef3c7'};padding:2px 8px;border-radius:10px;font-size:9px;font-weight:900">${r.tipoComision==='PORCENTUAL'?r.porcentaje+'%':'Completo'}</span></td>
+                <td style="text-align:right">$${formatNum(r.totalVentas)}</td>
+                <td style="text-align:right;font-weight:900;color:#16a34a">$${formatNum(r.compensacionTotal)}</td>
+              </tr>`).join('');
+            const total = reps.reduce((s,r)=>s+parseNum(r.compensacionTotal),0);
+            const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+              <style>body{font-family:Arial;padding:32px;font-size:12px}h1{font-size:20px;font-weight:900;color:#1e293b;border-bottom:3px solid #E8541A;padding-bottom:8px;margin-bottom:20px}
+              table{width:100%;border-collapse:collapse}th{background:#0f172a;color:#fff;padding:10px 12px;font-size:10px;text-transform:uppercase;text-align:left}
+              td{padding:9px 12px;border-bottom:1px solid #f1f5f9}tr:nth-child(even){background:#f8fafc}
+              .total{background:#E8541A;color:#fff;font-weight:900;font-size:14px}</style></head><body>
+              <h1>Reporte General de Comisiones${comHistMesFilt?' — '+reps[0]?.mesLabel:''}</h1>
+              <table><thead><tr><th>Vendedor</th><th>Período</th><th>Tipo</th><th style="text-align:right">Ventas</th><th style="text-align:right">Comisión</th></tr></thead>
+              <tbody>${rows}</tbody>
+              <tfoot><tr class="total"><td colspan="4">TOTAL COMISIONES</td><td style="text-align:right">$${formatNum(total)}</td></tr></tfoot>
+              </table></body></html>`;
+            const w=window.open('','_blank');w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);
+          };
+
+          return (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden mt-4 animate-in fade-in">
-            <div className="px-8 py-5 border-b bg-indigo-50 flex justify-between items-center">
-              <h3 className="font-black text-indigo-900 uppercase text-sm flex items-center gap-2"><FileText size={18}/> Historial de Reportes</h3>
-              <select value={comVendedor} onChange={e=>setComVendedor(e.target.value)} className="border-2 border-indigo-200 rounded-xl px-3 py-1.5 text-xs font-black outline-none bg-white">
-                <option value="">Todos los vendedores</option>
-                {((settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[]).map(v=><option key={v} value={v}>{v}</option>)}
-              </select>
+            {/* Header con filtros */}
+            <div className="px-6 py-4 border-b bg-indigo-50 flex flex-wrap gap-3 items-center justify-between">
+              <h3 className="font-black text-indigo-900 uppercase text-sm flex items-center gap-2"><FileText size={18}/> Historial de Comisiones</h3>
+              <div className="flex flex-wrap gap-2 items-center">
+                {/* Filtro mes */}
+                <select value={comHistMesFilt} onChange={e=>setComHistMesFilt(e.target.value)}
+                  className="border-2 border-indigo-200 rounded-xl px-3 py-1.5 text-xs font-black outline-none bg-white">
+                  <option value="">Todos los meses</option>
+                  {mesesDisp.map(ym=>{
+                    const [y,m]=ym.split('-');
+                    const label=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m)-1]+' '+y;
+                    return <option key={ym} value={ym}>{label}</option>;
+                  })}
+                </select>
+                {/* Filtro vendedor */}
+                <select value={comHistVendFilt} onChange={e=>setComHistVendFilt(e.target.value)}
+                  className="border-2 border-indigo-200 rounded-xl px-3 py-1.5 text-xs font-black outline-none bg-white">
+                  <option value="">Todos los vendedores</option>
+                  {((settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[]).map(v=><option key={v} value={v}>{v}</option>)}
+                </select>
+                {/* PDF General */}
+                <button onClick={genPdfGeneral}
+                  className="bg-red-600 text-white px-3 py-1.5 rounded-xl text-xs font-black uppercase flex items-center gap-1 hover:bg-red-700">
+                  <FileText size={12}/> PDF General
+                </button>
+              </div>
             </div>
-            <div className="p-6 space-y-2">
-              {(comReportes.filter(r=>!comVendedor||r.vendedor===comVendedor.toUpperCase())).length===0
-                ? <div className="text-center py-12 text-gray-400"><div className="text-4xl mb-2">📭</div><div className="text-sm font-bold">No hay reportes guardados</div><div className="text-xs mt-1">Calcula comisiones y presiona Guardar Reporte</div></div>
-                : comReportes.filter(r=>!comVendedor||r.vendedor===comVendedor.toUpperCase()).map(r=>(
-                  <div key={r.id} className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex items-center justify-between hover:shadow-sm transition-all">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center text-xl">💰</div>
-                      <div>
-                        <div className="font-black text-sm">{r.vendedor}</div>
-                        <div className="text-xs text-gray-500">{r.mesLabel}</div>
-                        <div className="text-[9px] text-gray-400 mt-0.5">{r.tipoComision==='PORCENTUAL'?('Porcentual '+r.porcentaje+'%'):'Completo'} · {r.nNEs} NEs · Guardado por {r.user}</div>
+
+            {/* Lista */}
+            <div className="p-6 space-y-3">
+              {filtered.length===0
+                ? <div className="text-center py-12 text-gray-400"><div className="text-4xl mb-2">📭</div><div className="text-sm font-bold">No hay reportes</div><div className="text-xs mt-1">Ajusta los filtros o guarda nuevos reportes</div></div>
+                : filtered.map(r=>{
+                    const esPct=r.tipoComision==='PORCENTUAL';
+                    return (
+                    <div key={r.id} className="bg-gray-50 border border-gray-200 rounded-2xl p-4 hover:shadow-md transition-all">
+                      <div className="flex items-start justify-between gap-4 flex-wrap">
+                        {/* Info */}
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl" style={{background:esPct?'#dbeafe':'#fef3c7'}}>
+                            {esPct?'%':'💰'}
+                          </div>
+                          <div>
+                            <div className="font-black text-base text-gray-900">{r.vendedor}</div>
+                            <div className="text-sm text-indigo-600 font-bold">{r.mesLabel}</div>
+                            <div className="text-xs text-gray-400 mt-0.5">
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black mr-2 ${esPct?'bg-blue-100 text-blue-700':'bg-amber-100 text-amber-700'}`}>
+                                {esPct?`Porcentual ${r.porcentaje}%`:'Esquema Completo'}
+                              </span>
+                              {r.nNEs} NEs · {r.user}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Montos */}
+                        <div className="flex items-center gap-6">
+                          <div className="text-right">
+                            <div className="text-xs text-gray-400">Ventas</div>
+                            <div className="font-bold text-gray-700 text-sm">${formatNum(r.totalVentas)}</div>
+                          </div>
+                          {!esPct && <div className="text-right">
+                            <div className="text-xs text-gray-400">Cobranza</div>
+                            <div className="font-bold text-gray-700 text-sm">${formatNum(r.totalCobranza||0)}</div>
+                          </div>}
+                          <div className="text-right">
+                            <div className="text-xs text-gray-400">{esPct?'Comisión':'Compensación'}</div>
+                            <div className="text-xl font-black text-green-700">${formatNum(r.compensacionTotal)}</div>
+                          </div>
+                        </div>
+
+                        {/* Acciones */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button onClick={()=>genPdfIndividual(r)}
+                            className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-600 border border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-600 hover:text-white transition-all">
+                            <FileText size={12}/> PDF
+                          </button>
+                          <button onClick={()=>genExcelIndividual(r)}
+                            className="flex items-center gap-1 px-3 py-2 bg-green-50 text-green-700 border border-green-200 rounded-xl text-[10px] font-black uppercase hover:bg-green-600 hover:text-white transition-all">
+                            <Download size={12}/> Excel
+                          </button>
+                          <button onClick={()=>{
+                            if(window.confirm(`¿Eliminar reporte de ${r.vendedor} — ${r.mesLabel}?`))
+                              deleteDoc(getDocRef('comisionesReportes',r.id));
+                          }} className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-400 border border-red-100 rounded-xl text-[10px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
+                            <Trash2 size={12}/> Eliminar
+                          </button>
+                        </div>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-lg font-black text-green-700">${formatNum(r.compensacionTotal)}</div>
-                      <div className="text-xs text-gray-400">Ventas: ${formatNum(r.totalVentas)}</div>
-                      <button onClick={()=>{if(window.confirm('Eliminar este reporte?')) deleteDoc(getDocRef('comisionesReportes',r.id));}} className="text-[8px] text-red-400 hover:text-red-600 mt-1 block">Eliminar</button>
-                    </div>
-                  </div>
-                ))
+                  );})
               }
             </div>
+
+            {/* Footer con totales del filtro */}
+            {filtered.length>0 && (
+              <div className="px-6 py-4 border-t bg-gray-50 flex justify-between items-center">
+                <span className="text-xs text-gray-500 font-bold">{filtered.length} reporte{filtered.length!==1?'s':''} · {comHistMesFilt?mesesDisp.find(m=>m===comHistMesFilt)||comHistMesFilt:'Todos los meses'}</span>
+                <div className="text-right">
+                  <div className="text-xs text-gray-400">Total comisiones en vista</div>
+                  <div className="text-xl font-black text-green-700">${formatNum(filtered.reduce((s,r)=>s+parseNum(r.compensacionTotal),0))}</div>
+                </div>
+              </div>
+            )}
           </div>
-        )}
+          );
+        })()}
         {/* ── NOTAS DE ENTREGA ── */}
         {ventasView === 'notas_entrega' && (() => {
           const PAGE_SIZE = 25;
